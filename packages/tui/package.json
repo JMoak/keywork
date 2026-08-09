@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@keywork/engine": "workspace:*",
-    "@keywork/shared": "workspace:*"
+    "@keywork/shared": "workspace:*",
+    "@opentui/core": "0.5.1"
   }
 }

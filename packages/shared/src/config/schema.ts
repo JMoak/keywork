@@ -17,6 +17,16 @@ export const configSchema = z
       .describe(
         "Action-name to chord overrides; exists because fully rebindable keys are a core product value.",
       ),
+    theme: z
+      .record(z.string(), z.string())
+      .describe(
+        "Theme-token to #rrggbb overrides on the keywork-night palette; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
+      ),
+    apiKeys: z
+      .record(z.string(), z.string())
+      .describe(
+        "Provider-name to API-key map written by `keywork setup`; exists so onboarding is one command with no shell-profile editing. Environment variables take precedence.",
+      ),
   })
   .partial()
   .strict();

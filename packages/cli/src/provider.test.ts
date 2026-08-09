@@ -29,4 +29,16 @@ describe("resolveProvider", () => {
     const resolved = resolveProvider({ KEYWORK_OPENROUTER_API_KEY: "scoped" });
     expect(resolved?.label).toBe("openrouter/openai/gpt-5-mini");
   });
+
+  it("falls back to keys saved by keywork setup", () => {
+    const resolved = resolveProvider({}, undefined, { openrouter: "saved-key" });
+    expect(resolved?.label).toBe("openrouter/openai/gpt-5-mini");
+  });
+
+  it("lets environment variables outrank saved keys", () => {
+    const resolved = resolveProvider({ KEYWORK_OPENAI_API_KEY: "env" }, undefined, {
+      openrouter: "",
+    });
+    expect(resolved?.label).toBe("openai/gpt-5-mini");
+  });
 });

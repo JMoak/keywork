@@ -20,7 +20,9 @@ const catalog = [
   },
 ] as const;
 
-export const providerSetupHint = `No provider configured. Set one of:
+export const providerSetupHint = `No provider configured. Easiest fix:
+  keywork setup            (interactive — saves the key for you)
+Or set an environment variable:
   KEYWORK_OPENROUTER_API_KEY or OPENROUTER_API_KEY  (any model on OpenRouter)
   KEYWORK_OPENAI_API_KEY or OPENAI_API_KEY          (OpenAI directly)
 then optionally choose a model with --model or "model" in keywork.json.`;
@@ -28,10 +30,11 @@ then optionally choose a model with --model or "model" in keywork.json.`;
 export function resolveProvider(
   env: Record<string, string | undefined>,
   model?: string,
+  savedKeys?: Record<string, string>,
 ): ResolvedProvider | undefined {
   for (const entry of catalog) {
-    const apiKey = firstPresent(env, entry.keyVariables);
-    if (apiKey === undefined) continue;
+    const apiKey = firstPresent(env, entry.keyVariables) ?? savedKeys?.[entry.name];
+    if (apiKey === undefined || apiKey === "") continue;
     const chosenModel = model ?? entry.defaultModel;
     return {
       provider: new RetryingProvider(

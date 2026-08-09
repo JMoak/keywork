@@ -12,6 +12,8 @@ Usage:
   keywork [chat] [--model <model>] [--continue]             interactive session
   keywork run "<prompt>" [--model <model>] [--json]
               [--session-dir <dir>]                         one-shot headless run
+  keywork panes                                             tiled multi-session workspace
+  keywork setup                                             connect a model provider
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -35,7 +37,7 @@ async function main(argv: string[]): Promise<number> {
     projectDir: join(cwd, ".keywork"),
   });
   const model = values.model ?? config.model;
-  const resolved = resolveProvider(process.env, model);
+  const resolved = resolveProvider(process.env, model, config.apiKeys);
 
   switch (command) {
     case "chat": {
@@ -64,6 +66,27 @@ async function main(argv: string[]): Promise<number> {
         json: values.json,
         ...(resolved !== undefined && { provider: resolved.provider }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
+      });
+      return 0;
+    }
+    case "setup": {
+      const { runSetup } = await import("./setup.ts");
+      return runSetup();
+    }
+    case "panes": {
+      const { runApp } = await import("@keywork/tui");
+      const { Agent, buildSystemPrompt, coreTools, loadProjectInstructions, suggestTitle } =
+        await import("@keywork/engine");
+      const instructions = await loadProjectInstructions(cwd);
+      const systemPrompt = buildSystemPrompt(instructions);
+      await runApp({
+        ...(config.theme !== undefined && { themeOverrides: config.theme }),
+        ...(resolved !== undefined && {
+          agentFactory: () =>
+            new Agent({ provider: resolved.provider, tools: coreTools(cwd), systemPrompt }),
+          titler: (conversation) => suggestTitle(resolved.provider, conversation),
+          statusLabel: resolved.label,
+        }),
       });
       return 0;
     }

@@ -33,6 +33,7 @@ export {
   type SessionHeader,
   SessionStore,
 } from "./session/store.ts";
+export { kebabTitle, suggestTitle } from "./titles.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
 export { coreTools } from "./tools/core.ts";
 export { defineTool } from "./tools/define.ts";
