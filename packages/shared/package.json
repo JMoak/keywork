@@ -1,0 +1,13 @@
+{
+  "name": "@keywork/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./config": "./src/config/index.ts"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  }
+}

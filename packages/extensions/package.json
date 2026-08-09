@@ -1,0 +1,13 @@
+{
+  "name": "@keywork/extensions",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@keywork/engine": "workspace:*",
+    "@keywork/shared": "workspace:*"
+  }
+}

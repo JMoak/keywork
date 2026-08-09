@@ -1,0 +1,17 @@
+{
+  "name": "@keywork/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "keywork": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@keywork/engine": "workspace:*",
+    "@keywork/shared": "workspace:*",
+    "@keywork/tui": "workspace:*"
+  }
+}

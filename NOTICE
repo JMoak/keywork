@@ -1,0 +1,24 @@
+keywork — third-party attributions
+
+This project adapts code and designs from the following MIT-licensed projects.
+Each adaptation is recorded here by the task that introduced it.
+
+---
+
+Pi (earendil-works/pi)
+Copyright (c) Mario Zechner and contributors
+Licensed under the MIT License: https://github.com/earendil-works/pi/blob/main/LICENSE
+Adaptations: (none yet — record per task)
+
+---
+
+OpenCode (sst/opencode)
+Copyright (c) SST contributors
+Licensed under the MIT License: https://github.com/sst/opencode/blob/dev/LICENSE
+Adaptations: (none yet — record per task)
+
+---
+
+Crush (charmbracelet/crush) is FSL-1.1-MIT licensed and is deliberately NOT a source of
+adapted code. Concepts credited to it in docs/ were reimplemented independently without
+consulting its source.

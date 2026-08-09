@@ -1,0 +1,24 @@
+{
+  "name": "keywork-monorepo",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "bun run check:types && bun run check:pins && bun run check:guardrails && bun run lint",
+    "check:types": "tsc --build",
+    "check:pins": "bun scripts/check-pins.ts",
+    "check:guardrails": "bun scripts/check-guardrails.ts",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.7",
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}
