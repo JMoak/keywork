@@ -13,12 +13,25 @@ export {
   type Usage,
 } from "./messages.ts";
 export { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
+export { buildSystemPrompt, loadProjectInstructions } from "./prompt.ts";
 export type {
   Provider,
   ProviderRequest,
   ToolDefinition,
   TurnDelta,
 } from "./provider.ts";
+export {
+  type MessageEntry,
+  type SessionEntry,
+  type SessionHeader,
+  SessionStore,
+} from "./session/store.ts";
+export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
+export { coreTools } from "./tools/core.ts";
+export { defineTool } from "./tools/define.ts";
+export { editTool } from "./tools/edit.ts";
+export { readTool } from "./tools/read.ts";
+export { writeTool } from "./tools/write.ts";
 export { findTool, type Tool, ToolNotFoundError } from "./tools.ts";
 
 export const engineVersion = "0.0.1";

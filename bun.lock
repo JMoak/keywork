@@ -28,6 +28,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@keywork/shared": "workspace:*",
+        "zod": "4.4.3",
       },
     },
     "packages/extensions": {

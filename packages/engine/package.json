@@ -7,6 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@keywork/shared": "workspace:*"
+    "@keywork/shared": "workspace:*",
+    "zod": "4.4.3"
   }
 }
