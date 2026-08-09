@@ -40,6 +40,7 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
   agent.bus.on("tool.started", (payload) => emit("tool.started", payload));
   agent.bus.on("tool.finished", (payload) => emit("tool.finished", payload));
   agent.bus.on("turn.completed", (payload) => emit("turn.completed", payload));
+  agent.bus.on("turn.interrupted", (payload) => emit("turn.interrupted", payload));
 
   const final = await agent.send(options.prompt);
   if (!options.json) print(messageText(final));

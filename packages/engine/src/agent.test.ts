@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Agent } from "./agent.ts";
-import { messageText } from "./messages.ts";
+import { messageText, textMessage } from "./messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
 import type { Tool } from "./tools.ts";
 
@@ -86,13 +86,71 @@ describe("Agent end-to-end with mock provider", () => {
     expect(toolResult).toMatchObject({ isError: true, output: "Unknown tool: missing" });
   });
 
-  it("aborts mid-stream when steered", async () => {
+  it("resolves an already-aborted send as an interrupted turn", async () => {
     const provider = new MockProvider([textTurn("this streams")]);
     const agent = new Agent({ provider });
     const controller = new AbortController();
     controller.abort();
+    let interrupted = false;
+    agent.bus.on("turn.interrupted", () => {
+      interrupted = true;
+    });
 
-    await expect(agent.send("anything", controller.signal)).rejects.toThrow();
+    const final = await agent.send("anything", controller.signal);
+
+    expect(interrupted).toBe(true);
+    expect(final.parts).toEqual([]);
+  });
+
+  it("keeps partial output when interrupted mid-stream", async () => {
+    const provider = new MockProvider([
+      [
+        { type: "text", text: "first " },
+        { type: "text", text: "second" },
+        { type: "done", usage: { inputTokens: 1, outputTokens: 1 } },
+      ],
+    ]);
+    const agent = new Agent({ provider });
+    agent.bus.on("turn.delta", () => agent.interrupt());
+    const events: string[] = [];
+    agent.bus.on("turn.interrupted", () => events.push("interrupted"));
+    agent.bus.on("turn.completed", () => events.push("completed"));
+
+    const final = await agent.send("go");
+
+    expect(events).toEqual(["interrupted"]);
+    expect(messageText(final)).toBe("first ");
+    expect(agent.history().at(-1)).toBe(final);
+  });
+
+  it("seeds history so a resumed conversation continues in place", async () => {
+    const provider = new MockProvider([textTurn("welcome back")]);
+    const agent = new Agent({
+      provider,
+      history: [textMessage("user", "earlier"), textMessage("assistant", "before")],
+    });
+
+    await agent.send("again");
+
+    expect(agent.history().map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+  });
+
+  it("accumulates session usage across turns", async () => {
+    const provider = new MockProvider([
+      textTurn("one", { inputTokens: 10, outputTokens: 2 }),
+      textTurn("two", { inputTokens: 20, outputTokens: 3 }),
+    ]);
+    const agent = new Agent({ provider });
+
+    await agent.send("first");
+    await agent.send("second");
+
+    expect(agent.usage()).toEqual({ inputTokens: 30, outputTokens: 5 });
   });
 
   it("accumulates streamed text into one part", async () => {

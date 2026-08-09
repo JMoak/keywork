@@ -21,6 +21,13 @@ export type {
   TurnDelta,
 } from "./provider.ts";
 export {
+  type FetchLike,
+  type OpenAiCompatibleOptions,
+  OpenAiCompatibleProvider,
+  ProviderHttpError,
+} from "./providers/openai.ts";
+export { RetryingProvider, type RetryOptions } from "./providers/retry.ts";
+export {
   type MessageEntry,
   type SessionEntry,
   type SessionHeader,

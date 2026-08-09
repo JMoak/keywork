@@ -5,6 +5,7 @@ export interface EngineEvents {
   "turn.started": { userText: string };
   "turn.delta": { delta: TurnDelta };
   "turn.completed": { message: Message; usage: Usage };
+  "turn.interrupted": { message: Message };
   "tool.started": { call: ToolCallPart };
   "tool.finished": { callId: string; output: string; isError: boolean };
   "engine.error": { error: Error };
