@@ -1,7 +1,8 @@
-import { textTurn } from "@keywork/engine";
-import { describe, expect, it } from "vitest";
+import { Agent, MockProvider, type Tool, textTurn, toolCallTurn } from "@keywork/engine";
+import { describe, expect, it, vi } from "vitest";
 import { paletteFrame, paletteRowLimit } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
+import { ConversationPane } from "./conversation-pane.ts";
 import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane } from "./pane.ts";
@@ -359,5 +360,103 @@ describe("conversation round-trip", () => {
       { kind: "assistant", text: "hey there" },
     ]);
     expect(probe.snapshot().panes[0]?.title).toBe("session-1 · 3▸5");
+  });
+});
+
+describe("safety net", () => {
+  it("announces undo and redo outcomes in the status notice", async () => {
+    const probe = new AppProbe({
+      undo: { undo: async () => true, redo: async () => false },
+    });
+
+    expect(probe.command("undo")).toBe(true);
+    await vi.waitFor(() => expect(probe.snapshot().notice).toBe("files restored"));
+
+    expect(probe.command("redo")).toBe(true);
+    await vi.waitFor(() => expect(probe.snapshot().notice).toBe("nothing to redo"));
+
+    probe.keys("a");
+    expect(probe.snapshot().notice).toBe("");
+  });
+
+  it("hides undo commands when no checkpoint store is wired", () => {
+    const probe = new AppProbe();
+    expect(probe.command("undo")).toBe(false);
+  });
+
+  it("pauses a mutating tool on the ask and runs it after y", async () => {
+    const executed: string[] = [];
+    const scribble: Tool = {
+      name: "scribble",
+      description: "writes",
+      parameters: { type: "object" },
+      mutates: true,
+      execute: async () => {
+        executed.push("scribble");
+        return "wrote";
+      },
+    };
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        let pane: ConversationPane | undefined;
+        const agent = new Agent({
+          provider: new MockProvider([
+            toolCallTurn({ type: "tool-call", callId: "c1", name: "scribble", arguments: {} }),
+            textTurn("done"),
+          ]),
+          tools: [scribble],
+          guard: { confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true) },
+        });
+        pane = new ConversationPane(id, agent, notify, undefined, commands);
+        return pane;
+      },
+    });
+
+    probe.type("go").keys("enter");
+    await vi.waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    expect(executed).toEqual([]);
+
+    probe.keys("y");
+    await probe.settled();
+
+    expect(executed).toEqual(["scribble"]);
+    expect(probe.model()?.entries.at(-1)).toEqual({ kind: "assistant", text: "done" });
+  });
+
+  it("feeds a decline back to the agent as an errored tool result", async () => {
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        let pane: ConversationPane | undefined;
+        const agent = new Agent({
+          provider: new MockProvider([
+            toolCallTurn({ type: "tool-call", callId: "c1", name: "scribble", arguments: {} }),
+            textTurn("understood"),
+          ]),
+          tools: [
+            {
+              name: "scribble",
+              description: "writes",
+              parameters: { type: "object" },
+              mutates: true,
+              execute: async () => "wrote",
+            },
+          ],
+          guard: { confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true) },
+        });
+        pane = new ConversationPane(id, agent, notify, undefined, commands);
+        return pane;
+      },
+    });
+
+    probe.type("go").keys("enter");
+    await vi.waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    probe.keys("n");
+    await probe.settled();
+
+    expect(probe.model()?.entries).toContainEqual({
+      kind: "tool",
+      text: "✗ declined by user",
+      failed: true,
+    });
   });
 });

@@ -3,12 +3,18 @@ import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } f
 import type { Provider, TurnDelta } from "./provider.ts";
 import { findTool, type Tool } from "./tools.ts";
 
+export interface ToolGuard {
+  confirm?(call: ToolCallPart): Promise<boolean>;
+  beforeMutation?(): Promise<void>;
+}
+
 export interface AgentOptions {
   provider: Provider;
   systemPrompt?: string;
   tools?: readonly Tool[];
   bus?: EventBus<EngineEvents>;
   history?: readonly Message[];
+  guard?: ToolGuard;
 }
 
 interface AssistantTurn {
@@ -23,8 +29,10 @@ export class Agent {
   private readonly systemPrompt: string;
   private readonly tools: readonly Tool[];
   private readonly messages: Message[];
+  private readonly guard: ToolGuard | undefined;
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
   private active: AbortController | undefined;
+  private checkpointed = false;
 
   constructor(options: AgentOptions) {
     this.provider = options.provider;
@@ -32,6 +40,7 @@ export class Agent {
     this.tools = options.tools ?? [];
     this.bus = options.bus ?? new EventBus();
     this.messages = [...(options.history ?? [])];
+    this.guard = options.guard;
   }
 
   history(): readonly Message[] {
@@ -53,6 +62,7 @@ export class Agent {
     if (signal?.aborted) controller.abort();
     signal?.addEventListener("abort", forwardAbort, { once: true });
 
+    this.checkpointed = false;
     this.messages.push(textMessage("user", userText));
     this.bus.emit("turn.started", { userText });
     try {
@@ -129,12 +139,25 @@ export class Agent {
   ): Promise<{ callId: string; output: string; isError: boolean }> {
     try {
       const tool = findTool(this.tools, call.name);
+      if (tool.mutates === true && !(await this.approveMutation(call))) {
+        return { callId: call.callId, output: "declined by user", isError: true };
+      }
       const output = await tool.execute(call.arguments, signal);
       return { callId: call.callId, output, isError: false };
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause);
       return { callId: call.callId, output: reason, isError: true };
     }
+  }
+
+  private async approveMutation(call: ToolCallPart): Promise<boolean> {
+    if (this.guard === undefined) return true;
+    if (this.guard.confirm !== undefined && !(await this.guard.confirm(call))) return false;
+    if (!this.checkpointed) {
+      this.checkpointed = true;
+      await this.guard.beforeMutation?.();
+    }
+    return true;
   }
 }
 

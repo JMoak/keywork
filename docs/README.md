@@ -25,6 +25,7 @@ in the order given; later docs assume the earlier ones.
 | 7 | [`influencers/rosavera.md`](influencers/rosavera.md) | rosavera (Jordan's private workspace — no license question): fail-closed scope federation, RRF hybrid retrieval, Gardener v2 curation, usefulness feedback; plus its two known gaps keywork fixes (recall metrics, proactive recall). |
 | 8 | [`influencers/knowledge-graphs.md`](influencers/knowledge-graphs.md) | KG-memory systems survey (GraphRAG, Zep/Graphiti, HippoRAG, LightRAG, Mem0, AriGraph, Letta — all MIT/Apache-2.0, verified): what a graph layer buys a coding agent (temporal supersession, multi-hop PPR, contradiction invariants) and the local SQLite design verdicts. Added 2026-08-10 for J12. |
 | 9 | [`influencers/obsidian.md`](influencers/obsidian.md) | Obsidian design DNA (app proprietary — conventions open; Dataview/Datacore/Breadcrumbs MIT, Juggl GPL ⚠): wikilinks, backlinks/unlinked mentions, frontmatter properties, evergreen atomic notes, local-graph-over-global; the vault-citizenship spec making keywork's memory a first-class vault. Added 2026-08-10 for J3/J9. |
+| 10 | [`influencers/lore.md`](influencers/lore.md) | Lore (dmbch/lore, MIT — a colleague's team knowledge archive as MCP service): Subjective Logic opinions, per-oracle earned trust, attestation ledgers, temporal decay. Convergent on epistemics, inverted on architecture; keywork takes ledger-derived state (R6), hallucinated-ID rejection, and the team-scope-via-MCP federation seam. |
 
 ### Feature candidates — the wider ecosystem
 

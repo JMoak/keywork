@@ -8,7 +8,10 @@ import type { PointerEvent, ScrollDirection } from "./pointer.ts";
 
 export interface AppProbeOptions
   extends Partial<
-    Pick<AppCoreOptions, "createPane" | "createFilePane" | "createBrowserPane" | "isDirectory">
+    Pick<
+      AppCoreOptions,
+      "createPane" | "createFilePane" | "createBrowserPane" | "isDirectory" | "undo"
+    >
   > {
   screen?: Screen;
   script?: TurnDelta[][];
@@ -31,6 +34,7 @@ export class AppProbe {
         createBrowserPane: options.createBrowserPane,
       }),
       ...(options.isDirectory !== undefined && { isDirectory: options.isDirectory }),
+      ...(options.undo !== undefined && { undo: options.undo }),
       onExit: () => {
         this.exited = true;
       },

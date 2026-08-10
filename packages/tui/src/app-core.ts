@@ -198,12 +198,18 @@ export type BrowserPaneFactory = (
   intents: PaneIntents,
 ) => Pane;
 
+export interface UndoPort {
+  undo(): Promise<boolean>;
+  redo(): Promise<boolean>;
+}
+
 export interface AppCoreOptions {
   screen: () => Screen;
   createPane: PaneFactory;
   createFilePane?: FilePaneFactory;
   createBrowserPane?: BrowserPaneFactory;
   isDirectory?: (path: string) => boolean;
+  undo?: UndoPort;
   onExit: () => void;
 }
 
@@ -253,6 +259,7 @@ export interface AppSnapshot {
   paletteQuery: string;
   leaderArmed: boolean;
   lastKey: string;
+  notice: string;
 }
 
 type PaletteEntries = ReturnType<CommandRegistry["search"]>;
@@ -270,6 +277,7 @@ export class AppCore {
   };
   leaderArmed = false;
   lastKey = "";
+  notice = "";
   private overlay: Overlay | undefined;
   private nextSession = 1;
   private nextFile = 1;
@@ -333,11 +341,13 @@ export class AppCore {
       paletteQuery: this.paletteQuery,
       leaderArmed: this.leaderArmed,
       lastKey: this.lastKey,
+      notice: this.notice,
     };
   }
 
   handleKey(chord: Chord, sequence: string | undefined, nowMs: number): void {
     this.lastKey = formatChord(chord);
+    this.notice = "";
     if (chord.ctrl && chord.name === "q") {
       this.shutdown();
       return;
@@ -416,6 +426,17 @@ export class AppCore {
   shutdown(): void {
     for (const pane of this.panes.values()) pane.dispose?.();
     this.options.onExit();
+  }
+
+  private announce(outcome: Promise<boolean>, done: string, empty: string): void {
+    outcome
+      .then((changed) => this.showNotice(changed ? done : empty))
+      .catch((cause: unknown) => this.showNotice((cause as Error).message));
+  }
+
+  private showNotice(text: string): void {
+    this.notice = text;
+    this.notify();
   }
 
   private palette(): PaletteOverlay | undefined {
@@ -581,6 +602,19 @@ export class AppCore {
         ...shortcut("browser.summon"),
         run: (args) =>
           args === undefined || args === "" ? this.summonBrowser() : this.openBrowserPane(args),
+      });
+    }
+    const undoPort = this.options.undo;
+    if (undoPort !== undefined) {
+      this.registry.register({
+        name: "undo",
+        description: "restore files to before the last agent change",
+        run: () => this.announce(undoPort.undo(), "files restored", "nothing to undo"),
+      });
+      this.registry.register({
+        name: "redo",
+        description: "reapply the last undone agent change",
+        run: () => this.announce(undoPort.redo(), "files brought forward", "nothing to redo"),
       });
     }
     this.registry.register({

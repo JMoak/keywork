@@ -1,4 +1,4 @@
-import type { Agent } from "@keywork/engine";
+import type { Agent, ToolCallPart } from "@keywork/engine";
 import { Box, Text } from "@opentui/core";
 import {
   type CommandsPort,
@@ -36,6 +36,10 @@ export class ConversationPane implements Pane {
     return this.model.handleKey(chord, sequence);
   }
 
+  confirmMutation(call: ToolCallPart): Promise<boolean> {
+    return this.model.confirmMutation(call);
+  }
+
   async settled(): Promise<void> {
     await this.model.lastSend;
   }
@@ -47,6 +51,7 @@ export class ConversationPane implements Pane {
     const maxRows = Math.max(3, height - 4 - suggestions.length);
     const lines = transcriptLines(this.model.entries, innerWidth).slice(-maxRows);
     const prompt = `› ${this.model.input}${focused ? "▌" : ""}`;
+    const ask = this.model.pendingAsk;
     return paneChrome(
       context,
       this.title(),
@@ -57,6 +62,9 @@ export class ConversationPane implements Pane {
       ...suggestions.map((suggestion, index) =>
         suggestionRow(suggestion, index === this.model.selectedSuggestion, theme),
       ),
+      ...(ask === undefined
+        ? []
+        : [Text({ content: `? ${ask.summary} — y allow · a always · n deny`, fg: theme.accent })]),
       Text({ content: prompt, fg: focused ? theme.text : theme.textDim }),
     );
   }

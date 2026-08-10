@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Agent } from "@keywork/engine";
+import type { Agent, ToolGuard } from "@keywork/engine";
 import { Box, createCliRenderer, type KeyEvent, type MouseEvent, Text } from "@opentui/core";
 import { AppCore, bindingHelp, helpFrame, paletteFrame } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
@@ -14,26 +14,48 @@ import type { PaneView } from "./pane.ts";
 import { pointerEventOf } from "./pointer.ts";
 import { resolveTheme, type Theme } from "./theme.ts";
 
+export interface CheckpointsPort {
+  capture(): Promise<void>;
+  undo(): Promise<boolean>;
+  redo(): Promise<boolean>;
+}
+
 export interface AppOptions {
   themeOverrides?: Record<string, string>;
-  agentFactory?: () => Agent;
+  agentFactory?: (guard: ToolGuard) => Agent;
   titler?: Titler;
   statusLabel?: string;
+  checkpoints?: CheckpointsPort;
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
   const theme = resolveTheme(options.themeOverrides);
   const renderer = await createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
   const screen = (): Screen => ({ width: renderer.width, height: renderer.height });
+  const checkpoints = options.checkpoints;
   const core = new AppCore({
     screen,
-    createPane: (id, notify, commands) =>
-      new ConversationPane(id, options.agentFactory?.(), notify, options.titler, commands),
+    createPane: (id, notify, commands) => {
+      let pane: ConversationPane | undefined;
+      const guard: ToolGuard = {
+        confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true),
+        ...(checkpoints !== undefined && { beforeMutation: () => checkpoints.capture() }),
+      };
+      pane = new ConversationPane(
+        id,
+        options.agentFactory?.(guard),
+        notify,
+        options.titler,
+        commands,
+      );
+      return pane;
+    },
     createFilePane: (id, path, notify) => new FilePane(id, process.cwd(), path, notify),
     createBrowserPane: (id, root, notify, intents) =>
       new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
     isDirectory: (path) =>
       statSync(resolve(process.cwd(), path), { throwIfNoEntry: false })?.isDirectory() === true,
+    ...(checkpoints !== undefined && { undo: checkpoints }),
     onExit: () => {
       renderer.destroy();
       process.exit(0);
@@ -138,9 +160,12 @@ function emptyView(theme: Theme) {
 }
 
 function statusBar(core: AppCore, theme: Theme, label: string | undefined) {
-  const hint = core.leaderArmed
-    ? "nav · h/j/k/l focus  H/J/K/L swap  s split  x close  z zoom  d/D dock  u undock · esc done"
-    : `${label ?? "keywork"} · ${core.layout.panes().length} panes · ctrl+k nav · ctrl+p commands`;
+  const hint =
+    core.notice !== ""
+      ? core.notice
+      : core.leaderArmed
+        ? "nav · h/j/k/l focus  H/J/K/L swap  s split  x close  z zoom  d/D dock  u undock · esc done"
+        : `${label ?? "keywork"} · ${core.layout.panes().length} panes · ctrl+k nav · ctrl+p commands`;
   return Box(
     {
       height: 1,
@@ -150,7 +175,10 @@ function statusBar(core: AppCore, theme: Theme, label: string | undefined) {
       paddingRight: 1,
       backgroundColor: theme.panel,
     },
-    Text({ content: hint, fg: core.leaderArmed ? theme.accent : theme.textDim }),
+    Text({
+      content: hint,
+      fg: core.notice !== "" || core.leaderArmed ? theme.accent : theme.textDim,
+    }),
     Text({ content: core.lastKey, fg: theme.textDim }),
   );
 }

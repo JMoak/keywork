@@ -1,5 +1,6 @@
-export { Agent, type AgentOptions } from "./agent.ts";
+export { Agent, type AgentOptions, type ToolGuard } from "./agent.ts";
 export { type EngineEvents, EventBus } from "./bus.ts";
+export { Checkpoints, type CheckpointsOptions } from "./checkpoints.ts";
 export {
   type Message,
   messageText,

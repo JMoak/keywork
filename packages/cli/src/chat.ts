@@ -1,17 +1,17 @@
-import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import {
   Agent,
   buildSystemPrompt,
+  Checkpoints,
   coreTools,
   loadProjectInstructions,
   type Message,
   type Provider,
   type SessionStore,
+  type ToolGuard,
 } from "@keywork/engine";
+import { defaultSessionDir, snapshotGitDir } from "./paths.ts";
 import { openOrResumeSession } from "./sessions.ts";
 
 export interface ChatOptions {
@@ -26,12 +26,14 @@ export async function chat(options: ChatOptions): Promise<void> {
   const instructions = await loadProjectInstructions(options.cwd);
   const dir = options.sessionDir ?? defaultSessionDir(options.cwd);
   const { store, seeded } = await openOrResumeSession(dir, options.cwd, options.resume ?? false);
+  const checkpoints = await openCheckpoints(options.cwd);
 
   const agent = new Agent({
     provider: options.provider,
     tools: coreTools(options.cwd),
     systemPrompt: buildSystemPrompt(instructions),
     history: seeded,
+    guard: mutationGuard(checkpoints),
   });
   wireStreamingOutput(agent);
   greet(options, store, seeded);
@@ -47,6 +49,10 @@ export async function chat(options: ChatOptions): Promise<void> {
         printSessionInfo(agent, store);
         continue;
       }
+      if (line === "/undo" || line === "/redo") {
+        await timeTravel(checkpoints, line);
+        continue;
+      }
       await runTurn(agent, line);
       printUsageLine(agent);
       persisted = await persistNewMessages(store, agent.history(), persisted);
@@ -58,12 +64,65 @@ export async function chat(options: ChatOptions): Promise<void> {
   }
 }
 
+async function openCheckpoints(cwd: string): Promise<Checkpoints | undefined> {
+  try {
+    return await Checkpoints.open({ worktree: cwd, gitDir: snapshotGitDir(cwd) });
+  } catch {
+    console.log("undo unavailable — git was not found on this machine");
+    return undefined;
+  }
+}
+
+function mutationGuard(checkpoints: Checkpoints | undefined): ToolGuard {
+  let alwaysAllow = false;
+  return {
+    confirm: (call) => {
+      if (alwaysAllow || !process.stdin.isTTY) return Promise.resolve(true);
+      console.log(`\n  ? ${call.name} ${compact(call.arguments)} — y allow · a always · n deny`);
+      return nextAnswerKey().then((answer) => {
+        alwaysAllow = answer === "always";
+        return answer !== "deny";
+      });
+    },
+    ...(checkpoints !== undefined && { beforeMutation: () => checkpoints.capture() }),
+  };
+}
+
+function nextAnswerKey(): Promise<"allow" | "always" | "deny"> {
+  return new Promise((resolve) => {
+    const onKeypress = (_chunk: string, key: { name?: string } | undefined) => {
+      const answer = answerFor(key?.name);
+      if (answer === undefined) return;
+      process.stdin.off("keypress", onKeypress);
+      resolve(answer);
+    };
+    process.stdin.on("keypress", onKeypress);
+  });
+}
+
+function answerFor(name: string | undefined): "allow" | "always" | "deny" | undefined {
+  if (name === "y" || name === "return") return "allow";
+  if (name === "a") return "always";
+  if (name === "n" || name === "escape") return "deny";
+  return undefined;
+}
+
+async function timeTravel(checkpoints: Checkpoints | undefined, line: string): Promise<void> {
+  if (checkpoints === undefined) {
+    console.log("undo unavailable — git was not found on this machine");
+    return;
+  }
+  const moved = line === "/undo" ? await checkpoints.undo() : await checkpoints.redo();
+  if (moved) console.log(line === "/undo" ? "files restored" : "files brought forward");
+  else console.log(line === "/undo" ? "nothing to undo" : "nothing to redo");
+}
+
 function greet(options: ChatOptions, store: SessionStore, seeded: readonly Message[]): void {
   console.log(`keywork · ${options.label} · ${options.cwd}`);
   console.log(`session → ${store.file}`);
   if (seeded.length > 0) console.log(`resumed ${seeded.length} messages`);
   console.log(
-    `Ask for anything · Esc interrupts a running turn · "exit" quits · /session for stats`,
+    `Ask for anything · Esc interrupts a running turn · "exit" quits · /session for stats · /undo reverts the last agent change`,
   );
 }
 
@@ -118,11 +177,6 @@ function printSessionInfo(agent: Agent, store: SessionStore): void {
   console.log(`file      ${store.file}`);
   console.log(`messages  ${agent.history().length}`);
   console.log(`tokens    ${inputTokens} in / ${outputTokens} out`);
-}
-
-function defaultSessionDir(cwd: string): string {
-  const projectKey = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
-  return join(homedir(), ".keywork", "sessions", projectKey);
 }
 
 async function persistNewMessages(

@@ -1,4 +1,4 @@
-import type { Agent, Message } from "@keywork/engine";
+import type { Agent, Message, ToolCallPart } from "@keywork/engine";
 import type { Chord } from "./keys.ts";
 
 export type Titler = (conversation: readonly Message[]) => Promise<string | undefined>;
@@ -23,14 +23,21 @@ export type TranscriptEntry =
   | { kind: "error"; text: string }
   | { kind: "info"; text: string };
 
+export interface PendingAsk {
+  summary: string;
+  resolve(allowed: boolean): void;
+}
+
 export class ConversationModel {
   readonly entries: TranscriptEntry[] = [];
   input = "";
   busy = false;
   title: string | undefined;
+  pendingAsk: PendingAsk | undefined;
   lastSend: Promise<unknown> = Promise.resolve();
   lastTitle: Promise<unknown> = Promise.resolve();
   private titleRequested = false;
+  private alwaysAllow = false;
 
   selectedSuggestion = 0;
 
@@ -92,7 +99,16 @@ export class ConversationModel {
     return this.commands.search(query).slice(0, suggestionLimit);
   }
 
+  confirmMutation(call: ToolCallPart): Promise<boolean> {
+    if (this.alwaysAllow) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      this.pendingAsk = { summary: `${call.name} ${compactJson(call.arguments)}`, resolve };
+      this.notify();
+    });
+  }
+
   handleKey(chord: Chord, sequence: string | undefined): boolean {
+    if (this.pendingAsk !== undefined) return this.answerAsk(chord);
     if (this.slashQuery() !== undefined && this.handleSlashKey(chord)) return true;
     if (chord.name === "escape") {
       if (!this.busy) return false;
@@ -116,6 +132,18 @@ export class ConversationModel {
       return true;
     }
     return false;
+  }
+
+  private answerAsk(chord: Chord): boolean {
+    const ask = this.pendingAsk;
+    if (ask === undefined) return false;
+    if (chord.name === "a") this.alwaysAllow = true;
+    const allowed = ["y", "a", "return", "enter"].includes(chord.name);
+    if (!allowed && chord.name !== "n" && chord.name !== "escape") return true;
+    this.pendingAsk = undefined;
+    ask.resolve(allowed);
+    this.notify();
+    return true;
   }
 
   private slashQuery(): string | undefined {

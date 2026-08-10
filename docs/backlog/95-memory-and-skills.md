@@ -121,6 +121,54 @@ pass). Three commitments:
    skill files never depend on vault conventions. Revisit only after both systems have
    stabilized in daily use.
 
+## Implementation refinements (third pass, 2026-08-10)
+
+Simplifications found by pushing "files are truth" all the way through — each removes a
+moving part rather than adding one:
+
+**R1 — Notes are nodes; the graph is fully vault-derived.** J12 initially implied a
+second authoritative store (entity + fact tables). Refined: an **entity is an atomic
+note** (its frontmatter already carries `aliases`, its filename is the canonical name;
+file/module entities are notes named by repo path), an **edge is a wikilink or a typed
+frontmatter relation**, and **supersession is a typed link pair** — the new note declares
+`supersedes: "[[old-note]]"`, the Gardener stamps the old note `superseded_by` + `valid_to`.
+History therefore lives in the vault too (superseded notes remain as files, dimmed, not
+deleted), so the *entire* SQLite side — FTS, vectors, entity/fact tables, adjacency —
+is one derived, disposable index. Delete it, lose nothing, including history. Obsidian
+users see supersession chains as ordinary links. Fact rows keep bi-temporal columns as
+*index materialization* of what the frontmatter says, never as the record.
+
+**R2 — Atomic notes index whole-note; chunking is for logs only.** A distilled note is a
+paragraph — chunking it at ~400 tokens is machinery for a problem it doesn't have. The
+retrieval unit, citation unit, and curation unit become the same object (one note),
+which also makes recall metrics and usefulness scoring per-note instead of per-chunk.
+Chunking applies only to daily logs and imported documents.
+
+**R3 — One review inbox.** J7's Gardener review queue, J11's staging area, and the
+airlock digest are the same surface, not three: everything awaiting a human — staged
+untrusted writes, borderline promotions, contradiction reports, protected-core proposals
+— is one ordered inbox, rendered once by J9, drained at the airlock, counted by the one
+`◇n` glyph. The session-end airlock is also a G6 notification moment ("come back — 4
+things to review") when the user is unfocused: the same designed moment, two doors.
+
+**R4 — Bootstrap = MOC + pinned embeds.** With `MEMORY.md` as a links-only MOC, session
+bootstrap resolves it by transcluding pinned/cured notes (embed resolution, budget-aware,
+cured-first then most-useful) rather than injecting a prose file. The budget pressure
+OpenClaw applies to one file becomes a ranked selection over notes — same mechanism as
+retrieval, reused.
+
+**R5 — J2 is separable.** The user-global config layer has no dependency on the memory
+stack and unblocks D8–D10/D14 (MCP config); it can land with iteration-3's Track P
+rather than waiting for workstream J.
+
+**R6 — Ledger-derived state** (from the Lore analysis —
+[`influencers/lore.md`](../influencers/lore.md)). Curing and usefulness state in note
+frontmatter is a *materialization* of the append-only audit/event ledger (recalls,
+corrections, re-attestations) — recomputable from events, never independently mutated
+counters. Same relationship the index has to files. Gardener structured outputs also
+adopt Lore's hallucinated-ID rejection: every referenced note/entity must appear in the
+candidate set.
+
 ## Tasks
 
 ### J1 (2pt) — Workspace definition
@@ -146,21 +194,24 @@ budgeted `MEMORY.md` as the MOC/index layer (links, not content), `daily/YYYY-MM
 episodic logs, **atomic notes** for distilled memories — one concept per file, unique
 concept-oriented titles, bare `[[Name]]` wikilinks, frontmatter carrying provenance /
 curing state / confidence / `aliases` / typed relations (quoted wikilinks in YAML),
-curation audit file. Ship no `.obsidian/`; gitignore it. Files are truth; git-able at
-workspace scope.
-**Accept:** round-trip tests; over-budget `MEMORY.md` truncates the injected copy, never
-the file; vault-citizenship fixture (frontmatter parses, links resolve by Obsidian's
-rules, unique-name invariant enforced); layout documented in `docs/memory.md`.
+curation audit file. Entities are notes (R1): file/module entity notes named by repo
+path, `supersedes:`/`superseded_by:` typed link pairs carry supersession in-vault.
+Ship no `.obsidian/`; gitignore it. Files are truth; git-able at workspace scope.
+**Accept:** round-trip tests; over-budget bootstrap selects, never truncates files (R4);
+vault-citizenship fixture (frontmatter parses, links resolve by Obsidian's rules,
+unique-name invariant enforced); supersession link-pair fixture; layout documented in
+`docs/memory.md`.
 **Strategy:** `LIFT:openclaw` budgets/daily-log lifecycle; open Obsidian conventions
 (`OWN` — no app code exists to lift); Matuschak evergreen method as spec.
 
 ### J4 (3pt) — Hybrid index & recall metrics
-SQLite sidecar per scope: chunking (~400 tokens, overlap), FTS5/BM25 lexical + embedding
-vectors (provider or local; chunk-hash cache), RRF fusion (K=60), scope filter, debounced
-file-watcher reindex; the wikilink graph from J3's notes parses into the same index
-(backlinks, aliases, dead links). Designed for the third leg (J12's PPR list joins the
-same RRF) without rework. Index is disposable — rebuildable from files, deleting it loses
-nothing. Ships with a **recall-metrics fixture** (the rosavera P0 gap): a probe corpus
+SQLite sidecar per scope: atomic notes index **whole-note** (R2 — note = retrieval =
+citation = scoring unit); daily logs and imports chunk (~400 tokens, overlap); FTS5/BM25
+lexical + embedding vectors (provider or local; content-hash cache), RRF fusion (K=60),
+scope filter, debounced file-watcher reindex; the wikilink graph from J3's notes parses
+into the same index (backlinks, aliases, dead links). Designed for the third leg (J12's
+PPR list joins the same RRF) without rework. Index is disposable — rebuildable from
+files, deleting it loses nothing, **including history** (R1). Ships with a **recall-metrics fixture** (the rosavera P0 gap): a probe corpus
 with expected-hit assertions gating regressions, including multi-hop cases that only the
 graph leg can win (baseline documented pre-J12).
 **Accept:** hybrid beats lexical-only on the probe corpus; lexical-only mode passes its
@@ -172,10 +223,12 @@ round-trips (backlinks/orphans/unresolved).
 ### J5 (2pt) — Recall surface & bootstrap injection
 `memory_search` / `memory_get` (line-range read after a hit) as core tools; memory *writes*
 are prompt-driven through the ordinary write/edit tools per conventions (no bespoke write
-tool); bootstrap injection of budgeted layers at session start, per-layer token budgets.
+tool); bootstrap injection at session start resolves the `MEMORY.md` MOC by transcluding
+pinned/cured notes, budget-aware, cured-first then most-useful (R4) — per-layer token
+budgets.
 **Accept:** E2E — mock agent stores a fact via ordinary edit, new session recalls it via
-`memory_search`; bootstrap respects budgets; sub-agent sessions get the filtered bootstrap
-(see J6).
+`memory_search`; bootstrap respects budgets and selection order (R4 fixture); sub-agent
+sessions get the filtered bootstrap (see J6).
 **Strategy:** `LIFT:openclaw` tool contracts + prompt-routing conventions.
 
 ### J6 (2pt) — Scope policy (fail-closed federation)
@@ -183,7 +236,9 @@ rosavera's policy layer translated to keywork's scopes: a validated session cont
 resolves allowed scopes; unvalidated or reduced contexts (sub-agents, external attach
 clients, headless callers) fail closed to reduced scope; imported memory (other tools'
 formats) is searchable, never bootstrap-injected. Designed so cross-workspace federation
-(P2) is a new scope, not a redesign.
+(P2) is a new scope, not a redesign — and so an external MCP memory service (e.g. Lore,
+a colleague's MIT team-knowledge archive) can mount via D8 as a **team scope** under the
+same policy: searchable, never bootstrap-injected, provenance-tagged external.
 **Accept:** policy matrix unit tests; sub-agent fixture cannot read user-scope memory;
 unknown context ⇒ workspace-public only.
 **Strategy:** `ADAPT:rosavera` fail-closed resolution.
@@ -196,8 +251,10 @@ EMA with an anti-gaming per-session cap (**wired into J4's retrieval ranking as 
 not just collected**), human review queue for borderline cases, every sweep leaving an
 audit entry. Graph duties (with J12): typed extraction against the closed ontology
 (Zod-validated), entity/alias resolution, the supersession sweep (expire the old edge,
-write `supersedes`), per-entity summary refresh in the markdown canon, and Obsidian-style
-**unlinked-mention densification** (title/alias occurrences → proposed links). Runs on
+stamp `superseded_by`/`valid_to` in frontmatter — R1), per-entity summary refresh in the
+markdown canon, and Obsidian-style **unlinked-mention densification** (title/alias
+occurrences → proposed links). All human-facing output lands in the **one review inbox**
+(R3). Runs on
 session close/idle — keywork has no daemon; the engine's own lifecycle is the heartbeat
 (Letta's sleep-time-compute pattern independently validates this placement). **Blast
 radius: agent-created content only, never human-authored files.**
@@ -225,8 +282,11 @@ Gardener activity, staged/`◇n` count — in the shared D14/notification visual
 Obsidian-translated affordances over J4's link index: **backlinks panel** for the focused
 note, **local graph as an indented 1–2-hop outline** (links out / links in — never a
 global graph; community verdict says local is the magic), unlinked-mention suggestions,
-`[[` fuzzy autocomplete over names + aliases, orphan/dead-link lint. Proactive recall:
-bus-driven surfacing of relevant memories as quiet pane events, never interruptions.
+`[[` fuzzy autocomplete over names + aliases, orphan/dead-link lint. The **one review
+inbox** (R3) renders here — this pane is where the airlock digest lives. Proactive
+recall, concretely: on file-open/pane-focus bus events, seed PPR from the focused
+entity's path and quietly surface the top memories touching it — never interruptions.
+(This is the repo-map join, previewed before F2 lands.)
 **Accept:** probe workflow — recall event renders in pane with scope + provenance; curing
 states visually distinct in theme tokens (both light/dark); backlinks/local-outline/
 autocomplete probe-tested; review queue reachable by keyboard; zero-memory state is calm,
@@ -246,8 +306,9 @@ persists; human-authored fixture skill provably untouchable; telemetry increment
 ### J11 (3pt) — Write gating (implements J-D4)
 The four J-D4 layers as one artifact — mechanism and visual design together: provenance
 metadata on the write path with structural staging for untrusted origins; the session
-ledger with chips + one-key revert; the airlock digest at session end (restart-safe
-staging area, `◇n` status-line counter); curing state on entries feeding J9's rendering.
+ledger with chips + one-key revert; the airlock digest at session end draining the **one
+review inbox** (R3 — staged writes, borderline promotions, contradiction reports,
+protected-core proposals in one ordered list; restart-safe; `◇n` status-line counter).
 Protected-core proposals render as outstanding-PR badges. E-stream (E1/E2) adopts the same
 vocabulary — one gating system, not two.
 **Accept:** property test — no untrusted-origin write can become load-bearing without
@@ -258,12 +319,14 @@ curing state transitions covered by unit tests.
 gates — `LIFT:hermes`/`LIFT:openclaw` where their code shapes fit).
 
 ### J12 (3pt) — Graph layer (bi-temporal entity graph + PPR leg)
-The third retrieval leg (J-D5). Schema: `entity(id, canonical_name, type, aliases)` +
-entity-normalized SPO facts with **bi-temporal columns** (world time `valid_from`/
-`valid_to` — already rosavera's schema — plus system time `created_at`/`expired_at`,
-Graphiti's design) and `source_ref` anchoring every fact to its markdown file + heading
-(AriGraph's provenance idea; graph and vault stay one system — wikilinks and facts
-describe the same edges). Ontology: small, closed, typed — entities {file, module,
+The third retrieval leg (J-D5), **fully derived from the vault** (R1): entity rows
+materialize atomic notes (filename = canonical name, frontmatter `aliases`), fact rows
+materialize wikilinks + typed frontmatter relations, bi-temporal columns (world time
+`valid_from`/`valid_to` — rosavera's schema — plus system time `created_at`/`expired_at`,
+Graphiti's design) materialize the `supersedes`/`superseded_by` link pairs, and
+`source_ref` anchors every fact to its note + heading (AriGraph's provenance idea). The
+tables are index, never record — rebuild from files reproduces them exactly, history
+included. Ontology: small, closed, typed — entities {file, module,
 decision, convention, tool, dependency, person, error-pattern, task}, ~15 predicates
 (`depends_on`, `supersedes`, `decided_for/against`, `applies_to`, …), Zod-validated.
 Write path stays cheap and deterministic (path/package/tool linking, no LLM — the LLM
@@ -295,6 +358,47 @@ its visual pieces with J9. F2 (repo map) later joins J12's entity space.
 
 Wants iteration-3's Track P (workspace persistence) and Track T (B7 compaction) landed
 first — workstream J is the natural **iteration-4 headliner**. ~29pt total.
+
+## The experience (what this feels like)
+
+**Session start.** `keywork` opens the workspace; bootstrap is silent and cheap — the MOC
+resolves a handful of cured notes into context, and the memory pane (if docked) shows the
+scopes and a calm garden: mostly bright settled notes, maybe one dim `~` from yesterday.
+Nothing asks anything.
+
+**During work.** You open `packages/tui/layout.ts`; the memory pane quietly surfaces
+"split ratios decided 50/50 → superseded by [[ratio-resize-decision]]" — the agent knows,
+and now you know it knows. The agent learns something ("tests run on Node, not Bun") and
+a small `M+` chip appears in the ledger; you glance, it's right, you keep typing. A web
+doc it read suggests a config change — that lands as a dim `◇` instead, untouchable until
+you say so. A skill's command fails mid-run; the agent patches it, an `S±` chip appears;
+you hit the chip, see a two-line diff, approve with a keystroke or just leave it —
+it's already working and revertable.
+
+**Session end.** The airlock: "keywork wants to remember 4 things and change 1 skill —
+review / approve all / leave staged." Fifteen seconds, usually. If you've tabbed away,
+that's the notification moment — one "come back, 4 to review," not four pings. Overnight
+(next idle), the Gardener sweeps: merges a duplicate, notices "we use pnpm" contradicts
+a cured note, queues that one question for tomorrow's inbox instead of guessing.
+
+**Anytime.** Open the memory directory in Obsidian — it's a real vault: the decision
+graph is wikilinks, supersession chains are visible links, daily notes are daily notes.
+Fix a wrong memory in any editor; the index rebuilds on save. Delete the entire SQLite
+index in anger; nothing is lost.
+
+**The feel targets** (review bar for every J PR): bootstrap adds zero perceptible
+latency; nothing modal ever appears mid-flow; every glyph (`●◐○ ~ ◇ M+ S±`) is one of
+the shared D14/notification family and legible at a glance; the empty first-run state
+is a quiet invitation ("keywork remembers what you teach it"), not a dashboard of zeros;
+and the whole system stays explainable in one sentence — *the agent writes notes you can
+read, they earn trust visibly, and nothing untrusted persists without you.*
+
+**Honest risks to design against:** inbox rot if `◇n` is ignorable for weeks (mitigate:
+the airlock's approve-all is genuinely safe *because* untrusted items are visually
+distinct within it); pane noise if proactive recall fires too eagerly (mitigate: strict
+relevance floor, per-session novelty — never resurface the same note twice); Gardener
+LLM cost creeping (mitigate: sweep budgets ride A15's token accounting, visible in the
+status line like everything else).
 
 ## Non-goals (v1)
 

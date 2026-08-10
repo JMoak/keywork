@@ -20,7 +20,11 @@ OpenCode (https://github.com/sst/opencode)
 Copyright (c) 2025 opencode
 Licensed under the MIT License (full text below).
 
-Adaptations: none yet.
+Adaptations:
+- E3/E4 (packages/engine/src/checkpoints.ts): file-checkpoint mechanism adapted from
+  OpenCode's snapshot module — a shadow git repository (separate GIT_DIR under the keywork
+  data dir, work tree at the project root) captured via `git add -A` + `git write-tree` and
+  restored via `git read-tree --reset -u`, so the user's own git state is never touched.
 
 ---
 

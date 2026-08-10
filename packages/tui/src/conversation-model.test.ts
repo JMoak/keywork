@@ -1,4 +1,11 @@
-import { Agent, MockProvider, type Tool, textTurn, toolCallTurn } from "@keywork/engine";
+import {
+  Agent,
+  MockProvider,
+  type Tool,
+  type ToolCallPart,
+  textTurn,
+  toolCallTurn,
+} from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { ConversationModel, transcriptLines } from "./conversation-model.ts";
 import { parseChord } from "./keys.ts";
@@ -228,6 +235,51 @@ describe("auto-titling", () => {
     await model.lastTitle;
 
     expect(model.title).toBeUndefined();
+  });
+});
+
+describe("mutation confirmation", () => {
+  const writeCall: ToolCallPart = {
+    type: "tool-call",
+    callId: "call-1",
+    name: "write",
+    arguments: { path: "notes.txt" },
+  };
+
+  it("holds the ask open, swallowing unrelated keys until answered", async () => {
+    const model = new ConversationModel(undefined, () => {});
+
+    const verdict = model.confirmMutation(writeCall);
+    expect(model.pendingAsk?.summary).toContain("write");
+    expect(model.handleKey(parseChord("z"), "z")).toBe(true);
+    expect(model.pendingAsk).toBeDefined();
+
+    model.handleKey(parseChord("y"), "y");
+    expect(await verdict).toBe(true);
+    expect(model.pendingAsk).toBeUndefined();
+  });
+
+  it("denies on n and on escape", async () => {
+    const model = new ConversationModel(undefined, () => {});
+
+    const first = model.confirmMutation(writeCall);
+    model.handleKey(parseChord("n"), "n");
+    expect(await first).toBe(false);
+
+    const second = model.confirmMutation(writeCall);
+    model.handleKey(parseChord("escape"), undefined);
+    expect(await second).toBe(false);
+  });
+
+  it("remembers a for the rest of the session", async () => {
+    const model = new ConversationModel(undefined, () => {});
+
+    const first = model.confirmMutation(writeCall);
+    model.handleKey(parseChord("a"), "a");
+    expect(await first).toBe(true);
+
+    expect(await model.confirmMutation(writeCall)).toBe(true);
+    expect(model.pendingAsk).toBeUndefined();
   });
 });
 

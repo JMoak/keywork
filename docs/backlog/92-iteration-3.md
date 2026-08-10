@@ -24,6 +24,8 @@
 | D13 | **done** | Onboarding auto-fires when no provider resolvable (TTY); `keywork setup` reusable. |
 | C11 | partial→ | FilePane wired: `/open <path>` (args now flow through `CommandSpec.run`); summon-per-type chords still outstanding. |
 | — | extra | `AppCore` extraction (pure state machine — the external-agent event surface), global `keywork` shim, 0600 key storage. |
+| E3/E4 | **done** (2026-08-10) | Track S landed: `Checkpoints` (engine) — shadow-git snapshots per I3 (ADAPT recorded in `NOTICE`), undo/redo ring (limit 64, dup-skipping, serialized), captured once per send before the first mutating tool via the new `ToolGuard` seam on `Agent`; `/undo` + `/redo` in panes (status-bar notice) and chat. Ring is in-memory per session by design. Headless `keywork run` deliberately unguarded. |
+| A6 ask-flag | **done** (2026-08-10) | `Tool.mutates` marks write/edit/bash; `ToolGuard.confirm` pauses mutating calls — panes render a modal y/a/n ask row in the owning pane (`a` = allow for the pane's lifetime), chat asks via keypress; declines return an errored `declined by user` tool result to the model. Interim until J11's provenance-gated model replaces it. |
 
 ## The shape of this iteration
 

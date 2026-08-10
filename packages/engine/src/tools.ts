@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "./provider.ts";
 
 export interface Tool extends ToolDefinition {
+  mutates?: boolean;
   execute(args: unknown, signal?: AbortSignal): Promise<string>;
 }
 

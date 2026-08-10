@@ -123,6 +123,100 @@ describe("Agent end-to-end with mock provider", () => {
     expect(agent.history().at(-1)).toBe(final);
   });
 
+  it("asks the guard before running a mutating tool and reports declines", async () => {
+    const executed: string[] = [];
+    const mutatingTool: Tool = {
+      ...echoTool,
+      name: "scribble",
+      mutates: true,
+      execute: async () => {
+        executed.push("scribble");
+        return "wrote";
+      },
+    };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+      textTurn("Understood."),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool],
+      guard: { confirm: async () => false },
+    });
+
+    await agent.send("Change something");
+
+    expect(executed).toEqual([]);
+    const toolResult = agent.history()[2]?.parts[0];
+    expect(toolResult).toMatchObject({ isError: true, output: "declined by user" });
+  });
+
+  it("checkpoints once per send, before the first mutating tool only", async () => {
+    const order: string[] = [];
+    const mutatingTool: Tool = {
+      ...echoTool,
+      name: "scribble",
+      mutates: true,
+      execute: async () => {
+        order.push("execute");
+        return "wrote";
+      },
+    };
+    const mutatingCall = (callId: string) =>
+      toolCallTurn({ type: "tool-call", callId, name: "scribble", arguments: {} });
+    const provider = new MockProvider([
+      mutatingCall("call-1"),
+      mutatingCall("call-2"),
+      textTurn("Done."),
+      mutatingCall("call-3"),
+      textTurn("Done again."),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool],
+      guard: {
+        beforeMutation: async () => {
+          order.push("checkpoint");
+        },
+      },
+    });
+
+    await agent.send("Change things twice");
+    await agent.send("Change once more");
+
+    expect(order).toEqual(["checkpoint", "execute", "execute", "checkpoint", "execute"]);
+  });
+
+  it("leaves non-mutating tools unguarded", async () => {
+    const guardCalls: string[] = [];
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "call-1",
+          name: "echo",
+          arguments: { text: "hi" },
+        }),
+        textTurn("Echoed."),
+      ]),
+      tools: [echoTool],
+      guard: {
+        confirm: async (call) => {
+          guardCalls.push(call.name);
+          return true;
+        },
+        beforeMutation: async () => {
+          guardCalls.push("checkpoint");
+        },
+      },
+    });
+
+    await agent.send("Just echo");
+
+    expect(guardCalls).toEqual([]);
+    expect(agent.history()[2]?.parts[0]).toMatchObject({ output: "echo: hi", isError: false });
+  });
+
   it("seeds history so a resumed conversation continues in place", async () => {
     const provider = new MockProvider([textTurn("welcome back")]);
     const agent = new Agent({

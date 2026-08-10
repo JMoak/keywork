@@ -15,6 +15,7 @@ export function editTool(cwd: string) {
     name: "edit",
     description: "Replace exact text in a file. oldText must match exactly once unless replaceAll.",
     schema,
+    mutates: true,
     run: async ({ path, oldText, newText, replaceAll = false }) => {
       const target = resolve(cwd, path);
       const content = await readFile(target, "utf8");

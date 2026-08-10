@@ -92,15 +92,27 @@ async function main(argv: string[]): Promise<number> {
       await onboardIfNeeded();
       const active = resolved;
       const { runApp } = await import("@keywork/tui");
-      const { Agent, buildSystemPrompt, coreTools, loadProjectInstructions, suggestTitle } =
-        await import("@keywork/engine");
+      const {
+        Agent,
+        buildSystemPrompt,
+        Checkpoints,
+        coreTools,
+        loadProjectInstructions,
+        suggestTitle,
+      } = await import("@keywork/engine");
+      const { snapshotGitDir } = await import("./paths.ts");
       const instructions = await loadProjectInstructions(cwd);
       const systemPrompt = buildSystemPrompt(instructions);
+      const checkpoints = await Checkpoints.open({
+        worktree: cwd,
+        gitDir: snapshotGitDir(cwd),
+      }).catch(() => undefined);
       await runApp({
         ...(config.theme !== undefined && { themeOverrides: config.theme }),
+        ...(checkpoints !== undefined && { checkpoints }),
         ...(active !== undefined && {
-          agentFactory: () =>
-            new Agent({ provider: active.provider, tools: coreTools(cwd), systemPrompt }),
+          agentFactory: (guard) =>
+            new Agent({ provider: active.provider, tools: coreTools(cwd), systemPrompt, guard }),
           titler: (conversation) => suggestTitle(active.provider, conversation),
           statusLabel: active.label,
         }),

@@ -38,6 +38,7 @@ export function bashTool(cwd: string, shell: Shell = detectShell()) {
     name: "bash",
     description: `Run a command in ${shell.name} from the working directory.`,
     schema,
+    mutates: true,
     run: ({ command, timeoutMs = defaultTimeoutMs }, signal) =>
       execute(shell, command, cwd, timeoutMs, signal),
   });

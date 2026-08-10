@@ -13,6 +13,7 @@ export function writeTool(cwd: string) {
     name: "write",
     description: "Create or overwrite a file, creating parent directories as needed.",
     schema,
+    mutates: true,
     run: async ({ path, content }) => {
       const target = resolve(cwd, path);
       await mkdir(dirname(target), { recursive: true });
