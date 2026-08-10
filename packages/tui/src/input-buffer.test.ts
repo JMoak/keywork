@@ -58,6 +58,49 @@ describe("InputBuffer", () => {
     expect(buffer.cursorAt()).toEqual({ line: 0, column: 0 });
   });
 
+  it("deletes a whole emoji with one backspace", () => {
+    const buffer = loaded("hi😀");
+    buffer.backspace();
+    expect(buffer.value).toBe("hi");
+  });
+
+  it("deletes a joined emoji cluster as one unit", () => {
+    const buffer = loaded("a👨‍👩‍👧");
+    buffer.backspace();
+    expect(buffer.value).toBe("a");
+    buffer.backspace();
+    expect(buffer.value).toBe("");
+  });
+
+  it("steps the cursor over emoji and CJK without landing mid-pair", () => {
+    const buffer = loaded("我😀b");
+    buffer.left();
+    expect(buffer.cursorAt().column).toBe(3);
+    buffer.left();
+    expect(buffer.cursorAt().column).toBe(1);
+    buffer.left();
+    expect(buffer.cursorAt().column).toBe(0);
+    buffer.right();
+    expect(buffer.cursorAt().column).toBe(1);
+    buffer.right();
+    expect(buffer.cursorAt().column).toBe(3);
+  });
+
+  it("inserts at a cursor placed inside emoji text without splitting pairs", () => {
+    const buffer = loaded("😀😀");
+    buffer.left();
+    buffer.insert("x");
+    expect(buffer.value).toBe("😀x😀");
+  });
+
+  it("keeps vertical moves off surrogate halves", () => {
+    const buffer = loaded("😀😀😀\nabc");
+    expect(buffer.up()).toBe(true);
+    buffer.insert("|");
+    expect(Array.from(buffer.value.split("\n")[0] ?? "")).toContain("|");
+    expect(buffer.value).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
   it("splits lines with newline and rejoins them with backspace", () => {
     const buffer = loaded("ab");
     buffer.left();

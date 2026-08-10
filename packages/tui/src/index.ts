@@ -1,2 +1,9 @@
-export { type AppOptions, runApp } from "./app.ts";
+export {
+  type AppOptions,
+  runApp,
+  type SessionAttachment,
+  type SessionPort,
+  type WorkspacePort,
+} from "./app.ts";
 export type { Titler } from "./conversation-model.ts";
+export type { WorkspaceState } from "./workspace-state.ts";

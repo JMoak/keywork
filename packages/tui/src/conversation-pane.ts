@@ -8,12 +8,13 @@ import {
 } from "./conversation-model.ts";
 import type { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
-import type { Pane, PaneContext, PaneView } from "./pane.ts";
+import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneTitle } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
 
 export class ConversationPane implements Pane {
+  sessionId: string | undefined;
   private readonly model: ConversationModel;
 
   constructor(
@@ -26,6 +27,13 @@ export class ConversationPane implements Pane {
     this.model = new ConversationModel(agent, notify, titler, commands);
   }
 
+  describe(): PaneDescriptor {
+    return {
+      kind: "conversation",
+      ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
+    };
+  }
+
   title(): string {
     const name = this.model.title ?? this.id;
     const usage = this.model.usageSummary();
@@ -35,6 +43,10 @@ export class ConversationPane implements Pane {
 
   handleKey(chord: Chord, sequence: string | undefined): boolean {
     return this.model.handleKey(chord, sequence);
+  }
+
+  handlePaste(text: string): boolean {
+    return this.model.paste(text);
   }
 
   handleMouse(_local: { x: number; y: number }, event: PointerEvent): boolean {

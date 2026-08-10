@@ -13,3 +13,13 @@ export function defaultSessionDir(cwd: string): string {
 export function snapshotGitDir(cwd: string): string {
   return join(homedir(), ".keywork", "snapshots", projectKey(cwd));
 }
+
+export type WorkspaceIdentity = string;
+
+export function workspaceIdentity(cwd: string): WorkspaceIdentity {
+  return projectKey(cwd);
+}
+
+export function workspaceStateFile(identity: WorkspaceIdentity): string {
+  return join(homedir(), ".keywork", "workspaces", `${identity}.json`);
+}

@@ -6,7 +6,7 @@ import {
   readDirectoryFromDisk,
 } from "./browser-model.ts";
 import type { Chord } from "./keys.ts";
-import type { Pane, PaneContext, PaneIntents, PaneView } from "./pane.ts";
+import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import { paneChrome, paneTitle } from "./pane-chrome.ts";
 import type { Theme } from "./theme.ts";
 
@@ -29,6 +29,10 @@ export class BrowserPane implements Pane {
   title(): string {
     const count = this.model.entryCount();
     return paneTitle(this.model.name, count === 0 ? undefined : `${count} entries`);
+  }
+
+  describe(): PaneDescriptor {
+    return { kind: "browser", root: this.model.rootPath };
   }
 
   handleKey(chord: Chord): boolean {

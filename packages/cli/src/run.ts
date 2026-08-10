@@ -3,12 +3,16 @@ import {
   Agent,
   buildSystemPrompt,
   coreTools,
+  DiagnosticsLog,
+  debugLogFile,
   loadProjectInstructions,
   type Message,
   messageText,
   type Provider,
   SessionStore,
 } from "@keywork/engine";
+import type { PromptsConfig } from "@keywork/shared";
+import { defaultSessionDir } from "./paths.ts";
 import { providerSetupHint } from "./provider.ts";
 import { newSessionFileName } from "./sessions.ts";
 
@@ -16,8 +20,11 @@ export interface RunOptions {
   prompt: string;
   cwd: string;
   json: boolean;
+  debug?: boolean;
   sessionDir?: string;
   provider?: Provider;
+  prompts?: PromptsConfig;
+  modelId?: string;
   print?: (line: string) => void;
   printError?: (line: string) => void;
   exit?: (code: number) => never;
@@ -34,8 +41,16 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
   const agent = new Agent({
     provider,
     tools: coreTools(options.cwd),
-    systemPrompt: buildSystemPrompt(instructions),
+    systemPrompt: buildSystemPrompt({
+      ...(instructions !== undefined && { projectInstructions: instructions }),
+      ...(options.prompts !== undefined && { prompts: options.prompts }),
+      ...(options.modelId !== undefined && { modelId: options.modelId }),
+    }),
   });
+
+  const diagnostics = options.debug === true ? await openDiagnostics(options) : undefined;
+  diagnostics?.tap(agent.bus);
+  diagnostics?.log("info", "run.started", { cwd: options.cwd, provider: provider.name });
 
   agent.bus.on("turn.started", (payload) => emit("turn.started", payload));
   agent.bus.on("turn.delta", (payload) => emit("turn.delta", payload));
@@ -47,7 +62,13 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
   const final = await agent.send(options.prompt);
   if (!options.json) print(messageText(final));
   await persistSession(options, agent.history());
+  await diagnostics?.flush();
   return final;
+}
+
+function openDiagnostics(options: RunOptions): Promise<DiagnosticsLog> {
+  const sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd);
+  return DiagnosticsLog.open(debugLogFile(sessionDir));
 }
 
 function refuseWithoutProvider(options: RunOptions): never {

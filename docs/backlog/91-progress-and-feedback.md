@@ -20,7 +20,7 @@ subset landed, remainder listed · **—** = not started.
 | ID | Status | Notes |
 |---|---|---|
 | M0.1–M0.6 | done | Monorepo, pins, AGENTS/NOTICE, Biome, CI (incl. the resequenced guardrail grep from 90 §Resequencing), config foundation. |
-| A1 | partial | Message/turn model live; **image parts** and the Anthropic-shaped paper-fixture round-trip (90 §Resequencing) outstanding. |
+| A1 | done | Message/turn model incl. image, thinking, and redacted-thinking parts plus cache-token usage; Anthropic-shaped paper fixtures round-trip losslessly (90 §Resequencing); image parts map to the chat wire and persist through the session store. TUI image input remains C21. |
 | A2 | done | Landed inside A6/A8 rather than as a standalone task; steer-abort tests prove mid-stream cancellation. |
 | A3 | done | Mock provider drives the whole test suite. |
 | A4 | done | Typed bus. |
@@ -33,11 +33,11 @@ subset landed, remainder listed · **—** = not started.
 | A14 | done | OpenAI-compatible + OpenRouter via raw fetch/SSE; no OAuth anywhere. |
 | A15 | done | Usage totals surfaced in chat. |
 | A16 | done | Retry/resilience taxonomy with fault-injection tests. |
-| A17 | — | Diagnostics logging. |
-| B1 | partial | JSONL **parent-chain** store; full tree semantics (branch points beyond a single chain, Pi-fixture compatibility test) outstanding. |
-| B2 | partial | Session dirs + `--continue` resume in chat; `--resume <id>` and list APIs outstanding. |
-| B3 | partial | Replay reconstructs the chain for resume; replay-as-bus-events with `replay: true` (the D3 extension contract) outstanding. |
-| B4–B8 | — | Fork/clone, labels, tree data, compaction, stats. |
+| A17 | done | `--debug`/`KEYWORK_DEBUG` → session-adjacent `debug/<ms>-<pid>.jsonl`; bus tap over all typed events; deterministic secret redaction (tested); zero cost when off (2026-08-10). |
+| B1 | done | Full tree semantics on Pi's version-3 entry vocabulary; Pi-fixture compatibility test pinned (see 92, Track T). |
+| B2 | done | `--resume <id>` + session list API + `keywork sessions` (see 92, Track T). |
+| B3 | done | `replaySession` emits historical bus events flagged `replay: true` (see 92, Track T). |
+| B4–B8 | done | Fork/clone, labels, tree API, compaction, stats — all landed 2026-08-10 (see 92, Track T). |
 | C0 | — | **TUI E2E harness spike still unbuilt** — the risk 90 flagged; C-stream is now well ahead of its own test infrastructure. |
 | C1 | partial | `keywork panes` boots a full-screen multi-pane app; crash-safe restore + error boundary not hardened to C1's acceptance bar. |
 | C2 | — | Render discipline / perf budgets. |

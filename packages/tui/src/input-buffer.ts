@@ -1,5 +1,7 @@
 import { clamp } from "./clamp.ts";
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 export class InputBuffer {
   private text = "";
   private cursor = 0;
@@ -32,16 +34,17 @@ export class InputBuffer {
 
   backspace(): void {
     if (this.cursor === 0) return;
-    this.text = this.text.slice(0, this.cursor - 1) + this.text.slice(this.cursor);
-    this.cursor -= 1;
+    const start = this.boundaryBefore(this.cursor);
+    this.text = this.text.slice(0, start) + this.text.slice(this.cursor);
+    this.cursor = start;
   }
 
   left(): void {
-    this.cursor = Math.max(0, this.cursor - 1);
+    this.cursor = this.boundaryBefore(this.cursor);
   }
 
   right(): void {
-    this.cursor = Math.min(this.text.length, this.cursor + 1);
+    this.cursor = this.boundaryAfter(this.cursor);
   }
 
   home(): void {
@@ -76,8 +79,34 @@ export class InputBuffer {
     if (target < 0 || target >= lines.length) return false;
     const targetLine = lines[target] ?? "";
     const targetStart = lines.slice(0, target).reduce((at, text) => at + text.length + 1, 0);
-    this.cursor = targetStart + clamp(column, 0, targetLine.length);
+    this.cursor = this.boundaryAtOrBefore(targetStart + clamp(column, 0, targetLine.length));
     return true;
+  }
+
+  private boundaryBefore(at: number): number {
+    let previous = 0;
+    for (const segment of graphemes.segment(this.text)) {
+      if (segment.index >= at) break;
+      previous = segment.index;
+    }
+    return previous;
+  }
+
+  private boundaryAfter(at: number): number {
+    for (const segment of graphemes.segment(this.text)) {
+      if (segment.index > at) return segment.index;
+    }
+    return this.text.length;
+  }
+
+  private boundaryAtOrBefore(at: number): number {
+    if (at >= this.text.length) return this.text.length;
+    let previous = 0;
+    for (const segment of graphemes.segment(this.text)) {
+      if (segment.index > at) break;
+      previous = segment.index;
+    }
+    return previous;
   }
 
   private lineStart(from: number): number {

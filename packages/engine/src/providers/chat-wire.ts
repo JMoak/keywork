@@ -1,4 +1,11 @@
-import { type Message, messageText, type ToolCallPart, toolCalls } from "../messages.ts";
+import {
+  type ImagePart,
+  type Message,
+  messageText,
+  type Part,
+  type ToolCallPart,
+  toolCalls,
+} from "../messages.ts";
 import type { ProviderRequest } from "../provider.ts";
 
 export function toChatRequest(request: ProviderRequest, model: string): object {
@@ -20,8 +27,9 @@ function toWireMessages(request: ProviderRequest): object[] {
 function toWire(message: Message): object[] {
   switch (message.role) {
     case "system":
+      return [{ role: "system", content: messageText(message) }];
     case "user":
-      return [{ role: message.role, content: messageText(message) }];
+      return [{ role: "user", content: userContent(message) }];
     case "assistant":
       return [assistantWire(message)];
     case "tool":
@@ -31,6 +39,26 @@ function toWire(message: Message): object[] {
           : [],
       );
   }
+}
+
+function userContent(message: Message): string | object[] {
+  if (!message.parts.some((part) => part.type === "image")) return messageText(message);
+  return message.parts.flatMap(userContentPart);
+}
+
+function userContentPart(part: Part): object[] {
+  switch (part.type) {
+    case "text":
+      return [{ type: "text", text: part.text }];
+    case "image":
+      return [{ type: "image_url", image_url: { url: imageDataUrl(part) } }];
+    default:
+      return [];
+  }
+}
+
+function imageDataUrl(part: ImagePart): string {
+  return `data:${part.mediaType};base64,${part.data}`;
 }
 
 function assistantWire(message: Message): object {

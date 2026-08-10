@@ -33,6 +33,8 @@ export function mergeConfigs(base: KeyworkConfig, overlay: KeyworkConfig): Keywo
     ...mergedRecord("keybindings", base, overlay),
     ...mergedRecord("theme", base, overlay),
     ...mergedRecord("apiKeys", base, overlay),
+    ...mergedRecord("mcpServers", base, overlay),
+    ...mergedPrompts(base, overlay),
   };
 }
 
@@ -54,7 +56,7 @@ function applyLayers(
     .reduce(mergeConfigs, base);
 }
 
-type RecordField = "keybindings" | "theme" | "apiKeys";
+type RecordField = "keybindings" | "theme" | "apiKeys" | "mcpServers";
 
 function mergedRecord<F extends RecordField>(
   field: F,
@@ -63,6 +65,21 @@ function mergedRecord<F extends RecordField>(
 ): Partial<Pick<KeyworkConfig, F>> {
   if (base[field] === undefined && overlay[field] === undefined) return {};
   return { [field]: { ...base[field], ...overlay[field] } } as Partial<Pick<KeyworkConfig, F>>;
+}
+
+function mergedPrompts(
+  base: KeyworkConfig,
+  overlay: KeyworkConfig,
+): Partial<Pick<KeyworkConfig, "prompts">> {
+  if (base.prompts === undefined && overlay.prompts === undefined) return {};
+  const models = { ...base.prompts?.models, ...overlay.prompts?.models };
+  return {
+    prompts: {
+      ...base.prompts,
+      ...overlay.prompts,
+      ...(Object.keys(models).length > 0 && { models }),
+    },
+  };
 }
 
 async function readLayer(dir: string | undefined): Promise<KeyworkConfig | undefined> {

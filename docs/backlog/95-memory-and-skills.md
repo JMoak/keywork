@@ -234,6 +234,15 @@ per D9 — every option `.describe()`-justified.
 **Accept:** global prompt applies to all providers in fixture; pattern-scoped override wins
 for matching model ids; precedence documented in the schema.
 **Strategy:** `OWN`; `LIFT:opencode` config-merge patterns where useful.
+**Landed (2026-08-10, via R5):** `mcpServers` (stdio/http discriminated union with the P2
+per-server `trusted` flag, schema-only — nothing executes; env values proven unechoed in
+validation errors) and `prompts` (`system` global + `models` glob-pattern overrides with
+per-entry `append`/`replace` mode; most-literal-characters wins, first-declared breaks
+ties) in `packages/shared/src/config/schema.ts`, precedence documented in `.describe()`.
+Engine assembly in `packages/engine/src/prompt.ts`: base keywork prompt → project
+instructions → global prompt → winning override (replace swaps the global prompt only).
+Both fields are user-layer-only — the WP-4 project-layer strip covers them, tested.
+`trusted` semantics deferred to workstream J; MCP execution deferred to D8.
 
 ### J3 (3pt) — Memory store & layout (atomic-note vault)
 The canonical record, per scope (workspace + user), as a **valid Obsidian vault** (J-D5):
@@ -407,6 +416,8 @@ J1 (workspace) ──► J3 (store) ──► J4 (index) ──► J5 (recall) �
 J2 (user config) ─┘                  │                │
 B7 (compaction) ────► J8 (flush)     └─► J12 (graph) ─┼─► J7 (gardener) ──► J9 (pane)
 D1 + D7 (skills) ────► J10 (self-healing) ────────────┘
+J5 ──► J13 (citations; gates F4's auto-catch)
+J3 + J4 + J7 ──► J14 (sync self-reconciliation) · A18 (engine) is independent
 J11 (gating, J-D4 resolved) underlies J7/J9/J10 — its write-path pieces land with J3,
 its visual pieces with J9. F2 (repo map) later joins J12's entity space.
 ```
@@ -415,7 +426,8 @@ Wants iteration-3's Track P (workspace persistence) and Track T (B7 compaction) 
 first. **Iteration-4 spine (Jordan, 2026-08-10): WP-1..3 → iteration-3 gates (P, B7) →
 workstream J and D14 run in parallel** — J is engine+vault-heavy, D14 is MCP+TUI, mostly
 disjoint files; J2 (user-global config incl. MCP) is the shared dependency both touch, so
-it lands first in the batch. ~29pt total for J.
+it lands first in the batch. ~34pt total for J (J13/J14 added by the fifth pass; A18
+rides the engine stream).
 
 **J-D8 — Full model-role map** (Jordan, 2026-08-10). Named model roles per function,
 Lore-style: `chat` (the conversation), `gardener` (curation sweeps), `flush`
@@ -543,6 +555,116 @@ lexical recency until the next sweep — acceptable, documented); "successful re
 a concrete cheap definition before the usefulness EMA means anything; cold-start garden
 is all-dim by construction (first-week rendering needs its own calm look, not
 poisoned-alert styling).
+
+## Fifth-pass resolutions (fault review, 2026-08-10)
+
+> Faults surfaced by the taste/envisionment pass; resolutions decided by Jordan
+> 2026-08-10 (layout, merge-driver posture, and citations scope confirmed explicitly).
+> F2 is parked; everything else is binding. New tasks J13/J14 below; F5 is housed
+> here as engine task A18 per the overlay convention.
+
+**F1 — Sync self-reconciliation is fully automatic.** Files-as-truth means vaults
+*will* be synced (git, OneDrive, Syncthing) from day one. Reconciliation is layered so
+conflicts are mostly impossible by construction and always self-healing:
+
+1. **Partition by writer** (binding refinement of J3's layout): daily logs and ledger
+   segments are per-machine files — `daily/2026-08-10.<host>.md`, per-host ledger
+   segments. Append-only + single-writer ⇒ merging is file-level union, which every
+   sync tool does natively; conflicts on these surfaces cannot occur.
+2. **Recompute, never merge, machine state** (an R6 consequence): ledger-derived
+   frontmatter (curing, usefulness, supersession stamps) resolves by unioning ledgers
+   and rematerializing. Divergent Gardener stamping across machines is a cache
+   rebuild, not a fork.
+3. **Git merge driver on the blessed path**: `keywork sync setup` — offered once when
+   a git-tracked vault is detected, never auto-installed — registers a merge driver
+   via `.gitattributes`: deterministic frontmatter resolution (derived fields
+   recomputed, human fields field-wise), append-detection for bodies.
+4. **Semantic divergence is a contradiction, not an error**: a true dual-rewrite
+   conflict ingests the conflict copy as a sibling note (`conflict-of: "[[note]]"`)
+   and routes through J7's merge/contradiction machinery — auto-merged when
+   confident, one review-inbox card when not. No new adjudication machinery exists.
+5. **Intake + lease floor**: conflict-artifact filename patterns (OneDrive, Syncthing,
+   Dropbox, Nextcloud) and in-body git conflict markers quarantine into layer 4; a
+   cross-machine sweep lease (host + timestamp; fresh foreign lease ⇒ defer, sweep
+   debt per P6) serializes Gardeners.
+
+One-sentence user story: *sync however you like; keywork reconciles itself.*
+
+**F2 — Usefulness rich-get-richer: RESOLVED** (Jordan, 2026-08-10). The EMA prior
+risked corrections losing to the mistakes they fix. Decision, two parts:
+
+1. **Superseded is a ranking floor** (refines J12/J4): a `superseded_by`-stamped note
+   can never outrank its successor; it surfaces only for explicitly temporal queries.
+2. **Usefulness leaves search ranking; the Gardener keeps it.** Retrieval ranks on
+   relevance alone (BM25 + vectors + PPR, plus recency); the usefulness EMA feeds
+   *curation* — promotion, merge, review flags — and R4's bootstrap selection
+   (cured-first then most-useful), where it stays genuinely valuable. The
+   rich-get-richer loop cannot exist because popularity never touches rank. This
+   supersedes J7's "wired into J4's retrieval ranking as a prior" clause and its
+   matching acceptance line (now: usefulness measurably affects *bootstrap
+   selection and promotion decisions* on the probe corpus).
+3. Escalation path, only if dogfooding shows relevance-only search missing daily
+   drivers: first a tie-breaker cap (usefulness reorders near-ties within bounded ε),
+   then the shaped prior (time-decay + novelty bonus + influence cap) — tuned
+   against measured recall, not intuition. "Successful recall" is defined as a J13
+   citation event (strongest when the user acts on the cited claim).
+
+**F3 — Airlock habituation instrumentation** (extends J11): the ledger records
+digest-rendered → keystroke latency per airlock event; a rolling median lives in
+workspace state. If approve-all latency sits below reading speed session after
+session, the mandated response is fewer, better-batched asks — never louder ones.
+No LLM, no new storage, no UI until the threshold trips.
+
+**F4 — Same-session staleness**, three rungs now plus one gated design:
+
+- **Session overlay** (extends J5): an in-session assertion that overrides a recalled
+  note registers note → claim in a session-scoped shadow map consulted before every
+  recall; J8's flush persists the overlay to the daily log for formalization.
+- **The flush asks about wrongness** (extends J8): the flush prompt explicitly
+  requests supersession notes for anything recalled that proved wrong this session.
+- **Scoped micro-sweep** (extends J7): the overlay reaching k entries triggers a
+  Gardener pass scoped to the touched entities only — bounded cost, no daemon;
+  closes the fourth-pass "graph only knows promoted knowledge" gap.
+- **Auto-catch (designed, gated on J13, not v1)**: 2–3 citation-replacement events on
+  the same note stage a supersession proposal with one quiet inbox-side prompt and a
+  hard cooldown — never modal, never repeated. Deterministic only once citations
+  exist; must not be built before them.
+- J9 renders recalled notes whose entity the session has since discussed with a
+  "predates this session's discussion" annotation — annotate, never block.
+
+**F5 — Stream backpressure is an engine guarantee**, not a pane courtesy (task A18
+below): presentation cost scales with screen size, never stream size; the bus itself
+stays unbounded and honest.
+
+### J13 (2pt) — Recall citations
+Claims grounded in recalled notes carry their sources: `memory_search`/`memory_get`
+results are id-addressed, the agent is prompted to cite, the conversation surface
+renders citations as note links (one keystroke: claim → note → provenance →
+supersession chain), and each citation lands as a ledger event. Those events double
+as the concrete "successful recall" signal the usefulness EMA has been missing.
+**Accept:** E2E — recalled fact cited in the reply links to its note; citation events
+in the ledger; J9 shows recent citations; cited vs. uncited recalls distinguishable
+in the ledger.
+**Strategy:** `OWN`.
+
+### J14 (3pt) — Sync self-reconciliation
+Implements F1: per-host append-only layout (with J3), union-and-rematerialize for
+ledger-derived state, `keywork sync setup` + merge driver, conflict-artifact intake
+into Gardener adjudication, cross-machine sweep lease.
+**Accept:** two-vault divergence fixtures reconcile automatically (append case,
+derived-frontmatter case); dual-rewrite fixture yields a `conflict-of` sibling and
+one inbox card; merge-driver fixture resolves at `git merge`; fresh foreign lease
+defers the sweep; conflict-pattern filenames quarantine and surface as lint.
+**Strategy:** `OWN` (lease/queue via `LIFT:pi` `withFileMutationQueue`, per P6).
+
+### A18 (2pt) — Bounded transcript entries & delta coalescing (engine stream)
+Transcript entries hold head + tail up to a budget; overflow spills to file-backed
+buffers (session JSONL remains the record; panes open spills via ranged reads). Bus
+deltas coalesce per frame tick per pane; pane rendering virtualizes to visible rows.
+**Accept:** firehose-tool fixture keeps per-entry memory under budget and UI
+frame time flat; spill opens in the file pane at the right range; JSONL replay
+byte-identical with and without spilling.
+**Strategy:** `OWN`.
 
 ## Non-goals (v1)
 

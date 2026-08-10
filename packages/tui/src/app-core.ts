@@ -1,9 +1,10 @@
 import { CommandRegistry } from "./commands.ts";
 import { Keymap } from "./keymap.ts";
 import { type Chord, formatChord } from "./keys.ts";
-import { type DockSide, Layout, type Rect, type Screen } from "./layout.ts";
+import { type DockSide, Layout, layoutStateIds, type Rect, type Screen } from "./layout.ts";
 import type { Pane, PaneIntents } from "./pane.ts";
 import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
+import { captureWorkspace, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
 interface AppAction {
   chords: string | readonly string[];
@@ -197,7 +198,12 @@ const chainActions = new Set(
     .map(([name]) => name),
 );
 
-export type PaneFactory = (id: string, notify: () => void, commands: CommandRegistry) => Pane;
+export type PaneFactory = (
+  id: string,
+  notify: () => void,
+  commands: CommandRegistry,
+  resumeSessionId?: string,
+) => Pane;
 export type FilePaneFactory = (id: string, path: string, notify: () => void) => Pane;
 export type BrowserPaneFactory = (
   id: string,
@@ -218,6 +224,8 @@ export interface AppCoreOptions {
   createBrowserPane?: BrowserPaneFactory;
   isDirectory?: (path: string) => boolean;
   undo?: UndoPort;
+  restoreWorkspace?: WorkspaceState;
+  saveWorkspace?: (state: WorkspaceState) => void;
   onExit: () => void;
 }
 
@@ -291,6 +299,11 @@ export class AppCore {
   private nextFile = 1;
   private nextBrowser = 1;
   private notify: () => void = () => {};
+  private lastSavedWorkspace = "";
+  private readonly paneChanged = (): void => {
+    this.persistWorkspace();
+    this.notify();
+  };
 
   constructor(private readonly options: AppCoreOptions) {
     this.registerCommands();
@@ -301,7 +314,13 @@ export class AppCore {
   }
 
   start(): void {
-    this.openPane();
+    const saved = this.options.restoreWorkspace;
+    if (saved === undefined || !this.restoreFrom(saved)) this.openPane();
+    this.persistWorkspace();
+  }
+
+  workspaceState(): WorkspaceState {
+    return captureWorkspace(this.layout, this.panes);
   }
 
   screen(): Screen {
@@ -329,7 +348,9 @@ export class AppCore {
   }
 
   runCommand(name: string): boolean {
-    return this.registry.run(name);
+    const ran = this.registry.run(name);
+    this.persistWorkspace();
+    return ran;
   }
 
   expireArmed(nowMs: number): void {
@@ -357,7 +378,17 @@ export class AppCore {
     };
   }
 
-  handleKey(chord: Chord, sequence: string | undefined, nowMs: number): void {
+  handleKey(chord: Chord, sequence: string | undefined, nowMs: number, repeat = false): void {
+    this.dispatchKey(chord, sequence, nowMs, repeat);
+    this.persistWorkspace();
+  }
+
+  private dispatchKey(
+    chord: Chord,
+    sequence: string | undefined,
+    nowMs: number,
+    repeat: boolean,
+  ): void {
     this.lastKey = formatChord(chord);
     this.notice = "";
     if (chord.ctrl && chord.name === "q") {
@@ -368,11 +399,11 @@ export class AppCore {
       this.handlePaletteKey(chord, sequence);
       return;
     }
-    if (this.helpVisible && chord.name === "escape") {
-      this.overlay = undefined;
+    if (this.helpVisible) {
+      if (chord.name === "escape" || chord.name === "f1") this.overlay = undefined;
       return;
     }
-    const result = this.keymap.press(chord, nowMs);
+    const result = this.keymap.press(chord, nowMs, repeat);
     this.leaderArmed = result.type === "leader-pending";
     if (result.type === "action") {
       this.apply(result.action);
@@ -388,25 +419,23 @@ export class AppCore {
     }
   }
 
+  handlePaste(text: string): void {
+    if (this.overlay !== undefined) return;
+    const id = this.layout.focused();
+    if (id !== undefined) this.panes.get(id)?.handlePaste?.(text);
+  }
+
   handleMouse(event: PointerEvent, _nowMs: number): void {
-    if (this.paletteOpen) {
-      this.routePaletteMouse(event);
-      return;
-    }
-    if (this.helpVisible) {
-      this.routeHelpMouse(event);
-      return;
-    }
-    this.routePaneMouse(event);
+    if (this.paletteOpen) this.routePaletteMouse(event);
+    else if (this.helpVisible) this.routeHelpMouse(event);
+    else this.routePaneMouse(event);
+    this.persistWorkspace();
   }
 
   openPane(): void {
     const id = `session-${this.nextSession}`;
     this.nextSession += 1;
-    this.panes.set(
-      id,
-      this.options.createPane(id, () => this.notify(), this.registry),
-    );
+    this.panes.set(id, this.options.createPane(id, this.paneChanged, this.registry));
     this.focusMainArea();
     this.layout.open(id, this.screen());
   }
@@ -441,6 +470,7 @@ export class AppCore {
   }
 
   shutdown(): void {
+    this.persistWorkspace();
     for (const pane of this.panes.values()) pane.dispose?.();
     this.options.onExit();
   }
@@ -465,7 +495,10 @@ export class AppCore {
       kind: "palette",
       query,
       index: 0,
-      entries: this.registry.search(query).slice(0, paletteRowLimit),
+      entries: this.registry
+        .search(query)
+        .filter((command) => command.needsArgs !== true)
+        .slice(0, paletteRowLimit),
     };
   }
 
@@ -473,15 +506,74 @@ export class AppCore {
     appActions[action]?.invoke(this);
   }
 
+  private persistWorkspace(): void {
+    const save = this.options.saveWorkspace;
+    if (save === undefined) return;
+    const state = this.workspaceState();
+    const fingerprint = JSON.stringify(state);
+    if (fingerprint === this.lastSavedWorkspace) return;
+    this.lastSavedWorkspace = fingerprint;
+    save(state);
+  }
+
+  private restoreFrom(state: WorkspaceState): boolean {
+    const layoutIds = new Set(layoutStateIds(state.layout));
+    const revived: string[] = [];
+    for (const entry of state.panes) {
+      if (!layoutIds.has(entry.id)) continue;
+      const pane = this.revive(entry);
+      if (pane === undefined) continue;
+      this.panes.set(entry.id, pane);
+      revived.push(entry.id);
+    }
+    if (revived.length === 0) return false;
+    this.layout.load(state.layout);
+    for (const id of this.layout.panes()) {
+      if (!this.panes.has(id)) this.layout.close(id);
+    }
+    this.adoptPaneNumbers(revived);
+    return true;
+  }
+
+  private revive(entry: WorkspacePane): Pane | undefined {
+    try {
+      switch (entry.kind) {
+        case "conversation":
+          return this.options.createPane(
+            entry.id,
+            this.paneChanged,
+            this.registry,
+            entry.sessionId,
+          );
+        case "file":
+          return this.options.createFilePane?.(entry.id, entry.path, this.paneChanged);
+        case "browser":
+          return this.options.createBrowserPane?.(
+            entry.id,
+            entry.root,
+            this.paneChanged,
+            this.intents,
+          );
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  private adoptPaneNumbers(ids: readonly string[]): void {
+    for (const id of ids) {
+      this.nextSession = nextAfter(id, "session", this.nextSession);
+      this.nextFile = nextAfter(id, "file", this.nextFile);
+      this.nextBrowser = nextAfter(id, "browser", this.nextBrowser);
+    }
+  }
+
   private openFilePane(path: string): void {
     const create = this.options.createFilePane;
     if (create === undefined) return;
     const id = `file-${this.nextFile}`;
     this.nextFile += 1;
-    this.panes.set(
-      id,
-      create(id, path, () => this.notify()),
-    );
+    this.panes.set(id, create(id, path, this.paneChanged));
     this.focusMainArea();
     this.layout.open(id, this.screen());
   }
@@ -491,10 +583,7 @@ export class AppCore {
     if (create === undefined) return;
     const id = `browser-${this.nextBrowser}`;
     this.nextBrowser += 1;
-    this.panes.set(
-      id,
-      create(id, root, () => this.notify(), this.intents),
-    );
+    this.panes.set(id, create(id, root, this.paneChanged, this.intents));
     this.layout.open(id, this.screen());
     this.layout.dockFocused(this.layout.dock()?.side ?? "left");
   }
@@ -604,6 +693,7 @@ export class AppCore {
         name: "open",
         aliases: ["view"],
         description: "open a file viewer pane: /open <path>",
+        needsArgs: true,
         run: (args) => {
           if (args === undefined || args === "") return;
           if (this.pointsAtDirectory(args)) this.openBrowserPane(args);
@@ -647,20 +737,26 @@ export class AppCore {
       ...shortcut("app.quit"),
       run: () => this.shutdown(),
     });
-    this.registry.addSource(() =>
-      this.layout
+    this.registry.addSource(() => {
+      const targets = this.layout
         .panes()
         .filter((id) => id !== this.layout.focused())
-        .map((id) => {
-          const title = this.panes.get(id)?.title().trim().split(" ·")[0] ?? id;
-          return {
-            name: `go-${title}`,
-            description: "jump to this session",
-            run: () => this.layout.focus(id),
-          };
-        }),
-    );
+        .map((id) => ({ id, title: this.panes.get(id)?.title().trim().split(" ·")[0] ?? id }));
+      const titleCounts = new Map<string, number>();
+      for (const { title } of targets) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
+      return targets.map(({ id, title }) => ({
+        name: `go-${(titleCounts.get(title) ?? 0) > 1 ? `${title} ${id}` : title}`,
+        description: "jump to this session",
+        run: () => this.layout.focus(id),
+      }));
+    });
   }
+}
+
+function nextAfter(id: string, prefix: string, current: number): number {
+  const match = new RegExp(`^${prefix}-(\\d+)$`).exec(id);
+  if (match === null) return current;
+  return Math.max(current, Number(match[1]) + 1);
 }
 
 function containsPoint(frame: OverlayFrame, x: number, y: number): boolean {

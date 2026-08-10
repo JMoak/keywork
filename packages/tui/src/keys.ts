@@ -57,6 +57,7 @@ export function chordOf(key: {
   ctrl?: boolean;
   shift?: boolean;
   meta?: boolean;
+  option?: boolean;
   eventType?: string;
 }): Chord | undefined {
   if (key.eventType === "release") return undefined;
@@ -67,6 +68,6 @@ export function chordOf(key: {
     name,
     ctrl: key.ctrl === true,
     shift: key.shift === true,
-    meta: key.meta === true,
+    meta: key.meta === true || key.option === true,
   };
 }

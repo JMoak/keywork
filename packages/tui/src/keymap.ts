@@ -33,9 +33,11 @@ export class Keymap {
     }
   }
 
-  press(chord: Chord, nowMs: number): KeymapResult {
+  press(chord: Chord, nowMs: number, repeat = false): KeymapResult {
     if (this.isPending(nowMs)) {
-      if (chordsEqual(chord, this.leader)) return this.disarm();
+      if (chordsEqual(chord, this.leader)) {
+        return repeat ? { type: "leader-pending" } : this.disarm();
+      }
       return this.resolveLeaderKey(chord, nowMs);
     }
     if (chordsEqual(chord, this.leader)) {
@@ -77,6 +79,9 @@ export class Keymap {
     const scope = this.armedScope;
     this.disarm();
     if (chord.name === "escape") return { type: "cancelled" };
+    if (chord.ctrl || chord.meta) {
+      return scope === undefined ? { type: "cancelled" } : this.press(chord, nowMs);
+    }
     const action = this.findByLeaderKey(chord);
     if (action !== undefined && (scope === undefined || scope.has(action))) {
       return { type: "action", action };

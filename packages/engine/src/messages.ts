@@ -5,6 +5,23 @@ export interface TextPart {
   text: string;
 }
 
+export interface ImagePart {
+  type: "image";
+  mediaType: string;
+  data: string;
+}
+
+export interface ThinkingPart {
+  type: "thinking";
+  thinking: string;
+  signature: string;
+}
+
+export interface RedactedThinkingPart {
+  type: "redacted-thinking";
+  data: string;
+}
+
 export interface ToolCallPart {
   type: "tool-call";
   callId: string;
@@ -19,7 +36,13 @@ export interface ToolResultPart {
   isError: boolean;
 }
 
-export type Part = TextPart | ToolCallPart | ToolResultPart;
+export type Part =
+  | TextPart
+  | ImagePart
+  | ThinkingPart
+  | RedactedThinkingPart
+  | ToolCallPart
+  | ToolResultPart;
 
 export interface Message {
   role: Role;
@@ -29,6 +52,8 @@ export interface Message {
 export interface Usage {
   inputTokens: number;
   outputTokens: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
 }
 
 export function textMessage(role: Role, text: string): Message {

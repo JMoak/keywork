@@ -2,6 +2,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { debugEnabled } from "@keywork/engine";
 import { loadConfig } from "@keywork/shared";
 import { chat } from "./chat.ts";
 import { providerSetupHint, resolveProvider } from "./provider.ts";
@@ -17,10 +18,12 @@ function loadKeyworkConfig(cwd: string): ReturnType<typeof loadConfig> {
 const usage = `keywork — keyboard-first coding agent
 
 Usage:
-  keywork [chat] [--model <model>] [--continue]             interactive session
-  keywork run "<prompt>" [--model <model>] [--json]
+  keywork [chat] [--model <model>] [--continue]
+                 [--resume <session-id>]                    interactive session
+  keywork run "<prompt>" [--model <model>] [--json] [--debug]
               [--session-dir <dir>]                         one-shot headless run
-  keywork panes                                             tiled multi-session workspace
+  keywork panes [--fresh]                                   tiled multi-session workspace
+  keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
   keywork setup                                             connect a model provider
 `;
 
@@ -33,8 +36,11 @@ async function main(argv: string[]): Promise<number> {
     allowPositionals: true,
     options: {
       json: { type: "boolean", default: false },
+      debug: { type: "boolean", default: false },
       model: { type: "string" },
       continue: { type: "boolean", default: false },
+      fresh: { type: "boolean", default: false },
+      resume: { type: "string" },
       "session-dir": { type: "string" },
     },
   });
@@ -64,7 +70,10 @@ async function main(argv: string[]): Promise<number> {
         cwd,
         provider: resolved.provider,
         label: resolved.label,
+        modelId: resolved.modelId,
         resume: values.continue,
+        ...(config.prompts !== undefined && { prompts: config.prompts }),
+        ...(values.resume !== undefined && { resumeId: values.resume }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
       });
       return 0;
@@ -79,10 +88,17 @@ async function main(argv: string[]): Promise<number> {
         prompt,
         cwd,
         json: values.json,
-        ...(resolved !== undefined && { provider: resolved.provider }),
+        debug: values.debug || debugEnabled(process.env),
+        ...(resolved !== undefined && { provider: resolved.provider, modelId: resolved.modelId }),
+        ...(config.prompts !== undefined && { prompts: config.prompts }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
       });
       return 0;
+    }
+    case "sessions": {
+      const { sessionsCommand } = await import("./sessions.ts");
+      const { defaultSessionDir } = await import("./paths.ts");
+      return sessionsCommand(positionals, values["session-dir"] ?? defaultSessionDir(cwd));
     }
     case "setup": {
       const { runSetup } = await import("./setup.ts");
@@ -100,19 +116,35 @@ async function main(argv: string[]): Promise<number> {
         loadProjectInstructions,
         suggestTitle,
       } = await import("@keywork/engine");
-      const { snapshotGitDir } = await import("./paths.ts");
+      const { defaultSessionDir, snapshotGitDir, workspaceIdentity, workspaceStateFile } =
+        await import("./paths.ts");
+      const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
+      const { sessionPort } = await import("./sessions.ts");
       const instructions = await loadProjectInstructions(cwd);
-      const systemPrompt = buildSystemPrompt(instructions);
+      const systemPrompt = buildSystemPrompt({
+        ...(instructions !== undefined && { projectInstructions: instructions }),
+        ...(config.prompts !== undefined && { prompts: config.prompts }),
+        ...(active !== undefined && { modelId: active.modelId }),
+      });
       const checkpoints = await Checkpoints.open({
         worktree: cwd,
         gitDir: snapshotGitDir(cwd),
       }).catch(() => undefined);
+      const stateStore = workspaceFile(workspaceStateFile(workspaceIdentity(cwd)));
       await runApp({
+        workspace: values.fresh ? freshWorkspace(stateStore) : stateStore,
+        sessions: sessionPort(values["session-dir"] ?? defaultSessionDir(cwd), cwd),
         ...(config.theme !== undefined && { themeOverrides: config.theme }),
         ...(checkpoints !== undefined && { checkpoints }),
         ...(active !== undefined && {
-          agentFactory: (guard) =>
-            new Agent({ provider: active.provider, tools: coreTools(cwd), systemPrompt, guard }),
+          agentFactory: (guard, history) =>
+            new Agent({
+              provider: active.provider,
+              tools: coreTools(cwd),
+              systemPrompt,
+              guard,
+              ...(history !== undefined && { history }),
+            }),
           titler: (conversation) => suggestTitle(active.provider, conversation),
           statusLabel: active.label,
         }),

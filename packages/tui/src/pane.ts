@@ -17,11 +17,18 @@ export interface PaneIntents {
   focusPane(id: string): void;
 }
 
+export type PaneDescriptor =
+  | { kind: "conversation"; sessionId?: string }
+  | { kind: "file"; path: string }
+  | { kind: "browser"; root: string };
+
 export interface Pane {
   readonly id: string;
   title(): string;
   view(context: PaneContext): PaneView;
+  describe?(): PaneDescriptor;
   handleKey?(chord: Chord, sequence: string | undefined): boolean;
+  handlePaste?(text: string): boolean;
   handleMouse?(local: { x: number; y: number }, event: PointerEvent): boolean;
   settled?(): Promise<void>;
   dispose?(): void;

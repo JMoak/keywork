@@ -5,12 +5,19 @@ import { ConversationPane } from "./conversation-pane.ts";
 import { type Chord, parseChord } from "./keys.ts";
 import type { Rect, Screen } from "./layout.ts";
 import type { PointerEvent, ScrollDirection } from "./pointer.ts";
+import type { WorkspaceState } from "./workspace-state.ts";
 
 export interface AppProbeOptions
   extends Partial<
     Pick<
       AppCoreOptions,
-      "createPane" | "createFilePane" | "createBrowserPane" | "isDirectory" | "undo"
+      | "createPane"
+      | "createFilePane"
+      | "createBrowserPane"
+      | "isDirectory"
+      | "undo"
+      | "restoreWorkspace"
+      | "saveWorkspace"
     >
   > {
   screen?: Screen;
@@ -35,6 +42,10 @@ export class AppProbe {
       }),
       ...(options.isDirectory !== undefined && { isDirectory: options.isDirectory }),
       ...(options.undo !== undefined && { undo: options.undo }),
+      ...(options.restoreWorkspace !== undefined && {
+        restoreWorkspace: options.restoreWorkspace,
+      }),
+      ...(options.saveWorkspace !== undefined && { saveWorkspace: options.saveWorkspace }),
       onExit: () => {
         this.exited = true;
       },
@@ -49,6 +60,18 @@ export class AppProbe {
 
   type(text: string): this {
     for (const character of text) this.press(printableChord(character), character);
+    return this;
+  }
+
+  repeat(spec: string): this {
+    this.clockMs += 1;
+    this.core.handleKey(parseChord(spec), undefined, this.clockMs, true);
+    return this;
+  }
+
+  paste(text: string): this {
+    this.clockMs += 1;
+    this.core.handlePaste(text);
     return this;
   }
 
@@ -80,6 +103,10 @@ export class AppProbe {
 
   snapshot(): AppSnapshot {
     return this.core.snapshot();
+  }
+
+  workspaceState(): WorkspaceState {
+    return this.core.workspaceState();
   }
 
   model(id = this.core.snapshot().focused): ConversationModel | undefined {

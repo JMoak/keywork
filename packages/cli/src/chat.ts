@@ -4,13 +4,16 @@ import {
   Agent,
   buildSystemPrompt,
   Checkpoints,
+  compactSession,
   coreTools,
   loadProjectInstructions,
   type Message,
   type Provider,
+  replaySession,
   type SessionStore,
   type ToolGuard,
 } from "@keywork/engine";
+import type { PromptsConfig } from "@keywork/shared";
 import { defaultSessionDir, snapshotGitDir } from "./paths.ts";
 import { openOrResumeSession } from "./sessions.ts";
 
@@ -20,22 +23,37 @@ export interface ChatOptions {
   label: string;
   sessionDir?: string;
   resume?: boolean;
+  resumeId?: string;
+  prompts?: PromptsConfig;
+  modelId?: string;
 }
 
 export async function chat(options: ChatOptions): Promise<void> {
   const instructions = await loadProjectInstructions(options.cwd);
   const dir = options.sessionDir ?? defaultSessionDir(options.cwd);
-  const { store, seeded } = await openOrResumeSession(dir, options.cwd, options.resume ?? false);
+  const opened = await tryOpenSession(dir, options);
+  if (opened === undefined) return;
+  const { store, seeded } = opened;
   const checkpoints = await openCheckpoints(options.cwd);
-
-  const agent = new Agent({
-    provider: options.provider,
-    tools: coreTools(options.cwd),
-    systemPrompt: buildSystemPrompt(instructions),
-    history: seeded,
-    guard: mutationGuard(checkpoints),
+  const systemPrompt = buildSystemPrompt({
+    ...(instructions !== undefined && { projectInstructions: instructions }),
+    ...(options.prompts !== undefined && { prompts: options.prompts }),
+    ...(options.modelId !== undefined && { modelId: options.modelId }),
   });
-  wireStreamingOutput(agent);
+
+  const buildAgent = (history: readonly Message[]): Agent => {
+    const agent = new Agent({
+      provider: options.provider,
+      tools: coreTools(options.cwd),
+      systemPrompt,
+      history,
+      guard: mutationGuard(checkpoints),
+    });
+    wireStreamingOutput(agent);
+    return agent;
+  };
+  let agent = buildAgent(seeded);
+  replaySession(store, agent.bus);
   greet(options, store, seeded);
 
   const readline = createInterface({ input: process.stdin, output: process.stdout });
@@ -53,6 +71,18 @@ export async function chat(options: ChatOptions): Promise<void> {
         await timeTravel(checkpoints, line);
         continue;
       }
+      if (line.startsWith("/label")) {
+        await labelLeaf(store, line.slice("/label".length).trim());
+        continue;
+      }
+      if (line.startsWith("/compact")) {
+        const compacted = await compactNow(store, options.provider, line);
+        if (compacted) {
+          agent = buildAgent(store.messages());
+          persisted = agent.history().length;
+        }
+        continue;
+      }
       await runTurn(agent, line);
       printUsageLine(agent);
       persisted = await persistNewMessages(store, agent.history(), persisted);
@@ -61,6 +91,53 @@ export async function chat(options: ChatOptions): Promise<void> {
     if (!isReadlineClosed(cause)) throw cause;
   } finally {
     readline.close();
+  }
+}
+
+async function tryOpenSession(
+  dir: string,
+  options: ChatOptions,
+): Promise<{ store: SessionStore; seeded: readonly Message[] } | undefined> {
+  try {
+    return await openOrResumeSession(dir, options.cwd, {
+      continueLatest: options.resume ?? false,
+      ...(options.resumeId !== undefined && { resumeId: options.resumeId }),
+    });
+  } catch (cause) {
+    console.error((cause as Error).message);
+    return undefined;
+  }
+}
+
+async function labelLeaf(store: SessionStore, name: string): Promise<void> {
+  const leaf = store.leafId();
+  if (leaf === null) {
+    console.log("nothing to label yet");
+    return;
+  }
+  if (name === "") {
+    console.log("usage: /label <name>");
+    return;
+  }
+  await store.setLabel(leaf, name);
+  console.log(`labeled ${leaf.slice(0, 8)} as "${name}"`);
+}
+
+async function compactNow(store: SessionStore, provider: Provider, line: string): Promise<boolean> {
+  const instructions = line.slice("/compact".length).trim();
+  try {
+    const entry = await compactSession(store, provider, {
+      ...(instructions !== "" && { instructions }),
+    });
+    if (entry === undefined) {
+      console.log("nothing to compact yet");
+      return false;
+    }
+    console.log(`compacted ${entry.tokensBefore} tokens into a summary`);
+    return true;
+  } catch (cause) {
+    console.error(`compaction failed: ${(cause as Error).message}`);
+    return false;
   }
 }
 
@@ -125,7 +202,7 @@ function greet(options: ChatOptions, store: SessionStore, seeded: readonly Messa
   console.log(`session → ${store.file}`);
   if (seeded.length > 0) console.log(`resumed ${seeded.length} messages`);
   console.log(
-    `Ask for anything · Esc interrupts a running turn · "exit" quits · /session for stats · /undo reverts the last agent change`,
+    `Ask for anything · Esc interrupts a running turn · "exit" quits · /session for stats · /undo reverts the last agent change · /compact summarizes old context · /label <name> marks this point`,
   );
 }
 
@@ -157,16 +234,18 @@ function interruptOnEscape(agent: Agent): () => void {
 }
 
 function wireStreamingOutput(agent: Agent): void {
-  agent.bus.on("turn.delta", ({ delta }) => {
-    if (delta.type === "text") process.stdout.write(delta.text);
+  agent.bus.on("turn.delta", ({ delta, replay }) => {
+    if (replay !== true && delta.type === "text") process.stdout.write(delta.text);
   });
-  agent.bus.on("tool.started", ({ call }) => {
-    console.log(`\n· ${call.name} ${compact(call.arguments)}`);
+  agent.bus.on("tool.started", ({ call, replay }) => {
+    if (replay !== true) console.log(`\n· ${call.name} ${compact(call.arguments)}`);
   });
-  agent.bus.on("tool.finished", ({ output, isError }) => {
-    console.log(`  ${isError ? "✗" : "✓"} ${firstLine(output)}`);
+  agent.bus.on("tool.finished", ({ output, isError, replay }) => {
+    if (replay !== true) console.log(`  ${isError ? "✗" : "✓"} ${firstLine(output)}`);
   });
-  agent.bus.on("turn.completed", () => console.log());
+  agent.bus.on("turn.completed", ({ replay }) => {
+    if (replay !== true) console.log();
+  });
   agent.bus.on("turn.interrupted", () => console.log("\n— interrupted"));
 }
 
@@ -176,10 +255,14 @@ function printUsageLine(agent: Agent): void {
 }
 
 function printSessionInfo(agent: Agent, store: SessionStore): void {
+  const stats = store.stats();
   const { inputTokens, outputTokens } = agent.usage();
   console.log(`file      ${store.file}`);
-  console.log(`messages  ${agent.history().length}`);
-  console.log(`tokens    ${inputTokens} in / ${outputTokens} out`);
+  console.log(`id        ${store.header.id}`);
+  console.log(
+    `entries   ${stats.entries} (${stats.messages} messages, ${stats.branchPoints} branch points, ${stats.labels} labels, ${stats.compactions} compactions)`,
+  );
+  console.log(`tokens    ${inputTokens} in / ${outputTokens} out this run`);
 }
 
 async function persistNewMessages(

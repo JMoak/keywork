@@ -75,6 +75,37 @@ describe("Keymap", () => {
     expect(map.press(parseChord("s"), 20)).toEqual({ type: "pass" });
   });
 
+  it("cancels instead of resolving when an armed chord carries ctrl or alt", () => {
+    const map = keymap();
+    map.press(parseChord("ctrl+k"), 0);
+    expect(map.press(parseChord("ctrl+x"), 10)).toEqual({ type: "cancelled" });
+    map.press(parseChord("ctrl+k"), 20);
+    expect(map.press(parseChord("alt+s"), 30)).toEqual({ type: "cancelled" });
+    map.press(parseChord("ctrl+k"), 40);
+    expect(map.press(parseChord("ctrl+s"), 50)).toEqual({ type: "cancelled" });
+  });
+
+  it("re-presses modified chords during a scoped chain instead of resolving letters", () => {
+    const map = keymap();
+    map.arm(0, new Set(["pane.close"]));
+    expect(map.press(parseChord("ctrl+x"), 10)).toEqual({ type: "pass" });
+    map.arm(20, new Set(["pane.close"]));
+    expect(map.press(parseChord("ctrl+q"), 30)).toEqual({ type: "action", action: "app.quit" });
+  });
+
+  it("keeps the leader armed through key-repeat of the leader chord", () => {
+    const map = keymap();
+    map.press(parseChord("ctrl+k"), 0);
+    expect(map.press(parseChord("ctrl+k"), 10, true)).toEqual({ type: "leader-pending" });
+    expect(map.press(parseChord("ctrl+k"), 20, true)).toEqual({ type: "leader-pending" });
+    expect(map.press(parseChord("s"), 30)).toEqual({ type: "action", action: "pane.split" });
+  });
+
+  it("arms on a repeated leader press even without the initial press", () => {
+    const map = keymap();
+    expect(map.press(parseChord("ctrl+k"), 0, true)).toEqual({ type: "leader-pending" });
+  });
+
   it("limits a scoped arm to the allowed actions and re-presses the rest", () => {
     const map = keymap();
     map.arm(0, new Set(["pane.split"]));
@@ -162,5 +193,14 @@ describe("chordOf", () => {
   it("ignores bare modifier presses", () => {
     expect(chordOf({ name: "ctrl", ctrl: true })).toBeUndefined();
     expect(chordOf({ name: "shift", shift: true })).toBeUndefined();
+  });
+
+  it("treats the kitty option modifier as alt", () => {
+    expect(chordOf({ name: "x", option: true })).toEqual({
+      name: "x",
+      ctrl: false,
+      shift: false,
+      meta: true,
+    });
   });
 });

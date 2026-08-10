@@ -11,8 +11,21 @@ Pi (https://github.com/earendil-works/pi-mono, published as @earendil-works/pi-c
 Copyright (c) 2025 Mario Zechner
 Licensed under the MIT License (full text below).
 
-Adaptations: none yet. keywork's four-tool set (read/write/edit/bash) and JSONL
-session-tree file format follow Pi's published design, implemented independently.
+Adaptations:
+- B1/B4-B6/B8 (packages/engine/src/session/entries.ts, store.ts): session entry
+  vocabulary and JSONL tree semantics adapted from Pi's session-manager, format
+  version 3 — the entry union (message / compaction / branch_summary / label /
+  session_info / custom / custom_message / thinking_level_change / model_change,
+  each with id/parentId/timestamp), leaf-pointer branching, compaction-aware
+  context assembly, tree read API, and branched-session cloning with a
+  parentSession header reference. Message payloads inside entries are keywork's
+  own message shape, not Pi's.
+- B7 (packages/engine/src/session/compaction.ts): compaction algorithm adapted
+  from Pi's documented design (docs/compaction.md in the published package) —
+  reserve-token trigger, keep-recent backward cut walk with message-boundary cut
+  points (never at tool results), iterative structured summaries that fold the
+  previous summary, cumulative read/modified file tracking in compaction details,
+  and serialized-conversation summarization input with tool-result truncation.
 
 ---
 

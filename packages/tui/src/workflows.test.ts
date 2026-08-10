@@ -7,6 +7,13 @@ import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
+import { parseWorkspaceState, type WorkspaceState } from "./workspace-state.ts";
+
+function mustParse(value: unknown): WorkspaceState {
+  const state = parseWorkspaceState(value);
+  if (state === undefined) throw new Error("expected a parseable workspace state");
+  return state;
+}
 
 async function waitFor(assertion: () => void): Promise<void> {
   const deadline = Date.now() + 1000;
@@ -125,6 +132,29 @@ describe("command palette", () => {
     expect(probe.snapshot().overlay).toBeUndefined();
     expect(paneIds(probe)).toEqual(["session-1"]);
   });
+
+  it("hides arg-requiring commands from the palette but keeps them for slash input", () => {
+    const probe = new AppProbe({ createFilePane: (id, path) => stubFilePane(id, path) });
+    probe.keys("ctrl+p").type("open");
+    expect(probe.core.paletteMatches().map((entry) => entry.name)).not.toContain("open");
+    probe.keys("escape");
+    expect(probe.core.registry.search("open").map((entry) => entry.name)).toContain("open");
+  });
+
+  it("keeps the matched entries stable when a pane retitles mid-selection", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+p").type("go");
+    const before = probe.core.paletteMatches();
+    expect(before.some((entry) => entry.name === "go-session-1")).toBe(true);
+
+    const idle = probe.core.panes.get("session-1");
+    if (idle !== undefined) idle.title = () => " renamed pane ";
+
+    expect(probe.core.paletteMatches()).toBe(before);
+    probe.keys("enter");
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
 });
 
 describe("slash commands", () => {
@@ -235,6 +265,70 @@ describe("splitting from a docked pane", () => {
   });
 });
 
+describe("modified chords while the leader is armed", () => {
+  it("does not close a pane on ctrl+x during an armed leader", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "ctrl+x");
+    expect(paneIds(probe)).toEqual(["session-1", "session-2"]);
+    expect(probe.exited).toBe(false);
+  });
+
+  it("does not split on ctrl+s or alt+s during an armed leader", () => {
+    const probe = new AppProbe().keys("ctrl+k", "ctrl+s");
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    probe.keys("ctrl+k", "alt+s");
+    expect(paneIds(probe)).toEqual(["session-1"]);
+  });
+
+  it("keeps a held leader armed through key-repeat without toggling", () => {
+    const probe = new AppProbe().keys("ctrl+k").repeat("ctrl+k").repeat("ctrl+k");
+    expect(probe.snapshot().leaderArmed).toBe(true);
+    probe.keys("s");
+    expect(paneIds(probe)).toEqual(["session-1", "session-2"]);
+  });
+});
+
+describe("paste", () => {
+  it("routes pasted text into the focused pane's prompt without submitting", () => {
+    const probe = new AppProbe().type("see: ").paste("first line\nsecond line");
+    expect(probe.model()?.input).toBe("see: first line\nsecond line");
+    expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([]);
+  });
+
+  it("drops pastes while an overlay is open", () => {
+    const probe = new AppProbe().keys("ctrl+p").paste("split");
+    expect(probe.snapshot().paletteQuery).toBe("");
+    probe.keys("escape");
+    expect(probe.model()?.input).toBe("");
+  });
+});
+
+describe("modal help overlay", () => {
+  it("swallows keys while open instead of leaking them to panes", () => {
+    const probe = new AppProbe().keys("ctrl+k", "/");
+    expect(probe.snapshot().overlay).toBe("help");
+    probe.keys("s").type("hello");
+    expect(probe.snapshot().overlay).toBe("help");
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    expect(probe.model()?.input).toBe("");
+  });
+
+  it("closes on escape and on f1", () => {
+    const probe = new AppProbe().keys("ctrl+k", "/", "escape");
+    expect(probe.snapshot().overlay).toBeUndefined();
+    probe.keys("f1");
+    expect(probe.snapshot().overlay).toBe("help");
+    probe.keys("f1");
+    expect(probe.snapshot().overlay).toBeUndefined();
+  });
+
+  it("still quits from ctrl+q while help is open", () => {
+    const probe = new AppProbe().keys("ctrl+k", "/", "ctrl+q");
+    expect(probe.exited).toBe(true);
+  });
+});
+
 describe("armed indicator expiry", () => {
   it("clears leaderArmed once the keymap's arm window lapses", () => {
     const probe = new AppProbe().keys("ctrl+k");
@@ -253,6 +347,36 @@ describe("jump commands", () => {
     expect(jump?.name).toBe("go-session-1");
     expect(probe.command("go-session-1")).toBe(true);
     expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("runs go commands whose titles contain spaces", () => {
+    const probe = new AppProbe({
+      createFilePane: (id, path) => stubFilePane(id, path),
+    });
+    probe.type("/open my notes.txt").keys("enter");
+    expect(probe.snapshot().focused).toBe("file-1");
+    probe.command("split");
+    const jump = probe.core.registry.search("go").find((entry) => entry.name.startsWith("go-my"));
+    expect(jump?.name).toBe("go-my notes.txt");
+    expect(probe.command("go-my notes.txt")).toBe(true);
+    expect(probe.snapshot().focused).toBe("file-1");
+  });
+
+  it("gives duplicate titles distinct go commands that jump to each pane", () => {
+    const probe = new AppProbe({
+      createFilePane: (id, path) => stubFilePane(id, path),
+    });
+    probe.type("/open notes.txt").keys("enter");
+    probe.command("go-session-1");
+    probe.type("/open notes.txt").keys("enter");
+    probe.command("go-session-1");
+    const names = probe.core.registry
+      .search("go")
+      .map((entry) => entry.name)
+      .filter((name) => name.startsWith("go-notes"));
+    expect(names.sort()).toEqual(["go-notes.txt file-1", "go-notes.txt file-2"]);
+    expect(probe.command("go-notes.txt file-2")).toBe(true);
+    expect(probe.snapshot().focused).toBe("file-2");
   });
 });
 
@@ -585,5 +709,114 @@ describe("conversation pane completion", () => {
       { kind: "user", text: "follow-up" },
       { kind: "assistant", text: "second reply" },
     ]);
+  });
+});
+
+describe("workspace persistence", () => {
+  const describableFactories = () => ({
+    createFilePane: (id: string, path: string): Pane => ({
+      ...stubFilePane(id, path),
+      describe: () => ({ kind: "file", path }),
+    }),
+    createBrowserPane: (id: string, root: string): Pane => ({
+      ...stubFilePane(id, root),
+      describe: () => ({ kind: "browser", root }),
+    }),
+  });
+
+  const savedState = (probe: AppProbe): unknown =>
+    JSON.parse(JSON.stringify(probe.workspaceState()));
+
+  function buildWorkspace(): AppProbe {
+    const probe = new AppProbe(describableFactories());
+    probe.command("split");
+    probe.keys("ctrl+k", "shift+.", "shift+.", "escape");
+    probe.command("browse");
+    probe.command("open notes.md");
+    (probe.core.panes.get("session-1") as ConversationPane).sessionId = "sess-a";
+    (probe.core.panes.get("session-2") as ConversationPane).sessionId = "sess-b";
+    probe.core.layout.focus("session-2");
+    return probe;
+  }
+
+  it("restores geometry, panes, dock, and focus into a fresh core", () => {
+    const first = buildWorkspace();
+    const state = mustParse(savedState(first));
+
+    const resumed: string[] = [];
+    const second = new AppProbe({
+      ...describableFactories(),
+      createPane: (id, notify, commands, resumeSessionId) => {
+        if (resumeSessionId !== undefined) resumed.push(`${id}=${resumeSessionId}`);
+        const pane = new ConversationPane(id, undefined, notify, undefined, commands);
+        pane.sessionId = resumeSessionId;
+        return pane;
+      },
+      restoreWorkspace: state,
+    });
+
+    expect(paneIds(second).sort()).toEqual(paneIds(first).sort());
+    expect(second.snapshot().focused).toBe("session-2");
+    expect(second.snapshot().dockSide).toBe(first.snapshot().dockSide);
+    expect(dockedIds(second)).toEqual(dockedIds(first));
+    for (const id of paneIds(first)) expect(second.rect(id)).toEqual(first.rect(id));
+    expect(resumed.sort()).toEqual(["session-1=sess-a", "session-2=sess-b"]);
+
+    second.command("split");
+    expect(paneIds(second)).toContain("session-3");
+  });
+
+  it("persists browser panes as root only — expansion state absent by design", () => {
+    const probe = new AppProbe(describableFactories());
+    probe.command("browse src");
+    const browser = probe.workspaceState().panes.find((pane) => pane.kind === "browser");
+    expect(browser).toEqual({ id: "browser-1", kind: "browser", root: "src" });
+  });
+
+  it("skips panes whose revival fails and keeps the rest", () => {
+    const state = mustParse(savedState(buildWorkspace()));
+    const second = new AppProbe({
+      ...describableFactories(),
+      createFilePane: () => {
+        throw new Error("file vanished");
+      },
+      restoreWorkspace: state,
+    });
+    expect(paneIds(second)).not.toContain("file-1");
+    expect(paneIds(second)).toEqual(
+      expect.arrayContaining(["session-1", "session-2", "browser-1"]),
+    );
+  });
+
+  it("starts clean when nothing survives restore", () => {
+    const first = new AppProbe(describableFactories());
+    first.command("open notes.md");
+    first.core.layout.focus("session-1");
+    first.command("exit");
+    const state = mustParse(savedState(first));
+    expect(state.panes).toEqual([{ id: "file-1", kind: "file", path: "notes.md" }]);
+
+    const second = new AppProbe({ restoreWorkspace: state });
+    expect(paneIds(second)).toEqual(["session-1"]);
+  });
+
+  it("saves on layout changes but not on mere typing", () => {
+    const saves: string[] = [];
+    const probe = new AppProbe({
+      saveWorkspace: (state) => saves.push(JSON.stringify(state)),
+    });
+    expect(saves).toHaveLength(1);
+    probe.command("split");
+    expect(saves).toHaveLength(2);
+    probe.type("hello");
+    expect(saves).toHaveLength(2);
+    probe.keys("ctrl+k", "h");
+    expect(saves).toHaveLength(3);
+    expect(new Set(saves).size).toBe(3);
+  });
+
+  it("corrupt saved payloads are rejected before they reach the core", () => {
+    expect(parseWorkspaceState("{ not json at all")).toBeUndefined();
+    expect(parseWorkspaceState({ version: 99, layout: {}, panes: [] })).toBeUndefined();
   });
 });

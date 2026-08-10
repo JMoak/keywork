@@ -3,6 +3,7 @@ import { OpenAiCompatibleProvider, type Provider, RetryingProvider } from "@keyw
 export interface ResolvedProvider {
   provider: Provider;
   label: string;
+  modelId: string;
 }
 
 const catalog = [
@@ -46,6 +47,7 @@ export function resolveProvider(
         }),
       ),
       label: `${entry.name}/${chosenModel}`,
+      modelId: chosenModel,
     };
   }
   return undefined;

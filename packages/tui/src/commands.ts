@@ -3,6 +3,7 @@ export interface CommandSpec {
   description: string;
   aliases?: readonly string[];
   shortcut?: string;
+  needsArgs?: true;
   run(args?: string): void;
 }
 
@@ -40,16 +41,27 @@ export class CommandRegistry {
 
   run(input: string): boolean {
     const trimmed = input.trim();
+    const commands = this.all();
+    const whole = findByName(commands, trimmed);
+    if (whole !== undefined) {
+      whole.run(undefined);
+      return true;
+    }
     const spaceAt = trimmed.indexOf(" ");
-    const name = (spaceAt === -1 ? trimmed : trimmed.slice(0, spaceAt)).toLowerCase();
-    const args = spaceAt === -1 ? undefined : trimmed.slice(spaceAt + 1).trim();
-    const found = this.all().find(
-      (command) => command.name.toLowerCase() === name || command.aliases?.includes(name),
-    );
+    if (spaceAt === -1) return false;
+    const found = findByName(commands, trimmed.slice(0, spaceAt));
     if (found === undefined) return false;
-    found.run(args);
+    found.run(trimmed.slice(spaceAt + 1).trim());
     return true;
   }
+}
+
+function findByName(commands: readonly CommandSpec[], raw: string): CommandSpec | undefined {
+  const name = raw.toLowerCase();
+  if (name === "") return undefined;
+  return commands.find(
+    (command) => command.name.toLowerCase() === name || command.aliases?.includes(name),
+  );
 }
 
 function bestScore(command: CommandSpec, query: string): number | undefined {

@@ -51,19 +51,25 @@ describe("Layout dwindle tiling", () => {
       seed = (seed * 1103515245 + 12345) % 2 ** 31;
       return seed / 2 ** 31;
     };
+    const paneBudget = 10;
     for (let step = 0; step < steps; step += 1) {
-      const roll = alive.length === 0 ? 0 : random();
-      if (roll < 0.5) {
+      const roll = alive.length === 0 ? 0 : alive.length >= paneBudget ? 0.95 : random();
+      if (roll < 0.45) {
         const id = `p${step}`;
         layout.open(id, screen);
         alive.push(id);
         const focusTarget = alive[Math.floor(random() * alive.length)] as string;
         layout.focus(focusTarget);
-      } else if (roll < 0.6) {
+      } else if (roll < 0.55) {
         layout.dockFocused(random() < 0.5 ? "left" : "right");
-      } else if (roll < 0.7) {
+      } else if (roll < 0.63) {
         layout.undockFocused(screen);
-      } else if (roll < 0.85) {
+      } else if (roll < 0.72) {
+        layout.zoomToggle();
+      } else if (roll < 0.8) {
+        const directions = ["left", "right", "up", "down"] as const;
+        layout.moveFocus(directions[Math.floor(random() * directions.length)] ?? "left", screen);
+      } else if (roll < 0.9) {
         layout.resizeFocused((random() - 0.5) * 0.4);
       } else {
         const victim = alive.splice(Math.floor(random() * alive.length), 1)[0] as string;
@@ -76,6 +82,7 @@ describe("Layout dwindle tiling", () => {
       }
       assertExactTiling(layout);
       expect(alive).toContain(layout.focused());
+      expect(layout.rects(screen).has(layout.focused() as string)).toBe(true);
     }
   });
 
@@ -354,6 +361,22 @@ describe("Layout zoom", () => {
     expect(layout.zoomed()).toBeUndefined();
     expect(layout.rects(screen).size).toBe(3);
   });
+
+  it("clears the zoom when focus jumps to another pane", () => {
+    const layout = layoutWith("a", "b");
+    layout.zoomToggle();
+    expect(layout.zoomed()).toBe("b");
+    layout.focus("a");
+    expect(layout.zoomed()).toBeUndefined();
+    expect(layout.rects(screen).size).toBe(2);
+  });
+
+  it("keeps the zoom when re-focusing the zoomed pane", () => {
+    const layout = layoutWith("a", "b");
+    layout.zoomToggle();
+    layout.focus("b");
+    expect(layout.zoomed()).toBe("b");
+  });
 });
 
 describe("degenerate screens", () => {
@@ -392,5 +415,77 @@ describe("degenerate screens", () => {
     expect(layout.dock()?.panes).toEqual(["a"]);
     expect(layout.root()).toEqual({ kind: "leaf", id: "b" });
     expect(layout.focused()).toBe("b");
+  });
+});
+
+describe("serialization", () => {
+  it("round-trips tree shape, ratios, dock, and focus through JSON", () => {
+    const layout = layoutWith("a", "b", "c", "d");
+    layout.resizeFocused(0.15);
+    layout.focus("d");
+    layout.dockFocused("right");
+    layout.growDock(0.1);
+    layout.focus("b");
+
+    const state = Layout.parse(JSON.parse(JSON.stringify(layout.toJSON())));
+    expect(state).toBeDefined();
+    const revived = new Layout();
+    revived.load(state as NonNullable<typeof state>);
+
+    expect(revived.toJSON()).toEqual(layout.toJSON());
+    expect(revived.focused()).toBe("b");
+    expect(revived.dock()).toEqual(layout.dock());
+    expect([...revived.rects(screen)]).toEqual([...layout.rects(screen)]);
+  });
+
+  it("never serializes zoom", () => {
+    const layout = layoutWith("a", "b");
+    layout.zoomToggle();
+    const revived = new Layout();
+    revived.load(layout.toJSON());
+    expect(revived.zoomed()).toBeUndefined();
+  });
+
+  it("clamps out-of-bounds ratios on parse", () => {
+    const state = Layout.parse({
+      tree: {
+        kind: "split",
+        orientation: "row",
+        ratio: 0.99,
+        first: { kind: "leaf", id: "a" },
+        second: { kind: "leaf", id: "b" },
+      },
+      dock: { side: "left", panes: ["c"], ratio: 0.9 },
+    });
+    expect(state?.tree).toMatchObject({ ratio: 0.9 });
+    expect(state?.dock?.ratio).toBe(0.6);
+  });
+
+  it("rejects corrupt shapes wholesale", () => {
+    const leaf = { kind: "leaf", id: "a" };
+    const corrupt: unknown[] = [
+      null,
+      "layout",
+      {},
+      { tree: { kind: "widget", id: "a" } },
+      { tree: { kind: "leaf", id: "" } },
+      { tree: { kind: "split", orientation: "diagonal", ratio: 0.5, first: leaf, second: leaf } },
+      { tree: { kind: "split", orientation: "row", ratio: "half", first: leaf, second: leaf } },
+      {
+        tree: {
+          kind: "split",
+          orientation: "row",
+          ratio: 0.5,
+          first: leaf,
+          second: { kind: "leaf", id: "a" },
+        },
+      },
+      { tree: leaf, dock: { side: "top", panes: ["b"], ratio: 0.3 } },
+      { tree: leaf, dock: { side: "left", panes: [], ratio: 0.3 } },
+      { tree: leaf, dock: { side: "left", panes: ["a"], ratio: 0.3 } },
+      { tree: leaf, focused: "ghost" },
+      { tree: leaf, focused: 7 },
+    ];
+    for (const value of corrupt) expect(Layout.parse(value)).toBeUndefined();
   });
 });

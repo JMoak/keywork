@@ -29,7 +29,19 @@
 > WP-8: CI actions pinned to resolved SHAs (checkout v4.4.0, setup-bun v2.2.0, tags as comments);
 > guardrail scan widened to repo root incl. scripts/; check-pins walks all package.json and
 > `findUnpinnedActions` fails CI on any non-SHA `uses:` (sec-9/10).
-> Remaining: WP-5 + WP-6 (input & render wave), then iteration-3 gates (Track P, B7).
+> **Wave 3 landed 2026-08-10 — WP-5 + WP-6 complete, gate green (388 tests, alongside Track T + A17).**
+> WP-5: leader rejects ctrl/alt-modified chords (Track Q chain semantics preserved) and key-repeat
+> holds arm instead of toggling; paste subscribed and routed as one edit via a `Pane.handlePaste`
+> seam (CRLF-normalized, `probe.paste()`); kitty `option`→alt; InputBuffer grapheme-aware via
+> `Intl.Segmenter` (emoji/ZWJ/CJK typeable), transcript wrap code-point safe (P1 J/K, P2 F11/F12).
+> WP-6: `Layout.focus()` clears zoom (property walk extended zoom×focus/move); renderer `resize`
+> subscribed; `screen()` reports the inner area so rects match the bordered render, mouse coords
+> border-translated, dock width in cells via shared `dockColumnWidth()`; `visibleTranscript` walks
+> backward collecting only visible rows (cost ∝ window, not session); help modal; `needsArgs`
+> commands hidden from palette; `go-<title>` exact-name dispatch + dup suffixing (P1 L/M/P,
+> P2 F7–F10, F13 pinned). Deferred to Track L: cell-width (double-width CJK) rendering, emoji in
+> palette queries, real-terminal verification of resize/chrome.
+> **All eight work packages complete.** Next: iteration-3 gates (Track P; B7 landed with Track T).
 
 > Three hostile reviewers (engine, TUI, security), 2026-08-09, over the 158-test working tree.
 > Findings deduped and cross-verified — several issues were independently found by two reviewers

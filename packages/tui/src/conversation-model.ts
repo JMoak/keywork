@@ -142,10 +142,23 @@ export class ConversationModel {
 
   visibleTranscript(width: number, rows: number): TranscriptLine[] {
     this.pageRows = rows;
-    const lines = this.entries.flatMap((entry) => this.wrappedLines(entry, width));
+    const lines = this.linesFromEnd(width, rows + this.scrollBack);
     this.scrollBack = clampScroll(this.scrollBack, lines.length, rows);
     const end = lines.length - this.scrollBack;
     return lines.slice(Math.max(0, end - rows), end);
+  }
+
+  private linesFromEnd(width: number, needed: number): TranscriptLine[] {
+    const tail: TranscriptLine[][] = [];
+    let count = 0;
+    for (let at = this.entries.length - 1; at >= 0 && count < needed; at -= 1) {
+      const entry = this.entries[at];
+      if (entry === undefined) break;
+      const lines = this.wrappedLines(entry, width);
+      tail.push(lines);
+      count += lines.length;
+    }
+    return tail.reverse().flat();
   }
 
   private wrappedLines(entry: TranscriptEntry, width: number): TranscriptLine[] {
@@ -162,6 +175,11 @@ export class ConversationModel {
     const lines = transcriptLines([entry], width);
     this.wrapCache.set(entry, { width, text: entry.text, failed, lines });
     return lines;
+  }
+
+  paste(text: string): boolean {
+    if (this.pendingAsk !== undefined) return true;
+    return this.edit(() => this.buffer.insert(text.replace(/\r\n?/g, "\n")));
   }
 
   scrollBy(delta: number): boolean {
@@ -420,17 +438,21 @@ export function transcriptLines(
 function wrap(line: string, width: number): string[] {
   if (width < 1) return [line];
   if (line === "") return [""];
+  const points = Array.from(line);
   const pieces: string[] = [];
-  for (let at = 0; at < line.length; at += width) {
-    pieces.push(line.slice(at, at + width));
+  for (let at = 0; at < points.length; at += width) {
+    pieces.push(points.slice(at, at + width).join(""));
   }
   return pieces;
 }
 
 function isPrintable(chord: Chord, sequence: string | undefined): boolean {
-  if (sequence === undefined || sequence.length !== 1 || chord.ctrl || chord.meta) return false;
-  const code = sequence.charCodeAt(0);
-  return code >= 32 && code !== 127;
+  if (sequence === undefined || sequence === "" || chord.ctrl || chord.meta) return false;
+  for (const character of sequence) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 32 || code === 127) return false;
+  }
+  return true;
 }
 
 function compactJson(value: unknown): string {

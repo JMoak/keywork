@@ -1,7 +1,7 @@
 import type { Message, ToolCallPart, Usage } from "./messages.ts";
 import type { TurnDelta } from "./provider.ts";
 
-export interface EngineEvents {
+interface LiveEvents {
   "turn.started": { userText: string };
   "turn.delta": { delta: TurnDelta };
   "turn.completed": { message: Message; usage: Usage };
@@ -10,6 +10,10 @@ export interface EngineEvents {
   "tool.finished": { callId: string; output: string; isError: boolean };
   "engine.error": { error: Error };
 }
+
+export type EngineEvents = {
+  [K in keyof LiveEvents]: LiveEvents[K] & { replay?: boolean };
+};
 
 type Listener<T> = (payload: T) => void;
 

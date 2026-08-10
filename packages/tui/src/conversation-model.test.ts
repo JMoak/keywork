@@ -540,6 +540,59 @@ describe("mutation confirmation", () => {
   });
 });
 
+describe("paste", () => {
+  it("inserts multi-line text into the prompt without submitting", () => {
+    const model = new ConversationModel(undefined, () => {});
+    type(model, "err: ");
+    model.paste("line one\nline two");
+    expect(model.input).toBe("err: line one\nline two");
+    expect(model.entries.filter((entry) => entry.kind === "user")).toEqual([]);
+  });
+
+  it("normalizes CRLF pastes to newlines", () => {
+    const model = new ConversationModel(undefined, () => {});
+    model.paste("a\r\nb\rc");
+    expect(model.input).toBe("a\nb\nc");
+  });
+
+  it("ignores pastes while an ask is pending", () => {
+    const model = new ConversationModel(undefined, () => {});
+    void model.confirmMutation({ type: "tool-call", callId: "c", name: "write", arguments: {} });
+    expect(model.paste("sneaky")).toBe(true);
+    expect(model.input).toBe("");
+    expect(model.pendingAsk).toBeDefined();
+  });
+});
+
+describe("windowed transcript", () => {
+  function bigConversation(): ConversationModel {
+    const model = new ConversationModel(undefined, () => {});
+    model.entries.length = 0;
+    for (let at = 1; at <= 500; at += 1) {
+      model.entries.push({ kind: "assistant", text: `entry ${at}` });
+    }
+    return model;
+  }
+
+  it("matches the full wrap-and-slice result at the live edge and scrolled", () => {
+    const model = bigConversation();
+    const full = transcriptLines(model.entries, 40);
+
+    expect(model.visibleTranscript(40, 8)).toEqual(full.slice(-8));
+
+    model.scrollBy(100);
+    expect(model.visibleTranscript(40, 8)).toEqual(full.slice(-108, -100));
+  });
+
+  it("clamps a scroll past the top to the oldest window", () => {
+    const model = bigConversation();
+    model.scrollBy(100_000);
+    const window = model.visibleTranscript(40, 8);
+    expect(window[0]?.text).toBe("entry 1");
+    expect(model.scrollBack).toBe(500 - 8);
+  });
+});
+
 describe("transcriptLines", () => {
   it("prefixes user entries and wraps long lines to width", () => {
     const lines = transcriptLines(
@@ -555,5 +608,18 @@ describe("transcriptLines", () => {
   it("splits embedded newlines", () => {
     const lines = transcriptLines([{ kind: "assistant", text: "a\nb" }], 10);
     expect(lines.map((line) => line.text)).toEqual(["a", "b"]);
+  });
+
+  it("never splits surrogate pairs when wrapping astral-plane text", () => {
+    const lines = transcriptLines([{ kind: "assistant", text: "😀".repeat(7) }], 3);
+    expect(lines.map((line) => line.text)).toEqual(["😀😀😀", "😀😀😀", "😀"]);
+    for (const line of lines) {
+      expect(line.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    }
+  });
+
+  it("wraps CJK text by code points", () => {
+    const lines = transcriptLines([{ kind: "assistant", text: "我们在这里写字" }], 3);
+    expect(lines.map((line) => line.text)).toEqual(["我们在", "这里写", "字"]);
   });
 });

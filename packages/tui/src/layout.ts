@@ -24,6 +24,18 @@ export type LayoutNode =
 
 export type SplitNode = Extract<LayoutNode, { kind: "split" }>;
 
+export interface DockState {
+  side: DockSide;
+  panes: PaneId[];
+  ratio: number;
+}
+
+export interface LayoutState {
+  tree?: LayoutNode;
+  focused?: PaneId;
+  dock?: DockState;
+}
+
 export interface Screen {
   width: number;
   height: number;
@@ -43,6 +55,44 @@ export class Layout {
   private dockIds: PaneId[] = [];
   private dockEdge: DockSide = "left";
   private dockRatio = defaultDockRatio;
+
+  static parse(value: unknown): LayoutState | undefined {
+    if (!isRecord(value)) return undefined;
+    const tree = value.tree === undefined ? undefined : parseNode(value.tree);
+    if (value.tree !== undefined && tree === undefined) return undefined;
+    const dock = value.dock === undefined ? undefined : parseDock(value.dock);
+    if (value.dock !== undefined && dock === undefined) return undefined;
+    const ids = [...(tree === undefined ? [] : leafIds(tree)), ...(dock?.panes ?? [])];
+    if (ids.length === 0 || new Set(ids).size !== ids.length) return undefined;
+    const focused = value.focused;
+    if (focused !== undefined && (typeof focused !== "string" || !ids.includes(focused))) {
+      return undefined;
+    }
+    return {
+      ...(tree !== undefined && { tree }),
+      ...(focused !== undefined && { focused }),
+      ...(dock !== undefined && { dock }),
+    };
+  }
+
+  toJSON(): LayoutState {
+    return {
+      ...(this.tree !== undefined && { tree: cloneNode(this.tree) }),
+      ...(this.focusedId !== undefined && { focused: this.focusedId }),
+      ...(this.dockIds.length > 0 && {
+        dock: { side: this.dockEdge, panes: [...this.dockIds], ratio: this.dockRatio },
+      }),
+    };
+  }
+
+  load(state: LayoutState): void {
+    this.tree = state.tree === undefined ? undefined : cloneNode(state.tree);
+    this.focusedId = state.focused;
+    this.zoomedId = undefined;
+    this.dockIds = state.dock === undefined ? [] : [...state.dock.panes];
+    this.dockEdge = state.dock?.side ?? "left";
+    this.dockRatio = state.dock?.ratio ?? defaultDockRatio;
+  }
 
   root(): LayoutNode | undefined {
     return this.tree;
@@ -111,7 +161,9 @@ export class Layout {
   }
 
   focus(id: PaneId): void {
-    if (this.panes().includes(id)) this.focusedId = id;
+    if (!this.panes().includes(id)) return;
+    if (this.zoomedId !== undefined && this.zoomedId !== id) this.zoomedId = undefined;
+    this.focusedId = id;
   }
 
   moveFocus(direction: Direction, screen: Screen): PaneId | undefined {
@@ -214,12 +266,20 @@ export class Layout {
   }
 }
 
-function splitAtDock(full: Rect, side: DockSide, ratio: number): [Rect, Rect] {
-  const dockWidth = clamp(
-    Math.round(full.width * ratio),
-    Math.min(1, full.width),
-    Math.max(1, full.width - 1),
+export function layoutStateIds(state: LayoutState): PaneId[] {
+  return [...(state.tree === undefined ? [] : leafIds(state.tree)), ...(state.dock?.panes ?? [])];
+}
+
+export function dockColumnWidth(totalWidth: number, ratio: number): number {
+  return clamp(
+    Math.round(totalWidth * ratio),
+    Math.min(1, totalWidth),
+    Math.max(1, totalWidth - 1),
   );
+}
+
+function splitAtDock(full: Rect, side: DockSide, ratio: number): [Rect, Rect] {
+  const dockWidth = dockColumnWidth(full.width, ratio);
   const mainWidth = full.width - dockWidth;
   if (side === "left") {
     return [
@@ -242,6 +302,50 @@ function stackVertically(ids: PaneId[], rect: Rect, into: Map<PaneId, Rect>): vo
     into.set(id, { x: rect.x, y, width: rect.width, height });
     y += height;
   });
+}
+
+function parseNode(value: unknown): LayoutNode | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.kind === "leaf") {
+    return isPaneId(value.id) ? { kind: "leaf", id: value.id } : undefined;
+  }
+  if (value.kind !== "split") return undefined;
+  const orientation = value.orientation;
+  if (orientation !== "row" && orientation !== "column") return undefined;
+  const ratio = parseRatio(value.ratio, splitRatioBounds);
+  const first = parseNode(value.first);
+  const second = parseNode(value.second);
+  if (ratio === undefined || first === undefined || second === undefined) return undefined;
+  return { kind: "split", orientation, ratio, first, second };
+}
+
+function parseDock(value: unknown): DockState | undefined {
+  if (!isRecord(value)) return undefined;
+  const side = value.side;
+  if (side !== "left" && side !== "right") return undefined;
+  const panes = value.panes;
+  if (!Array.isArray(panes) || panes.length === 0 || !panes.every(isPaneId)) return undefined;
+  const ratio = parseRatio(value.ratio, dockRatioBounds);
+  if (ratio === undefined) return undefined;
+  return { side, panes: [...panes], ratio };
+}
+
+function parseRatio(value: unknown, bounds: { min: number; max: number }): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return clamp(value, bounds.min, bounds.max);
+}
+
+function isPaneId(value: unknown): value is PaneId {
+  return typeof value === "string" && value !== "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function cloneNode(node: LayoutNode): LayoutNode {
+  if (node.kind === "leaf") return { ...node };
+  return { ...node, first: cloneNode(node.first), second: cloneNode(node.second) };
 }
 
 function wideOrTall(rect: Rect): Orientation {
