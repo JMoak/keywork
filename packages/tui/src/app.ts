@@ -19,6 +19,7 @@ import { chordOf } from "./keys.ts";
 import { dockColumnWidth, type LayoutNode, type Screen } from "./layout.ts";
 import type { PaneView } from "./pane.ts";
 import { pointerEventOf } from "./pointer.ts";
+import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import { resolveTheme, type Theme } from "./theme.ts";
 import { parseWorkspaceState, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
@@ -54,6 +55,7 @@ export interface AppOptions {
   checkpoints?: CheckpointsPort;
   workspace?: WorkspacePort;
   sessions?: SessionPort;
+  sessionTrees?: SessionTreePort;
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
@@ -66,6 +68,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     height: Math.max(0, renderer.height - 2 * chrome.border - chrome.statusRows),
   });
   const checkpoints = options.checkpoints;
+  const attachments = restored?.attachments ?? new Map<string, SessionAttachment>();
+  const trees = options.sessionTrees;
   const core = new AppCore({
     screen,
     createPane: (id, notify, commands, resumeSessionId) => {
@@ -75,15 +79,29 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         ...(checkpoints !== undefined && { beforeMutation: () => checkpoints.capture() }),
       };
       const attachment =
-        resumeSessionId === undefined ? undefined : restored?.attachments.get(resumeSessionId);
+        resumeSessionId === undefined ? undefined : attachments.get(resumeSessionId);
       const agent = options.agentFactory?.(guard, attachment?.history);
       pane = new ConversationPane(id, agent, notify, options.titler, commands);
-      wireSession(pane, agent, attachment, options.sessions, notify);
+      if (attachment !== undefined) adoptSession(pane, agent, attachment);
+      else if (resumeSessionId === undefined) {
+        startFreshSession(pane, agent, options.sessions, notify);
+      }
       return pane;
     },
     createFilePane: (id, path, notify) => new FilePane(id, process.cwd(), path, notify),
     createBrowserPane: (id, root, notify, intents) =>
       new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
+    ...(trees !== undefined && {
+      createSessionTreePane: (id, notify, intents, targetSession, sessionId) =>
+        new SessionTreePane(
+          id,
+          notify,
+          intents,
+          attachOnFork(trees, options.sessions, attachments),
+          targetSession,
+          sessionId,
+        ),
+    }),
     isDirectory: (path) =>
       statSync(resolve(process.cwd(), path), { throwIfNoEntry: false })?.isDirectory() === true,
     ...(checkpoints !== undefined && { undo: checkpoints }),
@@ -197,6 +215,8 @@ async function restorable(
       return statKind(resolve(process.cwd(), pane.path))?.isFile() === true;
     case "browser":
       return statKind(pane.root)?.isDirectory() === true;
+    case "session-tree":
+      return true;
   }
 }
 
@@ -204,17 +224,30 @@ function statKind(path: string) {
   return statSync(path, { throwIfNoEntry: false });
 }
 
-function wireSession(
+function attachOnFork(
+  trees: SessionTreePort,
+  sessions: SessionPort | undefined,
+  attachments: Map<string, SessionAttachment>,
+): SessionTreePort {
+  return {
+    load: (sessionId) => trees.load(sessionId),
+    setLabel: (sessionId, entryId, label) => trees.setLabel(sessionId, entryId, label),
+    fork: async (sessionId, entryId) => {
+      const forkedId = await trees.fork(sessionId, entryId);
+      if (forkedId === undefined || sessions === undefined) return forkedId;
+      const attachment = await sessions.open(forkedId);
+      if (attachment !== undefined) attachments.set(forkedId, attachment);
+      return forkedId;
+    },
+  };
+}
+
+function startFreshSession(
   pane: ConversationPane,
   agent: Agent | undefined,
-  attachment: SessionAttachment | undefined,
   sessions: SessionPort | undefined,
   notify: () => void,
 ): void {
-  if (attachment !== undefined) {
-    adoptSession(pane, agent, attachment);
-    return;
-  }
   if (agent === undefined || sessions === undefined) return;
   void sessions
     .create()

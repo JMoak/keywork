@@ -8,6 +8,7 @@ import {
   coreTools,
   loadProjectInstructions,
   type Message,
+  type PermissionResolver,
   type Provider,
   replaySession,
   type SessionStore,
@@ -24,12 +25,15 @@ export interface ChatOptions {
   sessionDir?: string;
   resume?: boolean;
   resumeId?: string;
+  projectTrusted?: boolean;
   prompts?: PromptsConfig;
   modelId?: string;
+  permissions?: PermissionResolver;
 }
 
 export async function chat(options: ChatOptions): Promise<void> {
-  const instructions = await loadProjectInstructions(options.cwd);
+  const instructions =
+    options.projectTrusted === true ? await loadProjectInstructions(options.cwd) : undefined;
   const dir = options.sessionDir ?? defaultSessionDir(options.cwd);
   const opened = await tryOpenSession(dir, options);
   if (opened === undefined) return;
@@ -48,6 +52,7 @@ export async function chat(options: ChatOptions): Promise<void> {
       systemPrompt,
       history,
       guard: mutationGuard(checkpoints),
+      ...(options.permissions !== undefined && { permissions: options.permissions }),
     });
     wireStreamingOutput(agent);
     return agent;

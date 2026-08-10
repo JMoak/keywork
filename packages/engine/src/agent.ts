@@ -8,6 +8,9 @@ export interface ToolGuard {
   beforeMutation?(): Promise<void>;
 }
 
+export type ToolPermission = "allow" | "ask" | "deny";
+export type PermissionResolver = (call: ToolCallPart) => ToolPermission | undefined;
+
 export interface AgentOptions {
   provider: Provider;
   systemPrompt?: string;
@@ -15,6 +18,7 @@ export interface AgentOptions {
   bus?: EventBus<EngineEvents>;
   history?: readonly Message[];
   guard?: ToolGuard;
+  permissions?: PermissionResolver;
 }
 
 export class AgentBusyError extends Error {
@@ -38,6 +42,7 @@ export class Agent {
   private readonly tools: readonly Tool[];
   private readonly messages: Message[];
   private readonly guard: ToolGuard | undefined;
+  private readonly permissions: PermissionResolver | undefined;
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
   private active: AbortController | undefined;
   private checkpointed = false;
@@ -49,6 +54,7 @@ export class Agent {
     this.bus = options.bus ?? new EventBus();
     this.messages = [...(options.history ?? [])];
     this.guard = options.guard;
+    this.permissions = options.permissions;
   }
 
   history(): readonly Message[] {
@@ -195,9 +201,14 @@ export class Agent {
   ): Promise<{ callId: string; output: string; isError: boolean }> {
     try {
       const tool = findTool(this.tools, call.name);
-      if (tool.mutates === true && !(await this.approveMutation(call))) {
+      const verdict = this.permissions?.(call) ?? defaultPermission(tool);
+      if (verdict === "deny") {
+        return { callId: call.callId, output: "denied by permission policy", isError: true };
+      }
+      if (verdict === "ask" && !(await this.confirmWithGuard(call))) {
         return { callId: call.callId, output: "declined by user", isError: true };
       }
+      if (tool.mutates === true) await this.checkpointOnce();
       const output = await tool.execute(call.arguments, signal);
       return { callId: call.callId, output, isError: false };
     } catch (cause) {
@@ -206,15 +217,19 @@ export class Agent {
     }
   }
 
-  private async approveMutation(call: ToolCallPart): Promise<boolean> {
-    if (this.guard === undefined) return true;
-    if (this.guard.confirm !== undefined && !(await this.guard.confirm(call))) return false;
-    if (!this.checkpointed) {
-      this.checkpointed = true;
-      await this.guard.beforeMutation?.();
-    }
-    return true;
+  private confirmWithGuard(call: ToolCallPart): Promise<boolean> {
+    return this.guard?.confirm?.(call) ?? Promise.resolve(true);
   }
+
+  private async checkpointOnce(): Promise<void> {
+    if (this.checkpointed) return;
+    this.checkpointed = true;
+    await this.guard?.beforeMutation?.();
+  }
+}
+
+function defaultPermission(tool: Tool): ToolPermission {
+  return tool.mutates === true ? "ask" : "allow";
 }
 
 function addUsage(left: Usage, right: Usage): Usage {

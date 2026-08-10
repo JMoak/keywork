@@ -58,7 +58,10 @@ Nothing requires rethinking the vision.
 - **C23 (1pt) — Default keymap spec.** The actual taste decision: the shipped bindings, as a
   reviewed doc mapping every default onto ux-principles (frequency-tiered, leader grammar).
 - **G3 (3pt) — Packaging & release pipeline.** Tagged release → installable artifacts
-  (Win/Linux/macOS; `bun build --compile` evaluated). *Accept:* fresh machine installs and runs.
+  (Win/Linux/macOS; `bun build --compile` evaluated); ships desktop entries per the 80-doc
+  external-surface posture — Windows Terminal profile fragment, `.desktop` file, macOS
+  `.app` shim, each launching the TUI in a well-configured terminal. *Accept:* fresh
+  machine installs and runs.
 - **G4 (1pt) — Version & update check** (non-nagging).
 - **G5 (3pt) — User & extension-author docs.** Quickstart; config reference **generated from
   the M0.6 schema descriptions** (the option-policy justifications become the docs);

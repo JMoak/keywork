@@ -2,16 +2,23 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { debugEnabled } from "@keywork/engine";
-import { loadConfig } from "@keywork/shared";
+import { debugEnabled, type PermissionResolver } from "@keywork/engine";
+import {
+  ConfigError,
+  loadConfig,
+  openWorkspace,
+  permissionPolicy,
+  TrustStore,
+} from "@keywork/shared";
 import { chat } from "./chat.ts";
 import { providerSetupHint, resolveProvider } from "./provider.ts";
 import { runHeadless } from "./run.ts";
 
-function loadKeyworkConfig(cwd: string): ReturnType<typeof loadConfig> {
+function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typeof loadConfig> {
   return loadConfig({
     userDir: join(homedir(), ".keywork"),
     projectDir: join(cwd, ".keywork"),
+    projectTrusted,
   });
 }
 
@@ -25,6 +32,7 @@ Usage:
   keywork panes [--fresh]                                   tiled multi-session workspace
   keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
   keywork setup                                             connect a model provider
+  keywork trust | untrust                                   grant or revoke workspace trust
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -46,7 +54,19 @@ async function main(argv: string[]): Promise<number> {
   });
 
   const cwd = process.cwd();
-  const config = await loadKeyworkConfig(cwd);
+  const workspace = openWorkspace(cwd);
+  for (const dir of workspace?.missingContextDirs ?? []) {
+    console.warn(`keywork: workspace context dir not found, skipping: ${dir}`);
+  }
+  const trustStore = new TrustStore();
+  if (command === "trust" || command === "untrust") {
+    const { trustCommand } = await import("./trust.ts");
+    return trustCommand(command, cwd, trustStore);
+  }
+  const projectTrusted = trustStore.resolve(cwd) === "trusted";
+  const config = await loadKeyworkConfig(cwd, projectTrusted);
+  const policy = permissionPolicy(config.permissions);
+  const toolPermissions: PermissionResolver = (call) => policy(call.name, call.arguments);
   const model = values.model ?? config.model;
   let resolved = resolveProvider(process.env, model, config.apiKeys);
 
@@ -55,7 +75,7 @@ async function main(argv: string[]): Promise<number> {
     console.log("Welcome to keywork — no model provider is configured yet.\n");
     const { runSetup } = await import("./setup.ts");
     if ((await runSetup()) !== 0) return;
-    const refreshed = await loadKeyworkConfig(cwd);
+    const refreshed = await loadKeyworkConfig(cwd, projectTrusted);
     resolved = resolveProvider(process.env, values.model ?? refreshed.model, refreshed.apiKeys);
   };
 
@@ -72,6 +92,8 @@ async function main(argv: string[]): Promise<number> {
         label: resolved.label,
         modelId: resolved.modelId,
         resume: values.continue,
+        projectTrusted,
+        permissions: toolPermissions,
         ...(config.prompts !== undefined && { prompts: config.prompts }),
         ...(values.resume !== undefined && { resumeId: values.resume }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
@@ -88,6 +110,8 @@ async function main(argv: string[]): Promise<number> {
         prompt,
         cwd,
         json: values.json,
+        projectTrusted,
+        permissions: toolPermissions,
         debug: values.debug || debugEnabled(process.env),
         ...(resolved !== undefined && { provider: resolved.provider, modelId: resolved.modelId }),
         ...(config.prompts !== undefined && { prompts: config.prompts }),
@@ -119,8 +143,8 @@ async function main(argv: string[]): Promise<number> {
       const { defaultSessionDir, snapshotGitDir, workspaceIdentity, workspaceStateFile } =
         await import("./paths.ts");
       const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
-      const { sessionPort } = await import("./sessions.ts");
-      const instructions = await loadProjectInstructions(cwd);
+      const { sessionPort, sessionTreePort } = await import("./sessions.ts");
+      const instructions = projectTrusted ? await loadProjectInstructions(cwd) : undefined;
       const systemPrompt = buildSystemPrompt({
         ...(instructions !== undefined && { projectInstructions: instructions }),
         ...(config.prompts !== undefined && { prompts: config.prompts }),
@@ -134,6 +158,7 @@ async function main(argv: string[]): Promise<number> {
       await runApp({
         workspace: values.fresh ? freshWorkspace(stateStore) : stateStore,
         sessions: sessionPort(values["session-dir"] ?? defaultSessionDir(cwd), cwd),
+        sessionTrees: sessionTreePort(values["session-dir"] ?? defaultSessionDir(cwd)),
         ...(config.theme !== undefined && { themeOverrides: config.theme }),
         ...(checkpoints !== undefined && { checkpoints }),
         ...(active !== undefined && {
@@ -143,6 +168,7 @@ async function main(argv: string[]): Promise<number> {
               tools: coreTools(cwd),
               systemPrompt,
               guard,
+              permissions: toolPermissions,
               ...(history !== undefined && { history }),
             }),
           titler: (conversation) => suggestTitle(active.provider, conversation),
@@ -158,4 +184,8 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-process.exitCode = await main(process.argv.slice(2));
+process.exitCode = await main(process.argv.slice(2)).catch((cause: unknown) => {
+  if (!(cause instanceof ConfigError)) throw cause;
+  console.error(cause.message);
+  return 1;
+});

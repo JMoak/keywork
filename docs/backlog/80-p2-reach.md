@@ -6,6 +6,52 @@
 
 ---
 
+## External-surface posture (Jordan, 2026-08-10)
+
+How keywork meets every tool that isn't keywork — decided while examining dictation
+(Wispr Flow) support, then generalized to a citizenship ladder. Baseline finding:
+dictation already works by construction — OS-level injection arrives as keystrokes or
+paste, and WP-5's paste seam made injected newlines literal — so these decisions make
+the class first-class rather than accidental:
+
+- **Tier 0 — keyboard citizens** (dictation, text expanders, clipboard managers,
+  password managers): no integration surface; the contract is input robustness —
+  bracketed paste never submits, bursts render without stutter, no timing-sensitive
+  chords anywhere, and a burst arriving while the leader is armed falls through as
+  text (Track Q semantics). Wispr Flow is the named flagship; C34 is the fixture.
+- **Tier 1 — stream citizens** (scripts, CI, other agents): `keywork run --json`
+  (A13) — already shipped.
+- **Tier 2 — pane citizens** (LLM interaction windows, voice assistants, overlays):
+  P2.1's server + P2.2's attach; external prompt injection is P2.6. Anything wanting
+  a live conversation mounts a pane or drives the SSE surface — never a bespoke
+  per-tool integration.
+- **Voice capture stays external, permanently.** Terminals have no audio surface and
+  that is also the correct trust boundary: keywork is a great citizen to injectors;
+  it never hosts a microphone.
+- **Native-shell revisit gate (D10 restated).** A native app is a *third mounting
+  surface* over the D7 server — a Tauri-class shell embedding the TUI, or panes
+  rendered natively from SSE — never a port, and it is not considered before the M2
+  public demo *and* P2.1 have both landed. Until then, native presence ships as
+  G3's desktop entries (Windows Terminal fragment, `.desktop`, macOS `.app` shim).
+
+### C34 (1pt, v1-timed) — Injection citizenship fixture
+Probe-harness fixture simulating dictation-class input: a multi-hundred-event burst,
+paste with embedded newlines (never submits), burst-during-armed-leader falling
+through as text, grapheme-heavy content (emoji/ZWJ/CJK) landing intact.
+**Accept:** fixture green in CI; paste/burst regressions fail here first.
+**Strategy:** `OWN` on WP-5's `Pane.handlePaste`/`probe.paste()` seams.
+
+### P2.6 (2pt) — External prompt injection
+Server endpoint submitting text into a session from outside — the Tier-2 door for
+LLM interaction windows and voice assistants: provenance-tagged external per J's
+taint boundary, policy-gated per J6, echoed on the bus so every pane sees it as an
+ordinary prompt.
+**Accept:** injected prompt renders and runs identically to a typed one; any memory
+write it causes carries external provenance; unauthorized client rejected.
+**Strategy:** `OWN` on P2.1.
+
+---
+
 ### P2.1 (5pt) — HTTP/SSE server wrap
 Wrap the A4 bus in a Bun HTTP server: OpenAPI 3.1 spec served at `/doc`, REST for commands,
 SSE for the event stream; localhost + token auth by default. Mechanical if A5 held its

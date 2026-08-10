@@ -14,6 +14,7 @@ export interface AppProbeOptions
       | "createPane"
       | "createFilePane"
       | "createBrowserPane"
+      | "createSessionTreePane"
       | "isDirectory"
       | "undo"
       | "restoreWorkspace"
@@ -39,6 +40,9 @@ export class AppProbe {
       ...(options.createFilePane !== undefined && { createFilePane: options.createFilePane }),
       ...(options.createBrowserPane !== undefined && {
         createBrowserPane: options.createBrowserPane,
+      }),
+      ...(options.createSessionTreePane !== undefined && {
+        createSessionTreePane: options.createSessionTreePane,
       }),
       ...(options.isDirectory !== undefined && { isDirectory: options.isDirectory }),
       ...(options.undo !== undefined && { undo: options.undo }),

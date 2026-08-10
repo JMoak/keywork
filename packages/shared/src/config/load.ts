@@ -6,6 +6,7 @@ import { configSchema, defaultConfig, type KeyworkConfig } from "./schema.ts";
 export interface ConfigSource {
   userDir?: string;
   projectDir?: string;
+  projectTrusted?: boolean;
 }
 
 export class ConfigError extends Error {
@@ -21,7 +22,7 @@ export class ConfigError extends Error {
 export async function loadConfig(source: ConfigSource): Promise<KeyworkConfig> {
   const [user, project] = await Promise.all([
     readLayer(source.userDir),
-    readLayer(source.projectDir),
+    readLayer(source.projectTrusted === true ? source.projectDir : undefined),
   ]);
   return applyLayers(defaultConfig, user, project && workspacePreferences(project));
 }
@@ -38,8 +39,9 @@ export function mergeConfigs(base: KeyworkConfig, overlay: KeyworkConfig): Keywo
   };
 }
 
-// Trust boundary: a checked-in project file may adjust workspace preferences,
-// never credentials or model routing — those stay user/env-owned.
+// Trust boundary: an untrusted project layer contributes nothing (E6); once the
+// directory is trusted, a checked-in project file may adjust workspace preferences,
+// never credentials, permissions, or model routing — those stay user/env-owned.
 function workspacePreferences(layer: KeyworkConfig): KeyworkConfig {
   return {
     ...(layer.keybindings !== undefined && { keybindings: layer.keybindings }),

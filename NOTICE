@@ -26,6 +26,10 @@ Adaptations:
   points (never at tool results), iterative structured summaries that fold the
   previous summary, cumulative read/modified file tracking in compaction details,
   and serialized-conversation summarization input with tool-result truncation.
+- E6 (packages/shared/src/trust/store.ts): workspace trust store adapted from Pi's
+  trust-manager — per-path persisted trust decisions in a JSON map, canonicalized
+  paths, nearest-ancestor resolution via dirname walking, session-only grants, and
+  the never-blanket-trust-$HOME edge case.
 
 ---
 
@@ -38,6 +42,10 @@ Adaptations:
   OpenCode's snapshot module — a shadow git repository (separate GIT_DIR under the keywork
   data dir, work tree at the project root) captured via `git add -A` + `git write-tree` and
   restored via `git read-tree --reset -u`, so the user's own git state is never touched.
+- E1 (packages/shared/src/trust/permissions.ts): declarative tool-permission model
+  adapted from OpenCode's permission config — allow/ask/deny actions per tool plus
+  glob-pattern rules over the bash command string, with keywork's own
+  most-specific-match precedence and chaining-character containment.
 
 ---
 
@@ -45,8 +53,12 @@ OpenClaw (https://github.com/openclaw/openclaw)
 Copyright (c) 2026 OpenClaw Foundation
 Licensed under the MIT License (full text below).
 
-Adaptations: none yet. keywork's memory workstream (docs/backlog/95-memory-and-skills.md)
-plans adaptations of its memory mechanisms; entries will be recorded here as code lands.
+Adaptations:
+- J3 (packages/engine/src/memory/store.ts): vault layout and lifecycle adapted from
+  OpenClaw's documented memory design — MEMORY.md as the budgeted bootstrap index,
+  append-only daily/YYYY-MM-DD.md episodic logs, markdown files as the canonical
+  record with any index treated as disposable cache, and whole-file (never truncated)
+  budget selection. Reimplemented in TypeScript from the documented design.
 
 ---
 

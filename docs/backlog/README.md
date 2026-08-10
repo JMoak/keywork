@@ -27,14 +27,15 @@
 | [`50-trust.md`](50-trust.md) | E — trust & safety | 5 | 10 |
 | [`60-code-intel.md`](60-code-intel.md) | F — code intelligence | 5 | 10 |
 | [`70-anthropic.md`](70-anthropic.md) | G — Anthropic (late, gated) | 2 | 3 |
-| [`80-p2-reach.md`](80-p2-reach.md) | P2 — server, attach, workspaces | 5 | 17 |
+| [`80-p2-reach.md`](80-p2-reach.md) | P2 — server, attach, workspaces; external-surface posture 2026-08-10 (citizenship ladder, Wispr-flagship fixture C34, injection endpoint P2.6, native-shell gate) | 7 | 20 |
 
 | [`90-plan-review.md`](90-plan-review.md) | **Authoritative overlay** — combined two-reviewer findings: 15 new tasks (E6 trust gate, C0 TUI harness, D0 slash registry, packaging/docs/onboarding, …), resequencing (guardrail CI grep → M0, undo → M1), resizing, corrected milestone map | 15 | +43 |
 | [`91-progress-and-feedback.md`](91-progress-and-feedback.md) | **Authoritative overlay** — completed ledger (done/partial per ID), 7 new tasks from first user feedback (C24 empty state, C25 slash autocomplete, C26 quick menu superseding C5, C27/C28 dock layout, D12 provider-free commands, D13 `/onboarding`), corrected mid-M2 milestone statement, next-up ordering | 7 | +12 |
 | [`95-memory-and-skills.md`](95-memory-and-skills.md) | **Workstream J** — memory & self-healing skills: workspace/user scopes (J-D1), engine-core memory (J-D2), hybrid RRF retrieval (J-D3), Gardener curation, pre-compaction flush, memory pane, Hermes-style skill healing, write gating = provenance-gated optimism + airlock with curing-garden rendering (J-D4 resolved); atomic-note Obsidian-citizen vault + bi-temporal entity graph with PPR third retrieval leg (J-D5). Sources: OpenClaw (MIT), Hermes (MIT), HippoRAG (MIT), Graphiti (Apache-2.0, design), rosavera (Jordan's own); fifth-pass fault resolutions 2026-08-10 (sync self-reconciliation J14, recall citations J13, airlock instrumentation, session-staleness rungs, backpressure guarantee A18) | 15 | +36 |
 
-**Total: 113 tasks, ~246 points** (after review + progress overlays; D14 MCP status dock
-and workstream J added 2026-08-10; J13/J14/A18 from the fifth-pass fault review).
+**Total: 115 tasks, ~249 points** (after review + progress overlays; D14 MCP status dock
+and workstream J added 2026-08-10; J13/J14/A18 from the fifth-pass fault review; C34/P2.6
+from the external-surface posture).
 
 **Milestone map — see `90-plan-review.md` (authoritative), current status in
 `91-progress-and-feedback.md`:**

@@ -1,4 +1,12 @@
-import { Agent, MockProvider, type Tool, textTurn, toolCallTurn } from "@keywork/engine";
+import {
+  Agent,
+  MockProvider,
+  type SessionTreeNode,
+  type Tool,
+  textMessage,
+  textTurn,
+  toolCallTurn,
+} from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { paletteFrame, paletteRowLimit } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
@@ -7,6 +15,8 @@ import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
+import type { SessionTreeModel } from "./session-tree-model.ts";
+import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import { parseWorkspaceState, type WorkspaceState } from "./workspace-state.ts";
 
 function mustParse(value: unknown): WorkspaceState {
@@ -459,6 +469,222 @@ describe("file browser", () => {
 
   it("browse is absent when no browser factory is wired", () => {
     expect(new AppProbe().command("browse")).toBe(false);
+  });
+});
+
+describe("session tree", () => {
+  interface TreeWorld {
+    entries: { id: string; parentId: string | null; text: string }[];
+    labels: Map<string, string>;
+    forkedFrom: string[];
+    resumed: (string | undefined)[];
+  }
+
+  const fixtureEntries = (): TreeWorld["entries"] => [
+    { id: "u1", parentId: null, text: "hello" },
+    { id: "a1", parentId: "u1", text: "hi there" },
+    { id: "u2", parentId: "a1", text: "make a plan" },
+    { id: "a2a", parentId: "u2", text: "plan v1" },
+    { id: "a2b", parentId: "u2", text: "plan v2" },
+  ];
+
+  function rootsOf(world: TreeWorld): SessionTreeNode[] {
+    const nodes = new Map<string, SessionTreeNode>(
+      world.entries.map((entry) => [
+        entry.id,
+        {
+          entry: {
+            type: "message",
+            id: entry.id,
+            parentId: entry.parentId,
+            timestamp: "",
+            message: textMessage("user", entry.text),
+          },
+          children: [],
+          onActivePath: entry.id !== "a2b",
+          ...(world.labels.has(entry.id) && { label: world.labels.get(entry.id) as string }),
+        },
+      ]),
+    );
+    const roots: SessionTreeNode[] = [];
+    for (const entry of world.entries) {
+      const node = nodes.get(entry.id) as SessionTreeNode;
+      const parent = entry.parentId === null ? undefined : nodes.get(entry.parentId);
+      if (parent === undefined) roots.push(node);
+      else parent.children.push(node);
+    }
+    return roots;
+  }
+
+  function treeProbe() {
+    const world: TreeWorld = {
+      entries: fixtureEntries(),
+      labels: new Map([["a2b", "alt"]]),
+      forkedFrom: [],
+      resumed: [],
+    };
+    const port: SessionTreePort = {
+      load: async (sessionId) => ({ sessionId, name: "fixture", roots: rootsOf(world) }),
+      setLabel: async (_sessionId, entryId, label) => {
+        if (label === undefined) world.labels.delete(entryId);
+        else world.labels.set(entryId, label);
+      },
+      fork: async (_sessionId, entryId) => {
+        world.forkedFrom.push(entryId);
+        return `forked-${world.forkedFrom.length}`;
+      },
+    };
+    const probe = new AppProbe({
+      createPane: (id, notify, commands, resumeSessionId) => {
+        world.resumed.push(resumeSessionId);
+        const pane = new ConversationPane(id, undefined, notify, undefined, commands);
+        pane.sessionId = resumeSessionId ?? `sess-${id}`;
+        return pane;
+      },
+      createSessionTreePane: (id, notify, intents, targetSession, sessionId) =>
+        new SessionTreePane(id, notify, intents, port, targetSession, sessionId),
+    });
+    return { probe, world };
+  }
+
+  function treeModel(probe: AppProbe, id = "tree-1"): SessionTreeModel {
+    const pane = probe.core.panes.get(id);
+    if (!(pane instanceof SessionTreePane)) throw new Error(`no session-tree pane "${id}"`);
+    return pane.model;
+  }
+
+  it("/tree opens the tree docked, focused, and mapped to the focused conversation", async () => {
+    const { probe } = treeProbe();
+    probe.type("/tree").keys("enter");
+    expect(paneIds(probe)).toEqual(["session-1", "tree-1"]);
+    expect(dockedIds(probe)).toEqual(["tree-1"]);
+    expect(probe.snapshot().focused).toBe("tree-1");
+    await probe.settled();
+    expect(treeModel(probe).sessionId()).toBe("sess-session-1");
+    expect(probe.snapshot().panes.find((pane) => pane.id === "tree-1")?.title).toContain(
+      "5 entries",
+    );
+  });
+
+  it("leader t summons the tree and refocuses it instead of duplicating", () => {
+    const { probe } = treeProbe();
+    probe.keys("ctrl+k", "t");
+    expect(paneIds(probe)).toEqual(["session-1", "tree-1"]);
+    expect(probe.snapshot().focused).toBe("tree-1");
+    probe.keys("ctrl+k", "l");
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.keys("t");
+    expect(probe.snapshot().focused).toBe("tree-1");
+    expect(paneIds(probe)).toEqual(["session-1", "tree-1"]);
+  });
+
+  it("renders branch structure and navigates with j/k", async () => {
+    const { probe } = treeProbe();
+    probe.command("tree");
+    await probe.settled();
+    const model = treeModel(probe);
+    expect(model.rows().map((row) => [row.id, row.depth])).toEqual([
+      ["u1", 0],
+      ["a1", 0],
+      ["u2", 0],
+      ["a2a", 1],
+      ["a2b", 1],
+    ]);
+    probe.keys("j", "j");
+    expect(model.cursorRow()?.id).toBe("u2");
+    probe.keys("k");
+    expect(model.cursorRow()?.id).toBe("a1");
+  });
+
+  it("f forks from the cursored node into a new conversation pane in the main area", async () => {
+    const { probe, world } = treeProbe();
+    probe.command("tree");
+    await probe.settled();
+    probe.keys("j", "j", "f");
+    await probe.settled();
+    expect(world.forkedFrom).toEqual(["u2"]);
+    expect(world.resumed).toEqual([undefined, "forked-1"]);
+    expect(paneIds(probe)).toEqual(["session-1", "session-2", "tree-1"]);
+    expect(dockedIds(probe)).toEqual(["tree-1"]);
+    expect(probe.snapshot().focused).toBe("session-2");
+  });
+
+  it("labels round-trip: shift+l edits, enter commits, the reloaded tree shows it", async () => {
+    const { probe, world } = treeProbe();
+    probe.command("tree");
+    await probe.settled();
+    probe.keys("j", "shift+l").type("wip").keys("enter");
+    await probe.settled();
+    expect(world.labels.get("a1")).toBe("wip");
+    expect(treeModel(probe).cursorRow()?.label).toBe("wip");
+    probe.keys("shift+l", "backspace", "backspace", "backspace", "enter");
+    await probe.settled();
+    expect(world.labels.has("a1")).toBe(false);
+    expect(treeModel(probe).cursorRow()?.label).toBeUndefined();
+  });
+
+  it("r refreshes and keeps the cursor on the surviving entry", async () => {
+    const { probe, world } = treeProbe();
+    probe.command("tree");
+    await probe.settled();
+    probe.keys("j", "j");
+    world.entries.push({ id: "u0", parentId: null, text: "second root" });
+    probe.keys("r");
+    await probe.settled();
+    const model = treeModel(probe);
+    expect(model.rows()).toHaveLength(6);
+    expect(model.cursorRow()?.id).toBe("u2");
+  });
+
+  it("a refresh that deletes the cursored node clamps to the nearest row", async () => {
+    const { probe, world } = treeProbe();
+    probe.command("tree");
+    await probe.settled();
+    probe.keys("j", "j", "j", "j");
+    expect(treeModel(probe).cursorRow()?.id).toBe("a2b");
+    world.entries = world.entries.filter((entry) => entry.id !== "a2b");
+    probe.keys("r");
+    await probe.settled();
+    const model = treeModel(probe);
+    expect(model.rows()).toHaveLength(4);
+    expect(model.cursorRow()).toBeDefined();
+  });
+
+  it("persists as a session-tree pane and revives from workspace state", async () => {
+    const { probe } = treeProbe();
+    probe.command("tree");
+    await probe.settled();
+    const state = mustParse(probe.workspaceState());
+    expect(state.panes).toContainEqual({
+      id: "tree-1",
+      kind: "session-tree",
+      sessionId: "sess-session-1",
+    });
+    const restored = new AppProbe({
+      createPane: (id, notify, commands) =>
+        new ConversationPane(id, undefined, notify, undefined, commands),
+      createSessionTreePane: (id, notify, intents, targetSession, sessionId) =>
+        new SessionTreePane(
+          id,
+          notify,
+          intents,
+          {
+            load: async (sessionId2) => ({ sessionId: sessionId2, roots: [] }),
+            setLabel: async () => {},
+            fork: async () => undefined,
+          },
+          targetSession,
+          sessionId,
+        ),
+      restoreWorkspace: state,
+    });
+    await restored.settled();
+    expect(paneIds(restored)).toEqual(["session-1", "tree-1"]);
+    expect(treeModel(restored).sessionId()).toBe("sess-session-1");
+  });
+
+  it("tree is absent when no session-tree factory is wired", () => {
+    expect(new AppProbe().command("tree")).toBe(false);
   });
 });
 

@@ -34,13 +34,42 @@ describe("loadConfig", () => {
       keybindings: { "pane.split": "ctrl+x s" },
     });
 
-    const config = await loadConfig({ userDir, projectDir });
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
     expect(config.model).toBe("openrouter/some-model");
     expect(config.keybindings).toEqual({
       "pane.split": "ctrl+x s",
       "pane.zoom": "ctrl+z",
     });
+  });
+
+  it("ignores the project layer entirely unless the workspace is trusted", async () => {
+    const userDir = await dirWithConfig({ keybindings: { "pane.split": "ctrl+s" } });
+    const projectDir = await dirWithConfig({ keybindings: { "pane.split": "ctrl+x s" } });
+
+    const untrusted = await loadConfig({ userDir, projectDir });
+    const explicit = await loadConfig({ userDir, projectDir, projectTrusted: false });
+
+    expect(untrusted.keybindings).toEqual({ "pane.split": "ctrl+s" });
+    expect(explicit.keybindings).toEqual({ "pane.split": "ctrl+s" });
+  });
+
+  it("does not even parse an invalid project config while untrusted", async () => {
+    const userDir = await dirWithConfig({});
+    const projectDir = await dirWithConfig("{ hostile garbage");
+
+    await expect(loadConfig({ userDir, projectDir })).resolves.toEqual(defaultConfig);
+  });
+
+  it("ignores permissions from the project layer even when trusted", async () => {
+    const userDir = await dirWithConfig({ permissions: { tools: { bash: "ask" } } });
+    const projectDir = await dirWithConfig({
+      permissions: { tools: { bash: "allow" }, bash: { "*": "allow" } },
+    });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.permissions).toEqual({ tools: { bash: "ask" } });
   });
 
   it("rejects unknown options with a readable error naming the file", async () => {
@@ -66,7 +95,7 @@ describe("loadConfig", () => {
       apiKeys: { openrouter: "attacker-key", attacker: "planted-key" },
     });
 
-    const config = await loadConfig({ userDir, projectDir });
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
     expect(config.model).toBe("openrouter/user-model");
     expect(config.apiKeys).toEqual({ openrouter: "user-key" });
@@ -76,7 +105,7 @@ describe("loadConfig", () => {
     const userDir = await dirWithConfig({ apiKeys: { openai: "user-key" } });
     const projectDir = await dirWithConfig({ apiKeys: {} });
 
-    const config = await loadConfig({ userDir, projectDir });
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
     expect(config.apiKeys).toEqual({ openai: "user-key" });
   });
@@ -87,7 +116,7 @@ describe("loadConfig", () => {
     });
     const projectDir = await dirWithConfig({ theme: { accent: "#445566" } });
 
-    const config = await loadConfig({ userDir, projectDir });
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
     expect(config.theme).toEqual({ accent: "#445566", background: "#000000" });
   });
@@ -161,7 +190,7 @@ describe("loadConfig", () => {
       },
     });
 
-    const config = await loadConfig({ userDir, projectDir });
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
     expect(config.mcpServers).toBeUndefined();
     expect(config.prompts).toEqual({ system: "user voice" });

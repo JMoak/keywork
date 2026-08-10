@@ -8,7 +8,12 @@ import {
   SessionStore,
   type SessionTreeNode,
 } from "@keywork/engine";
-import type { SessionAttachment, SessionPort } from "@keywork/tui";
+import type {
+  SessionAttachment,
+  SessionPort,
+  SessionTreePort,
+  SessionTreeView,
+} from "@keywork/tui";
 
 export interface OpenedSession {
   store: SessionStore;
@@ -72,6 +77,32 @@ export function sessionPort(dir: string, cwd: string): SessionPort {
   };
 }
 
+export function sessionTreePort(dir: string): SessionTreePort {
+  return {
+    async load(sessionId: string): Promise<SessionTreeView | undefined> {
+      const store = await openById(dir, sessionId);
+      if (store === undefined) return undefined;
+      const name = store.name();
+      return {
+        sessionId: store.header.id,
+        roots: store.tree(),
+        ...(name !== undefined && { name }),
+      };
+    },
+    async setLabel(sessionId: string, entryId: string, label: string | undefined): Promise<void> {
+      const store = await openById(dir, sessionId);
+      if (store === undefined) throw new Error(`no session matches id ${sessionId}`);
+      await store.setLabel(entryId, label);
+    },
+    async fork(sessionId: string, entryId: string): Promise<string | undefined> {
+      const store = await openById(dir, sessionId);
+      if (store === undefined) return undefined;
+      const clone = await store.clone(join(dir, newSessionFileName()), entryId);
+      return clone.header.id;
+    },
+  };
+}
+
 export async function findSessionFile(dir: string, idPrefix: string): Promise<string | undefined> {
   for (const summary of await listSessions(dir)) {
     if (summary.id.startsWith(idPrefix)) return summary.file;
@@ -111,6 +142,15 @@ export async function latestSessionFile(dir: string): Promise<string | undefined
 }
 
 let sessionSequence = 0;
+
+async function openById(dir: string, idPrefix: string): Promise<SessionStore | undefined> {
+  try {
+    const file = await findSessionFile(dir, idPrefix);
+    return file === undefined ? undefined : await SessionStore.open(file);
+  } catch {
+    return undefined;
+  }
+}
 
 function attachmentOf(store: SessionStore): SessionAttachment {
   return {

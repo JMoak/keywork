@@ -226,6 +226,21 @@ workspace, not merely a directory.
 identity; undeclared cwd still works exactly as today; vault path resolves from the
 declaration.
 **Strategy:** `OWN` (VS Code workspace *concept* as prior art; no code to lift).
+**Landed (2026-08-10):** `workspaceDeclarationSchema` + `openWorkspace(cwd)` +
+`resolveVaultPath(cwd)` in `packages/shared/src/config/workspace.ts` — strict schema
+(`name`, optional `contextDirs`, every field `.describe()`-justified), git-style walk-up
+discovery (nearest declaration wins, documented in the schema description), invalid or
+unreadable declaration is a hard `ConfigError`, absence is silent. Context dirs resolve
+against the root, dedupe, exclude the root itself, and partition into
+`contextDirs`/`missingContextDirs` (missing warns at CLI startup, never fatal — exposed
+for future tools-confinement widening). `workspaceIdentity(cwd)` in
+`packages/cli/src/paths.ts` keys declared workspaces off
+`sha256("workspace:" + resolvedRoot)` (domain-separated from the cwd hash; state files
+are machine-local in `~/.keywork`, cross-machine sharing rides the in-repo vault, and
+`name` stays a display handle so renaming it never orphans state); undeclared cwds keep
+today's cwd hash byte-for-byte, tested. Vault path is `<root>/.keywork/memory` for
+declared workspaces, `undefined` otherwise — the resolver never creates it; the J3 store
+consumes it via injection.
 
 ### J2 (2pt) — User-global config layer
 User scope carries global settings: MCP servers (feeds D8–D10/D14), global system prompts
@@ -259,6 +274,25 @@ unique-name invariant enforced); supersession link-pair fixture; layout document
 `docs/memory.md`.
 **Strategy:** `LIFT:openclaw` budgets/daily-log lifecycle; open Obsidian conventions
 (`OWN` — no app code exists to lift); Matuschak evergreen method as spec.
+**Landed (2026-08-10):** `packages/engine/src/memory/` — per-scope vault store over an
+injected vault root + clock (J1's `resolveVaultPath` plugs in when it lands): links-only
+`MEMORY.md` MOC, `daily/YYYY-MM-DD.md` with per-entry `- HH:MM [prov: class]` markers
+(continuations indented so content can't forge a marker), atomic notes with
+provenance/staged/confidence/aliases frontmatter and quoted-wikilink
+`supersedes`/`superseded_by` pairs stamped across both notes, `entities/<repo path>.md`
+(P4: case-preserving, case-insensitive match, short-name alias), `curation.md` audit,
+unique titles enforced case-insensitively with hostile-name rejection, malformed
+frontmatter as a typed error naming the file, R4 budget bootstrap (pinned first, MOC
+order, whole files only). The **J11 kernel** landed with it: caller-stamped provenance,
+untrusted writes structurally staged in `.staging/` (excluded from every read surface
+until approve/discard; supersession stamping deferred to approval), session ledger with
+before/after content hashes and one-key revert that demotes stale bases to needs-rebase
+(P7), P5 redaction (`‹redacted:NAME›`) before any persistence staged included, and the
+P1 trust gate (injected `trusted: false` ⇒ reads empty, writes throw `MemoryInertError`).
+Property-tested: a 120-step randomized op walk proves no sequence makes an untrusted
+write load-bearing without approve, and the raw secret never touches disk. Layout doc in
+`docs/memory.md`; airlock ritual and curing display deliberately not built (the J-D7
+escape hatch — kernel first).
 
 ### J4 (3pt) — Hybrid index & recall metrics
 SQLite sidecar per scope: atomic notes index **whole-note** (R2 — note = retrieval =

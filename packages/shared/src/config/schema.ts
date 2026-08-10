@@ -89,6 +89,24 @@ const prompts = z
   .partial()
   .strict();
 
+const permissionAction = z.enum(["allow", "ask", "deny"]);
+
+const permissions = z
+  .object({
+    tools: z
+      .record(z.string(), permissionAction)
+      .describe(
+        "Tool name (read, write, edit, bash, or any registered tool) to allow | ask | deny; exists so the safety posture is auditable policy instead of scattered flags. Unlisted tools keep the built-in posture: read-only tools allow, mutating tools ask. deny reaches the model as a refused tool result without ever prompting.",
+      ),
+    bash: z
+      .record(z.string(), permissionAction)
+      .describe(
+        'Glob patterns (`*` wildcard) over the full bash command string to allow | ask | deny, e.g. "git status*": "allow"; exists because asking on every trivially safe command makes the gate unusable. The most specific matching pattern wins (most literal characters; first declared breaks ties) and overrides tools.bash. A command containing shell chaining characters (; & | < > ` $ ( ) or a newline) can only match deny rules — "git status; rm -rf /" falls through to tools.bash instead of riding an allow rule.',
+      ),
+  })
+  .partial()
+  .strict();
+
 export const configSchema = z
   .object({
     model: z
@@ -116,6 +134,9 @@ export const configSchema = z
       .describe(
         "Named MCP server definitions the user mounts globally; exists to feed D8–D10/D14 tool mounting from one validated map (schema only until D8 wires execution). Honored from the user config layer only — a checked-in project file can never register servers or their credentials.",
       ),
+    permissions: permissions.describe(
+      "Declarative allow | ask | deny policy for tool execution; exists because graduated trust (workstream E) must live in readable config, not code. Honored from the user config layer only — a checked-in project file can never widen permissions.",
+    ),
     prompts: prompts.describe(
       "User-scope system-prompt customization: one global prompt plus per-model-pattern overrides; exists because prompt steering is a user preference, not a project artifact. Honored from the user config layer only — a checked-in project file can never inject prompts.",
     ),
@@ -125,6 +146,8 @@ export const configSchema = z
 
 export type KeyworkConfig = z.infer<typeof configSchema>;
 export type McpServerConfig = z.infer<typeof mcpServer>;
+export type PermissionAction = z.infer<typeof permissionAction>;
+export type PermissionsConfig = NonNullable<KeyworkConfig["permissions"]>;
 export type PromptsConfig = NonNullable<KeyworkConfig["prompts"]>;
 export type PromptOverride = z.infer<typeof promptOverride>;
 

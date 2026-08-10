@@ -10,6 +10,7 @@ import {
   newSessionFileName,
   openOrResumeSession,
   sessionsCommand,
+  sessionTreePort,
 } from "./sessions.ts";
 
 const tempDirs: string[] = [];
@@ -230,5 +231,38 @@ describe("findSessionFile", () => {
 
     expect(await findSessionFile(dir, opened.store.header.id.slice(0, 6))).toBe(opened.store.file);
     expect(await findSessionFile(dir, "zzzzzz")).toBeUndefined();
+  });
+});
+
+describe("sessionTreePort", () => {
+  it("loads the tree, relabels, and forks through the disk store", async () => {
+    const dir = await tempDir();
+    const opened = await openOrResumeSession(dir, ".");
+    const first = await opened.store.append(textMessage("user", "root question"));
+    await opened.store.append(textMessage("assistant", "root answer"));
+    const port = sessionTreePort(dir);
+    const id = opened.store.header.id;
+
+    const view = await port.load(id.slice(0, 8));
+    expect(view?.sessionId).toBe(id);
+    expect(view?.roots.at(0)?.entry.id).toBe(first.id);
+
+    await port.setLabel(id, first.id, "start");
+    const relabeled = await port.load(id);
+    expect(relabeled?.roots.at(0)?.label).toBe("start");
+
+    const forkedId = await port.fork(id, first.id);
+    expect(forkedId).toBeDefined();
+    expect(forkedId).not.toBe(id);
+    const sessions = await listSessions(dir);
+    expect(sessions.map((session) => session.id)).toContain(forkedId);
+  });
+
+  it("degrades cleanly on unknown sessions", async () => {
+    const port = sessionTreePort(await tempDir());
+
+    expect(await port.load("missing")).toBeUndefined();
+    expect(await port.fork("missing", "entry")).toBeUndefined();
+    await expect(port.setLabel("missing", "entry", "x")).rejects.toThrow("no session matches");
   });
 });

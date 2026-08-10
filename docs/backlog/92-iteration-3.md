@@ -33,6 +33,7 @@
 
 | Track P | **done** (2026-08-10) | Workspace persistence: `~/.keywork/workspaces/<hash>.json` keyed by `workspaceIdentity(cwd)` (cwd-hash today, the J1 seam — swap the identity function, nothing else moves). `Layout.toJSON/parse/load` serialize tree shape + split ratios + dock side/ratio/order + focus (zoom never persisted); `workspace-state.ts` wraps it with versioned pane descriptors (conversation → sessionId, file → path, browser → root only — expansion state absent per C31) and discards corrupt/version-mismatched files wholesale. `AppCore` saves through an injectable `saveWorkspace` on every layout/descriptor change (fingerprint-deduped) and on shutdown; cli side debounces (500ms) with flush-on-exit. Restore on `keywork panes` revives panes via the existing factories, reattaches sessions through a `SessionPort` (open-by-id / create; panes mode is now session-backed — turns append to the store, resumes seed history + replay), and skips missing sessions/files/throwing factories without crashing; `--fresh` opts out of loading while still saving. Probe round-trip, revival-degradation, save-trigger, and corrupt-file tests in workflows/layout/workspace-state/cli suites. Deferred: dock-pane session persistence needs nothing extra; per-pane scroll positions and input drafts deliberately not persisted. |
 | B2 note | — | The `--resume`/session-list half of Track P landed with Track T (see above); not redone here. |
+| C13 | mostly done (2026-08-10) | Session-tree pane over Track T's `tree()` API: pure `SessionTreeModel` (windowed flattened outline, indent only under branch points, collapse/expand, path-anchored cursor surviving refresh, inline label editor) + `SessionTreePane` (chrome, entry-count title, `●/○` active-path markers, `▸/▾` branch glyphs); `/tree` command + `leader t` summon-or-focus, opens docked (browser precedent); `f` fork → `PaneIntents.openSession` → new session-backed conversation pane (fork attachments pre-opened so history seeds the agent); `session-tree` workspace descriptor persists/revives. Injected `SessionTreePort` is TUI-side only — the cli `sessionPort`-style disk implementation is the remaining wiring (cli was owned elsewhere this wave). Jump-to-node deferred honestly: switching a live pane's branch requires rebinding the agent's seeded history mid-flight — lands with the steer/agent-rebuild seam. Unit + property + probe workflow tests. |
 
 ## The shape of this iteration
 
@@ -110,9 +111,19 @@ New backlog entries (next iterations, sequenced by existing IDs):
 - **I5 (E6, 1–2pt):** Pi `ProjectTrustStore`/`resolveProjectTrusted` — per-path persisted
   tri-state trust, cwd-is-$HOME handling, session-only trust. E6's design already
   edge-cased. ADAPT.
+  **Landed (2026-08-10):** `TrustStore` in `packages/shared/src/trust/store.ts` (NOTICE
+  Pi entry) — `~/.keywork/trust.json`, nearest-ancestor resolution, $HOME/root decisions
+  never blanket children, session-only grants shadow persisted ones; `loadConfig` takes
+  `projectTrusted` and ignores the project layer entirely (unread) until trusted;
+  `keywork trust`/`untrust` CLI; first-open TUI overlay still open.
 - **I6 (E1, 2pt):** OpenCode permission model — allow/ask/deny per tool category,
   glob-scoped bash rules, per-agent overrides. Pi supplies persistence (I5), OpenCode the
   rule engine. ADAPT.
+  **Landed (2026-08-10):** `permissionPolicy` in `packages/shared/src/trust/permissions.ts`
+  (NOTICE OpenCode entry) + `permissions` schema field; `Agent` resolves the verdict before
+  the interim guard ask. Bash rules: most literal characters wins, first declared breaks
+  ties; commands containing `; & | < > \` $ ( )` or newlines can only match deny rules.
+  Per-agent overrides await D6 agents.
 - **I7 (D1–D3, 2–3pt):** Pi extension host contract — `ExtensionAPI` (`registerTool` with
   render hooks + `details` state reconstruction, `registerCommand`, `appendEntry` replayable
   state); installed `docs/extensions.md` is the D2 event-taxonomy spec. ADAPT types/taxonomy.

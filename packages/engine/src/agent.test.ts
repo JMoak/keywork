@@ -244,6 +244,165 @@ describe("Agent end-to-end with mock provider", () => {
     expect(agent.history()[2]?.parts[0]).toMatchObject({ output: "echo: hi", isError: false });
   });
 
+  it("denies a tool by permission verdict without consulting the guard", async () => {
+    const executed: string[] = [];
+    const guardCalls: string[] = [];
+    const mutatingTool: Tool = {
+      ...echoTool,
+      name: "scribble",
+      mutates: true,
+      execute: async () => {
+        executed.push("scribble");
+        return "wrote";
+      },
+    };
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+        textTurn("Understood."),
+      ]),
+      tools: [mutatingTool],
+      guard: {
+        confirm: async (call) => {
+          guardCalls.push(call.name);
+          return true;
+        },
+      },
+      permissions: () => "deny",
+    });
+
+    await agent.send("Change something");
+
+    expect(executed).toEqual([]);
+    expect(guardCalls).toEqual([]);
+    expect(agent.history()[2]?.parts[0]).toMatchObject({
+      isError: true,
+      output: "denied by permission policy",
+    });
+  });
+
+  it("denies non-mutating tools too when the policy says so", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "call-1",
+          name: "echo",
+          arguments: { text: "x" },
+        }),
+        textTurn("Understood."),
+      ]),
+      tools: [echoTool],
+      permissions: (call) => (call.name === "echo" ? "deny" : undefined),
+    });
+
+    await agent.send("Read something");
+
+    expect(agent.history()[2]?.parts[0]).toMatchObject({
+      isError: true,
+      output: "denied by permission policy",
+    });
+  });
+
+  it("skips the ask but still checkpoints when the policy allows a mutation", async () => {
+    const order: string[] = [];
+    const mutatingTool: Tool = {
+      ...echoTool,
+      name: "scribble",
+      mutates: true,
+      execute: async () => {
+        order.push("execute");
+        return "wrote";
+      },
+    };
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+        textTurn("Done."),
+      ]),
+      tools: [mutatingTool],
+      guard: {
+        confirm: async () => {
+          order.push("confirm");
+          return false;
+        },
+        beforeMutation: async () => {
+          order.push("checkpoint");
+        },
+      },
+      permissions: () => "allow",
+    });
+
+    await agent.send("Change something");
+
+    expect(order).toEqual(["checkpoint", "execute"]);
+  });
+
+  it("asks the guard when the policy says ask, even for non-mutating tools", async () => {
+    const guardCalls: string[] = [];
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "call-1",
+          name: "echo",
+          arguments: { text: "x" },
+        }),
+        textTurn("Understood."),
+      ]),
+      tools: [echoTool],
+      guard: {
+        confirm: async (call) => {
+          guardCalls.push(call.name);
+          return false;
+        },
+      },
+      permissions: () => "ask",
+    });
+
+    await agent.send("Read carefully");
+
+    expect(guardCalls).toEqual(["echo"]);
+    expect(agent.history()[2]?.parts[0]).toMatchObject({
+      isError: true,
+      output: "declined by user",
+    });
+  });
+
+  it("falls back to the mutates default where the policy is silent", async () => {
+    const guardCalls: string[] = [];
+    const mutatingTool: Tool = {
+      ...echoTool,
+      name: "scribble",
+      mutates: true,
+      execute: async () => "wrote",
+    };
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "call-1",
+          name: "echo",
+          arguments: { text: "x" },
+        }),
+        toolCallTurn({ type: "tool-call", callId: "call-2", name: "scribble", arguments: {} }),
+        textTurn("Done."),
+      ]),
+      tools: [echoTool, mutatingTool],
+      guard: {
+        confirm: async (call) => {
+          guardCalls.push(call.name);
+          return true;
+        },
+      },
+      permissions: () => undefined,
+    });
+
+    await agent.send("Mixed work");
+
+    expect(guardCalls).toEqual(["scribble"]);
+  });
+
   it("keeps interrupt aimed at a turn started from a completion event", async () => {
     let calls = 0;
     const provider: Provider = {

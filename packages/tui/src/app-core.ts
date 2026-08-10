@@ -159,6 +159,12 @@ const appActions: Record<string, AppAction> = {
     chainable: true,
     invoke: (core) => core.summonBrowser(),
   },
+  "tree.summon": {
+    chords: "leader t",
+    help: "session tree",
+    chainable: true,
+    invoke: (core) => core.summonSessionTree(),
+  },
   "help.toggle": {
     chords: ["leader /", "f1"],
     help: "this overlay",
@@ -211,6 +217,13 @@ export type BrowserPaneFactory = (
   notify: () => void,
   intents: PaneIntents,
 ) => Pane;
+export type SessionTreePaneFactory = (
+  id: string,
+  notify: () => void,
+  intents: PaneIntents,
+  targetSession: () => string | undefined,
+  sessionId?: string,
+) => Pane;
 
 export interface UndoPort {
   undo(): Promise<boolean>;
@@ -222,6 +235,7 @@ export interface AppCoreOptions {
   createPane: PaneFactory;
   createFilePane?: FilePaneFactory;
   createBrowserPane?: BrowserPaneFactory;
+  createSessionTreePane?: SessionTreePaneFactory;
   isDirectory?: (path: string) => boolean;
   undo?: UndoPort;
   restoreWorkspace?: WorkspaceState;
@@ -289,6 +303,7 @@ export class AppCore {
   readonly panes = new Map<string, Pane>();
   readonly intents: PaneIntents = {
     openFile: (path) => this.openFilePane(path),
+    openSession: (sessionId) => this.openPane(sessionId),
     focusPane: (id) => this.layout.focus(id),
   };
   leaderArmed = false;
@@ -298,6 +313,7 @@ export class AppCore {
   private nextSession = 1;
   private nextFile = 1;
   private nextBrowser = 1;
+  private nextTree = 1;
   private notify: () => void = () => {};
   private lastSavedWorkspace = "";
   private readonly paneChanged = (): void => {
@@ -432,10 +448,13 @@ export class AppCore {
     this.persistWorkspace();
   }
 
-  openPane(): void {
+  openPane(resumeSessionId?: string): void {
     const id = `session-${this.nextSession}`;
     this.nextSession += 1;
-    this.panes.set(id, this.options.createPane(id, this.paneChanged, this.registry));
+    this.panes.set(
+      id,
+      this.options.createPane(id, this.paneChanged, this.registry, resumeSessionId),
+    );
     this.focusMainArea();
     this.layout.open(id, this.screen());
   }
@@ -459,6 +478,15 @@ export class AppCore {
       return;
     }
     this.openBrowserPane(".");
+  }
+
+  summonSessionTree(): void {
+    const existing = [...this.panes.keys()].find((id) => id.startsWith("tree-"));
+    if (existing !== undefined) {
+      this.layout.focus(existing);
+      return;
+    }
+    this.openSessionTreePane();
   }
 
   toggleHelp(): void {
@@ -554,6 +582,14 @@ export class AppCore {
             this.paneChanged,
             this.intents,
           );
+        case "session-tree":
+          return this.options.createSessionTreePane?.(
+            entry.id,
+            this.paneChanged,
+            this.intents,
+            () => this.conversationSession(),
+            entry.sessionId,
+          );
       }
     } catch {
       return undefined;
@@ -565,6 +601,7 @@ export class AppCore {
       this.nextSession = nextAfter(id, "session", this.nextSession);
       this.nextFile = nextAfter(id, "file", this.nextFile);
       this.nextBrowser = nextAfter(id, "browser", this.nextBrowser);
+      this.nextTree = nextAfter(id, "tree", this.nextTree);
     }
   }
 
@@ -586,6 +623,32 @@ export class AppCore {
     this.panes.set(id, create(id, root, this.paneChanged, this.intents));
     this.layout.open(id, this.screen());
     this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+  }
+
+  private openSessionTreePane(): void {
+    const create = this.options.createSessionTreePane;
+    if (create === undefined) return;
+    const id = `tree-${this.nextTree}`;
+    this.nextTree += 1;
+    this.panes.set(
+      id,
+      create(id, this.paneChanged, this.intents, () => this.conversationSession()),
+    );
+    this.layout.open(id, this.screen());
+    this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+  }
+
+  private conversationSession(): string | undefined {
+    const focused = this.layout.focused();
+    const ids = this.layout.panes();
+    const ordered = focused === undefined ? ids : [focused, ...ids.filter((id) => id !== focused)];
+    for (const id of ordered) {
+      const descriptor = this.panes.get(id)?.describe?.();
+      if (descriptor?.kind === "conversation" && descriptor.sessionId !== undefined) {
+        return descriptor.sessionId;
+      }
+    }
+    return undefined;
   }
 
   private pointsAtDirectory(path: string): boolean {
@@ -709,6 +772,15 @@ export class AppCore {
         ...shortcut("browser.summon"),
         run: (args) =>
           args === undefined || args === "" ? this.summonBrowser() : this.openBrowserPane(args),
+      });
+    }
+    if (this.options.createSessionTreePane !== undefined) {
+      this.registry.register({
+        name: "tree",
+        aliases: ["session-tree"],
+        description: "open the session tree: /tree",
+        ...shortcut("tree.summon"),
+        run: () => this.summonSessionTree(),
       });
     }
     const undoPort = this.options.undo;

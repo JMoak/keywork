@@ -1,4 +1,11 @@
-export { Agent, AgentBusyError, type AgentOptions, type ToolGuard } from "./agent.ts";
+export {
+  Agent,
+  AgentBusyError,
+  type AgentOptions,
+  type PermissionResolver,
+  type ToolGuard,
+  type ToolPermission,
+} from "./agent.ts";
 export { type EngineEvents, EventBus } from "./bus.ts";
 export { Checkpoints, type CheckpointsOptions } from "./checkpoints.ts";
 export {
@@ -9,6 +16,39 @@ export {
   debugLogFile,
   redactSecrets,
 } from "./diagnostics.ts";
+export {
+  type Frontmatter,
+  type FrontmatterValue,
+  MalformedFrontmatterError,
+} from "./memory/frontmatter.ts";
+export {
+  contentHash,
+  type FileDelta,
+  type LedgerEntry,
+  type LedgerOp,
+  type RevertOutcome,
+} from "./memory/ledger.ts";
+export { canonicalEntityPath, InvalidTitleError, titleKey } from "./memory/naming.ts";
+export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
+export {
+  type BootstrapSelection,
+  type DailyEntry,
+  DuplicateTitleError,
+  extractWikilinks,
+  LedgerEntryNotFoundError,
+  MalformedStagedItemError,
+  MemoryInertError,
+  MemoryStore,
+  type MemoryStoreOptions,
+  MissingNoteError,
+  type Note,
+  type NoteInput,
+  type Provenance,
+  type StagedItem,
+  StagedItemNotFoundError,
+  type StagedKind,
+  type WriteResult,
+} from "./memory/store.ts";
 export {
   type ImagePart,
   type Message,

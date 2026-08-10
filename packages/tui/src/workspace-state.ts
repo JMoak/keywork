@@ -50,6 +50,13 @@ function parsePane(value: unknown): WorkspacePane | undefined {
     case "browser":
       if (typeof value.root !== "string" || value.root === "") return undefined;
       return { id: value.id, kind: "browser", root: value.root };
+    case "session-tree":
+      if (value.sessionId !== undefined && typeof value.sessionId !== "string") return undefined;
+      return {
+        id: value.id,
+        kind: "session-tree",
+        ...(value.sessionId !== undefined && { sessionId: value.sessionId }),
+      };
     default:
       return undefined;
   }

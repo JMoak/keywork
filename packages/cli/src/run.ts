@@ -8,6 +8,7 @@ import {
   loadProjectInstructions,
   type Message,
   messageText,
+  type PermissionResolver,
   type Provider,
   SessionStore,
 } from "@keywork/engine";
@@ -20,11 +21,13 @@ export interface RunOptions {
   prompt: string;
   cwd: string;
   json: boolean;
+  projectTrusted?: boolean;
   debug?: boolean;
   sessionDir?: string;
   provider?: Provider;
   prompts?: PromptsConfig;
   modelId?: string;
+  permissions?: PermissionResolver;
   print?: (line: string) => void;
   printError?: (line: string) => void;
   exit?: (code: number) => never;
@@ -37,10 +40,12 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
     if (options.json) print(JSON.stringify({ type, ...(payload as object) }));
   };
 
-  const instructions = await loadProjectInstructions(options.cwd);
+  const instructions =
+    options.projectTrusted === true ? await loadProjectInstructions(options.cwd) : undefined;
   const agent = new Agent({
     provider,
     tools: coreTools(options.cwd),
+    ...(options.permissions !== undefined && { permissions: options.permissions }),
     systemPrompt: buildSystemPrompt({
       ...(instructions !== undefined && { projectInstructions: instructions }),
       ...(options.prompts !== undefined && { prompts: options.prompts }),

@@ -51,14 +51,17 @@ subset landed, remainder listed · **—** = not started.
 | C10 | — | Zoom & layout cycle. |
 | C11 | partial | Generic Pane contract + registry seed; summon-per-type chords outstanding. |
 | C12 | partial | ConversationPane streams with agent+session per pane (= multi-session); markdown/code rendering, collapsed tool blocks, steer-vs-queue keys, scroll perf outstanding. |
-| C13–C15a | — | Session-tree, diff, terminal-spike panes. |
+| C13 | mostly done (2026-08-10) | `SessionTreeModel`/`SessionTreePane`: flattened outline (indent only under branch points), labels inline, active path marked, collapse/expand, path-anchored cursor; `f` forks into a new conversation pane, `shift+l` inline label editor, `r` refresh; `/tree` + `leader t` summon-or-focus, opens docked. Jump-to-node deferred (needs live agent rebind); CLI wiring of `SessionTreePort` outstanding. |
+| C14–C15a | — | Diff, terminal-spike panes. |
 | C16 | done | Theme system: tokens, `keywork-night` (Tokyo-Night purple) default, config overrides. |
 | C17 | — | `system` terminal-derived theme. |
 | C18 | — | Status line. |
 | C19 | partial | `keywork setup` writes apiKeys to user config — the guided-key-setup half; the in-TUI welcome surface outstanding (and now auto-triggered per D13). |
 | C20–C23 | — | Model picker, @file/paste, deep links, keymap spec. |
 | D0–D11 | — | D-stream untouched; **D0 is now the critical path** for the feedback tasks below and is pulled forward (see Resequencing). |
-| E1–E6 | — | Trust & safety untouched — including the interim hardcoded ask-before-bash/write flag 90 attached to A6. Flagged, not forgotten. |
+| E1 | partial (2026-08-10) | Declarative allow/ask/deny permission model per 92/I6: user-scope `permissions.tools` (per tool name) + `permissions.bash` (glob rules over the command string, chaining-character containment), resolved in the Agent loop ahead of the interim ask — deny reaches the model without prompting, allow skips the ask, project layer can never widen. Overlay allow-once/always UX and per-agent overrides outstanding. |
+| E2, E3–E4 surfacing, E5 | — | Presets UX, panes markers for checkpoints, Plan/Build agents pending. |
+| E6 | partial (2026-08-10) | Workspace trust gate per 92/I5: tri-state per-path store at `~/.keywork/trust.json` (0600, nearest-ancestor wins, $HOME never blankets, session-only grants), project config layer inert until trusted, `keywork trust`/`untrust`, hostile-fixture acceptance tests green. Project instructions (AGENTS.md → system prompt) also trust-gated (Jordan, 2026-08-10): fail-closed `projectTrusted` on chat/run/panes — an untrusted clone's instructions never reach the model. First-open TUI overlay outstanding. |
 | F, G, P2 | — | As planned (G-gated guardrail intact). |
 
 Unplanned extras that landed without a backlog ID (recorded here so the ledger stays honest):
