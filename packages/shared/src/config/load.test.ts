@@ -72,6 +72,25 @@ describe("loadConfig", () => {
     expect(config.permissions).toEqual({ tools: { bash: "ask" } });
   });
 
+  it("accepts a plausible bedrockRegion and rejects a hostile one", async () => {
+    const validDir = await dirWithConfig({ bedrockRegion: "us-gov-west-1" });
+    const hostileDir = await dirWithConfig({ bedrockRegion: "evil.example.com" });
+
+    await expect(loadConfig({ userDir: validDir })).resolves.toMatchObject({
+      bedrockRegion: "us-gov-west-1",
+    });
+    await expect(loadConfig({ userDir: hostileDir })).rejects.toThrow(/us-east-1/);
+  });
+
+  it("ignores bedrockRegion from the project layer even when trusted", async () => {
+    const userDir = await dirWithConfig({});
+    const projectDir = await dirWithConfig({ bedrockRegion: "eu-west-1" });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.bedrockRegion).toBeUndefined();
+  });
+
   it("rejects unknown options with a readable error naming the file", async () => {
     const userDir = await dirWithConfig({ telemtry: true });
 

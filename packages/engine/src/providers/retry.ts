@@ -66,7 +66,11 @@ function isTransient(cause: unknown): boolean {
   if (cause instanceof ProviderHttpError) {
     return cause.status === 408 || cause.status === 429 || cause.status >= 500;
   }
-  return isNetworkFailure(cause);
+  return declaresTransience(cause) || isNetworkFailure(cause);
+}
+
+function declaresTransience(cause: unknown): boolean {
+  return cause instanceof Error && (cause as { transient?: unknown }).transient === true;
 }
 
 const networkFailurePattern =

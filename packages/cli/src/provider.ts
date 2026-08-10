@@ -1,4 +1,11 @@
-import { OpenAiCompatibleProvider, type Provider, RetryingProvider } from "@keywork/engine";
+import {
+  BedrockProvider,
+  credentialsFromEnv,
+  OpenAiCompatibleProvider,
+  type Provider,
+  RetryingProvider,
+  regionFromEnv,
+} from "@keywork/engine";
 
 export interface ResolvedProvider {
   provider: Provider;
@@ -26,12 +33,14 @@ export const providerSetupHint = `No provider configured. Easiest fix:
 Or set an environment variable:
   KEYWORK_OPENROUTER_API_KEY or OPENROUTER_API_KEY  (any model on OpenRouter)
   KEYWORK_OPENAI_API_KEY or OPENAI_API_KEY          (OpenAI directly)
+  AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION  (Amazon Bedrock)
 then optionally choose a model with --model or "model" in keywork.json.`;
 
 export function resolveProvider(
   env: Record<string, string | undefined>,
   model?: string,
   savedKeys?: Record<string, string>,
+  bedrockRegion?: string,
 ): ResolvedProvider | undefined {
   for (const entry of catalog) {
     const apiKey = firstPresent(env, entry.keyVariables) ?? savedKeys?.[entry.name];
@@ -50,7 +59,27 @@ export function resolveProvider(
       modelId: chosenModel,
     };
   }
-  return undefined;
+  return resolveBedrock(env, model, bedrockRegion);
+}
+
+const bedrockDefaultModel = "amazon.nova-lite-v1:0";
+
+function resolveBedrock(
+  env: Record<string, string | undefined>,
+  model?: string,
+  configRegion?: string,
+): ResolvedProvider | undefined {
+  const credentials = credentialsFromEnv(env);
+  const region = regionFromEnv(env) ?? configRegion;
+  if (credentials === undefined || region === undefined) return undefined;
+  const chosenModel = model ?? bedrockDefaultModel;
+  return {
+    provider: new RetryingProvider(
+      new BedrockProvider({ region, model: chosenModel, credentials }),
+    ),
+    label: `bedrock/${chosenModel}`,
+    modelId: chosenModel,
+  };
 }
 
 function firstPresent(

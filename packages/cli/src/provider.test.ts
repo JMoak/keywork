@@ -45,4 +45,55 @@ describe("resolveProvider", () => {
     });
     expect(resolved?.label).toBe("openai/gpt-5-mini");
   });
+
+  it("resolves bedrock from AWS credentials and region in the environment", () => {
+    const resolved = resolveProvider({
+      AWS_ACCESS_KEY_ID: "id",
+      AWS_SECRET_ACCESS_KEY: "secret",
+      AWS_REGION: "us-east-1",
+    });
+    expect(resolved?.label).toBe("bedrock/amazon.nova-lite-v1:0");
+  });
+
+  it("falls back to the configured bedrock region when the environment has none", () => {
+    const resolved = resolveProvider(
+      { AWS_ACCESS_KEY_ID: "id", AWS_SECRET_ACCESS_KEY: "secret" },
+      undefined,
+      undefined,
+      "eu-west-1",
+    );
+    expect(resolved?.label).toBe("bedrock/amazon.nova-lite-v1:0");
+  });
+
+  it("returns nothing for AWS credentials without any region", () => {
+    expect(
+      resolveProvider({ AWS_ACCESS_KEY_ID: "id", AWS_SECRET_ACCESS_KEY: "secret" }),
+    ).toBeUndefined();
+  });
+
+  it("returns nothing for a region without complete AWS credentials", () => {
+    expect(resolveProvider({ AWS_ACCESS_KEY_ID: "id", AWS_REGION: "us-east-1" })).toBeUndefined();
+  });
+
+  it("lets API-key providers outrank bedrock", () => {
+    const resolved = resolveProvider({
+      OPENAI_API_KEY: "k",
+      AWS_ACCESS_KEY_ID: "id",
+      AWS_SECRET_ACCESS_KEY: "secret",
+      AWS_REGION: "us-east-1",
+    });
+    expect(resolved?.label).toBe("openai/gpt-5-mini");
+  });
+
+  it("honors an explicit model choice on bedrock", () => {
+    const resolved = resolveProvider(
+      {
+        AWS_ACCESS_KEY_ID: "id",
+        AWS_SECRET_ACCESS_KEY: "secret",
+        AWS_REGION: "us-east-1",
+      },
+      "meta.llama3-70b-instruct-v1:0",
+    );
+    expect(resolved?.label).toBe("bedrock/meta.llama3-70b-instruct-v1:0");
+  });
 });

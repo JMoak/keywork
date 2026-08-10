@@ -31,6 +31,15 @@ export {
 export { canonicalEntityPath, InvalidTitleError, titleKey } from "./memory/naming.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
 export {
+  type EmbeddingsPort,
+  MemorySearch,
+  type RetrievalSource,
+  type SearchHit,
+  type SearchLeg,
+  type SearchOptions,
+  type SearchOutcome,
+} from "./memory/search.ts";
+export {
   type BootstrapSelection,
   type DailyEntry,
   DuplicateTitleError,
@@ -76,6 +85,16 @@ export type {
   ToolDefinition,
   TurnDelta,
 } from "./provider.ts";
+export {
+  BedrockExceptionError,
+  type BedrockOptions,
+  BedrockProvider,
+} from "./providers/bedrock/bedrock.ts";
+export {
+  type AwsCredentials,
+  credentialsFromEnv,
+  regionFromEnv,
+} from "./providers/bedrock/sigv4.ts";
 export {
   type FetchLike,
   type OpenAiCompatibleOptions,

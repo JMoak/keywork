@@ -124,6 +124,12 @@ export const configSchema = z
       .describe(
         "Theme-token to #rrggbb overrides on the keywork-night palette; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
       ),
+    bedrockRegion: z
+      .string()
+      .regex(/^[a-z]{2}(-[a-z]+)+-\d+$/, "bedrockRegion must look like us-east-1")
+      .describe(
+        "AWS region for the Bedrock provider when AWS_REGION/AWS_DEFAULT_REGION are unset; exists because Bedrock endpoints are regional and the endpoint is derived from the region alone — config can never supply a base URL. Honored from the user config layer only.",
+      ),
     apiKeys: z
       .record(z.string(), z.string())
       .describe(

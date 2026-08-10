@@ -68,7 +68,7 @@ async function main(argv: string[]): Promise<number> {
   const policy = permissionPolicy(config.permissions);
   const toolPermissions: PermissionResolver = (call) => policy(call.name, call.arguments);
   const model = values.model ?? config.model;
-  let resolved = resolveProvider(process.env, model, config.apiKeys);
+  let resolved = resolveProvider(process.env, model, config.apiKeys, config.bedrockRegion);
 
   const onboardIfNeeded = async (): Promise<void> => {
     if (resolved !== undefined || !process.stdin.isTTY) return;
@@ -76,7 +76,12 @@ async function main(argv: string[]): Promise<number> {
     const { runSetup } = await import("./setup.ts");
     if ((await runSetup()) !== 0) return;
     const refreshed = await loadKeyworkConfig(cwd, projectTrusted);
-    resolved = resolveProvider(process.env, values.model ?? refreshed.model, refreshed.apiKeys);
+    resolved = resolveProvider(
+      process.env,
+      values.model ?? refreshed.model,
+      refreshed.apiKeys,
+      refreshed.bedrockRegion,
+    );
   };
 
   switch (command) {

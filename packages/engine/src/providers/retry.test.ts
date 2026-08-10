@@ -102,6 +102,24 @@ describe("RetryingProvider", () => {
     expect(calls).toBe(1);
   });
 
+  it("retries errors that declare themselves transient", async () => {
+    const provider = new RetryingProvider(
+      providerFailingTimes(1, () => Object.assign(new Error("throttled"), { transient: true })),
+      { attempts: 2, sleep: instantSleep },
+    );
+
+    expect(await collect(provider.stream(request))).toEqual(goodTurn);
+  });
+
+  it("does not retry errors that declare themselves non-transient", async () => {
+    const provider = new RetryingProvider(
+      providerFailingTimes(1, () => Object.assign(new Error("invalid"), { transient: false })),
+      { attempts: 3, sleep: instantSleep },
+    );
+
+    await expect(collect(provider.stream(request))).rejects.toThrow(/invalid/);
+  });
+
   it("retries plain network errors", async () => {
     const provider = new RetryingProvider(
       providerFailingTimes(1, () => new TypeError("fetch failed")),
