@@ -2,9 +2,8 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Agent } from "@keywork/engine";
 import { Box, createCliRenderer, type KeyEvent, type MouseEvent, Text } from "@opentui/core";
-import { AppCore, bindingHelp, helpFrame, paletteFrame, paletteRowLimit } from "./app-core.ts";
+import { AppCore, bindingHelp, helpFrame, paletteFrame } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
-import type { CommandRegistry } from "./commands.ts";
 import type { Titler } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { FilePane } from "./file-pane.ts";
@@ -25,8 +24,9 @@ export interface AppOptions {
 export async function runApp(options: AppOptions = {}): Promise<void> {
   const theme = resolveTheme(options.themeOverrides);
   const renderer = await createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
+  const screen = (): Screen => ({ width: renderer.width, height: renderer.height });
   const core = new AppCore({
-    screen: () => ({ width: renderer.width, height: renderer.height }),
+    screen,
     createPane: (id, notify, commands) =>
       new ConversationPane(id, options.agentFactory?.(), notify, options.titler, commands),
     createFilePane: (id, path, notify) => new FilePane(id, process.cwd(), path, notify),
@@ -39,8 +39,6 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       process.exit(0);
     },
   });
-
-  const screen = (): Screen => ({ width: renderer.width, height: renderer.height });
 
   const render = (): void => {
     for (const child of [...renderer.root.getChildren()]) renderer.root.remove(child);
@@ -61,11 +59,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       ),
     );
     if (core.helpVisible) renderer.root.add(helpOverlay(core.keymap, theme, screen()));
-    if (core.paletteOpen) {
-      renderer.root.add(
-        paletteOverlay(core.registry, theme, screen(), core.paletteQuery, core.paletteIndex),
-      );
-    }
+    if (core.paletteOpen) renderer.root.add(paletteOverlay(core, theme, screen()));
     renderer.requestRender();
   };
 
@@ -110,8 +104,7 @@ function buildBody(core: AppCore, theme: Theme, screen: Screen) {
   if (dock === undefined) {
     return Box({ flexGrow: 1, flexDirection: "row" }, main ?? emptyView(theme));
   }
-  const dockRect = rects.get(dock.panes[0] as string);
-  const dockPercent = `${Math.round(((dockRect?.width ?? 0) / screen.width) * 100)}%` as const;
+  const dockPercent = `${Math.round(dock.ratio * 100)}%` as const;
   const dockColumn = Box(
     { width: dockPercent, flexDirection: "column" },
     ...dock.panes.map(paneView),
@@ -162,16 +155,10 @@ function statusBar(core: AppCore, theme: Theme, label: string | undefined) {
   );
 }
 
-function paletteOverlay(
-  registry: CommandRegistry,
-  theme: Theme,
-  screen: Screen,
-  query: string,
-  selected: number,
-) {
-  const matches = registry.search(query).slice(0, paletteRowLimit);
+function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
+  const matches = core.paletteMatches();
   const rows = matches.map((command, index) => {
-    const active = index === selected;
+    const active = index === core.paletteIndex;
     const shortcut = command.shortcut === undefined ? "" : `  ${command.shortcut}`;
     return Box(
       { flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1 },
@@ -201,7 +188,7 @@ function paletteOverlay(
       paddingTop: 1,
       paddingBottom: 1,
     },
-    Text({ content: ` › ${query}▌`, fg: theme.text }),
+    Text({ content: ` › ${core.paletteQuery}▌`, fg: theme.text }),
     ...(rows.length > 0 ? rows : [Text({ content: "  no matching commands", fg: theme.textDim })]),
   );
 }

@@ -1,3 +1,5 @@
+import { clamp } from "./clamp.ts";
+
 export type PaneId = string;
 export type Orientation = "row" | "column";
 export type Direction = "left" | "right" | "up" | "down";
@@ -58,9 +60,9 @@ export class Layout {
     return [...this.mainPanes(), ...this.dockIds];
   }
 
-  dock(): { side: DockSide; panes: PaneId[] } | undefined {
+  dock(): { side: DockSide; panes: PaneId[]; ratio: number } | undefined {
     if (this.dockIds.length === 0) return undefined;
-    return { side: this.dockEdge, panes: [...this.dockIds] };
+    return { side: this.dockEdge, panes: [...this.dockIds], ratio: this.dockRatio };
   }
 
   open(id: PaneId, screen: Screen): void {
@@ -69,7 +71,11 @@ export class Layout {
       return;
     }
     this.zoomedId = undefined;
-    if (this.focusedId !== undefined && this.dockIds.includes(this.focusedId)) {
+    if (
+      this.focusedId !== undefined &&
+      this.dockIds.includes(this.focusedId) &&
+      this.tree !== undefined
+    ) {
       this.dockIds.splice(this.dockIds.indexOf(this.focusedId) + 1, 0, id);
       this.focusedId = id;
       return;
@@ -209,7 +215,11 @@ export class Layout {
 }
 
 function splitAtDock(full: Rect, side: DockSide, ratio: number): [Rect, Rect] {
-  const dockWidth = clamp(Math.round(full.width * ratio), 1, full.width - 1);
+  const dockWidth = clamp(
+    Math.round(full.width * ratio),
+    Math.min(1, full.width),
+    Math.max(1, full.width - 1),
+  );
   const mainWidth = full.width - dockWidth;
   if (side === "left") {
     return [
@@ -240,10 +250,6 @@ function wideOrTall(rect: Rect): Orientation {
 
 function area(rect: Rect): number {
   return rect.width * rect.height;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 function leafIds(node: LayoutNode): PaneId[] {
@@ -326,8 +332,9 @@ function divide(rect: Rect, split: SplitNode): [Rect, Rect] {
 }
 
 function divideExtent(total: number, ratio: number, minFirst: number, minSecond: number): number {
+  if (total <= 1) return Math.max(0, total);
   const preferred = clamp(Math.round(total * ratio), minFirst, total - minSecond);
-  return clamp(preferred, 1, Math.max(1, total - 1));
+  return clamp(preferred, 1, total - 1);
 }
 
 function minWidth(node: LayoutNode): number {

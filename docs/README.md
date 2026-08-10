@@ -23,6 +23,8 @@ in the order given; later docs assume the earlier ones.
 | 5 | [`influencers/openclaw.md`](influencers/openclaw.md) | OpenClaw (openclaw/openclaw, MIT — verified): the field's most-praised agent memory — files-as-truth/index-as-cache, budgeted bootstrap, pre-compaction silent flush, taint-gated dreaming. Added 2026-08-10 for workstream J. |
 | 6 | [`influencers/hermes.md`](influencers/hermes.md) | Hermes Agent (NousResearch/hermes-agent, MIT — verified): self-healing skills "versioned by reality" — execution-time self-patching, Curator with agent-created-only blast radius, progressive disclosure. Added 2026-08-10 for workstream J. |
 | 7 | [`influencers/rosavera.md`](influencers/rosavera.md) | rosavera (Jordan's private workspace — no license question): fail-closed scope federation, RRF hybrid retrieval, Gardener v2 curation, usefulness feedback; plus its two known gaps keywork fixes (recall metrics, proactive recall). |
+| 8 | [`influencers/knowledge-graphs.md`](influencers/knowledge-graphs.md) | KG-memory systems survey (GraphRAG, Zep/Graphiti, HippoRAG, LightRAG, Mem0, AriGraph, Letta — all MIT/Apache-2.0, verified): what a graph layer buys a coding agent (temporal supersession, multi-hop PPR, contradiction invariants) and the local SQLite design verdicts. Added 2026-08-10 for J12. |
+| 9 | [`influencers/obsidian.md`](influencers/obsidian.md) | Obsidian design DNA (app proprietary — conventions open; Dataview/Datacore/Breadcrumbs MIT, Juggl GPL ⚠): wikilinks, backlinks/unlinked mentions, frontmatter properties, evergreen atomic notes, local-graph-over-global; the vault-citizenship spec making keywork's memory a first-class vault. Added 2026-08-10 for J3/J9. |
 
 ### Feature candidates — the wider ecosystem
 

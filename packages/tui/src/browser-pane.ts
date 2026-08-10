@@ -1,4 +1,4 @@
-import { Box, Text } from "@opentui/core";
+import { Text } from "@opentui/core";
 import {
   BrowserModel,
   type BrowserRow,
@@ -7,6 +7,7 @@ import {
 } from "./browser-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneIntents, PaneView } from "./pane.ts";
+import { paneChrome, paneTitle } from "./pane-chrome.ts";
 import type { Theme } from "./theme.ts";
 
 export class BrowserPane implements Pane {
@@ -27,30 +28,24 @@ export class BrowserPane implements Pane {
 
   title(): string {
     const count = this.model.entryCount();
-    return count === 0 ? ` ${this.model.name} ` : ` ${this.model.name} · ${count} entries `;
+    return paneTitle(this.model.name, count === 0 ? undefined : `${count} entries`);
   }
 
   handleKey(chord: Chord): boolean {
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
+  settled(): Promise<void> {
+    return this.model.settled();
+  }
+
   view(context: PaneContext): PaneView {
     const { theme, focused, height, width } = context;
     const filterLine = this.filterLine(theme, focused);
     this.lastPageRows = Math.max(3, height - 3 - (filterLine === undefined ? 0 : 1));
-    return Box(
-      {
-        flexGrow: 1,
-        flexBasis: 0,
-        border: true,
-        borderStyle: "rounded",
-        borderColor: focused ? theme.borderFocus : theme.border,
-        title: this.title(),
-        titleAlignment: "left",
-        flexDirection: "column",
-        paddingLeft: 1,
-        paddingRight: 1,
-      },
+    return paneChrome(
+      context,
+      this.title(),
       ...this.bodyLines(theme, this.lastPageRows, Math.max(10, width - 4)),
       ...(filterLine === undefined ? [] : [filterLine]),
     );

@@ -127,7 +127,7 @@ describe("Layout dock", () => {
     const rects = layout.rects(screen);
     expect(rects.get("b")).toEqual({ x: 0, y: 0, width: 40, height: 40 });
     expect(rects.get("a")).toEqual({ x: 40, y: 0, width: 80, height: 40 });
-    expect(layout.dock()).toEqual({ side: "left", panes: ["b"] });
+    expect(layout.dock()).toEqual({ side: "left", panes: ["b"], ratio: 1 / 3 });
     assertExactTiling(layout);
   });
 
@@ -199,7 +199,7 @@ describe("Layout dock", () => {
     const layout = layoutWith("a", "b");
     layout.dockFocused("left");
     layout.dockFocused("right");
-    expect(layout.dock()).toEqual({ side: "right", panes: ["b"] });
+    expect(layout.dock()).toEqual({ side: "right", panes: ["b"], ratio: 1 / 3 });
     expect((layout.rects(screen).get("b") as Rect).x).toBe(80);
   });
 
@@ -235,7 +235,7 @@ describe("Layout dock", () => {
     const layout = layoutWith("a", "b");
     layout.dockFocused("left");
     layout.open("c", screen);
-    expect(layout.dock()).toEqual({ side: "left", panes: ["b", "c"] });
+    expect(layout.dock()).toEqual({ side: "left", panes: ["b", "c"], ratio: 1 / 3 });
     expect(layout.focused()).toBe("c");
     assertExactTiling(layout);
   });
@@ -353,5 +353,44 @@ describe("Layout zoom", () => {
     layout.open("c", screen);
     expect(layout.zoomed()).toBeUndefined();
     expect(layout.rects(screen).size).toBe(3);
+  });
+});
+
+describe("degenerate screens", () => {
+  it("never produces negative extents at tiny sizes", () => {
+    const wide: Screen = { width: 200, height: 40 };
+    const layout = new Layout();
+    layout.open("a", wide);
+    layout.open("b", wide);
+    layout.open("c", wide);
+    const tiny: Screen[] = [
+      { width: 1, height: 40 },
+      { width: 2, height: 2 },
+      { width: 0, height: 0 },
+    ];
+    for (const size of tiny) {
+      for (const rect of layout.rects(size).values()) {
+        expect(rect.width).toBeGreaterThanOrEqual(0);
+        expect(rect.height).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it("keeps dock and main non-negative at width one", () => {
+    const layout = layoutWith("a", "b");
+    layout.dockFocused("left");
+    for (const rect of layout.rects({ width: 1, height: 10 }).values()) {
+      expect(rect.width).toBeGreaterThanOrEqual(0);
+      expect(rect.height).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("opens into the empty main area when every pane is docked", () => {
+    const layout = layoutWith("a");
+    layout.dockFocused("left");
+    layout.open("b", screen);
+    expect(layout.dock()?.panes).toEqual(["a"]);
+    expect(layout.root()).toEqual({ kind: "leaf", id: "b" });
+    expect(layout.focused()).toBe("b");
   });
 });

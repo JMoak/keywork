@@ -297,3 +297,40 @@ function join(...segments: string[]): string {
 }
 
 const sep = process.platform === "win32" ? "\\" : "/";
+
+describe("BrowserModel refresh and caching", () => {
+  it("ignores reads that started before a refresh", async () => {
+    const waiters = new Map<string, ((entries: Entry[]) => void)[]>();
+    const read: ReadDirectory = (path) =>
+      new Promise((resolve) => {
+        const queue = waiters.get(path) ?? [];
+        queue.push(resolve);
+        waiters.set(path, queue);
+      });
+    const model = new BrowserModel(
+      "root",
+      read,
+      () => {},
+      () => {},
+    );
+    press(model, "r");
+    const [stale, fresh] = waiters.get("root") ?? [];
+    fresh?.([{ name: "fresh.ts", kind: "file" }]);
+    stale?.([{ name: "stale.ts", kind: "file" }]);
+    await model.settled();
+    expect(model.rows().map((row) => row.name)).toEqual(["fresh.ts"]);
+  });
+
+  it("reuses the built rows until the tree changes", async () => {
+    const { model } = await browserOver(sampleTree);
+    const first = model.rows();
+    expect(model.rows()).toBe(first);
+    press(model, ".");
+    expect(model.rows()).not.toBe(first);
+  });
+
+  it("orders names by locale, not code units", async () => {
+    const { model } = await browserOver({ "z.ts": "file", "é.ts": "file" });
+    expect(model.rows().map((row) => row.name)).toEqual(["é.ts", "z.ts"]);
+  });
+});

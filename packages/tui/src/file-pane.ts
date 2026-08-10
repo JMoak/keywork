@@ -1,7 +1,8 @@
-import { Box, Text } from "@opentui/core";
+import { Text } from "@opentui/core";
 import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneView } from "./pane.ts";
+import { paneChrome, paneTitle } from "./pane-chrome.ts";
 import type { Theme } from "./theme.ts";
 
 export class FilePane implements Pane {
@@ -19,7 +20,7 @@ export class FilePane implements Pane {
 
   title(): string {
     const count = this.model.lineCount();
-    return count === 0 ? ` ${this.model.name} ` : ` ${this.model.name} · ${count} lines `;
+    return paneTitle(this.model.name, count === 0 ? undefined : `${count} lines`);
   }
 
   handleKey(chord: Chord): boolean {
@@ -27,21 +28,11 @@ export class FilePane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
-    const { theme, focused, height, width } = context;
+    const { theme, height, width } = context;
     this.lastPageRows = Math.max(3, height - 3);
-    return Box(
-      {
-        flexGrow: 1,
-        flexBasis: 0,
-        border: true,
-        borderStyle: "rounded",
-        borderColor: focused ? theme.borderFocus : theme.border,
-        title: this.title(),
-        titleAlignment: "left",
-        flexDirection: "column",
-        paddingLeft: 1,
-        paddingRight: 1,
-      },
+    return paneChrome(
+      context,
+      this.title(),
       ...this.bodyLines(theme, this.lastPageRows, Math.max(10, width - 4)),
     );
   }

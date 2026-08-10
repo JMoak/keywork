@@ -1,24 +1,17 @@
 import { Agent, MockProvider, type TurnDelta } from "@keywork/engine";
-import { AppCore, type AppSnapshot } from "./app-core.ts";
-import type { BrowserModel } from "./browser-model.ts";
-import { BrowserPane } from "./browser-pane.ts";
-import type { CommandRegistry } from "./commands.ts";
+import { AppCore, type AppCoreOptions, type AppSnapshot, type PaneFactory } from "./app-core.ts";
 import type { ConversationModel } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { type Chord, parseChord } from "./keys.ts";
 import type { Rect, Screen } from "./layout.ts";
-import type { Pane, PaneIntents } from "./pane.ts";
 import type { PointerEvent, ScrollDirection } from "./pointer.ts";
 
-export type PaneFactory = (id: string, notify: () => void, commands: CommandRegistry) => Pane;
-
-export interface AppProbeOptions {
+export interface AppProbeOptions
+  extends Partial<
+    Pick<AppCoreOptions, "createPane" | "createFilePane" | "createBrowserPane" | "isDirectory">
+  > {
   screen?: Screen;
   script?: TurnDelta[][];
-  createPane?: PaneFactory;
-  createFilePane?: (id: string, path: string, notify: () => void) => Pane;
-  createBrowserPane?: (id: string, root: string, notify: () => void, intents: PaneIntents) => Pane;
-  isDirectory?: (path: string) => boolean;
 }
 
 export class AppProbe {
@@ -75,8 +68,10 @@ export class AppProbe {
     return this;
   }
 
-  rect(id: string): Rect | undefined {
-    return this.core.layout.rects(this.screen).get(id);
+  rect(id: string): Rect {
+    const rect = this.core.layout.rects(this.screen).get(id);
+    if (rect === undefined) throw new Error(`no pane rect for "${id}"`);
+    return rect;
   }
 
   snapshot(): AppSnapshot {
@@ -89,11 +84,7 @@ export class AppProbe {
   }
 
   async settled(): Promise<this> {
-    for (const pane of this.snapshot().panes) {
-      await this.model(pane.id)?.lastSend;
-      const candidate = this.core.panes.get(pane.id);
-      if (candidate instanceof BrowserPane) await browserModelOf(candidate).settled();
-    }
+    for (const pane of this.core.panes.values()) await pane.settled?.();
     return this;
   }
 
@@ -127,8 +118,4 @@ function printableChord(character: string): Chord {
 
 function modelOf(pane: ConversationPane): ConversationModel {
   return (pane as unknown as { model: ConversationModel }).model;
-}
-
-function browserModelOf(pane: BrowserPane): BrowserModel {
-  return (pane as unknown as { model: BrowserModel }).model;
 }

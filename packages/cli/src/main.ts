@@ -7,6 +7,13 @@ import { chat } from "./chat.ts";
 import { providerSetupHint, resolveProvider } from "./provider.ts";
 import { runHeadless } from "./run.ts";
 
+function loadKeyworkConfig(cwd: string): ReturnType<typeof loadConfig> {
+  return loadConfig({
+    userDir: join(homedir(), ".keywork"),
+    projectDir: join(cwd, ".keywork"),
+  });
+}
+
 const usage = `keywork — keyboard-first coding agent
 
 Usage:
@@ -33,10 +40,7 @@ async function main(argv: string[]): Promise<number> {
   });
 
   const cwd = process.cwd();
-  const config = await loadConfig({
-    userDir: join(homedir(), ".keywork"),
-    projectDir: join(cwd, ".keywork"),
-  });
+  const config = await loadKeyworkConfig(cwd);
   const model = values.model ?? config.model;
   let resolved = resolveProvider(process.env, model, config.apiKeys);
 
@@ -45,10 +49,7 @@ async function main(argv: string[]): Promise<number> {
     console.log("Welcome to keywork — no model provider is configured yet.\n");
     const { runSetup } = await import("./setup.ts");
     if ((await runSetup()) !== 0) return;
-    const refreshed = await loadConfig({
-      userDir: join(homedir(), ".keywork"),
-      projectDir: join(cwd, ".keywork"),
-    });
+    const refreshed = await loadKeyworkConfig(cwd);
     resolved = resolveProvider(process.env, values.model ?? refreshed.model, refreshed.apiKeys);
   };
 

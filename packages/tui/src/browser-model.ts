@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { clampIndex, clampScroll } from "./clamp.ts";
 import { fuzzyScore } from "./commands.ts";
 import type { Chord } from "./keys.ts";
 
@@ -41,6 +42,8 @@ export class BrowserModel {
   private readonly expandedDirs = new Set<string>();
   private readonly pendingReads = new Set<Promise<void>>();
   private anchorPath: string | undefined;
+  private revision = 0;
+  private cachedRows: { revision: number; rows: BrowserRow[] } | undefined;
 
   constructor(
     readonly rootPath: string,
@@ -54,11 +57,10 @@ export class BrowserModel {
   }
 
   rows(): BrowserRow[] {
-    const rows: BrowserRow[] = [];
-    this.collect(this.rootPath, 0, rows);
-    if (this.filterQuery === "") return rows;
-    const query = this.filterQuery.toLowerCase();
-    return rows.filter((row) => fuzzyScore(query, row.name.toLowerCase()) !== undefined);
+    if (this.cachedRows?.revision === this.revision) return this.cachedRows.rows;
+    const rows = this.buildRows();
+    this.cachedRows = { revision: this.revision, rows };
+    return rows;
   }
 
   visibleRows(rowCount: number): { index: number; row: BrowserRow }[] {
@@ -192,15 +194,30 @@ export class BrowserModel {
     }
     if (!this.expandedDirs.has(row.path)) {
       this.expandedDirs.add(row.path);
+      this.touch();
       this.ensureLoaded(row.path);
       this.notify();
     }
     return true;
   }
 
+  private buildRows(): BrowserRow[] {
+    const rows: BrowserRow[] = [];
+    this.collect(this.rootPath, 0, rows);
+    if (this.filterQuery === "") return rows;
+    const query = this.filterQuery.toLowerCase();
+    return rows.filter((row) => fuzzyScore(query, row.name.toLowerCase()) !== undefined);
+  }
+
+  private touch(): void {
+    this.revision += 1;
+    this.cachedRows = undefined;
+  }
+
   private mutate(action: () => void): boolean {
     this.anchorPath = this.rows()[this.cursor]?.path ?? this.anchorPath;
     action();
+    this.touch();
     this.reanchor();
     this.notify();
     return true;
@@ -243,13 +260,15 @@ export class BrowserModel {
 
   private ensureLoaded(path: string): void {
     if (this.directories.has(path)) return;
-    this.directories.set(path, { kind: "loading" });
+    const claim: DirectoryState = { kind: "loading" };
+    this.directories.set(path, claim);
+    this.touch();
     const read = this.readDirectory(path)
       .then((entries) => {
-        this.directories.set(path, { kind: "loaded", entries: sortEntries(entries) });
+        this.settle(path, claim, { kind: "loaded", entries: sortEntries(entries) });
       })
       .catch((cause: unknown) => {
-        this.directories.set(path, { kind: "failed", reason: (cause as Error).message });
+        this.settle(path, claim, { kind: "failed", reason: (cause as Error).message });
       })
       .then(() => {
         this.pendingReads.delete(read);
@@ -257,6 +276,12 @@ export class BrowserModel {
         this.notify();
       });
     this.pendingReads.add(read);
+  }
+
+  private settle(path: string, claim: DirectoryState, state: DirectoryState): void {
+    if (this.directories.get(path) !== claim) return;
+    this.directories.set(path, state);
+    this.touch();
   }
 }
 
@@ -274,18 +299,13 @@ function loadOf(state: DirectoryState | undefined): Pick<BrowserRow, "load" | "f
 function sortEntries(entries: Entry[]): Entry[] {
   return [...entries].sort((left, right) => {
     if (left.kind !== right.kind) return left.kind === "dir" ? -1 : 1;
-    return left.name.toLowerCase() < right.name.toLowerCase() ? -1 : 1;
+    return (
+      left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
+      left.name.localeCompare(right.name)
+    );
   });
 }
 
 function isPrintable(chord: Chord): boolean {
   return chord.name.length === 1 && !chord.ctrl && !chord.meta;
-}
-
-function clampIndex(index: number, count: number): number {
-  return Math.max(0, Math.min(index, count - 1));
-}
-
-function clampScroll(scrollTop: number, count: number, rows: number): number {
-  return Math.max(0, Math.min(scrollTop, Math.max(0, count - rows)));
 }

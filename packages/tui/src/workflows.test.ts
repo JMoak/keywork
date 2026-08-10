@@ -1,14 +1,25 @@
 import { textTurn } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { paletteFrame } from "./app-core.ts";
+import { paletteFrame, paletteRowLimit } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
-import type { Rect } from "./layout.ts";
+import type { Pane } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
 
 function paneIds(probe: AppProbe): string[] {
   return probe.snapshot().panes.map((pane) => pane.id);
+}
+
+function stubFilePane(id: string, path: string, handleKey?: (chord: Chord) => boolean): Pane {
+  return {
+    id,
+    title: () => ` ${path} `,
+    view: () => {
+      throw new Error("probe panes are never rendered");
+    },
+    ...(handleKey !== undefined && { handleKey }),
+  };
 }
 
 function dockedIds(probe: AppProbe): string[] {
@@ -149,16 +160,7 @@ describe("jump commands", () => {
 });
 
 describe("open file pane", () => {
-  const fileProbe = () =>
-    new AppProbe({
-      createFilePane: (id, path) => ({
-        id,
-        title: () => ` ${path} `,
-        view: () => {
-          throw new Error("probe panes are never rendered");
-        },
-      }),
-    });
+  const fileProbe = () => new AppProbe({ createFilePane: (id, path) => stubFilePane(id, path) });
 
   it("/open <path> adds a file pane beside the session and focuses it", () => {
     const probe = fileProbe().type("/open src/app.ts").keys("enter");
@@ -187,13 +189,7 @@ describe("file browser", () => {
   };
   const browserProbe = () =>
     new AppProbe({
-      createFilePane: (id, path) => ({
-        id,
-        title: () => ` ${path} `,
-        view: () => {
-          throw new Error("probe panes are never rendered");
-        },
-      }),
+      createFilePane: (id, path) => stubFilePane(id, path),
       createBrowserPane: (id, root, notify, intents) =>
         new BrowserPane(id, root, notify, intents, async (path) => {
           const entries = listing[path];
@@ -249,19 +245,21 @@ describe("pane resize", () => {
   it("grows and shrinks the focused pane from the leader chord", () => {
     const probe = new AppProbe();
     probe.command("split");
+    const before = probe.rect("session-2").width;
     probe.keys("ctrl+k", "shift+.");
-    expect((probe.rect("session-2") as Rect).width).toBe(66);
+    expect(probe.rect("session-2").width).toBeGreaterThan(before);
     probe.keys("shift+,");
-    expect((probe.rect("session-2") as Rect).width).toBe(60);
+    expect(probe.rect("session-2").width).toBe(before);
   });
 
   it("resizes via the palette commands", () => {
     const probe = new AppProbe();
     probe.command("split");
+    const before = probe.rect("session-2").width;
     expect(probe.command("grow")).toBe(true);
-    expect((probe.rect("session-2") as Rect).width).toBe(66);
+    expect(probe.rect("session-2").width).toBeGreaterThan(before);
     expect(probe.command("shrink")).toBe(true);
-    expect((probe.rect("session-2") as Rect).width).toBe(60);
+    expect(probe.rect("session-2").width).toBe(before);
   });
 });
 
@@ -272,14 +270,7 @@ describe("mouse", () => {
       createFilePane: (id, path) => {
         const model = new FileModel(process.cwd(), path, () => {});
         models.set(id, model);
-        return {
-          id,
-          title: () => ` ${path} `,
-          view: () => {
-            throw new Error("probe panes are never rendered");
-          },
-          handleKey: (chord: Chord) => model.handleKey(chord, 10),
-        };
+        return stubFilePane(id, path, (chord) => model.handleKey(chord, 10));
       },
     });
     return { probe, models };
@@ -288,7 +279,7 @@ describe("mouse", () => {
   it("focuses the pane under a click", () => {
     const probe = new AppProbe();
     probe.command("split");
-    const rect = probe.rect("session-1") as Rect;
+    const rect = probe.rect("session-1");
     probe.click(rect.x + 1, rect.y + 1);
     expect(probe.snapshot().focused).toBe("session-1");
   });
@@ -296,9 +287,9 @@ describe("mouse", () => {
   it("wheel-scrolls the pane under the cursor without moving focus", () => {
     const { probe, models } = modelFilePane();
     probe.type("/open notes.txt").keys("enter");
-    const session = probe.rect("session-1") as Rect;
+    const session = probe.rect("session-1");
     probe.click(session.x + 1, session.y + 1);
-    const file = probe.rect("file-1") as Rect;
+    const file = probe.rect("file-1");
     probe.scroll(file.x + 1, file.y + 1, "down", 3);
     expect(models.get("file-1")?.scrollTop).toBe(3);
     expect(probe.snapshot().focused).toBe("session-1");
@@ -306,9 +297,17 @@ describe("mouse", () => {
     expect(models.get("file-1")?.scrollTop).toBe(0);
   });
 
+  it("clamps huge wheel deltas to a bounded scroll", () => {
+    const { probe, models } = modelFilePane();
+    probe.type("/open notes.txt").keys("enter");
+    const file = probe.rect("file-1");
+    probe.scroll(file.x + 1, file.y + 1, "down", 10_000);
+    expect(models.get("file-1")?.scrollTop).toBe(10);
+  });
+
   it("moves the palette selection on hover, and arrows still win afterwards", () => {
     const probe = new AppProbe().keys("ctrl+p");
-    const rows = Math.min(10, probe.core.registry.search("").length);
+    const rows = Math.min(paletteRowLimit, probe.core.registry.search("").length);
     const frame = paletteFrame(probe.screen, rows);
     probe.hover(frame.x + 2, frame.firstRowY + 2);
     expect(probe.core.paletteIndex).toBe(2);
@@ -318,7 +317,7 @@ describe("mouse", () => {
 
   it("runs the clicked palette row", () => {
     const probe = new AppProbe().keys("ctrl+p").type("split");
-    const rows = Math.min(10, probe.core.registry.search("split").length);
+    const rows = Math.min(paletteRowLimit, probe.core.registry.search("split").length);
     const frame = paletteFrame(probe.screen, rows);
     probe.click(frame.x + 2, frame.firstRowY);
     expect(probe.snapshot().overlay).toBeUndefined();

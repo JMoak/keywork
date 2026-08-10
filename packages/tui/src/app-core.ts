@@ -1,94 +1,208 @@
 import { CommandRegistry } from "./commands.ts";
 import { Keymap } from "./keymap.ts";
 import { type Chord, formatChord } from "./keys.ts";
-import { type Direction, type DockSide, Layout, type Rect, type Screen } from "./layout.ts";
+import { type DockSide, Layout, type Rect, type Screen } from "./layout.ts";
 import type { Pane, PaneIntents } from "./pane.ts";
 import type { PointerEvent, PointerScroll } from "./pointer.ts";
 
-export const appBindings = {
-  "pane.split": "leader s",
-  "pane.close": "leader x",
-  "pane.zoom": "leader z",
-  "focus.left": ["leader h", "leader left"],
-  "focus.down": ["leader j", "leader down"],
-  "focus.up": ["leader k", "leader up"],
-  "focus.right": ["leader l", "leader right"],
-  "swap.left": "leader shift+h",
-  "swap.down": "leader shift+j",
-  "swap.up": "leader shift+k",
-  "swap.right": "leader shift+l",
-  "dock.left": "leader d",
-  "dock.right": "leader shift+d",
-  "dock.undock": "leader u",
-  "dock.grow": "leader .",
-  "dock.shrink": "leader ,",
-  "pane.grow": "leader shift+.",
-  "pane.shrink": "leader shift+,",
-  "browser.summon": "leader f",
-  "help.toggle": ["leader /", "f1"],
-  "palette.toggle": ["ctrl+p", "leader p"],
-  "app.quit": "ctrl+q",
-} as const;
+interface AppAction {
+  chords: string | readonly string[];
+  help: string;
+  sticky?: true;
+  invoke: (core: AppCore) => void;
+  command?: { name: string; description: string; aliases?: string[] };
+}
 
-export const bindingHelp: Record<string, string> = {
-  "pane.split": "new session pane",
-  "pane.close": "close focused pane",
-  "pane.zoom": "zoom pane (toggle)",
-  "focus.left": "focus left",
-  "focus.down": "focus down",
-  "focus.up": "focus up",
-  "focus.right": "focus right",
-  "swap.left": "swap pane left",
-  "swap.down": "swap pane down",
-  "swap.up": "swap pane up",
-  "swap.right": "swap pane right",
-  "dock.left": "dock pane to the left edge",
-  "dock.right": "dock pane to the right edge",
-  "dock.undock": "return pane to the main area",
-  "dock.grow": "widen the dock",
-  "dock.shrink": "narrow the dock",
-  "pane.grow": "grow the focused pane",
-  "pane.shrink": "shrink the focused pane",
-  "browser.summon": "file browser",
-  "help.toggle": "this overlay",
-  "palette.toggle": "command palette",
-  "app.quit": "quit",
+const appActions: Record<string, AppAction> = {
+  "pane.split": {
+    chords: "leader s",
+    help: "new session pane",
+    sticky: true,
+    invoke: (core) => core.openPane(),
+    command: { name: "split", description: "open a new session pane" },
+  },
+  "pane.close": {
+    chords: "leader x",
+    help: "close focused pane",
+    sticky: true,
+    invoke: (core) => core.closePane(),
+  },
+  "pane.zoom": {
+    chords: "leader z",
+    help: "zoom pane (toggle)",
+    sticky: true,
+    invoke: (core) => core.layout.zoomToggle(),
+    command: { name: "zoom", description: "zoom the focused pane" },
+  },
+  "focus.left": {
+    chords: ["leader h", "leader left"],
+    help: "focus left",
+    sticky: true,
+    invoke: (core) => core.layout.moveFocus("left", core.screen()),
+    command: {
+      name: "move-left",
+      description: "focus the pane to the left",
+      aliases: ["moveleft"],
+    },
+  },
+  "focus.down": {
+    chords: ["leader j", "leader down"],
+    help: "focus down",
+    sticky: true,
+    invoke: (core) => core.layout.moveFocus("down", core.screen()),
+    command: { name: "move-down", description: "focus the pane below", aliases: ["movedown"] },
+  },
+  "focus.up": {
+    chords: ["leader k", "leader up"],
+    help: "focus up",
+    sticky: true,
+    invoke: (core) => core.layout.moveFocus("up", core.screen()),
+    command: { name: "move-up", description: "focus the pane above", aliases: ["moveup"] },
+  },
+  "focus.right": {
+    chords: ["leader l", "leader right"],
+    help: "focus right",
+    sticky: true,
+    invoke: (core) => core.layout.moveFocus("right", core.screen()),
+    command: {
+      name: "move-right",
+      description: "focus the pane to the right",
+      aliases: ["moveright"],
+    },
+  },
+  "swap.left": {
+    chords: "leader shift+h",
+    help: "swap pane left",
+    sticky: true,
+    invoke: (core) => core.layout.swap("left", core.screen()),
+  },
+  "swap.down": {
+    chords: "leader shift+j",
+    help: "swap pane down",
+    sticky: true,
+    invoke: (core) => core.layout.swap("down", core.screen()),
+  },
+  "swap.up": {
+    chords: "leader shift+k",
+    help: "swap pane up",
+    sticky: true,
+    invoke: (core) => core.layout.swap("up", core.screen()),
+  },
+  "swap.right": {
+    chords: "leader shift+l",
+    help: "swap pane right",
+    sticky: true,
+    invoke: (core) => core.layout.swap("right", core.screen()),
+  },
+  "dock.left": {
+    chords: "leader d",
+    help: "dock pane to the left edge",
+    sticky: true,
+    invoke: (core) => core.layout.dockFocused("left"),
+    command: {
+      name: "dock-left",
+      description: "dock this pane to the left edge",
+      aliases: ["dockleft"],
+    },
+  },
+  "dock.right": {
+    chords: "leader shift+d",
+    help: "dock pane to the right edge",
+    sticky: true,
+    invoke: (core) => core.layout.dockFocused("right"),
+    command: {
+      name: "dock-right",
+      description: "dock this pane to the right edge",
+      aliases: ["dockright"],
+    },
+  },
+  "dock.undock": {
+    chords: "leader u",
+    help: "return pane to the main area",
+    sticky: true,
+    invoke: (core) => core.layout.undockFocused(core.screen()),
+    command: { name: "undock", description: "return this pane to the main area" },
+  },
+  "dock.grow": {
+    chords: "leader .",
+    help: "widen the dock",
+    sticky: true,
+    invoke: (core) => core.layout.growDock(0.05),
+    command: { name: "dock-wider", description: "widen the dock column" },
+  },
+  "dock.shrink": {
+    chords: "leader ,",
+    help: "narrow the dock",
+    sticky: true,
+    invoke: (core) => core.layout.growDock(-0.05),
+    command: { name: "dock-narrower", description: "narrow the dock column" },
+  },
+  "pane.grow": {
+    chords: "leader shift+.",
+    help: "grow the focused pane",
+    sticky: true,
+    invoke: (core) => core.layout.resizeFocused(0.05),
+    command: { name: "grow", description: "grow the focused pane", aliases: ["pane-grow"] },
+  },
+  "pane.shrink": {
+    chords: "leader shift+,",
+    help: "shrink the focused pane",
+    sticky: true,
+    invoke: (core) => core.layout.resizeFocused(-0.05),
+    command: { name: "shrink", description: "shrink the focused pane", aliases: ["pane-shrink"] },
+  },
+  "browser.summon": {
+    chords: "leader f",
+    help: "file browser",
+    invoke: (core) => core.summonBrowser(),
+  },
+  "help.toggle": {
+    chords: ["leader /", "f1"],
+    help: "this overlay",
+    invoke: (core) => core.toggleHelp(),
+    command: { name: "keys", description: "show the hotkeys overlay", aliases: ["help"] },
+  },
+  "palette.toggle": {
+    chords: ["ctrl+p", "leader p"],
+    help: "command palette",
+    invoke: (core) => core.openPalette(),
+    command: { name: "palette", description: "open the command palette" },
+  },
+  "app.quit": {
+    chords: "ctrl+q",
+    help: "quit",
+    invoke: (core) => core.shutdown(),
+  },
 };
 
-const focusDirections: Record<string, Direction> = {
-  "focus.left": "left",
-  "focus.down": "down",
-  "focus.up": "up",
-  "focus.right": "right",
-};
+export const appBindings: Record<string, string | readonly string[]> = Object.fromEntries(
+  Object.entries(appActions).map(([name, action]) => [name, action.chords]),
+);
 
-const swapDirections: Record<string, Direction> = {
-  "swap.left": "left",
-  "swap.down": "down",
-  "swap.up": "up",
-  "swap.right": "right",
-};
+export const bindingHelp: Record<string, string> = Object.fromEntries(
+  Object.entries(appActions).map(([name, action]) => [name, action.help]),
+);
 
-const stickyActions = new Set([
-  ...Object.keys(focusDirections),
-  ...Object.keys(swapDirections),
-  "pane.split",
-  "pane.close",
-  "pane.zoom",
-  "dock.left",
-  "dock.right",
-  "dock.undock",
-  "dock.grow",
-  "dock.shrink",
-  "pane.grow",
-  "pane.shrink",
-]);
+const stickyActions = new Set(
+  Object.entries(appActions)
+    .filter(([, action]) => action.sticky)
+    .map(([name]) => name),
+);
+
+export type PaneFactory = (id: string, notify: () => void, commands: CommandRegistry) => Pane;
+export type FilePaneFactory = (id: string, path: string, notify: () => void) => Pane;
+export type BrowserPaneFactory = (
+  id: string,
+  root: string,
+  notify: () => void,
+  intents: PaneIntents,
+) => Pane;
 
 export interface AppCoreOptions {
   screen: () => Screen;
-  createPane: (id: string, notify: () => void, commands: CommandRegistry) => Pane;
-  createFilePane?: (id: string, path: string, notify: () => void) => Pane;
-  createBrowserPane?: (id: string, root: string, notify: () => void, intents: PaneIntents) => Pane;
+  createPane: PaneFactory;
+  createFilePane?: FilePaneFactory;
+  createBrowserPane?: BrowserPaneFactory;
   isDirectory?: (path: string) => boolean;
   onExit: () => void;
 }
@@ -141,6 +255,10 @@ export interface AppSnapshot {
   lastKey: string;
 }
 
+type PaletteEntries = ReturnType<CommandRegistry["search"]>;
+type PaletteOverlay = { kind: "palette"; query: string; index: number; entries: PaletteEntries };
+type Overlay = PaletteOverlay | { kind: "help" };
+
 export class AppCore {
   readonly layout = new Layout();
   readonly keymap = new Keymap({ leader: "ctrl+k", bindings: appBindings });
@@ -151,11 +269,8 @@ export class AppCore {
     focusPane: (id) => this.layout.focus(id),
   };
   leaderArmed = false;
-  helpVisible = false;
-  paletteOpen = false;
-  paletteQuery = "";
-  paletteIndex = 0;
   lastKey = "";
+  private overlay: Overlay | undefined;
   private nextSession = 1;
   private nextFile = 1;
   private nextBrowser = 1;
@@ -171,6 +286,30 @@ export class AppCore {
 
   start(): void {
     this.openPane();
+  }
+
+  screen(): Screen {
+    return this.options.screen();
+  }
+
+  get helpVisible(): boolean {
+    return this.overlay?.kind === "help";
+  }
+
+  get paletteOpen(): boolean {
+    return this.overlay?.kind === "palette";
+  }
+
+  get paletteQuery(): string {
+    return this.palette()?.query ?? "";
+  }
+
+  get paletteIndex(): number {
+    return this.palette()?.index ?? 0;
+  }
+
+  paletteMatches(): PaletteEntries {
+    return this.palette()?.entries ?? [];
   }
 
   runCommand(name: string): boolean {
@@ -190,7 +329,7 @@ export class AppCore {
       focused,
       zoomed: this.layout.zoomed(),
       dockSide: dock?.side,
-      overlay: this.paletteOpen ? "palette" : this.helpVisible ? "help" : undefined,
+      overlay: this.overlay?.kind,
       paletteQuery: this.paletteQuery,
       leaderArmed: this.leaderArmed,
       lastKey: this.lastKey,
@@ -208,7 +347,7 @@ export class AppCore {
       return;
     }
     if (this.helpVisible && chord.name === "escape") {
-      this.helpVisible = false;
+      this.overlay = undefined;
       return;
     }
     const result = this.keymap.press(chord, nowMs);
@@ -239,36 +378,61 @@ export class AppCore {
     this.routePaneMouse(event);
   }
 
-  private apply(action: string): void {
-    const focusDirection = focusDirections[action];
-    const swapDirection = swapDirections[action];
-    if (action === "pane.split") this.openPane();
-    else if (action === "pane.close") this.closePane();
-    else if (action === "pane.zoom") this.layout.zoomToggle();
-    else if (action === "help.toggle") this.helpVisible = !this.helpVisible;
-    else if (action === "palette.toggle") this.openPalette();
-    else if (action === "dock.left") this.layout.dockFocused("left");
-    else if (action === "dock.right") this.layout.dockFocused("right");
-    else if (action === "dock.undock") this.layout.undockFocused(this.options.screen());
-    else if (action === "dock.grow") this.layout.growDock(0.05);
-    else if (action === "dock.shrink") this.layout.growDock(-0.05);
-    else if (action === "pane.grow") this.layout.resizeFocused(0.05);
-    else if (action === "pane.shrink") this.layout.resizeFocused(-0.05);
-    else if (action === "browser.summon") this.summonBrowser();
-    else if (focusDirection !== undefined)
-      this.layout.moveFocus(focusDirection, this.options.screen());
-    else if (swapDirection !== undefined) this.layout.swap(swapDirection, this.options.screen());
-    else if (action === "app.quit") this.shutdown();
-  }
-
-  private openPane(): void {
+  openPane(): void {
     const id = `session-${this.nextSession}`;
     this.nextSession += 1;
     this.panes.set(
       id,
       this.options.createPane(id, () => this.notify(), this.registry),
     );
-    this.layout.open(id, this.options.screen());
+    this.layout.open(id, this.screen());
+  }
+
+  closePane(): void {
+    const id = this.layout.focused();
+    if (id === undefined) return;
+    this.panes.get(id)?.dispose?.();
+    this.panes.delete(id);
+    this.layout.close(id);
+  }
+
+  summonBrowser(): void {
+    const existing = [...this.panes.keys()].find((id) => id.startsWith("browser-"));
+    if (existing !== undefined) {
+      this.layout.focus(existing);
+      return;
+    }
+    this.openBrowserPane(".");
+  }
+
+  toggleHelp(): void {
+    this.overlay = this.helpVisible ? undefined : { kind: "help" };
+  }
+
+  openPalette(): void {
+    this.overlay = this.paletteFor("");
+  }
+
+  shutdown(): void {
+    for (const pane of this.panes.values()) pane.dispose?.();
+    this.options.onExit();
+  }
+
+  private palette(): PaletteOverlay | undefined {
+    return this.overlay?.kind === "palette" ? this.overlay : undefined;
+  }
+
+  private paletteFor(query: string): PaletteOverlay {
+    return {
+      kind: "palette",
+      query,
+      index: 0,
+      entries: this.registry.search(query).slice(0, paletteRowLimit),
+    };
+  }
+
+  private apply(action: string): void {
+    appActions[action]?.invoke(this);
   }
 
   private openFilePane(path: string): void {
@@ -281,16 +445,7 @@ export class AppCore {
       create(id, path, () => this.notify()),
     );
     this.focusMainArea();
-    this.layout.open(id, this.options.screen());
-  }
-
-  private summonBrowser(): void {
-    const existing = [...this.panes.keys()].find((id) => id.startsWith("browser-"));
-    if (existing !== undefined) {
-      this.layout.focus(existing);
-      return;
-    }
-    this.openBrowserPane(".");
+    this.layout.open(id, this.screen());
   }
 
   private openBrowserPane(root: string): void {
@@ -302,7 +457,7 @@ export class AppCore {
       id,
       create(id, root, () => this.notify(), this.intents),
     );
-    this.layout.open(id, this.options.screen());
+    this.layout.open(id, this.screen());
     this.layout.dockFocused(this.layout.dock()?.side ?? "left");
   }
 
@@ -320,54 +475,30 @@ export class AppCore {
     if (main !== undefined) this.layout.focus(main);
   }
 
-  private closePane(): void {
-    const id = this.layout.focused();
-    if (id === undefined) return;
-    this.panes.get(id)?.dispose?.();
-    this.panes.delete(id);
-    this.layout.close(id);
-  }
-
-  private shutdown(): void {
-    for (const pane of this.panes.values()) pane.dispose?.();
-    this.options.onExit();
-  }
-
-  private openPalette(): void {
-    this.paletteOpen = true;
-    this.paletteQuery = "";
-    this.paletteIndex = 0;
-  }
-
-  private closePalette(): void {
-    this.paletteOpen = false;
-    this.paletteQuery = "";
-    this.paletteIndex = 0;
-  }
-
   private routePaletteMouse(event: PointerEvent): void {
-    const matches = this.paletteMatches();
-    const frame = paletteFrame(this.options.screen(), matches.length);
+    const palette = this.palette();
+    if (palette === undefined) return;
+    const frame = paletteFrame(this.screen(), palette.entries.length);
     const inside = containsPoint(frame, event.x, event.y);
     const row = event.y - frame.firstRowY;
-    const onRow = inside && row >= 0 && row < matches.length;
-    if ((event.type === "move" || event.type === "drag") && onRow) this.paletteIndex = row;
+    const onRow = inside && row >= 0 && row < palette.entries.length;
+    if ((event.type === "move" || event.type === "drag") && onRow) palette.index = row;
     if (event.type !== "down") return;
     if (!inside) {
-      this.closePalette();
+      this.overlay = undefined;
       return;
     }
     if (onRow) {
-      const chosen = matches[row];
-      this.closePalette();
+      const chosen = palette.entries[row];
+      this.overlay = undefined;
       chosen?.run();
     }
   }
 
   private routeHelpMouse(event: PointerEvent): void {
     if (event.type !== "down") return;
-    const frame = helpFrame(this.options.screen(), this.keymap.actions().length);
-    if (!containsPoint(frame, event.x, event.y)) this.helpVisible = false;
+    const frame = helpFrame(this.screen(), this.keymap.actions().length);
+    if (!containsPoint(frame, event.x, event.y)) this.overlay = undefined;
   }
 
   private routePaneMouse(event: PointerEvent): void {
@@ -381,42 +512,37 @@ export class AppCore {
   }
 
   private paneUnder(x: number, y: number): { id: string; rect: Rect } | undefined {
-    for (const [id, rect] of this.layout.rects(this.options.screen())) {
+    for (const [id, rect] of this.layout.rects(this.screen())) {
       if (containsPoint(rect, x, y)) return { id, rect };
     }
     return undefined;
   }
 
-  private paletteMatches() {
-    return this.registry.search(this.paletteQuery).slice(0, paletteRowLimit);
-  }
-
   private handlePaletteKey(chord: Chord, sequence: string | undefined): void {
-    const matches = this.paletteMatches();
+    const palette = this.palette();
+    if (palette === undefined) return;
     if (chord.name === "escape") {
-      this.closePalette();
+      this.overlay = undefined;
       return;
     }
     if (chord.name === "up" || chord.name === "down") {
       const step = chord.name === "down" ? 1 : -1;
-      const count = Math.max(1, matches.length);
-      this.paletteIndex = (this.paletteIndex + step + count) % count;
+      const count = Math.max(1, palette.entries.length);
+      palette.index = (palette.index + step + count) % count;
       return;
     }
     if (chord.name === "return" || chord.name === "enter") {
-      const chosen = matches[this.paletteIndex];
-      this.closePalette();
+      const chosen = palette.entries[palette.index];
+      this.overlay = undefined;
       chosen?.run();
       return;
     }
     if (chord.name === "backspace") {
-      this.paletteQuery = this.paletteQuery.slice(0, -1);
-      this.paletteIndex = 0;
+      this.overlay = this.paletteFor(palette.query.slice(0, -1));
       return;
     }
     if (sequence !== undefined && sequence.length === 1 && !chord.ctrl && !chord.meta) {
-      this.paletteQuery += sequence;
-      this.paletteIndex = 0;
+      this.overlay = this.paletteFor(palette.query + sequence);
     }
   }
 
@@ -425,29 +551,16 @@ export class AppCore {
       const keys = this.keymap.describe(action);
       return keys === undefined ? {} : { shortcut: keys };
     };
-    const forAction = (name: string, action: string, description: string, aliases?: string[]) =>
+    for (const [name, action] of Object.entries(appActions)) {
+      if (action.command === undefined) continue;
+      const { aliases, ...command } = action.command;
       this.registry.register({
-        name,
-        description,
+        ...command,
         ...(aliases !== undefined && { aliases }),
-        ...shortcut(action),
-        run: () => this.apply(action),
+        ...shortcut(name),
+        run: () => action.invoke(this),
       });
-    forAction("split", "pane.split", "open a new session pane");
-    forAction("zoom", "pane.zoom", "zoom the focused pane");
-    forAction("move-right", "focus.right", "focus the pane to the right", ["moveright"]);
-    forAction("move-left", "focus.left", "focus the pane to the left", ["moveleft"]);
-    forAction("move-up", "focus.up", "focus the pane above", ["moveup"]);
-    forAction("move-down", "focus.down", "focus the pane below", ["movedown"]);
-    forAction("keys", "help.toggle", "show the hotkeys overlay", ["help"]);
-    forAction("palette", "palette.toggle", "open the command palette");
-    forAction("dock-left", "dock.left", "dock this pane to the left edge", ["dockleft"]);
-    forAction("dock-right", "dock.right", "dock this pane to the right edge", ["dockright"]);
-    forAction("undock", "dock.undock", "return this pane to the main area");
-    forAction("dock-wider", "dock.grow", "widen the dock column");
-    forAction("dock-narrower", "dock.shrink", "narrow the dock column");
-    forAction("grow", "pane.grow", "grow the focused pane", ["pane-grow"]);
-    forAction("shrink", "pane.shrink", "shrink the focused pane", ["pane-shrink"]);
+    }
     if (this.options.createFilePane !== undefined) {
       this.registry.register({
         name: "open",
@@ -503,9 +616,11 @@ function containsPoint(frame: OverlayFrame, x: number, y: number): boolean {
   return x >= frame.x && x < frame.x + frame.width && y >= frame.y && y < frame.y + frame.height;
 }
 
+const maxScrollSteps = 10;
+
 function scrollByKeys(pane: Pane | undefined, scroll: PointerScroll): void {
   if (pane?.handleKey === undefined) return;
   const chord: Chord = { name: scroll.direction, ctrl: false, shift: false, meta: false };
-  const steps = Math.max(1, Math.round(scroll.delta));
+  const steps = Math.min(maxScrollSteps, Math.max(1, Math.round(scroll.delta)));
   for (let step = 0; step < steps; step += 1) pane.handleKey(chord, undefined);
 }

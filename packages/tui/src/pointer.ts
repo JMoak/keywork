@@ -30,7 +30,7 @@ export function pointerEventOf(raw: RawPointerEvent): PointerEvent | undefined {
       type: "scroll",
       x: raw.x,
       y: raw.y,
-      scroll: { direction, delta: raw.scroll?.delta ?? 1 },
+      scroll: { direction, delta: sanitizedDelta(raw.scroll?.delta) },
     };
   }
   if (!isPointerAction(raw.type)) return undefined;
@@ -52,4 +52,8 @@ const pointerActions: ReadonlySet<string> = new Set([
 
 function isPointerAction(type: string): type is PointerAction {
   return pointerActions.has(type);
+}
+
+function sanitizedDelta(delta: number | undefined): number {
+  return delta !== undefined && Number.isFinite(delta) && delta > 0 ? delta : 1;
 }

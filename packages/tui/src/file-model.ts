@@ -1,5 +1,6 @@
-﻿import { readFile } from "node:fs/promises";
+﻿import { readFile, stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
+import { clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
 
 export type FileState =
@@ -23,16 +24,18 @@ export class FileModel {
   }
 
   handleKey(chord: Chord, pageRows: number): boolean {
-    const jumps: Record<string, number> = {
-      up: -1,
-      down: 1,
-      pageup: -pageRows,
-      pagedown: pageRows,
-    };
-    const jump = jumps[chord.name];
-    if (jump === undefined) return false;
-    this.scrollBy(jump);
-    return true;
+    switch (chord.name) {
+      case "up":
+        return this.scrollBy(-1);
+      case "down":
+        return this.scrollBy(1);
+      case "pageup":
+        return this.scrollBy(-pageRows);
+      case "pagedown":
+        return this.scrollBy(pageRows);
+      default:
+        return false;
+    }
   }
 
   visibleLines(rows: number): { number: number; text: string }[] {
@@ -47,13 +50,20 @@ export class FileModel {
     return this.state.kind === "loaded" ? this.state.lines.length : 0;
   }
 
-  private scrollBy(delta: number): void {
+  private scrollBy(delta: number): boolean {
     this.scrollTop = Math.max(0, this.scrollTop + delta);
     this.notify();
+    return true;
   }
 
   private async load(absolutePath: string): Promise<void> {
     try {
+      const { size } = await stat(absolutePath);
+      if (size > maxFileBytes) {
+        this.state = { kind: "failed", reason: `file too large (${megabytes(size)} MB)` };
+        this.notify();
+        return;
+      }
       const content = await readFile(absolutePath, "utf8");
       this.state = content.includes("\u0000")
         ? { kind: "failed", reason: "binary file" }
@@ -65,6 +75,8 @@ export class FileModel {
   }
 }
 
-function clampScroll(scrollTop: number, lineCount: number, rows: number): number {
-  return Math.max(0, Math.min(scrollTop, Math.max(0, lineCount - rows)));
+const maxFileBytes = 20 * 1024 * 1024;
+
+function megabytes(bytes: number): number {
+  return Math.round(bytes / (1024 * 1024));
 }

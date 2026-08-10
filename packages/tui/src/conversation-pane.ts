@@ -9,6 +9,7 @@ import {
 } from "./conversation-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneView } from "./pane.ts";
+import { paneChrome, paneTitle } from "./pane-chrome.ts";
 import type { Theme } from "./theme.ts";
 
 export class ConversationPane implements Pane {
@@ -28,11 +29,15 @@ export class ConversationPane implements Pane {
     const name = this.model.title ?? this.id;
     const usage = this.model.usageSummary();
     const spinner = this.model.busy ? " ·" : "";
-    return usage === "" ? ` ${name}${spinner} ` : ` ${name} · ${usage}${spinner} `;
+    return usage === "" ? paneTitle(`${name}${spinner}`) : paneTitle(name, `${usage}${spinner}`);
   }
 
   handleKey(chord: Chord, sequence: string | undefined): boolean {
     return this.model.handleKey(chord, sequence);
+  }
+
+  async settled(): Promise<void> {
+    await this.model.lastSend;
   }
 
   view(context: PaneContext): PaneView {
@@ -42,19 +47,9 @@ export class ConversationPane implements Pane {
     const maxRows = Math.max(3, height - 4 - suggestions.length);
     const lines = transcriptLines(this.model.entries, innerWidth).slice(-maxRows);
     const prompt = `› ${this.model.input}${focused ? "▌" : ""}`;
-    return Box(
-      {
-        flexGrow: 1,
-        flexBasis: 0,
-        border: true,
-        borderStyle: "rounded",
-        borderColor: focused ? theme.borderFocus : theme.border,
-        title: this.title(),
-        titleAlignment: "left",
-        flexDirection: "column",
-        paddingLeft: 1,
-        paddingRight: 1,
-      },
+    return paneChrome(
+      context,
+      this.title(),
       Box(
         { flexGrow: 1, flexDirection: "column", justifyContent: "flex-end", overflow: "hidden" },
         ...lines.map((line) => Text({ content: line.text || " ", fg: lineColor(line, theme) })),

@@ -22,6 +22,18 @@
 | H1, H2, H3 | **done** | `AppCore.handleMouse` spine + `pointer.ts`; overlay frames as shared pure functions; split-node `ratio` with min-size clamping, `leader shift+./,` resize verbs, `grow`/`shrink` commands; probe `click`/`hover`/`scroll`. |
 | H4–H6 | open | H4 must account for the ~1-cell chrome offset between `layout.rects` and the bordered render (flagged in H1 work). |
 
+**Improvement pass (2026-08-10, two-pronged review → applied, 207 tests / 20 files green).**
+Algo/correctness: stale-read guard on refreshed directory reads (claim-token settle);
+revision-cached `rows()` (no more full-tree walks per keystroke); locale-total sort
+comparator; wheel-delta clamp (`maxScrollSteps`) + sanitized pointer deltas; degenerate-rect
+handling at tiny screens; all-docked opens land in the empty main tree; 20 MB file-size cap
+before read; palette matches snapshotted per query so Enter always runs the row the user saw.
+Craft: one declarative action table drives bindings/help/sticky/dispatch/commands; shared
+`pane-chrome.ts` + `clamp.ts`; `Pane.settled?()` probe seam (casts deleted); overlay state as
+a discriminated union; factory types derived `AppCoreOptions` → `AppProbeOptions`; `index.ts`
+trimmed to the real public surface; `Layout.dock()` exposes `ratio`. Deferred (reviewed, not
+defects): incremental filtering, notify batching/render coalescing (C2's perf-budget work).
+
 ## Why now
 
 `FilePane`/`FileModel` landed with `/open <path>` (C11 partial). The natural next rung is

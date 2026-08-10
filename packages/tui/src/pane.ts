@@ -23,5 +23,6 @@ export interface Pane {
   view(context: PaneContext): PaneView;
   handleKey?(chord: Chord, sequence: string | undefined): boolean;
   handleMouse?(local: { x: number; y: number }, event: PointerEvent): boolean;
+  settled?(): Promise<void>;
   dispose?(): void;
 }
