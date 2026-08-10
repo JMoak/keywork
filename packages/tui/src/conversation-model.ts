@@ -3,6 +3,19 @@ import type { Chord } from "./keys.ts";
 
 export type Titler = (conversation: readonly Message[]) => Promise<string | undefined>;
 
+export interface CommandSuggestion {
+  name: string;
+  description: string;
+  shortcut?: string;
+}
+
+export interface CommandsPort {
+  search(query: string): readonly CommandSuggestion[];
+  run(name: string): boolean;
+}
+
+const suggestionLimit = 5;
+
 export type TranscriptEntry =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
@@ -19,10 +32,13 @@ export class ConversationModel {
   lastTitle: Promise<unknown> = Promise.resolve();
   private titleRequested = false;
 
+  selectedSuggestion = 0;
+
   constructor(
     private readonly agent: Agent | undefined,
     private readonly notify: () => void,
     private readonly titler?: Titler,
+    private readonly commands?: CommandsPort,
   ) {
     if (agent === undefined) {
       this.entries.push({
@@ -70,7 +86,14 @@ export class ConversationModel {
     return inputTokens + outputTokens === 0 ? "" : `${inputTokens}▸${outputTokens}`;
   }
 
+  suggestions(): readonly CommandSuggestion[] {
+    const query = this.slashQuery();
+    if (query === undefined || this.commands === undefined) return [];
+    return this.commands.search(query).slice(0, suggestionLimit);
+  }
+
   handleKey(chord: Chord, sequence: string | undefined): boolean {
+    if (this.slashQuery() !== undefined && this.handleSlashKey(chord)) return true;
     if (chord.name === "escape") {
       if (!this.busy) return false;
       this.agent?.interrupt();
@@ -82,15 +105,62 @@ export class ConversationModel {
     }
     if (chord.name === "backspace") {
       this.input = this.input.slice(0, -1);
+      this.selectedSuggestion = 0;
       this.notify();
       return true;
     }
     if (isPrintable(chord, sequence)) {
       this.input += sequence;
+      this.selectedSuggestion = 0;
       this.notify();
       return true;
     }
     return false;
+  }
+
+  private slashQuery(): string | undefined {
+    return this.input.startsWith("/") ? this.input.slice(1) : undefined;
+  }
+
+  private handleSlashKey(chord: Chord): boolean {
+    const suggestions = this.suggestions();
+    if (chord.name === "escape") {
+      this.input = "";
+      this.selectedSuggestion = 0;
+      this.notify();
+      return true;
+    }
+    if (chord.name === "up" || chord.name === "down") {
+      const step = chord.name === "down" ? 1 : -1;
+      const count = Math.max(1, suggestions.length);
+      this.selectedSuggestion = (this.selectedSuggestion + step + count) % count;
+      this.notify();
+      return true;
+    }
+    if (chord.name === "tab") {
+      const chosen = suggestions[this.selectedSuggestion];
+      if (chosen !== undefined) {
+        this.input = `/${chosen.name}`;
+        this.notify();
+      }
+      return true;
+    }
+    if (chord.name === "return" || chord.name === "enter") {
+      this.runSlashCommand(suggestions);
+      return true;
+    }
+    return false;
+  }
+
+  private runSlashCommand(suggestions: readonly CommandSuggestion[]): void {
+    if (this.commands === undefined) return;
+    const typed = this.input.slice(1).trim();
+    const chosen = suggestions[this.selectedSuggestion]?.name;
+    this.input = "";
+    this.selectedSuggestion = 0;
+    const ran = this.commands.run(typed) || (chosen !== undefined && this.commands.run(chosen));
+    if (!ran) this.entries.push({ kind: "error", text: `unknown command /${typed}` });
+    this.notify();
   }
 
   submit(): void {

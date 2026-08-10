@@ -37,10 +37,23 @@ async function main(argv: string[]): Promise<number> {
     projectDir: join(cwd, ".keywork"),
   });
   const model = values.model ?? config.model;
-  const resolved = resolveProvider(process.env, model, config.apiKeys);
+  let resolved = resolveProvider(process.env, model, config.apiKeys);
+
+  const onboardIfNeeded = async (): Promise<void> => {
+    if (resolved !== undefined || !process.stdin.isTTY) return;
+    console.log("Welcome to keywork — no model provider is configured yet.\n");
+    const { runSetup } = await import("./setup.ts");
+    if ((await runSetup()) !== 0) return;
+    const refreshed = await loadConfig({
+      userDir: join(homedir(), ".keywork"),
+      projectDir: join(cwd, ".keywork"),
+    });
+    resolved = resolveProvider(process.env, values.model ?? refreshed.model, refreshed.apiKeys);
+  };
 
   switch (command) {
     case "chat": {
+      await onboardIfNeeded();
       if (resolved === undefined) {
         console.error(providerSetupHint);
         return 1;
@@ -74,6 +87,8 @@ async function main(argv: string[]): Promise<number> {
       return runSetup();
     }
     case "panes": {
+      await onboardIfNeeded();
+      const active = resolved;
       const { runApp } = await import("@keywork/tui");
       const { Agent, buildSystemPrompt, coreTools, loadProjectInstructions, suggestTitle } =
         await import("@keywork/engine");
@@ -81,11 +96,11 @@ async function main(argv: string[]): Promise<number> {
       const systemPrompt = buildSystemPrompt(instructions);
       await runApp({
         ...(config.theme !== undefined && { themeOverrides: config.theme }),
-        ...(resolved !== undefined && {
+        ...(active !== undefined && {
           agentFactory: () =>
-            new Agent({ provider: resolved.provider, tools: coreTools(cwd), systemPrompt }),
-          titler: (conversation) => suggestTitle(resolved.provider, conversation),
-          statusLabel: resolved.label,
+            new Agent({ provider: active.provider, tools: coreTools(cwd), systemPrompt }),
+          titler: (conversation) => suggestTitle(active.provider, conversation),
+          statusLabel: active.label,
         }),
       });
       return 0;

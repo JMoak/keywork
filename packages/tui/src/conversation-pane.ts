@@ -1,6 +1,7 @@
 import type { Agent } from "@keywork/engine";
 import { Box, Text } from "@opentui/core";
 import {
+  type CommandsPort,
   ConversationModel,
   type Titler,
   type TranscriptLine,
@@ -18,8 +19,9 @@ export class ConversationPane implements Pane {
     agent: Agent | undefined,
     notify: () => void,
     titler?: Titler,
+    commands?: CommandsPort,
   ) {
-    this.model = new ConversationModel(agent, notify, titler);
+    this.model = new ConversationModel(agent, notify, titler, commands);
   }
 
   title(): string {
@@ -36,7 +38,8 @@ export class ConversationPane implements Pane {
   view(context: PaneContext): PaneView {
     const { theme, focused, width, height } = context;
     const innerWidth = Math.max(10, width - 4);
-    const maxRows = Math.max(3, height - 4);
+    const suggestions = focused ? this.model.suggestions() : [];
+    const maxRows = Math.max(3, height - 4 - suggestions.length);
     const lines = transcriptLines(this.model.entries, innerWidth).slice(-maxRows);
     const prompt = `› ${this.model.input}${focused ? "▌" : ""}`;
     return Box(
@@ -56,9 +59,25 @@ export class ConversationPane implements Pane {
         { flexGrow: 1, flexDirection: "column", justifyContent: "flex-end", overflow: "hidden" },
         ...lines.map((line) => Text({ content: line.text || " ", fg: lineColor(line, theme) })),
       ),
+      ...suggestions.map((suggestion, index) =>
+        suggestionRow(suggestion, index === this.model.selectedSuggestion, theme),
+      ),
       Text({ content: prompt, fg: focused ? theme.text : theme.textDim }),
     );
   }
+}
+
+function suggestionRow(
+  suggestion: { name: string; description: string; shortcut?: string },
+  selected: boolean,
+  theme: Theme,
+) {
+  const marker = selected ? "▸" : " ";
+  const shortcut = suggestion.shortcut === undefined ? "" : `  ${suggestion.shortcut}`;
+  return Text({
+    content: `${marker} /${suggestion.name} — ${suggestion.description}${shortcut}`,
+    fg: selected ? theme.accent : theme.textDim,
+  });
 }
 
 function lineColor(line: TranscriptLine, theme: Theme): string {

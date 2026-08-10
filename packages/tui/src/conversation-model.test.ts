@@ -119,6 +119,76 @@ describe("ConversationModel", () => {
   });
 });
 
+describe("slash commands", () => {
+  const commandNames = ["exit", "exit-all", "move-right"];
+  function modelWithCommands(onRun: (name: string) => void = () => {}): ConversationModel {
+    return new ConversationModel(undefined, () => {}, undefined, {
+      search: (query) =>
+        commandNames
+          .filter((name) => name.startsWith(query.toLowerCase()))
+          .map((name) => ({ name, description: name })),
+      run: (name) => {
+        if (!commandNames.includes(name)) return false;
+        onRun(name);
+        return true;
+      },
+    });
+  }
+
+  it("suggests matching commands while typing a slash query", () => {
+    const model = modelWithCommands();
+    type(model, "/ex");
+    expect(model.suggestions().map((suggestion) => suggestion.name)).toEqual(["exit", "exit-all"]);
+  });
+
+  it("runs the exact command on enter and clears the input", () => {
+    const ran: string[] = [];
+    const model = modelWithCommands((name) => ran.push(name));
+    type(model, "/exit");
+    model.handleKey(parseChord("return"), undefined);
+    expect(ran).toEqual(["exit"]);
+    expect(model.input).toBe("");
+  });
+
+  it("falls back to the selected suggestion for partial input", () => {
+    const ran: string[] = [];
+    const model = modelWithCommands((name) => ran.push(name));
+    type(model, "/ex");
+    model.handleKey(parseChord("down"), undefined);
+    model.handleKey(parseChord("return"), undefined);
+    expect(ran).toEqual(["exit-all"]);
+  });
+
+  it("completes the selection with tab", () => {
+    const model = modelWithCommands();
+    type(model, "/mo");
+    model.handleKey(parseChord("tab"), undefined);
+    expect(model.input).toBe("/move-right");
+  });
+
+  it("reports unknown commands as an error entry", () => {
+    const model = modelWithCommands();
+    type(model, "/nonsense");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toMatchObject({ kind: "error" });
+  });
+
+  it("clears slash input with escape", () => {
+    const model = modelWithCommands();
+    type(model, "/ex");
+    model.handleKey(parseChord("escape"), undefined);
+    expect(model.input).toBe("");
+  });
+
+  it("works without any agent so commands function providerless", () => {
+    const ran: string[] = [];
+    const model = modelWithCommands((name) => ran.push(name));
+    type(model, "/move-right");
+    model.handleKey(parseChord("return"), undefined);
+    expect(ran).toEqual(["move-right"]);
+  });
+});
+
 describe("auto-titling", () => {
   it("requests a title once after the first completed turn", async () => {
     const agent = new Agent({ provider: new MockProvider([textTurn("a"), textTurn("b")]) });

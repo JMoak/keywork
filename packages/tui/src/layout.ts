@@ -1,6 +1,7 @@
 export type PaneId = string;
 export type Orientation = "row" | "column";
 export type Direction = "left" | "right" | "up" | "down";
+export type DockSide = "left" | "right";
 
 export interface Rect {
   x: number;
@@ -19,11 +20,16 @@ export interface Screen {
 }
 
 const terminalCellAspect = 2;
+const dockRatioBounds = { min: 0.15, max: 0.6 };
+const defaultDockRatio = 1 / 3;
 
 export class Layout {
   private tree: LayoutNode | undefined;
   private focusedId: PaneId | undefined;
   private zoomedId: PaneId | undefined;
+  private dockIds: PaneId[] = [];
+  private dockEdge: DockSide = "left";
+  private dockRatio = defaultDockRatio;
 
   root(): LayoutNode | undefined {
     return this.tree;
@@ -38,7 +44,12 @@ export class Layout {
   }
 
   panes(): PaneId[] {
-    return this.tree === undefined ? [] : leafIds(this.tree);
+    return [...this.mainPanes(), ...this.dockIds];
+  }
+
+  dock(): { side: DockSide; panes: PaneId[] } | undefined {
+    if (this.dockIds.length === 0) return undefined;
+    return { side: this.dockEdge, panes: [...this.dockIds] };
   }
 
   open(id: PaneId, screen: Screen): void {
@@ -47,6 +58,11 @@ export class Layout {
       return;
     }
     this.zoomedId = undefined;
+    if (this.focusedId !== undefined && this.dockIds.includes(this.focusedId)) {
+      this.dockIds.splice(this.dockIds.indexOf(this.focusedId) + 1, 0, id);
+      this.focusedId = id;
+      return;
+    }
     const leaf: LayoutNode = { kind: "leaf", id };
     if (this.tree === undefined || this.focusedId === undefined) {
       this.tree = leaf;
@@ -60,12 +76,20 @@ export class Layout {
   }
 
   close(id: PaneId): void {
-    if (this.tree === undefined) return;
     if (this.zoomedId === id) this.zoomedId = undefined;
-    const remaining = removeLeaf(this.tree, id);
-    this.tree = remaining;
+    const dockIndex = this.dockIds.indexOf(id);
+    if (dockIndex >= 0) {
+      this.dockIds.splice(dockIndex, 1);
+      if (this.focusedId === id) {
+        this.focusedId =
+          this.dockIds[Math.min(dockIndex, this.dockIds.length - 1)] ?? this.mainPanes()[0];
+      }
+      return;
+    }
+    if (this.tree === undefined) return;
+    this.tree = removeLeaf(this.tree, id);
     if (this.focusedId === id) {
-      this.focusedId = remaining === undefined ? undefined : (leafIds(remaining)[0] as PaneId);
+      this.focusedId = this.mainPanes()[0] ?? this.dockIds[0];
     }
   }
 
@@ -82,8 +106,9 @@ export class Layout {
   swap(direction: Direction, screen: Screen): boolean {
     const from = this.focusedId;
     const to = this.neighbor(direction, screen);
-    if (from === undefined || to === undefined || this.tree === undefined) return false;
-    this.tree = swapLeaves(this.tree, from, to);
+    if (from === undefined || to === undefined) return false;
+    if (this.tree !== undefined) this.tree = swapLeaves(this.tree, from, to);
+    this.dockIds = this.dockIds.map((id) => (id === from ? to : id === to ? from : id));
     return true;
   }
 
@@ -92,15 +117,70 @@ export class Layout {
     this.zoomedId = this.zoomedId === this.focusedId ? undefined : this.focusedId;
   }
 
+  dockFocused(side: DockSide): void {
+    const id = this.focusedId;
+    if (id === undefined) return;
+    this.zoomedId = undefined;
+    this.dockEdge = side;
+    if (this.dockIds.includes(id)) return;
+    if (this.tree !== undefined) this.tree = removeLeaf(this.tree, id);
+    this.dockIds.push(id);
+  }
+
+  undockFocused(screen: Screen): void {
+    const id = this.focusedId;
+    if (id === undefined) return;
+    const dockIndex = this.dockIds.indexOf(id);
+    if (dockIndex < 0) return;
+    this.zoomedId = undefined;
+    this.dockIds.splice(dockIndex, 1);
+    const leaf: LayoutNode = { kind: "leaf", id };
+    const target = this.largestMainLeaf(screen);
+    if (this.tree === undefined || target === undefined) {
+      this.tree = leaf;
+      return;
+    }
+    this.tree = splitLeaf(this.tree, target.id, leaf, wideOrTall(target.rect));
+  }
+
+  growDock(delta: number): void {
+    this.dockRatio = clamp(this.dockRatio + delta, dockRatioBounds.min, dockRatioBounds.max);
+  }
+
   rects(screen: Screen): Map<PaneId, Rect> {
     const result = new Map<PaneId, Rect>();
-    if (this.tree === undefined) return result;
+    const full: Rect = { x: 0, y: 0, width: screen.width, height: screen.height };
     if (this.zoomedId !== undefined && this.panes().includes(this.zoomedId)) {
-      result.set(this.zoomedId, { x: 0, y: 0, width: screen.width, height: screen.height });
+      result.set(this.zoomedId, full);
       return result;
     }
-    collectRects(this.tree, { x: 0, y: 0, width: screen.width, height: screen.height }, result);
+    if (this.dockIds.length === 0) {
+      if (this.tree !== undefined) collectRects(this.tree, full, result);
+      return result;
+    }
+    if (this.tree === undefined) {
+      stackVertically(this.dockIds, full, result);
+      return result;
+    }
+    const [dockRect, mainRect] = splitAtDock(full, this.dockEdge, this.dockRatio);
+    stackVertically(this.dockIds, dockRect, result);
+    collectRects(this.tree, mainRect, result);
     return result;
+  }
+
+  private mainPanes(): PaneId[] {
+    return this.tree === undefined ? [] : leafIds(this.tree);
+  }
+
+  private largestMainLeaf(screen: Screen): { id: PaneId; rect: Rect } | undefined {
+    if (this.tree === undefined) return undefined;
+    const rects = this.rects(screen);
+    let best: { id: PaneId; rect: Rect } | undefined;
+    for (const id of leafIds(this.tree)) {
+      const rect = rects.get(id) as Rect;
+      if (best === undefined || area(rect) > area(best.rect)) best = { id, rect };
+    }
+    return best;
   }
 
   private neighbor(direction: Direction, screen: Screen): PaneId | undefined {
@@ -112,8 +192,42 @@ export class Layout {
   }
 }
 
+function splitAtDock(full: Rect, side: DockSide, ratio: number): [Rect, Rect] {
+  const dockWidth = clamp(Math.round(full.width * ratio), 1, full.width - 1);
+  const mainWidth = full.width - dockWidth;
+  if (side === "left") {
+    return [
+      { ...full, width: dockWidth },
+      { ...full, x: full.x + dockWidth, width: mainWidth },
+    ];
+  }
+  return [
+    { ...full, x: full.x + mainWidth, width: dockWidth },
+    { ...full, width: mainWidth },
+  ];
+}
+
+function stackVertically(ids: PaneId[], rect: Rect, into: Map<PaneId, Rect>): void {
+  const base = Math.floor(rect.height / ids.length);
+  const extra = rect.height % ids.length;
+  let y = rect.y;
+  ids.forEach((id, index) => {
+    const height = base + (index < extra ? 1 : 0);
+    into.set(id, { x: rect.x, y, width: rect.width, height });
+    y += height;
+  });
+}
+
 function wideOrTall(rect: Rect): Orientation {
   return rect.width >= rect.height * terminalCellAspect ? "row" : "column";
+}
+
+function area(rect: Rect): number {
+  return rect.width * rect.height;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function leafIds(node: LayoutNode): PaneId[] {

@@ -26,10 +26,12 @@
 | [`80-p2-reach.md`](80-p2-reach.md) | P2 — server, attach, workspaces | 5 | 17 |
 
 | [`90-plan-review.md`](90-plan-review.md) | **Authoritative overlay** — combined two-reviewer findings: 15 new tasks (E6 trust gate, C0 TUI harness, D0 slash registry, packaging/docs/onboarding, …), resequencing (guardrail CI grep → M0, undo → M1), resizing, corrected milestone map | 15 | +43 |
+| [`91-progress-and-feedback.md`](91-progress-and-feedback.md) | **Authoritative overlay** — completed ledger (done/partial per ID), 7 new tasks from first user feedback (C24 empty state, C25 slash autocomplete, C26 quick menu superseding C5, C27/C28 dock layout, D12 provider-free commands, D13 `/onboarding`), corrected mid-M2 milestone statement, next-up ordering | 7 | +12 |
 
-**Total: 90 tasks, ~196 points** (after review overlay).
+**Total: 97 tasks, ~208 points** (after review + progress overlays).
 
-**Milestone map — see `90-plan-review.md` (authoritative):**
+**Milestone map — see `90-plan-review.md` (authoritative), current status in
+`91-progress-and-feedback.md`:**
 **M1** = M0 · A1–A17 · B1–B8 · C0–C7, C12, C19, C20 · D0 · E3, E4 ·
 **M2** = C8–C11, C13, C14, C15a, C16–C18, C21–C23 · D1–D11 · E1, E2, E5, E6 (exit gate:
 one keywork feature built *using* keywork) · **M3** = F1–F5 · G1–G6 · C15b · **P2** post-v1.

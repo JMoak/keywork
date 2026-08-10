@@ -1,5 +1,8 @@
 export { type AppOptions, appBindings, runApp } from "./app.ts";
+export { CommandRegistry, type CommandSpec, fuzzyScore } from "./commands.ts";
 export {
+  type CommandSuggestion,
+  type CommandsPort,
   ConversationModel,
   type Titler,
   type TranscriptEntry,
