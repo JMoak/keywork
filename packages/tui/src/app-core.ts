@@ -232,10 +232,18 @@ export type SessionTreePaneFactory = (
   sessionId?: string,
 ) => Pane;
 export type MemoryPaneFactory = (id: string, notify: () => void) => Pane;
+export type McpPaneFactory = (id: string, notify: () => void) => Pane;
 
 export interface UndoPort {
   undo(): Promise<boolean>;
   redo(): Promise<boolean>;
+}
+
+export interface PresetsPort {
+  names(): readonly string[];
+  active(): string;
+  requiresConfirmation(name: string): boolean;
+  apply(name: string): Promise<void>;
 }
 
 export interface AppCoreOptions {
@@ -245,8 +253,10 @@ export interface AppCoreOptions {
   createBrowserPane?: BrowserPaneFactory;
   createSessionTreePane?: SessionTreePaneFactory;
   createMemoryPane?: MemoryPaneFactory;
+  createMcpPane?: McpPaneFactory;
   isDirectory?: (path: string) => boolean;
   undo?: UndoPort;
+  presets?: PresetsPort;
   restoreWorkspace?: WorkspaceState;
   saveWorkspace?: (state: WorkspaceState) => void;
   onExit: () => void;
@@ -294,16 +304,31 @@ export interface AppSnapshot {
   focused: string | undefined;
   zoomed: string | undefined;
   dockSide: DockSide | undefined;
-  overlay: "palette" | "help" | undefined;
+  overlay: "palette" | "help" | "preset" | "preset-confirm" | undefined;
   paletteQuery: string;
   leaderArmed: boolean;
   lastKey: string;
   notice: string;
 }
 
+export interface PresetPicker {
+  names: readonly string[];
+  active: string;
+  index: number;
+}
+
+export interface PresetConfirmation {
+  from: string;
+  to: string;
+}
+
 type PaletteEntries = ReturnType<CommandRegistry["search"]>;
 type PaletteOverlay = { kind: "palette"; query: string; index: number; entries: PaletteEntries };
-type Overlay = PaletteOverlay | { kind: "help" };
+type Overlay =
+  | PaletteOverlay
+  | { kind: "help" }
+  | { kind: "preset"; names: readonly string[]; index: number }
+  | { kind: "preset-confirm"; name: string };
 
 export class AppCore {
   readonly layout = new Layout();
@@ -324,6 +349,7 @@ export class AppCore {
   private nextBrowser = 1;
   private nextTree = 1;
   private nextMemory = 1;
+  private nextMcp = 1;
   private notify: () => void = () => {};
   private lastSavedWorkspace = "";
   private readonly paneChanged = (): void => {
@@ -342,6 +368,7 @@ export class AppCore {
   start(): void {
     const saved = this.options.restoreWorkspace;
     if (saved === undefined || !this.restoreFrom(saved)) this.openPane();
+    this.dockMcpPaneOnStartup();
     this.persistWorkspace();
   }
 
@@ -429,6 +456,14 @@ export class AppCore {
       if (chord.name === "escape" || chord.name === "f1") this.overlay = undefined;
       return;
     }
+    if (this.overlay?.kind === "preset") {
+      this.handlePresetKey(this.overlay, chord);
+      return;
+    }
+    if (this.overlay?.kind === "preset-confirm") {
+      this.handlePresetConfirmKey(this.overlay.name, chord);
+      return;
+    }
     const result = this.keymap.press(chord, nowMs, repeat);
     this.leaderArmed = result.type === "leader-pending";
     if (result.type === "action") {
@@ -454,7 +489,9 @@ export class AppCore {
   handleMouse(event: PointerEvent, _nowMs: number): void {
     if (this.paletteOpen) this.routePaletteMouse(event);
     else if (this.helpVisible) this.routeHelpMouse(event);
-    else this.routePaneMouse(event);
+    else if (this.overlay !== undefined) {
+      if (event.type === "down") this.overlay = undefined;
+    } else this.routePaneMouse(event);
     this.persistWorkspace();
   }
 
@@ -510,12 +547,44 @@ export class AppCore {
     this.openMemoryPane();
   }
 
+  summonMcpPane(): void {
+    const existing = [...this.panes.keys()].find((id) => id.startsWith("mcp-"));
+    if (existing !== undefined) {
+      this.layout.focus(existing);
+      return;
+    }
+    this.openMcpPane();
+  }
+
+  postNotice(text: string): void {
+    this.showNotice(text);
+  }
+
   toggleHelp(): void {
     this.overlay = this.helpVisible ? undefined : { kind: "help" };
   }
 
   openPalette(): void {
     this.overlay = this.paletteFor("");
+  }
+
+  openPresetPicker(): void {
+    const port = this.options.presets;
+    if (port === undefined) return;
+    const names = port.names();
+    this.overlay = { kind: "preset", names, index: Math.max(0, names.indexOf(port.active())) };
+  }
+
+  presetPicker(): PresetPicker | undefined {
+    const port = this.options.presets;
+    if (port === undefined || this.overlay?.kind !== "preset") return undefined;
+    return { names: this.overlay.names, active: port.active(), index: this.overlay.index };
+  }
+
+  presetConfirmation(): PresetConfirmation | undefined {
+    const port = this.options.presets;
+    if (port === undefined || this.overlay?.kind !== "preset-confirm") return undefined;
+    return { from: port.active(), to: this.overlay.name };
   }
 
   shutdown(): void {
@@ -613,6 +682,8 @@ export class AppCore {
           );
         case "memory":
           return this.options.createMemoryPane?.(entry.id, this.paneChanged);
+        case "mcp":
+          return this.options.createMcpPane?.(entry.id, this.paneChanged);
       }
     } catch {
       return undefined;
@@ -626,6 +697,7 @@ export class AppCore {
       this.nextBrowser = nextAfter(id, "browser", this.nextBrowser);
       this.nextTree = nextAfter(id, "tree", this.nextTree);
       this.nextMemory = nextAfter(id, "memory", this.nextMemory);
+      this.nextMcp = nextAfter(id, "mcp", this.nextMcp);
     }
   }
 
@@ -670,6 +742,23 @@ export class AppCore {
     this.panes.set(id, create(id, this.paneChanged));
     this.layout.open(id, this.screen());
     this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+  }
+
+  private openMcpPane(): void {
+    const create = this.options.createMcpPane;
+    if (create === undefined) return;
+    const id = `mcp-${this.nextMcp}`;
+    this.nextMcp += 1;
+    this.panes.set(id, create(id, this.paneChanged));
+    this.layout.open(id, this.screen());
+    this.layout.dockFocused(this.layout.dock()?.side ?? "right");
+  }
+
+  private dockMcpPaneOnStartup(): void {
+    if (this.options.createMcpPane === undefined) return;
+    if ([...this.panes.keys()].some((id) => id.startsWith("mcp-"))) return;
+    this.openMcpPane();
+    this.focusMainArea();
   }
 
   private conversationSession(): string | undefined {
@@ -740,6 +829,59 @@ export class AppCore {
       if (containsPoint(rect, x, y)) return { id, rect };
     }
     return undefined;
+  }
+
+  private handlePresetKey(
+    overlay: { names: readonly string[]; index: number },
+    chord: Chord,
+  ): void {
+    if (chord.name === "escape") {
+      this.overlay = undefined;
+      return;
+    }
+    if (chord.name === "up" || chord.name === "down") {
+      const step = chord.name === "down" ? 1 : -1;
+      const count = Math.max(1, overlay.names.length);
+      overlay.index = (overlay.index + step + count) % count;
+      return;
+    }
+    if (chord.name === "return" || chord.name === "enter") {
+      const chosen = overlay.names[overlay.index];
+      if (chosen !== undefined) this.choosePreset(chosen);
+    }
+  }
+
+  private handlePresetConfirmKey(name: string, chord: Chord): void {
+    if (["y", "return", "enter"].includes(chord.name)) {
+      this.applyPreset(name);
+      return;
+    }
+    if (chord.name === "n" || chord.name === "escape") this.overlay = undefined;
+  }
+
+  private choosePreset(name: string): void {
+    const port = this.options.presets;
+    if (port === undefined) return;
+    if (name === port.active()) {
+      this.overlay = undefined;
+      this.showNotice(`already on ${name}`);
+      return;
+    }
+    if (port.requiresConfirmation(name)) {
+      this.overlay = { kind: "preset-confirm", name };
+      return;
+    }
+    this.applyPreset(name);
+  }
+
+  private applyPreset(name: string): void {
+    const port = this.options.presets;
+    this.overlay = undefined;
+    if (port === undefined) return;
+    port
+      .apply(name)
+      .then(() => this.showNotice(`permissions preset → ${name}`))
+      .catch((cause: unknown) => this.showNotice((cause as Error).message));
   }
 
   private handlePaletteKey(chord: Chord, sequence: string | undefined): void {
@@ -823,6 +965,21 @@ export class AppCore {
         description: "open the memory pane: /memory",
         ...shortcut("memory.summon"),
         run: () => this.summonMemoryPane(),
+      });
+    }
+    if (this.options.createMcpPane !== undefined) {
+      this.registry.register({
+        name: "mcp",
+        description: "open the MCP status pane: /mcp",
+        run: () => this.summonMcpPane(),
+      });
+    }
+    if (this.options.presets !== undefined) {
+      this.registry.register({
+        name: "preset",
+        aliases: ["presets"],
+        description: "switch the permissions preset: /preset",
+        run: () => this.openPresetPicker(),
       });
     }
     const undoPort = this.options.undo;

@@ -1,18 +1,30 @@
 import {
   Agent,
+  type Message,
   MockProvider,
+  messageText,
   type SessionTreeNode,
   type Tool,
+  type TurnDelta,
   textMessage,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { paletteFrame, paletteRowLimit } from "./app-core.ts";
+import {
+  bindSessionLifecycle,
+  type CheckpointsPort,
+  forkAtPrompt,
+  type SessionAttachment,
+  type SessionTurn,
+} from "./app.ts";
+import { type PresetsPort, paletteFrame, paletteRowLimit } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
+import { McpPane, type McpPanePort } from "./mcp-pane.ts";
+import type { McpServerView } from "./mcp-pane-model.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { InboxItemView, MemoryPaneInputs } from "./memory-pane-model.ts";
 import type { Pane } from "./pane.ts";
@@ -1104,7 +1116,8 @@ describe("esc-backtrack prompt stepping", () => {
           ports: {
             forkAtPrompt: async (ordinal, draft) => {
               forks.push({ ordinal, draft });
-              return typeof outcome === "boolean" ? outcome : outcome();
+              const forked = typeof outcome === "boolean" ? outcome : await outcome();
+              return { forked };
             },
           },
         });
@@ -1242,7 +1255,7 @@ describe("esc-backtrack prompt stepping", () => {
           ports: {
             forkAtPrompt: async (ordinal, draft) => {
               forks.push({ ordinal, draft });
-              return true;
+              return { forked: true };
             },
           },
         });
@@ -1542,6 +1555,478 @@ describe("memory pane", () => {
 
   it("memory is absent when no memory factory is wired", () => {
     expect(new AppProbe().command("memory")).toBe(false);
+  });
+});
+
+describe("session after-turn lifecycle", () => {
+  interface RecordedAttachment extends SessionAttachment {
+    appended: Message[];
+  }
+
+  function recordedAttachment(id: string): RecordedAttachment {
+    const appended: Message[] = [];
+    return {
+      id,
+      history: [],
+      appended,
+      replay: () => {},
+      append: async (message) => {
+        appended.push(message);
+      },
+    };
+  }
+
+  function lifecycleProbe(options: {
+    turns: TurnDelta[][];
+    afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
+  }) {
+    const attachment = recordedAttachment("sess-1");
+    const rebuilt: Agent[] = [];
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const provider = new MockProvider(options.turns);
+        const agent = new Agent({ provider });
+        const pane = new ConversationPane(id, agent, notify, undefined, commands);
+        bindSessionLifecycle({
+          pane,
+          agent,
+          attachment,
+          ...(options.afterTurn !== undefined && { afterTurn: options.afterTurn }),
+          rebuild: (history) => {
+            const next = new Agent({ provider, bus: agent.bus, history });
+            rebuilt.push(next);
+            return next;
+          },
+        });
+        pane.sessionId = attachment.id;
+        return pane;
+      },
+    });
+    return { probe, attachment, rebuilt };
+  }
+
+  it("persists turn messages, then joins flush messages into store and agent context", async () => {
+    const flushMessages = [
+      textMessage("user", "FLUSH-PROMPT"),
+      textMessage("assistant", "FLUSH-REPLY"),
+    ];
+    const seen: string[] = [];
+    const { probe, attachment, rebuilt } = lifecycleProbe({
+      turns: [textTurn("first reply"), textTurn("second reply")],
+      afterTurn: async ({ sessionId, history }) => {
+        seen.push(`${sessionId}:${history.length}`);
+        if (seen.length > 1) return [];
+        for (const message of flushMessages) await attachment.append(message);
+        return flushMessages;
+      },
+    });
+    probe.type("hi").keys("enter");
+    await probe.settled();
+
+    expect(seen).toEqual(["sess-1:2"]);
+    expect(attachment.appended.map((message) => messageText(message))).toEqual([
+      "hi",
+      "first reply",
+      "FLUSH-PROMPT",
+      "FLUSH-REPLY",
+    ]);
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0]?.history()).toHaveLength(4);
+    expect(probe.model()?.entries.some((entry) => entry.text.includes("FLUSH"))).toBe(false);
+
+    probe.type("again").keys("enter");
+    await probe.settled();
+    expect(probe.model()?.entries.at(-1)).toEqual({ kind: "assistant", text: "second reply" });
+    expect(attachment.appended.map((message) => messageText(message)).slice(4)).toEqual([
+      "again",
+      "second reply",
+    ]);
+    expect(rebuilt[0]?.history()).toHaveLength(6);
+  });
+
+  it("keeps the turn open until the after-turn hook settles", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { probe } = lifecycleProbe({
+      turns: [textTurn("reply")],
+      afterTurn: async () => {
+        await gate;
+        return [];
+      },
+    });
+    probe.type("hi").keys("enter");
+    await waitFor(() =>
+      expect(probe.model()?.entries.at(-1)).toEqual({ kind: "assistant", text: "reply" }),
+    );
+    expect(probe.model()?.busy).toBe(true);
+    release();
+    await probe.settled();
+    expect(probe.model()?.busy).toBe(false);
+  });
+
+  it("surfaces an after-turn failure and keeps the pane usable", async () => {
+    const { probe } = lifecycleProbe({
+      turns: [textTurn("first"), textTurn("second")],
+      afterTurn: async () => {
+        throw new Error("flush pipeline broke");
+      },
+    });
+    probe.type("one").keys("enter");
+    await probe.settled();
+    expect(probe.model()?.entries).toContainEqual({ kind: "error", text: "flush pipeline broke" });
+    expect(probe.model()?.busy).toBe(false);
+
+    probe.type("two").keys("enter");
+    await probe.settled();
+    expect(probe.model()?.entries).toContainEqual({ kind: "assistant", text: "second" });
+  });
+});
+
+describe("preset overlay", () => {
+  function presetProbe(overrides?: Partial<PresetsPort>) {
+    const applied: string[] = [];
+    let active = "standard";
+    const port: PresetsPort = {
+      names: () => ["careful", "standard", "open"],
+      active: () => active,
+      requiresConfirmation: (name) => name === "open",
+      apply: async (name) => {
+        applied.push(name);
+        active = name;
+      },
+      ...overrides,
+    };
+    const probe = new AppProbe({ presets: port });
+    return { probe, applied, setActive: (name: string) => (active = name) };
+  }
+
+  it("/preset opens the picker with the active preset marked", () => {
+    const { probe } = presetProbe();
+    probe.type("/preset").keys("enter");
+    expect(probe.snapshot().overlay).toBe("preset");
+    expect(probe.core.presetPicker()).toEqual({
+      names: ["careful", "standard", "open"],
+      active: "standard",
+      index: 1,
+    });
+  });
+
+  it("choosing the active preset just closes with a notice", () => {
+    const { probe, applied } = presetProbe();
+    probe.command("preset");
+    probe.keys("enter");
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(probe.snapshot().notice).toBe("already on standard");
+    expect(applied).toEqual([]);
+  });
+
+  it("tightening applies without confirmation", async () => {
+    const { probe, applied } = presetProbe();
+    probe.command("preset");
+    probe.keys("up", "enter");
+    await waitFor(() => expect(probe.snapshot().notice).toBe("permissions preset → careful"));
+    expect(applied).toEqual(["careful"]);
+    expect(probe.snapshot().overlay).toBeUndefined();
+  });
+
+  it("loosening asks first; declining leaves the matrix untouched and closes", () => {
+    const { probe, applied } = presetProbe();
+    probe.command("preset");
+    probe.keys("down", "enter");
+    expect(probe.snapshot().overlay).toBe("preset-confirm");
+    expect(probe.core.presetConfirmation()).toEqual({ from: "standard", to: "open" });
+    probe.keys("n");
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(applied).toEqual([]);
+  });
+
+  it("loosening applies after an explicit y", async () => {
+    const { probe, applied } = presetProbe();
+    probe.command("preset");
+    probe.keys("down", "enter", "y");
+    await waitFor(() => expect(probe.snapshot().notice).toBe("permissions preset → open"));
+    expect(applied).toEqual(["open"]);
+  });
+
+  it("derives the active preset live instead of caching it", () => {
+    const { probe, setActive } = presetProbe();
+    probe.command("preset");
+    expect(probe.core.presetPicker()?.active).toBe("standard");
+    setActive("open");
+    expect(probe.core.presetPicker()?.active).toBe("open");
+  });
+
+  it("marks a custom matrix that matches no preset", () => {
+    const { probe, setActive } = presetProbe();
+    setActive("custom");
+    probe.command("preset");
+    const picker = probe.core.presetPicker();
+    expect(picker?.active).toBe("custom");
+    expect(picker?.names).not.toContain("custom");
+    expect(picker?.index).toBe(0);
+  });
+
+  it("takes key precedence over a pending ask and hands keys back afterwards", async () => {
+    const executed: string[] = [];
+    const applied: string[] = [];
+    const port: PresetsPort = {
+      names: () => ["careful", "standard", "open"],
+      active: () => "standard",
+      requiresConfirmation: (name) => name === "open",
+      apply: async (name) => {
+        applied.push(name);
+      },
+    };
+    const probe = new AppProbe({
+      presets: port,
+      createPane: (id, notify, commands) => {
+        let pane: ConversationPane | undefined;
+        const agent = new Agent({
+          provider: new MockProvider([
+            toolCallTurn({ type: "tool-call", callId: "c1", name: "scribble", arguments: {} }),
+            textTurn("done"),
+          ]),
+          tools: [
+            {
+              name: "scribble",
+              description: "writes",
+              parameters: { type: "object" },
+              mutates: true,
+              execute: async () => {
+                executed.push("scribble");
+                return "wrote";
+              },
+            },
+          ],
+          guard: { confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true) },
+        });
+        pane = new ConversationPane(id, agent, notify, undefined, commands);
+        return pane;
+      },
+    });
+
+    probe.type("go").keys("enter");
+    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+
+    probe.command("preset");
+    probe.keys("down", "enter", "y");
+    await waitFor(() => expect(applied).toEqual(["open"]));
+    expect(probe.model()?.pendingAsk).toBeDefined();
+    expect(executed).toEqual([]);
+
+    probe.keys("y");
+    await probe.settled();
+    expect(executed).toEqual(["scribble"]);
+  });
+
+  it("preset is absent when no port is wired", () => {
+    expect(new AppProbe().command("preset")).toBe(false);
+  });
+});
+
+describe("retrieval disclosure", () => {
+  it("renders exactly once per session, quietly, in the feed", () => {
+    const probe = new AppProbe();
+    const pane = probe.core.panes.get("session-1") as ConversationPane;
+    pane.discloseRetrieval("memory search uses embeddings from voyage-3");
+    pane.discloseRetrieval("memory search uses embeddings from voyage-3");
+    const disclosures = probe
+      .model()
+      ?.entries.filter((entry) => entry.kind === "info" && entry.text.includes("embeddings"));
+    expect(disclosures).toEqual([
+      { kind: "info", text: "memory search uses embeddings from voyage-3" },
+    ]);
+  });
+});
+
+describe("checkpoint-paired backtrack fork", () => {
+  const treeHash = "a".repeat(40);
+
+  function promptRoots(checkpoint?: string): SessionTreeNode[] {
+    const second: SessionTreeNode = {
+      entry: {
+        type: "message",
+        id: "u2",
+        parentId: "a1",
+        timestamp: "",
+        message: textMessage("user", "two"),
+        ...(checkpoint !== undefined && { checkpoint }),
+      },
+      children: [],
+      onActivePath: true,
+    };
+    const reply: SessionTreeNode = {
+      entry: {
+        type: "message",
+        id: "a1",
+        parentId: "u1",
+        timestamp: "",
+        message: textMessage("assistant", "re: one"),
+      },
+      children: [second],
+      onActivePath: true,
+    };
+    return [
+      {
+        entry: {
+          type: "message",
+          id: "u1",
+          parentId: null,
+          timestamp: "",
+          message: textMessage("user", "one"),
+        },
+        children: [reply],
+        onActivePath: true,
+      },
+    ];
+  }
+
+  function forkWorld(options: { checkpoint?: string; restoreError?: Error } = {}) {
+    const restored: string[] = [];
+    const opened: (string | undefined)[] = [];
+    const trees: SessionTreePort = {
+      load: async (sessionId) => ({ sessionId, roots: promptRoots(options.checkpoint) }),
+      setLabel: async () => {},
+      fork: async () => "forked-1",
+    };
+    const checkpoints: CheckpointsPort = {
+      capture: async () => {},
+      undo: async () => false,
+      redo: async () => false,
+      restoreTo: async (tree) => {
+        if (options.restoreError !== undefined) throw options.restoreError;
+        restored.push(tree);
+      },
+    };
+    return {
+      restored,
+      opened,
+      fork: (ordinal: number, draft: string) =>
+        forkAtPrompt(
+          trees,
+          (sessionId) => opened.push(sessionId),
+          checkpoints,
+          "s1",
+          ordinal,
+          draft,
+        ),
+    };
+  }
+
+  it("restores files to the prompt's checkpoint and says so", async () => {
+    const world = forkWorld({ checkpoint: treeHash });
+    const outcome = await world.fork(1, "two");
+    expect(outcome).toEqual({ forked: true, note: "files restored to that point" });
+    expect(world.restored).toEqual([treeHash]);
+    expect(world.opened).toEqual(["forked-1"]);
+  });
+
+  it("forks truthfully without touching files when the prompt was never checkpointed", async () => {
+    const world = forkWorld();
+    const outcome = await world.fork(1, "two");
+    expect(outcome).toEqual({ forked: true, note: "conversation forked; file state unchanged" });
+    expect(world.restored).toEqual([]);
+    expect(world.opened).toEqual(["forked-1"]);
+  });
+
+  it("keeps the conversation fork alive when the file restore fails, and says why", async () => {
+    const world = forkWorld({ checkpoint: treeHash, restoreError: new Error("disk detached") });
+    const outcome = await world.fork(1, "two");
+    expect(world.opened).toEqual(["forked-1"]);
+    expect(outcome).toEqual({
+      forked: true,
+      note: "conversation forked — file restore failed: disk detached",
+    });
+  });
+
+  it("skips restoring when no checkpoint store is available", async () => {
+    const opened: (string | undefined)[] = [];
+    const trees: SessionTreePort = {
+      load: async (sessionId) => ({ sessionId, roots: promptRoots(treeHash) }),
+      setLabel: async () => {},
+      fork: async () => "forked-1",
+    };
+    const outcome = await forkAtPrompt(
+      trees,
+      (sessionId) => opened.push(sessionId),
+      undefined,
+      "s1",
+      1,
+      "two",
+    );
+    expect(outcome).toEqual({ forked: true, note: "conversation forked; file state unchanged" });
+    expect(opened).toEqual(["forked-1"]);
+  });
+
+  it("surfaces the restore note quietly in the transcript after enter-fork", async () => {
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const agent = new Agent({ provider: new MockProvider([textTurn("re: one")]) });
+        return new ConversationPane(id, agent, notify, undefined, commands, {
+          ports: {
+            forkAtPrompt: async () => ({ forked: true, note: "files restored to that point" }),
+          },
+        });
+      },
+    });
+    probe.type("one").keys("enter");
+    await probe.settled();
+    probe.keys("escape", "escape", "enter");
+    await probe.settled();
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "files restored to that point",
+    });
+  });
+});
+
+describe("mcp status pane wiring", () => {
+  function mcpFactory(servers: McpServerView[] = []) {
+    const port: McpPanePort = {
+      load: async () => servers,
+      restart: async () => {},
+      setEnabled: async () => {},
+      listTools: async () => [],
+    };
+    return (id: string, notify: () => void) => new McpPane(id, notify, port);
+  }
+
+  it("auto-docks the pane on the right at startup without stealing focus", async () => {
+    const probe = new AppProbe({
+      createMcpPane: mcpFactory([{ name: "files", state: "connected", toolCount: 2 }]),
+    });
+    await probe.settled();
+    expect(paneIds(probe)).toEqual(["session-1", "mcp-1"]);
+    expect(dockedIds(probe)).toEqual(["mcp-1"]);
+    expect(probe.snapshot().dockSide).toBe("right");
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("/mcp summons and refocuses the pane instead of duplicating it", async () => {
+    const probe = new AppProbe({ createMcpPane: mcpFactory() });
+    await probe.settled();
+    probe.type("/mcp").keys("enter");
+    expect(probe.snapshot().focused).toBe("mcp-1");
+    expect(paneIds(probe)).toEqual(["session-1", "mcp-1"]);
+  });
+
+  it("with zero servers configured the pane never exists and /mcp is absent", () => {
+    const probe = new AppProbe();
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    expect(probe.command("mcp")).toBe(false);
+  });
+
+  it("revives a saved mcp pane without double-docking a second one", async () => {
+    const first = new AppProbe({ createMcpPane: mcpFactory() });
+    await first.settled();
+    const state = mustParse(JSON.parse(JSON.stringify(first.workspaceState())));
+    expect(state.panes.map((pane) => pane.kind)).toContain("mcp");
+
+    const revived = new AppProbe({ createMcpPane: mcpFactory(), restoreWorkspace: state });
+    await revived.settled();
+    expect(paneIds(revived).filter((id) => id.startsWith("mcp-"))).toEqual(["mcp-1"]);
   });
 });
 

@@ -59,6 +59,8 @@ function parsePane(value: unknown): WorkspacePane | undefined {
       };
     case "memory":
       return { id: value.id, kind: "memory" };
+    case "mcp":
+      return { id: value.id, kind: "mcp" };
     default:
       return undefined;
   }

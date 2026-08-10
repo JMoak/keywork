@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { MockProvider, messageText, SessionStore, textTurn, toolCallTurn } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
 import { runHeadless } from "./run.ts";
@@ -176,6 +177,39 @@ describe("runHeadless", () => {
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(systemPrompt).not.toContain("wrong override");
+  });
+
+  it("mounts configured MCP servers into the run's toolset and stops them after", async () => {
+    const fixtureServerPath = fileURLToPath(
+      new URL("../../engine/src/mcp/fixture-server.ts", import.meta.url),
+    );
+    const cwd = await tempDir();
+    const inner = new MockProvider([textTurn("ok")]);
+    const toolRosters: string[][] = [];
+
+    await runHeadless({
+      prompt: "hi",
+      cwd,
+      json: false,
+      provider: {
+        name: inner.name,
+        stream: (request: Parameters<typeof inner.stream>[0]) => {
+          toolRosters.push(request.tools.map((tool) => tool.name));
+          return inner.stream(request);
+        },
+      },
+      mcpServers: {
+        fixture: {
+          transport: "stdio",
+          command: process.execPath,
+          args: [fixtureServerPath, "basic"],
+        },
+      },
+      print: () => {},
+    });
+
+    expect(toolRosters[0]).toContain("mcp_tool_search");
+    expect(toolRosters[0]).toContain("bash");
   });
 
   it("prints plain text when json is off", async () => {

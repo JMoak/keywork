@@ -46,6 +46,12 @@ Adaptations:
   adapted from OpenCode's permission config — allow/ask/deny actions per tool plus
   glob-pattern rules over the bash command string, with keywork's own
   most-specific-match precedence and chaining-character containment.
+- D5/D6 (packages/engine/src/extensions/markdown-commands.ts, markdown-agents.ts):
+  markdown command format (description/agent/model frontmatter + $ARGUMENTS,
+  !`cmd` shell interpolation, @file embedding template semantics) and markdown
+  agent format (frontmatter-configured agents with tool/permission restriction and
+  a system-prompt body) adapted from OpenCode's conventions — no code copied;
+  frontmatter expressed as flat lists to fit keywork's parser.
 
 ---
 

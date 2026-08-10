@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { Checkpoints } from "./checkpoints.ts";
+import { Checkpoints, UnknownCheckpointError } from "./checkpoints.ts";
 
 const cleanups: string[] = [];
 
@@ -150,6 +150,138 @@ describe("Checkpoints", () => {
       }
     }
     expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v1");
+  });
+
+  it("returns the captured tree hash, stable for identical content", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "v1" });
+
+    const first = await store.captureTree();
+    const repeat = await store.captureTree();
+    await seed(worktree, { "file.txt": "v2" });
+    const changed = await store.captureTree();
+
+    expect(first).toMatch(/^[0-9a-f]{40,64}$/);
+    expect(repeat).toBe(first);
+    expect(changed).not.toBe(first);
+  });
+
+  it("restores files to a previously captured tree", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "kept.txt": "original", "doomed.txt": "delete me" });
+
+    const tree = await store.captureTree();
+    await seed(worktree, { "kept.txt": "clobbered", "intruder.txt": "new" });
+    await rm(join(worktree, "doomed.txt"));
+    await store.restoreTo(tree);
+
+    expect(await readFile(join(worktree, "kept.txt"), "utf8")).toBe("original");
+    expect(await readFile(join(worktree, "doomed.txt"), "utf8")).toBe("delete me");
+    expect(existsSync(join(worktree, "intruder.txt"))).toBe(false);
+  });
+
+  it("rejects a malformed checkpoint reference without touching files", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "untouched" });
+
+    await expect(store.restoreTo("--exec=evil")).rejects.toThrow(UnknownCheckpointError);
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("untouched");
+  });
+
+  it("rejects an unknown but well-formed tree hash without touching files", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "untouched" });
+    await store.capture();
+
+    await expect(store.restoreTo("a".repeat(40))).rejects.toThrow(UnknownCheckpointError);
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("untouched");
+    expect(store.canRedo()).toBe(false);
+    expect(store.canUndo()).toBe(true);
+  });
+
+  it("makes restoreTo undoable and clears redo", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "v1" });
+    const v1 = await store.captureTree();
+    await seed(worktree, { "file.txt": "v2" });
+    await store.capture();
+    await store.undo();
+
+    expect(store.canRedo()).toBe(true);
+    await seed(worktree, { "file.txt": "v3" });
+    await store.restoreTo(v1);
+
+    expect(store.canRedo()).toBe(false);
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v1");
+    expect(await store.undo()).toBe(true);
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v3");
+    expect(await store.redo()).toBe(true);
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v1");
+  });
+
+  it("treats restoreTo onto the current state as a no-op", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "same" });
+    const tree = await store.captureTree();
+
+    await store.restoreTo(tree);
+
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("same");
+    expect(await store.undo()).toBe(true);
+    expect(await store.undo()).toBe(false);
+  });
+
+  it("serializes restoreTo behind an in-flight capture", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "v1" });
+    const v1 = await store.captureTree();
+    await seed(worktree, { "file.txt": "v2" });
+
+    const order: string[] = [];
+    const racingCapture = store.captureTree().then(() => order.push("capture"));
+    const restore = store.restoreTo(v1).then(() => order.push("restore"));
+    await Promise.all([racingCapture, restore]);
+
+    expect(order).toEqual(["capture", "restore"]);
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v1");
+    expect(await store.undo()).toBe(true);
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v2");
+  });
+
+  it("hands out the first captured tree per turn tag and clears on take", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "v1" });
+
+    expect(store.takeTurnTag()).toBeUndefined();
+    const first = await store.captureTree();
+    await seed(worktree, { "file.txt": "v2" });
+    await store.capture();
+
+    expect(store.takeTurnTag()).toBe(first);
+    expect(store.takeTurnTag()).toBeUndefined();
+  });
+
+  it("does not mint a turn tag from restoreTo or undo", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "v1" });
+    const v1 = await store.captureTree();
+    await seed(worktree, { "file.txt": "v2" });
+    await store.capture();
+    store.takeTurnTag();
+
+    await store.undo();
+    await store.restoreTo(v1);
+
+    expect(store.takeTurnTag()).toBeUndefined();
   });
 
   it("reopens an existing shadow repo without reinitializing", async () => {

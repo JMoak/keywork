@@ -21,6 +21,7 @@ export interface MessageEntry extends EntryBase {
   type: "message";
   message: Message;
   usage?: Usage;
+  checkpoint?: string;
 }
 
 export interface CompactionEntry extends EntryBase {
@@ -113,6 +114,21 @@ export function parseFileEntries(content: string): FileEntry[] {
     });
 }
 
+export type PromptCheckpoint =
+  | { restorable: true; tree: string }
+  | { restorable: false; reason: "prompt-not-found" | "turn-not-checkpointed" };
+
+export function checkpointForPrompt(
+  roots: readonly SessionTreeNode[],
+  promptOrdinal: number,
+): PromptCheckpoint {
+  const prompt = userPrompts(activePathEntries(roots))[promptOrdinal];
+  if (prompt === undefined) return { restorable: false, reason: "prompt-not-found" };
+  return prompt.checkpoint === undefined
+    ? { restorable: false, reason: "turn-not-checkpointed" }
+    : { restorable: true, tree: prompt.checkpoint };
+}
+
 export function pathToEntry(
   byId: ReadonlyMap<string, SessionEntry>,
   leafId: string | null,
@@ -180,6 +196,23 @@ export function buildTree(
     else parent.children.push(node);
   }
   return roots;
+}
+
+function activePathEntries(roots: readonly SessionTreeNode[]): SessionEntry[] {
+  const path: SessionEntry[] = [];
+  let level: readonly SessionTreeNode[] = roots;
+  for (;;) {
+    const node = level.find((candidate) => candidate.onActivePath);
+    if (node === undefined) return path;
+    path.push(node.entry);
+    level = node.children;
+  }
+}
+
+function userPrompts(path: readonly SessionEntry[]): MessageEntry[] {
+  return path.filter(
+    (entry): entry is MessageEntry => entry.type === "message" && entry.message.role === "user",
+  );
 }
 
 function labelProperty(labels: ReadonlyMap<string, string>, id: string): { label?: string } {

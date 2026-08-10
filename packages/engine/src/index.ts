@@ -7,7 +7,7 @@ export {
   type ToolPermission,
 } from "./agent.ts";
 export { type EngineEvents, EventBus } from "./bus.ts";
-export { Checkpoints, type CheckpointsOptions } from "./checkpoints.ts";
+export { Checkpoints, type CheckpointsOptions, UnknownCheckpointError } from "./checkpoints.ts";
 export {
   type DiagnosticsLevel,
   type DiagnosticsLine,
@@ -16,6 +16,61 @@ export {
   debugLogFile,
   redactSecrets,
 } from "./diagnostics.ts";
+export type {
+  ExtensionLoadFailure,
+  LayeredDirs,
+  LayerSource,
+} from "./extensions/layers.ts";
+export {
+  type AgentDefinition,
+  type AgentLoad,
+  loadAgents,
+  narrowedPermissions,
+  restrictTools,
+} from "./extensions/markdown-agents.ts";
+export {
+  type CommandDefinition,
+  type CommandLoad,
+  type CommandRuntime,
+  fileEmbedder,
+  loadCommands,
+  renderCommand,
+  scanTemplate,
+  type TemplateSegment,
+} from "./extensions/markdown-commands.ts";
+export {
+  discoverSkills,
+  type SkillDefinition,
+  type SkillLoad,
+  skillConventionDirs,
+  skillTool,
+} from "./extensions/skills.ts";
+export {
+  connectStdioServer,
+  type McpConnection,
+  McpProtocolError,
+  McpRequestTimeoutError,
+  McpServerExitedError,
+  type McpTool,
+  type McpToolResult,
+  mcpProtocolVersion,
+  type StdioConnectOptions,
+  type StdioServerSpec,
+} from "./mcp/client.ts";
+export {
+  defaultRestartDelaysMs,
+  isMcpBackedTool,
+  type McpBackedTool,
+  McpRegistry,
+  type McpRegistryOptions,
+  McpServerNotFoundError,
+  type McpServerState,
+  type McpServerStatus,
+  type McpStatusListener,
+  type McpToolCallReport,
+  type McpToolProvenance,
+  mcpSearchToolName,
+} from "./mcp/registry.ts";
 export {
   type BootstrapInjection,
   type BootstrapLayer,
@@ -83,6 +138,7 @@ export {
   type RetrievalSource,
   type SearchHit,
   type SearchLeg,
+  type SearchObserver,
   type SearchOptions,
   type SearchOutcome,
 } from "./memory/search.ts";
@@ -166,11 +222,13 @@ export {
   type CompactionEntry,
   type CustomEntry,
   type CustomMessageEntry,
+  checkpointForPrompt,
   type FileEntry,
   type FileTrackingDetails,
   type LabelEntry,
   type MessageEntry,
   type ModelChangeEntry,
+  type PromptCheckpoint,
   type SessionEntry,
   type SessionHeader,
   type SessionInfoEntry,

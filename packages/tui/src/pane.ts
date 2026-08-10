@@ -23,7 +23,8 @@ export type PaneDescriptor =
   | { kind: "file"; path: string }
   | { kind: "browser"; root: string }
   | { kind: "session-tree"; sessionId?: string }
-  | { kind: "memory" };
+  | { kind: "memory" }
+  | { kind: "mcp" };
 
 export interface Pane {
   readonly id: string;

@@ -15,6 +15,7 @@ import {
   memoryPanePort,
   memoryRecall,
   openWorkspaceMemory,
+  retrievalDisclosure,
   sweepOnClose,
   withMemoryPrompt,
 } from "./memory.ts";
@@ -160,10 +161,78 @@ describe("memoryRecall", () => {
     expect(report.usefulness["Ratio Rule"]).toBeGreaterThan(0);
   });
 
-  it("omits the recall tap when no session id is known", async () => {
+  it("records nothing while the session id is still unknown", async () => {
     const memory = openWorkspaceMemory(await declaredWorkspace(), true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
     expect(memoryRecall(undefined)).toBeUndefined();
-    expect(memory === undefined ? undefined : memoryRecall(memory)?.onRecall).toBeUndefined();
+    memoryRecall(memory)?.onRecall?.("Ratio Rule");
+    const report = await memory.gardener.sweep();
+    expect(report.usefulness["Ratio Rule"] ?? 0).toBe(0);
+  });
+
+  it("resolves a late-bound session key at recall time", async () => {
+    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
+    let sessionId: string | undefined;
+    const recall = memoryRecall(memory, () => sessionId);
+    recall?.onRecall?.("Ratio Rule");
+    sessionId = "sess-late";
+    recall?.onRecall?.("Ratio Rule");
+    const report = await memory.gardener.sweep();
+    expect(report.usefulness["Ratio Rule"]).toBeGreaterThan(0);
+  });
+
+  it("stays silent about retrieval for lexical-only search", async () => {
+    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
+    const disclosures: string[] = [];
+    const recall = memoryRecall(memory, "sess-1", (line) => disclosures.push(line));
+    await recall?.search.search("ratio");
+    expect(disclosures).toEqual([]);
+  });
+
+  it("discloses the embedding source on every hybrid search", async () => {
+    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    memory.embeddings = { id: "fake-embed", embed: async (texts) => texts.map(() => [1, 0]) };
+    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
+    const disclosures: string[] = [];
+    const recall = memoryRecall(memory, "sess-1", (line) => disclosures.push(line));
+    await recall?.search.search("ratio");
+    expect(disclosures).toEqual(["memory search uses embeddings from fake-embed"]);
+  });
+
+  it("discloses degradation when the embedding source fails", async () => {
+    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    memory.embeddings = {
+      id: "fake-embed",
+      embed: async () => {
+        throw new Error("socket reset");
+      },
+    };
+    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
+    const disclosures: string[] = [];
+    const recall = memoryRecall(memory, "sess-1", (line) => disclosures.push(line));
+    await recall?.search.search("ratio");
+    expect(disclosures).toEqual([
+      "memory search fell back to lexical — embeddings from fake-embed unavailable",
+    ]);
+  });
+});
+
+describe("retrievalDisclosure", () => {
+  it("names the source for hybrid, degraded for fallback, nothing for lexical", () => {
+    expect(retrievalDisclosure({ kind: "lexical" })).toBeUndefined();
+    expect(retrievalDisclosure({ kind: "hybrid", embeddings: "voyage-3" })).toBe(
+      "memory search uses embeddings from voyage-3",
+    );
+    expect(
+      retrievalDisclosure({ kind: "lexical-degraded", embeddings: "voyage-3", reason: "down" }),
+    ).toBe("memory search fell back to lexical — embeddings from voyage-3 unavailable");
   });
 });
 

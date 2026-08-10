@@ -70,6 +70,26 @@ export class ConversationPane implements Pane {
     return this.model.confirmMutation(call);
   }
 
+  bindAfterTurn(hook: () => Promise<void>): void {
+    this.model.bindAfterTurn(hook);
+  }
+
+  submitPrompt(text: string): void {
+    this.model.submitText(text);
+  }
+
+  currentAgent(): Agent | undefined {
+    return this.model.currentAgent();
+  }
+
+  swapAgent(agent: Agent): void {
+    this.model.swapAgent(agent);
+  }
+
+  discloseRetrieval(text: string): void {
+    this.model.discloseRetrieval(text);
+  }
+
   dispose(): void {
     this.model.dispose();
   }

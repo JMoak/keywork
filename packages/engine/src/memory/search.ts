@@ -28,6 +28,8 @@ export interface SearchOptions {
   limit?: number;
 }
 
+export type SearchObserver = (outcome: SearchOutcome) => void;
+
 const defaultLimit = 8;
 const legDepth = 50;
 const rrfK = 60;
@@ -41,6 +43,7 @@ export class MemorySearch {
   constructor(
     private readonly store: MemoryStore,
     private readonly embeddings?: EmbeddingsPort,
+    private readonly observer?: SearchObserver,
   ) {}
 
   source(): RetrievalSource {
@@ -50,6 +53,12 @@ export class MemorySearch {
   }
 
   async search(query: string, options: SearchOptions = {}): Promise<SearchOutcome> {
+    const outcome = await this.runSearch(query, options);
+    this.observer?.(outcome);
+    return outcome;
+  }
+
+  private async runSearch(query: string, options: SearchOptions): Promise<SearchOutcome> {
     const limit = options.limit ?? defaultLimit;
     const notes = await this.store.listNotes();
     if (notes.length === 0 || query.trim() === "") return { hits: [], source: this.source() };

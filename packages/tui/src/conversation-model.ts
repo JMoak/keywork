@@ -18,9 +18,11 @@ export interface CommandsPort {
   run(name: string): boolean;
 }
 
+export type ForkOutcome = { forked: false } | { forked: true; note?: string };
+
 export interface ConversationPorts {
   readFile?: FileReader;
-  forkAtPrompt?: (promptOrdinal: number, draft: string) => Promise<boolean>;
+  forkAtPrompt?: (promptOrdinal: number, draft: string) => Promise<ForkOutcome>;
 }
 
 export interface PendingAsk {
@@ -74,14 +76,19 @@ export class ConversationModel {
   private titleRequested = false;
   private alwaysAllow = false;
   private pageRows = 10;
+  private agent: Agent | undefined;
+  private afterTurn: (() => Promise<void>) | undefined;
+  private retrievalDisclosed = false;
+  private disposed = false;
 
   constructor(
-    private readonly agent: Agent | undefined,
+    agent: Agent | undefined,
     private readonly notify: () => void,
     private readonly titler?: Titler,
     private readonly commands?: CommandsPort,
     private readonly ports?: ConversationPorts,
   ) {
+    this.agent = agent;
     if (agent === undefined) {
       this.entries.push({
         kind: "info",
@@ -121,17 +128,13 @@ export class ConversationModel {
         notify();
       }),
       agent.bus.on("turn.completed", () => {
-        this.busy = false;
         this.tailFollow = undefined;
         this.requestTitleOnce();
-        this.drainQueue();
         notify();
       }),
       agent.bus.on("turn.interrupted", () => {
-        this.busy = false;
         this.tailFollow = undefined;
         this.entries.push({ kind: "info", text: "— interrupted" });
-        this.drainQueue();
         notify();
       }),
     );
@@ -183,6 +186,7 @@ export class ConversationModel {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const unsubscribe of this.subscriptions) unsubscribe();
     this.subscriptions.length = 0;
     this.queue.length = 0;
@@ -313,16 +317,41 @@ export class ConversationModel {
   submit(): void {
     const text = this.buffer.value.trim();
     if (text === "" || this.agent === undefined) return;
-    this.remember(text);
     this.buffer.clear();
     this.historyIndex = undefined;
     this.selectedSuggestion = 0;
+    this.submitText(text);
+  }
+
+  submitText(text: string): void {
+    const trimmed = text.trim();
+    if (trimmed === "" || this.agent === undefined) return;
+    this.remember(trimmed);
     if (this.busy) {
-      this.queue.push(text);
+      this.queue.push(trimmed);
       this.notify();
       return;
     }
-    this.deliver(text);
+    this.deliver(trimmed);
+  }
+
+  currentAgent(): Agent | undefined {
+    return this.agent;
+  }
+
+  bindAfterTurn(hook: () => Promise<void>): void {
+    this.afterTurn = hook;
+  }
+
+  swapAgent(agent: Agent): void {
+    this.agent = agent;
+  }
+
+  discloseRetrieval(text: string): void {
+    if (this.retrievalDisclosed) return;
+    this.retrievalDisclosed = true;
+    this.entries.push({ kind: "info", text });
+    this.notify();
   }
 
   private deliver(text: string): void {
@@ -331,12 +360,18 @@ export class ConversationModel {
     this.entries.push({ kind: "user", text });
     this.busy = true;
     this.scrollBack = 0;
-    this.lastSend = agent.send(text).catch((cause: unknown) => {
-      this.busy = false;
-      this.entries.push({ kind: "error", text: (cause as Error).message });
-      this.drainQueue();
-      this.notify();
-    });
+    this.lastSend = agent
+      .send(text)
+      .then(() => this.afterTurn?.())
+      .catch((cause: unknown) => {
+        this.entries.push({ kind: "error", text: (cause as Error).message });
+      })
+      .then(() => {
+        if (this.disposed) return;
+        this.busy = false;
+        this.drainQueue();
+        this.notify();
+      });
     this.notify();
   }
 
@@ -431,8 +466,12 @@ export class ConversationModel {
       return true;
     }
     this.lastFork = fork(ordinal, entry.text)
-      .then((forked) => {
-        if (!forked) this.entries.push({ kind: "info", text: "could not fork at that prompt" });
+      .then((outcome) => {
+        if (!outcome.forked) {
+          this.entries.push({ kind: "info", text: "could not fork at that prompt" });
+        } else if (outcome.note !== undefined) {
+          this.entries.push({ kind: "info", text: outcome.note });
+        }
       })
       .catch((cause: unknown) => {
         this.entries.push({ kind: "error", text: (cause as Error).message });

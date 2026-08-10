@@ -2,10 +2,18 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { debugEnabled } from "@keywork/engine";
-import { ConfigError, loadConfig, openWorkspace, TrustStore } from "@keywork/shared";
+import { debugEnabled, type SessionStore } from "@keywork/engine";
+import {
+  ConfigError,
+  loadConfig,
+  openWorkspace,
+  presetOrder,
+  requiresConfirmation,
+  TrustStore,
+} from "@keywork/shared";
+import type { PresetsPort, SessionAttachment, SessionPort } from "@keywork/tui";
 import { chat } from "./chat.ts";
-import { createPresetSwitch } from "./presets.ts";
+import { createPresetSwitch, isPresetName } from "./presets.ts";
 import { providerSetupHint, resolveProvider } from "./provider.ts";
 import { runHeadless } from "./run.ts";
 
@@ -102,6 +110,7 @@ async function main(argv: string[]): Promise<number> {
         permissions: toolPermissions,
         presets,
         ...(config.prompts !== undefined && { prompts: config.prompts }),
+        ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
         ...(values.resume !== undefined && { resumeId: values.resume }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
       });
@@ -122,6 +131,7 @@ async function main(argv: string[]): Promise<number> {
         debug: values.debug || debugEnabled(process.env),
         ...(resolved !== undefined && { provider: resolved.provider, modelId: resolved.modelId }),
         ...(config.prompts !== undefined && { prompts: config.prompts }),
+        ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
       });
       return 0;
@@ -145,17 +155,31 @@ async function main(argv: string[]): Promise<number> {
         Checkpoints,
         coreTools,
         loadProjectInstructions,
+        McpRegistry,
+        MemoryFlush,
+        narrowedPermissions,
+        renderCommand,
+        restrictTools,
+        scanTemplate,
+        SessionStore: Sessions,
+        skillTool,
         suggestTitle,
       } = await import("@keywork/engine");
       const { defaultSessionDir, snapshotGitDir, workspaceIdentity, workspaceStateFile } =
         await import("./paths.ts");
       const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
-      const { sessionPort, sessionTreePort } = await import("./sessions.ts");
+      const { attachmentOf, findSessionFile, newSessionFileName, sessionTreePort } = await import(
+        "./sessions.ts"
+      );
+      const { commandRuntime, loadWorkspaceExtensions } = await import("./commands.ts");
+      const { mcpPanePort } = await import("./mcp.ts");
       const {
         bootstrapInjection,
+        flushAfterTurn,
         memoryPanePort,
         memoryRecall,
         openWorkspaceMemory,
+        sweepOnClose,
         withMemoryPrompt,
       } = await import("./memory.ts");
       const instructions = projectTrusted ? await loadProjectInstructions(cwd) : undefined;
@@ -173,25 +197,127 @@ async function main(argv: string[]): Promise<number> {
         gitDir: snapshotGitDir(cwd),
       }).catch(() => undefined);
       const stateStore = workspaceFile(workspaceStateFile(workspaceIdentity(cwd)));
+      const sessionDir = values["session-dir"] ?? defaultSessionDir(cwd);
+      const extensions = await loadWorkspaceExtensions(cwd, projectTrusted);
+      const skillTools = extensions.skills.length > 0 ? [skillTool(extensions.skills)] : [];
+      const extensionsView = {
+        commands: extensions.commands.map((command) => ({
+          name: command.name,
+          ...(command.description !== undefined && { description: command.description }),
+          needsArgs: scanTemplate(command.template).some((segment) => segment.kind === "arguments"),
+          render: (args: string, confirmShell: (shell: string) => Promise<boolean>) =>
+            renderCommand(
+              command.template,
+              args,
+              commandRuntime(cwd, {
+                confirm: (call) => confirmShell((call.arguments as { command: string }).command),
+              }),
+            ),
+        })),
+        agents: extensions.agents.map((agent) => ({
+          name: agent.name,
+          ...(agent.description !== undefined && { description: agent.description }),
+        })),
+        failures: extensions.failures.map((failure) => `${failure.file} — ${failure.reason}`),
+      };
+      const mcp =
+        config.mcpServers === undefined || Object.keys(config.mcpServers).length === 0
+          ? undefined
+          : new McpRegistry({ servers: config.mcpServers });
+      mcp?.start();
+
+      const stores = new Map<string, SessionStore>();
+      const attach = (store: SessionStore): SessionAttachment => {
+        stores.set(store.header.id, store);
+        return attachmentOf(store, () => checkpoints?.takeTurnTag());
+      };
+      const sessions: SessionPort = {
+        open: async (id) => {
+          try {
+            const file = await findSessionFile(sessionDir, id);
+            return file === undefined ? undefined : attach(await Sessions.open(file));
+          } catch {
+            return undefined;
+          }
+        },
+        create: async () => {
+          try {
+            return attach(await Sessions.create(join(sessionDir, newSessionFileName()), cwd));
+          } catch {
+            return undefined;
+          }
+        },
+      };
+
+      const flushes = new Map<string, InstanceType<typeof MemoryFlush>>();
+      const flushFor = (sessionId: string): InstanceType<typeof MemoryFlush> | undefined => {
+        if (memory === undefined || active === undefined) return undefined;
+        const provider = active.provider;
+        let flush = flushes.get(sessionId);
+        if (flush === undefined) {
+          flush = new MemoryFlush({ provider, store: memory.store, systemPrompt });
+          flushes.set(sessionId, flush);
+        }
+        return flush;
+      };
+
+      const presetsPort: PresetsPort = {
+        names: () => presetOrder,
+        active: () => presets.active(),
+        requiresConfirmation: (name) =>
+          isPresetName(name) && requiresConfirmation(presets.active(), name),
+        apply: async (name) => {
+          if (isPresetName(name)) await presets.apply(name);
+        },
+      };
+
       await runApp({
         workspace: values.fresh ? freshWorkspace(stateStore) : stateStore,
-        sessions: sessionPort(values["session-dir"] ?? defaultSessionDir(cwd), cwd),
-        sessionTrees: sessionTreePort(values["session-dir"] ?? defaultSessionDir(cwd)),
+        sessions,
+        sessionTrees: sessionTreePort(sessionDir),
+        presets: presetsPort,
+        afterTurn: async ({ sessionId, history }) => {
+          const store = stores.get(sessionId);
+          if (store === undefined) return [];
+          return flushAfterTurn(flushFor(sessionId), store, history);
+        },
+        closers: [() => sweepOnClose(memory), ...(mcp === undefined ? [] : [() => mcp.stop()])],
+        extensions: extensionsView,
         ...(config.theme !== undefined && { themeOverrides: config.theme }),
         ...(checkpoints !== undefined && { checkpoints }),
         ...(memory !== undefined && { memory: memoryPanePort(memory) }),
+        ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
         ...(active !== undefined && {
-          agentFactory: (guard, history) => {
+          agentFactory: (guard, history, seams, agentName) => {
+            const definition = extensions.agents.find((candidate) => candidate.name === agentName);
             let self: InstanceType<typeof Agent> | undefined;
+            const baseTools = [
+              ...coreTools(
+                cwd,
+                memoryRecall(
+                  memory,
+                  () => seams?.sessionId(),
+                  (disclosure) => seams?.discloseRetrieval(disclosure),
+                ),
+                (chunk) => self?.bus.emit("tool.output", { chunk }),
+              ),
+              ...skillTools,
+            ];
+            const tools = mcp === undefined ? baseTools : mcp.surface(baseTools);
             const agent = new Agent({
               provider: active.provider,
-              tools: coreTools(cwd, memoryRecall(memory), (chunk) =>
-                self?.bus.emit("tool.output", { chunk }),
-              ),
-              systemPrompt,
+              tools: definition === undefined ? tools : restrictTools(tools, definition),
+              systemPrompt:
+                definition === undefined || definition.prompt === ""
+                  ? systemPrompt
+                  : definition.prompt,
               guard,
-              permissions: toolPermissions,
+              permissions:
+                definition === undefined
+                  ? toolPermissions
+                  : narrowedPermissions(definition, toolPermissions),
               ...(history !== undefined && { history }),
+              ...(seams?.bus !== undefined && { bus: seams.bus }),
             });
             self = agent;
             return agent;

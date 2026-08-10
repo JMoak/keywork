@@ -9,7 +9,15 @@ export interface CheckpointsOptions {
   limit?: number;
 }
 
+export class UnknownCheckpointError extends Error {
+  constructor(readonly tree: string) {
+    super(`no checkpoint with tree ${tree}`);
+    this.name = "UnknownCheckpointError";
+  }
+}
+
 const defaultLimit = 64;
+const treeHashShape = /^[0-9a-f]{40,64}$/;
 
 const repoStateVars = new Set([
   "GIT_DIR",
@@ -29,6 +37,7 @@ function withoutRepoStateEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export class Checkpoints {
   private readonly undoTrees: string[] = [];
   private readonly redoTrees: string[] = [];
+  private turnTag: string | undefined;
   private queue: Promise<unknown> = Promise.resolve();
 
   private constructor(
@@ -51,13 +60,34 @@ export class Checkpoints {
     return this.redoTrees.length > 0;
   }
 
-  capture(): Promise<void> {
+  async capture(): Promise<void> {
+    await this.captureTree();
+  }
+
+  captureTree(): Promise<string> {
     return this.serialized(async () => {
       const tree = await this.snapshotWorktree();
+      this.turnTag ??= tree;
       this.redoTrees.length = 0;
-      if (this.undoTrees.at(-1) === tree) return;
-      this.undoTrees.push(tree);
-      if (this.undoTrees.length > this.limit) this.undoTrees.shift();
+      if (this.undoTrees.at(-1) !== tree) this.pushBounded(this.undoTrees, tree);
+      return tree;
+    });
+  }
+
+  takeTurnTag(): string | undefined {
+    const tag = this.turnTag;
+    this.turnTag = undefined;
+    return tag;
+  }
+
+  restoreTo(tree: string): Promise<void> {
+    return this.serialized(async () => {
+      await this.assertKnownTree(tree);
+      const current = await this.snapshotWorktree();
+      if (current === tree) return;
+      this.redoTrees.length = 0;
+      this.pushBounded(this.undoTrees, current);
+      await this.git("read-tree", "--reset", "-u", tree);
     });
   }
 
@@ -77,6 +107,17 @@ export class Checkpoints {
       await this.git("read-tree", "--reset", "-u", target);
       return true;
     });
+  }
+
+  private async assertKnownTree(tree: string): Promise<void> {
+    if (!treeHashShape.test(tree)) throw new UnknownCheckpointError(tree);
+    const kind = await this.git("cat-file", "-t", tree).catch(() => "missing");
+    if (kind !== "tree") throw new UnknownCheckpointError(tree);
+  }
+
+  private pushBounded(trees: string[], tree: string): void {
+    trees.push(tree);
+    if (trees.length > this.limit) trees.shift();
   }
 
   private async snapshotWorktree(): Promise<string> {

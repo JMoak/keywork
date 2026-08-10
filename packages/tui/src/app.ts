@@ -1,6 +1,13 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Agent, Message, ToolGuard } from "@keywork/engine";
+import {
+  type Agent,
+  checkpointForPrompt,
+  type Message,
+  type SessionTreeNode,
+  type ToolCallPart,
+  type ToolGuard,
+} from "@keywork/engine";
 import {
   Box,
   createCliRenderer,
@@ -9,15 +16,23 @@ import {
   type PasteEvent,
   Text,
 } from "@opentui/core";
-import { AppCore, bindingHelp, helpFrame, paletteFrame } from "./app-core.ts";
+import { AppCore, bindingHelp, helpFrame, type PresetsPort, paletteFrame } from "./app-core.ts";
 import { promptAnchor } from "./backtrack.ts";
 import { BrowserPane } from "./browser-pane.ts";
-import type { ConversationPorts, Titler } from "./conversation-model.ts";
+import type { ConversationPorts, ForkOutcome, Titler } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
+import {
+  type ConversationTarget,
+  type ExtensionsPort,
+  extensionFailureNotice,
+  registerExtensions,
+} from "./extension-commands.ts";
 import { FilePane } from "./file-pane.ts";
 import type { Keymap } from "./keymap.ts";
 import { chordOf } from "./keys.ts";
 import { dockColumnWidth, type LayoutNode, type Screen } from "./layout.ts";
+import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
+import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { PaneView } from "./pane.ts";
 import { pointerEventOf } from "./pointer.ts";
@@ -29,6 +44,7 @@ export interface CheckpointsPort {
   capture(): Promise<void>;
   undo(): Promise<boolean>;
   redo(): Promise<boolean>;
+  restoreTo(tree: string): Promise<void>;
 }
 
 export interface SessionAttachment {
@@ -49,9 +65,31 @@ export interface WorkspacePort {
   flush(): void;
 }
 
+export interface AgentSeams {
+  sessionId(): string | undefined;
+  discloseRetrieval(text: string): void;
+  bus?: Agent["bus"];
+}
+
+export type AgentFactory = (
+  guard: ToolGuard,
+  history?: readonly Message[],
+  seams?: AgentSeams,
+  agentName?: string,
+) => Agent;
+
+export interface SessionTurn {
+  sessionId: string;
+  history: readonly Message[];
+}
+
 export interface AppOptions {
   themeOverrides?: Record<string, string>;
-  agentFactory?: (guard: ToolGuard, history?: readonly Message[]) => Agent;
+  agentFactory?: AgentFactory;
+  afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
+  closers?: readonly Closer[];
+  closeTimeoutMs?: number;
+  presets?: PresetsPort;
   titler?: Titler;
   statusLabel?: string | (() => string);
   checkpoints?: CheckpointsPort;
@@ -59,6 +97,8 @@ export interface AppOptions {
   sessions?: SessionPort;
   sessionTrees?: SessionTreePort;
   memory?: MemoryPanePort;
+  mcp?: McpPanePort;
+  extensions?: ExtensionsPort;
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
@@ -76,6 +116,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const treePort =
     trees === undefined ? undefined : attachOnFork(trees, options.sessions, attachments);
   const memoryPort = options.memory;
+  const mcpPort = options.mcp;
+  const agentSwitchers = new Map<string, (agentName: string | undefined) => boolean>();
   const core = new AppCore({
     screen,
     createPane: (id, notify, commands, resumeSessionId, draft) => {
@@ -86,27 +128,54 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       };
       const attachment =
         resumeSessionId === undefined ? undefined : attachments.get(resumeSessionId);
-      const agent = options.agentFactory?.(guard, attachment?.history);
+      const seams: AgentSeams = {
+        sessionId: () => pane?.sessionId,
+        discloseRetrieval: (text) => pane?.discloseRetrieval(text),
+      };
+      const agent = options.agentFactory?.(guard, attachment?.history, seams);
       const ports: ConversationPorts = {
         readFile: readWorkspaceFile,
         forkAtPrompt: (ordinal, promptDraft) =>
           forkAtPrompt(
             treePort,
             (sessionId, forkDraft) => core.openPane(sessionId, forkDraft),
+            checkpoints,
             pane?.sessionId,
             ordinal,
             promptDraft,
           ),
       };
-      pane = new ConversationPane(id, agent, notify, options.titler, commands, {
+      const created = new ConversationPane(id, agent, notify, options.titler, commands, {
         ports,
         ...(draft !== undefined && { initialDraft: draft }),
       });
-      if (attachment !== undefined) adoptSession(pane, agent, attachment);
-      else if (resumeSessionId === undefined) {
-        startFreshSession(pane, agent, options.sessions, notify);
+      pane = created;
+      agentSwitchers.set(id, (agentName) => {
+        const factory = options.agentFactory;
+        const current = created.currentAgent();
+        if (factory === undefined || current === undefined || current.busy()) return false;
+        created.swapAgent(
+          factory(guard, current.history(), { ...seams, bus: current.bus }, agentName),
+        );
+        return true;
+      });
+      const wireSession = (adopted: SessionAttachment): void => {
+        adoptSession(created, agent, adopted);
+        if (agent === undefined) return;
+        bindSessionLifecycle({
+          pane: created,
+          agent,
+          attachment: adopted,
+          ...(options.afterTurn !== undefined && { afterTurn: options.afterTurn }),
+          rebuild: (history) =>
+            options.agentFactory?.(guard, history, { ...seams, bus: agent.bus }),
+        });
+      };
+      if (attachment !== undefined) wireSession(attachment);
+      else if (resumeSessionId === undefined && agent !== undefined) {
+        startFreshSession(options.sessions, notify, wireSession);
       }
-      return pane;
+      return created;
     },
     createFilePane: (id, path, notify) => new FilePane(id, process.cwd(), path, notify),
     createBrowserPane: (id, root, notify, intents) =>
@@ -118,19 +187,37 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     ...(memoryPort !== undefined && {
       createMemoryPane: (id: string, notify: () => void) => new MemoryPane(id, notify, memoryPort),
     }),
+    ...(mcpPort !== undefined && {
+      createMcpPane: (id: string, notify: () => void) => new McpPane(id, notify, mcpPort),
+    }),
     isDirectory: (path) =>
       statSync(resolve(process.cwd(), path), { throwIfNoEntry: false })?.isDirectory() === true,
     ...(checkpoints !== undefined && { undo: checkpoints }),
+    ...(options.presets !== undefined && { presets: options.presets }),
     ...(restored !== undefined && { restoreWorkspace: restored.state }),
     ...(options.workspace !== undefined && {
       saveWorkspace: (state: WorkspaceState) => options.workspace?.save(state),
     }),
-    onExit: () => {
+    onExit: closeOnce(() => {
       renderer.destroy();
       options.workspace?.flush();
-      process.exit(0);
-    },
+      void runClosers(
+        options.closers ?? [],
+        options.closeTimeoutMs ?? defaultCloseTimeoutMs,
+        (error) => console.error(error.message),
+      ).finally(() => process.exit(0));
+    }),
   });
+
+  mcpPort?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
+  if (options.extensions !== undefined) {
+    registerExtensions(core.registry, options.extensions, {
+      conversation: () => conversationTarget(core, agentSwitchers),
+      notice: (text) => core.postNotice(text),
+    });
+    const failureNote = extensionFailureNotice(options.extensions.failures);
+    if (failureNote !== undefined) core.postNotice(failureNote);
+  }
 
   let armedExpiry: ReturnType<typeof setTimeout> | undefined;
   const watchArmedExpiry = (): void => {
@@ -163,6 +250,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     );
     if (core.helpVisible) renderer.root.add(helpOverlay(core.keymap, theme, screen()));
     if (core.paletteOpen) renderer.root.add(paletteOverlay(core, theme, screen()));
+    const preset = presetOverlay(core, theme, screen());
+    if (preset !== undefined) renderer.root.add(preset);
     renderer.requestRender();
   };
 
@@ -233,6 +322,7 @@ async function restorable(
       return statKind(pane.root)?.isDirectory() === true;
     case "session-tree":
     case "memory":
+    case "mcp":
       return true;
   }
 }
@@ -249,26 +339,76 @@ function readWorkspaceFile(path: string): string | undefined {
   }
 }
 
-async function forkAtPrompt(
+export async function forkAtPrompt(
   trees: SessionTreePort | undefined,
   open: (sessionId: string | undefined, draft: string) => void,
+  checkpoints: CheckpointsPort | undefined,
   sessionId: string | undefined,
   ordinal: number,
   draft: string,
-): Promise<boolean> {
-  if (trees === undefined || sessionId === undefined) return false;
+): Promise<ForkOutcome> {
+  if (trees === undefined || sessionId === undefined) return { forked: false };
   const view = await trees.load(sessionId);
-  if (view === undefined) return false;
+  if (view === undefined) return { forked: false };
   const anchor = promptAnchor(view.roots, ordinal);
-  if (anchor === undefined) return false;
+  if (anchor === undefined) return { forked: false };
   if (anchor.parentId === null) {
     open(undefined, draft);
-    return true;
+    return { forked: true, note: await restoreForkedFiles(checkpoints, view.roots, ordinal) };
   }
   const forked = await trees.fork(sessionId, anchor.parentId);
-  if (forked === undefined) return false;
+  if (forked === undefined) return { forked: false };
   open(forked, draft);
-  return true;
+  return { forked: true, note: await restoreForkedFiles(checkpoints, view.roots, ordinal) };
+}
+
+const unchangedFilesNote = "conversation forked; file state unchanged";
+
+async function restoreForkedFiles(
+  checkpoints: CheckpointsPort | undefined,
+  roots: readonly SessionTreeNode[],
+  ordinal: number,
+): Promise<string> {
+  if (checkpoints === undefined) return unchangedFilesNote;
+  const checkpoint = checkpointForPrompt(roots, ordinal);
+  if (!checkpoint.restorable) return unchangedFilesNote;
+  try {
+    await checkpoints.restoreTo(checkpoint.tree);
+    return "files restored to that point";
+  } catch (cause) {
+    return `conversation forked — file restore failed: ${(cause as Error).message}`;
+  }
+}
+
+let shellConfirmSequence = 0;
+
+function shellConfirmCall(command: string): ToolCallPart {
+  shellConfirmSequence += 1;
+  return {
+    type: "tool-call",
+    callId: `command-shell-${shellConfirmSequence}`,
+    name: "bash",
+    arguments: { command },
+  };
+}
+
+function conversationTarget(
+  core: AppCore,
+  switchers: ReadonlyMap<string, (agentName: string | undefined) => boolean>,
+): ConversationTarget | undefined {
+  const focused = core.layout.focused();
+  const ids = core.layout.panes();
+  const ordered = focused === undefined ? ids : [focused, ...ids.filter((id) => id !== focused)];
+  for (const id of ordered) {
+    const pane = core.panes.get(id);
+    if (!(pane instanceof ConversationPane)) continue;
+    return {
+      confirmShell: (command) => pane.confirmMutation(shellConfirmCall(command)),
+      submitPrompt: (text) => pane.submitPrompt(text),
+      switchAgent: (agentName) => switchers.get(id)?.(agentName) ?? false,
+    };
+  }
+  return undefined;
 }
 
 function attachOnFork(
@@ -290,17 +430,16 @@ function attachOnFork(
 }
 
 function startFreshSession(
-  pane: ConversationPane,
-  agent: Agent | undefined,
   sessions: SessionPort | undefined,
   notify: () => void,
+  wire: (attachment: SessionAttachment) => void,
 ): void {
-  if (agent === undefined || sessions === undefined) return;
+  if (sessions === undefined) return;
   void sessions
     .create()
     .then((created) => {
       if (created === undefined) return;
-      adoptSession(pane, agent, created);
+      wire(created);
       notify();
     })
     .catch(() => {});
@@ -314,23 +453,32 @@ function adoptSession(
   pane.sessionId = attachment.id;
   if (agent === undefined) return;
   attachment.replay(agent.bus);
-  recordTurns(agent, attachment);
 }
 
-function recordTurns(agent: Agent, attachment: SessionAttachment): void {
+export interface SessionLifecycleOptions {
+  pane: ConversationPane;
+  agent: Agent;
+  attachment: SessionAttachment;
+  afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
+  rebuild?: (history: readonly Message[]) => Agent | undefined;
+}
+
+export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
+  const { pane, attachment } = options;
   let persisted = attachment.history.length;
-  let writes: Promise<void> = Promise.resolve();
-  const record = (): void => {
+  pane.bindAfterTurn(async () => {
+    const agent = pane.currentAgent() ?? options.agent;
     const fresh = agent.history().slice(persisted);
     persisted += fresh.length;
-    writes = writes
-      .then(async () => {
-        for (const message of fresh) await attachment.append(message);
-      })
-      .catch(() => {});
-  };
-  agent.bus.on("turn.completed", record);
-  agent.bus.on("turn.interrupted", record);
+    for (const message of fresh) await attachment.append(message);
+    const joined =
+      (await options.afterTurn?.({ sessionId: attachment.id, history: agent.history() })) ?? [];
+    if (joined.length === 0) return;
+    const next = options.rebuild?.([...agent.history(), ...joined]);
+    if (next === undefined) return;
+    persisted = next.history().length;
+    pane.swapAgent(next);
+  });
 }
 
 function buildBody(core: AppCore, theme: Theme, screen: Screen) {
@@ -447,6 +595,57 @@ function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
     Text({ content: ` › ${core.paletteQuery}▌`, fg: theme.text }),
     ...(rows.length > 0 ? rows : [Text({ content: "  no matching commands", fg: theme.textDim })]),
   );
+}
+
+function presetOverlay(core: AppCore, theme: Theme, screen: Screen) {
+  const rows = presetRows(core, theme);
+  if (rows === undefined) return undefined;
+  const frame = helpFrame(screen, rows.length);
+  return Box(
+    {
+      position: "absolute",
+      left: frame.x,
+      top: frame.y,
+      width: frame.width,
+      height: frame.height,
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " permissions ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    ...rows,
+  );
+}
+
+function presetRows(core: AppCore, theme: Theme) {
+  const confirmation = core.presetConfirmation();
+  if (confirmation !== undefined) {
+    return [
+      Text({
+        content: ` switch ${confirmation.from} → ${confirmation.to} loosens permissions`,
+        fg: theme.text,
+      }),
+      Text({ content: " y confirm · n cancel", fg: theme.accent }),
+    ];
+  }
+  const picker = core.presetPicker();
+  if (picker === undefined) return undefined;
+  const rows = picker.names.map((name, index) =>
+    Text({
+      content: `${index === picker.index ? "▸" : " "} ${name}${name === picker.active ? " · active" : ""}`,
+      fg: index === picker.index ? theme.accent : theme.text,
+    }),
+  );
+  if (!picker.names.includes(picker.active)) {
+    rows.push(Text({ content: `  ${picker.active} · active (edited config)`, fg: theme.textDim }));
+  }
+  return rows;
 }
 
 function helpOverlay(keymap: Keymap, theme: Theme, screen: Screen) {

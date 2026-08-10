@@ -57,19 +57,30 @@ export async function listSessions(dir: string): Promise<SessionSummary[]> {
   return summaries.sort((a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime());
 }
 
-export function sessionPort(dir: string, cwd: string): SessionPort {
+export type CheckpointTagSource = () => string | undefined;
+
+export function sessionPort(
+  dir: string,
+  cwd: string,
+  checkpointTag?: CheckpointTagSource,
+): SessionPort {
   return {
     async open(id: string): Promise<SessionAttachment | undefined> {
       try {
         const file = await findSessionFile(dir, id);
-        return file === undefined ? undefined : attachmentOf(await SessionStore.open(file));
+        return file === undefined
+          ? undefined
+          : attachmentOf(await SessionStore.open(file), checkpointTag);
       } catch {
         return undefined;
       }
     },
     async create(): Promise<SessionAttachment | undefined> {
       try {
-        return attachmentOf(await SessionStore.create(join(dir, newSessionFileName()), cwd));
+        return attachmentOf(
+          await SessionStore.create(join(dir, newSessionFileName()), cwd),
+          checkpointTag,
+        );
       } catch {
         return undefined;
       }
@@ -152,13 +163,17 @@ async function openById(dir: string, idPrefix: string): Promise<SessionStore | u
   }
 }
 
-function attachmentOf(store: SessionStore): SessionAttachment {
+export function attachmentOf(
+  store: SessionStore,
+  checkpointTag?: CheckpointTagSource,
+): SessionAttachment {
   return {
     id: store.header.id,
     history: store.messages(),
     replay: (bus) => replaySession(store, bus),
     append: async (message) => {
-      await store.append(message);
+      const checkpoint = message.role === "user" ? checkpointTag?.() : undefined;
+      await store.append(message, undefined, checkpoint);
     },
   };
 }

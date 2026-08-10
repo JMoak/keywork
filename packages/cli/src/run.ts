@@ -12,7 +12,8 @@ import {
   type Provider,
   SessionStore,
 } from "@keywork/engine";
-import type { PromptsConfig } from "@keywork/shared";
+import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
+import { startMcpRegistry } from "./chat.ts";
 import {
   bootstrapInjection,
   memoryRecall,
@@ -34,6 +35,7 @@ export interface RunOptions {
   prompts?: PromptsConfig;
   modelId?: string;
   permissions?: PermissionResolver;
+  mcpServers?: Record<string, McpServerConfig>;
   print?: (line: string) => void;
   printError?: (line: string) => void;
   exit?: (code: number) => never;
@@ -49,12 +51,14 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
   const instructions =
     options.projectTrusted === true ? await loadProjectInstructions(options.cwd) : undefined;
   const memory = openWorkspaceMemory(options.cwd, options.projectTrusted === true);
+  const mcp = startMcpRegistry(options.mcpServers);
   let self: Agent | undefined;
+  const baseTools = coreTools(options.cwd, memoryRecall(memory), (chunk) =>
+    self?.bus.emit("tool.output", { chunk }),
+  );
   const agent = new Agent({
     provider,
-    tools: coreTools(options.cwd, memoryRecall(memory), (chunk) =>
-      self?.bus.emit("tool.output", { chunk }),
-    ),
+    tools: mcp === undefined ? baseTools : mcp.surface(baseTools),
     ...(options.permissions !== undefined && { permissions: options.permissions }),
     systemPrompt: withMemoryPrompt(
       buildSystemPrompt({
@@ -79,11 +83,15 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
   agent.bus.on("turn.completed", (payload) => emit("turn.completed", payload));
   agent.bus.on("turn.interrupted", (payload) => emit("turn.interrupted", payload));
 
-  const final = await agent.send(options.prompt);
-  if (!options.json) print(messageText(final));
-  await persistSession(options, agent.history());
-  await diagnostics?.flush();
-  return final;
+  try {
+    const final = await agent.send(options.prompt);
+    if (!options.json) print(messageText(final));
+    await persistSession(options, agent.history());
+    await diagnostics?.flush();
+    return final;
+  } finally {
+    await mcp?.stop();
+  }
 }
 
 function openDiagnostics(options: RunOptions): Promise<DiagnosticsLog> {

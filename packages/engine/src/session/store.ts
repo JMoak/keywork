@@ -85,8 +85,13 @@ export class SessionStore {
     return store;
   }
 
-  async append(message: Message, usage?: Usage): Promise<MessageEntry> {
-    return this.appendEntry({ type: "message", message, ...(usage !== undefined && { usage }) });
+  async append(message: Message, usage?: Usage, checkpoint?: string): Promise<MessageEntry> {
+    return this.appendEntry({
+      type: "message",
+      message,
+      ...(usage !== undefined && { usage }),
+      ...(checkpoint !== undefined && { checkpoint }),
+    });
   }
 
   async appendCompaction(input: CompactionInput): Promise<CompactionEntry> {

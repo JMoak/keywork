@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { messageText, textMessage } from "../messages.ts";
+import { checkpointForPrompt } from "./entries.ts";
 import { SessionStore } from "./store.ts";
 
 const tempDirs: string[] = [];
@@ -98,6 +99,55 @@ describe("SessionStore", () => {
     await reopened.append(textMessage("assistant", "third branch"));
     expect(reopened.entries()).toHaveLength(4);
     expect(reopened.tree()[0]?.children).toHaveLength(3);
+  });
+
+  it("round-trips a checkpoint tag on a user turn through disk", async () => {
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+    const tagged = await store.append(textMessage("user", "change files"), undefined, "abc123");
+    const untagged = await store.append(textMessage("assistant", "done"));
+
+    expect(tagged.checkpoint).toBe("abc123");
+    expect(untagged.checkpoint).toBeUndefined();
+    expect("checkpoint" in untagged).toBe(false);
+
+    const reopened = await SessionStore.open(file);
+    expect(reopened.entry(tagged.id)).toMatchObject({ checkpoint: "abc123" });
+    expect(reopened.entry(untagged.id)).not.toHaveProperty("checkpoint");
+  });
+
+  it("keeps checkpoint tags across branch and clone", async () => {
+    const dir = await tempDir();
+    const store = await SessionStore.create(join(dir, "origin.jsonl"), ".");
+    const root = await store.append(textMessage("user", "start"), undefined, "tree-root");
+    await store.append(textMessage("assistant", "first"));
+
+    store.branch(root.id);
+    await store.append(textMessage("assistant", "second"));
+    expect(store.entry(root.id)).toMatchObject({ checkpoint: "tree-root" });
+
+    const clone = await store.clone(join(dir, "clone.jsonl"));
+    expect(clone.entry(root.id)).toMatchObject({ checkpoint: "tree-root" });
+    const reopened = await SessionStore.open(join(dir, "clone.jsonl"));
+    expect(reopened.entry(root.id)).toMatchObject({ checkpoint: "tree-root" });
+  });
+
+  it("loads sessions written before checkpoint tags existed", async () => {
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+    await store.append(textMessage("user", "old prompt"));
+    await appendFile(
+      file,
+      '{"type":"message","id":"legacy","parentId":null,"timestamp":"","message":{"role":"user","parts":[{"type":"text","text":"older"}]}}\n',
+      "utf8",
+    );
+
+    const reopened = await SessionStore.open(file);
+    expect(reopened.entries()).toHaveLength(2);
+    expect(checkpointForPrompt(reopened.tree(), 0)).toEqual({
+      restorable: false,
+      reason: "turn-not-checkpointed",
+    });
   });
 
   it("refuses to branch from an unknown entry", async () => {
@@ -249,5 +299,50 @@ describe("SessionStore", () => {
       lastActivityAt: stats.lastActivityAt,
     });
     expect(stats.lastActivityAt).not.toBe("");
+  });
+});
+
+describe("checkpointForPrompt", () => {
+  it("resolves the tagged tree for a prompt ordinal on the active path", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    await store.append(textMessage("user", "first"), undefined, "tree-first");
+    await store.append(textMessage("assistant", "re: first"));
+    await store.append(textMessage("user", "second"), undefined, "tree-second");
+    await store.append(textMessage("assistant", "re: second"));
+
+    expect(checkpointForPrompt(store.tree(), 0)).toEqual({ restorable: true, tree: "tree-first" });
+    expect(checkpointForPrompt(store.tree(), 1)).toEqual({ restorable: true, tree: "tree-second" });
+  });
+
+  it("reports prompt-not-found for an ordinal past the active path", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    await store.append(textMessage("user", "only"), undefined, "tree-only");
+
+    expect(checkpointForPrompt(store.tree(), 1)).toEqual({
+      restorable: false,
+      reason: "prompt-not-found",
+    });
+    expect(checkpointForPrompt([], 0)).toEqual({ restorable: false, reason: "prompt-not-found" });
+  });
+
+  it("reports turn-not-checkpointed instead of guessing a tree", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    await store.append(textMessage("user", "tagged"), undefined, "tree-tagged");
+    await store.append(textMessage("user", "untagged"));
+
+    expect(checkpointForPrompt(store.tree(), 1)).toEqual({
+      restorable: false,
+      reason: "turn-not-checkpointed",
+    });
+  });
+
+  it("follows the active branch, not abandoned siblings", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    const root = await store.append(textMessage("user", "root"), undefined, "tree-root");
+    await store.append(textMessage("user", "abandoned"), undefined, "tree-abandoned");
+    store.branch(root.id);
+    await store.append(textMessage("user", "active"), undefined, "tree-active");
+
+    expect(checkpointForPrompt(store.tree(), 1)).toEqual({ restorable: true, tree: "tree-active" });
   });
 });

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
   bootstrapMemory,
+  type EmbeddingsPort,
   estimateContextTokens,
   Gardener,
   type MemoryFlush,
@@ -9,6 +10,7 @@ import {
   MemoryStore,
   type Message,
   type Note,
+  type RetrievalSource,
   ReviewInbox,
   type ReviewItem,
   type SessionStore,
@@ -28,6 +30,7 @@ export interface WorkspaceMemory {
   search: MemorySearch;
   inbox: ReviewInbox;
   gardener: Gardener;
+  embeddings?: EmbeddingsPort;
 }
 
 export const memoryBootstrapBudget = 4096;
@@ -46,17 +49,48 @@ export function openWorkspaceMemory(cwd: string, trusted: boolean): WorkspaceMem
   };
 }
 
+export type SessionKey = string | (() => string | undefined);
+
 export function memoryRecall(
   memory: WorkspaceMemory | undefined,
-  sessionId?: string,
+  sessionId?: SessionKey,
+  onRetrieval?: (disclosure: string) => void,
 ): MemoryRecall | undefined {
   if (memory === undefined) return undefined;
   return {
     store: memory.store,
-    search: memory.search,
-    ...(sessionId !== undefined && {
-      onRecall: (noteName: string) => memory.gardener.recordRecall(noteName, sessionId),
-    }),
+    search: recallSearch(memory, onRetrieval),
+    onRecall: recallTap(memory, sessionId),
+  };
+}
+
+export function retrievalDisclosure(source: RetrievalSource): string | undefined {
+  switch (source.kind) {
+    case "lexical":
+      return undefined;
+    case "hybrid":
+      return `memory search uses embeddings from ${source.embeddings}`;
+    case "lexical-degraded":
+      return `memory search fell back to lexical — embeddings from ${source.embeddings} unavailable`;
+  }
+}
+
+function recallSearch(
+  memory: WorkspaceMemory,
+  onRetrieval?: (disclosure: string) => void,
+): MemorySearch {
+  if (onRetrieval === undefined) return memory.search;
+  return new MemorySearch(memory.store, memory.embeddings, ({ source }) => {
+    const disclosure = retrievalDisclosure(source);
+    if (disclosure !== undefined) onRetrieval(disclosure);
+  });
+}
+
+function recallTap(memory: WorkspaceMemory, sessionId?: SessionKey): (noteName: string) => void {
+  const resolveSession = typeof sessionId === "function" ? sessionId : () => sessionId;
+  return (noteName) => {
+    const id = resolveSession();
+    if (id !== undefined) memory.gardener.recordRecall(noteName, id);
   };
 }
 

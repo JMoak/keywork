@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { textMessage } from "@keywork/engine";
+import { SessionStore, textMessage } from "@keywork/engine";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   findSessionFile,
@@ -9,6 +9,7 @@ import {
   listSessions,
   newSessionFileName,
   openOrResumeSession,
+  sessionPort,
   sessionsCommand,
   sessionTreePort,
 } from "./sessions.ts";
@@ -231,6 +232,40 @@ describe("findSessionFile", () => {
 
     expect(await findSessionFile(dir, opened.store.header.id.slice(0, 6))).toBe(opened.store.file);
     expect(await findSessionFile(dir, "zzzzzz")).toBeUndefined();
+  });
+});
+
+describe("sessionPort", () => {
+  it("tags persisted user turns with the pending checkpoint tree", async () => {
+    const dir = await tempDir();
+    const tags = ["tree-one", "tree-two"];
+    const port = sessionPort(dir, ".", () => tags.shift());
+    const attachment = await port.create();
+
+    await attachment?.append(textMessage("user", "mutating turn"));
+    await attachment?.append(textMessage("assistant", "done"));
+    await attachment?.append(textMessage("user", "another mutating turn"));
+    await attachment?.append(textMessage("user", "read-only turn"));
+
+    const file = await findSessionFile(dir, attachment?.id ?? "");
+    const store = await SessionStore.open(file ?? "");
+    const entries = store.entries();
+    expect(entries[0]).toMatchObject({ checkpoint: "tree-one" });
+    expect(entries[1]).not.toHaveProperty("checkpoint");
+    expect(entries[2]).toMatchObject({ checkpoint: "tree-two" });
+    expect(entries[3]).not.toHaveProperty("checkpoint");
+  });
+
+  it("persists untagged turns when no checkpoint source is wired", async () => {
+    const dir = await tempDir();
+    const port = sessionPort(dir, ".");
+    const attachment = await port.create();
+
+    await attachment?.append(textMessage("user", "prompt"));
+
+    const file = await findSessionFile(dir, attachment?.id ?? "");
+    const store = await SessionStore.open(file ?? "");
+    expect(store.entries()[0]).not.toHaveProperty("checkpoint");
   });
 });
 

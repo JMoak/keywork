@@ -16,8 +16,10 @@ export interface AppProbeOptions
       | "createBrowserPane"
       | "createSessionTreePane"
       | "createMemoryPane"
+      | "createMcpPane"
       | "isDirectory"
       | "undo"
+      | "presets"
       | "restoreWorkspace"
       | "saveWorkspace"
     >
@@ -48,8 +50,12 @@ export class AppProbe {
       ...(options.createMemoryPane !== undefined && {
         createMemoryPane: options.createMemoryPane,
       }),
+      ...(options.createMcpPane !== undefined && {
+        createMcpPane: options.createMcpPane,
+      }),
       ...(options.isDirectory !== undefined && { isDirectory: options.isDirectory }),
       ...(options.undo !== undefined && { undo: options.undo }),
+      ...(options.presets !== undefined && { presets: options.presets }),
       ...(options.restoreWorkspace !== undefined && {
         restoreWorkspace: options.restoreWorkspace,
       }),
