@@ -187,6 +187,18 @@ describe("bash", () => {
     expect(output).toContain("hello");
   });
 
+  it("streams progress chunks to onOutput while the model still gets only the final output", async () => {
+    const cwd = await workspace();
+    const chunks: string[] = [];
+
+    const output = await bashTool(cwd, detectShell(), (chunk) => chunks.push(chunk)).execute({
+      command: "echo hello",
+    });
+
+    expect(chunks.join("")).toContain("hello");
+    expect(output).toContain("hello");
+  });
+
   it("includes the exit code on failure", async () => {
     const cwd = await workspace();
     const shell = detectShell();

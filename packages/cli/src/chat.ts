@@ -7,6 +7,7 @@ import {
   compactSession,
   coreTools,
   loadProjectInstructions,
+  MemoryFlush,
   type Message,
   type PermissionResolver,
   type Provider,
@@ -15,7 +16,16 @@ import {
   type ToolGuard,
 } from "@keywork/engine";
 import type { PromptsConfig } from "@keywork/shared";
+import {
+  bootstrapInjection,
+  flushAfterTurn,
+  memoryRecall,
+  openWorkspaceMemory,
+  sweepOnClose,
+  withMemoryPrompt,
+} from "./memory.ts";
 import { defaultSessionDir, snapshotGitDir } from "./paths.ts";
+import { type PresetPort, presetCommand } from "./presets.ts";
 import { openOrResumeSession } from "./sessions.ts";
 
 export interface ChatOptions {
@@ -29,6 +39,7 @@ export interface ChatOptions {
   prompts?: PromptsConfig;
   modelId?: string;
   permissions?: PermissionResolver;
+  presets?: PresetPort;
 }
 
 export async function chat(options: ChatOptions): Promise<void> {
@@ -39,21 +50,33 @@ export async function chat(options: ChatOptions): Promise<void> {
   if (opened === undefined) return;
   const { store, seeded } = opened;
   const checkpoints = await openCheckpoints(options.cwd);
-  const systemPrompt = buildSystemPrompt({
-    ...(instructions !== undefined && { projectInstructions: instructions }),
-    ...(options.prompts !== undefined && { prompts: options.prompts }),
-    ...(options.modelId !== undefined && { modelId: options.modelId }),
-  });
+  const memory = openWorkspaceMemory(options.cwd, options.projectTrusted === true);
+  const systemPrompt = withMemoryPrompt(
+    buildSystemPrompt({
+      ...(instructions !== undefined && { projectInstructions: instructions }),
+      ...(options.prompts !== undefined && { prompts: options.prompts }),
+      ...(options.modelId !== undefined && { modelId: options.modelId }),
+    }),
+    await bootstrapInjection(memory),
+  );
+  const flush =
+    memory === undefined
+      ? undefined
+      : new MemoryFlush({ provider: options.provider, store: memory.store, systemPrompt });
 
   const buildAgent = (history: readonly Message[]): Agent => {
+    let self: Agent | undefined;
     const agent = new Agent({
       provider: options.provider,
-      tools: coreTools(options.cwd),
+      tools: coreTools(options.cwd, memoryRecall(memory, store.header.id), (chunk) =>
+        self?.bus.emit("tool.output", { chunk }),
+      ),
       systemPrompt,
       history,
       guard: mutationGuard(checkpoints),
       ...(options.permissions !== undefined && { permissions: options.permissions }),
     });
+    self = agent;
     wireStreamingOutput(agent);
     return agent;
   };
@@ -80,9 +103,19 @@ export async function chat(options: ChatOptions): Promise<void> {
         await labelLeaf(store, line.slice("/label".length).trim());
         continue;
       }
+      if (line.startsWith("/preset")) {
+        await presetCommand(
+          line.slice("/preset".length).trim(),
+          options.presets,
+          console.log,
+          confirmVia(readline),
+        );
+        continue;
+      }
       if (line.startsWith("/compact")) {
         const compacted = await compactNow(store, options.provider, line);
         if (compacted) {
+          flush?.compactionCompleted();
           agent = buildAgent(store.messages());
           persisted = agent.history().length;
         }
@@ -91,12 +124,18 @@ export async function chat(options: ChatOptions): Promise<void> {
       await runTurn(agent, line);
       printUsageLine(agent);
       persisted = await persistNewMessages(store, agent.history(), persisted);
+      const flushed = await flushAfterTurn(flush, store, agent.history());
+      if (flushed.length > 0) {
+        agent = buildAgent([...agent.history(), ...flushed]);
+        persisted = agent.history().length;
+      }
     }
   } catch (cause) {
     if (!isReadlineClosed(cause)) throw cause;
   } finally {
     readline.close();
   }
+  await sweepOnClose(memory);
 }
 
 async function tryOpenSession(
@@ -207,7 +246,7 @@ function greet(options: ChatOptions, store: SessionStore, seeded: readonly Messa
   console.log(`session → ${store.file}`);
   if (seeded.length > 0) console.log(`resumed ${seeded.length} messages`);
   console.log(
-    `Ask for anything · Esc interrupts a running turn · "exit" quits · /session for stats · /undo reverts the last agent change · /compact summarizes old context · /label <name> marks this point`,
+    `Ask for anything · Esc interrupts a running turn · "exit" quits · /session for stats · /undo reverts the last agent change · /compact summarizes old context · /label <name> marks this point · /preset switches permission presets`,
   );
 }
 
@@ -238,9 +277,19 @@ function interruptOnEscape(agent: Agent): () => void {
   };
 }
 
+function confirmVia(
+  readline: ReturnType<typeof createInterface>,
+): (question: string) => Promise<boolean> {
+  return async (question) =>
+    (await readline.question(question)).trim().toLowerCase().startsWith("y");
+}
+
 function wireStreamingOutput(agent: Agent): void {
   agent.bus.on("turn.delta", ({ delta, replay }) => {
     if (replay !== true && delta.type === "text") process.stdout.write(delta.text);
+  });
+  agent.bus.on("tool.output", ({ chunk, replay }) => {
+    if (replay !== true) process.stdout.write(chunk);
   });
   agent.bus.on("tool.started", ({ call, replay }) => {
     if (replay !== true) console.log(`\n· ${call.name} ${compact(call.arguments)}`);

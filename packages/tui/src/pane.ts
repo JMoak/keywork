@@ -14,7 +14,7 @@ export interface PaneContext {
 
 export interface PaneIntents {
   openFile(path: string): void;
-  openSession(sessionId: string): void;
+  openSession(sessionId: string, draft?: string): void;
   focusPane(id: string): void;
 }
 
@@ -22,7 +22,8 @@ export type PaneDescriptor =
   | { kind: "conversation"; sessionId?: string }
   | { kind: "file"; path: string }
   | { kind: "browser"; root: string }
-  | { kind: "session-tree"; sessionId?: string };
+  | { kind: "session-tree"; sessionId?: string }
+  | { kind: "memory" };
 
 export interface Pane {
   readonly id: string;

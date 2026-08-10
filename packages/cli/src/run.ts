@@ -13,6 +13,12 @@ import {
   SessionStore,
 } from "@keywork/engine";
 import type { PromptsConfig } from "@keywork/shared";
+import {
+  bootstrapInjection,
+  memoryRecall,
+  openWorkspaceMemory,
+  withMemoryPrompt,
+} from "./memory.ts";
 import { defaultSessionDir } from "./paths.ts";
 import { providerSetupHint } from "./provider.ts";
 import { newSessionFileName } from "./sessions.ts";
@@ -42,16 +48,24 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
 
   const instructions =
     options.projectTrusted === true ? await loadProjectInstructions(options.cwd) : undefined;
+  const memory = openWorkspaceMemory(options.cwd, options.projectTrusted === true);
+  let self: Agent | undefined;
   const agent = new Agent({
     provider,
-    tools: coreTools(options.cwd),
+    tools: coreTools(options.cwd, memoryRecall(memory), (chunk) =>
+      self?.bus.emit("tool.output", { chunk }),
+    ),
     ...(options.permissions !== undefined && { permissions: options.permissions }),
-    systemPrompt: buildSystemPrompt({
-      ...(instructions !== undefined && { projectInstructions: instructions }),
-      ...(options.prompts !== undefined && { prompts: options.prompts }),
-      ...(options.modelId !== undefined && { modelId: options.modelId }),
-    }),
+    systemPrompt: withMemoryPrompt(
+      buildSystemPrompt({
+        ...(instructions !== undefined && { projectInstructions: instructions }),
+        ...(options.prompts !== undefined && { prompts: options.prompts }),
+        ...(options.modelId !== undefined && { modelId: options.modelId }),
+      }),
+      await bootstrapInjection(memory),
+    ),
   });
+  self = agent;
 
   const diagnostics = options.debug === true ? await openDiagnostics(options) : undefined;
   diagnostics?.tap(agent.bus);
@@ -60,6 +74,7 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
   agent.bus.on("turn.started", (payload) => emit("turn.started", payload));
   agent.bus.on("turn.delta", (payload) => emit("turn.delta", payload));
   agent.bus.on("tool.started", (payload) => emit("tool.started", payload));
+  agent.bus.on("tool.output", (payload) => emit("tool.output", payload));
   agent.bus.on("tool.finished", (payload) => emit("tool.finished", payload));
   agent.bus.on("turn.completed", (payload) => emit("turn.completed", payload));
   agent.bus.on("turn.interrupted", (payload) => emit("turn.interrupted", payload));

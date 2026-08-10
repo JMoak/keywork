@@ -35,14 +35,18 @@ export function detectShell(platform: NodeJS.Platform = process.platform): Shell
   };
 }
 
-export function bashTool(cwd: string, shell: Shell = detectShell()) {
+export function bashTool(
+  cwd: string,
+  shell: Shell = detectShell(),
+  onOutput?: (chunk: string) => void,
+) {
   return defineTool({
     name: "bash",
     description: `Run a command in ${shell.name} from the working directory.`,
     schema,
     mutates: true,
     run: ({ command, timeoutMs = defaultTimeoutMs }, signal) =>
-      execute(shell, command, cwd, timeoutMs, signal),
+      execute(shell, command, cwd, timeoutMs, signal, onOutput),
   });
 }
 
@@ -69,6 +73,7 @@ function execute(
   cwd: string,
   timeoutMs: number,
   signal?: AbortSignal,
+  onOutput?: (chunk: string) => void,
 ): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(shell.file, shell.args(command), {
@@ -84,6 +89,7 @@ function execute(
     let settleTimer: NodeJS.Timeout | undefined;
 
     const capture = (chunk: Buffer) => {
+      onOutput?.(chunk.toString());
       if (truncated) return;
       output += chunk.toString();
       if (output.length > maxOutputChars) {

@@ -7,6 +7,7 @@ interface LiveEvents {
   "turn.completed": { message: Message; usage: Usage };
   "turn.interrupted": { message: Message };
   "tool.started": { call: ToolCallPart };
+  "tool.output": { chunk: string; callId?: string };
   "tool.finished": { callId: string; output: string; isError: boolean };
   "engine.error": { error: Error };
 }

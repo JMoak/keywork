@@ -109,18 +109,27 @@ export function readMaskedLine(
   });
 }
 
-export async function saveApiKey(
-  provider: string,
-  key: string,
+export async function updateUserConfig(
+  mutate: (existing: KeyworkConfig) => KeyworkConfig,
   dir: string = join(homedir(), ".keywork"),
 ): Promise<string> {
   const file = join(dir, "keywork.json");
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  const existing = await readKnownConfig(file);
-  const merged: KeyworkConfig = { ...existing, apiKeys: { ...existing.apiKeys, [provider]: key } };
+  const merged = mutate(await readKnownConfig(file));
   await writeFile(file, `${JSON.stringify(merged, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(file, 0o600);
   return file;
+}
+
+export function saveApiKey(
+  provider: string,
+  key: string,
+  dir: string = join(homedir(), ".keywork"),
+): Promise<string> {
+  return updateUserConfig(
+    (existing) => ({ ...existing, apiKeys: { ...existing.apiKeys, [provider]: key } }),
+    dir,
+  );
 }
 
 function askLine(prompt: string): Promise<string> {

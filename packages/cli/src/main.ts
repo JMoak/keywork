@@ -2,15 +2,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { debugEnabled, type PermissionResolver } from "@keywork/engine";
-import {
-  ConfigError,
-  loadConfig,
-  openWorkspace,
-  permissionPolicy,
-  TrustStore,
-} from "@keywork/shared";
+import { debugEnabled } from "@keywork/engine";
+import { ConfigError, loadConfig, openWorkspace, TrustStore } from "@keywork/shared";
 import { chat } from "./chat.ts";
+import { createPresetSwitch } from "./presets.ts";
 import { providerSetupHint, resolveProvider } from "./provider.ts";
 import { runHeadless } from "./run.ts";
 
@@ -65,8 +60,14 @@ async function main(argv: string[]): Promise<number> {
   }
   const projectTrusted = trustStore.resolve(cwd) === "trusted";
   const config = await loadKeyworkConfig(cwd, projectTrusted);
-  const policy = permissionPolicy(config.permissions);
-  const toolPermissions: PermissionResolver = (call) => policy(call.name, call.arguments);
+  const presets = createPresetSwitch({
+    initial: config.permissions,
+    persist: async (permissions) => {
+      const { updateUserConfig } = await import("./setup.ts");
+      await updateUserConfig((existing) => ({ ...existing, permissions }));
+    },
+  });
+  const toolPermissions = presets.resolver;
   const model = values.model ?? config.model;
   let resolved = resolveProvider(process.env, model, config.apiKeys, config.bedrockRegion);
 
@@ -99,6 +100,7 @@ async function main(argv: string[]): Promise<number> {
         resume: values.continue,
         projectTrusted,
         permissions: toolPermissions,
+        presets,
         ...(config.prompts !== undefined && { prompts: config.prompts }),
         ...(values.resume !== undefined && { resumeId: values.resume }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
@@ -149,12 +151,23 @@ async function main(argv: string[]): Promise<number> {
         await import("./paths.ts");
       const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
       const { sessionPort, sessionTreePort } = await import("./sessions.ts");
+      const {
+        bootstrapInjection,
+        memoryPanePort,
+        memoryRecall,
+        openWorkspaceMemory,
+        withMemoryPrompt,
+      } = await import("./memory.ts");
       const instructions = projectTrusted ? await loadProjectInstructions(cwd) : undefined;
-      const systemPrompt = buildSystemPrompt({
-        ...(instructions !== undefined && { projectInstructions: instructions }),
-        ...(config.prompts !== undefined && { prompts: config.prompts }),
-        ...(active !== undefined && { modelId: active.modelId }),
-      });
+      const memory = openWorkspaceMemory(cwd, projectTrusted);
+      const systemPrompt = withMemoryPrompt(
+        buildSystemPrompt({
+          ...(instructions !== undefined && { projectInstructions: instructions }),
+          ...(config.prompts !== undefined && { prompts: config.prompts }),
+          ...(active !== undefined && { modelId: active.modelId }),
+        }),
+        await bootstrapInjection(memory),
+      );
       const checkpoints = await Checkpoints.open({
         worktree: cwd,
         gitDir: snapshotGitDir(cwd),
@@ -166,18 +179,25 @@ async function main(argv: string[]): Promise<number> {
         sessionTrees: sessionTreePort(values["session-dir"] ?? defaultSessionDir(cwd)),
         ...(config.theme !== undefined && { themeOverrides: config.theme }),
         ...(checkpoints !== undefined && { checkpoints }),
+        ...(memory !== undefined && { memory: memoryPanePort(memory) }),
         ...(active !== undefined && {
-          agentFactory: (guard, history) =>
-            new Agent({
+          agentFactory: (guard, history) => {
+            let self: InstanceType<typeof Agent> | undefined;
+            const agent = new Agent({
               provider: active.provider,
-              tools: coreTools(cwd),
+              tools: coreTools(cwd, memoryRecall(memory), (chunk) =>
+                self?.bus.emit("tool.output", { chunk }),
+              ),
               systemPrompt,
               guard,
               permissions: toolPermissions,
               ...(history !== undefined && { history }),
-            }),
+            });
+            self = agent;
+            return agent;
+          },
           titler: (conversation) => suggestTitle(active.provider, conversation),
-          statusLabel: active.label,
+          statusLabel: () => `${active.label} · ${presets.active()}`,
         }),
       });
       return 0;

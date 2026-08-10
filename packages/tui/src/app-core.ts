@@ -165,6 +165,12 @@ const appActions: Record<string, AppAction> = {
     chainable: true,
     invoke: (core) => core.summonSessionTree(),
   },
+  "memory.summon": {
+    chords: "leader m",
+    help: "memory pane",
+    chainable: true,
+    invoke: (core) => core.summonMemoryPane(),
+  },
   "help.toggle": {
     chords: ["leader /", "f1"],
     help: "this overlay",
@@ -209,6 +215,7 @@ export type PaneFactory = (
   notify: () => void,
   commands: CommandRegistry,
   resumeSessionId?: string,
+  draft?: string,
 ) => Pane;
 export type FilePaneFactory = (id: string, path: string, notify: () => void) => Pane;
 export type BrowserPaneFactory = (
@@ -224,6 +231,7 @@ export type SessionTreePaneFactory = (
   targetSession: () => string | undefined,
   sessionId?: string,
 ) => Pane;
+export type MemoryPaneFactory = (id: string, notify: () => void) => Pane;
 
 export interface UndoPort {
   undo(): Promise<boolean>;
@@ -236,6 +244,7 @@ export interface AppCoreOptions {
   createFilePane?: FilePaneFactory;
   createBrowserPane?: BrowserPaneFactory;
   createSessionTreePane?: SessionTreePaneFactory;
+  createMemoryPane?: MemoryPaneFactory;
   isDirectory?: (path: string) => boolean;
   undo?: UndoPort;
   restoreWorkspace?: WorkspaceState;
@@ -303,7 +312,7 @@ export class AppCore {
   readonly panes = new Map<string, Pane>();
   readonly intents: PaneIntents = {
     openFile: (path) => this.openFilePane(path),
-    openSession: (sessionId) => this.openPane(sessionId),
+    openSession: (sessionId, draft) => this.openPane(sessionId, draft),
     focusPane: (id) => this.layout.focus(id),
   };
   leaderArmed = false;
@@ -314,6 +323,7 @@ export class AppCore {
   private nextFile = 1;
   private nextBrowser = 1;
   private nextTree = 1;
+  private nextMemory = 1;
   private notify: () => void = () => {};
   private lastSavedWorkspace = "";
   private readonly paneChanged = (): void => {
@@ -448,15 +458,17 @@ export class AppCore {
     this.persistWorkspace();
   }
 
-  openPane(resumeSessionId?: string): void {
+  openPane(resumeSessionId?: string, draft?: string): void {
     const id = `session-${this.nextSession}`;
     this.nextSession += 1;
     this.panes.set(
       id,
-      this.options.createPane(id, this.paneChanged, this.registry, resumeSessionId),
+      this.options.createPane(id, this.paneChanged, this.registry, resumeSessionId, draft),
     );
     this.focusMainArea();
     this.layout.open(id, this.screen());
+    this.persistWorkspace();
+    this.notify();
   }
 
   closePane(): void {
@@ -487,6 +499,15 @@ export class AppCore {
       return;
     }
     this.openSessionTreePane();
+  }
+
+  summonMemoryPane(): void {
+    const existing = [...this.panes.keys()].find((id) => id.startsWith("memory-"));
+    if (existing !== undefined) {
+      this.layout.focus(existing);
+      return;
+    }
+    this.openMemoryPane();
   }
 
   toggleHelp(): void {
@@ -590,6 +611,8 @@ export class AppCore {
             () => this.conversationSession(),
             entry.sessionId,
           );
+        case "memory":
+          return this.options.createMemoryPane?.(entry.id, this.paneChanged);
       }
     } catch {
       return undefined;
@@ -602,6 +625,7 @@ export class AppCore {
       this.nextFile = nextAfter(id, "file", this.nextFile);
       this.nextBrowser = nextAfter(id, "browser", this.nextBrowser);
       this.nextTree = nextAfter(id, "tree", this.nextTree);
+      this.nextMemory = nextAfter(id, "memory", this.nextMemory);
     }
   }
 
@@ -634,6 +658,16 @@ export class AppCore {
       id,
       create(id, this.paneChanged, this.intents, () => this.conversationSession()),
     );
+    this.layout.open(id, this.screen());
+    this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+  }
+
+  private openMemoryPane(): void {
+    const create = this.options.createMemoryPane;
+    if (create === undefined) return;
+    const id = `memory-${this.nextMemory}`;
+    this.nextMemory += 1;
+    this.panes.set(id, create(id, this.paneChanged));
     this.layout.open(id, this.screen());
     this.layout.dockFocused(this.layout.dock()?.side ?? "left");
   }
@@ -781,6 +815,14 @@ export class AppCore {
         description: "open the session tree: /tree",
         ...shortcut("tree.summon"),
         run: () => this.summonSessionTree(),
+      });
+    }
+    if (this.options.createMemoryPane !== undefined) {
+      this.registry.register({
+        name: "memory",
+        description: "open the memory pane: /memory",
+        ...shortcut("memory.summon"),
+        run: () => this.summonMemoryPane(),
       });
     }
     const undoPort = this.options.undo;

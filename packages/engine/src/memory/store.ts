@@ -39,6 +39,7 @@ export interface NoteInput {
   provenance: Provenance;
   aliases?: string[];
   confidence?: number;
+  usefulness?: number;
   pinned?: boolean;
   supersedes?: string;
 }
@@ -56,6 +57,7 @@ export interface Note {
   frontmatter: Frontmatter;
   created?: string;
   confidence?: number;
+  usefulness?: number;
   supersedes?: string;
   supersededBy?: string;
 }
@@ -146,8 +148,8 @@ const wikilinkPattern = /\[\[([^[\]|#]+)(?:#[^[\]|]*)?(?:\|[^[\]]*)?\]\]/g;
 const dailyMarkerPattern = /^- (\d{2}:\d{2}) \[prov: (user|agent|untrusted)\] (.*)$/;
 
 export class MemoryStore {
+  readonly trusted: boolean;
   private readonly root: string;
-  private readonly trusted: boolean;
   private readonly now: () => Date;
   private readonly secrets: NamedSecret[];
   private readonly log: LedgerEntry[] = [];
@@ -198,16 +200,27 @@ export class MemoryStore {
 
   async listStaged(): Promise<StagedItem[]> {
     if (!this.trusted) return [];
+    const files = new Set(await this.listDir(stagingDir));
     const items: StagedItem[] = [];
-    for (const file of await this.listDir(stagingDir)) {
+    for (const file of files) {
       if (!file.endsWith(".json")) continue;
-      items.push(await this.readStaged(file.slice(0, -".json".length)));
+      const id = file.slice(0, -".json".length);
+      if (!files.has(`${id}.md`)) continue;
+      items.push(await this.readStaged(id));
     }
     return items.sort((a, b) => a.created.localeCompare(b.created));
   }
 
   ledger(): readonly LedgerEntry[] {
     return this.log;
+  }
+
+  async listDailyDates(): Promise<string[]> {
+    if (!this.trusted) return [];
+    return (await this.listDir("daily"))
+      .filter((file) => file.endsWith(".md"))
+      .map((file) => file.slice(0, -".md".length))
+      .sort();
   }
 
   async bootstrap(tokenBudget: number): Promise<BootstrapSelection> {
@@ -258,6 +271,11 @@ export class MemoryStore {
     if (provenance === "untrusted") return this.stage("moc", mocFile, content);
     const delta = await this.delta(mocFile, content);
     return this.commit(delta.before === null ? "create" : "edit", [delta], mocFile, false);
+  }
+
+  async recordAudit(event: string): Promise<void> {
+    this.gate();
+    await this.audit(this.redact(event));
   }
 
   async approve(stagedId: string): Promise<WriteResult> {
@@ -353,6 +371,7 @@ export class MemoryStore {
       created: firstString(inherited.created) ?? this.now().toISOString(),
       ...(resolvePinned(input, inherited) && { pinned: true }),
       ...(input.confidence !== undefined && { confidence: input.confidence }),
+      ...(input.usefulness !== undefined && { usefulness: input.usefulness }),
       ...(aliases.length > 0 && { aliases }),
       ...(supersedes !== undefined && { supersedes: `[[${supersedes}]]` }),
     };
@@ -471,8 +490,8 @@ export class MemoryStore {
       inMocOrder.push(note);
     }
     return [
-      ...inMocOrder.filter((note) => note.pinned),
-      ...inMocOrder.filter((note) => !note.pinned),
+      ...mostUsefulFirst(inMocOrder.filter((note) => note.pinned)),
+      ...mostUsefulFirst(inMocOrder.filter((note) => !note.pinned)),
     ];
   }
 
@@ -498,6 +517,7 @@ export class MemoryStore {
     const provenance = parseProvenance(frontmatter, path);
     const created = firstString(frontmatter.created);
     const confidence = frontmatter.confidence;
+    const usefulness = frontmatter.usefulness;
     const supersedes = linkTarget(frontmatter.supersedes);
     const supersededBy = linkTarget(frontmatter.superseded_by);
     return {
@@ -513,6 +533,7 @@ export class MemoryStore {
       frontmatter,
       ...(created !== undefined && { created }),
       ...(typeof confidence === "number" && { confidence }),
+      ...(typeof usefulness === "number" && { usefulness }),
       ...(supersedes !== undefined && { supersedes }),
       ...(supersededBy !== undefined && { supersededBy }),
     };
@@ -675,6 +696,11 @@ function parseStagedMeta(
     created,
     ...(typeof supersedes === "string" && { supersedes }),
   };
+}
+
+function mostUsefulFirst(notes: Note[]): Note[] {
+  const priorOf = (note: Note) => note.usefulness ?? note.confidence ?? 0;
+  return [...notes].sort((a, b) => priorOf(b) - priorOf(a));
 }
 
 function resolvePinned(input: NoteInput, inherited: Frontmatter): boolean {

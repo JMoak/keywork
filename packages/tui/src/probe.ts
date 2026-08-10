@@ -15,6 +15,7 @@ export interface AppProbeOptions
       | "createFilePane"
       | "createBrowserPane"
       | "createSessionTreePane"
+      | "createMemoryPane"
       | "isDirectory"
       | "undo"
       | "restoreWorkspace"
@@ -43,6 +44,9 @@ export class AppProbe {
       }),
       ...(options.createSessionTreePane !== undefined && {
         createSessionTreePane: options.createSessionTreePane,
+      }),
+      ...(options.createMemoryPane !== undefined && {
+        createMemoryPane: options.createMemoryPane,
       }),
       ...(options.isDirectory !== undefined && { isDirectory: options.isDirectory }),
       ...(options.undo !== undefined && { undo: options.undo }),
@@ -135,10 +139,12 @@ export class AppProbe {
 }
 
 function conversationPanes(script: TurnDelta[][] | undefined): PaneFactory {
-  return (id, notify, commands) => {
+  return (id, notify, commands, _resumeSessionId, draft) => {
     const agent =
       script === undefined ? undefined : new Agent({ provider: new MockProvider(script) });
-    return new ConversationPane(id, agent, notify, undefined, commands);
+    return new ConversationPane(id, agent, notify, undefined, commands, {
+      ...(draft !== undefined && { initialDraft: draft }),
+    });
   };
 }
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MockProvider, messageText, SessionStore, textTurn, toolCallTurn } from "@keywork/engine";
@@ -46,8 +46,15 @@ describe("runHeadless", () => {
     const types = events.map((event) => event.type);
     expect(types).toContain("turn.started");
     expect(types).toContain("tool.started");
+    expect(types).toContain("tool.output");
     expect(types).toContain("tool.finished");
     expect(types.at(-1)).toBe("turn.completed");
+    expect(types.indexOf("tool.output")).toBeLessThan(types.indexOf("tool.finished"));
+    const chunks = events
+      .filter((event) => event.type === "tool.output")
+      .map((event) => event.chunk)
+      .join("");
+    expect(chunks).toContain("from-e2e");
     const toolFinished = events.find((event) => event.type === "tool.finished");
     expect(toolFinished.output).toContain("from-e2e");
 
@@ -179,6 +186,56 @@ describe("runHeadless", () => {
     await runHeadless({ prompt: "hi", cwd, json: false, provider, print: (l) => lines.push(l) });
 
     expect(lines).toEqual(["plain answer"]);
+  });
+});
+
+describe("workspace memory wiring", () => {
+  async function declaredWorkspaceWithNote(): Promise<string> {
+    const cwd = await tempDir();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "fixture" }));
+    await writeFile(join(cwd, ".keywork", "memory", "MEMORY.md"), "- [[Runtime Convention]]\n");
+    await writeFile(
+      join(cwd, ".keywork", "memory", "Runtime Convention.md"),
+      "---\nprovenance: user\npinned: true\n---\nTests run on Node, not Bun.\n",
+    );
+    return cwd;
+  }
+
+  async function requestSeen(cwd: string, projectTrusted: boolean) {
+    const inner = new MockProvider([textTurn("ok")]);
+    const requests: Parameters<typeof inner.stream>[0][] = [];
+    await runHeadless({
+      prompt: "hi",
+      cwd,
+      json: false,
+      projectTrusted,
+      provider: {
+        name: inner.name,
+        stream: (request: Parameters<typeof inner.stream>[0]) => {
+          requests.push(request);
+          return inner.stream(request);
+        },
+      },
+      print: () => {},
+    });
+    return requests[0];
+  }
+
+  it("injects the vault bootstrap and exposes the recall tools in a trusted workspace", async () => {
+    const request = await requestSeen(await declaredWorkspaceWithNote(), true);
+    expect(request?.systemPrompt).toContain("# Memory");
+    expect(request?.systemPrompt).toContain("Tests run on Node, not Bun.");
+    const toolNames = request?.tools.map((tool) => tool.name);
+    expect(toolNames).toContain("memory_search");
+    expect(toolNames).toContain("memory_get");
+  });
+
+  it("keeps an untrusted workspace's vault out of the prompt and the toolset", async () => {
+    const request = await requestSeen(await declaredWorkspaceWithNote(), false);
+    expect(request?.systemPrompt).not.toContain("Tests run on Node");
+    expect(request?.tools.map((tool) => tool.name)).toContain("memory_search");
+    expect(request?.systemPrompt).not.toContain("# Memory");
   });
 });
 

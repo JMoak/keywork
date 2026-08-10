@@ -13,10 +13,13 @@ import { BrowserPane } from "./browser-pane.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
+import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+import type { InboxItemView, MemoryPaneInputs } from "./memory-pane-model.ts";
 import type { Pane } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
 import type { SessionTreeModel } from "./session-tree-model.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
+import { resolveTheme } from "./theme.ts";
 import { parseWorkspaceState, type WorkspaceState } from "./workspace-state.ts";
 
 function mustParse(value: unknown): WorkspaceState {
@@ -907,6 +910,360 @@ describe("safety net", () => {
   });
 });
 
+describe("live tool tail-follow", () => {
+  function tailProbe(finishTool: Promise<void>) {
+    const agents: Agent[] = [];
+    const streaming: Tool = {
+      name: "slow",
+      description: "streams output",
+      parameters: { type: "object" },
+      execute: async () => {
+        const agent = agents[0];
+        agent?.bus.emit("tool.output", { chunk: "step 1\n\x1b[31mstep 2\x1b[0m\n" });
+        agent?.bus.emit("tool.output", { chunk: `step 3 ${"x".repeat(500)}\n` });
+        await finishTool;
+        return "final result";
+      },
+    };
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const agent = new Agent({
+          provider: new MockProvider([
+            toolCallTurn({ type: "tool-call", callId: "t1", name: "slow", arguments: {} }),
+            textTurn("done"),
+          ]),
+          tools: [streaming],
+        });
+        agents.push(agent);
+        return new ConversationPane(id, agent, notify, undefined, commands);
+      },
+    });
+    return { probe, agents };
+  }
+
+  it("grows a bounded dim tail while the tool runs and settles to the ✓ line", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { probe, agents } = tailProbe(gate);
+    probe.type("go").keys("enter");
+    await waitFor(() => {
+      const tail = probe
+        .model()
+        ?.visibleTranscript(38, 12)
+        .filter((line) => line.kind === "tail");
+      expect(tail?.length).toBeGreaterThan(0);
+    });
+
+    const tail = (probe.model()?.visibleTranscript(38, 12) ?? []).filter(
+      (line) => line.kind === "tail",
+    );
+    expect(tail.length).toBeLessThanOrEqual(3);
+    for (const line of tail) expect(line.text).toMatch(/^[░▒▓█] /);
+    expect(tail.map((line) => line.text)).toContainEqual(expect.stringContaining("step 2"));
+    expect(tail.some((line) => line.text.includes("\x1b"))).toBe(false);
+    expect(tail.some((line) => line.text.includes("…"))).toBe(true);
+    for (const line of tail) expect(Array.from(line.text).length).toBeLessThanOrEqual(38);
+
+    release();
+    await probe.settled();
+
+    const lines = probe.model()?.visibleTranscript(38, 12) ?? [];
+    expect(lines.filter((line) => line.kind === "tail")).toEqual([]);
+    expect(probe.model()?.entries).toContainEqual({
+      kind: "tool",
+      text: "✓ slow — final result",
+      failed: false,
+    });
+
+    const toolResults = (agents[0]?.history() ?? [])
+      .filter((message) => message.role === "tool")
+      .flatMap((message) => message.parts);
+    expect(toolResults).toEqual([
+      { type: "tool-result", callId: "t1", output: "final result", isError: false },
+    ]);
+  });
+});
+
+describe("diff preview in the ask", () => {
+  function writeAskProbe(
+    files: Record<string, string>,
+    executed: string[],
+    call: { name: string; arguments: unknown },
+  ) {
+    return new AppProbe({
+      createPane: (id, notify, commands) => {
+        let pane: ConversationPane | undefined;
+        const agent = new Agent({
+          provider: new MockProvider([
+            toolCallTurn({
+              type: "tool-call",
+              callId: "m1",
+              name: call.name,
+              arguments: call.arguments,
+            }),
+            textTurn("done"),
+          ]),
+          tools: [
+            {
+              name: call.name,
+              description: "mutates",
+              parameters: { type: "object" },
+              mutates: true,
+              execute: async () => {
+                executed.push(call.name);
+                return "ok";
+              },
+            },
+          ],
+          guard: {
+            confirm: (askedCall) => pane?.confirmMutation(askedCall) ?? Promise.resolve(true),
+          },
+        });
+        pane = new ConversationPane(id, agent, notify, undefined, commands, {
+          ports: { readFile: (path) => files[path] },
+        });
+        return pane;
+      },
+    });
+  }
+
+  it("renders the pending write as a unified diff and only runs it after y", async () => {
+    const executed: string[] = [];
+    const probe = writeAskProbe({ "notes.txt": "alpha\nbeta\ngamma\n" }, executed, {
+      name: "write",
+      arguments: { path: "notes.txt", content: "alpha\nBETA\ngamma\n" },
+    });
+    probe.type("go").keys("enter");
+    await waitFor(() => expect(probe.model()?.pendingAsk?.diff).toBeDefined());
+    expect(executed).toEqual([]);
+
+    const window = probe.model()?.askDiffWindow(10);
+    expect(window?.lines).toContainEqual({ kind: "del", text: "beta" });
+    expect(window?.lines).toContainEqual({ kind: "add", text: "BETA" });
+
+    probe.keys("down");
+    expect(probe.model()?.pendingAsk).toBeDefined();
+
+    probe.keys("y");
+    await probe.settled();
+    expect(executed).toEqual(["write"]);
+  });
+
+  it("scrolls a long diff inside a bounded window without answering the ask", async () => {
+    const before = Array.from({ length: 40 }, (_, at) => `old ${at}`).join("\n");
+    const after = Array.from({ length: 40 }, (_, at) => `new ${at}`).join("\n");
+    const probe = writeAskProbe({ "big.txt": before }, [], {
+      name: "write",
+      arguments: { path: "big.txt", content: after },
+    });
+    probe.type("go").keys("enter");
+    await waitFor(() => expect(probe.model()?.pendingAsk?.diff).toBeDefined());
+
+    const top = probe.model()?.askDiffWindow(5);
+    expect(top?.above).toBe(0);
+    expect(top?.below).toBeGreaterThan(0);
+
+    probe.keys("down", "down");
+    expect(probe.model()?.askDiffWindow(5).above).toBe(2);
+    probe.keys("up", "up", "up");
+    expect(probe.model()?.askDiffWindow(5).above).toBe(0);
+    expect(probe.model()?.pendingAsk).toBeDefined();
+
+    probe.keys("n");
+    await probe.settled();
+  });
+
+  it("keeps the plain ask for non-write tools", async () => {
+    const executed: string[] = [];
+    const probe = writeAskProbe({}, executed, {
+      name: "bash",
+      arguments: { command: "echo hi" },
+    });
+    probe.type("go").keys("enter");
+    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    expect(probe.model()?.pendingAsk?.diff).toBeUndefined();
+    probe.keys("y");
+    await probe.settled();
+    expect(executed).toEqual(["bash"]);
+  });
+});
+
+describe("esc-backtrack prompt stepping", () => {
+  function backtrackProbe(
+    forks: { ordinal: number; draft: string }[],
+    outcome: boolean | (() => Promise<boolean>) = true,
+  ) {
+    return new AppProbe({
+      createPane: (id, notify, commands) => {
+        const agent = new Agent({
+          provider: new MockProvider([textTurn("re: one"), textTurn("re: two")]),
+        });
+        return new ConversationPane(id, agent, notify, undefined, commands, {
+          ports: {
+            forkAtPrompt: async (ordinal, draft) => {
+              forks.push({ ordinal, draft });
+              return typeof outcome === "boolean" ? outcome : outcome();
+            },
+          },
+        });
+      },
+    });
+  }
+
+  async function conversed(probe: AppProbe, ...prompts: string[]): Promise<AppProbe> {
+    for (const prompt of prompts) {
+      probe.type(prompt).keys("enter");
+      await probe.settled();
+    }
+    return probe;
+  }
+
+  it("does nothing on esc-esc when no prompts exist", () => {
+    const probe = new AppProbe();
+    probe.keys("escape", "escape");
+    expect(probe.model()?.backtracking()).toBe(false);
+    expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([]);
+  });
+
+  it("walks prior prompts with a visible highlight and cancels on escape", async () => {
+    const probe = await conversed(backtrackProbe([]), "one", "two");
+    probe.keys("escape", "escape");
+    expect(probe.model()?.backtracking()).toBe(true);
+
+    const selectedText = () =>
+      (probe.model()?.visibleTranscript(60, 12) ?? [])
+        .filter((line) => line.selected === true)
+        .map((line) => line.text);
+    expect(selectedText()).toEqual(["› two"]);
+
+    probe.keys("up");
+    expect(selectedText()).toEqual(["› one"]);
+    probe.keys("up");
+    expect(selectedText()).toEqual(["› one"]);
+    probe.keys("down");
+    expect(selectedText()).toEqual(["› two"]);
+
+    probe.keys("escape");
+    expect(probe.model()?.backtracking()).toBe(false);
+    expect(selectedText()).toEqual([]);
+  });
+
+  it("stepping past the newest prompt leaves backtrack quietly", async () => {
+    const probe = await conversed(backtrackProbe([]), "one", "two");
+    probe.keys("escape", "escape", "down");
+    expect(probe.model()?.backtracking()).toBe(false);
+  });
+
+  it("enter forks at the selected prompt, including the very first one", async () => {
+    const forks: { ordinal: number; draft: string }[] = [];
+    const probe = await conversed(backtrackProbe(forks), "one", "two");
+    probe.keys("escape", "escape", "up", "enter");
+    await probe.settled();
+
+    expect(forks).toEqual([{ ordinal: 0, draft: "one" }]);
+    expect(probe.model()?.backtracking()).toBe(false);
+    expect(probe.model()?.entries.filter((entry) => entry.kind === "info")).toEqual([]);
+  });
+
+  it("reports truthfully when the fork cannot happen", async () => {
+    const forks: { ordinal: number; draft: string }[] = [];
+    const probe = await conversed(backtrackProbe(forks, false), "one");
+    probe.keys("escape", "escape", "enter");
+    await probe.settled();
+
+    expect(forks).toEqual([{ ordinal: 0, draft: "one" }]);
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "could not fork at that prompt",
+    });
+  });
+
+  it("says so when no fork port is wired instead of silently dropping", async () => {
+    const probe = new AppProbe({ script: [textTurn("re: one")] });
+    probe.type("one").keys("enter");
+    await probe.settled();
+    probe.keys("escape", "escape", "enter");
+    await probe.settled();
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "backtrack fork unavailable — no session port",
+    });
+  });
+
+  it("interrupts instead of backtracking while the agent is busy", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const agents: Agent[] = [];
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const agent = new Agent({
+          provider: new MockProvider([
+            toolCallTurn({ type: "tool-call", callId: "b1", name: "block", arguments: {} }),
+          ]),
+          tools: [
+            {
+              name: "block",
+              description: "waits",
+              parameters: { type: "object" },
+              execute: async () => {
+                await gate;
+                return "done";
+              },
+            },
+          ],
+        });
+        agents.push(agent);
+        return new ConversationPane(id, agent, notify, undefined, commands);
+      },
+    });
+    probe.type("go").keys("enter");
+    await waitFor(() => expect(agents[0]?.busy()).toBe(true));
+
+    probe.keys("escape", "escape");
+    expect(probe.model()?.backtracking()).toBe(false);
+
+    release();
+    await probe.settled();
+    expect(probe.model()?.busy).toBe(false);
+  });
+
+  it("counts replayed prompts so fork ordinals match the session", async () => {
+    const forks: { ordinal: number; draft: string }[] = [];
+    const agents: Agent[] = [];
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const agent = new Agent({ provider: new MockProvider([textTurn("re: new")]) });
+        agents.push(agent);
+        return new ConversationPane(id, agent, notify, undefined, commands, {
+          ports: {
+            forkAtPrompt: async (ordinal, draft) => {
+              forks.push({ ordinal, draft });
+              return true;
+            },
+          },
+        });
+      },
+    });
+    agents[0]?.bus.emit("turn.started", { userText: "old prompt", replay: true });
+    probe.type("new prompt").keys("enter");
+    await probe.settled();
+
+    probe.keys("escape", "escape", "up", "enter");
+    await probe.settled();
+    expect(forks).toEqual([{ ordinal: 0, draft: "old prompt" }]);
+  });
+
+  it("opens a forked pane with the chosen prompt preloaded for editing", () => {
+    const probe = new AppProbe();
+    probe.core.openPane(undefined, "edit me first");
+    expect(probe.model()?.input).toBe("edit me first");
+  });
+});
+
 describe("conversation pane completion", () => {
   it("scrolls the transcript with the wheel and snaps back on escape", async () => {
     const probe = new AppProbe({
@@ -1046,3 +1403,157 @@ describe("workspace persistence", () => {
     expect(parseWorkspaceState({ version: 99, layout: {}, panes: [] })).toBeUndefined();
   });
 });
+
+describe("memory pane", () => {
+  interface MemoryWorld {
+    inbox: InboxItemView[];
+    approved: string[];
+    discarded: string[];
+  }
+
+  function memoryProbe(inputs?: Partial<MemoryPaneInputs>) {
+    const world: MemoryWorld = {
+      inbox: [
+        {
+          id: "staged-1",
+          kind: "staged",
+          title: "config change",
+          provenance: "untrusted",
+          created: "2026-08-10T01:00:00Z",
+        },
+      ],
+      approved: [],
+      discarded: [],
+    };
+    const port: MemoryPanePort = {
+      load: async () => ({
+        scopes: ["workspace"],
+        notes: [
+          {
+            name: "ratio-rule",
+            title: "ratio-rule",
+            scope: "workspace",
+            provenance: "agent" as const,
+            curing: 3 as const,
+            links: [],
+            aliases: [],
+          },
+        ],
+        inbox: world.inbox,
+        recalls: [],
+        ...inputs,
+      }),
+      approve: async (id) => {
+        const found = world.inbox.find((item) => item.id === id);
+        if (found === undefined) throw new Error(`no review item with id ${id}`);
+        world.inbox = world.inbox.filter((item) => item.id !== id);
+        world.approved.push(id);
+      },
+      discard: async (id) => {
+        world.inbox = world.inbox.filter((item) => item.id !== id);
+        world.discarded.push(id);
+      },
+    };
+    const probe = new AppProbe({
+      createMemoryPane: (id, notify) => new MemoryPane(id, notify, port),
+    });
+    return { probe, world, port };
+  }
+
+  function memoryPane(probe: AppProbe, id = "memory-1"): MemoryPane {
+    const pane = probe.core.panes.get(id);
+    if (!(pane instanceof MemoryPane)) throw new Error(`no memory pane "${id}"`);
+    return pane;
+  }
+
+  it("/memory opens the pane docked and focused with counts in the title", async () => {
+    const { probe } = memoryProbe();
+    probe.type("/memory").keys("enter");
+    expect(paneIds(probe)).toEqual(["session-1", "memory-1"]);
+    expect(dockedIds(probe)).toEqual(["memory-1"]);
+    expect(probe.snapshot().focused).toBe("memory-1");
+    await probe.settled();
+    expect(probe.snapshot().panes.find((pane) => pane.id === "memory-1")?.title).toContain(
+      "1 note",
+    );
+  });
+
+  it("leader m summons the memory pane and refocuses instead of duplicating", () => {
+    const { probe } = memoryProbe();
+    probe.keys("ctrl+k", "m");
+    expect(paneIds(probe)).toEqual(["session-1", "memory-1"]);
+    expect(probe.snapshot().focused).toBe("memory-1");
+    probe.keys("ctrl+k", "l");
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.keys("m");
+    expect(probe.snapshot().focused).toBe("memory-1");
+    expect(paneIds(probe)).toEqual(["session-1", "memory-1"]);
+  });
+
+  it("i jumps to the inbox and a approves the staged item through the port", async () => {
+    const { probe, world } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    probe.keys("i", "a");
+    await probe.settled();
+    expect(world.approved).toEqual(["staged-1"]);
+    expect(memoryPane(probe).model.stagedCount()).toBe(0);
+  });
+
+  it("approving an already-resolved item shows a calm failure and r recovers", async () => {
+    const { probe, world } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    const pane = memoryPane(probe);
+    world.inbox = [];
+    probe.keys("i", "a");
+    await probe.settled();
+    expect(world.approved).toEqual([]);
+    const failed = JSON.stringify(describePaneTree(pane.view(paneContext())));
+    expect(failed).toContain("no review item with id staged-1");
+    probe.keys("r");
+    await probe.settled();
+    const recovered = JSON.stringify(describePaneTree(pane.view(paneContext())));
+    expect(recovered).not.toContain("no review item");
+  });
+
+  it("persists as a memory pane and revives from workspace state", async () => {
+    const { probe, port } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    const state = mustParse(probe.workspaceState());
+    expect(state.panes).toContainEqual({ id: "memory-1", kind: "memory" });
+    const restored = new AppProbe({
+      createMemoryPane: (id, notify) => new MemoryPane(id, notify, port),
+      restoreWorkspace: state,
+    });
+    await restored.settled();
+    expect(paneIds(restored)).toEqual(["session-1", "memory-1"]);
+    expect(memoryPane(restored).model.noteCount()).toBe(1);
+  });
+
+  it("an empty vault renders the calm invitation, not a dashboard of zeros", async () => {
+    const { probe } = memoryProbe({ scopes: [], notes: [], inbox: [], recalls: [] });
+    probe.command("memory");
+    await probe.settled();
+    const rows = memoryPane(probe).model.rows();
+    expect(rows.map((row) => row.text)).toEqual(["keywork remembers what you teach it"]);
+  });
+
+  it("memory is absent when no memory factory is wired", () => {
+    expect(new AppProbe().command("memory")).toBe(false);
+  });
+});
+
+function paneContext() {
+  return { theme: resolveTheme(), focused: true, width: 60, height: 20 };
+}
+
+function describePaneTree(node: unknown): unknown {
+  if (node === null || typeof node !== "object") return node;
+  const record = node as { props?: { content?: unknown }; children?: unknown[] };
+  return {
+    ...(record.props?.content !== undefined && { content: record.props.content }),
+    ...(Array.isArray(record.children) && { children: record.children.map(describePaneTree) }),
+  };
+}

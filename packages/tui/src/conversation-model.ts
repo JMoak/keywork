@@ -1,7 +1,9 @@
 import type { Agent, Message, ToolCallPart } from "@keywork/engine";
 import { clampScroll } from "./clamp.ts";
+import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
+import { TailFollow } from "./tail-follow.ts";
 
 export type Titler = (conversation: readonly Message[]) => Promise<string | undefined>;
 
@@ -16,9 +18,21 @@ export interface CommandsPort {
   run(name: string): boolean;
 }
 
+export interface ConversationPorts {
+  readFile?: FileReader;
+  forkAtPrompt?: (promptOrdinal: number, draft: string) => Promise<boolean>;
+}
+
 export interface PendingAsk {
   summary: string;
+  diff?: DiffLine[];
   resolve(allowed: boolean): void;
+}
+
+export interface AskDiffWindow {
+  lines: DiffLine[];
+  above: number;
+  below: number;
 }
 
 const suggestionLimit = 5;
@@ -38,12 +52,19 @@ export class ConversationModel {
   title: string | undefined;
   pendingAsk: PendingAsk | undefined;
   scrollBack = 0;
+  askScroll = 0;
   lastSend: Promise<unknown> = Promise.resolve();
   lastTitle: Promise<unknown> = Promise.resolve();
+  lastFork: Promise<unknown> = Promise.resolve();
   selectedSuggestion = 0;
   private readonly queue: string[] = [];
   private readonly history: string[] = [];
   private historyIndex: number | undefined;
+  private tailFollow: TailFollow | undefined;
+  private askPageRows = 8;
+  private backtrackAt: number | undefined;
+  private backtrackMoved = false;
+  private escapePrimed = false;
   private readonly runningTools = new Map<string, { entry: TranscriptEntry; name: string }>();
   private readonly wrapCache = new WeakMap<
     TranscriptEntry,
@@ -59,6 +80,7 @@ export class ConversationModel {
     private readonly notify: () => void,
     private readonly titler?: Titler,
     private readonly commands?: CommandsPort,
+    private readonly ports?: ConversationPorts,
   ) {
     if (agent === undefined) {
       this.entries.push({
@@ -68,12 +90,17 @@ export class ConversationModel {
       return;
     }
     this.subscriptions.push(
+      agent.bus.on("turn.started", ({ userText, replay }) => {
+        if (replay !== true) return;
+        this.entries.push({ kind: "user", text: userText });
+        notify();
+      }),
       agent.bus.on("turn.delta", ({ delta }) => {
         if (delta.type !== "text") return;
         this.appendAssistant(delta.text);
         notify();
       }),
-      agent.bus.on("tool.started", ({ call }) => {
+      agent.bus.on("tool.started", ({ call, replay }) => {
         const entry: TranscriptEntry = {
           kind: "tool",
           text: `· ${call.name} ${compactJson(call.arguments)}`,
@@ -81,20 +108,28 @@ export class ConversationModel {
         };
         this.runningTools.set(call.callId, { entry, name: call.name });
         this.entries.push(entry);
+        this.tailFollow = replay === true ? undefined : new TailFollow();
+        notify();
+      }),
+      agent.bus.on("tool.output", ({ chunk }) => {
+        this.tailFollow?.push(chunk);
         notify();
       }),
       agent.bus.on("tool.finished", ({ callId, output, isError }) => {
         this.settleTool(callId, output, isError);
+        this.tailFollow = undefined;
         notify();
       }),
       agent.bus.on("turn.completed", () => {
         this.busy = false;
+        this.tailFollow = undefined;
         this.requestTitleOnce();
         this.drainQueue();
         notify();
       }),
       agent.bus.on("turn.interrupted", () => {
         this.busy = false;
+        this.tailFollow = undefined;
         this.entries.push({ kind: "info", text: "— interrupted" });
         this.drainQueue();
         notify();
@@ -121,9 +156,30 @@ export class ConversationModel {
   confirmMutation(call: ToolCallPart): Promise<boolean> {
     if (this.alwaysAllow) return Promise.resolve(true);
     return new Promise((resolve) => {
-      this.pendingAsk = { summary: `${call.name} ${compactJson(call.arguments)}`, resolve };
+      const reader = this.ports?.readFile;
+      const diff =
+        reader === undefined ? undefined : mutationDiff(call.name, call.arguments, reader);
+      this.pendingAsk = {
+        summary: `${call.name} ${compactJson(call.arguments)}`,
+        ...(diff !== undefined && { diff }),
+        resolve,
+      };
+      this.askScroll = 0;
       this.notify();
     });
+  }
+
+  askDiffWindow(rows: number): AskDiffWindow {
+    const diff = this.pendingAsk?.diff ?? [];
+    this.askPageRows = Math.max(1, rows);
+    this.askScroll = Math.min(Math.max(0, this.askScroll), Math.max(0, diff.length - rows));
+    const start = this.askScroll;
+    const end = Math.min(diff.length, start + rows);
+    return { lines: diff.slice(start, end), above: start, below: diff.length - end };
+  }
+
+  backtracking(): boolean {
+    return this.backtrackAt !== undefined;
   }
 
   dispose(): void {
@@ -132,6 +188,8 @@ export class ConversationModel {
     this.queue.length = 0;
     this.pendingAsk?.resolve(false);
     this.pendingAsk = undefined;
+    this.tailFollow = undefined;
+    this.backtrackAt = undefined;
     this.busy = false;
     this.agent?.interrupt();
   }
@@ -142,7 +200,8 @@ export class ConversationModel {
 
   visibleTranscript(width: number, rows: number): TranscriptLine[] {
     this.pageRows = rows;
-    const lines = this.linesFromEnd(width, rows + this.scrollBack);
+    this.revealBacktrack(width, rows);
+    const lines = [...this.linesFromEnd(width, rows + this.scrollBack), ...this.tailLines(width)];
     this.scrollBack = clampScroll(this.scrollBack, lines.length, rows);
     const end = lines.length - this.scrollBack;
     return lines.slice(Math.max(0, end - rows), end);
@@ -155,10 +214,35 @@ export class ConversationModel {
       const entry = this.entries[at];
       if (entry === undefined) break;
       const lines = this.wrappedLines(entry, width);
-      tail.push(lines);
+      tail.push(
+        at === this.backtrackAt ? lines.map((line) => ({ ...line, selected: true })) : lines,
+      );
       count += lines.length;
     }
     return tail.reverse().flat();
+  }
+
+  private tailLines(width: number): TranscriptLine[] {
+    if (this.tailFollow === undefined || this.runningTools.size === 0) return [];
+    const mark = this.tailFollow.mark();
+    return this.tailFollow
+      .rows(Math.max(1, width - 2))
+      .map((text) => ({ kind: "tail" as const, failed: false, text: `${mark} ${text}` }));
+  }
+
+  private revealBacktrack(width: number, rows: number): void {
+    const at = this.backtrackAt;
+    if (at === undefined || !this.backtrackMoved) return;
+    this.backtrackMoved = false;
+    let below = 0;
+    for (let index = this.entries.length - 1; index > at; index -= 1) {
+      const entry = this.entries[index];
+      if (entry === undefined) break;
+      below += this.wrappedLines(entry, width).length;
+    }
+    const selected = this.entries[at];
+    const selectedRows = selected === undefined ? 0 : this.wrappedLines(selected, width).length;
+    this.scrollBack = Math.max(0, below + selectedRows - rows);
   }
 
   private wrappedLines(entry: TranscriptEntry, width: number): TranscriptLine[] {
@@ -190,10 +274,13 @@ export class ConversationModel {
 
   handleKey(chord: Chord, sequence: string | undefined): boolean {
     if (this.pendingAsk !== undefined) return this.answerAsk(chord);
+    if (this.backtrackAt !== undefined) return this.handleBacktrackKey(chord, sequence);
+    const primed = this.escapePrimed;
+    this.escapePrimed = false;
     if (this.slashQuery() !== undefined && this.handleSlashKey(chord)) return true;
     switch (chord.name) {
       case "escape":
-        return this.handleEscape();
+        return this.handleEscape(primed);
       case "return":
       case "enter":
         if (chord.shift) return this.edit(() => this.buffer.newline());
@@ -267,13 +354,102 @@ export class ConversationModel {
     if (running.entry.kind === "tool") running.entry.failed = isError;
   }
 
-  private handleEscape(): boolean {
+  private handleEscape(primed: boolean): boolean {
     if (this.scrollBack > 0) return this.scrollBy(-this.scrollBack);
     if (this.busy) {
       this.agent?.interrupt();
       return true;
     }
-    return false;
+    if (!this.buffer.isEmpty()) return false;
+    if (primed) return this.enterBacktrack();
+    this.escapePrimed = true;
+    return true;
+  }
+
+  private enterBacktrack(): boolean {
+    const prompts = this.promptIndices();
+    const newest = prompts.at(-1);
+    if (newest === undefined) return false;
+    this.backtrackAt = newest;
+    this.backtrackMoved = true;
+    this.notify();
+    return true;
+  }
+
+  private handleBacktrackKey(chord: Chord, sequence: string | undefined): boolean {
+    switch (chord.name) {
+      case "escape":
+        this.exitBacktrack();
+        return true;
+      case "up":
+        return this.stepBacktrack(-1);
+      case "down":
+        return this.stepBacktrack(1);
+      case "return":
+      case "enter":
+        return this.selectBacktrack();
+      default:
+        this.exitBacktrack();
+        return this.handleKey(chord, sequence);
+    }
+  }
+
+  private stepBacktrack(direction: -1 | 1): boolean {
+    const prompts = this.promptIndices();
+    const position = prompts.indexOf(this.backtrackAt ?? -1);
+    if (position === -1) {
+      this.exitBacktrack();
+      return true;
+    }
+    const next = position + direction;
+    if (next >= prompts.length) {
+      this.exitBacktrack();
+      return true;
+    }
+    if (next < 0) return true;
+    this.backtrackAt = prompts[next];
+    this.backtrackMoved = true;
+    this.notify();
+    return true;
+  }
+
+  private selectBacktrack(): boolean {
+    const at = this.backtrackAt;
+    const entry = at === undefined ? undefined : this.entries[at];
+    const ordinal = at === undefined ? -1 : this.promptIndices().indexOf(at);
+    this.exitBacktrack();
+    if (entry === undefined || entry.kind !== "user" || ordinal < 0) return true;
+    if (this.busy) {
+      this.entries.push({ kind: "info", text: "a turn is running — esc interrupts it first" });
+      this.notify();
+      return true;
+    }
+    const fork = this.ports?.forkAtPrompt;
+    if (fork === undefined) {
+      this.entries.push({ kind: "info", text: "backtrack fork unavailable — no session port" });
+      this.notify();
+      return true;
+    }
+    this.lastFork = fork(ordinal, entry.text)
+      .then((forked) => {
+        if (!forked) this.entries.push({ kind: "info", text: "could not fork at that prompt" });
+      })
+      .catch((cause: unknown) => {
+        this.entries.push({ kind: "error", text: (cause as Error).message });
+      })
+      .then(() => this.notify());
+    return true;
+  }
+
+  private exitBacktrack(): void {
+    this.backtrackAt = undefined;
+    this.backtrackMoved = false;
+    this.scrollBack = 0;
+    this.notify();
+  }
+
+  private promptIndices(): number[] {
+    return this.entries.flatMap((entry, index) => (entry.kind === "user" ? [index] : []));
   }
 
   private lineUpOrHistory(direction: -1 | 1): boolean {
@@ -339,11 +515,27 @@ export class ConversationModel {
   private answerAsk(chord: Chord): boolean {
     const ask = this.pendingAsk;
     if (ask === undefined) return false;
+    if (ask.diff !== undefined && this.scrollAskDiff(chord)) return true;
     if (chord.name === "a") this.alwaysAllow = true;
     const allowed = ["y", "a", "return", "enter"].includes(chord.name);
     if (!allowed && chord.name !== "n" && chord.name !== "escape") return true;
     this.pendingAsk = undefined;
+    this.askScroll = 0;
     ask.resolve(allowed);
+    this.notify();
+    return true;
+  }
+
+  private scrollAskDiff(chord: Chord): boolean {
+    const steps: Record<string, number> = {
+      up: -1,
+      down: 1,
+      pageup: -this.askPageRows,
+      pagedown: this.askPageRows,
+    };
+    const step = steps[chord.name];
+    if (step === undefined) return false;
+    this.askScroll = Math.max(0, this.askScroll + step);
     this.notify();
     return true;
   }
@@ -416,9 +608,10 @@ export class ConversationModel {
 }
 
 export interface TranscriptLine {
-  kind: TranscriptEntry["kind"];
+  kind: TranscriptEntry["kind"] | "tail";
   failed: boolean;
   text: string;
+  selected?: true;
 }
 
 export function transcriptLines(

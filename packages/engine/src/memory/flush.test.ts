@@ -1,0 +1,150 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { messageText, textMessage } from "../messages.ts";
+import { MockProvider, textTurn } from "../mock-provider.ts";
+import { defaultCompactionSettings, shouldCompact } from "../session/compaction.ts";
+import {
+  defaultFlushSettings,
+  isMemoryFlushPrompt,
+  isNoReply,
+  MemoryFlush,
+  memoryFlushPrompt,
+  noReplyToken,
+  shouldFlush,
+} from "./flush.ts";
+import { memorySearchTool } from "./recall-tools.ts";
+import { MemorySearch } from "./search.ts";
+import { MemoryStore } from "./store.ts";
+
+const cleanups: string[] = [];
+
+afterEach(async () => {
+  while (cleanups.length > 0) {
+    const root = cleanups.pop();
+    if (root !== undefined) await rm(root, { recursive: true, force: true });
+  }
+});
+
+const contextWindow = 200_000;
+const overThreshold = contextWindow - defaultFlushSettings.reserveTokens + 1;
+
+async function openVault(trusted = true): Promise<{ store: MemoryStore; root: string }> {
+  const root = await mkdtemp(join(tmpdir(), "keywork-flush-"));
+  cleanups.push(root);
+  const store = new MemoryStore({
+    vaultRoot: root,
+    trusted,
+    now: () => new Date("2026-08-10T14:30:00.000Z"),
+  });
+  return { store, root };
+}
+
+const longConversation = Array.from({ length: 40 }, (_, index) =>
+  textMessage(index % 2 === 0 ? "user" : "assistant", `turn ${index} about the layout work`),
+);
+
+describe("shouldFlush", () => {
+  it("fires at the reserve threshold, before compaction would", () => {
+    expect(defaultFlushSettings.reserveTokens).toBeGreaterThan(
+      defaultCompactionSettings.reserveTokens,
+    );
+    expect(shouldFlush(overThreshold, contextWindow)).toBe(true);
+    expect(shouldCompact(overThreshold, contextWindow)).toBe(false);
+    expect(shouldFlush(contextWindow - defaultFlushSettings.reserveTokens, contextWindow)).toBe(
+      false,
+    );
+  });
+});
+
+describe("MemoryFlush", () => {
+  it("flushes a long conversation to the daily log and the fact survives into a new session", async () => {
+    const { store, root } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([
+        textTurn("Split ratios were decided 60/40 after the resize review."),
+      ]),
+      store,
+    });
+    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    expect(outcome).toMatchObject({ flushed: true, persisted: true });
+    const daily = await readFile(join(root, "daily", "2026-08-10.md"), "utf8");
+    expect(daily).toContain(
+      "- 14:30 [prov: agent] Split ratios were decided 60/40 after the resize review.",
+    );
+
+    const fresh = new MemoryStore({ vaultRoot: root, trusted: true });
+    const recall = await memorySearchTool(fresh, new MemorySearch(fresh)).execute({
+      query: "split ratios decided",
+    });
+    expect(recall).toContain("Split ratios were decided 60/40");
+  });
+
+  it("asks about wrongness and instructs a NO_REPLY escape in the flush prompt", () => {
+    expect(memoryFlushPrompt).toContain("proved wrong");
+    expect(memoryFlushPrompt).toContain("supersedes");
+    expect(memoryFlushPrompt).toContain(noReplyToken);
+    expect(isMemoryFlushPrompt(memoryFlushPrompt)).toBe(true);
+    expect(isMemoryFlushPrompt("something else")).toBe(false);
+  });
+
+  it("records the silent turn for honest replay while marking NO_REPLY as unrenderable", async () => {
+    const { store, root } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn(`  ${noReplyToken}\n`)]),
+      store,
+    });
+    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    expect(outcome.flushed).toBe(true);
+    expect(outcome.persisted).toBe(false);
+    expect(outcome.messages).toHaveLength(2);
+    const [prompt, reply] = outcome.messages;
+    expect(prompt === undefined ? "" : messageText(prompt)).toBe(memoryFlushPrompt);
+    expect(reply !== undefined && isNoReply(reply)).toBe(true);
+    await expect(readFile(join(root, "daily", "2026-08-10.md"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("fires exactly once, then again only after compaction completes", async () => {
+    const { store } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn("first fact"), textTurn("second fact")]),
+      store,
+    });
+    const first = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    expect(first.flushed).toBe(true);
+    const latched = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    expect(latched).toEqual({ flushed: false, persisted: false, messages: [] });
+    flush.compactionCompleted();
+    const second = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    expect(second.flushed).toBe(true);
+    expect((await store.readDaily("2026-08-10")).map((entry) => entry.text)).toEqual([
+      "first fact",
+      "second fact",
+    ]);
+  });
+
+  it("stays quiet below the threshold without touching the provider", async () => {
+    const { store } = await openVault();
+    const flush = new MemoryFlush({ provider: new MockProvider([]), store });
+    const outcome = await flush.maybeFlush(longConversation, 1000, contextWindow);
+    expect(outcome).toEqual({ flushed: false, persisted: false, messages: [] });
+  });
+
+  it("is inert over an untrusted vault: no turn, no writes", async () => {
+    const { store } = await openVault(false);
+    const flush = new MemoryFlush({ provider: new MockProvider([]), store });
+    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    expect(outcome).toEqual({ flushed: false, persisted: false, messages: [] });
+  });
+
+  it("treats an empty reply like NO_REPLY", async () => {
+    const { store } = await openVault();
+    const flush = new MemoryFlush({ provider: new MockProvider([textTurn("   \n")]), store });
+    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    expect(outcome.persisted).toBe(false);
+    expect(await store.readDaily("2026-08-10")).toEqual([]);
+  });
+});

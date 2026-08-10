@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Agent, Message, ToolGuard } from "@keywork/engine";
 import {
@@ -10,13 +10,15 @@ import {
   Text,
 } from "@opentui/core";
 import { AppCore, bindingHelp, helpFrame, paletteFrame } from "./app-core.ts";
+import { promptAnchor } from "./backtrack.ts";
 import { BrowserPane } from "./browser-pane.ts";
-import type { Titler } from "./conversation-model.ts";
+import type { ConversationPorts, Titler } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { FilePane } from "./file-pane.ts";
 import type { Keymap } from "./keymap.ts";
 import { chordOf } from "./keys.ts";
 import { dockColumnWidth, type LayoutNode, type Screen } from "./layout.ts";
+import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { PaneView } from "./pane.ts";
 import { pointerEventOf } from "./pointer.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
@@ -51,11 +53,12 @@ export interface AppOptions {
   themeOverrides?: Record<string, string>;
   agentFactory?: (guard: ToolGuard, history?: readonly Message[]) => Agent;
   titler?: Titler;
-  statusLabel?: string;
+  statusLabel?: string | (() => string);
   checkpoints?: CheckpointsPort;
   workspace?: WorkspacePort;
   sessions?: SessionPort;
   sessionTrees?: SessionTreePort;
+  memory?: MemoryPanePort;
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
@@ -70,9 +73,12 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const checkpoints = options.checkpoints;
   const attachments = restored?.attachments ?? new Map<string, SessionAttachment>();
   const trees = options.sessionTrees;
+  const treePort =
+    trees === undefined ? undefined : attachOnFork(trees, options.sessions, attachments);
+  const memoryPort = options.memory;
   const core = new AppCore({
     screen,
-    createPane: (id, notify, commands, resumeSessionId) => {
+    createPane: (id, notify, commands, resumeSessionId, draft) => {
       let pane: ConversationPane | undefined;
       const guard: ToolGuard = {
         confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true),
@@ -81,7 +87,21 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       const attachment =
         resumeSessionId === undefined ? undefined : attachments.get(resumeSessionId);
       const agent = options.agentFactory?.(guard, attachment?.history);
-      pane = new ConversationPane(id, agent, notify, options.titler, commands);
+      const ports: ConversationPorts = {
+        readFile: readWorkspaceFile,
+        forkAtPrompt: (ordinal, promptDraft) =>
+          forkAtPrompt(
+            treePort,
+            (sessionId, forkDraft) => core.openPane(sessionId, forkDraft),
+            pane?.sessionId,
+            ordinal,
+            promptDraft,
+          ),
+      };
+      pane = new ConversationPane(id, agent, notify, options.titler, commands, {
+        ports,
+        ...(draft !== undefined && { initialDraft: draft }),
+      });
       if (attachment !== undefined) adoptSession(pane, agent, attachment);
       else if (resumeSessionId === undefined) {
         startFreshSession(pane, agent, options.sessions, notify);
@@ -91,16 +111,12 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     createFilePane: (id, path, notify) => new FilePane(id, process.cwd(), path, notify),
     createBrowserPane: (id, root, notify, intents) =>
       new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
-    ...(trees !== undefined && {
+    ...(treePort !== undefined && {
       createSessionTreePane: (id, notify, intents, targetSession, sessionId) =>
-        new SessionTreePane(
-          id,
-          notify,
-          intents,
-          attachOnFork(trees, options.sessions, attachments),
-          targetSession,
-          sessionId,
-        ),
+        new SessionTreePane(id, notify, intents, treePort, targetSession, sessionId),
+    }),
+    ...(memoryPort !== undefined && {
+      createMemoryPane: (id: string, notify: () => void) => new MemoryPane(id, notify, memoryPort),
     }),
     isDirectory: (path) =>
       statSync(resolve(process.cwd(), path), { throwIfNoEntry: false })?.isDirectory() === true,
@@ -216,12 +232,43 @@ async function restorable(
     case "browser":
       return statKind(pane.root)?.isDirectory() === true;
     case "session-tree":
+    case "memory":
       return true;
   }
 }
 
 function statKind(path: string) {
   return statSync(path, { throwIfNoEntry: false });
+}
+
+function readWorkspaceFile(path: string): string | undefined {
+  try {
+    return readFileSync(resolve(process.cwd(), path), "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+async function forkAtPrompt(
+  trees: SessionTreePort | undefined,
+  open: (sessionId: string | undefined, draft: string) => void,
+  sessionId: string | undefined,
+  ordinal: number,
+  draft: string,
+): Promise<boolean> {
+  if (trees === undefined || sessionId === undefined) return false;
+  const view = await trees.load(sessionId);
+  if (view === undefined) return false;
+  const anchor = promptAnchor(view.roots, ordinal);
+  if (anchor === undefined) return false;
+  if (anchor.parentId === null) {
+    open(undefined, draft);
+    return true;
+  }
+  const forked = await trees.fork(sessionId, anchor.parentId);
+  if (forked === undefined) return false;
+  open(forked, draft);
+  return true;
 }
 
 function attachOnFork(
@@ -339,7 +386,8 @@ function emptyView(theme: Theme) {
   );
 }
 
-function statusBar(core: AppCore, theme: Theme, label: string | undefined) {
+function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => string) | undefined) {
+  const label = typeof labelOption === "function" ? labelOption() : labelOption;
   const hint =
     core.notice !== ""
       ? core.notice

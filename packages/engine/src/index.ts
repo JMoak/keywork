@@ -17,10 +17,51 @@ export {
   redactSecrets,
 } from "./diagnostics.ts";
 export {
+  type BootstrapInjection,
+  type BootstrapLayer,
+  bootstrapMemory,
+  type LayerBootstrap,
+} from "./memory/bootstrap.ts";
+export {
+  defaultFlushSettings,
+  type FlushOutcome,
+  type FlushSettings,
+  isMemoryFlushPrompt,
+  isNoReply,
+  MemoryFlush,
+  type MemoryFlushOptions,
+  memoryFlushPrompt,
+  noReplyToken,
+  shouldFlush,
+} from "./memory/flush.ts";
+export {
   type Frontmatter,
   type FrontmatterValue,
   MalformedFrontmatterError,
 } from "./memory/frontmatter.ts";
+export {
+  type CurationJudgmentPort,
+  type CurationThresholds,
+  type DailyEntryCandidate,
+  defaultCurationThresholds,
+  Gardener,
+  type GardenerOptions,
+  type PairRelation,
+  type PairVerdict,
+  type PromotionProposal,
+  type ProposalRejection,
+  type SweepOptions,
+  type SweepReport,
+} from "./memory/gardener.ts";
+export {
+  MalformedInboxError,
+  ReviewInbox,
+  type ReviewInboxOptions,
+  type ReviewItem,
+  type ReviewItemDetail,
+  ReviewItemNotFoundError,
+  reviewKey,
+} from "./memory/inbox.ts";
 export {
   contentHash,
   type FileDelta,
@@ -29,6 +70,12 @@ export {
   type RevertOutcome,
 } from "./memory/ledger.ts";
 export { canonicalEntityPath, InvalidTitleError, titleKey } from "./memory/naming.ts";
+export {
+  memoryGetTool,
+  memoryRecallTools,
+  memorySearchTool,
+  type RecallListener,
+} from "./memory/recall-tools.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
 export {
   type EmbeddingsPort,
@@ -140,7 +187,7 @@ export {
 } from "./session/store.ts";
 export { kebabTitle, suggestTitle } from "./titles.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
-export { coreTools } from "./tools/core.ts";
+export { coreTools, type MemoryRecall } from "./tools/core.ts";
 export { defineTool } from "./tools/define.ts";
 export { editTool } from "./tools/edit.ts";
 export { readTool } from "./tools/read.ts";

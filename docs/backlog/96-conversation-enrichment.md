@@ -77,6 +77,23 @@ to-command → D-stream. Survey verdicts adopted as anti-goals here: no auto-com
 silent auto-compaction, no LLM-classified approvals, no ask timeouts (an ask that expires
 was never an ask).
 
+## Status (2026-08-10)
+
+- **V2.1 landed.** `tool.output` bus event + `bashTool` `onOutput` tap (engine, minimal);
+  `tail-follow.ts` renders a ≤3-line dim tail with `\r`/ANSI sanitizing, middle-elision, and a
+  deterministic ░▒▓█ byte-count mark. Render-only per the Amp refinement: only the tool's final
+  output reaches the model. Remaining seam: `coreTools` (cli wiring) does not yet pass
+  `onOutput` through to the agent bus — reported, not wired.
+- **V2.2 landed.** `diff-render.ts` (own LCS unified diff, no dependency) previews write/edit
+  asks as a bounded, scrollable diff computed from tool args vs current file content; asks for
+  non-write tools are unchanged. The Gemini edit-in-`$EDITOR` refinement stays deferred to I4.
+- **V2.13 landed (prompt-stepping + conversation fork).** Empty-input Esc-Esc walks prior
+  prompts with a transcript highlight; enter forks the session before the chosen prompt (B4
+  seam via the session-tree port) into a new pane with the prompt preloaded for editing; busy
+  panes interrupt instead. **Remaining:** checkpoint-paired file restore — needs per-user-turn
+  checkpoint tags plus a `Checkpoints.restoreTo` API and cli wiring (E3 seam), then the fork
+  port restores files alongside the conversation.
+
 ## Ordering instinct (pre-survey)
 
 V2.2 and V2.1 first — they compound the trust story (see what you approve; see what runs).

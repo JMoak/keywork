@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Agent } from "../agent.ts";
 import { type EngineEvents, EventBus } from "../bus.ts";
+import { memoryFlushPrompt } from "../memory/flush.ts";
 import { textMessage } from "../messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "../mock-provider.ts";
 import { defineTool } from "../tools/define.ts";
@@ -93,5 +94,24 @@ describe("replaySession", () => {
     replaySession(store, bus);
 
     expect(events.map((event) => event.payload.userText)).toEqual(["the past", "remembered"]);
+  });
+
+  it("suppresses memory-flush turns while keeping them in the JSONL record", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    await store.append(textMessage("user", "real question"));
+    await store.append(textMessage("assistant", "real answer"));
+    await store.append(textMessage("user", memoryFlushPrompt));
+    await store.append(textMessage("assistant", "tests run on Node, not Bun"));
+    await store.append(textMessage("user", "next question"));
+
+    const bus = new EventBus<EngineEvents>();
+    const events = record(bus);
+    replaySession(store, bus);
+
+    const texts = events
+      .filter((event) => event.type === "turn.started" || event.type === "turn.delta")
+      .map((event) => event.payload.userText ?? (event.payload.delta as { text?: string })?.text);
+    expect(texts).toEqual(["real question", "real answer", "next question"]);
+    expect(store.messages()).toHaveLength(5);
   });
 });
