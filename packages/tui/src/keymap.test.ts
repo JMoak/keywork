@@ -68,6 +68,40 @@ describe("Keymap", () => {
     expect(keymap().actions()).not.toContain("app.never");
   });
 
+  it("disarms on a second leader press instead of resolving leader+leader-key", () => {
+    const map = keymap();
+    map.press(parseChord("ctrl+k"), 0);
+    expect(map.press(parseChord("ctrl+k"), 10)).toEqual({ type: "cancelled" });
+    expect(map.press(parseChord("s"), 20)).toEqual({ type: "pass" });
+  });
+
+  it("limits a scoped arm to the allowed actions and re-presses the rest", () => {
+    const map = keymap();
+    map.arm(0, new Set(["pane.split"]));
+    expect(map.press(parseChord("s"), 10)).toEqual({ type: "action", action: "pane.split" });
+
+    map.arm(20, new Set(["pane.split"]));
+    expect(map.press(parseChord("z"), 30)).toEqual({ type: "pass" });
+
+    map.arm(40, new Set(["pane.split"]));
+    expect(map.press(parseChord("ctrl+q"), 50)).toEqual({ type: "action", action: "app.quit" });
+  });
+
+  it("reports armed state and lets it lapse after the timeout", () => {
+    const map = keymap();
+    map.press(parseChord("ctrl+k"), 0);
+    expect(map.armed(100)).toBe(true);
+    expect(map.armed(2001)).toBe(false);
+  });
+
+  it("clears the scope on a fresh leader press", () => {
+    const map = keymap();
+    map.arm(0, new Set(["pane.split"]));
+    map.press(parseChord("ctrl+k"), 10);
+    map.press(parseChord("ctrl+k"), 20);
+    expect(map.press(parseChord("z"), 30)).toEqual({ type: "action", action: "pane.zoom" });
+  });
+
   it("describes bindings for palette display", () => {
     const map = keymap();
     expect(map.describe("pane.split")).toBe("ctrl+k s");

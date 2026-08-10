@@ -34,8 +34,8 @@
 ## Alignment with workstream J
 
 **Convergent (mutual validation):** hybrid two-lane retrieval fused by RRF; provenance
-stored before anything else; trust as something earned and visible; time as a first-class
-epistemic dimension; contradiction as a tracked relation, not an overwrite.
+stored before anything else; trust made visible; time as a first-class epistemic
+dimension; contradiction as a tracked relation, not an overwrite.
 
 **Inverted (deliberately not our shape):** Lore is a *service* — daemon, OIDC, the
 database **is** the record, store is opaque to humans. keywork is local-first, no-daemon,
@@ -44,7 +44,12 @@ synchronous write path (Interpreter+Archivist per consult); keywork's write path
 deterministic and the LLM pass lives in the Gardener. Lore has no graph/supersession
 semantics — decay makes stale claims *fade*, keywork's `supersedes` edge says *what
 replaced them*; complementary, not equivalent. Lore's problem is multi-user consensus;
-J v1 is single-user workspace memory.
+J v1 is single-user workspace memory. **Trust model (J-D6, Jordan 2026-08-10): the
+deepest divergence.** Lore's trust is *earned* — per-oracle reputation accrued by
+aligning with the herd. keywork's trust is *granted* — declarative, schema-validated
+policy (provenance classes → allowed outcomes, scope grants, protected core) that
+secops/infra teams can read, diff, and enforce; trust state is always reproducible from
+config + provenance, never from accumulated history. No reputation system, deliberately.
 
 ## What keywork takes
 
@@ -58,9 +63,10 @@ J v1 is single-user workspace memory.
    note/entity against the candidate set (Lore's `ArchivistResolutionError` pattern).
 4. **The federation seam (the real prize)**: Lore is an MCP server — keywork's D8 MCP
    host can mount it as an additional **team scope** under J6's fail-closed policy:
-   searchable, never bootstrap-injected, provenance-tagged as external. Team memory
-   without keywork building multi-user consensus; per-oracle trust becomes relevant
-   exactly at the P2 shared-workspace rung.
+   searchable, never bootstrap-injected, provenance-tagged as external, its access a
+   **scope-level grant in config** (per J-D6 — keywork never adopts Lore's per-oracle
+   earned trust; the herd's consensus math stays Lore's business, keywork just reads the
+   results under policy). Team memory without keywork building multi-user consensus.
 
 ## Sources
 

@@ -4,16 +4,14 @@ import { ProviderHttpError } from "./openai.ts";
 export interface RetryOptions {
   attempts?: number;
   baseDelayMs?: number;
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
-
-const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class RetryingProvider implements Provider {
   readonly name: string;
   private readonly attempts: number;
   private readonly baseDelayMs: number;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 
   constructor(
     private readonly inner: Provider,
@@ -22,7 +20,7 @@ export class RetryingProvider implements Provider {
     this.name = inner.name;
     this.attempts = options.attempts ?? 3;
     this.baseDelayMs = options.baseDelayMs ?? 500;
-    this.sleep = options.sleep ?? defaultSleep;
+    this.sleep = options.sleep ?? abortableSleep;
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
@@ -41,15 +39,49 @@ export class RetryingProvider implements Provider {
           request.signal?.aborted !== true &&
           isTransient(cause);
         if (!retryable) throw cause;
-        await this.sleep(this.baseDelayMs * 2 ** (attempt - 1));
+        await this.sleep(this.baseDelayMs * 2 ** (attempt - 1), request.signal);
+        if (request.signal?.aborted === true) throw cause;
       }
     }
   }
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted === true) {
+      resolve();
+      return;
+    }
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", finish);
+  });
 }
 
 function isTransient(cause: unknown): boolean {
   if (cause instanceof ProviderHttpError) {
     return cause.status === 408 || cause.status === 429 || cause.status >= 500;
   }
-  return cause instanceof TypeError;
+  return isNetworkFailure(cause);
+}
+
+const networkFailurePattern =
+  /fetch failed|network|socket|connection|connect econn|econnreset|econnrefused|etimedout|eai_again|epipe|terminated|dns/i;
+
+function isNetworkFailure(cause: unknown): boolean {
+  if (!(cause instanceof TypeError)) return false;
+  if (networkFailurePattern.test(cause.message)) return true;
+  const inner = cause.cause;
+  return (
+    inner instanceof Error && networkFailurePattern.test(`${inner.message} ${describeCode(inner)}`)
+  );
+}
+
+function describeCode(error: Error): string {
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : "";
 }

@@ -1,5 +1,5 @@
 import { Agent, MockProvider, type Tool, textTurn, toolCallTurn } from "@keywork/engine";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { paletteFrame, paletteRowLimit } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { ConversationPane } from "./conversation-pane.ts";
@@ -7,6 +7,19 @@ import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
+
+async function waitFor(assertion: () => void): Promise<void> {
+  const deadline = Date.now() + 1000;
+  for (;;) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+}
 
 function paneIds(probe: AppProbe): string[] {
   return probe.snapshot().panes.map((pane) => pane.id);
@@ -136,16 +149,99 @@ describe("slash commands", () => {
   });
 });
 
-describe("closing the last pane via keys", () => {
-  it("leaves an empty layout without exiting, and split revives it", () => {
-    const probe = new AppProbe().keys("ctrl+k", "x");
-    expect(probe.snapshot().panes).toEqual([]);
-    expect(probe.snapshot().focused).toBeUndefined();
+describe("closing panes via keys", () => {
+  it("closes one of several panes and keeps the app running", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "x");
+    expect(paneIds(probe)).toEqual(["session-1"]);
     expect(probe.exited).toBe(false);
+  });
+
+  it("quits from the last pane, matching /exit", () => {
+    const probe = new AppProbe().keys("ctrl+k", "x");
+    expect(probe.exited).toBe(true);
+  });
+
+  it("closing a busy pane interrupts its agent and detaches its transcript", async () => {
+    const agents: Agent[] = [];
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
+        agents.push(agent);
+        return new ConversationPane(id, agent, notify, undefined, commands);
+      },
+    });
+    probe.command("split");
+    probe.type("go").keys("enter");
+    const closing = probe.model();
+    expect(closing?.busy).toBe(true);
+    const busyAgent = agents.find((agent) => agent.busy());
+    expect(busyAgent).toBeDefined();
+
+    probe.keys("ctrl+k", "x");
+
+    expect(probe.exited).toBe(false);
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    await waitFor(() => expect(busyAgent?.busy()).toBe(false));
+    expect(closing?.entries).toEqual([{ kind: "user", text: "go" }]);
+    expect(closing?.busy).toBe(false);
+  });
+});
+
+describe("sticky chain boundaries", () => {
+  it("disarms on a second ctrl+k instead of acting as leader k", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "s", "ctrl+k");
+    expect(probe.snapshot().leaderArmed).toBe(false);
+    expect(probe.snapshot().focused).toBe("session-3");
+  });
+
+  it("lets / start slash input after a sticky action instead of opening help", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "h", "/");
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(probe.model()?.input).toBe("/");
+  });
+
+  it("still opens help from a fresh leader /", () => {
+    const probe = new AppProbe().keys("ctrl+k", "/");
+    expect(probe.snapshot().overlay).toBe("help");
+  });
+});
+
+describe("splitting from a docked pane", () => {
+  it("opens the new session into the main tree, not the dock", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "d");
+    expect(dockedIds(probe)).toEqual(["session-2"]);
 
     probe.keys("s");
-    expect(paneIds(probe)).toEqual(["session-2"]);
-    expect(probe.snapshot().focused).toBe("session-2");
+    expect(dockedIds(probe)).toEqual(["session-2"]);
+    expect(paneIds(probe)).toEqual(["session-1", "session-3", "session-2"]);
+    expect(probe.snapshot().focused).toBe("session-3");
+  });
+
+  it("lands in the main area even when every pane is docked", () => {
+    const probe = new AppProbe().keys("ctrl+k", "d");
+    expect(dockedIds(probe)).toEqual(["session-1"]);
+
+    probe.keys("s");
+    expect(dockedIds(probe)).toEqual(["session-1"]);
+    expect(paneIds(probe)).toEqual(["session-2", "session-1"]);
+  });
+});
+
+describe("armed indicator expiry", () => {
+  it("clears leaderArmed once the keymap's arm window lapses", () => {
+    const probe = new AppProbe().keys("ctrl+k");
+    expect(probe.snapshot().leaderArmed).toBe(true);
+
+    probe.core.expireArmed(10_000);
+    expect(probe.snapshot().leaderArmed).toBe(false);
   });
 });
 
@@ -340,9 +436,9 @@ describe("mouse", () => {
   });
 
   it("ignores clicks and scrolls when no pane is under the cursor", () => {
-    const probe = new AppProbe().keys("ctrl+k", "x");
-    probe.click(5, 5).scroll(5, 5, "down").hover(5, 5);
-    expect(probe.snapshot().panes).toEqual([]);
+    const probe = new AppProbe();
+    probe.click(500, 500).scroll(500, 500, "down").hover(500, 500);
+    expect(paneIds(probe)).toEqual(["session-1"]);
     expect(probe.exited).toBe(false);
   });
 });
@@ -370,10 +466,10 @@ describe("safety net", () => {
     });
 
     expect(probe.command("undo")).toBe(true);
-    await vi.waitFor(() => expect(probe.snapshot().notice).toBe("files restored"));
+    await waitFor(() => expect(probe.snapshot().notice).toBe("files restored"));
 
     expect(probe.command("redo")).toBe(true);
-    await vi.waitFor(() => expect(probe.snapshot().notice).toBe("nothing to redo"));
+    await waitFor(() => expect(probe.snapshot().notice).toBe("nothing to redo"));
 
     probe.keys("a");
     expect(probe.snapshot().notice).toBe("");
@@ -413,7 +509,7 @@ describe("safety net", () => {
     });
 
     probe.type("go").keys("enter");
-    await vi.waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
     expect(executed).toEqual([]);
 
     probe.keys("y");
@@ -449,14 +545,45 @@ describe("safety net", () => {
     });
 
     probe.type("go").keys("enter");
-    await vi.waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
     probe.keys("n");
     await probe.settled();
 
     expect(probe.model()?.entries).toContainEqual({
       kind: "tool",
-      text: "✗ declined by user",
+      text: "✗ scribble — declined by user",
       failed: true,
     });
+  });
+});
+
+describe("conversation pane completion", () => {
+  it("scrolls the transcript with the wheel and snaps back on escape", async () => {
+    const probe = new AppProbe({
+      script: [textTurn(Array.from({ length: 30 }, (_, at) => `line ${at + 1}`).join("\n"))],
+    });
+    probe.type("go").keys("enter");
+    await probe.settled();
+
+    const rect = probe.rect("session-1");
+    probe.scroll(rect.x + 2, rect.y + 2, "up", 3);
+    expect(probe.model()?.scrollBack).toBe(3);
+
+    probe.keys("escape");
+    expect(probe.model()?.scrollBack).toBe(0);
+  });
+
+  it("composes a multiline prompt and queues a follow-up while busy", async () => {
+    const probe = new AppProbe({ script: [textTurn("first reply"), textTurn("second reply")] });
+    probe.type("hello").keys("shift+return").type("world").keys("enter");
+    probe.type("follow-up").keys("enter");
+    await probe.settled();
+
+    expect(probe.model()?.entries).toEqual([
+      { kind: "user", text: "hello\nworld" },
+      { kind: "assistant", text: "first reply" },
+      { kind: "user", text: "follow-up" },
+      { kind: "assistant", text: "second reply" },
+    ]);
   });
 });

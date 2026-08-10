@@ -127,6 +127,31 @@ describe("Checkpoints", () => {
     expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v1");
   });
 
+  it("ignores hostile repo-state env vars while keeping the rest of the environment", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "v1" });
+
+    const hostile = {
+      GIT_DIR: join(worktree, "nowhere"),
+      GIT_WORK_TREE: join(worktree, "elsewhere"),
+      GIT_OBJECT_DIRECTORY: join(worktree, "bogus-objects"),
+    };
+    const previous = Object.fromEntries(Object.keys(hostile).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, hostile);
+    try {
+      await store.capture();
+      await seed(worktree, { "file.txt": "v2" });
+      expect(await store.undo()).toBe(true);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v1");
+  });
+
   it("reopens an existing shadow repo without reinitializing", async () => {
     const { worktree, gitDir } = await scratchProject();
     const first = await Checkpoints.open({ worktree, gitDir });

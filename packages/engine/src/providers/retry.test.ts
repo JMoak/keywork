@@ -110,4 +110,51 @@ describe("RetryingProvider", () => {
 
     expect(await collect(provider.stream(request))).toEqual(goodTurn);
   });
+
+  it("retries TypeErrors whose cause is a network failure", async () => {
+    const provider = new RetryingProvider(
+      providerFailingTimes(
+        1,
+        () =>
+          new TypeError("request failed", {
+            cause: Object.assign(new Error("write"), { code: "ECONNRESET" }),
+          }),
+      ),
+      { attempts: 2, sleep: instantSleep },
+    );
+
+    expect(await collect(provider.stream(request))).toEqual(goodTurn);
+  });
+
+  it("does not retry programmer TypeErrors", async () => {
+    let calls = 0;
+    const provider = new RetryingProvider(
+      {
+        name: "buggy",
+        // biome-ignore lint/correctness/useYield: failure path throws before yielding
+        async *stream() {
+          calls += 1;
+          throw new TypeError("Cannot read properties of undefined (reading 'delta')");
+        },
+      },
+      { attempts: 3, sleep: instantSleep },
+    );
+
+    await expect(collect(provider.stream(request))).rejects.toThrow(/Cannot read properties/);
+    expect(calls).toBe(1);
+  });
+
+  it("aborts the backoff sleep promptly when the signal fires", async () => {
+    const controller = new AbortController();
+    const provider = new RetryingProvider(
+      providerFailingTimes(5, () => new ProviderHttpError("flaky", 429, "slow down")),
+      { attempts: 3, baseDelayMs: 60_000 },
+    );
+    const startedAt = Date.now();
+    const outcome = collect(provider.stream({ ...request, signal: controller.signal }));
+    setTimeout(() => controller.abort(), 10);
+
+    await expect(outcome).rejects.toThrow(/429/);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
 });

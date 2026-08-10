@@ -3,12 +3,13 @@ import { Keymap } from "./keymap.ts";
 import { type Chord, formatChord } from "./keys.ts";
 import { type DockSide, Layout, type Rect, type Screen } from "./layout.ts";
 import type { Pane, PaneIntents } from "./pane.ts";
-import type { PointerEvent, PointerScroll } from "./pointer.ts";
+import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
 
 interface AppAction {
   chords: string | readonly string[];
   help: string;
   sticky?: true;
+  chainable?: true;
   invoke: (core: AppCore) => void;
   command?: { name: string; description: string; aliases?: string[] };
 }
@@ -154,6 +155,7 @@ const appActions: Record<string, AppAction> = {
   "browser.summon": {
     chords: "leader f",
     help: "file browser",
+    chainable: true,
     invoke: (core) => core.summonBrowser(),
   },
   "help.toggle": {
@@ -186,6 +188,12 @@ export const bindingHelp: Record<string, string> = Object.fromEntries(
 const stickyActions = new Set(
   Object.entries(appActions)
     .filter(([, action]) => action.sticky)
+    .map(([name]) => name),
+);
+
+const chainActions = new Set(
+  Object.entries(appActions)
+    .filter(([, action]) => action.sticky || action.chainable)
     .map(([name]) => name),
 );
 
@@ -324,6 +332,10 @@ export class AppCore {
     return this.registry.run(name);
   }
 
+  expireArmed(nowMs: number): void {
+    this.leaderArmed = this.keymap.armed(nowMs);
+  }
+
   snapshot(): AppSnapshot {
     const focused = this.layout.focused();
     const dock = this.layout.dock();
@@ -365,7 +377,7 @@ export class AppCore {
     if (result.type === "action") {
       this.apply(result.action);
       if (stickyActions.has(result.action)) {
-        this.keymap.arm(nowMs);
+        this.keymap.arm(nowMs, chainActions);
         this.leaderArmed = true;
       }
       return;
@@ -395,10 +407,15 @@ export class AppCore {
       id,
       this.options.createPane(id, () => this.notify(), this.registry),
     );
+    this.focusMainArea();
     this.layout.open(id, this.screen());
   }
 
   closePane(): void {
+    if (this.panes.size <= 1) {
+      this.shutdown();
+      return;
+    }
     const id = this.layout.focused();
     if (id === undefined) return;
     this.panes.get(id)?.dispose?.();
@@ -621,7 +638,7 @@ export class AppCore {
       name: "exit",
       description: "close this pane (closes keywork from the last one)",
       ...shortcut("pane.close"),
-      run: () => (this.panes.size <= 1 ? this.shutdown() : this.closePane()),
+      run: () => this.closePane(),
     });
     this.registry.register({
       name: "exit-all",
@@ -650,11 +667,9 @@ function containsPoint(frame: OverlayFrame, x: number, y: number): boolean {
   return x >= frame.x && x < frame.x + frame.width && y >= frame.y && y < frame.y + frame.height;
 }
 
-const maxScrollSteps = 10;
-
 function scrollByKeys(pane: Pane | undefined, scroll: PointerScroll): void {
   if (pane?.handleKey === undefined) return;
   const chord: Chord = { name: scroll.direction, ctrl: false, shift: false, meta: false };
-  const steps = Math.min(maxScrollSteps, Math.max(1, Math.round(scroll.delta)));
+  const steps = wheelSteps(scroll.delta);
   for (let step = 0; step < steps; step += 1) pane.handleKey(chord, undefined);
 }

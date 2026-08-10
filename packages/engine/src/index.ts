@@ -1,4 +1,4 @@
-export { Agent, type AgentOptions, type ToolGuard } from "./agent.ts";
+export { Agent, AgentBusyError, type AgentOptions, type ToolGuard } from "./agent.ts";
 export { type EngineEvents, EventBus } from "./bus.ts";
 export { Checkpoints, type CheckpointsOptions } from "./checkpoints.ts";
 export {
@@ -26,6 +26,7 @@ export {
   type OpenAiCompatibleOptions,
   OpenAiCompatibleProvider,
   ProviderHttpError,
+  ProviderStreamError,
 } from "./providers/openai.ts";
 export { RetryingProvider, type RetryOptions } from "./providers/retry.ts";
 export {

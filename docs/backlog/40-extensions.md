@@ -90,8 +90,9 @@ Gitignore-syntax exclusion file respected by read/edit tools' discovery surfaces
 (C27/C28 dock) showing a tight per-server status line: name, connection state, tool count.
 Focusing it opens a simple interaction menu per server — enable/disable, restart, list
 tools — in the spirit of OpenCode's MCP menu, re-presented as a dock-native pane. Connection
-progress gets keywork's own loading indicator: tight like OpenCode's, but an original,
-more imaginative design (spec it before building; no spinner-by-default).
+progress uses the **tile-fill mark** (Jordan, 2026-08-10 — the dwindle layout in
+miniature; spec in [`../design-language.md`](../design-language.md)); server states use
+the density ramp (`█` connected · `▒` connecting · `░` down). Never a spinner.
 **Accept:** fixture config with two servers (one healthy, one failing) docks the pane on
 start with correct states; menu restart recovers the failing server; zero MCP config ⇒ no
 pane, zero cost.

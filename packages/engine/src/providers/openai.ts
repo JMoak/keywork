@@ -24,6 +24,13 @@ export class ProviderHttpError extends Error {
   }
 }
 
+export class ProviderStreamError extends Error {
+  constructor(provider: string, detail: string) {
+    super(`${provider} stream failed: ${detail.slice(0, 500)}`);
+    this.name = "ProviderStreamError";
+  }
+}
+
 export class OpenAiCompatibleProvider implements Provider {
   readonly name: string;
   private readonly options: Required<Omit<OpenAiCompatibleOptions, "extraHeaders">> & {
@@ -50,11 +57,15 @@ export class OpenAiCompatibleProvider implements Provider {
       throw new ProviderHttpError(this.name, response.status, await response.text());
     }
     if (response.body === null) throw new Error(`${this.name} returned an empty response body`);
-    yield* assembleTurn(sseData(response.body));
+    yield* assembleTurn(this.name, sseData(this.name, response.body));
   }
 }
 
+const maxSseBufferBytes = 1_048_576;
+const maxToolArgumentBytes = 1_048_576;
+
 interface StreamEvent {
+  error?: { message?: string } | string;
   choices?: { delta?: WireDelta }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
 }
@@ -76,11 +87,17 @@ interface PendingCall {
   argumentsJson: string;
 }
 
-async function* assembleTurn(events: AsyncIterable<unknown>): AsyncGenerator<TurnDelta> {
+async function* assembleTurn(
+  provider: string,
+  events: AsyncIterable<unknown>,
+): AsyncGenerator<TurnDelta> {
   const pending = new Map<number, PendingCall>();
   let usage: Usage = { inputTokens: 0, outputTokens: 0 };
   for await (const raw of events) {
     const event = raw as StreamEvent;
+    if (event.error != null) {
+      throw new ProviderStreamError(provider, describeErrorEvent(event.error));
+    }
     if (event.usage != null) {
       usage = {
         inputTokens: event.usage.prompt_tokens ?? 0,
@@ -91,25 +108,43 @@ async function* assembleTurn(events: AsyncIterable<unknown>): AsyncGenerator<Tur
     if (typeof delta?.content === "string" && delta.content !== "") {
       yield { type: "text", text: delta.content };
     }
-    for (const fragment of delta?.tool_calls ?? []) accumulate(pending, fragment);
+    for (const fragment of delta?.tool_calls ?? []) accumulate(provider, pending, fragment);
   }
-  for (const [, call] of [...pending].sort(([a], [b]) => a - b)) {
-    yield { type: "tool-call", call: completedCall(call) };
+  for (const [index, call] of [...pending].sort(([a], [b]) => a - b)) {
+    yield { type: "tool-call", call: completedCall(index, call) };
   }
   yield { type: "done", usage };
 }
 
-function accumulate(pending: Map<number, PendingCall>, fragment: ToolCallFragment): void {
+function describeErrorEvent(error: NonNullable<StreamEvent["error"]>): string {
+  if (typeof error === "string") return error;
+  return error.message ?? JSON.stringify(error);
+}
+
+function accumulate(
+  provider: string,
+  pending: Map<number, PendingCall>,
+  fragment: ToolCallFragment,
+): void {
   const existing = pending.get(fragment.index) ?? { id: "", name: "", argumentsJson: "" };
+  const argumentsJson = existing.argumentsJson + (fragment.function?.arguments ?? "");
+  if (argumentsJson.length > maxToolArgumentBytes) {
+    throw new ProviderStreamError(provider, "tool-call arguments exceeded the size ceiling");
+  }
   pending.set(fragment.index, {
-    id: fragment.id ?? existing.id,
-    name: existing.name + (fragment.function?.name ?? ""),
-    argumentsJson: existing.argumentsJson + (fragment.function?.arguments ?? ""),
+    id: existing.id !== "" ? existing.id : (fragment.id ?? ""),
+    name: existing.name !== "" ? existing.name : (fragment.function?.name ?? ""),
+    argumentsJson,
   });
 }
 
-function completedCall(call: PendingCall): ToolCallPart {
-  return { type: "tool-call", callId: call.id, name: call.name, arguments: parseArgs(call) };
+function completedCall(index: number, call: PendingCall): ToolCallPart {
+  return {
+    type: "tool-call",
+    callId: call.id !== "" ? call.id : `call_${index}`,
+    name: call.name,
+    arguments: parseArgs(call),
+  };
 }
 
 function parseArgs(call: PendingCall): unknown {
@@ -121,20 +156,45 @@ function parseArgs(call: PendingCall): unknown {
   }
 }
 
-async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
+async function* sseData(
+  provider: string,
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<unknown> {
   const decoder = new TextDecoder();
   let buffer = "";
   for await (const chunk of body) {
     buffer += decoder.decode(chunk, { stream: true });
+    if (buffer.length > maxSseBufferBytes) {
+      throw new ProviderStreamError(provider, "event stream buffer exceeded the size ceiling");
+    }
     let newline = buffer.indexOf("\n");
     while (newline !== -1) {
-      const line = buffer.slice(0, newline).trim();
+      const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
       newline = buffer.indexOf("\n");
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (data === "[DONE]") return;
-      yield JSON.parse(data);
+      const event = parseSseLine(line);
+      if (event === endOfStream) return;
+      if (event !== skipLine) yield event;
     }
+  }
+  buffer += decoder.decode();
+  const event = parseSseLine(buffer);
+  if (event !== endOfStream && event !== skipLine) yield event;
+}
+
+const endOfStream = Symbol("endOfStream");
+const skipLine = Symbol("skipLine");
+
+function parseSseLine(rawLine: string): unknown {
+  const line = rawLine.trim();
+  if (!line.startsWith("data:")) return skipLine;
+  const data = line.slice(5).trim();
+  if (data === "") return skipLine;
+  if (data === "[DONE]") return endOfStream;
+  try {
+    const event: unknown = JSON.parse(data);
+    return typeof event === "object" && event !== null ? event : skipLine;
+  } catch {
+    return skipLine;
   }
 }

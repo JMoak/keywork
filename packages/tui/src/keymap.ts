@@ -17,10 +17,11 @@ export interface KeymapOptions {
 }
 
 export class Keymap {
+  readonly timeoutMs: number;
   private readonly leader: Chord;
-  private readonly timeoutMs: number;
   private readonly bindings = new Map<string, Binding[]>();
   private pendingSince: number | undefined;
+  private armedScope: ReadonlySet<string> | undefined;
 
   constructor(options: KeymapOptions) {
     this.leader = parseChord(options.leader ?? "ctrl+k");
@@ -33,17 +34,25 @@ export class Keymap {
   }
 
   press(chord: Chord, nowMs: number): KeymapResult {
-    if (this.isPending(nowMs)) return this.resolveLeaderKey(chord);
+    if (this.isPending(nowMs)) {
+      if (chordsEqual(chord, this.leader)) return this.disarm();
+      return this.resolveLeaderKey(chord, nowMs);
+    }
     if (chordsEqual(chord, this.leader)) {
-      this.pendingSince = nowMs;
+      this.arm(nowMs);
       return { type: "leader-pending" };
     }
     const action = this.findByChord(chord);
     return action === undefined ? { type: "pass" } : { type: "action", action };
   }
 
-  arm(nowMs: number): void {
+  arm(nowMs: number, scope?: ReadonlySet<string>): void {
     this.pendingSince = nowMs;
+    this.armedScope = scope;
+  }
+
+  armed(nowMs: number): boolean {
+    return this.isPending(nowMs);
   }
 
   describe(action: string): string | undefined {
@@ -64,11 +73,21 @@ export class Keymap {
     return false;
   }
 
-  private resolveLeaderKey(chord: Chord): KeymapResult {
-    this.pendingSince = undefined;
+  private resolveLeaderKey(chord: Chord, nowMs: number): KeymapResult {
+    const scope = this.armedScope;
+    this.disarm();
     if (chord.name === "escape") return { type: "cancelled" };
     const action = this.findByLeaderKey(chord);
-    return action === undefined ? { type: "cancelled" } : { type: "action", action };
+    if (action !== undefined && (scope === undefined || scope.has(action))) {
+      return { type: "action", action };
+    }
+    return scope === undefined ? { type: "cancelled" } : this.press(chord, nowMs);
+  }
+
+  private disarm(): KeymapResult {
+    this.pendingSince = undefined;
+    this.armedScope = undefined;
+    return { type: "cancelled" };
   }
 
   private findByChord(chord: Chord): string | undefined {

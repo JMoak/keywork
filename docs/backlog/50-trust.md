@@ -15,11 +15,18 @@ config.
 skips next prompt; deny reaches the model as a refusal result.
 **Strategy:** `LIFT:opencode` config model + rule semantics.
 
-### E2 (1pt) — Trust ladder UX
-Three visible levels (ask-most → allowlist → trusted) mapping onto E1 presets; current level
-always in the status line (fills C18's slot); one key cycles with confirmation on escalation.
-**Accept:** level change updates gate behavior immediately; indicator matches actual matrix
-state (no lying UI).
+### E2 (1pt) — Permission presets UX
+Design direction (Jordan, 2026-08-10): **named presets + status word**. Two or three
+named policy presets defined as bundles in the policy file — **`careful` · `standard` ·
+`open`** (Jordan, 2026-08-10; `standard` ships as default); the active preset's name
+sits in the status line (fills C18's slot); one chord
+opens the preset picker, cycling with confirmation when loosening. Presets are plain
+policy-file bundles — secops reads the file, users read the word. Scoped per 95/J-D7:
+this surface is tool permissions only, sharing at most visual vocabulary with memory's
+validity machinery.
+**Accept:** preset change updates gate behavior immediately; indicator matches actual
+matrix state (no lying UI); custom policy edits that diverge from every preset render a
+distinct "custom" state, never a preset's name.
 **Strategy:** `OWN` design and presentation.
 
 ### E3 (2pt) — Git snapshots

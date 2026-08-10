@@ -17,10 +17,18 @@ export interface AgentOptions {
   guard?: ToolGuard;
 }
 
+export class AgentBusyError extends Error {
+  constructor() {
+    super("a turn is already in flight; interrupt it or await it first");
+    this.name = "AgentBusyError";
+  }
+}
+
 interface AssistantTurn {
   message: Message;
   usage: Usage;
   interrupted: boolean;
+  failure?: Error;
 }
 
 export class Agent {
@@ -51,11 +59,16 @@ export class Agent {
     return { ...this.totals };
   }
 
+  busy(): boolean {
+    return this.active !== undefined;
+  }
+
   interrupt(): void {
     this.active?.abort();
   }
 
   async send(userText: string, signal?: AbortSignal): Promise<Message> {
+    if (this.active !== undefined) throw new AgentBusyError();
     const controller = new AbortController();
     this.active = controller;
     const forwardAbort = () => controller.abort();
@@ -66,37 +79,79 @@ export class Agent {
     this.messages.push(textMessage("user", userText));
     this.bus.emit("turn.started", { userText });
     try {
-      return await this.runUntilFinalMessage(controller.signal);
+      return await this.runUntilFinalMessage(controller);
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       this.bus.emit("engine.error", { error });
       throw error;
     } finally {
-      this.active = undefined;
+      this.release(controller);
       signal?.removeEventListener("abort", forwardAbort);
     }
   }
 
-  private async runUntilFinalMessage(signal: AbortSignal): Promise<Message> {
+  private async runUntilFinalMessage(controller: AbortController): Promise<Message> {
+    const signal = controller.signal;
     while (true) {
       const turn = await this.streamAssistantTurn(signal);
-      this.messages.push(turn.message);
       this.totals = addUsage(this.totals, turn.usage);
-      if (turn.interrupted) return this.finishInterrupted(turn.message);
+      if (turn.failure !== undefined) throw turn.failure;
+      if (turn.interrupted) {
+        if (turn.message.parts.length > 0) this.messages.push(turn.message);
+        return this.finishInterrupted(controller, turn.message);
+      }
+      this.messages.push(turn.message);
 
       const calls = toolCalls(turn.message);
-      if (calls.length === 0) {
-        this.bus.emit("turn.completed", { message: turn.message, usage: turn.usage });
-        return turn.message;
-      }
+      if (calls.length === 0) return this.finishCompleted(controller, turn);
       await this.executeToolCalls(calls, signal);
-      if (signal.aborted) return this.finishInterrupted(turn.message);
+      if (signal.aborted) return this.finishInterrupted(controller, turn.message);
     }
   }
 
-  private finishInterrupted(message: Message): Message {
+  private finishCompleted(controller: AbortController, turn: AssistantTurn): Message {
+    this.release(controller);
+    this.bus.emit("turn.completed", { message: turn.message, usage: turn.usage });
+    return turn.message;
+  }
+
+  private finishInterrupted(controller: AbortController, message: Message): Message {
+    this.settleOrphanedToolCalls(message);
+    this.release(controller);
     this.bus.emit("turn.interrupted", { message });
     return message;
+  }
+
+  private settleOrphanedToolCalls(message: Message): void {
+    const settled = this.settledCallIds();
+    for (const call of toolCalls(message)) {
+      if (settled.has(call.callId)) continue;
+      this.messages.push({
+        role: "tool",
+        parts: [
+          {
+            type: "tool-result",
+            callId: call.callId,
+            output: "interrupted before execution",
+            isError: true,
+          },
+        ],
+      });
+    }
+  }
+
+  private settledCallIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const message of this.messages) {
+      for (const part of message.parts) {
+        if (part.type === "tool-result") ids.add(part.callId);
+      }
+    }
+    return ids;
+  }
+
+  private release(controller: AbortController): void {
+    if (this.active === controller) this.active = undefined;
   }
 
   private async streamAssistantTurn(signal: AbortSignal): Promise<AssistantTurn> {
@@ -115,7 +170,8 @@ export class Agent {
       }
     } catch (cause) {
       if (signal.aborted) return { message, usage, interrupted: true };
-      throw cause;
+      const failure = cause instanceof Error ? cause : new Error(String(cause));
+      return { message, usage, interrupted: false, failure };
     }
     return { message, usage, interrupted: false };
   }

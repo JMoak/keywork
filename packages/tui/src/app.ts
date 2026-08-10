@@ -62,7 +62,18 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     },
   });
 
+  let armedExpiry: ReturnType<typeof setTimeout> | undefined;
+  const watchArmedExpiry = (): void => {
+    if (armedExpiry !== undefined) clearTimeout(armedExpiry);
+    if (!core.leaderArmed) return;
+    armedExpiry = setTimeout(() => {
+      core.expireArmed(performance.now());
+      render();
+    }, core.keymap.timeoutMs + 50);
+  };
+
   const render = (): void => {
+    watchArmedExpiry();
     for (const child of [...renderer.root.getChildren()]) renderer.root.remove(child);
     renderer.root.add(
       Box(

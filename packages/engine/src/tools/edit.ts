@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { z } from "zod";
+import { confinedPath } from "./confine.ts";
 import { defineTool } from "./define.ts";
 
 const schema = z.object({
@@ -17,9 +17,12 @@ export function editTool(cwd: string) {
     schema,
     mutates: true,
     run: async ({ path, oldText, newText, replaceAll = false }) => {
-      const target = resolve(cwd, path);
-      const content = await readFile(target, "utf8");
-      const occurrences = countOccurrences(content, oldText);
+      const target = confinedPath(cwd, path);
+      const raw = await readFile(target, "utf8");
+      const crlf = raw.includes("\r\n");
+      const content = toUnixEol(raw);
+      const search = toUnixEol(oldText);
+      const occurrences = countOccurrences(content, search);
       if (occurrences === 0) {
         throw new Error(`oldText not found in ${path}; read the file and match it exactly`);
       }
@@ -28,16 +31,25 @@ export function editTool(cwd: string) {
           `oldText matches ${occurrences} places in ${path}; add surrounding context to make it unique, or set replaceAll`,
         );
       }
-      await writeFile(target, content.replaceAll(oldText, newText), "utf8");
+      const edited = content.replaceAll(search, toUnixEol(newText));
+      await writeFile(target, crlf ? edited.replaceAll("\n", "\r\n") : edited, "utf8");
       const label = occurrences === 1 ? "1 occurrence" : `${occurrences} occurrences`;
       return `Replaced ${label} in ${path}`;
     },
   });
 }
 
+function toUnixEol(text: string): string {
+  return text.replaceAll("\r\n", "\n");
+}
+
 function countOccurrences(content: string, search: string): number {
   let count = 0;
-  for (let at = content.indexOf(search); at !== -1; at = content.indexOf(search, at + 1)) {
+  for (
+    let at = content.indexOf(search);
+    at !== -1;
+    at = content.indexOf(search, at + search.length)
+  ) {
     count += 1;
   }
   return count;

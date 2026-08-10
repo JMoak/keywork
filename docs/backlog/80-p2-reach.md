@@ -25,10 +25,15 @@ sqlite sidecar per D8).
 **Strategy:** `OWN` — own design, protocol, and storage.
 
 ### P2.4 (2pt) — Notifications
-"Come back, I need a decision" as a designed moment. To be designed from keywork's own
-work-management model: urgency derives from work state (docked, backgrounded, awaiting a
-decision, finished while unfocused), with transports (native toast / OSC 777 / bell / off)
-as a lower-level delivery detail — not a flat mode enum.
+Formula decided (Jordan, 2026-08-10 — see [`../design-language.md`](../design-language.md)):
+**needs-you only** — exactly two triggers, both when unfocused: an agent blocked on a
+decision (ask-gate, protected-core proposal) and the review inbox crossing its threshold.
+Completions/failures/milestones stay silent (dock state on return). Transports
+(native toast / OSC 777 / bell / off) auto-select per terminal underneath,
+policy-configurable — the formula is not a mode enum.
+**Accept:** a keywork notification always corresponds to a wanted keystroke (fixture:
+completion while unfocused does NOT notify; ask-gate does); transport fallback chain
+tested per terminal fixture.
 **Strategy:** `OWN` design.
 
 ### P2.5 (2pt) — HTML export & sharing

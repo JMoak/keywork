@@ -59,6 +59,7 @@ The open questions have been resolved and the plan written:
 
 | Doc | What it covers |
 |-----|----------------|
+| [`design-language.md`](design-language.md) | **Visual vocabulary of record** (Jordan, 2026-08-10): the density ramp (`░▒▓█`) as the one system across curing/provenance/staging/MCP/loading, the tile-fill progress mark (dwindle in miniature, never a spinner), the needs-you-only notification formula, status-line grammar. Supersedes placeholder glyphs in planning docs. |
 | [`vision.md`](vision.md) | Decision record D1–D10 resolving Q1–Q10: MCP in core (lazy schemas), minimal core + blessed default-on extensions, trust-ladder gate, three session layers, full code-intel stack phased, **native tiling with panes as bus clients** (the differentiator), in-process server-shaped bus, Pi JSONL persistence, one typed config, terminal-only v1. |
 | [`tasks.md`](tasks.md) | The parallelized implementation breakdown: milestones M0–M3 + P2, six concurrent workstreams (engine, sessions, TUI/keyboard, extensions, trust, code-intel) with dependency gates and a per-task lift strategy (LIFT:pi / LIFT:opencode / LIFT:aider / OWN; the former REIMPL:crush tag is retired). |
 | [`backlog/`](backlog/README.md) | The full 75-task backlog (153pt): every workstream broken into 1–3pt tasks with descriptions, acceptance criteria, and lift strategy, in execution order. |

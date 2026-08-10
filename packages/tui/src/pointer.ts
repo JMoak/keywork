@@ -57,3 +57,9 @@ function isPointerAction(type: string): type is PointerAction {
 function sanitizedDelta(delta: number | undefined): number {
   return delta !== undefined && Number.isFinite(delta) && delta > 0 ? delta : 1;
 }
+
+const maxWheelSteps = 10;
+
+export function wheelSteps(delta: number): number {
+  return Math.min(maxWheelSteps, Math.max(1, Math.round(delta)));
+}

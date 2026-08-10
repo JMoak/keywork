@@ -84,8 +84,8 @@ describe("ConversationModel", () => {
     await submit(model);
 
     const kinds = model.entries.map((entry) => entry.kind);
-    expect(kinds).toEqual(["user", "tool", "tool", "assistant"]);
-    expect(model.entries[2]).toMatchObject({ text: "✓ echo: hi", failed: false });
+    expect(kinds).toEqual(["user", "tool", "assistant"]);
+    expect(model.entries[1]).toMatchObject({ text: "✓ echo — echo: hi", failed: false });
   });
 
   it("surfaces provider failures as error entries instead of throwing", async () => {
@@ -238,6 +238,253 @@ describe("auto-titling", () => {
   });
 });
 
+describe("multiline input", () => {
+  it("keeps composing across shift+enter and submits the whole message", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("ok")]) });
+    const model = new ConversationModel(agent, () => {});
+
+    type(model, "first");
+    model.handleKey(parseChord("shift+return"), undefined);
+    type(model, "second");
+    expect(model.input).toBe("first\nsecond");
+    await submit(model);
+
+    expect(model.entries[0]).toEqual({ kind: "user", text: "first\nsecond" });
+    expect(model.input).toBe("");
+  });
+
+  it("moves the cursor between lines with up and down while composing", () => {
+    const model = new ConversationModel(undefined, () => {});
+    type(model, "abc");
+    model.handleKey(parseChord("shift+return"), undefined);
+    type(model, "z");
+
+    model.handleKey(parseChord("up"), undefined);
+    type(model, "!");
+    expect(model.input).toBe("a!bc\nz");
+  });
+});
+
+describe("input history", () => {
+  async function conversed(...prompts: string[]): Promise<ConversationModel> {
+    const agent = new Agent({
+      provider: new MockProvider(prompts.map((prompt) => textTurn(`re: ${prompt}`))),
+    });
+    const model = new ConversationModel(agent, () => {});
+    for (const prompt of prompts) {
+      type(model, prompt);
+      await submit(model);
+    }
+    return model;
+  }
+
+  it("recalls earlier prompts with up at an empty prompt", async () => {
+    const model = await conversed("one", "two");
+
+    model.handleKey(parseChord("up"), undefined);
+    expect(model.input).toBe("two");
+    model.handleKey(parseChord("up"), undefined);
+    expect(model.input).toBe("one");
+    model.handleKey(parseChord("down"), undefined);
+    expect(model.input).toBe("two");
+    model.handleKey(parseChord("down"), undefined);
+    expect(model.input).toBe("");
+  });
+
+  it("stays put when the prompt has unsent text", async () => {
+    const model = await conversed("one");
+    type(model, "draft");
+    model.handleKey(parseChord("up"), undefined);
+    expect(model.input).toBe("draft");
+  });
+
+  it("stops browsing as soon as the recalled text is edited", async () => {
+    const model = await conversed("one", "two");
+    model.handleKey(parseChord("up"), undefined);
+    type(model, "!");
+    expect(model.input).toBe("two!");
+    model.handleKey(parseChord("up"), undefined);
+    expect(model.input).toBe("two!");
+  });
+});
+
+describe("queueing while busy", () => {
+  it("queues a second prompt mid-turn and sends it after the first completes", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("first reply"), textTurn("second reply")]),
+    });
+    const model = new ConversationModel(agent, () => {});
+
+    type(model, "first");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.busy).toBe(true);
+    type(model, "second");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.queued()).toEqual(["second"]);
+    expect(model.entries.map((entry) => entry.kind)).toEqual(["user"]);
+
+    let previous: Promise<unknown>;
+    do {
+      previous = model.lastSend;
+      await previous;
+    } while (previous !== model.lastSend);
+
+    expect(model.entries).toEqual([
+      { kind: "user", text: "first" },
+      { kind: "assistant", text: "first reply" },
+      { kind: "user", text: "second" },
+      { kind: "assistant", text: "second reply" },
+    ]);
+    expect(model.busy).toBe(false);
+    expect(model.queued()).toEqual([]);
+  });
+
+  it("keeps the transcript in true send order with several prompts queued", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("re: a"), textTurn("re: b"), textTurn("re: c")]),
+    });
+    const model = new ConversationModel(agent, () => {});
+
+    for (const prompt of ["a", "b", "c"]) {
+      type(model, prompt);
+      model.handleKey(parseChord("return"), undefined);
+    }
+    expect(model.queued()).toEqual(["b", "c"]);
+
+    let previous: Promise<unknown>;
+    do {
+      previous = model.lastSend;
+      await previous;
+    } while (previous !== model.lastSend);
+
+    expect(model.entries.map((entry) => entry.text)).toEqual([
+      "a",
+      "re: a",
+      "b",
+      "re: b",
+      "c",
+      "re: c",
+    ]);
+  });
+
+  it("dispose mid-turn interrupts the agent and silences every bus listener", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([
+        [
+          { type: "text", text: "streaming " },
+          { type: "text", text: "along" },
+          { type: "done", usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+      ]),
+    });
+    let notifies = 0;
+    const model = new ConversationModel(agent, () => {
+      notifies += 1;
+    });
+    let interrupted = false;
+    agent.bus.on("turn.interrupted", () => {
+      interrupted = true;
+    });
+
+    type(model, "go");
+    model.handleKey(parseChord("return"), undefined);
+    model.dispose();
+    const notifiesAtDispose = notifies;
+    await model.lastSend;
+
+    expect(interrupted).toBe(true);
+    expect(agent.busy()).toBe(false);
+    expect(model.busy).toBe(false);
+    expect(notifies).toBe(notifiesAtDispose);
+    expect(model.entries).toEqual([{ kind: "user", text: "go" }]);
+  });
+
+  it("drops queued prompts on dispose instead of sending them to a dead pane", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("first reply"), textTurn("never sent")]),
+    });
+    const model = new ConversationModel(agent, () => {});
+
+    type(model, "first");
+    model.handleKey(parseChord("return"), undefined);
+    type(model, "second");
+    model.handleKey(parseChord("return"), undefined);
+
+    model.dispose();
+    await model.lastSend;
+
+    expect(model.queued()).toEqual([]);
+    expect(agent.history().filter((message) => message.role === "user")).toHaveLength(1);
+  });
+});
+
+describe("scrollback", () => {
+  function longConversation(): ConversationModel {
+    const model = new ConversationModel(undefined, () => {});
+    model.entries.length = 0;
+    for (let at = 1; at <= 20; at += 1) {
+      model.entries.push({ kind: "assistant", text: `line ${at}` });
+    }
+    return model;
+  }
+
+  it("pages back through the transcript and clamps at the top", () => {
+    const model = longConversation();
+    expect(model.visibleTranscript(80, 5).map((line) => line.text)).toEqual([
+      "line 16",
+      "line 17",
+      "line 18",
+      "line 19",
+      "line 20",
+    ]);
+
+    model.handleKey(parseChord("pageup"), undefined);
+    expect(model.visibleTranscript(80, 5)[0]?.text).toBe("line 11");
+
+    for (let at = 0; at < 10; at += 1) model.handleKey(parseChord("pageup"), undefined);
+    expect(model.visibleTranscript(80, 5)[0]?.text).toBe("line 1");
+  });
+
+  it("returns to live with escape", () => {
+    const model = longConversation();
+    model.visibleTranscript(80, 5);
+    model.handleKey(parseChord("pageup"), undefined);
+    expect(model.scrollBack).toBeGreaterThan(0);
+
+    expect(model.handleKey(parseChord("escape"), undefined)).toBe(true);
+    expect(model.scrollBack).toBe(0);
+  });
+
+  it("escape snaps to live before it interrupts a running turn", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn(Array.from({ length: 20 }, () => "line").join("\n"))]),
+    });
+    const model = new ConversationModel(agent, () => {});
+    type(model, "go");
+    model.handleKey(parseChord("return"), undefined);
+    await model.lastSend;
+    model.busy = true;
+    model.visibleTranscript(80, 5);
+    model.handleKey(parseChord("pageup"), undefined);
+
+    model.handleKey(parseChord("escape"), undefined);
+    expect(model.scrollBack).toBe(0);
+    expect(model.busy).toBe(true);
+
+    model.handleKey(parseChord("escape"), undefined);
+    model.busy = false;
+  });
+
+  it("scrolls by wheel deltas through scrollBy", () => {
+    const model = longConversation();
+    model.visibleTranscript(80, 5);
+    model.scrollBy(3);
+    expect(model.visibleTranscript(80, 5)[0]?.text).toBe("line 13");
+    model.scrollBy(-3);
+    expect(model.visibleTranscript(80, 5)[0]?.text).toBe("line 16");
+  });
+});
+
 describe("mutation confirmation", () => {
   const writeCall: ToolCallPart = {
     type: "tool-call",
@@ -269,6 +516,16 @@ describe("mutation confirmation", () => {
     const second = model.confirmMutation(writeCall);
     model.handleKey(parseChord("escape"), undefined);
     expect(await second).toBe(false);
+  });
+
+  it("denies a pending ask on dispose so the agent is never stranded", async () => {
+    const model = new ConversationModel(undefined, () => {});
+    const verdict = model.confirmMutation(writeCall);
+
+    model.dispose();
+
+    expect(await verdict).toBe(false);
+    expect(model.pendingAsk).toBeUndefined();
   });
 
   it("remembers a for the rest of the session", async () => {

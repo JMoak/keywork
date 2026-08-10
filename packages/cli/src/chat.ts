@@ -67,8 +67,8 @@ export async function chat(options: ChatOptions): Promise<void> {
 async function openCheckpoints(cwd: string): Promise<Checkpoints | undefined> {
   try {
     return await Checkpoints.open({ worktree: cwd, gitDir: snapshotGitDir(cwd) });
-  } catch {
-    console.log("undo unavailable — git was not found on this machine");
+  } catch (cause) {
+    console.log(`undo unavailable — ${(cause as Error).message}`);
     return undefined;
   }
 }
@@ -90,8 +90,8 @@ function mutationGuard(checkpoints: Checkpoints | undefined): ToolGuard {
 
 function nextAnswerKey(): Promise<"allow" | "always" | "deny"> {
   return new Promise((resolve) => {
-    const onKeypress = (_chunk: string, key: { name?: string } | undefined) => {
-      const answer = answerFor(key?.name);
+    const onKeypress = (_chunk: string, key: { name?: string; ctrl?: boolean } | undefined) => {
+      const answer = answerFor(key);
       if (answer === undefined) return;
       process.stdin.off("keypress", onKeypress);
       resolve(answer);
@@ -100,16 +100,19 @@ function nextAnswerKey(): Promise<"allow" | "always" | "deny"> {
   });
 }
 
-function answerFor(name: string | undefined): "allow" | "always" | "deny" | undefined {
-  if (name === "y" || name === "return") return "allow";
-  if (name === "a") return "always";
-  if (name === "n" || name === "escape") return "deny";
+function answerFor(
+  key: { name?: string; ctrl?: boolean } | undefined,
+): "allow" | "always" | "deny" | undefined {
+  if (key?.ctrl === true) return key.name === "c" ? "deny" : undefined;
+  if (key?.name === "y" || key?.name === "return") return "allow";
+  if (key?.name === "a") return "always";
+  if (key?.name === "n" || key?.name === "escape") return "deny";
   return undefined;
 }
 
 async function timeTravel(checkpoints: Checkpoints | undefined, line: string): Promise<void> {
   if (checkpoints === undefined) {
-    console.log("undo unavailable — git was not found on this machine");
+    console.log("undo unavailable in this session");
     return;
   }
   const moved = line === "/undo" ? await checkpoints.undo() : await checkpoints.redo();

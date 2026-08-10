@@ -82,18 +82,21 @@ gracefully — but the architecture, tests, and scoring assume hybrid as the nor
    wants to remember 4 things and change 1 skill") where staged items cross over:
    review / approve all / leave staged. Staged items persist across restarts; a `◇n`
    counter lives in the status line meanwhile.
-4. **Curing rendering**: independent of staging, entries harden visually — fresh writes
-   render dim/provisional (`~` prefix) and cure to full saturation by surviving sessions
-   and successful recalls; the pane's rendering *is* the trust model, and a poisoned
-   memory is by construction the most eye-catching newest thing on screen.
+4. **Curing rendering**: independent of staging, entries mature visually — fresh writes
+   render dim/provisional (`~` prefix) and reach full saturation as they age and get
+   used. Per J-D6 this is **display, not authority**: what an entry may do is fixed by
+   its provenance class + granted policy the moment it's written; saturation just tells
+   the human what's new. A poisoned memory is by construction the most eye-catching
+   newest thing on screen.
 
 Fixed invariants beneath all four: a **protected core** (trust config, guardrail skills,
 human-authored files) the agent can only ever *propose* against at any trust state, and
 the Hermes blast-radius rule — **agent-initiated curation never auto-touches
 human-authored files**. Rationale anchor: approval prompts run at ~93% autopilot, so the
 design makes trust ambiently visible and review cheap and batched instead of asking more.
-This mechanism also supersedes the ladder framing for E2's presentation — one gating
-vocabulary across memory, skills, config, and tool trust.
+Scope note (per J-D7): this machinery serves memory validity only; E2's tool-permission
+presentation may share its visual vocabulary but remains a separate, plain allow/ask/deny
+surface.
 
 **J-D5 — Atomic-note vault + graph leg** (2026-08-10, from the KG/Obsidian research
 pass). Three commitments:
@@ -120,6 +123,46 @@ pass). Three commitments:
    pointing at the skill's path) so "what do we know about this skill" still works, but
    skill files never depend on vault conventions. Revisit only after both systems have
    stabilized in daily use.
+
+**J-D6 — Trust is granted, not earned** (Jordan, 2026-08-10). keywork has **no
+reputation system**. What a write, source, scope, tool, or external mount may do is
+determined entirely by declarative, schema-validated policy: provenance classes mapped to
+allowed outcomes, the scope access matrix, protected-core paths, explicit grants for
+external scopes (e.g. an MCP-mounted team archive). One clean configuration plane that
+secops/infra teams can read, diff, version, and enforce — trust state is always
+reproducible from config + provenance, never from accumulated history. Consequences,
+applied throughout:
+
+- **Curing (J-D4 layer 4) is maturity *display*, not authority** — age/usage rendered as
+  saturation informs the human; it never changes what an entry is permitted to do.
+  Promotion and staging are decided by provenance class + policy alone.
+- **Usefulness scores tune retrieval ranking** (relevance), never permissions.
+- **Lore-style per-oracle earned trust is explicitly not adopted**; a mounted team scope
+  gets a scope-level grant in config like everything else.
+- E1/E2's allow/ask/deny stays its own simple surface in the same declarative *style* —
+  see J-D7; keywork does not build a unified trust framework.
+
+**J-D7 — Trust points at memory validity, and nothing else** (Jordan, 2026-08-10). The
+J-series trust machinery exists to answer exactly one question: **can this remembered
+thing be relied on — is it true, current, and correctly sourced?** It is not a general
+trust framework. Tool permissions remain E-stream's plain allow/ask/deny; skills keep
+only the blast-radius invariant and one-key revert; scopes are access control, not
+trust semantics. A shared *visual vocabulary* across these surfaces is desirable; a
+shared *system* is scope creep and is rejected.
+
+**The simplicity escape hatch (binding):** if any layer proves too complicated in
+practice, drop it rather than tune it. The irreducible kernel is three things —
+**provenance tagged, untrusted writes staged until approved, everything one-key
+revertable**. The airlock-as-ritual and the curing display are polish that must earn
+their keep in daily use, in that order of expendability. Minimal for effectiveness,
+beautiful in design.
+
+**The compass (why memory validity is the priority):** as models improve, the human's
+attention zooms out — from reviewing lines to supervising systems. At that altitude the
+scarce resource is justified confidence in what the system *believes*: whether a
+convention is current, where a decision came from, what superseded what. That is exactly
+what J's validity machinery (provenance, supersession, staleness-made-visible) buys, and
+why it is the one place trust complexity is allowed to live.
 
 ## Implementation refinements (third pass, 2026-08-10)
 
@@ -172,12 +215,16 @@ candidate set.
 ## Tasks
 
 ### J1 (2pt) — Workspace definition
-First-class workspace identity: a declared workspace (name, root, additional context dirs)
-persisted per J-D1; upgrade Track P's cwd-hash workspace state to key off declared
-workspace identity with cwd-hash as the undeclared fallback. `keywork` opens a workspace,
-not merely a directory.
+First-class workspace identity (form decided by Jordan, 2026-08-10): declaration at
+**`.keywork/workspace.json`** in the primary root — name + additional context dirs,
+schema-validated per D9 — with the workspace-scope vault at **`.keywork/memory/`**
+alongside it (in-repo, git-able: teammates share workspace shape *and* memory; P1's
+trust gate defends the untrusted-clone case). Upgrade Track P's cwd-hash workspace state
+to key off declared identity with cwd-hash as the undeclared fallback. `keywork` opens a
+workspace, not merely a directory.
 **Accept:** declare workspace with two extra dirs; state/persistence keys by workspace
-identity; undeclared cwd still works exactly as today.
+identity; undeclared cwd still works exactly as today; vault path resolves from the
+declaration.
 **Strategy:** `OWN` (VS Code workspace *concept* as prior art; no code to lift).
 
 ### J2 (2pt) — User-global config layer
@@ -207,7 +254,12 @@ unique-name invariant enforced); supersession link-pair fixture; layout document
 ### J4 (3pt) — Hybrid index & recall metrics
 SQLite sidecar per scope: atomic notes index **whole-note** (R2 — note = retrieval =
 citation = scoring unit); daily logs and imports chunk (~400 tokens, overlap); FTS5/BM25
-lexical + embedding vectors (provider or local; content-hash cache), RRF fusion (K=60),
+lexical + embedding vectors, RRF fusion (K=60). **Embedding default (Jordan,
+2026-08-10): provider-matched with mandatory user familiarity** — if the configured chat
+provider offers an embedding endpoint it is used, but never silently: onboarding
+discloses and confirms the embedding source, the memory pane shows it (source + model),
+and the first hybrid query surfaces a one-time notice with the config path. No provider ⇒
+lexical-only. Ollama is the explicit local/private opt-in. Content-hash cache;
 scope filter, debounced file-watcher reindex; the wikilink graph from J3's notes parses
 into the same index (backlinks, aliases, dead links). Designed for the third leg (J12's
 PPR list joins the same RRF) without rework. Index is disposable — rebuildable from
@@ -309,8 +361,11 @@ metadata on the write path with structural staging for untrusted origins; the se
 ledger with chips + one-key revert; the airlock digest at session end draining the **one
 review inbox** (R3 — staged writes, borderline promotions, contradiction reports,
 protected-core proposals in one ordered list; restart-safe; `◇n` status-line counter).
-Protected-core proposals render as outstanding-PR badges. E-stream (E1/E2) adopts the same
-vocabulary — one gating system, not two.
+Protected-core proposals render as outstanding-PR badges. Scoped per J-D7: this gates
+**memory validity only** — E-stream keeps its own plain allow/ask/deny surface, sharing
+visual vocabulary at most. Build the kernel first (provenance tag → untrusted staged →
+one-key revert), then the airlock ritual, then curing display — each later layer lands
+only if the previous one feels right in daily use (the J-D7 escape hatch).
 **Accept:** property test — no untrusted-origin write can become load-bearing without
 passing the airlock; ledger revert round-trips; digest lists exactly the session's staged
 items; protected-core file provably unwritable by the agent at every trust state;
@@ -357,14 +412,35 @@ its visual pieces with J9. F2 (repo map) later joins J12's entity space.
 ```
 
 Wants iteration-3's Track P (workspace persistence) and Track T (B7 compaction) landed
-first — workstream J is the natural **iteration-4 headliner**. ~29pt total.
+first. **Iteration-4 spine (Jordan, 2026-08-10): WP-1..3 → iteration-3 gates (P, B7) →
+workstream J and D14 run in parallel** — J is engine+vault-heavy, D14 is MCP+TUI, mostly
+disjoint files; J2 (user-global config incl. MCP) is the shared dependency both touch, so
+it lands first in the batch. ~29pt total for J.
+
+**J-D8 — Full model-role map** (Jordan, 2026-08-10). Named model roles per function,
+Lore-style: `chat` (the conversation), `gardener` (curation sweeps), `flush`
+(pre-compaction persistence turn), `titler` (session titles/branch summaries),
+`embeddings` (J4). Omakase defaults keep D9 honest: every non-chat role defaults to the
+cheap/fast tier of the already-configured provider (embeddings per J4's
+provider-matched rule) — zero required config, full control for those who want it, and
+each role option carries its `.describe()` justification (recurring background cost must
+never silently run on the flagship model).
+
+**Tunables are adaptive where possible** (Jordan, 2026-08-10): bootstrap budget as a
+percentage of the active model's context window (working default 2%), Gardener sweep cap
+as a percentage of recent session spend, inbox threshold by count-or-age — each defined
+adaptively in the schema with its `.describe()` justification, **and every policy
+readout (`/policy`, status surfaces) shows the resolved absolute values** so secops
+reasons in tokens, not formulas. Working defaults are provisional until dogfooding
+validates them.
 
 ## The experience (what this feels like)
 
 **Session start.** `keywork` opens the workspace; bootstrap is silent and cheap — the MOC
-resolves a handful of cured notes into context, and the memory pane (if docked) shows the
-scopes and a calm garden: mostly bright settled notes, maybe one dim `~` from yesterday.
-Nothing asks anything.
+resolves a handful of settled notes into context, and the memory pane (if docked) shows
+the scopes and a calm garden: mostly bright settled notes, maybe one dim `~` from
+yesterday. Nothing asks anything. For the infra-minded: everything the agent may do to
+memory today is readable in one policy file before the session even starts.
 
 **During work.** You open `packages/tui/layout.ts`; the memory pane quietly surfaces
 "split ratios decided 50/50 → superseded by [[ratio-resize-decision]]" — the agent knows,
@@ -387,11 +463,13 @@ Fix a wrong memory in any editor; the index rebuilds on save. Delete the entire 
 index in anger; nothing is lost.
 
 **The feel targets** (review bar for every J PR): bootstrap adds zero perceptible
-latency; nothing modal ever appears mid-flow; every glyph (`●◐○ ~ ◇ M+ S±`) is one of
-the shared D14/notification family and legible at a glance; the empty first-run state
+latency; nothing modal ever appears mid-flow; every mark comes from the density-ramp system in
+[`design-language.md`](../design-language.md) (which supersedes this doc's placeholder
+glyphs) and is legible at a glance; the empty first-run state
 is a quiet invitation ("keywork remembers what you teach it"), not a dashboard of zeros;
 and the whole system stays explainable in one sentence — *the agent writes notes you can
-read, they earn trust visibly, and nothing untrusted persists without you.*
+read, granted policy decides what they may become, and nothing untrusted persists
+without you.*
 
 **Honest risks to design against:** inbox rot if `◇n` is ignorable for weeks (mitigate:
 the airlock's approve-all is genuinely safe *because* untrusted items are visually
@@ -400,9 +478,79 @@ relevance floor, per-session novelty — never resurface the same note twice); G
 LLM cost creeping (mitigate: sweep budgets ride A15's token accounting, visible in the
 status line like everything else).
 
+## Edge-case resolutions (fourth-pass review, resolved 2026-08-10)
+
+Found by walking workflows and edge cases; all seven resolved with minimal-overhead
+designs (P1/P2/P3 decided by Jordan; P4–P7 had no real tradeoff).
+
+**P1 — RESOLVED (Jordan, 2026-08-10): untrusted workspace ⇒ memory fully inert.** No
+bootstrap injection, no search, no writes until the workspace is trusted via E6's
+first-open prompt (one keystroke, once per repo; headless/unknown contexts fail closed).
+One-sentence rule for secops: *untrusted workspace, inert memory.* Forensics on a
+stranger's `.keywork/memory/` remains available as an **explicit** act — ask the agent to
+read the files as untrusted data — rather than ambient retrieval; files-as-truth means
+option A loses no capability, only the attack surface. Same rule class as WP-4's
+project-config trust.
+
+**P2 — RESOLVED (Jordan, 2026-08-10): turn-level taint at the external-content
+boundary, configurable.** Content from outside the trusted workspace taints the turn —
+web fetches, MCP tool results, files beyond the workspace dirs, imported memory; local
+bash/read output of the workspace's own content does **not**. Every durable memory write
+from a tainted turn is untrusted-class → staged. The boundary lives in the policy plane
+as one readable block: sources are whitelistable, and MCP servers carry a per-server
+`trusted` flag in their config (a trusted server's results don't taint) — secops can
+tighten to all-tool-output-taints with one edit. Mechanically: a path-prefix interceptor
+stamps provenance on memory-path writes through the ordinary write/edit tools;
+deterministic, no LLM.
+
+**P3 — RESOLVED (Jordan, 2026-08-10): one inbox, three doors.** The airlock is
+per-workspace and surfaces at three natural boundaries, all draining the same inbox:
+(1) a **non-blocking digest at app exit** — skip leaves items staged, exit is never
+blocked; (2) **"while you were away"** at next workspace open when items are pending
+(crash and quit converge here); (3) **long-running sessions get caught too** — when the
+workspace runs continuously past a threshold or `◇n` crosses a configured count, the
+digest is *offered* quietly at a natural pause (a work-state notification moment, never
+a modal). Thresholds live in the policy plane; staged items are restart-safe throughout.
+
+**P4 — RESOLVED: entity notes mirror repo structure under `entities/`.** File-entity
+links use the full-path link form (`[[entities/packages/tui/layout.ts]]`) as the one
+sanctioned exception to the bare-name rule; `aliases` carry the short name so
+autocomplete and unlinked mentions still work. Path canonicalization is case-preserving
+with case-insensitive matching (cross-platform).
+
+**P5 — RESOLVED: redaction pass on every durable memory write.** Conservative
+secret-shaped patterns plus the exact values of session-visible secret env vars; matches
+are elided as `‹redacted:NAME›` **before** persistence — the secret itself is never
+written anywhere, staged included. Patterns extendable in the policy plane; deterministic,
+no LLM.
+
+**P6 — RESOLVED: one Gardener per workspace behind a lock**, mutating via a
+file-mutation queue (Pi's `withFileMutationQueue` pattern, I12); **sweep debt** tracked
+in workspace state so users who kill the terminal instantly still get overdue sweeps at
+next start, budget-capped.
+
+**P7 — RESOLVED: staged edits record their base content hash**; the airlock re-checks
+and demotes stale items to "needs rebase" (agent re-derives next session, or the user
+discards) instead of applying against a moved base.
+
+Minor (noted for task specs): PPR leg self-mutes when query seeds match no entities
+(early sparse graphs — don't dilute RRF); daily-log entries need a per-entry provenance
+marker format (atomic notes carry it in frontmatter, logs don't); sub-agent memory writes
+are untrusted-class by default until decided otherwise; the file watcher ignores
+`.obsidian/`; entity path canonicalization must handle case-insensitivity across
+platforms; the graph only knows *promoted* knowledge (same-day supersession relies on
+lexical recency until the next sweep — acceptable, documented); "successful recall" needs
+a concrete cheap definition before the usefulness EMA means anything; cold-start garden
+is all-dim by construction (first-week rendering needs its own calm look, not
+poisoned-alert styling).
+
 ## Non-goals (v1)
 
 - Cross-workspace federation (designed-for via J6's scope seam; built post-v1).
+- **Memory imports from other tools** (Claude Code, OpenClaw, …) — post-v1 (Jordan,
+  2026-08-10). J6's imported-scope policy (searchable, never bootstrap-injected,
+  untrusted provenance) stays designed-for; the vault format makes the importer a small
+  additive later.
 - Memory encryption at rest (rosavera's person-scope privacy weight doesn't apply to
   workspace/user coding scopes; revisit if scopes ever carry personal data).
 - GEPA-style skill evolution (recorded in the Hermes dossier; not v1).

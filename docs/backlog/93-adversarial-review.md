@@ -1,5 +1,24 @@
 # Adversarial Review — Consolidated Findings & Parallel Work Plan
 
+> **GO (Jordan, 2026-08-10): WP-1 + WP-2 + WP-3 land now, before the remaining
+> iteration-3 tracks.** Rationale: five P0s are live under daily dogfooding, and
+> workstream J (95) structurally depends on WP-1 — the protected core needs filesystem
+> confinement (D), and memory's secret redaction (95/P5) needs the env allowlist (E).
+
+> **Status (2026-08-10): wave 1 landed — WP-1 + WP-2 + WP-3 all complete, gate green (287 tests).**
+> WP-1: root-jail via `tools/confine.ts` across read/write/edit, bash env scrub
+> (`*_API_KEY`/`KEYWORK_*`), detached-group SIGTERM→SIGKILL (taskkill `/t` on Windows),
+> settle-on-exit, live output cap, CRLF round-trip edit, non-overlapping match count
+> (P0 C/D/E, P1 G, P2 15/16, sec-5).
+> WP-2: interrupt repair synthesizes errored results for orphaned tool_calls before persist
+> (wire-valid history, `--resume` safe), `AgentBusyError` busy-guard on `send()`,
+> `ConversationModel.dispose()` unsubscribes + interrupts on pane close, usage kept on
+> partial turns (P0 A/B, P1 I, P2 11).
+> WP-3: mid-stream SSE errors surface as `ProviderStreamError`, hardened line parsing with
+> trailing-buffer flush, set-once callId/name with synthesized ids, 1 MiB buffer/args
+> ceilings, `isTransient` narrowed off bare TypeError, abortable backoff (P1 F/H/O, P2 9/10, sec-6).
+> Next wave: WP-4 + WP-7 + WP-8.
+
 > Three hostile reviewers (engine, TUI, security), 2026-08-09, over the 158-test working tree.
 > Findings deduped and cross-verified — several issues were independently found by two reviewers
 > (noted). Severity: **P0** broken/exploitable now · **P1** will bite soon · **P2** debt.

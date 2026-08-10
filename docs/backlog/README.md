@@ -44,3 +44,14 @@ one keywork feature built *using* keywork) · **M3** = F1–F5 · G1–G6 · C15
 
 **ID authority:** these backlog files are canonical; the coarser IDs in `../tasks.md` are
 superseded narrative.
+
+**Release posture (Jordan, 2026-08-10):** keywork is **FSL-1.1-MIT** (`LICENSE.md`);
+the repo **goes public at the M2 demo** — arriving as the tiling-pane harness, with CI
+green and docs coherent as the publishing bar. **The launch screencast is
+"zero-to-working in 60 seconds"**: install → onboarding → first agent turn → first undo,
+one real-time minute — which makes onboarding polish (C19, D13) and packaging (G3)
+launch-critical. The README one-liner leads **feel-led** (the terminal-video-game /
+craft experience; Jordan wordsmiths the final line), with the tiling screenshot
+adjacent so the feel claim is instantly grounded. Security order of record: WP-1..3 (93) land before all remaining
+feature tracks; iteration 4 = workstream J + D14 in parallel after the P/B7 gates.
+Visual vocabulary of record: [`../design-language.md`](../design-language.md).

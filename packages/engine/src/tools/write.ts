@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { z } from "zod";
+import { confinedPath } from "./confine.ts";
 import { defineTool } from "./define.ts";
 
 const schema = z.object({
@@ -15,7 +16,7 @@ export function writeTool(cwd: string) {
     schema,
     mutates: true,
     run: async ({ path, content }) => {
-      const target = resolve(cwd, path);
+      const target = confinedPath(cwd, path);
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, content, "utf8");
       return `Wrote ${content.length} characters to ${path}`;

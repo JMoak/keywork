@@ -11,6 +11,21 @@ export interface CheckpointsOptions {
 
 const defaultLimit = 64;
 
+const repoStateVars = new Set([
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_NAMESPACE",
+  "GIT_COMMON_DIR",
+  "GIT_CEILING_DIRECTORIES",
+]);
+
+function withoutRepoStateEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !repoStateVars.has(key)));
+}
+
 export class Checkpoints {
   private readonly undoTrees: string[] = [];
   private readonly redoTrees: string[] = [];
@@ -88,7 +103,7 @@ export class Checkpoints {
         cwd: this.worktree,
         windowsHide: true,
         env: {
-          ...process.env,
+          ...withoutRepoStateEnv(process.env),
           GIT_DIR: this.gitDir,
           GIT_WORK_TREE: this.worktree,
           GIT_INDEX_FILE: join(this.gitDir, "index"),
