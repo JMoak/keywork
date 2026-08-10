@@ -34,7 +34,7 @@ Typed pub/sub in-process bus: event envelope `{id, ts, sessionId, type, payload}
 subscribe-by-type with full inference; sync dispatch, no external deps.
 **Accept:** type-safe subscription (compile error on wrong payload); ordering guaranteed;
 1k events dispatch < 5ms.
-**Strategy:** `REIMPL:crush` bus shape; `OWN` implementation.
+**Strategy:** `OWN` design and implementation.
 
 ### A5 (2pt) — Event vocabulary v1
 `docs/events.md`: the named event set, SSE-shaped from day one (D7) — session lifecycle, turn

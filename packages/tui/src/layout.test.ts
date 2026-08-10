@@ -59,10 +59,12 @@ describe("Layout dwindle tiling", () => {
         alive.push(id);
         const focusTarget = alive[Math.floor(random() * alive.length)] as string;
         layout.focus(focusTarget);
-      } else if (roll < 0.65) {
+      } else if (roll < 0.6) {
         layout.dockFocused(random() < 0.5 ? "left" : "right");
-      } else if (roll < 0.8) {
+      } else if (roll < 0.7) {
         layout.undockFocused(screen);
+      } else if (roll < 0.85) {
+        layout.resizeFocused((random() - 0.5) * 0.4);
       } else {
         const victim = alive.splice(Math.floor(random() * alive.length), 1)[0] as string;
         layout.close(victim);
@@ -236,6 +238,100 @@ describe("Layout dock", () => {
     expect(layout.dock()).toEqual({ side: "left", panes: ["b", "c"] });
     expect(layout.focused()).toBe("c");
     assertExactTiling(layout);
+  });
+});
+
+describe("Layout split ratios", () => {
+  it("grows the focused pane along its parent split", () => {
+    const layout = layoutWith("a", "b");
+    layout.focus("b");
+    layout.resizeFocused(0.1);
+    expect(layout.rects(screen).get("a")).toEqual({ x: 0, y: 0, width: 48, height: 40 });
+    expect(layout.rects(screen).get("b")).toEqual({ x: 48, y: 0, width: 72, height: 40 });
+    assertExactTiling(layout);
+  });
+
+  it("shrinks the focused pane with a negative delta", () => {
+    const layout = layoutWith("a", "b");
+    layout.focus("b");
+    layout.resizeFocused(-0.1);
+    expect((layout.rects(screen).get("b") as Rect).width).toBe(48);
+    assertExactTiling(layout);
+  });
+
+  it("clamps the ratio so repeated growth stalls at the bounds", () => {
+    const layout = layoutWith("a", "b");
+    layout.focus("a");
+    for (let i = 0; i < 50; i += 1) layout.resizeFocused(0.05);
+    expect((layout.rects(screen).get("a") as Rect).width).toBe(108);
+    layout.resizeFocused(0.05);
+    expect((layout.rects(screen).get("a") as Rect).width).toBe(108);
+    assertExactTiling(layout);
+  });
+
+  it("never collapses a pane below the minimum cells on a small screen", () => {
+    const small: Screen = { width: 20, height: 4 };
+    const layout = new Layout();
+    layout.open("a", small);
+    layout.open("b", small);
+    layout.resizeFocused(10);
+    const rects = layout.rects(small);
+    expect((rects.get("a") as Rect).width).toBeGreaterThanOrEqual(5);
+    expect((rects.get("b") as Rect).width).toBeGreaterThanOrEqual(5);
+  });
+
+  it("never collapses a pane below the minimum rows in a column split", () => {
+    const tall: Screen = { width: 10, height: 12 };
+    const layout = new Layout();
+    layout.open("a", tall);
+    layout.open("b", tall);
+    layout.focus("a");
+    layout.resizeFocused(10);
+    expect((layout.rects(tall).get("b") as Rect).height).toBeGreaterThanOrEqual(3);
+  });
+
+  it("restores the identical tree and rects through zoom, ratios included", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("c");
+    layout.resizeFocused(0.15);
+    const tree = layout.root();
+    const before = layout.rects(screen);
+    layout.zoomToggle();
+    layout.zoomToggle();
+    expect(layout.root()).toEqual(tree);
+    expect(layout.rects(screen)).toEqual(before);
+  });
+
+  it("keeps the adjusted ratio in place when panes swap", () => {
+    const layout = layoutWith("a", "b");
+    layout.focus("a");
+    layout.resizeFocused(0.1);
+    layout.swap("right", screen);
+    const rects = layout.rects(screen);
+    expect((rects.get("b") as Rect).width).toBe(72);
+    expect((rects.get("a") as Rect).width).toBe(48);
+    assertExactTiling(layout);
+  });
+
+  it("stays gapless after resizing and closing panes", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("b");
+    layout.resizeFocused(0.2);
+    layout.close("b");
+    assertExactTiling(layout);
+    layout.resizeFocused(0.1);
+    assertExactTiling(layout);
+  });
+
+  it("ignores resize for a sole or docked pane", () => {
+    const layout = layoutWith("a");
+    layout.resizeFocused(0.2);
+    expect(layout.rects(screen).get("a")).toEqual({ x: 0, y: 0, width: 120, height: 40 });
+    layout.open("b", screen);
+    layout.dockFocused("left");
+    const before = layout.rects(screen);
+    layout.resizeFocused(0.2);
+    expect(layout.rects(screen)).toEqual(before);
   });
 });
 

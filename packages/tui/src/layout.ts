@@ -12,7 +12,15 @@ export interface Rect {
 
 export type LayoutNode =
   | { kind: "leaf"; id: PaneId }
-  | { kind: "split"; orientation: Orientation; first: LayoutNode; second: LayoutNode };
+  | {
+      kind: "split";
+      orientation: Orientation;
+      ratio: number;
+      first: LayoutNode;
+      second: LayoutNode;
+    };
+
+export type SplitNode = Extract<LayoutNode, { kind: "split" }>;
 
 export interface Screen {
   width: number;
@@ -22,6 +30,9 @@ export interface Screen {
 const terminalCellAspect = 2;
 const dockRatioBounds = { min: 0.15, max: 0.6 };
 const defaultDockRatio = 1 / 3;
+const splitRatioBounds = { min: 0.1, max: 0.9 };
+const minPaneWidth = 5;
+const minPaneHeight = 3;
 
 export class Layout {
   private tree: LayoutNode | undefined;
@@ -147,6 +158,11 @@ export class Layout {
     this.dockRatio = clamp(this.dockRatio + delta, dockRatioBounds.min, dockRatioBounds.max);
   }
 
+  resizeFocused(delta: number): void {
+    if (this.focusedId === undefined || this.tree === undefined) return;
+    this.tree = resizeAroundLeaf(this.tree, this.focusedId, delta);
+  }
+
   rects(screen: Screen): Map<PaneId, Rect> {
     const result = new Map<PaneId, Rect>();
     const full: Rect = { x: 0, y: 0, width: screen.width, height: screen.height };
@@ -243,7 +259,7 @@ function splitLeaf(
 ): LayoutNode {
   if (node.kind === "leaf") {
     if (node.id !== target) return node;
-    return { kind: "split", orientation, first: node, second: incoming };
+    return { kind: "split", orientation, ratio: 0.5, first: node, second: incoming };
   }
   return {
     ...node,
@@ -279,24 +295,72 @@ function collectRects(node: LayoutNode, rect: Rect, into: Map<PaneId, Rect>): vo
     into.set(node.id, rect);
     return;
   }
-  const [first, second] = divide(rect, node.orientation);
+  const [first, second] = divide(rect, node);
   collectRects(node.first, first, into);
   collectRects(node.second, second, into);
 }
 
-function divide(rect: Rect, orientation: Orientation): [Rect, Rect] {
-  if (orientation === "row") {
-    const firstWidth = Math.floor(rect.width / 2);
+function divide(rect: Rect, split: SplitNode): [Rect, Rect] {
+  if (split.orientation === "row") {
+    const width = divideExtent(
+      rect.width,
+      split.ratio,
+      minWidth(split.first),
+      minWidth(split.second),
+    );
     return [
-      { ...rect, width: firstWidth },
-      { ...rect, x: rect.x + firstWidth, width: rect.width - firstWidth },
+      { ...rect, width },
+      { ...rect, x: rect.x + width, width: rect.width - width },
     ];
   }
-  const firstHeight = Math.floor(rect.height / 2);
+  const height = divideExtent(
+    rect.height,
+    split.ratio,
+    minHeight(split.first),
+    minHeight(split.second),
+  );
   return [
-    { ...rect, height: firstHeight },
-    { ...rect, y: rect.y + firstHeight, height: rect.height - firstHeight },
+    { ...rect, height },
+    { ...rect, y: rect.y + height, height: rect.height - height },
   ];
+}
+
+function divideExtent(total: number, ratio: number, minFirst: number, minSecond: number): number {
+  const preferred = clamp(Math.round(total * ratio), minFirst, total - minSecond);
+  return clamp(preferred, 1, Math.max(1, total - 1));
+}
+
+function minWidth(node: LayoutNode): number {
+  if (node.kind === "leaf") return minPaneWidth;
+  const first = minWidth(node.first);
+  const second = minWidth(node.second);
+  return node.orientation === "row" ? first + second : Math.max(first, second);
+}
+
+function minHeight(node: LayoutNode): number {
+  if (node.kind === "leaf") return minPaneHeight;
+  const first = minHeight(node.first);
+  const second = minHeight(node.second);
+  return node.orientation === "column" ? first + second : Math.max(first, second);
+}
+
+function resizeAroundLeaf(node: LayoutNode, id: PaneId, delta: number): LayoutNode {
+  if (node.kind === "leaf") return node;
+  if (isLeafOf(node.first, id)) return withRatio(node, node.ratio + delta);
+  if (isLeafOf(node.second, id)) return withRatio(node, node.ratio - delta);
+  return {
+    ...node,
+    first: resizeAroundLeaf(node.first, id, delta),
+    second: resizeAroundLeaf(node.second, id, delta),
+  };
+}
+
+function isLeafOf(node: LayoutNode, id: PaneId): boolean {
+  return node.kind === "leaf" && node.id === id;
+}
+
+function withRatio(split: SplitNode, ratio: number): SplitNode {
+  return { ...split, ratio: clamp(ratio, splitRatioBounds.min, splitRatioBounds.max) };
 }
 
 function nearestInDirection(

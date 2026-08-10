@@ -9,8 +9,8 @@
 >
 > **Standing guardrails (unchanged):** no Anthropic wiring of any kind before workstream G;
 > API-key / Agent-SDK only, ever; no subscription-OAuth code paths ported from any source.
-> Pi/OpenCode are MIT — lift with attribution in `NOTICE`; Crush is FSL — ideas only, never
-> source.
+> Pi/OpenCode are MIT — lift with attribution in `NOTICE`; Crush is FSL — never a source
+> (no code ever, and since 2026-08-10 no design credits either — those features are `OWN`).
 
 ## Completed ledger (verified against the working tree)
 

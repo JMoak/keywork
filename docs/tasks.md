@@ -8,8 +8,8 @@
 > Derived from [`vision.md`](vision.md). Organized for **parallel execution**: six workstreams
 > with explicit dependency gates. Tasks tagged with their lift strategy:
 > **[LIFT:pi]** / **[LIFT:opencode]** / **[LIFT:aider]** — adapt MIT/Apache source with attribution ·
-> **[REIMPL:crush]** — reimplement the idea, never the source ·
-> **[OWN]** — original work.
+> **[OWN]** — original work. (The former **[REIMPL:crush]** tag is retired — 2026-08-10
+> decision: Crush is not a design source; those items are now [OWN].)
 >
 > Anthropic provider wiring is deliberately **absent until M3** (API-key only, per guardrail).
 
@@ -35,7 +35,7 @@
 | ID | Task | Depends | Strategy |
 |---|---|---|---|
 | A1 | Provider-agnostic message/turn format + streaming abstraction | M0 | [LIFT:pi] `pi-ai` / [LIFT:opencode] `packages/llm` — study both, pick one, **excise all subscription-OAuth** |
-| A2 | Typed event bus: event vocabulary designed OpenAPI/SSE-shaped (D7) | M0 | [REIMPL:crush] event-bus shape; [LIFT:opencode] SSE event naming |
+| A2 | Typed event bus: event vocabulary designed OpenAPI/SSE-shaped (D7) | M0 | [OWN] bus design; [LIFT:opencode] SSE event naming |
 | A3 | Agent loop: prompt assembly (shortest-viable system prompt), tool dispatch, steer/queue interruption semantics | A1, A2 | [LIFT:pi] loop + prompt structure + `streamingBehavior` |
 | A4 | Four core tools: `read`/`write`/`edit`/`bash` (Windows-first bash story decided here) | A3 | [LIFT:pi] tool impls |
 | A5 | Headless print/JSON mode over the bus (unlocks E2E Vitest harness for everyone) | A3 | [LIFT:pi] print-mode contract |
@@ -61,7 +61,7 @@
 | C5 | Conversation pane: streaming render, steer/queue keys, markdown, tool-call display | C4, A3 | [LIFT:opencode] components; [LIFT:pi] steer UX |
 | C6 | Session-tree pane + diff pane + terminal pane (first pane set) | C4, B2 | [OWN] composition; [LIFT:opencode] diff rendering |
 | C7 | Theming: token palette, JSON schema, `system` terminal-derived default | C1 | [LIFT:opencode] theme schema + system theme |
-| C8 | Status line: trust indicator slot, honest token/cost display | C1, A3 | [REIMPL:crush] visible-trust idea |
+| C8 | Status line: trust indicator slot, honest token/cost display | C1, A3 | [OWN] |
 
 ## Workstream D — Extensions & commands (owner-track 4; parallel after A2)
 
@@ -70,16 +70,16 @@
 | D1 | Extension API: Pi's event taxonomy (~30 hooks), registerTool/Command/Shortcut, replayable entries | A2, B4 | [LIFT:pi] wholesale |
 | D2 | `/reload` hot reload (extensions/skills/themes/keybindings) | D1 | [LIFT:pi] |
 | D3 | Markdown commands: `$ARGUMENTS`, `` !`cmd` ``, `@file`; agents-as-markdown frontmatter | D1 | [LIFT:opencode] verbatim format |
-| D4 | `SKILL.md` support + cross-agent discovery walk (`.claude/skills`, `.cursor/skills`, …) | D1 | [REIMPL:crush] discovery; open standard |
+| D4 | `SKILL.md` support + cross-agent discovery walk (`.claude/skills`, `.cursor/skills`, …) | D1 | [OWN]; open standard |
 | D5 | **MCP host in core, lazy** (D1-gated): stdio/http/sse transports, deferred tool schemas (names only until used) | D1, A3 | [LIFT:opencode] server-side MCP endpoints; [OWN] lazy-schema design |
-| D6 | `.keyworkignore` (gitignore syntax) respected by tools + repo map | A4 | [REIMPL:crush] (trivial) |
+| D6 | `.keyworkignore` (gitignore syntax) respected by tools + repo map | A4 | [OWN] (trivial) |
 
 ## Workstream E — Trust & safety (owner-track 5; small, parallel after D1)
 
 | ID | Task | Depends | Strategy |
 |---|---|---|---|
 | E1 | Gate extension: allow/ask/deny matrix, glob bash rules, per-agent | D1 | [LIFT:opencode] config model |
-| E2 | Trust ladder UX: visible level in status line, one key to change (feeds C8) | E1, C8 | [REIMPL:crush] ladder idea |
+| E2 | Trust ladder UX: visible level in status line, one key to change (feeds C8) | E1, C8 | [OWN] design |
 | E3 | Git-snapshot `/undo` `/redo` | A4 | [LIFT:opencode] mechanism |
 | E4 | Plan/Build blessed agents + Tab switch | D3, E1 | [LIFT:opencode] markdown agents verbatim |
 
@@ -89,7 +89,7 @@
 |---|---|---|---|
 | F1 | v1: curated CLI recipes (tsc, eslint, etc.) as skills/commands, not core code | A4, D3 | [OWN] |
 | F2 | Repo map extension: ranked structural context | D1 | [LIFT:aider] Apache-2.0, adapt to TS |
-| F3 | LSP-as-agent-tools extension (`vtsls` first): diagnostics + symbols; lifecycle mgmt | D1, F2 | [REIMPL:crush] idea / [LIFT:opencode] MIT LSP layer — never Crush source |
+| F3 | LSP-as-agent-tools extension (`vtsls` first): diagnostics + symbols; lifecycle mgmt | D1, F2 | [OWN] design / [LIFT:opencode] MIT LSP layer |
 
 ## M3 gate — Anthropic provider (deliberately late)
 
@@ -100,8 +100,8 @@
 ## P2 — Reach (designed now, built post-v1)
 
 Server wrap of the bus (OpenAPI 3.1 + SSE) → `keywork attach --pane X` (tmux/zellij mounting)
-→ shared workspaces by `--cwd` [REIMPL:crush] → notifications (native/OSC/bell)
-[REIMPL:crush] → `/share`-style HTML export [LIFT:pi].
+→ shared workspaces by `--cwd` [OWN] → notifications designed from keywork's own
+work-management model [OWN] → `/share`-style HTML export [LIFT:pi].
 
 ## Parallelization map
 

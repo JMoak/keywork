@@ -4,15 +4,16 @@
 > [`comparison.md`](comparison.md) §4. Each decision is binding until explicitly revisited.
 >
 > **Standing guardrails (restated everywhere on purpose):** Pi and OpenCode are MIT — lift with
-> attribution. Crush is FSL-1.1-MIT — ideas only, never copy source. Anthropic access is
+> attribution. Crush is FSL-1.1-MIT — never a source: no code ever, and since 2026-08-10 no
+> design credits either (formerly Crush-credited features are original designs). Anthropic access is
 > **API-key / Agent-SDK only**; no subscription-OAuth, ever, and no Anthropic provider wiring at
 > all until the dedicated API-key milestone.
 
 ## The one-liner
 
 **keywork** is a keyboard-first coding-agent harness with native multi-pane tiling: Pi's
-minimal core and extension model, OpenCode's architecture and stack, Crush's product
-sensibility (reimplemented), and Omarchy's attention to operational detail — Bun + TypeScript +
+minimal core and extension model, OpenCode's architecture and stack, its own product
+sensibility, and Omarchy's attention to operational detail — Bun + TypeScript +
 Vitest + OpenTUI.
 
 ## Decisions
@@ -32,7 +33,7 @@ experience (Omarchy omakase); every core addition requires a written justificati
 
 ### D3 — Permissions: gate extension with a visible trust ladder
 Shipped-on gate extension implementing OpenCode's allow/ask/deny config model (MIT lift,
-glob-scoped bash rules, per-agent) presented through Crush's *idea* of a graduated trust
+glob-scoped bash rules, per-agent) presented through keywork's own graduated trust
 ladder: one always-visible trust indicator in the status line, one key to change level.
 Replaceable by power users because it's just an extension (D2).
 
@@ -40,15 +41,15 @@ Replaceable by power users because it's just an extension (D2).
 1. **P0** — Pi's JSONL tree format (`id`/`parentId`, active leaf, fork/clone/labels, branch
    summaries, promptable compaction). Lifted format = Pi tooling stays compatible.
 2. **P1** — git-snapshot `/undo` `/redo` of file changes (OpenCode mechanism, MIT lift).
-3. **P2** — live shared workspaces: same `--cwd` ⇒ implicit join (Crush idea, own protocol).
+3. **P2** — live shared workspaces: same `--cwd` ⇒ implicit join (own design and protocol).
 
 ### D5 — Code intelligence: all three rungs, phased ("MIT mode online")
 Committed to the full stack, landed in cost order so nothing blocks the core loop:
 1. **v1** — CLI tools via bash (tsc, linters) — free, ships with the four-tool core.
 2. **v1.x** — Aider-style ranked repo map (Apache-2.0, adaptable) as a blessed extension.
 3. **capstone** — LSP-as-agent-tools (`vtsls`/`typescript-language-server` first): diagnostics
-   and symbols exposed to the model. Crush's idea; implementation is our own or adapted from
-   OpenCode's MIT LSP layer — never Crush source.
+   and symbols exposed to the model. Our own design; implementation is our own or adapted
+   from OpenCode's MIT LSP layer.
 
 ### D6 — Panes: keywork owns tiling; panes are bus clients
 The differentiator. Every pane (conversation, diff/files, terminal, session tree, …) is a
@@ -59,8 +60,8 @@ workspace server (`keywork attach --pane diff`), making tmux/zellij composition 
 surface, not a dependency. One pane abstraction, two mounting surfaces.
 
 ### D7 — Topology: in-process bus, server-shaped
-Headless engine as a library emitting **typed events on an internal bus** (Crush's shape,
-reimplemented; convergent with OpenCode's SSE design). TUI subscribes in-process for v1. The
+Headless engine as a library emitting **typed events on an internal bus** (own design;
+convergent with OpenCode's SSE design). TUI subscribes in-process for v1. The
 event vocabulary is designed OpenAPI/SSE-shaped from day one so the P2 server wrap
 (HTTP + SSE, spec at `/doc`) is mechanical, not a rewrite. Print/JSON headless mode rides the
 same bus (testability, CI, scripting).

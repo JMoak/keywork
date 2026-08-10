@@ -6,9 +6,12 @@
 > order implies them loosely; the workstream files can be attacked in parallel.
 >
 > **Point scale:** 1pt ≈ one focused hour or two · 2pt ≈ a half-day · 3pt ≈ a full day.
-> **Strategy tags:** `LIFT:pi` / `LIFT:opencode` / `LIFT:aider` = adapt MIT/Apache source with
-> attribution (record in `NOTICE`) · `REIMPL:crush` = reimplement the idea, never the source ·
+> **Strategy tags:** `LIFT:pi` / `LIFT:opencode` / `LIFT:aider` / `LIFT:openclaw` /
+> `LIFT:hermes` = adapt MIT/Apache source with attribution (record in `NOTICE`) ·
+> `ADAPT:rosavera` = adapt Jordan's own private rosavera code (no attribution obligation) ·
 > `OWN` = original work.
+> The former `REIMPL:crush` tag is retired (2026-08-10): Crush is not a design source;
+> every task that carried it is now `OWN`, designed from first principles.
 >
 > **Standing guardrails:** no Anthropic wiring of any kind before workstream G; API-key /
 > Agent-SDK only, ever; no subscription-OAuth code paths ported from any source.
@@ -19,7 +22,7 @@
 | [`10-engine.md`](10-engine.md) | A — engine core | 15 | 30 |
 | [`20-sessions.md`](20-sessions.md) | B — session trees | 8 | 15 |
 | [`30-tui.md`](30-tui.md) | C — TUI, keyboard, tiling | 18 | 37 |
-| [`40-extensions.md`](40-extensions.md) | D — extensions, commands, MCP | 11 | 22 |
+| [`40-extensions.md`](40-extensions.md) | D — extensions, commands, MCP | 12 | 24 |
 | [`50-trust.md`](50-trust.md) | E — trust & safety | 5 | 10 |
 | [`60-code-intel.md`](60-code-intel.md) | F — code intelligence | 5 | 10 |
 | [`70-anthropic.md`](70-anthropic.md) | G — Anthropic (late, gated) | 2 | 3 |
@@ -27,8 +30,10 @@
 
 | [`90-plan-review.md`](90-plan-review.md) | **Authoritative overlay** — combined two-reviewer findings: 15 new tasks (E6 trust gate, C0 TUI harness, D0 slash registry, packaging/docs/onboarding, …), resequencing (guardrail CI grep → M0, undo → M1), resizing, corrected milestone map | 15 | +43 |
 | [`91-progress-and-feedback.md`](91-progress-and-feedback.md) | **Authoritative overlay** — completed ledger (done/partial per ID), 7 new tasks from first user feedback (C24 empty state, C25 slash autocomplete, C26 quick menu superseding C5, C27/C28 dock layout, D12 provider-free commands, D13 `/onboarding`), corrected mid-M2 milestone statement, next-up ordering | 7 | +12 |
+| [`95-memory-and-skills.md`](95-memory-and-skills.md) | **Workstream J** — memory & self-healing skills: workspace/user scopes (J-D1), engine-core memory (J-D2), hybrid RRF retrieval (J-D3), Gardener curation, pre-compaction flush, memory pane, Hermes-style skill healing, write-gating design open (J-D4). Sources: OpenClaw (MIT), Hermes (MIT), rosavera (Jordan's own) | 11 | +25 |
 
-**Total: 97 tasks, ~208 points** (after review + progress overlays).
+**Total: 109 tasks, ~235 points** (after review + progress overlays; D14 MCP status dock
+and workstream J added 2026-08-10).
 
 **Milestone map — see `90-plan-review.md` (authoritative), current status in
 `91-progress-and-feedback.md`:**

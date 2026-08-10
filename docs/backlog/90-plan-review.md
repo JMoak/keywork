@@ -92,8 +92,9 @@ design vs. implementation) · F2 → 5pt. Standing rule: **no task whose accepta
 - A7: pin Pi's reference token count in-repo as a fixture; don't track a moving target.
 - C16 absorbs accessibility: `NO_COLOR`, reduced-motion honored; C17 keeps contrast checks.
 - B6/C5: in-TUI session list/switch is explicitly palette-reachable (fuzzy, per P8).
-- Every `REIMPL:crush` task's definition-of-done adds: "no Crush source consulted during
-  implementation" (mirrors G2's process artifact; policy line added to M0.3's scope).
+- The former `REIMPL:crush` tag is retired (2026-08-10 decision): Crush is not a design
+  source, and every task that carried the tag is now `OWN`, designed from first principles.
+  The FSL rule stands regardless — Crush source is never consulted.
 
 ## Revised totals
 

@@ -23,7 +23,7 @@ Exact-pin policy (no `^`/`~` in any `package.json`), committed lockfile, `.npmrc
 **Strategy:** `LIFT:pi` practices (their supply-chain README section).
 
 ### M0.3 (2pt) — Agent instructions & attribution policy
-`AGENTS.md`: project conventions, the licensing map (Pi/OpenCode MIT-lift, Crush ideas-only),
+`AGENTS.md`: project conventions, the licensing map (Pi/OpenCode MIT-lift, Crush excluded),
 the Anthropic API-key-only guardrail, pointer to `docs/`. `CLAUDE.md` shim containing
 `@AGENTS.md`. `NOTICE` file seeded with Pi and OpenCode attribution blocks (MIT texts +
 "portions adapted from" lines) — every future `LIFT` task appends here.

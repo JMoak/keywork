@@ -13,8 +13,10 @@ overlay).
    No Anthropic provider wiring at all before backlog task G1.
 2. **Licensing:** Pi (`earendil-works/pi`) and OpenCode (`sst/opencode`) are MIT — code may be
    adapted **with attribution recorded in `NOTICE`**. Crush (`charmbracelet/crush`) is
-   FSL-1.1-MIT — **ideas only; never copy, port, or closely paraphrase its source**, and never
-   consult its source while implementing a `REIMPL:crush` task.
+   FSL-1.1-MIT and is **not a source for keywork at all**: never copy, port, or closely
+   paraphrase its source, and (2026-08-10 decision) its formerly-credited ideas are retired —
+   the `REIMPL:crush` tag no longer exists; design those features from first principles as
+   `OWN` work rather than from Crush.
 3. **Git:** the user commits; agents never run `git commit` or `git push` unless explicitly
    asked in the current conversation.
 

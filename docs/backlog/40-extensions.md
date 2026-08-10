@@ -57,7 +57,8 @@ Load skills from `.keywork/skills/` **and** discover existing `.claude/skills/`,
 `.cursor/skills/` etc. (cross-agent walk) so team skill investments work day one; skills
 surface in palette and are model-invokable.
 **Accept:** fixture repo with a `.claude/skills/` skill: discovered, listed, invokable.
-**Strategy:** `REIMPL:crush` discovery walk (open standard; never Crush source).
+**Strategy:** `OWN` (the `SKILL.md` format and cross-agent directory names are public
+convention).
 
 ### D8 (2pt) — MCP client: stdio transport
 Spawn/manage stdio MCP servers from config; handshake, tool listing, invocation, restart on
@@ -82,4 +83,17 @@ context until a schema is requested; post-fetch invocation works.
 Gitignore-syntax exclusion file respected by read/edit tools' discovery surfaces, repo map
 (F2), and diff pane; combines with `.gitignore`.
 **Accept:** ignored fixture paths invisible to tool globbing and repo map.
-**Strategy:** `REIMPL:crush` idea (trivial); standard ignore-parser dep.
+**Strategy:** `OWN` (trivial); standard ignore-parser dep.
+
+### D14 (2pt) — MCP status dock pane
+(2026-08-10, Jordan.) When any MCP server is configured, startup docks a node on the right
+(C27/C28 dock) showing a tight per-server status line: name, connection state, tool count.
+Focusing it opens a simple interaction menu per server — enable/disable, restart, list
+tools — in the spirit of OpenCode's MCP menu, re-presented as a dock-native pane. Connection
+progress gets keywork's own loading indicator: tight like OpenCode's, but an original,
+more imaginative design (spec it before building; no spinner-by-default).
+**Accept:** fixture config with two servers (one healthy, one failing) docks the pane on
+start with correct states; menu restart recovers the failing server; zero MCP config ⇒ no
+pane, zero cost.
+**Strategy:** `LIFT:opencode` MCP plumbing/status semantics (D8–D10); `OWN` dock
+presentation and loading indicator.

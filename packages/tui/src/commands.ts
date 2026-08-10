@@ -3,7 +3,7 @@ export interface CommandSpec {
   description: string;
   aliases?: readonly string[];
   shortcut?: string;
-  run(): void;
+  run(args?: string): void;
 }
 
 export interface CommandMatch {
@@ -13,19 +13,25 @@ export interface CommandMatch {
 
 export class CommandRegistry {
   private readonly commands: CommandSpec[] = [];
+  private readonly sources: Array<() => CommandSpec[]> = [];
 
   register(command: CommandSpec): void {
     this.commands.push(command);
   }
 
-  all(): readonly CommandSpec[] {
-    return this.commands;
+  addSource(source: () => CommandSpec[]): void {
+    this.sources.push(source);
+  }
+
+  all(): CommandSpec[] {
+    return [...this.commands, ...this.sources.flatMap((source) => source())];
   }
 
   search(query: string): CommandSpec[] {
     const trimmed = query.trim().toLowerCase();
-    if (trimmed === "") return [...this.commands];
-    return this.commands
+    const commands = this.all();
+    if (trimmed === "") return commands;
+    return commands
       .map((command) => ({ command, score: bestScore(command, trimmed) }))
       .filter((match): match is CommandMatch => match.score !== undefined)
       .sort((left, right) => right.score - left.score)
@@ -33,12 +39,15 @@ export class CommandRegistry {
   }
 
   run(input: string): boolean {
-    const name = input.trim().toLowerCase();
-    const exact = this.commands.find(
-      (command) => command.name === name || command.aliases?.includes(name),
+    const trimmed = input.trim();
+    const spaceAt = trimmed.indexOf(" ");
+    const name = (spaceAt === -1 ? trimmed : trimmed.slice(0, spaceAt)).toLowerCase();
+    const args = spaceAt === -1 ? undefined : trimmed.slice(spaceAt + 1).trim();
+    const found = this.all().find(
+      (command) => command.name.toLowerCase() === name || command.aliases?.includes(name),
     );
-    if (exact === undefined) return false;
-    exact.run();
+    if (found === undefined) return false;
+    found.run(args);
     return true;
   }
 }

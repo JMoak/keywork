@@ -15,6 +15,7 @@ const forbiddenPatterns: ReadonlyArray<{ name: string; pattern: RegExp }> = [
     pattern:
       /["'`]x-app["'`]\s*[:,]\s*["'`]cli["'`]|user[-_]?agent[\s\S]{0,40}claude[- ]?(code|cli)/i,
   },
+  { name: "crush-source-reference", pattern: /charmbracelet\/crush/i },
 ];
 
 const scannedExtensions = /\.(ts|tsx|js|json)$/;

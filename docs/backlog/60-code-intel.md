@@ -34,7 +34,7 @@ graceful degradation when the server dies (agent falls back to F1/F2 silently �
 the loop).
 **Accept:** server boots against fixture repo; kill-recovery test; degradation test proves
 loop continues without it.
-**Strategy:** `REIMPL:crush` idea; consult `LIFT:opencode` MIT LSP layer — never Crush source.
+**Strategy:** `OWN` design; consult `LIFT:opencode` MIT LSP layer where useful.
 
 ### F5 (2pt) — LSP as agent tools
 Expose `diagnostics` (post-edit errors/warnings, push-after-write as context hint),
@@ -42,4 +42,4 @@ Expose `diagnostics` (post-edit errors/warnings, push-after-write as context hin
 push is the killer feature — the model sees the type error the moment it writes it.
 **Accept:** E2E — mock agent introduces a type error, diagnostics event lands in context
 within the same turn; symbol lookup round-trips on fixture code.
-**Strategy:** `REIMPL:crush` idea; `OWN` implementation.
+**Strategy:** `OWN` design and implementation.

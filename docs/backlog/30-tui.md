@@ -134,4 +134,4 @@ Single-line honest status: model + provider, session name/branch, token/cost (A1
 trust-level slot (E2 fills it), transient toasts (reloads, errors). No clutter — every item
 justified or absent (Omarchy corner-polish).
 **Accept:** updates live from bus events in E2E; layout degrades gracefully at narrow widths.
-**Strategy:** `OWN`; `REIMPL:crush` visible-trust slot idea.
+**Strategy:** `OWN`.

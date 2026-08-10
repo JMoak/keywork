@@ -59,4 +59,22 @@ describe("CommandRegistry", () => {
   it("reports unknown commands without running anything", () => {
     expect(registryWith("exit").run("quit")).toBe(false);
   });
+
+  it("passes everything after the name to run, preserving case", () => {
+    const registry = new CommandRegistry();
+    let received: string | undefined;
+    registry.register({
+      name: "open",
+      description: "",
+      run: (args) => {
+        received = args;
+      },
+    });
+
+    expect(registry.run("Open src/App.ts")).toBe(true);
+    expect(received).toBe("src/App.ts");
+
+    expect(registry.run("open")).toBe(true);
+    expect(received).toBeUndefined();
+  });
 });

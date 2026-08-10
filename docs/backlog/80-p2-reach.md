@@ -22,12 +22,14 @@ mounting surface.
 Same `--cwd` ⇒ implicit workspace join with live session mirroring across clients; local
 socket/Bun IPC discovery; concurrent-access story for the B1 store decided here (index or
 sqlite sidecar per D8).
-**Strategy:** `REIMPL:crush` idea — own protocol, own storage.
+**Strategy:** `OWN` — own design, protocol, and storage.
 
 ### P2.4 (2pt) — Notifications
-"Come back, I need a decision" as a designed moment: native (Windows toast) / OSC 777 / bell
-/ off modes, fired on ask-gate prompts and turn completion when unfocused.
-**Strategy:** `REIMPL:crush` modes idea.
+"Come back, I need a decision" as a designed moment. To be designed from keywork's own
+work-management model: urgency derives from work state (docked, backgrounded, awaiting a
+decision, finished while unfocused), with transports (native toast / OSC 777 / bell / off)
+as a lower-level delivery detail — not a flat mode enum.
+**Strategy:** `OWN` design.
 
 ### P2.5 (2pt) — HTML export & sharing
 `/export` static HTML of a session branch (self-contained, themed); optional gist upload.

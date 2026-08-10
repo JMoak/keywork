@@ -1,7 +1,7 @@
 # Workstream E — Trust & Safety
 
 > Shipped as blessed default-on extensions (D2/D3 decisions) — replaceable by power users,
-> present for everyone else. The UX is Crush's *idea* of a visible trust ladder over
+> present for everyone else. The UX is keywork's own graduated-trust design over
 > OpenCode's lifted allow/ask/deny machinery.
 
 ---
@@ -20,7 +20,7 @@ Three visible levels (ask-most → allowlist → trusted) mapping onto E1 preset
 always in the status line (fills C18's slot); one key cycles with confirmation on escalation.
 **Accept:** level change updates gate behavior immediately; indicator matches actual matrix
 state (no lying UI).
-**Strategy:** `REIMPL:crush` ladder idea; `OWN` presentation.
+**Strategy:** `OWN` design and presentation.
 
 ### E3 (2pt) — Git snapshots
 On each file-mutating tool call, record a snapshot ref (git stash-like plumbing objects, no

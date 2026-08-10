@@ -1,4 +1,20 @@
-export { type AppOptions, appBindings, runApp } from "./app.ts";
+export { type AppOptions, runApp } from "./app.ts";
+export {
+  AppCore,
+  type AppCoreOptions,
+  type AppSnapshot,
+  appBindings,
+  bindingHelp,
+  type PaneSnapshot,
+} from "./app-core.ts";
+export {
+  BrowserModel,
+  type BrowserRow,
+  type Entry,
+  type ReadDirectory,
+  readDirectoryFromDisk,
+} from "./browser-model.ts";
+export { BrowserPane } from "./browser-pane.ts";
 export { CommandRegistry, type CommandSpec, fuzzyScore } from "./commands.ts";
 export {
   type CommandSuggestion,
@@ -21,7 +37,7 @@ export {
   type Rect,
   type Screen,
 } from "./layout.ts";
-export type { Pane, PaneContext, PaneView } from "./pane.ts";
+export type { Pane, PaneContext, PaneIntents, PaneView } from "./pane.ts";
 export { keyworkNight, resolveTheme, type Theme } from "./theme.ts";
 
 export const tuiVersion = "0.0.1";

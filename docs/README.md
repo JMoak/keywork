@@ -18,8 +18,11 @@ in the order given; later docs assume the earlier ones.
 |---|-----|----------------|
 | 1 | [`influencers/pi.md`](influencers/pi.md) | Pi (earendil-works/pi, MIT): the minimal, self-extending harness — four built-in tools, ~30-hook TypeScript extension API, JSONL tree sessions, the anti-MCP argument, and a prioritized "what keywork should take" list. |
 | 2 | [`influencers/opencode.md`](influencers/opencode.md) | OpenCode (sst/opencode, MIT): the most structurally relevant influence — same Bun/TS/OpenTUI stack. Headless-server "everything is a client" architecture, Plan/Build modes, permissions, and lift candidates. |
-| 3 | [`influencers/crush.md`](influencers/crush.md) | Crush (charmbracelet/crush, FSL-1.1-MIT — **ideas only**): Charm's glamorous-TUI craft, LSP-as-agent-context, event-bus architecture, and an ideas-only reinterpretation list. |
+| 3 | [`influencers/crush.md`](influencers/crush.md) | Crush (charmbracelet/crush, FSL-1.1-MIT — **retired as a design source 2026-08-10**): research history only; formerly Crush-credited features are now original keywork designs. |
 | 4 | [`influencers/omarchy-ux.md`](influencers/omarchy-ux.md) | Omarchy (DHH's Arch/Hyprland distro) as a pure *feel* reference: 12 attention-to-detail heuristics with TUI translations, anti-patterns to avoid, and a "keywork feel" manifesto. |
+| 5 | [`influencers/openclaw.md`](influencers/openclaw.md) | OpenClaw (openclaw/openclaw, MIT — verified): the field's most-praised agent memory — files-as-truth/index-as-cache, budgeted bootstrap, pre-compaction silent flush, taint-gated dreaming. Added 2026-08-10 for workstream J. |
+| 6 | [`influencers/hermes.md`](influencers/hermes.md) | Hermes Agent (NousResearch/hermes-agent, MIT — verified): self-healing skills "versioned by reality" — execution-time self-patching, Curator with agent-created-only blast radius, progressive disclosure. Added 2026-08-10 for workstream J. |
+| 7 | [`influencers/rosavera.md`](influencers/rosavera.md) | rosavera (Jordan's private workspace — no license question): fail-closed scope federation, RRF hybrid retrieval, Gardener v2 curation, usefulness feedback; plus its two known gaps keywork fixes (recall metrics, proactive recall). |
 
 ### Feature candidates — the wider ecosystem
 
@@ -42,7 +45,7 @@ in the order given; later docs assume the earlier ones.
 >
 > - **Pi** ([earendil-works/pi](https://github.com/earendil-works/pi)) — **MIT**: code may be lifted with attribution.
 > - **OpenCode** ([sst/opencode](https://github.com/sst/opencode)) — **MIT**: code may be lifted with attribution.
-> - **Crush** ([charmbracelet/crush](https://github.com/charmbracelet/crush)) — **FSL-1.1-MIT**: **ideas only — never copy, port, or closely paraphrase its source.** Where Crush and an MIT tool share a mechanic, lift the MIT implementation instead.
+> - **Crush** ([charmbracelet/crush](https://github.com/charmbracelet/crush)) — **FSL-1.1-MIT**: **never a source — never copy, port, or closely paraphrase its source, and (since 2026-08-10) not a design source either.** Where a mechanic exists in an MIT tool, lift the MIT implementation; otherwise design from first principles.
 > - **Anthropic access is API-key / Agent-SDK only.** Never integrate Anthropic subscription-OAuth, and never port any tool's Pro/Max login code paths. This is a hard ToS guardrail for the project.
 
 ---
@@ -54,7 +57,7 @@ The open questions have been resolved and the plan written:
 | Doc | What it covers |
 |-----|----------------|
 | [`vision.md`](vision.md) | Decision record D1–D10 resolving Q1–Q10: MCP in core (lazy schemas), minimal core + blessed default-on extensions, trust-ladder gate, three session layers, full code-intel stack phased, **native tiling with panes as bus clients** (the differentiator), in-process server-shaped bus, Pi JSONL persistence, one typed config, terminal-only v1. |
-| [`tasks.md`](tasks.md) | The parallelized implementation breakdown: milestones M0–M3 + P2, six concurrent workstreams (engine, sessions, TUI/keyboard, extensions, trust, code-intel) with dependency gates and a per-task lift strategy (LIFT:pi / LIFT:opencode / LIFT:aider / REIMPL:crush / OWN). |
+| [`tasks.md`](tasks.md) | The parallelized implementation breakdown: milestones M0–M3 + P2, six concurrent workstreams (engine, sessions, TUI/keyboard, extensions, trust, code-intel) with dependency gates and a per-task lift strategy (LIFT:pi / LIFT:opencode / LIFT:aider / OWN; the former REIMPL:crush tag is retired). |
 | [`backlog/`](backlog/README.md) | The full 75-task backlog (153pt): every workstream broken into 1–3pt tasks with descriptions, acceptance criteria, and lift strategy, in execution order. |
 
 The research docs above remain the evidentiary base; where a decision in `vision.md`

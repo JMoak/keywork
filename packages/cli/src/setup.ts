@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -56,12 +56,13 @@ export async function runSetup(): Promise<number> {
 export async function saveApiKey(provider: string, key: string): Promise<string> {
   const dir = join(homedir(), ".keywork");
   const file = join(dir, "keywork.json");
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const existing = await readFile(file, "utf8")
     .then((raw) => JSON.parse(raw) as Record<string, unknown>)
     .catch(() => ({}) as Record<string, unknown>);
   const apiKeys = { ...(existing.apiKeys as Record<string, string> | undefined), [provider]: key };
   const merged = { ...existing, apiKeys };
-  await writeFile(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  await writeFile(file, `${JSON.stringify(merged, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(file, 0o600);
   return file;
 }

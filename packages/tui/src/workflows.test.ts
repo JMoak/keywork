@@ -1,0 +1,364 @@
+import { textTurn } from "@keywork/engine";
+import { describe, expect, it } from "vitest";
+import { paletteFrame } from "./app-core.ts";
+import { BrowserPane } from "./browser-pane.ts";
+import { FileModel } from "./file-model.ts";
+import type { Chord } from "./keys.ts";
+import type { Rect } from "./layout.ts";
+import { AppProbe } from "./probe.ts";
+
+function paneIds(probe: AppProbe): string[] {
+  return probe.snapshot().panes.map((pane) => pane.id);
+}
+
+function dockedIds(probe: AppProbe): string[] {
+  return probe
+    .snapshot()
+    .panes.filter((pane) => pane.docked)
+    .map((pane) => pane.id);
+}
+
+describe("boot", () => {
+  it("starts with a single focused pane", () => {
+    const probe = new AppProbe();
+    const snapshot = probe.snapshot();
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    expect(snapshot.focused).toBe("session-1");
+    expect(snapshot.panes[0]?.focused).toBe(true);
+    expect(probe.exited).toBe(false);
+  });
+});
+
+describe("split and sticky navigation", () => {
+  it("splits twice from a single leader press", () => {
+    const probe = new AppProbe().keys("ctrl+k", "s", "s");
+    expect(paneIds(probe)).toEqual(["session-1", "session-2", "session-3"]);
+    expect(probe.snapshot().focused).toBe("session-3");
+    expect(probe.snapshot().leaderArmed).toBe(true);
+  });
+
+  it("traverses h/l/j/k in one sticky chain", () => {
+    const probe = new AppProbe().keys("ctrl+k", "s", "s", "h");
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.keys("l");
+    expect(probe.snapshot().focused).toBe("session-2");
+    probe.keys("j");
+    expect(probe.snapshot().focused).toBe("session-3");
+    probe.keys("k");
+    expect(probe.snapshot().focused).toBe("session-2");
+  });
+});
+
+describe("docking", () => {
+  it("docks, stacks a second pane, undocks, and re-docks right", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("split");
+
+    probe.keys("ctrl+k", "d");
+    expect(probe.snapshot().dockSide).toBe("left");
+    expect(dockedIds(probe)).toEqual(["session-3"]);
+
+    probe.keys("l", "d");
+    expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
+
+    probe.keys("u");
+    expect(dockedIds(probe)).toEqual(["session-3"]);
+    expect(paneIds(probe)).toContain("session-1");
+
+    probe.keys("shift+d");
+    expect(probe.snapshot().dockSide).toBe("right");
+  });
+});
+
+describe("zoom", () => {
+  it("toggles zoom on the focused pane and back", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "z");
+    expect(probe.snapshot().zoomed).toBe("session-2");
+    probe.keys("z");
+    expect(probe.snapshot().zoomed).toBeUndefined();
+  });
+});
+
+describe("command palette", () => {
+  it("opens, takes a query, and runs the top match on enter", () => {
+    const probe = new AppProbe().keys("ctrl+p");
+    expect(probe.snapshot().overlay).toBe("palette");
+
+    probe.type("split");
+    expect(probe.snapshot().paletteQuery).toBe("split");
+
+    probe.keys("enter");
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(paneIds(probe)).toEqual(["session-1", "session-2"]);
+  });
+
+  it("closes on escape without running anything", () => {
+    const probe = new AppProbe().keys("ctrl+p").type("split").keys("escape");
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(paneIds(probe)).toEqual(["session-1"]);
+  });
+});
+
+describe("slash commands", () => {
+  it("/exit closes the focused pane while others remain", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.type("/exit").keys("enter");
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    expect(probe.exited).toBe(false);
+  });
+
+  it("/exit from the last pane quits the app", () => {
+    const probe = new AppProbe().type("/exit").keys("enter");
+    expect(probe.exited).toBe(true);
+  });
+
+  it("/exit-all quits immediately from any pane", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.type("/exit-all").keys("enter");
+    expect(probe.exited).toBe(true);
+  });
+});
+
+describe("closing the last pane via keys", () => {
+  it("leaves an empty layout without exiting, and split revives it", () => {
+    const probe = new AppProbe().keys("ctrl+k", "x");
+    expect(probe.snapshot().panes).toEqual([]);
+    expect(probe.snapshot().focused).toBeUndefined();
+    expect(probe.exited).toBe(false);
+
+    probe.keys("s");
+    expect(paneIds(probe)).toEqual(["session-2"]);
+    expect(probe.snapshot().focused).toBe("session-2");
+  });
+});
+
+describe("jump commands", () => {
+  it("lists a go-<session> entry for each unfocused pane and jumps on run", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    const jump = probe.core.registry.search("go").find((entry) => entry.name.startsWith("go-"));
+    expect(jump?.name).toBe("go-session-1");
+    expect(probe.command("go-session-1")).toBe(true);
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+});
+
+describe("open file pane", () => {
+  const fileProbe = () =>
+    new AppProbe({
+      createFilePane: (id, path) => ({
+        id,
+        title: () => ` ${path} `,
+        view: () => {
+          throw new Error("probe panes are never rendered");
+        },
+      }),
+    });
+
+  it("/open <path> adds a file pane beside the session and focuses it", () => {
+    const probe = fileProbe().type("/open src/app.ts").keys("enter");
+    expect(paneIds(probe)).toEqual(["session-1", "file-1"]);
+    expect(probe.snapshot().focused).toBe("file-1");
+    expect(probe.snapshot().panes[1]?.title).toBe("src/app.ts");
+  });
+
+  it("/open without a path does nothing", () => {
+    const probe = fileProbe().type("/open").keys("enter");
+    expect(paneIds(probe)).toEqual(["session-1"]);
+  });
+
+  it("open is absent when no file pane factory is wired", () => {
+    expect(new AppProbe().command("open src/app.ts")).toBe(false);
+  });
+});
+
+describe("file browser", () => {
+  const listing: Record<string, { name: string; kind: "file" | "dir" }[]> = {
+    ".": [
+      { name: "src", kind: "dir" },
+      { name: "readme.md", kind: "file" },
+    ],
+    src: [{ name: "app.ts", kind: "file" }],
+  };
+  const browserProbe = () =>
+    new AppProbe({
+      createFilePane: (id, path) => ({
+        id,
+        title: () => ` ${path} `,
+        view: () => {
+          throw new Error("probe panes are never rendered");
+        },
+      }),
+      createBrowserPane: (id, root, notify, intents) =>
+        new BrowserPane(id, root, notify, intents, async (path) => {
+          const entries = listing[path];
+          if (entries === undefined) throw new Error(`no such directory: ${path}`);
+          return entries;
+        }),
+      isDirectory: (path) => listing[path] !== undefined,
+    });
+
+  it("/browse opens the browser docked left and focused", () => {
+    const probe = browserProbe().type("/browse").keys("enter");
+    expect(paneIds(probe)).toEqual(["session-1", "browser-1"]);
+    expect(dockedIds(probe)).toEqual(["browser-1"]);
+    expect(probe.snapshot().dockSide).toBe("left");
+    expect(probe.snapshot().focused).toBe("browser-1");
+  });
+
+  it("leader f summons the browser and refocuses it instead of duplicating", () => {
+    const probe = browserProbe().keys("ctrl+k", "f");
+    expect(paneIds(probe)).toEqual(["session-1", "browser-1"]);
+    expect(probe.snapshot().focused).toBe("browser-1");
+    probe.keys("ctrl+k", "l");
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.keys("f");
+    expect(probe.snapshot().focused).toBe("browser-1");
+    expect(paneIds(probe)).toEqual(["session-1", "browser-1"]);
+  });
+
+  it("enter on a file opens it into the main area and keeps the browser docked", async () => {
+    const probe = browserProbe().type("/browse").keys("enter");
+    await probe.settled();
+    probe.keys("j", "enter");
+    expect(paneIds(probe)).toEqual(["session-1", "file-1", "browser-1"]);
+    expect(probe.snapshot().focused).toBe("file-1");
+    expect(dockedIds(probe)).toEqual(["browser-1"]);
+    expect(probe.snapshot().panes.find((pane) => pane.id === "file-1")?.title).toBe("readme.md");
+  });
+
+  it("/open <dir> redirects to the browser instead of a file pane", async () => {
+    const probe = browserProbe().type("/open src").keys("enter");
+    await probe.settled();
+    expect(paneIds(probe)).toEqual(["session-1", "browser-1"]);
+    expect(dockedIds(probe)).toEqual(["browser-1"]);
+    expect(probe.snapshot().panes.find((pane) => pane.id === "browser-1")?.title).toContain("src");
+  });
+
+  it("browse is absent when no browser factory is wired", () => {
+    expect(new AppProbe().command("browse")).toBe(false);
+  });
+});
+
+describe("pane resize", () => {
+  it("grows and shrinks the focused pane from the leader chord", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "shift+.");
+    expect((probe.rect("session-2") as Rect).width).toBe(66);
+    probe.keys("shift+,");
+    expect((probe.rect("session-2") as Rect).width).toBe(60);
+  });
+
+  it("resizes via the palette commands", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    expect(probe.command("grow")).toBe(true);
+    expect((probe.rect("session-2") as Rect).width).toBe(66);
+    expect(probe.command("shrink")).toBe(true);
+    expect((probe.rect("session-2") as Rect).width).toBe(60);
+  });
+});
+
+describe("mouse", () => {
+  const modelFilePane = () => {
+    const models = new Map<string, FileModel>();
+    const probe = new AppProbe({
+      createFilePane: (id, path) => {
+        const model = new FileModel(process.cwd(), path, () => {});
+        models.set(id, model);
+        return {
+          id,
+          title: () => ` ${path} `,
+          view: () => {
+            throw new Error("probe panes are never rendered");
+          },
+          handleKey: (chord: Chord) => model.handleKey(chord, 10),
+        };
+      },
+    });
+    return { probe, models };
+  };
+
+  it("focuses the pane under a click", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    const rect = probe.rect("session-1") as Rect;
+    probe.click(rect.x + 1, rect.y + 1);
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("wheel-scrolls the pane under the cursor without moving focus", () => {
+    const { probe, models } = modelFilePane();
+    probe.type("/open notes.txt").keys("enter");
+    const session = probe.rect("session-1") as Rect;
+    probe.click(session.x + 1, session.y + 1);
+    const file = probe.rect("file-1") as Rect;
+    probe.scroll(file.x + 1, file.y + 1, "down", 3);
+    expect(models.get("file-1")?.scrollTop).toBe(3);
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.scroll(file.x + 1, file.y + 1, "up", 5);
+    expect(models.get("file-1")?.scrollTop).toBe(0);
+  });
+
+  it("moves the palette selection on hover, and arrows still win afterwards", () => {
+    const probe = new AppProbe().keys("ctrl+p");
+    const rows = Math.min(10, probe.core.registry.search("").length);
+    const frame = paletteFrame(probe.screen, rows);
+    probe.hover(frame.x + 2, frame.firstRowY + 2);
+    expect(probe.core.paletteIndex).toBe(2);
+    probe.keys("down");
+    expect(probe.core.paletteIndex).toBe(3);
+  });
+
+  it("runs the clicked palette row", () => {
+    const probe = new AppProbe().keys("ctrl+p").type("split");
+    const rows = Math.min(10, probe.core.registry.search("split").length);
+    const frame = paletteFrame(probe.screen, rows);
+    probe.click(frame.x + 2, frame.firstRowY);
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(paneIds(probe)).toEqual(["session-1", "session-2"]);
+  });
+
+  it("closes the palette on an outside click without running anything", () => {
+    const probe = new AppProbe().keys("ctrl+p").type("split");
+    probe.click(0, 0);
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(paneIds(probe)).toEqual(["session-1"]);
+  });
+
+  it("closes the help overlay on an outside click", () => {
+    const probe = new AppProbe().keys("ctrl+k", "/");
+    expect(probe.snapshot().overlay).toBe("help");
+    probe.click(0, 0);
+    expect(probe.snapshot().overlay).toBeUndefined();
+  });
+
+  it("ignores clicks and scrolls when no pane is under the cursor", () => {
+    const probe = new AppProbe().keys("ctrl+k", "x");
+    probe.click(5, 5).scroll(5, 5, "down").hover(5, 5);
+    expect(probe.snapshot().panes).toEqual([]);
+    expect(probe.exited).toBe(false);
+  });
+});
+
+describe("conversation round-trip", () => {
+  it("sends a prompt and streams the scripted reply into the pane", async () => {
+    const probe = new AppProbe({
+      script: [textTurn("hey there", { inputTokens: 3, outputTokens: 5 })],
+    });
+    probe.type("hi").keys("enter");
+    await probe.settled();
+
+    expect(probe.model()?.entries).toEqual([
+      { kind: "user", text: "hi" },
+      { kind: "assistant", text: "hey there" },
+    ]);
+    expect(probe.snapshot().panes[0]?.title).toBe("session-1 · 3▸5");
+  });
+});

@@ -2,6 +2,12 @@
 
 > Research dossier for **keywork**. Crush is Charm's agentic coding tool for the terminal — "Your new coding bestie, now available in your favourite terminal." Written in Go on the Bubble Tea stack.
 
+> **STATUS (2026-08-10): retired as a design source.** keywork no longer takes ideas from
+> Crush either — every feature once slated as a Crush-idea reimplementation (trust ladder,
+> notifications, skill discovery, `.keyworkignore`, LSP registration UX, shared workspaces)
+> is now designed from first principles as `OWN` work. This dossier remains as research
+> history only.
+
 > **LICENSING — READ FIRST**
 > Crush is **FSL-1.1-MIT** (Functional Source License with an MIT conversion after a delay). It is *source-available, not open source* for our purposes. **keywork must NEVER copy, port, translate, or closely paraphrase Crush source code.** This document covers **IDEAS ONLY**: any feature we adopt must be reimplemented independently from first principles. (Contrast: Pi and OpenCode are MIT — code from those may be lifted with attribution.)
 >

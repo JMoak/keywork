@@ -5,6 +5,12 @@
 > **Sections 2 and 3 are PROPOSALS** — concrete starting points for the upcoming vision
 > discussion, drawn from what the researched tools verifiably do. They are not decisions.
 >
+> **Update (2026-08-10):** Crush is no longer a design source for keywork. Crush citations
+> below stand as research history only; every formerly Crush-credited feature (trust-ladder
+> UX, notifications, skill discovery, `.keyworkignore`, LSP registration UX, shared
+> workspaces, palette-invocable skills) is now an original keywork design — see the `OWN`
+> tags in `backlog/`.
+>
 > **Licensing ground rules (apply throughout):**
 > - **Pi** ([earendil-works/pi](https://github.com/earendil-works/pi)) and **OpenCode**
 >   ([sst/opencode](https://github.com/sst/opencode)) are **MIT** — code may be lifted with
