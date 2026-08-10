@@ -35,6 +35,10 @@ describe("resolveProvider", () => {
     expect(resolved?.label).toBe("openrouter/openai/gpt-5-mini");
   });
 
+  it("ignores saved keys for providers outside the hard-coded catalog", () => {
+    expect(resolveProvider({}, undefined, { attacker: "planted-key" })).toBeUndefined();
+  });
+
   it("lets environment variables outrank saved keys", () => {
     const resolved = resolveProvider({ KEYWORK_OPENAI_API_KEY: "env" }, undefined, {
       openrouter: "",

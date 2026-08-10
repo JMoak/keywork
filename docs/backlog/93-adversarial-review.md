@@ -17,7 +17,19 @@
 > WP-3: mid-stream SSE errors surface as `ProviderStreamError`, hardened line parsing with
 > trailing-buffer flush, set-once callId/name with synthesized ids, 1 MiB buffer/args
 > ceilings, `isTransient` narrowed off bare TypeError, abortable backoff (P1 F/H/O, P2 9/10, sec-6).
-> Next wave: WP-4 + WP-7 + WP-8.
+> **Wave 2 landed same day — WP-4 + WP-7 + WP-8 complete, gate green (312 tests).**
+> WP-4: project config layer contributes `keybindings`/`theme` only — `apiKeys`/`model` stripped
+> before merge; per-field deep merge replaces the shallow clobber; theme validated `#rrggbb`;
+> unreadable config is a hard `ConfigError`, never "no config"; `baseUrl` reconfirmed
+> config-unreachable (P1 N, P2 17).
+> WP-7: session files named `<ms>-<counter>-<pid>.jsonl` via `newSessionFileName()` (sortable,
+> collision-free; also fixes run.ts persistSession); `keywork run` without a provider exits 1
+> with the chat setup hint, no fabricated output; setup masks key entry (`readMaskedLine`,
+> paste-safe); `saveApiKey` re-persists only schema-known validated fields (F14/15/16, eng-12).
+> WP-8: CI actions pinned to resolved SHAs (checkout v4.4.0, setup-bun v2.2.0, tags as comments);
+> guardrail scan widened to repo root incl. scripts/; check-pins walks all package.json and
+> `findUnpinnedActions` fails CI on any non-SHA `uses:` (sec-9/10).
+> Remaining: WP-5 + WP-6 (input & render wave), then iteration-3 gates (Track P, B7).
 
 > Three hostile reviewers (engine, TUI, security), 2026-08-09, over the 158-test working tree.
 > Findings deduped and cross-verified — several issues were independently found by two reviewers

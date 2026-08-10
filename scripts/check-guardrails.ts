@@ -19,6 +19,11 @@ const forbiddenPatterns: ReadonlyArray<{ name: string; pattern: RegExp }> = [
 ];
 
 const scannedExtensions = /\.(ts|tsx|js|json)$/;
+const excludedDirectories = new Set(["node_modules", ".git", "dist", "docs"]);
+const patternDefinitionFiles = new Set([
+  join("scripts", "check-guardrails.ts"),
+  join("scripts", "checks.test.ts"),
+]);
 
 export function findGuardrailViolations(content: string): string[] {
   return forbiddenPatterns.filter(({ pattern }) => pattern.test(content)).map(({ name }) => name);
@@ -29,8 +34,10 @@ async function sourceFiles(dir: string): Promise<string[]> {
   const nested = await Promise.all(
     entries.map((entry) => {
       const path = join(dir, entry.name);
-      if (entry.isDirectory() && entry.name !== "node_modules") return sourceFiles(path);
-      return scannedExtensions.test(entry.name) ? [path] : [];
+      if (entry.isDirectory()) {
+        return excludedDirectories.has(entry.name) ? [] : sourceFiles(path);
+      }
+      return scannedExtensions.test(entry.name) && !patternDefinitionFiles.has(path) ? [path] : [];
     }),
   );
   return nested.flat();
@@ -38,7 +45,7 @@ async function sourceFiles(dir: string): Promise<string[]> {
 
 if (import.meta.main) {
   const violations: string[] = [];
-  for (const path of await sourceFiles("packages")) {
+  for (const path of await sourceFiles(".")) {
     const content = await readFile(path, "utf8");
     for (const name of findGuardrailViolations(content)) {
       violations.push(`${path}: ${name}`);

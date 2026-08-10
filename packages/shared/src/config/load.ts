@@ -19,18 +19,50 @@ export class ConfigError extends Error {
 }
 
 export async function loadConfig(source: ConfigSource): Promise<KeyworkConfig> {
-  const layers = await Promise.all([readLayer(source.userDir), readLayer(source.projectDir)]);
-  return layers
-    .filter((layer): layer is KeyworkConfig => layer !== undefined)
-    .reduce(mergeConfigs, defaultConfig);
+  const [user, project] = await Promise.all([
+    readLayer(source.userDir),
+    readLayer(source.projectDir),
+  ]);
+  return applyLayers(defaultConfig, user, project && workspacePreferences(project));
 }
 
 export function mergeConfigs(base: KeyworkConfig, overlay: KeyworkConfig): KeyworkConfig {
   return {
     ...base,
     ...overlay,
-    keybindings: { ...base.keybindings, ...overlay.keybindings },
+    ...mergedRecord("keybindings", base, overlay),
+    ...mergedRecord("theme", base, overlay),
+    ...mergedRecord("apiKeys", base, overlay),
   };
+}
+
+// Trust boundary: a checked-in project file may adjust workspace preferences,
+// never credentials or model routing — those stay user/env-owned.
+function workspacePreferences(layer: KeyworkConfig): KeyworkConfig {
+  return {
+    ...(layer.keybindings !== undefined && { keybindings: layer.keybindings }),
+    ...(layer.theme !== undefined && { theme: layer.theme }),
+  };
+}
+
+function applyLayers(
+  base: KeyworkConfig,
+  ...overlays: (KeyworkConfig | undefined)[]
+): KeyworkConfig {
+  return overlays
+    .filter((overlay): overlay is KeyworkConfig => overlay !== undefined)
+    .reduce(mergeConfigs, base);
+}
+
+type RecordField = "keybindings" | "theme" | "apiKeys";
+
+function mergedRecord<F extends RecordField>(
+  field: F,
+  base: KeyworkConfig,
+  overlay: KeyworkConfig,
+): Partial<Pick<KeyworkConfig, F>> {
+  if (base[field] === undefined && overlay[field] === undefined) return {};
+  return { [field]: { ...base[field], ...overlay[field] } } as Partial<Pick<KeyworkConfig, F>>;
 }
 
 async function readLayer(dir: string | undefined): Promise<KeyworkConfig | undefined> {
@@ -56,10 +88,14 @@ function parseJson(file: string, raw: string): unknown {
   }
 }
 
+const absenceCodes = new Set(["ENOENT", "ENOTDIR"]);
+
 async function readFileIfExists(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, "utf8");
-  } catch {
-    return undefined;
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code ?? "unknown";
+    if (absenceCodes.has(code)) return undefined;
+    throw new ConfigError(path, `unreadable (${code}): ${(cause as Error).message}`);
   }
 }

@@ -5,12 +5,12 @@ import {
   coreTools,
   loadProjectInstructions,
   type Message,
-  MockProvider,
   messageText,
   type Provider,
   SessionStore,
-  textTurn,
 } from "@keywork/engine";
+import { providerSetupHint } from "./provider.ts";
+import { newSessionFileName } from "./sessions.ts";
 
 export interface RunOptions {
   prompt: string;
@@ -19,15 +19,17 @@ export interface RunOptions {
   sessionDir?: string;
   provider?: Provider;
   print?: (line: string) => void;
+  printError?: (line: string) => void;
+  exit?: (code: number) => never;
 }
 
 export async function runHeadless(options: RunOptions): Promise<Message> {
+  const provider = options.provider ?? refuseWithoutProvider(options);
   const print = options.print ?? console.log;
   const emit = (type: string, payload: unknown) => {
     if (options.json) print(JSON.stringify({ type, ...(payload as object) }));
   };
 
-  const provider = options.provider ?? placeholderProvider(options.prompt);
   const instructions = await loadProjectInstructions(options.cwd);
   const agent = new Agent({
     provider,
@@ -48,15 +50,15 @@ export async function runHeadless(options: RunOptions): Promise<Message> {
   return final;
 }
 
-function placeholderProvider(prompt: string): Provider {
-  return new MockProvider([
-    textTurn(`keywork engine is alive; no live provider is configured yet. You said: ${prompt}`),
-  ]);
+function refuseWithoutProvider(options: RunOptions): never {
+  const printError = options.printError ?? console.error;
+  printError(providerSetupHint);
+  return (options.exit ?? process.exit)(1);
 }
 
 async function persistSession(options: RunOptions, history: readonly Message[]): Promise<void> {
   if (options.sessionDir === undefined) return;
-  const file = join(options.sessionDir, `${Date.now()}.jsonl`);
+  const file = join(options.sessionDir, newSessionFileName());
   const store = await SessionStore.create(file, options.cwd);
   for (const message of history) await store.append(message);
 }

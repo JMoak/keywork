@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -55,11 +55,84 @@ describe("loadConfig", () => {
 
     await expect(loadConfig({ userDir })).rejects.toThrow(/not valid JSON/);
   });
+
+  it("ignores apiKeys and model from the project layer", async () => {
+    const userDir = await dirWithConfig({
+      model: "openrouter/user-model",
+      apiKeys: { openrouter: "user-key" },
+    });
+    const projectDir = await dirWithConfig({
+      model: "attacker/model",
+      apiKeys: { openrouter: "attacker-key", attacker: "planted-key" },
+    });
+
+    const config = await loadConfig({ userDir, projectDir });
+
+    expect(config.model).toBe("openrouter/user-model");
+    expect(config.apiKeys).toEqual({ openrouter: "user-key" });
+  });
+
+  it("keeps user credentials when the project layer sets empty apiKeys", async () => {
+    const userDir = await dirWithConfig({ apiKeys: { openai: "user-key" } });
+    const projectDir = await dirWithConfig({ apiKeys: {} });
+
+    const config = await loadConfig({ userDir, projectDir });
+
+    expect(config.apiKeys).toEqual({ openai: "user-key" });
+  });
+
+  it("deep-merges theme so a project token cannot clobber sibling user tokens", async () => {
+    const userDir = await dirWithConfig({
+      theme: { accent: "#112233", background: "#000000" },
+    });
+    const projectDir = await dirWithConfig({ theme: { accent: "#445566" } });
+
+    const config = await loadConfig({ userDir, projectDir });
+
+    expect(config.theme).toEqual({ accent: "#445566", background: "#000000" });
+  });
+
+  it("rejects theme values that are not #rrggbb", async () => {
+    const userDir = await dirWithConfig({ theme: { accent: "hotpink" } });
+
+    await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
+    await expect(loadConfig({ userDir })).rejects.toThrow(/#rrggbb/);
+  });
+
+  it("accepts uppercase hex theme values", async () => {
+    const userDir = await dirWithConfig({ theme: { accent: "#AABBCC" } });
+
+    const config = await loadConfig({ userDir });
+
+    expect(config.theme).toEqual({ accent: "#AABBCC" });
+  });
+
+  it("surfaces unreadable config files instead of treating them as absent", async () => {
+    const userDir = await mkdtemp(join(tmpdir(), "keywork-config-"));
+    tempDirs.push(userDir);
+    await mkdir(join(userDir, "keywork.json"));
+
+    await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
+    await expect(loadConfig({ userDir })).rejects.toThrow(/unreadable/);
+  });
 });
 
 describe("mergeConfigs", () => {
   it("merges keybindings instead of replacing them", () => {
     const merged = mergeConfigs({ keybindings: { a: "ctrl+a" } }, { keybindings: { b: "ctrl+b" } });
     expect(merged.keybindings).toEqual({ a: "ctrl+a", b: "ctrl+b" });
+  });
+
+  it("merges theme and apiKeys records instead of replacing them", () => {
+    const merged = mergeConfigs(
+      { theme: { accent: "#112233" }, apiKeys: { openrouter: "a" } },
+      { theme: { background: "#000000" }, apiKeys: { openai: "b" } },
+    );
+    expect(merged.theme).toEqual({ accent: "#112233", background: "#000000" });
+    expect(merged.apiKeys).toEqual({ openrouter: "a", openai: "b" });
+  });
+
+  it("leaves record fields absent when neither layer has them", () => {
+    expect(mergeConfigs({}, { model: "m" })).toEqual({ model: "m" });
   });
 });

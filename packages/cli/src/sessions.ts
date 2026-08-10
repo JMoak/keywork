@@ -19,8 +19,14 @@ export async function openOrResumeSession(
       return { store, seeded: store.messages() };
     }
   }
-  const store = await SessionStore.create(join(dir, `${Date.now()}.jsonl`), cwd);
+  const store = await SessionStore.create(join(dir, newSessionFileName()), cwd);
   return { store, seeded: [] };
+}
+
+export function newSessionFileName(): string {
+  sessionSequence += 1;
+  const sequence = String(sessionSequence).padStart(4, "0");
+  return `${Date.now()}-${sequence}-${process.pid}.jsonl`;
 }
 
 export async function latestSessionFile(dir: string): Promise<string | undefined> {
@@ -28,6 +34,8 @@ export async function latestSessionFile(dir: string): Promise<string | undefined
   const last = names.sort().at(-1);
   return last === undefined ? undefined : join(dir, last);
 }
+
+let sessionSequence = 0;
 
 async function sessionFileNames(dir: string): Promise<string[]> {
   try {

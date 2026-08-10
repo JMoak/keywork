@@ -62,6 +62,35 @@ describe("runHeadless", () => {
     ]);
   });
 
+  it("refuses to run without a provider: hint on stderr, exit 1, no output, no session", async () => {
+    const cwd = await tempDir();
+    const sessionDir = await tempDir();
+    const out: string[] = [];
+    const err: string[] = [];
+    const exits: number[] = [];
+    const exit = (code: number): never => {
+      exits.push(code);
+      throw new Error("exit requested");
+    };
+
+    await expect(
+      runHeadless({
+        prompt: "hi",
+        cwd,
+        json: true,
+        sessionDir,
+        print: (line) => out.push(line),
+        printError: (line) => err.push(line),
+        exit,
+      }),
+    ).rejects.toThrow("exit requested");
+
+    expect(exits).toEqual([1]);
+    expect(err.join("\n")).toContain("provider");
+    expect(out).toEqual([]);
+    expect(await readdir(sessionDir)).toEqual([]);
+  });
+
   it("prints plain text when json is off", async () => {
     const cwd = await tempDir();
     const provider = new MockProvider([textTurn("plain answer")]);
