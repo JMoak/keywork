@@ -62,7 +62,7 @@ export interface SessionPort {
 export interface WorkspacePort {
   load(): Promise<unknown>;
   save(state: WorkspaceState): void;
-  flush(): void;
+  seal(): void;
 }
 
 export interface AgentSeams {
@@ -210,7 +210,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       if (armedExpiry !== undefined) clearTimeout(armedExpiry);
       unsubscribeMcp?.();
       renderer.destroy();
-      options.workspace?.flush();
+      options.workspace?.seal();
       void runClosers(
         options.closers ?? [],
         options.closeTimeoutMs ?? defaultCloseTimeoutMs,
@@ -485,7 +485,7 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
     for (const message of fresh) await attachment.append(message);
     const joined =
       (await options.afterTurn?.({ sessionId: attachment.id, history: agent.history() })) ?? [];
-    if (joined.length === 0) return;
+    if (joined.length === 0 || pane.disposed()) return;
     const next = options.rebuild?.([...agent.history(), ...joined]);
     if (next === undefined) return;
     persisted = next.history().length;

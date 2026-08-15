@@ -1,7 +1,7 @@
 import { Text } from "@opentui/core";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
-import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import { paneChrome, paneFailureLine, paneTitle } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
 import {
   SessionTreeModel,
@@ -99,9 +99,7 @@ export class SessionTreePane implements Pane {
 
   private bodyLines(theme: Theme, rows: number, width: number) {
     const failure = this.tasks.failure();
-    if (failure !== undefined) {
-      return [Text({ content: failure.slice(0, width), fg: theme.error })];
-    }
+    if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     if (this.model.sessionId() === undefined) {
       return [Text({ content: "no session yet — r retries", fg: theme.textDim })];
     }

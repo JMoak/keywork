@@ -1,6 +1,9 @@
 # Forensic stress harness — MCP lifecycle under adversarial conditions
 
 > 2026-08-15. Design + implementation notes (analysis and plan; no code lands from this doc).
+> **Status update, same day:** the lifecycle-hardening wave landed §9 item 1 and closed §2
+> defects #1/#2/#4/#5/#9/#10 (statuses inline in the §2 table); the harness itself (§3–§7,
+> §9 items 2–6) remains unbuilt.
 > Scope: the MCP subsystem (`packages/engine/src/mcp/*`, `packages/tui/src/mcp-pane*`) plus the
 > process-hygiene machinery it shares with `tools/bash.ts`. All findings reference the current
 > working tree. Cross-refs: `AGENTS.md` (quality bar), `docs/vision.md` D1/D2 (MCP in core),
@@ -39,30 +42,32 @@ The acceptance bar (verbatim from the request, all achievable):
 
 ## 2. Why it would help — the current code already has the bugs this harness exists to catch
 
-Forensic pass over the working tree (keep this list; it is the first regression corpus):
+Forensic pass over the 2026-08-15 pre-hardening tree (keep this list; it is the first regression
+corpus — statuses reflect the lifecycle-hardening wave that landed the same day):
 
-| # | Target | Defect the harness must provoke |
-|---|--------|--------------------------------|
-| 1 | `client.ts:144` `StdioChannel.close()` | Never resolves if the child ignores SIGTERM: `child.kill()` once, no SIGKILL escalation, no timeout. Hangs `dropConnection` → `serve()` → `stop()`; `runClosers` (tui/lifecycle.ts:14) then `process.exit(0)` at 5 s **leaking the child**. |
-| 2 | `client.ts:90` spawn | No `detached`/process-group, no `taskkill /t` — **grandchildren of MCP servers are never killed**, ever. Contrast `bash.ts:181` `killWindowsTree` which does this right; the transport should adopt the same machinery. |
-| 3 | `registry.ts:497` `Wakeup` | Backoff `setTimeout` not `unref()`'d; a server parked in an 8 s backoff pins the event loop. |
-| 4 | `mcp-pane.ts:39` `pending` | In-flight `load()`/`listTools()` resolve after `dispose()` and mutate the model / call `notify()` on a dead pane — no `disposed` flag, `pending` never drained on dispose. |
-| 5 | `app.ts:212` `mcpDropWatcher` | Subscription never unsubscribed; its `lastStates` map (`mcp-pane.ts:22`) is never pruned — unbounded under server-name churn. |
-| 6 | `registry.ts:77` `surfaces` | Keyed by returned-array identity; any caller that forgets `dropSurface` retains the view forever (per-pane agent construction at `main.ts:306` is the live risk). |
-| 7 | `registry.ts` `runtime.activated` | Never cleared on disable/restart — monotonic growth across cycles. |
-| 8 | `handleLoss` (`registry.ts:279`) | `restartAttempt` not reset when a *healthy* connection is lost — a flapping server walks the ladder to `retriesExhausted`. Decide intended semantics, then encode it in the model. |
-| 9 | `stop()` (`registry.ts:101`) | Verbs racing `closing` in the same tick; concurrent double-`stop()` unguarded. |
-| 10 | `client.ts:79` `pending` request timers | Cleared only via `settleClosed()` on child exit/error; a deliberate close with in-flight requests depends on the exit event firing. |
+| # | Target | Defect the harness must provoke | Status (2026-08-15) |
+|---|--------|--------------------------------|---------------------|
+| 1 | `StdioChannel.close()` | Never resolves if the child ignores SIGTERM: `child.kill()` once, no SIGKILL escalation, no timeout. Hangs `dropConnection` → `serve()` → `stop()`; `runClosers` then `process.exit(0)` at 5 s **leaking the child**. | **fixed** — `close()` = stdin-EOF + 500 ms grace, then verified `killTree` escalation; teardown memoized, awaits real process death. |
+| 2 | `client.ts` spawn | No `detached`/process-group, no `taskkill /t` — **grandchildren of MCP servers are never killed**, ever. Contrast `bash.ts` `killWindowsTree` which does this right; the transport should adopt the same machinery. | **fixed** — `killTree` lifted into shared `proc.ts`, used by both; POSIX spawns detached for group kill; `leaky` fixture proves grandchild death after close and `stop()`. |
+| 3 | `Wakeup` backoff timer | Backoff `setTimeout` not `unref()`'d; a server parked in an 8 s backoff pins the event loop. | open — mitigated (`stop()` and any verb now interrupt backoff sleeps immediately); full fix lands with the §3.1 Clock seam. |
+| 4 | `mcp-pane.ts` `pending` | In-flight `load()`/`listTools()` resolve after `dispose()` and mutate the model / call `notify()` on a dead pane — no `disposed` flag, `pending` never drained on dispose. | **fixed** — shared `PaneTasks` (mcp/memory/session-tree panes): no new work after dispose, notifies gated, `settled()` still drains in-flight work. |
+| 5 | `app.ts` `mcpDropWatcher` | Subscription never unsubscribed; its `lastStates` map is never pruned — unbounded under server-name churn. | **fixed** (subscription torn down in `onExit`, plus a render closed-guard behind it); `lastStates` pruning moot while the server set is config-static per process. |
+| 6 | `registry.ts` `surfaces` | Keyed by returned-array identity; any caller that forgets `dropSurface` retains the view forever (per-pane agent construction is the live risk). | open. |
+| 7 | `registry.ts` `runtime.activated` | Never cleared on disable/restart — monotonic growth across cycles. | open by design so far — re-enable keeping activated tools callable is pinned by tests; growth bounded by catalog size. Revisit under `huge-catalog`. |
+| 8 | `handleLoss` | `restartAttempt` not reset when a *healthy* connection is lost — a flapping server walks the ladder to `retriesExhausted`. Decide intended semantics, then encode it in the model. | semantics now deterministic: the reconciler resets the ladder on every successful adopt, so a flapping server retries forever (per-cycle backoff, never exhausts). Encode exactly that in the shadow model; `flap` profile still wanted. |
+| 9 | `stop()` | Verbs racing `closing` in the same tick; concurrent double-`stop()` unguarded. | **fixed** — closing latch, verbs reject `McpRegistryClosedError`, fixed-point loop drain, idempotent double-stop; bursts coalesce via versioned desired state. |
+| 10 | `client.ts` `pending` request timers | Cleared only via `settleClosed()` on child exit/error; a deliberate close with in-flight requests depends on the exit event firing. | **fixed** — abort settles pending immediately; deliberate close reaches `settleClosed` via EOF-exit or forced kill, both awaited. |
 
-Items 1–2 are exactly the class of bug behind the native-crash/orphan symptoms this initiative is
-reacting to, and they are invisible to the current test suite because every existing test uses
-well-behaved fixtures or injected fake connections. The harness makes this whole class
+Items 1–2 were exactly the class of bug behind the native-crash/orphan symptoms this initiative is
+reacting to, and they were invisible to the then-current test suite because every existing test
+used well-behaved fixtures or injected fake connections. The harness makes this whole class
 unwriteable: any future lifecycle change that can leak or hang fails CI within one nightly.
 
-**Sequencing note:** several of these are fixes-before-harness. Building the harness against known
-bugs is fine (each becomes a "harness catches it" demo, then a fix, then a committed regression
-example), but #1/#2 (termination escalation + tree kill in the transport) should probably land
-first as ordinary work, since every Tier 2 run would otherwise wedge on them immediately.
+**Sequencing note (resolved 2026-08-15):** #1/#2 landed first as ordinary work exactly as
+prescribed (§9 item 1), alongside a registry rewrite that closed #9/#10 and the pane-disposal
+work that closed #4/#5 — see `backlog/92-iteration-3.md` "MCP lifecycle hardening". The harness
+itself remains unbuilt; the fixed rows above become "harness catches the regression" demos, the
+open rows (#3 pending the Clock seam, #6, #7, #8-as-decided) are its first live targets.
 
 ## 3. Architecture
 
@@ -136,12 +141,15 @@ one wedged `exited` promise stalls everything). Shape:
 ## 4. Fixture-server misbehavior catalog
 
 `fixture-server.ts` already has: `basic` (incl. paginated tools/list), `silent` (never responds,
-60 s keep-alive), `crash-once`, `hazard` (blast/boom), `garbage` (non-JSON, split frames). Add:
+60 s keep-alive), `crash-once`, `hazard` (blast/boom), `garbage` (non-JSON, split frames), and —
+since the 2026-08-15 hardening wave — `leaky` (spawns a pid-marker-reporting grandchild AND
+lingers after stdin EOF, covering the `spawn-grandchildren` row and the stdin-close half of
+`ignore-term` below; its tests pin grandchild death after close/stop). Add:
 
 | Profile | Behavior | Targets |
 |---|---|---|
-| `ignore-term` | Traps/ignores SIGTERM (and on Windows just never exits on stdin close); only dies to SIGKILL/taskkill | #1 close-hang, termination escalation |
-| `spawn-grandchildren` | Spawns 2–3 children (which touch a marker file on exit) then serves normally | #2 tree kill; ledger proves grandchild death |
+| `ignore-term` | Traps/ignores SIGTERM (POSIX half — the Windows never-exits-on-stdin-close half is `leaky`); only dies to SIGKILL | #1 close-hang, termination escalation |
+| `spawn-grandchildren` | ~~Spawns 2–3 children then serves normally~~ landed as `leaky` (one grandchild; extend to several if the ledger needs it) | #2 tree kill; ledger proves grandchild death |
 | `slow-handshake` | Sleeps a scriptable delay before the initialize response | shutdown-during-handshake |
 | `stall-tools-list` | Handshake fine; `tools/list` never responds (or responds after long delay) | shutdown-during-enumeration; `openConnection`'s close-on-listTools-throw path |
 | `flap` | Serves, then self-exits after a scriptable interval, repeatedly | #8 backoff-reset semantics |
@@ -172,18 +180,13 @@ reporter are all useless here. The oracles below are what actually works under B
    pid, plus lookup of every ledgered pid **matched against CreationDate** (PID-reuse guard).
    Assert empty; `Stop-Process -Force` stragglers individually and fail the run. POSIX analogue:
    process-group scan via `ps -o pid,ppid,lstart`.
-3. **Windows Job Object (upgrade, decision needed):** `KILL_ON_JOB_CLOSE` makes orphans
-   *impossible* rather than merely detected; neither Node nor Bun exposes Job Objects, but ~40
-   lines of FFI via `koffi` does, and koffi works under Bun. This is a new exact-pinned native
-   dependency — propose it as its own small decision (likely worth it: it also hardens production
-   `bash.ts` and MCP spawns, not just tests). The CIM sweep then regression-tests the job wiring.
-4. **JS-object growth:** `bun:jsc` `heapStats().objectTypeCounts` diffed after `Bun.gc(true)`
+3. **JS-object growth:** `bun:jsc` `heapStats().objectTypeCounts` diffed after `Bun.gc(true)`
    between cycle k and cycle 2k — assert no unbounded growth in `Subprocess`, stream, timer, and
    our own class names. Escalation path: `Bun.generateHeapSnapshot("v8")` on breach.
-5. **Handle-count trend (secondary, trend-only):** `(Get-Process -Id $pid).HandleCount` sampled
+4. **Handle-count trend (secondary, trend-only):** `(Get-Process -Id $pid).HandleCount` sampled
    per cycle. Noisy by nature (GC, threadpool) — flag only monotonic growth across ≥5 consecutive
    samples beyond ~100-handle tolerance; never single-sample assertions.
-6. **In-process residue (Tier 1 + end of every Tier 2 worker):** registry `runtimes` loops all
+5. **In-process residue (Tier 1 + end of every Tier 2 worker):** registry `runtimes` loops all
    settled, `listeners`/`surfaces`/waiters empty, no live `Wakeup` timer, pane `pending` empty,
    fake-transport open-connection count zero.
 
@@ -247,13 +250,19 @@ ProcDump cannot follow child processes at all. Hence a split strategy:
   guided fuzzing in JS (jazzer.js discontinued 2024, no living option; use weighted generators
   instead), `@fast-check/worker` (solves hung predicates, not hung subprocesses), MCP validators/
   Inspector (target servers, not client lifecycle), corpus-repo infra (committed `examples` are
-  the corpus), vitest-under-Bun for the stress lane.
+  the corpus), vitest-under-Bun for the stress lane, Windows Job Objects with `KILL_ON_JOB_CLOSE`
+  (2026-08-15: would make orphans *impossible* rather than merely detected — and would harden
+  production `bash.ts`/MCP spawns, not just tests — but the CIM sweep already proves the
+  acceptance bar's "zero subprocesses" clause; koffi rejected as a single-maintainer native-blob
+  dependency, the real FFI risks being supply chain plus our own struct-layout bugs; if ever
+  revisited, weigh it as production orphan *prevention* and use Bun's built-in `bun:ffi`).
 
 ## 9. Implementation plan sketch (for the eventual backlog entry — next free overlay: 97)
 
-1. **(pre) Transport hardening** — SIGTERM→SIGKILL escalation + timeout in `StdioChannel.close()`;
-   tree kill for MCP children (lift the `bash.ts` `killTree` machinery into a shared module).
-   Fixes §2 #1/#2 so Tier 2 can run at all. ~2pt.
+1. **(pre) Transport hardening** — **done 2026-08-15** as ordinary work: `bash.ts` `killTree`
+   lifted into shared `proc.ts`; `StdioChannel.close()` = stdin-EOF grace then verified tree-kill
+   escalation; abortable connects threaded through the registry's per-server reconciler.
+   §2 #1/#2 closed; Tier 2 can run.
 2. **Seams** — `Clock` injection, `Wakeup` on the clock + unref; `FakeTransport` with scriptable
    phase behavior grown from the existing test helpers. ~2pt.
 3. **Tier 1** — fast-check (exact-pinned), commands + shadow model + scheduler property +
@@ -263,7 +272,6 @@ ProcDump cannot follow child processes at all. Hence a split strategy:
    heapStats + handle trend, failure artifacts. ~3pt.
 6. **CI wiring** — `.bun-version`, stress workflow (matrix, nightly, canary via archived zip),
    WER LocalDumps step, ProcDump escalation path, cdb triage, artifact upload. ~2pt.
-7. **(decision) Job Objects via koffi** — separate proposal; benefits production spawns too. ~2pt.
 
 Accept criteria for the overlay = §1's nine-point bar, verbatim, each mapped to its oracle.
 

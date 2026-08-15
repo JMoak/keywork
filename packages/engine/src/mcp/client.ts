@@ -1,7 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { killTree } from "../proc.ts";
+import { killTree, within } from "../proc.ts";
 
 export const mcpProtocolVersion = "2025-06-18";
+
+const closeGraceMs = 500;
 
 export interface McpTool {
   name: string;
@@ -70,7 +72,7 @@ export async function connectStdioServer(
   try {
     await channel.handshake();
   } catch (cause) {
-    await channel.close();
+    await channel.close().catch(() => undefined);
     throw cause;
   }
   return channel;
@@ -161,14 +163,21 @@ class StdioChannel implements McpConnection {
 
   close(): Promise<void> {
     this.closedDeliberately = true;
-    this.teardown ??= killTree(this.child, this.exited);
+    this.teardown ??= this.retire();
     return this.teardown;
+  }
+
+  private async retire(): Promise<void> {
+    this.child.stdin?.end();
+    if (await within(this.exited, closeGraceMs)) return;
+    await killTree(this.child, this.exited);
   }
 
   private abortNow(): void {
     this.closedDeliberately = true;
     this.settleClosed(new McpAbortedError());
     this.teardown ??= killTree(this.child, this.exited);
+    void this.teardown.catch(() => undefined);
   }
 
   private request(method: string, params: unknown): Promise<unknown> {

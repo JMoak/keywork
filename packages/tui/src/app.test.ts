@@ -1,5 +1,7 @@
+import { Agent, type Message, MockProvider, textMessage, textTurn } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { type SessionAttachment, startFreshSession } from "./app.ts";
+import { bindSessionLifecycle, type SessionAttachment, startFreshSession } from "./app.ts";
+import { ConversationPane } from "./conversation-pane.ts";
 
 function attachmentOf(id: string): SessionAttachment {
   return { id, history: [], replay: () => {}, append: async () => {} };
@@ -56,5 +58,34 @@ describe("startFreshSession", () => {
     await flush();
     expect(wired).toBe(false);
     expect(notified).toBe(0);
+  });
+});
+
+describe("bindSessionLifecycle", () => {
+  it("persists a turn in flight at close but skips the agent swap", async () => {
+    const appended: Message[] = [];
+    const attachment: SessionAttachment = {
+      id: "s1",
+      history: [],
+      replay: () => {},
+      append: async (message) => {
+        appended.push(message);
+      },
+    };
+    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
+    const next = new Agent({ provider: new MockProvider([]) });
+    const pane = new ConversationPane("session-1", agent, () => {});
+    bindSessionLifecycle({
+      pane,
+      agent,
+      attachment,
+      afterTurn: async () => [textMessage("user", "joined")],
+      rebuild: () => next,
+    });
+    pane.submitPrompt("go");
+    pane.dispose();
+    await pane.settled();
+    expect(appended.length).toBeGreaterThan(0);
+    expect(pane.currentAgent()).toBe(agent);
   });
 });

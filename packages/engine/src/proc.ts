@@ -59,7 +59,7 @@ async function waitForExit(alive: () => boolean, timeoutMs: number): Promise<boo
   return true;
 }
 
-function within(completion: Promise<void>, timeoutMs: number): Promise<boolean> {
+export function within(completion: Promise<void>, timeoutMs: number): Promise<boolean> {
   return new Promise((resolvePromise) => {
     let finished = false;
     const finish = (result: boolean) => {

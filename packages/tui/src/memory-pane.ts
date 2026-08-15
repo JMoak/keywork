@@ -7,7 +7,7 @@ import {
   toneToken,
 } from "./memory-pane-model.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
-import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import { paneChrome, paneFailureLine, paneTitle } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
 import type { Theme } from "./theme.ts";
 
@@ -84,9 +84,7 @@ export class MemoryPane implements Pane {
 
   private bodyLines(theme: Theme, rows: number, width: number) {
     const failure = this.tasks.failure();
-    if (failure !== undefined) {
-      return [Text({ content: failure.slice(0, width), fg: theme.error })];
-    }
+    if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     return this.model
       .visibleRows(rows)
       .map(({ index, row }) => this.rowLine(row, index === this.model.cursor, theme, width));

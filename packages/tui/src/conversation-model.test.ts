@@ -278,18 +278,35 @@ describe("disposal", () => {
     expect(notified).toBe(notifiedBefore);
   });
 
-  it("clears the after-turn hook on dispose", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("a"), textTurn("b")]) });
+  it("still runs the after-turn hook for a turn in flight at dispose", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("a")]) });
     let hooked = 0;
     const model = new ConversationModel(agent, () => {});
     model.bindAfterTurn(async () => {
       hooked += 1;
     });
     type(model, "one");
-    await submit(model);
-    expect(hooked).toBe(1);
+    const send = submit(model);
     model.dispose();
-    expect(model.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+    await send;
+    expect(hooked).toBe(1);
+  });
+
+  it("auto-denies mutation confirmations once disposed", async () => {
+    const model = new ConversationModel(undefined, () => {});
+    model.dispose();
+    const call: ToolCallPart = { type: "tool-call", callId: "c1", name: "bash", arguments: {} };
+    await expect(model.confirmMutation(call)).resolves.toBe(false);
+  });
+
+  it("ignores submitted text once disposed", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("hey")]) });
+    const model = new ConversationModel(agent, () => {});
+    model.dispose();
+    model.submitText("go");
+    await model.lastSend;
+    expect(model.entries).toEqual([]);
+    expect(agent.history()).toEqual([]);
   });
 });
 

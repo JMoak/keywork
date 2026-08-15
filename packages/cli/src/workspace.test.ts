@@ -24,18 +24,18 @@ const state: WorkspaceState = {
 };
 
 describe("workspaceFile", () => {
-  it("round-trips state through save, flush, and load", async () => {
+  it("round-trips state through save, seal, and load", async () => {
     const port = workspaceFile(await tempStateFile());
     port.save(state);
-    port.flush();
+    port.seal();
     expect(await port.load()).toEqual(state);
   });
 
-  it("debounces writes until flush", async () => {
+  it("debounces writes until sealed", async () => {
     const port = workspaceFile(await tempStateFile(), 60_000);
     port.save(state);
     expect(await port.load()).toBeUndefined();
-    port.flush();
+    port.seal();
     expect(await port.load()).toEqual(state);
   });
 
@@ -44,7 +44,7 @@ describe("workspaceFile", () => {
     const port = workspaceFile(file);
     expect(await port.load()).toBeUndefined();
     port.save(state);
-    port.flush();
+    port.seal();
     await writeFile(file, "{ definitely not json", "utf8");
     expect(await port.load()).toBeUndefined();
   });
@@ -53,20 +53,20 @@ describe("workspaceFile", () => {
     const file = await tempStateFile();
     const seed = workspaceFile(file);
     seed.save(state);
-    seed.flush();
+    seed.seal();
     const fresh = freshWorkspace(workspaceFile(file));
     expect(await fresh.load()).toBeUndefined();
     fresh.save({ ...state, panes: [] });
-    fresh.flush();
+    fresh.seal();
     expect(await workspaceFile(file).load()).toEqual({ ...state, panes: [] });
   });
 
-  it("ignores saves after the final flush", async () => {
+  it("ignores saves after sealing", async () => {
     const port = workspaceFile(await tempStateFile());
     port.save(state);
-    port.flush();
+    port.seal();
     port.save({ ...state, panes: [] });
-    port.flush();
+    port.seal();
     expect(await port.load()).toEqual(state);
   });
 });

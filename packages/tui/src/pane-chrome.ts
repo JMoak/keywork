@@ -1,5 +1,6 @@
-import { Box } from "@opentui/core";
+import { Box, Text } from "@opentui/core";
 import type { PaneContext, PaneView } from "./pane.ts";
+import type { Theme } from "./theme.ts";
 
 export type PaneChild = Parameters<typeof Box>[1];
 
@@ -28,4 +29,8 @@ export function paneChrome(
 
 export function paneTitle(name: string, detail?: string): string {
   return detail === undefined ? ` ${name} ` : ` ${name} · ${detail} `;
+}
+
+export function paneFailureLine(failure: string, theme: Theme, width: number): PaneChild {
+  return Text({ content: failure.slice(0, width), fg: theme.error });
 }

@@ -31,7 +31,7 @@ function main(): void {
     });
     writeFileSync(markerPath, `${process.pid}\n${grandchild.pid ?? 0}`);
   }
-  serve(profile === "hazard" ? hazardTools() : basicTools());
+  serve(profile === "hazard" ? hazardTools() : basicTools(), profile === "leaky");
 }
 
 function basicTools(): FixtureTool[] {
@@ -76,7 +76,7 @@ function hazardTools(): FixtureTool[] {
   ];
 }
 
-function serve(tools: FixtureTool[]): void {
+function serve(tools: FixtureTool[], lingerAfterEof: boolean): void {
   let buffer = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk: string) => {
@@ -89,7 +89,10 @@ function serve(tools: FixtureTool[]): void {
       newline = buffer.indexOf("\n");
     }
   });
-  process.stdin.on("end", () => process.exit(0));
+  process.stdin.on("end", () => {
+    if (lingerAfterEof) setInterval(() => {}, 60_000);
+    else process.exit(0);
+  });
 }
 
 function handle(message: Json, tools: FixtureTool[]): void {

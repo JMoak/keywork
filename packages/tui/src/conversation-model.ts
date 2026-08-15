@@ -157,6 +157,7 @@ export class ConversationModel {
   }
 
   confirmMutation(call: ToolCallPart): Promise<boolean> {
+    if (this.disposed) return Promise.resolve(false);
     if (this.alwaysAllow) return Promise.resolve(true);
     return new Promise((resolve) => {
       const reader = this.ports?.readFile;
@@ -195,7 +196,6 @@ export class ConversationModel {
     this.tailFollow = undefined;
     this.backtrackAt = undefined;
     this.busy = false;
-    this.afterTurn = undefined;
     this.agent?.interrupt();
   }
 
@@ -349,14 +349,14 @@ export class ConversationModel {
   }
 
   discloseRetrieval(text: string): void {
-    if (this.retrievalDisclosed) return;
+    if (this.disposed || this.retrievalDisclosed) return;
     this.retrievalDisclosed = true;
     this.entries.push({ kind: "info", text });
     this.notify();
   }
 
   private deliver(text: string): void {
-    if (this.agent === undefined) return;
+    if (this.disposed || this.agent === undefined) return;
     const agent = this.agent;
     this.entries.push({ kind: "user", text });
     this.busy = true;
