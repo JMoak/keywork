@@ -9,6 +9,7 @@ import {
 } from "./mcp-pane-model.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import { PaneTasks } from "./pane-tasks.ts";
 import type { Theme } from "./theme.ts";
 
 export interface McpPanePort {
@@ -35,27 +36,28 @@ export function mcpDropWatcher(
 
 export class McpPane implements Pane {
   readonly model: McpPaneModel;
-  private failure: string | undefined;
-  private readonly pending = new Set<Promise<void>>();
+  private readonly tasks: PaneTasks;
   private lastPageRows = 20;
   private readonly unsubscribe: (() => void) | undefined;
 
   constructor(
     readonly id: string,
-    private readonly notify: () => void,
+    notify: () => void,
     private readonly port: McpPanePort,
   ) {
-    this.model = new McpPaneModel(notify, {
+    this.tasks = new PaneTasks(notify);
+    this.model = new McpPaneModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
       restart: (name) => this.transition(name, () => this.port.restart(name)),
       setEnabled: (name, on) => this.transition(name, () => this.port.setEnabled(name, on)),
-      listTools: (name) => this.track(this.deliverTools(name)),
+      listTools: (name) => this.tasks.track(() => this.deliverTools(name)),
     });
     this.unsubscribe = port.subscribe?.((servers) => this.model.setServers(servers));
     this.refresh();
   }
 
   dispose(): void {
+    this.tasks.dispose();
     this.unsubscribe?.();
   }
 
@@ -75,12 +77,12 @@ export class McpPane implements Pane {
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
-  async settled(): Promise<void> {
-    while (this.pending.size > 0) await Promise.all([...this.pending]);
+  settled(): Promise<void> {
+    return this.tasks.settled();
   }
 
   refresh(): void {
-    this.track(this.port.load().then((servers) => this.model.setServers(servers)));
+    this.tasks.track(() => this.port.load().then((servers) => this.model.setServers(servers)));
   }
 
   view(context: PaneContext): PaneView {
@@ -102,37 +104,24 @@ export class McpPane implements Pane {
   }
 
   private transition(name: string, act: () => Promise<void>): void {
-    this.model.setBusy(name, true);
-    this.track(
-      this.drain(act).finally(() => {
+    this.tasks.track(() => {
+      this.model.setBusy(name, true);
+      return this.drain(act).finally(() => {
         this.model.setBusy(name, false);
-      }),
-    );
+      });
+    });
   }
 
   private async drain(act: () => Promise<void>): Promise<void> {
     await act();
+    if (!this.tasks.live()) return;
     this.model.setServers(await this.port.load());
   }
 
-  private track(work: Promise<void>): void {
-    const settled = work
-      .then(() => {
-        this.failure = undefined;
-      })
-      .catch((cause: unknown) => {
-        this.failure = (cause as Error).message;
-      })
-      .then(() => {
-        this.pending.delete(settled);
-        this.notify();
-      });
-    this.pending.add(settled);
-  }
-
   private bodyLines(theme: Theme, rows: number, width: number) {
-    if (this.failure !== undefined) {
-      return [Text({ content: this.failure.slice(0, width), fg: theme.error })];
+    const failure = this.tasks.failure();
+    if (failure !== undefined) {
+      return [Text({ content: failure.slice(0, width), fg: theme.error })];
     }
     return this.model
       .visibleRows(rows)

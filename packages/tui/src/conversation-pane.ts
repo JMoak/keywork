@@ -25,6 +25,7 @@ export interface ConversationPaneOptions {
 export class ConversationPane implements Pane {
   sessionId: string | undefined;
   private readonly model: ConversationModel;
+  private closed = false;
 
   constructor(
     readonly id: string,
@@ -91,7 +92,12 @@ export class ConversationPane implements Pane {
   }
 
   dispose(): void {
+    this.closed = true;
     this.model.dispose();
+  }
+
+  disposed(): boolean {
+    return this.closed;
   }
 
   async settled(): Promise<void> {

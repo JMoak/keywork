@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
@@ -23,6 +24,12 @@ function main(): void {
   if (profile === "crash-once" && markerPath !== undefined && !existsSync(markerPath)) {
     writeFileSync(markerPath, "crashed");
     process.exit(1);
+  }
+  if (profile === "leaky" && markerPath !== undefined) {
+    const grandchild = spawn(process.execPath, [process.argv[1] ?? "", "silent"], {
+      stdio: "ignore",
+    });
+    writeFileSync(markerPath, `${process.pid}\n${grandchild.pid ?? 0}`);
   }
   serve(profile === "hazard" ? hazardTools() : basicTools());
 }

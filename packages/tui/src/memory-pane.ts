@@ -8,6 +8,7 @@ import {
 } from "./memory-pane-model.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import { PaneTasks } from "./pane-tasks.ts";
 import type { Theme } from "./theme.ts";
 
 export interface MemoryPanePort {
@@ -18,21 +19,25 @@ export interface MemoryPanePort {
 
 export class MemoryPane implements Pane {
   readonly model: MemoryPaneModel;
-  private failure: string | undefined;
-  private readonly pending = new Set<Promise<void>>();
+  private readonly tasks: PaneTasks;
   private lastPageRows = 20;
 
   constructor(
     readonly id: string,
-    private readonly notify: () => void,
+    notify: () => void,
     private readonly port: MemoryPanePort,
   ) {
-    this.model = new MemoryPaneModel(notify, {
+    this.tasks = new PaneTasks(notify);
+    this.model = new MemoryPaneModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
-      approve: (stagedId) => this.track(this.drain(() => this.port.approve(stagedId))),
-      discard: (stagedId) => this.track(this.drain(() => this.port.discard(stagedId))),
+      approve: (stagedId) => this.tasks.track(() => this.drain(() => this.port.approve(stagedId))),
+      discard: (stagedId) => this.tasks.track(() => this.drain(() => this.port.discard(stagedId))),
     });
     this.refresh();
+  }
+
+  dispose(): void {
+    this.tasks.dispose();
   }
 
   title(): string {
@@ -53,12 +58,12 @@ export class MemoryPane implements Pane {
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
-  async settled(): Promise<void> {
-    while (this.pending.size > 0) await Promise.all([...this.pending]);
+  settled(): Promise<void> {
+    return this.tasks.settled();
   }
 
   refresh(): void {
-    this.track(this.port.load().then((inputs) => this.model.setInputs(inputs)));
+    this.tasks.track(() => this.port.load().then((inputs) => this.model.setInputs(inputs)));
   }
 
   view(context: PaneContext): PaneView {
@@ -73,27 +78,14 @@ export class MemoryPane implements Pane {
 
   private async drain(act: () => Promise<void>): Promise<void> {
     await act();
+    if (!this.tasks.live()) return;
     this.model.setInputs(await this.port.load());
   }
 
-  private track(work: Promise<void>): void {
-    const settled = work
-      .then(() => {
-        this.failure = undefined;
-      })
-      .catch((cause: unknown) => {
-        this.failure = (cause as Error).message;
-      })
-      .then(() => {
-        this.pending.delete(settled);
-        this.notify();
-      });
-    this.pending.add(settled);
-  }
-
   private bodyLines(theme: Theme, rows: number, width: number) {
-    if (this.failure !== undefined) {
-      return [Text({ content: this.failure.slice(0, width), fg: theme.error })];
+    const failure = this.tasks.failure();
+    if (failure !== undefined) {
+      return [Text({ content: failure.slice(0, width), fg: theme.error })];
     }
     return this.model
       .visibleRows(rows)

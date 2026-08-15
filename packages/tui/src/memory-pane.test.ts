@@ -90,6 +90,39 @@ describe("MemoryPane", () => {
     expect(pane.title()).toBe(" memory ");
   });
 
+  it("a disposed pane ignores late completions and starts no new work", async () => {
+    const { port, world } = portOver(populated);
+    let release: () => void = () => {};
+    port.approve = (id) => {
+      world.approved.push(id);
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    };
+    let notified = 0;
+    const pane = new MemoryPane(
+      "memory-1",
+      () => {
+        notified += 1;
+      },
+      port,
+    );
+    await pane.settled();
+    pane.handleKey(parseChord("i"));
+    pane.handleKey(parseChord("a"));
+    expect(world.approved).toEqual(["staged-1"]);
+    const loadsBefore = world.loads;
+    pane.dispose();
+    const notifiedBefore = notified;
+    release();
+    await pane.settled();
+    expect(notified).toBe(notifiedBefore);
+    expect(world.loads).toBe(loadsBefore);
+    pane.refresh();
+    await pane.settled();
+    expect(world.loads).toBe(loadsBefore);
+  });
+
   it("routes keys through the model: i then a approves and reloads", async () => {
     const { pane, world } = await paneOver(populated);
     pane.handleKey(parseChord("i"));

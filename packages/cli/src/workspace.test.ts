@@ -50,13 +50,23 @@ describe("workspaceFile", () => {
   });
 
   it("fresh mode ignores saved state but keeps saving", async () => {
-    const port = workspaceFile(await tempStateFile());
-    port.save(state);
-    port.flush();
-    const fresh = freshWorkspace(port);
+    const file = await tempStateFile();
+    const seed = workspaceFile(file);
+    seed.save(state);
+    seed.flush();
+    const fresh = freshWorkspace(workspaceFile(file));
     expect(await fresh.load()).toBeUndefined();
     fresh.save({ ...state, panes: [] });
     fresh.flush();
-    expect(await port.load()).toEqual({ ...state, panes: [] });
+    expect(await workspaceFile(file).load()).toEqual({ ...state, panes: [] });
+  });
+
+  it("ignores saves after the final flush", async () => {
+    const port = workspaceFile(await tempStateFile());
+    port.save(state);
+    port.flush();
+    port.save({ ...state, panes: [] });
+    port.flush();
+    expect(await port.load()).toEqual(state);
   });
 });

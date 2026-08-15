@@ -259,6 +259,7 @@ export interface AppCoreOptions {
   presets?: PresetsPort;
   restoreWorkspace?: WorkspaceState;
   saveWorkspace?: (state: WorkspaceState) => void;
+  onPaneClosed?: (id: string) => void;
   onExit: () => void;
 }
 
@@ -518,6 +519,7 @@ export class AppCore {
     this.panes.get(id)?.dispose?.();
     this.panes.delete(id);
     this.layout.close(id);
+    this.options.onPaneClosed?.(id);
   }
 
   summonBrowser(): void {

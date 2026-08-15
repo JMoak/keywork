@@ -8,6 +8,7 @@ const saveDelayMs = 500;
 export function workspaceFile(file: string, delayMs = saveDelayMs): WorkspacePort {
   let pending: WorkspaceState | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let flushed = false;
   const write = (): void => {
     if (pending === undefined) return;
     mkdirSync(dirname(file), { recursive: true });
@@ -23,12 +24,14 @@ export function workspaceFile(file: string, delayMs = saveDelayMs): WorkspacePor
       }
     },
     save(state: WorkspaceState): void {
+      if (flushed) return;
       pending = state;
       clearTimeout(timer);
       timer = setTimeout(write, delayMs);
       timer.unref?.();
     },
     flush(): void {
+      flushed = true;
       clearTimeout(timer);
       write();
     },

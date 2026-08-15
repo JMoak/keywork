@@ -195,6 +195,7 @@ export class ConversationModel {
     this.tailFollow = undefined;
     this.backtrackAt = undefined;
     this.busy = false;
+    this.afterTurn = undefined;
     this.agent?.interrupt();
   }
 
@@ -364,6 +365,7 @@ export class ConversationModel {
       .send(text)
       .then(() => this.afterTurn?.())
       .catch((cause: unknown) => {
+        if (this.disposed) return;
         this.entries.push({ kind: "error", text: (cause as Error).message });
       })
       .then(() => {
@@ -467,6 +469,7 @@ export class ConversationModel {
     }
     this.lastFork = fork(ordinal, entry.text)
       .then((outcome) => {
+        if (this.disposed) return;
         if (!outcome.forked) {
           this.entries.push({ kind: "info", text: "could not fork at that prompt" });
         } else if (outcome.note !== undefined) {
@@ -474,9 +477,12 @@ export class ConversationModel {
         }
       })
       .catch((cause: unknown) => {
+        if (this.disposed) return;
         this.entries.push({ kind: "error", text: (cause as Error).message });
       })
-      .then(() => this.notify());
+      .then(() => {
+        if (!this.disposed) this.notify();
+      });
     return true;
   }
 
@@ -629,7 +635,7 @@ export class ConversationModel {
     this.titleRequested = true;
     this.lastTitle = this.titler(this.agent.history())
       .then((title) => {
-        if (title === undefined) return;
+        if (title === undefined || this.disposed) return;
         this.title = title;
         this.notify();
       })

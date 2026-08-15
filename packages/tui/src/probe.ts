@@ -22,6 +22,7 @@ export interface AppProbeOptions
       | "presets"
       | "restoreWorkspace"
       | "saveWorkspace"
+      | "onPaneClosed"
     >
   > {
   screen?: Screen;
@@ -60,6 +61,7 @@ export class AppProbe {
         restoreWorkspace: options.restoreWorkspace,
       }),
       ...(options.saveWorkspace !== undefined && { saveWorkspace: options.saveWorkspace }),
+      ...(options.onPaneClosed !== undefined && { onPaneClosed: options.onPaneClosed }),
       onExit: () => {
         this.exited = true;
       },

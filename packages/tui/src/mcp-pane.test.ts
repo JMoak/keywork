@@ -191,6 +191,40 @@ describe("McpPane", () => {
     expect(pane.handleKey(parseChord("z"))).toBe(false);
   });
 
+  it("a disposed pane ignores late completions and starts no new work", async () => {
+    const { port, world } = portOver(fixture);
+    let release: () => void = () => {};
+    port.restart = (name) => {
+      world.restarted.push(name);
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    };
+    let notified = 0;
+    const pane = new McpPane(
+      "mcp-1",
+      () => {
+        notified += 1;
+      },
+      port,
+    );
+    await pane.settled();
+    pane.handleKey(parseChord("enter"));
+    pane.handleKey(parseChord("j"));
+    pane.handleKey(parseChord("enter"));
+    expect(world.restarted).toEqual(["filesystem"]);
+    const loadsBefore = world.loads;
+    pane.dispose();
+    const notifiedBefore = notified;
+    release();
+    await pane.settled();
+    expect(notified).toBe(notifiedBefore);
+    expect(world.loads).toBe(loadsBefore);
+    pane.refresh();
+    await pane.settled();
+    expect(world.loads).toBe(loadsBefore);
+  });
+
   it("pushes subscribed status snapshots into the model and unsubscribes on dispose", async () => {
     const { port } = portOver([]);
     let push: ((servers: McpServerView[]) => void) | undefined;

@@ -2,6 +2,7 @@ import { Text } from "@opentui/core";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import { PaneTasks } from "./pane-tasks.ts";
 import {
   SessionTreeModel,
   type SessionTreeRow,
@@ -18,25 +19,29 @@ export interface SessionTreePort {
 export class SessionTreePane implements Pane {
   readonly model: SessionTreeModel;
   private sessionId: string | undefined;
-  private failure: string | undefined;
-  private readonly pending = new Set<Promise<void>>();
+  private readonly tasks: PaneTasks;
   private lastPageRows = 20;
 
   constructor(
     readonly id: string,
-    private readonly notify: () => void,
+    notify: () => void,
     intents: PaneIntents,
     private readonly port: SessionTreePort,
     private readonly targetSession: () => string | undefined,
     initialSessionId?: string,
   ) {
     this.sessionId = initialSessionId;
-    this.model = new SessionTreeModel(notify, {
+    this.tasks = new PaneTasks(notify);
+    this.model = new SessionTreeModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
-      fork: (entryId) => this.track(this.fork(entryId, intents)),
-      setLabel: (entryId, label) => this.track(this.relabel(entryId, label)),
+      fork: (entryId) => this.tasks.track(() => this.fork(entryId, intents)),
+      setLabel: (entryId, label) => this.tasks.track(() => this.relabel(entryId, label)),
     });
     this.refresh();
+  }
+
+  dispose(): void {
+    this.tasks.dispose();
   }
 
   title(): string {
@@ -56,15 +61,15 @@ export class SessionTreePane implements Pane {
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
-  async settled(): Promise<void> {
-    while (this.pending.size > 0) await Promise.all([...this.pending]);
+  settled(): Promise<void> {
+    return this.tasks.settled();
   }
 
   refresh(): void {
     const target = this.targetSession() ?? this.sessionId;
     if (target === undefined) return;
     this.sessionId = target;
-    this.track(this.port.load(target).then((view) => this.model.setView(view)));
+    this.tasks.track(() => this.port.load(target).then((view) => this.model.setView(view)));
   }
 
   view(context: PaneContext): PaneView {
@@ -82,33 +87,20 @@ export class SessionTreePane implements Pane {
   private async fork(entryId: string, intents: PaneIntents): Promise<void> {
     if (this.sessionId === undefined) return;
     const forkedId = await this.port.fork(this.sessionId, entryId);
-    if (forkedId !== undefined) intents.openSession(forkedId);
+    if (forkedId !== undefined && this.tasks.live()) intents.openSession(forkedId);
   }
 
   private async relabel(entryId: string, label: string | undefined): Promise<void> {
     if (this.sessionId === undefined) return;
     await this.port.setLabel(this.sessionId, entryId, label);
+    if (!this.tasks.live()) return;
     this.model.setView(await this.port.load(this.sessionId));
   }
 
-  private track(work: Promise<void>): void {
-    const settled = work
-      .then(() => {
-        this.failure = undefined;
-      })
-      .catch((cause: unknown) => {
-        this.failure = (cause as Error).message;
-      })
-      .then(() => {
-        this.pending.delete(settled);
-        this.notify();
-      });
-    this.pending.add(settled);
-  }
-
   private bodyLines(theme: Theme, rows: number, width: number) {
-    if (this.failure !== undefined) {
-      return [Text({ content: this.failure.slice(0, width), fg: theme.error })];
+    const failure = this.tasks.failure();
+    if (failure !== undefined) {
+      return [Text({ content: failure.slice(0, width), fg: theme.error })];
     }
     if (this.model.sessionId() === undefined) {
       return [Text({ content: "no session yet — r retries", fg: theme.textDim })];

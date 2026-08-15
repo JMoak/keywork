@@ -118,6 +118,9 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const memoryPort = options.memory;
   const mcpPort = options.mcp;
   const agentSwitchers = new Map<string, (agentName: string | undefined) => boolean>();
+  let closed = false;
+  let armedExpiry: ReturnType<typeof setTimeout> | undefined;
+  let unsubscribeMcp: (() => void) | undefined;
   const core = new AppCore({
     screen,
     createPane: (id, notify, commands, resumeSessionId, draft) => {
@@ -128,6 +131,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       };
       const attachment =
         resumeSessionId === undefined ? undefined : attachments.get(resumeSessionId);
+      if (resumeSessionId !== undefined) attachments.delete(resumeSessionId);
       const seams: AgentSeams = {
         sessionId: () => pane?.sessionId,
         discloseRetrieval: (text) => pane?.discloseRetrieval(text),
@@ -173,7 +177,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       };
       if (attachment !== undefined) wireSession(attachment);
       else if (resumeSessionId === undefined && agent !== undefined) {
-        startFreshSession(options.sessions, notify, wireSession);
+        startFreshSession(options.sessions, notify, wireSession, () => !created.disposed());
       }
       return created;
     },
@@ -198,7 +202,13 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     ...(options.workspace !== undefined && {
       saveWorkspace: (state: WorkspaceState) => options.workspace?.save(state),
     }),
+    onPaneClosed: (id) => {
+      agentSwitchers.delete(id);
+    },
     onExit: closeOnce(() => {
+      closed = true;
+      if (armedExpiry !== undefined) clearTimeout(armedExpiry);
+      unsubscribeMcp?.();
       renderer.destroy();
       options.workspace?.flush();
       void runClosers(
@@ -209,7 +219,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     }),
   });
 
-  mcpPort?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
+  unsubscribeMcp = mcpPort?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
   if (options.extensions !== undefined) {
     registerExtensions(core.registry, options.extensions, {
       conversation: () => conversationTarget(core, agentSwitchers),
@@ -219,7 +229,6 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     if (failureNote !== undefined) core.postNotice(failureNote);
   }
 
-  let armedExpiry: ReturnType<typeof setTimeout> | undefined;
   const watchArmedExpiry = (): void => {
     if (armedExpiry !== undefined) clearTimeout(armedExpiry);
     if (!core.leaderArmed) return;
@@ -227,9 +236,11 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       core.expireArmed(performance.now());
       render();
     }, core.keymap.timeoutMs + 50);
+    armedExpiry.unref?.();
   };
 
   const render = (): void => {
+    if (closed) return;
     watchArmedExpiry();
     for (const child of [...renderer.root.getChildren()]) renderer.root.remove(child);
     renderer.root.add(
@@ -429,16 +440,17 @@ function attachOnFork(
   };
 }
 
-function startFreshSession(
+export function startFreshSession(
   sessions: SessionPort | undefined,
   notify: () => void,
   wire: (attachment: SessionAttachment) => void,
+  live: () => boolean,
 ): void {
   if (sessions === undefined) return;
   void sessions
     .create()
     .then((created) => {
-      if (created === undefined) return;
+      if (created === undefined || !live()) return;
       wire(created);
       notify();
     })

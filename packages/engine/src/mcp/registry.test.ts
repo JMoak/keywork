@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { McpServerConfig } from "@keywork/shared";
 import { afterEach, describe, expect, it } from "vitest";
+import { processExists } from "../proc.ts";
 import type { Tool } from "../tools.ts";
 import { McpAbortedError, type McpConnection, type McpTool } from "./client.ts";
 import {
@@ -484,6 +485,25 @@ describe("structured lifecycle ownership", () => {
     await registry.restart("alpha");
     expect(stateOf(registry, "alpha")).toBe("connected");
     expect(attempts).toBe(2);
+  });
+
+  it("leaves no server processes behind after stop, grandchildren included", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "keywork-mcp-"));
+    tempDirs.push(dir);
+    const marker = join(dir, "pids");
+    const registry = makeRegistry({ servers: { leaky: fixtureServer("leaky", [marker]) } });
+    registry.start();
+    await waitFor(() => stateOf(registry, "leaky") === "connected");
+
+    const pids = (await readFile(marker, "utf8"))
+      .split("\n")
+      .map(Number)
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+    expect(pids).toHaveLength(2);
+    for (const pid of pids) expect(processExists(pid)).toBe(true);
+
+    await registry.stop();
+    for (const pid of pids) await waitFor(() => !processExists(pid));
   });
 
   it("tears down a hung real handshake promptly on disable", async () => {

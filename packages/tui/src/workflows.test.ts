@@ -218,6 +218,17 @@ describe("closing panes via keys", () => {
     expect(probe.exited).toBe(true);
   });
 
+  it("reports the closed pane id through onPaneClosed", () => {
+    const closedIds: string[] = [];
+    const probe = new AppProbe({ onPaneClosed: (id) => closedIds.push(id) });
+    probe.command("split");
+    const before = paneIds(probe);
+    probe.keys("ctrl+k", "x");
+    expect(closedIds).toHaveLength(1);
+    expect(before).toContain(closedIds[0]);
+    expect(paneIds(probe)).not.toContain(closedIds[0]);
+  });
+
   it("closing a busy pane interrupts its agent and detaches its transcript", async () => {
     const agents: Agent[] = [];
     const probe = new AppProbe({

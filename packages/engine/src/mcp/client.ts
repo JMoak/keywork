@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { killTree } from "../proc.ts";
 
 export const mcpProtocolVersion = "2025-06-18";
 
@@ -94,6 +95,7 @@ class StdioChannel implements McpConnection {
   private closed = false;
   private closedDeliberately = false;
   private exitReason: string | undefined;
+  private teardown: Promise<void> | undefined;
 
   constructor(spec: StdioServerSpec, timeoutMs: number, signal?: AbortSignal) {
     this.timeoutMs = timeoutMs;
@@ -101,6 +103,7 @@ class StdioChannel implements McpConnection {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...spec.env },
       windowsHide: true,
+      detached: process.platform !== "win32",
     });
     this.exited = new Promise((resolve) => {
       this.child.once("exit", () => resolve());
@@ -158,19 +161,14 @@ class StdioChannel implements McpConnection {
 
   close(): Promise<void> {
     this.closedDeliberately = true;
-    if (!this.closed) {
-      const killTimer = setTimeout(() => this.child.kill(), 500);
-      void this.exited.then(() => clearTimeout(killTimer));
-      this.child.stdin?.end();
-    }
-    return this.exited;
+    this.teardown ??= killTree(this.child, this.exited);
+    return this.teardown;
   }
 
   private abortNow(): void {
-    if (this.closed) return;
     this.closedDeliberately = true;
     this.settleClosed(new McpAbortedError());
-    this.child.kill();
+    this.teardown ??= killTree(this.child, this.exited);
   }
 
   private request(method: string, params: unknown): Promise<unknown> {

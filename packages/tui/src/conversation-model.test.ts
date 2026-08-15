@@ -238,6 +238,61 @@ describe("auto-titling", () => {
   });
 });
 
+describe("disposal", () => {
+  it("drops fork and title results that land after dispose", async () => {
+    let releaseFork: (outcome: { forked: boolean }) => void = () => {};
+    let releaseTitle: (title: string | undefined) => void = () => {};
+    const agent = new Agent({ provider: new MockProvider([textTurn("re: one")]) });
+    let notified = 0;
+    const model = new ConversationModel(
+      agent,
+      () => {
+        notified += 1;
+      },
+      () =>
+        new Promise((resolve) => {
+          releaseTitle = resolve;
+        }),
+      undefined,
+      {
+        forkAtPrompt: () =>
+          new Promise((resolve) => {
+            releaseFork = resolve;
+          }),
+      },
+    );
+    type(model, "one");
+    await submit(model);
+    model.handleKey(parseChord("escape"), undefined);
+    model.handleKey(parseChord("escape"), undefined);
+    model.handleKey(parseChord("return"), undefined);
+    const entriesBefore = model.entries.length;
+    model.dispose();
+    const notifiedBefore = notified;
+    releaseFork({ forked: false });
+    releaseTitle("late-title");
+    await model.lastFork;
+    await model.lastTitle;
+    expect(model.entries.length).toBe(entriesBefore);
+    expect(model.title).toBeUndefined();
+    expect(notified).toBe(notifiedBefore);
+  });
+
+  it("clears the after-turn hook on dispose", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("a"), textTurn("b")]) });
+    let hooked = 0;
+    const model = new ConversationModel(agent, () => {});
+    model.bindAfterTurn(async () => {
+      hooked += 1;
+    });
+    type(model, "one");
+    await submit(model);
+    expect(hooked).toBe(1);
+    model.dispose();
+    expect(model.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+  });
+});
+
 describe("multiline input", () => {
   it("keeps composing across shift+enter and submits the whole message", async () => {
     const agent = new Agent({ provider: new MockProvider([textTurn("ok")]) });
