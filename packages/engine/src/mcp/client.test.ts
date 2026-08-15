@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   connectStdioServer,
+  McpAbortedError,
   type McpConnection,
   McpRequestTimeoutError,
   McpServerExitedError,
@@ -75,6 +76,39 @@ describe("stdio MCP client", () => {
         { requestTimeoutMs: 2_000 },
       ),
     ).rejects.toThrow();
+  });
+
+  it("aborts a hung handshake without waiting out the request timeout", async () => {
+    const controller = new AbortController();
+    const connecting = connectStdioServer(fixtureSpec("silent"), {
+      requestTimeoutMs: 8_000,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 50);
+    const begun = Date.now();
+    await expect(connecting).rejects.toBeInstanceOf(McpAbortedError);
+    expect(Date.now() - begun).toBeLessThan(4_000);
+  });
+
+  it("rejects immediately on an already-aborted signal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      connectStdioServer(fixtureSpec("basic"), { signal: controller.signal }),
+    ).rejects.toBeInstanceOf(McpAbortedError);
+  });
+
+  it("abort after a successful connect is inert once the connection is closed", async () => {
+    const controller = new AbortController();
+    const connection = await connectStdioServer(fixtureSpec("basic"), {
+      requestTimeoutMs: 5_000,
+      signal: controller.signal,
+    });
+    const echoed = await connection.callTool("echo", { text: "pre-abort" });
+    expect(echoed.text).toBe("pre-abort");
+    await connection.close();
+    controller.abort();
+    await connection.close();
   });
 
   it("fails in-flight calls cleanly when the server crashes mid-call", async () => {

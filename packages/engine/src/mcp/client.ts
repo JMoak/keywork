@@ -29,6 +29,14 @@ export interface StdioServerSpec {
 
 export interface StdioConnectOptions {
   requestTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export class McpAbortedError extends Error {
+  constructor() {
+    super("connection attempt aborted");
+    this.name = "McpAbortedError";
+  }
 }
 
 export class McpRequestTimeoutError extends Error {
@@ -56,7 +64,8 @@ export async function connectStdioServer(
   spec: StdioServerSpec,
   options: StdioConnectOptions = {},
 ): Promise<McpConnection> {
-  const channel = new StdioChannel(spec, options.requestTimeoutMs ?? 10_000);
+  if (options.signal?.aborted === true) throw new McpAbortedError();
+  const channel = new StdioChannel(spec, options.requestTimeoutMs ?? 10_000, options.signal);
   try {
     await channel.handshake();
   } catch (cause) {
@@ -76,6 +85,7 @@ class StdioChannel implements McpConnection {
   serverName = "unknown";
   private readonly child: ChildProcess;
   private readonly timeoutMs: number;
+  private readonly exited: Promise<void>;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly closeHandlers: Array<(error?: Error) => void> = [];
   private buffer = "";
@@ -85,12 +95,16 @@ class StdioChannel implements McpConnection {
   private closedDeliberately = false;
   private exitReason: string | undefined;
 
-  constructor(spec: StdioServerSpec, timeoutMs: number) {
+  constructor(spec: StdioServerSpec, timeoutMs: number, signal?: AbortSignal) {
     this.timeoutMs = timeoutMs;
     this.child = spawn(spec.command, [...(spec.args ?? [])], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...spec.env },
       windowsHide: true,
+    });
+    this.exited = new Promise((resolve) => {
+      this.child.once("exit", () => resolve());
+      this.child.once("error", () => resolve());
     });
     this.child.stdin?.on("error", () => {});
     this.child.stdout?.setEncoding("utf8");
@@ -105,6 +119,7 @@ class StdioChannel implements McpConnection {
     this.child.on("exit", (code) => {
       this.settleClosed(new McpServerExitedError(this.describeExit(code)));
     });
+    signal?.addEventListener("abort", () => this.abortNow(), { once: true });
   }
 
   async handshake(): Promise<void> {
@@ -143,15 +158,19 @@ class StdioChannel implements McpConnection {
 
   close(): Promise<void> {
     this.closedDeliberately = true;
-    if (this.closed) return Promise.resolve();
-    return new Promise((resolve) => {
+    if (!this.closed) {
       const killTimer = setTimeout(() => this.child.kill(), 500);
-      this.child.once("exit", () => {
-        clearTimeout(killTimer);
-        resolve();
-      });
+      void this.exited.then(() => clearTimeout(killTimer));
       this.child.stdin?.end();
-    });
+    }
+    return this.exited;
+  }
+
+  private abortNow(): void {
+    if (this.closed) return;
+    this.closedDeliberately = true;
+    this.settleClosed(new McpAbortedError());
+    this.child.kill();
   }
 
   private request(method: string, params: unknown): Promise<unknown> {
@@ -220,7 +239,7 @@ class StdioChannel implements McpConnection {
     request.resolve(message.result);
   }
 
-  private settleClosed(error: McpServerExitedError): void {
+  private settleClosed(error: Error): void {
     if (this.closed) return;
     this.closed = true;
     this.exitReason = error.message;

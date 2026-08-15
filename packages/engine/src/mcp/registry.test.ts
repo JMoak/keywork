@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { McpServerConfig } from "@keywork/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Tool } from "../tools.ts";
-import type { McpConnection, McpTool } from "./client.ts";
+import { McpAbortedError, type McpConnection, type McpTool } from "./client.ts";
 import {
   isMcpBackedTool,
   McpRegistry,
@@ -434,6 +434,69 @@ describe("structured lifecycle ownership", () => {
     await registry.enable("alpha");
     expect(stateOf(registry, "alpha")).toBe("connected");
     expect(attempts).toBe(2);
+  });
+
+  function abortableConnect(): (spec: unknown, signal: AbortSignal) => Promise<McpConnection> {
+    return (_spec, signal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new McpAbortedError()), { once: true });
+      });
+  }
+
+  it("disable aborts a hung connect attempt instead of waiting it out", async () => {
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: abortableConnect(),
+    });
+    registry.start();
+    const begun = Date.now();
+    await registry.disable("alpha");
+    expect(Date.now() - begun).toBeLessThan(1_000);
+    expect(registry.status()[0]).toMatchObject({ state: "down", enabled: false });
+  });
+
+  it("stop aborts a hung connect attempt and returns promptly", async () => {
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: abortableConnect(),
+    });
+    registry.start();
+    const begun = Date.now();
+    await registry.stop();
+    expect(Date.now() - begun).toBeLessThan(1_000);
+  });
+
+  it("restart aborts the previous attempt and connects fresh", async () => {
+    let attempts = 0;
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: (_spec, signal) => {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(new McpAbortedError()), { once: true });
+          });
+        }
+        return Promise.resolve(fakeConnection([fakeTool("probe")]));
+      },
+    });
+    registry.start();
+    await registry.restart("alpha");
+    expect(stateOf(registry, "alpha")).toBe("connected");
+    expect(attempts).toBe(2);
+  });
+
+  it("tears down a hung real handshake promptly on disable", async () => {
+    const registry = makeRegistry({
+      servers: { mute: fixtureServer("silent") },
+      requestTimeoutMs: 8_000,
+      restartDelaysMs: [],
+    });
+    registry.start();
+    const begun = Date.now();
+    await registry.disable("mute");
+    expect(Date.now() - begun).toBeLessThan(4_000);
+    expect(registry.status()[0]).toMatchObject({ state: "down", enabled: false });
   });
 
   it("keeps a single reconciler when a listener reenters during the first notification", async () => {

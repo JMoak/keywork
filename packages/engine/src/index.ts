@@ -47,6 +47,7 @@ export {
 } from "./extensions/skills.ts";
 export {
   connectStdioServer,
+  McpAbortedError,
   type McpConnection,
   McpProtocolError,
   McpRequestTimeoutError,

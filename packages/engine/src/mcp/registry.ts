@@ -55,7 +55,7 @@ export class McpRegistryClosedError extends Error {
 
 export interface McpRegistryOptions {
   servers: Record<string, McpServerConfig>;
-  connect?: (spec: StdioServerSpec) => Promise<McpConnection>;
+  connect?: (spec: StdioServerSpec, signal: AbortSignal) => Promise<McpConnection>;
   requestTimeoutMs?: number;
   restartDelaysMs?: readonly number[];
   maxResultChars?: number;
@@ -69,7 +69,7 @@ export class McpRegistry {
   private readonly runtimes = new Map<string, ServerRuntime>();
   private readonly live: Tool[] = [];
   private readonly listeners = new Set<McpStatusListener>();
-  private readonly connect: (spec: StdioServerSpec) => Promise<McpConnection>;
+  private readonly connect: (spec: StdioServerSpec, signal: AbortSignal) => Promise<McpConnection>;
   private readonly restartDelays: readonly number[];
   private readonly maxResultChars: number;
   private readonly onToolResult: ((report: McpToolCallReport) => void) | undefined;
@@ -80,7 +80,8 @@ export class McpRegistry {
   constructor(options: McpRegistryOptions) {
     const timeoutMs = options.requestTimeoutMs ?? 10_000;
     this.connect =
-      options.connect ?? ((spec) => connectStdioServer(spec, { requestTimeoutMs: timeoutMs }));
+      options.connect ??
+      ((spec, signal) => connectStdioServer(spec, { requestTimeoutMs: timeoutMs, signal }));
     this.restartDelays = options.restartDelaysMs ?? defaultRestartDelaysMs;
     this.maxResultChars = options.maxResultChars ?? 30_000;
     this.onToolResult = options.onToolResult;
@@ -100,7 +101,10 @@ export class McpRegistry {
 
   async stop(): Promise<void> {
     this.closing = true;
-    for (const runtime of this.runtimes.values()) runtime.wake.fire();
+    for (const runtime of this.runtimes.values()) {
+      runtime.attempt?.abort();
+      runtime.wake.fire();
+    }
     const drained = new Set<Promise<void>>();
     for (
       let loops = this.undrainedLoops(drained);
@@ -187,6 +191,7 @@ export class McpRegistry {
     runtime.retriesExhausted = false;
     runtime.eager = true;
     this.spawn(runtime);
+    runtime.attempt?.abort();
     runtime.wake.fire();
     return this.settledAt(runtime, runtime.desired.version);
   }
@@ -235,8 +240,10 @@ export class McpRegistry {
     runtime.eager = false;
     runtime.state = "connecting";
     this.notify();
+    const attempt = new AbortController();
+    runtime.attempt = attempt;
     try {
-      const opened = await this.openConnection(runtime);
+      const opened = await this.openConnection(runtime, attempt.signal);
       if (this.superseded(runtime, goal)) {
         await closeQuietly(opened.connection);
         return;
@@ -248,11 +255,13 @@ export class McpRegistry {
       runtime.lastError = errorMessage(cause);
       this.notify();
       this.settle(runtime, goal.version);
+    } finally {
+      runtime.attempt = undefined;
     }
   }
 
-  private async openConnection(runtime: ServerRuntime): Promise<OpenedServer> {
-    const connection = await this.connect(stdioSpec(runtime.config));
+  private async openConnection(runtime: ServerRuntime, signal: AbortSignal): Promise<OpenedServer> {
+    const connection = await this.connect(stdioSpec(runtime.config), signal);
     try {
       return { connection, catalog: await connection.listTools() };
     } catch (cause) {
@@ -499,6 +508,7 @@ interface ServerRuntime {
   wake: Wakeup;
   serving: boolean;
   loop: Promise<void> | undefined;
+  attempt: AbortController | undefined;
 }
 
 interface CatalogEntry {
@@ -560,6 +570,7 @@ function freshRuntime(name: string, config: McpServerConfig): ServerRuntime {
     wake: new Wakeup(),
     serving: false,
     loop: undefined,
+    attempt: undefined,
   };
 }
 

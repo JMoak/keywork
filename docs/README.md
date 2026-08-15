@@ -40,6 +40,13 @@ in the order given; later docs assume the earlier ones.
 | 6 | [`comparison.md`](comparison.md) | Pi vs OpenCode vs Crush head-to-head: philosophy comparison, an 18-row shared-features matrix (keywork's table-stakes baseline), per-tool adoption verdicts, and ten open questions (Q1–Q10) for vision-shaping. |
 | 7 | [`ux-principles.md`](ux-principles.md) | keywork's UX & interaction principles: 13 named design principles, a *proposed* leader-key + palette keyboard model, a *proposed* five-pane window model, and a 14-item simplicity budget of refusals. Sections 2–3 are proposals, not decisions. |
 
+### Deep dives — implementation research
+
+| # | Doc | What it covers |
+|---|-----|----------------|
+| 8 | [`research/coding-agent-nuances.md`](research/coding-agent-nuances.md) | Survey & triage of the "million little things" — nuanced behaviors, not headline features — across Claude Code, OpenCode, Pi, Aider, Codex CLI, Gemini CLI, Goose, and Amp, sized against the backlog. |
+| 9 | [`research/forensic-stress-harness.md`](research/forensic-stress-harness.md) | Design + implementation notes for the two-tier MCP forensic stress harness: deterministic fast-check model layer, real-subprocess soak supervisor, leak/quiescence oracles, Windows crash-dump capture (WER/ProcDump vs Bun's VEH), Bun version matrix. |
+
 ---
 
 ## Ground rules
