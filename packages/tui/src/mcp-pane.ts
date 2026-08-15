@@ -47,8 +47,8 @@ export class McpPane implements Pane {
   ) {
     this.model = new McpPaneModel(notify, {
       refresh: () => this.refresh(),
-      restart: (name) => this.track(this.drain(() => this.port.restart(name))),
-      setEnabled: (name, on) => this.track(this.drain(() => this.port.setEnabled(name, on))),
+      restart: (name) => this.transition(name, () => this.port.restart(name)),
+      setEnabled: (name, on) => this.transition(name, () => this.port.setEnabled(name, on)),
       listTools: (name) => this.track(this.deliverTools(name)),
     });
     this.unsubscribe = port.subscribe?.((servers) => this.model.setServers(servers));
@@ -99,6 +99,15 @@ export class McpPane implements Pane {
     } catch (cause: unknown) {
       this.model.setTools(name, { error: (cause as Error).message });
     }
+  }
+
+  private transition(name: string, act: () => Promise<void>): void {
+    this.model.setBusy(name, true);
+    this.track(
+      this.drain(act).finally(() => {
+        this.model.setBusy(name, false);
+      }),
+    );
   }
 
   private async drain(act: () => Promise<void>): Promise<void> {

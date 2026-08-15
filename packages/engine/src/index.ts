@@ -62,6 +62,7 @@ export {
   isMcpBackedTool,
   type McpBackedTool,
   McpRegistry,
+  McpRegistryClosedError,
   type McpRegistryOptions,
   McpServerNotFoundError,
   type McpServerState,

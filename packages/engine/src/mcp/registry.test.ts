@@ -9,6 +9,7 @@ import type { McpConnection, McpTool } from "./client.ts";
 import {
   isMcpBackedTool,
   McpRegistry,
+  McpRegistryClosedError,
   type McpRegistryOptions,
   McpServerNotFoundError,
   type McpServerState,
@@ -314,6 +315,194 @@ describe("server lifecycle", () => {
   it("throws for unknown server names on control verbs", () => {
     const registry = makeRegistry({ servers: {} });
     expect(() => registry.listTools("ghost")).toThrow(McpServerNotFoundError);
+  });
+});
+
+describe("structured lifecycle ownership", () => {
+  function closableConnection(tools: McpTool[]): McpConnection & { closed: boolean } {
+    const tracked = {
+      ...fakeConnection(tools),
+      closed: false,
+      close: () => {
+        tracked.closed = true;
+        return Promise.resolve();
+      },
+    };
+    return tracked;
+  }
+
+  it("coalesces a burst of contradictory transitions into one reconnect", async () => {
+    let attempts = 0;
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => {
+        attempts += 1;
+        return Promise.resolve(fakeConnection([fakeTool("probe")]));
+      },
+    });
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "connected");
+    expect(attempts).toBe(1);
+
+    await Promise.all([
+      registry.restart("alpha"),
+      registry.disable("alpha"),
+      registry.restart("alpha"),
+      registry.enable("alpha"),
+    ]);
+    expect(stateOf(registry, "alpha")).toBe("connected");
+    expect(attempts).toBe(2);
+  });
+
+  it("stop waits for an in-flight connect and closes the late connection", async () => {
+    let release: ((connection: McpConnection) => void) | undefined;
+    const opening = new Promise<McpConnection>((resolve) => {
+      release = resolve;
+    });
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => opening,
+    });
+    registry.start();
+    const late = closableConnection([fakeTool("probe")]);
+    let stopped = false;
+    const stopping = registry.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    release?.(late);
+    await stopping;
+    expect(late.closed).toBe(true);
+  });
+
+  it("stop interrupts retry backoff without waiting out the delay", async () => {
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      restartDelaysMs: [60_000],
+      connect: () => Promise.reject(new Error("refused")),
+    });
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "down");
+    const begun = Date.now();
+    await registry.stop();
+    expect(Date.now() - begun).toBeLessThan(1_000);
+  });
+
+  it("rejects control verbs once stopped", async () => {
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => Promise.resolve(fakeConnection([fakeTool("probe")])),
+    });
+    registry.start();
+    await registry.stop();
+    await expect(registry.enable("alpha")).rejects.toThrow(McpRegistryClosedError);
+    await expect(registry.disable("alpha")).rejects.toThrow(McpRegistryClosedError);
+    await expect(registry.restart("alpha")).rejects.toThrow(McpRegistryClosedError);
+  });
+
+  it("closes the fresh connection when the tool listing fails", async () => {
+    const doomed = closableConnection([]);
+    doomed.listTools = () => Promise.reject(new Error("catalog unavailable"));
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      restartDelaysMs: [],
+      connect: () => Promise.resolve(doomed),
+    });
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "down");
+    expect(doomed.closed).toBe(true);
+    expect(registry.status()[0]?.lastError).toContain("catalog unavailable");
+  });
+
+  it("a verb during backoff preempts the delay", async () => {
+    let healthy = false;
+    let attempts = 0;
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      restartDelaysMs: [60_000],
+      connect: () => {
+        attempts += 1;
+        return healthy
+          ? Promise.resolve(fakeConnection([fakeTool("probe")]))
+          : Promise.reject(new Error("refused"));
+      },
+    });
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "down");
+    healthy = true;
+    await registry.enable("alpha");
+    expect(stateOf(registry, "alpha")).toBe("connected");
+    expect(attempts).toBe(2);
+  });
+
+  it("keeps a single reconciler when a listener reenters during the first notification", async () => {
+    let attempts = 0;
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => {
+        attempts += 1;
+        return Promise.resolve(fakeConnection([fakeTool("probe")]));
+      },
+    });
+    let disabling: Promise<void> | undefined;
+    registry.subscribe((statuses) => {
+      if (disabling === undefined && statuses[0]?.state === "connecting") {
+        disabling = registry.disable("alpha");
+      }
+    });
+    registry.start();
+    await waitFor(() => disabling !== undefined);
+    await disabling;
+    expect(registry.status()[0]).toMatchObject({ state: "down", enabled: false });
+    expect(attempts).toBe(1);
+  });
+
+  it("survives a connection whose close rejects", async () => {
+    let generation = 0;
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => {
+        generation += 1;
+        return Promise.resolve({
+          ...fakeConnection([fakeTool(`probe-${generation}`)]),
+          close: () => Promise.reject(new Error("close failed")),
+        });
+      },
+    });
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "connected");
+    await registry.restart("alpha");
+    expect(stateOf(registry, "alpha")).toBe("connected");
+    expect(registry.listTools("alpha").map((tool) => tool.name)).toEqual(["probe-2"]);
+    await registry.stop();
+  });
+
+  it("survives a throwing status listener", async () => {
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => Promise.resolve(fakeConnection([fakeTool("probe")])),
+    });
+    registry.subscribe(() => {
+      throw new Error("listener bug");
+    });
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "connected");
+    await registry.stop();
+    expect(stateOf(registry, "alpha")).toBe("down");
+  });
+
+  it("disable during backoff settles promptly and clears the failure", async () => {
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      restartDelaysMs: [60_000],
+      connect: () => Promise.reject(new Error("refused")),
+    });
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "down");
+    await registry.disable("alpha");
+    expect(registry.status()[0]).toMatchObject({ state: "down", enabled: false, toolCount: 0 });
+    expect(registry.status()[0]?.lastError).toBeUndefined();
   });
 });
 

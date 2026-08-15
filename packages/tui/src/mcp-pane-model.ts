@@ -66,6 +66,7 @@ export class McpPaneModel {
   scrollTop = 0;
 
   private servers: McpServerView[] = [];
+  private busyServers = new Set<string>();
   private openMenus = new Set<string>();
   private openTools = new Set<string>();
   private toolsByServer = new Map<string, ToolsState>();
@@ -85,6 +86,19 @@ export class McpPaneModel {
     this.touch();
     this.reanchor();
     this.notify();
+  }
+
+  setBusy(name: string, busy: boolean): void {
+    if (busy === this.busyServers.has(name)) return;
+    if (busy) this.busyServers.add(name);
+    else this.busyServers.delete(name);
+    this.touch();
+    this.reanchor();
+    this.notify();
+  }
+
+  isBusy(name: string): boolean {
+    return this.busyServers.has(name);
   }
 
   setTools(name: string, result: McpToolsResult): void {
@@ -189,10 +203,11 @@ export class McpPaneModel {
   }
 
   private menuRows(server: McpServerView): McpRow[] {
+    const held = this.busyServers.has(server.name);
     const rows = [
-      actionRow(server.name, "restart", "restart"),
-      actionRow(server.name, "toggle", isOn(server) ? "disable" : "enable"),
-      actionRow(server.name, "tools", "tools"),
+      actionRow(server.name, "restart", "restart", held),
+      actionRow(server.name, "toggle", isOn(server) ? "disable" : "enable", held),
+      actionRow(server.name, "tools", "tools", false),
     ];
     if (this.openTools.has(server.name)) rows.push(...this.toolRows(server.name));
     return rows;
@@ -253,10 +268,10 @@ export class McpPaneModel {
       case "menu":
         return this.toggleMenu(server.name);
       case "restart":
-        this.effects.restart(server.name);
+        if (!this.busyServers.has(server.name)) this.effects.restart(server.name);
         return true;
       case "toggle":
-        this.effects.setEnabled(server.name, !isOn(server));
+        if (!this.busyServers.has(server.name)) this.effects.setEnabled(server.name, !isOn(server));
         return true;
       case "tools":
         return this.toggleTools(server.name);
@@ -338,6 +353,7 @@ export class McpPaneModel {
   }
 
   private pruneVanished(names: Set<string>): void {
+    for (const name of this.busyServers) if (!names.has(name)) this.busyServers.delete(name);
     for (const name of this.openMenus) if (!names.has(name)) this.openMenus.delete(name);
     for (const name of this.openTools) if (!names.has(name)) this.openTools.delete(name);
     for (const name of this.toolsByServer.keys())
@@ -410,12 +426,12 @@ function serverText(server: McpServerView): string {
   }
 }
 
-function actionRow(name: string, action: McpAction, label: string): McpRow {
+function actionRow(name: string, action: McpAction, label: string, held: boolean): McpRow {
   return {
     id: `menu:${name}:${action}`,
     kind: "action",
     text: `  ${label}`,
-    tone: "normal",
+    tone: held ? "dim" : "normal",
     selectable: true,
     server: name,
     action,

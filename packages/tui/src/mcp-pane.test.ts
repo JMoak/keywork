@@ -130,6 +130,32 @@ describe("McpPane", () => {
     expect(rendered(pane)).toContain("░ filesystem · off");
   });
 
+  it("holds conflicting actions while a transition is in flight and releases after", async () => {
+    const { port, world } = portOver(fixture);
+    let release: () => void = () => {};
+    port.restart = (name) => {
+      world.restarted.push(name);
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    };
+    const pane = new McpPane("mcp-1", () => {}, port);
+    await pane.settled();
+    pane.handleKey(parseChord("enter"));
+    pane.handleKey(parseChord("j"));
+    pane.handleKey(parseChord("enter"));
+    pane.handleKey(parseChord("enter"));
+    pane.handleKey(parseChord("j"));
+    pane.handleKey(parseChord("enter"));
+    expect(world.restarted).toEqual(["filesystem"]);
+    expect(world.toggled).toEqual([]);
+    release();
+    await pane.settled();
+    pane.handleKey(parseChord("enter"));
+    await pane.settled();
+    expect(world.toggled).toEqual([["filesystem", false]]);
+  });
+
   it("menu tools lists tool names inline through the port", async () => {
     const { pane, world } = await paneOver(fixture);
     world.tools.filesystem = ["read_file", "write_file"];
