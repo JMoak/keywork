@@ -34,11 +34,13 @@
 | [`92-iteration-3.md`](92-iteration-3.md) | **Authoritative overlay** atop 91 — iteration-3 tracks (safety net, sessions durable/navigable/forkable) plus the running done-ledger of landed waves (Track S/T/P/V, Bedrock, workstream-J kernels, D5–D8/D10/D14, MCP lifecycle hardening 2026-08-15); binding platform priority (Linux primary, Windows fully supported) | — | — |
 | [`93-adversarial-review.md`](93-adversarial-review.md) | Adversarial-review findings + parallel work plan — WP-1…WP-8 waves (root-jail, interrupt repair, SSE hardening, …) all landed 2026-08-10; kept as the fixed-defect corpus and review-wave precedent | — | — |
 | [`96-conversation-enrichment.md`](96-conversation-enrichment.md) | Planning overlay for the conversation pane's streaming feed — 12 sized enrichment candidates (V2.x); adoption gated on the `research/coding-agent-nuances.md` merge; V2.1/V2.2/V2.10/V2.13 already landed via 92 | — | — |
+| [`97-product-direction.md`](97-product-direction.md) | **Authoritative overlay** (2026-08-15, wins over 96/95/94/92/91/90) — second hands-on feedback pass: panes becomes bare-`keywork`'s front door (D15), two-dock engine + location cycling superseding 92 Track Q item 4 (C38), geometry unification fixing the overlap glitch (C35), live/dedup'd sessions surfaces (C36, C37), per-pane permission-mode design (E7, absorbs E5), task-group memory design (J15), workspace anchoring & linked folders (J16); addendum: E2E screen-capture harness C39–C43 over OpenTUI's headless test renderer (design in `../research/e2e-screen-capture.md`); open design questions Q1–Q10; work streams W0–W6 | 13 | +26 |
 | [`95-memory-and-skills.md`](95-memory-and-skills.md) | **Workstream J** — memory & self-healing skills: workspace/user scopes (J-D1), engine-core memory (J-D2), hybrid RRF retrieval (J-D3), Gardener curation, pre-compaction flush, memory pane, Hermes-style skill healing, write gating = provenance-gated optimism + airlock with curing-garden rendering (J-D4 resolved); atomic-note Obsidian-citizen vault + bi-temporal entity graph with PPR third retrieval leg (J-D5). Sources: OpenClaw (MIT), Hermes (MIT), HippoRAG (MIT), Graphiti (Apache-2.0, design), rosavera (Jordan's own); fifth-pass fault resolutions 2026-08-10 (sync self-reconciliation J14, recall citations J13, airlock instrumentation, session-staleness rungs, backpressure guarantee A18) | 15 | +36 |
 
-**Total: 115 tasks, ~249 points** (after review + progress overlays; D14 MCP status dock
+**Total: 128 tasks, ~275 points** (after review + progress overlays; D14 MCP status dock
 and workstream J added 2026-08-10; J13/J14/A18 from the fifth-pass fault review; C34/P2.6
-from the external-surface posture).
+from the external-surface posture; C35–C43/D15/E7/J15/J16 from the 2026-08-15 product
+direction overlay and its screen-capture addendum).
 
 **Milestone map — see `90-plan-review.md` (authoritative), current status in
 `91-progress-and-feedback.md`:**
