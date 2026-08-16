@@ -79,6 +79,14 @@ export class ConversationPane implements Pane {
     this.model.submitText(text);
   }
 
+  adoptTitle(title: string): void {
+    this.model.adoptTitle(title);
+  }
+
+  titled(): string | undefined {
+    return this.model.title;
+  }
+
   currentAgent(): Agent | undefined {
     return this.model.currentAgent();
   }
@@ -157,14 +165,7 @@ export class ConversationPane implements Pane {
         suggestionRow(suggestion, index === this.model.selectedSuggestion, theme),
       ),
       ...diffRows,
-      ...(ask === undefined
-        ? []
-        : [
-            Text({
-              content: `? ${ask.summary}  [y] allow  [a] always  [n] deny`,
-              fg: theme.accent,
-            }),
-          ]),
+      ...(ask === undefined ? [] : [askRow(ask.summary, innerWidth, theme)]),
       ...backtrackHint,
       ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
     );
@@ -178,6 +179,14 @@ export class ConversationPane implements Pane {
       ...(window.below > 0 ? [Text({ content: `↓ ${window.below} more`, fg: theme.textDim })] : []),
     ];
   }
+}
+
+const askControls = "  [y] allow  [a] always  [n] deny";
+
+function askRow(summary: string, width: number, theme: Theme) {
+  const room = Math.max(0, width - askControls.length - 2);
+  const clipped = summary.length > room ? `${summary.slice(0, Math.max(0, room - 1))}…` : summary;
+  return Text({ content: `? ${clipped}${askControls}`, fg: theme.accent });
 }
 
 function transcriptRow(line: TranscriptLine, width: number, theme: Theme) {

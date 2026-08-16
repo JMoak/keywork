@@ -129,7 +129,7 @@ function tilingTour(): Scenario {
       await stage.settle();
       const tiled = await stage.capture("three-panes");
       assert.equal(paneTitleCount(tiled), 3, "two splits leave three session panes");
-      assert.ok(tiled.includes("3 panes"), "status bar counts three panes");
+      assert.ok(tiled.includes("4 panes"), "status bar counts the sessions node too");
 
       await stage.press("ctrl+k", "h", "escape");
       await stage.settle();
@@ -179,7 +179,9 @@ function tilingTour(): Scenario {
         "widening the dock pushes the main area right",
       );
 
-      await stage.press("ctrl+k", "l", "shift+d", "escape");
+      await stage.press("ctrl+k", "l", "escape");
+      await stage.type("/dock-right");
+      await stage.press("enter");
       await stage.settle();
       const dualDocks = await stage.capture("dual-docks");
       assert.ok(dualDocks.includes(" workspace "), "the browser holds the left dock");

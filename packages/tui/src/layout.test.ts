@@ -11,13 +11,15 @@ function layoutWith(...ids: string[]): Layout {
 }
 
 function assertExactTiling(layout: Layout): void {
-  const rects = [...layout.rects(screen).values()];
-  const area = rects.reduce((sum, rect) => sum + rect.width * rect.height, 0);
-  expect(area).toBe(screen.width * screen.height);
-  for (const rect of rects) {
+  const paneRects = [...layout.rects(screen).values()];
+  for (const rect of paneRects) {
     expect(rect.width).toBeGreaterThanOrEqual(minPaneSize.width);
     expect(rect.height).toBeGreaterThanOrEqual(minPaneSize.height);
   }
+  const idleMain = layout.emptyMainRect(screen);
+  const rects = idleMain === undefined ? paneRects : [...paneRects, idleMain];
+  const area = rects.reduce((sum, rect) => sum + rect.width * rect.height, 0);
+  expect(area).toBe(screen.width * screen.height);
   for (let i = 0; i < rects.length; i += 1) {
     for (let j = i + 1; j < rects.length; j += 1) {
       expect(overlaps(rects[i] as Rect, rects[j] as Rect)).toBe(false);
@@ -73,7 +75,7 @@ describe("Layout dwindle tiling", () => {
       } else if (roll < 0.73) {
         layout.moveFocus(directions[Math.floor(random() * directions.length)] ?? "left", screen);
       } else if (roll < 0.79) {
-        layout.swap(directions[Math.floor(random() * directions.length)] ?? "left", screen);
+        layout.move(directions[Math.floor(random() * directions.length)] ?? "left", screen);
       } else if (roll < 0.85) {
         layout.growDock(
           sides[Math.floor(random() * sides.length)] ?? "left",
@@ -130,7 +132,7 @@ describe("Layout navigation", () => {
   it("swaps panes directionally while keeping focus on the moved pane", () => {
     const layout = layoutWith("a", "b");
     layout.focus("a");
-    layout.swap("right", screen);
+    layout.move("right", screen);
     const rects = layout.rects(screen);
     expect((rects.get("a") as Rect).x).toBeGreaterThan((rects.get("b") as Rect).x);
     expect(layout.focused()).toBe("a");
@@ -183,22 +185,38 @@ describe("Layout dock", () => {
     assertExactTiling(layout);
   });
 
-  it("covers the whole screen when the only pane is docked", () => {
+  it("keeps its width and leaves the main area idle when the only pane is docked", () => {
     const layout = layoutWith("a");
     layout.dockFocused("left", screen);
-    expect(layout.rects(screen).get("a")).toEqual({ x: 0, y: 0, width: 120, height: 40 });
+    expect(layout.rects(screen).get("a")).toEqual({ x: 0, y: 0, width: 40, height: 40 });
+    expect(layout.emptyMainRect(screen)).toEqual({ x: 40, y: 0, width: 80, height: 40 });
     expect(layout.panes()).toEqual(["a"]);
+    assertExactTiling(layout);
   });
 
-  it("shares the whole screen between docks when the main area is empty", () => {
+  it("keeps an idle main area between the docks when every pane is docked", () => {
     const layout = layoutWith("a", "b");
     layout.focus("a");
     layout.dockFocused("left", screen);
     layout.focus("b");
     layout.dockFocused("right", screen);
     expect(layout.rects(screen).get("a")).toEqual({ x: 0, y: 0, width: 40, height: 40 });
-    expect(layout.rects(screen).get("b")).toEqual({ x: 40, y: 0, width: 80, height: 40 });
+    expect(layout.rects(screen).get("b")).toEqual({ x: 80, y: 0, width: 40, height: 40 });
+    expect(layout.emptyMainRect(screen)).toEqual({ x: 40, y: 0, width: 40, height: 40 });
     assertExactTiling(layout);
+  });
+
+  it("offers no idle main rect while a pane tiles the main area", () => {
+    const layout = layoutWith("a", "b");
+    layout.dockFocused("left", screen);
+    expect(layout.emptyMainRect(screen)).toBeUndefined();
+  });
+
+  it("offers no idle main rect while a docked pane is zoomed", () => {
+    const layout = layoutWith("a");
+    layout.dockFocused("left", screen);
+    layout.zoomToggle();
+    expect(layout.emptyMainRect(screen)).toBeUndefined();
   });
 
   it("reclaims the full width when the dock empties through close", () => {
@@ -270,11 +288,11 @@ describe("Layout dock", () => {
     layout.growDock("left", 1);
     expect((layout.rects(screen).get("b") as Rect).width).toBe(72);
     layout.growDock("left", -1);
-    expect((layout.rects(screen).get("b") as Rect).width).toBe(18);
+    expect((layout.rects(screen).get("b") as Rect).width).toBe(6);
     expect((layout.rects(screen).get("c") as Rect).width).toBe(40);
     layout.growDock("right", 0.05);
     expect((layout.rects(screen).get("c") as Rect).width).toBe(46);
-    expect((layout.rects(screen).get("b") as Rect).width).toBe(18);
+    expect((layout.rects(screen).get("b") as Rect).width).toBe(6);
     assertExactTiling(layout);
   });
 
@@ -403,7 +421,7 @@ describe("Layout split ratios", () => {
     const layout = layoutWith("a", "b");
     layout.focus("a");
     layout.resizeFocused(0.1);
-    layout.swap("right", screen);
+    layout.move("right", screen);
     const rects = layout.rects(screen);
     expect((rects.get("b") as Rect).width).toBe(72);
     expect((rects.get("a") as Rect).width).toBe(48);
@@ -496,7 +514,7 @@ describe("honest minimums", () => {
   });
 
   it("refuses docking when the column cannot fit its minimum width", () => {
-    const narrow: Screen = { width: 12, height: 10 };
+    const narrow: Screen = { width: 9, height: 10 };
     const layout = new Layout();
     layout.open("a", narrow);
     layout.open("b", narrow);
@@ -597,6 +615,92 @@ describe("degenerate screens", () => {
   });
 });
 
+describe("Layout move", () => {
+  it("reorders a docked pane within its stack and stops at the ends", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("b");
+    layout.dockFocused("left", screen);
+    layout.focus("c");
+    layout.dockFocused("left", screen);
+    expect(layout.dock("left")?.panes).toEqual(["b", "c"]);
+    expect(layout.move("up", screen)).toBe(true);
+    expect(layout.dock("left")?.panes).toEqual(["c", "b"]);
+    expect(layout.move("up", screen)).toBe(false);
+    assertExactTiling(layout);
+  });
+
+  it("moves a docked pane inward onto its near edge of the main area", () => {
+    const layout = layoutWith("a", "b");
+    layout.focus("b");
+    layout.dockFocused("left", screen);
+    expect(layout.move("right", screen)).toBe(true);
+    expect(layout.dockSideOf("b")).toBeUndefined();
+    const rects = layout.rects(screen);
+    expect((rects.get("b") as Rect).x).toBeLessThan((rects.get("a") as Rect).x);
+    assertExactTiling(layout);
+  });
+
+  it("keeps a docked pane put when moved outward", () => {
+    const layout = layoutWith("a", "b");
+    layout.focus("b");
+    layout.dockFocused("left", screen);
+    expect(layout.move("left", screen)).toBe(false);
+    expect(layout.dockSideOf("b")).toBe("left");
+  });
+
+  it("pushes an edge main pane into the adjacent dock", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("b");
+    layout.dockFocused("left", screen);
+    layout.focus("a");
+    expect(layout.move("left", screen)).toBe(true);
+    expect(layout.dock("left")?.panes).toEqual(["b", "a"]);
+    expect(layout.dockSideOf("a")).toBe("left");
+    assertExactTiling(layout);
+  });
+
+  it("promotes a main pane to the edge when nothing blocks it", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("a");
+    expect(layout.move("up", screen)).toBe(true);
+    expect(layout.rects(screen).get("a")).toEqual({ x: 0, y: 0, width: 120, height: 20 });
+    assertExactTiling(layout);
+  });
+
+  it("keeps the sole main pane put on an edge move", () => {
+    const layout = layoutWith("a");
+    expect(layout.move("left", screen)).toBe(false);
+    expect(layout.rects(screen).get("a")).toEqual({ x: 0, y: 0, width: 120, height: 40 });
+  });
+});
+
+describe("Layout dock resize handles", () => {
+  it("exposes a grab handle on the dock/main boundary", () => {
+    const layout = layoutWith("a", "b");
+    layout.dockFocused("left", screen);
+    expect(layout.dockHandleAt(39, screen)).toBe("left");
+    expect(layout.dockHandleAt(40, screen)).toBe("left");
+    expect(layout.dockHandleAt(41, screen)).toBeUndefined();
+  });
+
+  it("drags the left dock edge to the pointer column", () => {
+    const layout = layoutWith("a", "b");
+    layout.dockFocused("left", screen);
+    layout.dragDockEdge("left", 23, screen);
+    expect((layout.rects(screen).get("b") as Rect).width).toBe(24);
+    assertExactTiling(layout);
+  });
+
+  it("drags the right dock edge to the pointer column", () => {
+    const layout = layoutWith("a", "b");
+    layout.dockFocused("right", screen);
+    expect(layout.dockHandleAt(80, screen)).toBe("right");
+    layout.dragDockEdge("right", 90, screen);
+    expect(layout.rects(screen).get("b")).toEqual({ x: 90, y: 0, width: 30, height: 40 });
+    assertExactTiling(layout);
+  });
+});
+
 describe("serialization", () => {
   it("round-trips tree shape, ratios, both docks, and focus through JSON", () => {
     const layout = layoutWith("a", "b", "c", "d");
@@ -655,7 +759,7 @@ describe("serialization", () => {
     });
     expect(state?.tree).toMatchObject({ ratio: 0.9 });
     expect(state?.docks?.left?.ratio).toBe(0.6);
-    expect(state?.docks?.right?.ratio).toBe(0.15);
+    expect(state?.docks?.right?.ratio).toBe(0.05);
   });
 
   it("rejects corrupt shapes wholesale", () => {

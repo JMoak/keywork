@@ -1,5 +1,6 @@
-import { readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import {
   type Agent,
   checkpointForPrompt,
@@ -50,9 +51,11 @@ export interface CheckpointsPort {
 
 export interface SessionAttachment {
   id: string;
+  name?: string;
   history: readonly Message[];
   replay(bus: Agent["bus"]): void;
   append(message: Message): Promise<void>;
+  rename?(name: string): Promise<void>;
 }
 
 export interface SessionPort {
@@ -126,6 +129,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   let closed = false;
   let armedExpiry: ReturnType<typeof setTimeout> | undefined;
   let unsubscribeMcp: (() => void) | undefined;
+  let releaseFatalGuards: () => void = () => {};
   const core = new AppCore({
     screen,
     createPane: (id, notify, commands, resumeSessionId, draft) => {
@@ -142,6 +146,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         discloseRetrieval: (text) => pane?.discloseRetrieval(text),
       };
       const agent = options.agentFactory?.(guard, attachment?.history, seams);
+      let liveSession: SessionAttachment | undefined;
+      const titler = persistingTitler(options.titler, () => liveSession);
       const ports: ConversationPorts = {
         readFile: readWorkspaceFile,
         forkAtPrompt: (ordinal, promptDraft) =>
@@ -154,7 +160,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
             promptDraft,
           ),
       };
-      const created = new ConversationPane(id, agent, notify, options.titler, commands, {
+      const created = new ConversationPane(id, agent, notify, titler, commands, {
         ports,
         ...(draft !== undefined && { initialDraft: draft }),
       });
@@ -174,6 +180,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         return true;
       });
       const wireSession = (adopted: SessionAttachment): void => {
+        liveSession = adopted;
         adoptSession(created, agent, adopted);
         if (agent === undefined) return;
         bindSessionLifecycle({
@@ -221,6 +228,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     },
     onExit: closeOnce(() => {
       closed = true;
+      releaseFatalGuards();
       if (armedExpiry !== undefined) clearTimeout(armedExpiry);
       unsubscribeMcp?.();
       renderer.destroy();
@@ -253,10 +261,9 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     armedExpiry.unref?.();
   };
 
-  const render = (): void => {
-    if (closed) return;
+  const paintFrame = (): void => {
     watchArmedExpiry();
-    for (const child of [...renderer.root.getChildren()]) renderer.root.remove(child);
+    discardFrame(renderer.root);
     renderer.root.add(
       Box(
         {
@@ -280,29 +287,84 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     renderer.requestRender();
   };
 
+  let frameQueued = false;
+  const render = (): void => {
+    if (closed || frameQueued) return;
+    frameQueued = true;
+    queueMicrotask(() => {
+      frameQueued = false;
+      if (closed) return;
+      try {
+        paintFrame();
+      } catch (cause) {
+        recordCrash("render", cause);
+      }
+    });
+  };
+
+  const contain = (scope: string, work: () => void): void => {
+    try {
+      work();
+    } catch (cause) {
+      recordCrash(scope, cause);
+      core.postNotice(`recovered from an internal error · details in ${crashLogFile}`);
+    }
+  };
+
+  const crashStorm = crashStormGate();
+  const onUncaught = (cause: unknown): void => {
+    recordCrash("uncaught", cause);
+    if (crashStorm(performance.now())) {
+      try {
+        renderer.destroy();
+      } catch {}
+      console.error(`keywork hit repeated fatal errors · details in ${crashLogFile}`);
+      exit(1);
+      return;
+    }
+    try {
+      core.postNotice(`recovered from an internal error · details in ${crashLogFile}`);
+      render();
+    } catch {}
+  };
+  const onRejection = (cause: unknown): void => {
+    recordCrash("rejection", cause);
+  };
+  process.on("uncaughtException", onUncaught);
+  process.on("unhandledRejection", onRejection);
+
   renderer.keyInput.on("keypress", (key: KeyEvent) => {
-    const chord = chordOf(key);
-    if (chord === undefined) return;
-    core.handleKey(chord, key.sequence, performance.now(), key.eventType === "repeat");
+    contain("key", () => {
+      const chord = chordOf(key);
+      if (chord === undefined) return;
+      core.handleKey(chord, key.sequence, performance.now(), key.eventType === "repeat");
+    });
     render();
   });
 
   renderer.keyInput.on("paste", (event: PasteEvent) => {
-    core.handlePaste(new TextDecoder().decode(event.bytes));
+    contain("paste", () => core.handlePaste(new TextDecoder().decode(event.bytes)));
     render();
   });
 
   renderer.root.onMouse = (event: MouseEvent) => {
-    const pointer = pointerEventOf(event);
-    if (pointer === undefined) return;
-    core.handleMouse(
-      { ...pointer, x: pointer.x - frameChrome.border, y: pointer.y - frameChrome.border },
-      performance.now(),
-    );
+    contain("mouse", () => {
+      const pointer = pointerEventOf(event);
+      if (pointer === undefined) return;
+      core.handleMouse(
+        { ...pointer, x: pointer.x - frameChrome.border, y: pointer.y - frameChrome.border },
+        performance.now(),
+      );
+    });
     render();
   };
 
   renderer.on("resize", () => render());
+
+  releaseFatalGuards = (): void => {
+    process.off("uncaughtException", onUncaught);
+    process.off("unhandledRejection", onRejection);
+  };
 
   renderer.auto();
   core.bindNotify(render);
@@ -310,7 +372,40 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   render();
 }
 
+export const crashLogFile = join(homedir(), ".keywork", "tui-crash.log");
+
+function recordCrash(scope: string, cause: unknown): void {
+  const error = cause instanceof Error ? cause : new Error(String(cause));
+  try {
+    mkdirSync(dirname(crashLogFile), { recursive: true });
+    appendFileSync(
+      crashLogFile,
+      `${new Date().toISOString()} [${scope}] ${error.stack ?? error.message}\n`,
+    );
+  } catch {}
+}
+
+const crashStormLimit = { count: 20, windowMs: 5000 };
+
+function crashStormGate(): (nowMs: number) => boolean {
+  let recent: number[] = [];
+  return (nowMs) => {
+    recent = [...recent.filter((at) => nowMs - at < crashStormLimit.windowMs), nowMs];
+    return recent.length >= crashStormLimit.count;
+  };
+}
+
 const frameChrome = { border: 1, statusRows: 1 } as const;
+
+interface DiscardableFrame {
+  getChildren(): ReadonlyArray<{ destroyRecursively(): void }>;
+}
+
+// OpenTUI frees native text buffers only in destroy; remove() merely detaches,
+// leaking Zig-side allocations until createTextBuffer fails and the app dies.
+export function discardFrame(root: DiscardableFrame): void {
+  for (const child of [...root.getChildren()]) child.destroyRecursively();
+}
 
 function defaultRenderer(): Promise<CliRenderer> {
   return createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
@@ -544,8 +639,33 @@ function adoptSession(
   attachment: SessionAttachment,
 ): void {
   pane.sessionId = attachment.id;
+  reconcileTitle(pane, attachment);
   if (agent === undefined) return;
   attachment.replay(agent.bus);
+}
+
+function reconcileTitle(pane: ConversationPane, attachment: SessionAttachment): void {
+  if (attachment.name !== undefined) {
+    pane.adoptTitle(attachment.name);
+    return;
+  }
+  const settled = pane.titled();
+  if (settled !== undefined) void attachment.rename?.(settled).catch(() => {});
+}
+
+function persistingTitler(
+  titler: Titler | undefined,
+  session: () => SessionAttachment | undefined,
+): Titler | undefined {
+  if (titler === undefined) return undefined;
+  return async (conversation) => {
+    const title = await titler(conversation);
+    if (title !== undefined)
+      void session()
+        ?.rename?.(title)
+        .catch(() => {});
+    return title;
+  };
 }
 
 export interface SessionLifecycleOptions {
@@ -583,13 +703,17 @@ function buildBody(core: AppCore, theme: Theme, screen: Screen) {
       emptyView(theme),
     );
   }
+  const idleMain = core.layout.emptyMainRect(screen);
   return Box(
     { width: screen.width, height: screen.height },
-    ...[...rects].map(([id, rect]) => placedPane(core, theme, id, rect, id === focused)),
+    ...[...rects].map(([id, rect]) =>
+      placedBox(rect, paneViewFor(core, theme, id, rect, id === focused)),
+    ),
+    ...(idleMain === undefined ? [] : [placedBox(idleMain, idleMainView(theme))]),
   );
 }
 
-function placedPane(core: AppCore, theme: Theme, id: string, rect: Rect, focused: boolean) {
+function placedBox(rect: Rect, view: PaneView) {
   return Box(
     {
       position: "absolute",
@@ -600,7 +724,25 @@ function placedPane(core: AppCore, theme: Theme, id: string, rect: Rect, focused
       flexDirection: "column",
       overflow: "hidden",
     },
-    paneViewFor(core, theme, id, rect, focused),
+    view,
+  );
+}
+
+function idleMainView(theme: Theme) {
+  return Box(
+    {
+      flexGrow: 1,
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.border,
+      overflow: "hidden",
+    },
+    Text({ content: "· main ·", fg: theme.textDim }),
+    Text({ content: "ctrl+k s starts a session here", fg: theme.textDim }),
+    Text({ content: "ctrl+k shift+l/h pushes a docked pane in", fg: theme.textDim }),
   );
 }
 
@@ -645,7 +787,7 @@ function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => str
     core.notice !== ""
       ? core.notice
       : core.leaderArmed
-        ? "nav · h/j/k/l focus  H/J/K/L swap  s split  x close  z zoom  d/D dock  c cycle  u undock · esc done"
+        ? "nav · h/j/k/l focus  H/J/K/L move  s split  x close  z zoom  c cycle  ,/. dock width · esc done"
         : `${label ?? "keywork"} · ${core.layout.panes().length} panes · ctrl+k nav · ctrl+p commands`;
   return Box(
     {

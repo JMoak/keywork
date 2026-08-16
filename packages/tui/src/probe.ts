@@ -106,6 +106,14 @@ export class AppProbe {
     return this;
   }
 
+  drag(from: { x: number; y: number }, ...path: { x: number; y: number }[]): this {
+    this.point({ type: "down", x: from.x, y: from.y, button: 0 });
+    for (const at of path) this.point({ type: "drag", x: at.x, y: at.y, button: 0 });
+    const last = path.at(-1) ?? from;
+    this.point({ type: "up", x: last.x, y: last.y, button: 0 });
+    return this;
+  }
+
   scroll(x: number, y: number, direction: ScrollDirection, delta = 1): this {
     this.point({ type: "scroll", x, y, scroll: { direction, delta } });
     return this;

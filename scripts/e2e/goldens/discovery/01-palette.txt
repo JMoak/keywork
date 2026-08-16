@@ -1,6 +1,6 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│╭─ session-1 ────────────────────────────────────────────────────────────────────────────────────────────────────────╮│
-││                                                                                                                    ││
+│╭─ session tree ──────────────────────╮╭─ session-1 ─────────────────────────────────────────────────────────────────╮│
+││ ░ no sessions yet                   ││                                                                             ││
 ││                          ╭────────────────────────── commands ──────────────────────────╮                          ││
 ││                          │                                                              │                          ││
 ││                          │ › ▌                                                          │                          ││
@@ -10,23 +10,23 @@
 ││                          │   move-down — focus the pane below                  ctrl+k j │                          ││
 ││                          │   move-up — focus the pane above                    ctrl+k k │                          ││
 ││                          │   move-right — focus the pane to the right          ctrl+k l │                          ││
-││                          │   dock-left — dock this pane to the left edge       ctrl+k d │                          ││
-││                          │   dock-right — dock this pane to the right e… ctrl+k shift+d │                          ││
-││                          │   dock-cycle — move this pane to its next home: ma… ctrl+k c │                          ││
-││                          │   undock — return this pane to the main area        ctrl+k u │                          ││
+││                          │   push-left — move this pane left             ctrl+k shift+h │                          ││
+││                          │   push-down — move this pane down             ctrl+k shift+j │                          ││
+││                          │   push-up — move this pane up                 ctrl+k shift+k │                          ││
+││                          │   push-right — move this pane right           ctrl+k shift+l │                          ││
 ││                          │                                                              │                          ││
 ││                          ╰──────────────────────────────────────────────────────────────╯                          ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││                                                                                                                    ││
-││ › ▌                                                                                                                ││
-│╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯│
-│ keywork e2e · 1 panes · ctrl+k nav · ctrl+p commands                                                          ctrl+p │
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││                                                                             ││
+││                                     ││ › ▌                                                                         ││
+│╰─────────────────────────────────────╯╰─────────────────────────────────────────────────────────────────────────────╯│
+│ keywork e2e · 2 panes · ctrl+k nav · ctrl+p commands                                                          ctrl+p │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

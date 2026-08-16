@@ -1,7 +1,14 @@
 import { CommandRegistry } from "./commands.ts";
 import { Keymap } from "./keymap.ts";
 import { type Chord, formatChord } from "./keys.ts";
-import { type DockSide, Layout, layoutStateIds, type Rect, type Screen } from "./layout.ts";
+import {
+  type Direction,
+  type DockSide,
+  Layout,
+  layoutStateIds,
+  type Rect,
+  type Screen,
+} from "./layout.ts";
 import type { Pane, PaneIntents } from "./pane.ts";
 import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
 import { captureWorkspace, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
@@ -72,51 +79,33 @@ const appActions: Record<string, AppAction> = {
       aliases: ["moveright"],
     },
   },
-  "swap.left": {
+  "move.left": {
     chords: "leader shift+h",
-    help: "swap pane left",
+    help: "move pane left",
     sticky: true,
-    invoke: (core) => core.layout.swap("left", core.screen()),
+    invoke: (core) => core.movePane("left"),
+    command: { name: "push-left", description: "move this pane left", aliases: ["pushleft"] },
   },
-  "swap.down": {
+  "move.down": {
     chords: "leader shift+j",
-    help: "swap pane down",
+    help: "move pane down",
     sticky: true,
-    invoke: (core) => core.layout.swap("down", core.screen()),
+    invoke: (core) => core.movePane("down"),
+    command: { name: "push-down", description: "move this pane down", aliases: ["pushdown"] },
   },
-  "swap.up": {
+  "move.up": {
     chords: "leader shift+k",
-    help: "swap pane up",
+    help: "move pane up",
     sticky: true,
-    invoke: (core) => core.layout.swap("up", core.screen()),
+    invoke: (core) => core.movePane("up"),
+    command: { name: "push-up", description: "move this pane up", aliases: ["pushup"] },
   },
-  "swap.right": {
+  "move.right": {
     chords: "leader shift+l",
-    help: "swap pane right",
+    help: "move pane right",
     sticky: true,
-    invoke: (core) => core.layout.swap("right", core.screen()),
-  },
-  "dock.left": {
-    chords: "leader d",
-    help: "dock pane to the left edge",
-    sticky: true,
-    invoke: (core) => core.dockPane("left"),
-    command: {
-      name: "dock-left",
-      description: "dock this pane to the left edge",
-      aliases: ["dockleft"],
-    },
-  },
-  "dock.right": {
-    chords: "leader shift+d",
-    help: "dock pane to the right edge",
-    sticky: true,
-    invoke: (core) => core.dockPane("right"),
-    command: {
-      name: "dock-right",
-      description: "dock this pane to the right edge",
-      aliases: ["dockright"],
-    },
+    invoke: (core) => core.movePane("right"),
+    command: { name: "push-right", description: "move this pane right", aliases: ["pushright"] },
   },
   "dock.cycle": {
     chords: "leader c",
@@ -128,13 +117,6 @@ const appActions: Record<string, AppAction> = {
       description: "move this pane to its next home: main → left → right",
       aliases: ["cycle"],
     },
-  },
-  "dock.undock": {
-    chords: "leader u",
-    help: "return pane to the main area",
-    sticky: true,
-    invoke: (core) => core.undockPane(),
-    command: { name: "undock", description: "return this pane to the main area" },
   },
   "dock.grow": {
     chords: "leader .",
@@ -355,6 +337,7 @@ export class AppCore {
   lastKey = "";
   notice = "";
   private overlay: Overlay | undefined;
+  private dockResize: DockSide | undefined;
   private nextSession = 1;
   private nextFile = 1;
   private nextBrowser = 1;
@@ -378,8 +361,7 @@ export class AppCore {
 
   start(): void {
     const saved = this.options.restoreWorkspace;
-    if (saved === undefined || !this.restoreFrom(saved)) this.openPane();
-    this.dockMcpPaneOnStartup();
+    if (saved === undefined || !this.restoreFrom(saved)) this.seedDefaultWorkspace();
     this.persistWorkspace();
   }
 
@@ -540,6 +522,10 @@ export class AppCore {
 
   cyclePane(): void {
     if (!this.layout.cycleFocused(this.screen())) this.noticeNoRoom("this pane's next home");
+  }
+
+  movePane(direction: Direction): void {
+    this.layout.move(direction, this.screen());
   }
 
   resizeDock(delta: number): void {
@@ -799,9 +785,9 @@ export class AppCore {
     this.layout.dockFocused("right", this.screen());
   }
 
-  private dockMcpPaneOnStartup(): void {
-    if (this.options.createMcpPane === undefined) return;
-    if ([...this.panes.keys()].some((id) => id.startsWith("mcp-"))) return;
+  private seedDefaultWorkspace(): void {
+    this.openPane();
+    this.openSessionTreePane();
     this.openMcpPane();
     this.focusMainArea();
   }
@@ -859,6 +845,7 @@ export class AppCore {
   }
 
   private routePaneMouse(event: PointerEvent): void {
+    if (this.routeDockResize(event)) return;
     const hit = this.paneUnder(event.x, event.y);
     if (hit === undefined) return;
     if (event.type === "down") this.layout.focus(hit.id);
@@ -866,6 +853,25 @@ export class AppCore {
     const local = { x: event.x - hit.rect.x, y: event.y - hit.rect.y };
     if (pane?.handleMouse?.(local, event) === true) return;
     if (event.type === "scroll" && event.scroll !== undefined) scrollByKeys(pane, event.scroll);
+  }
+
+  private routeDockResize(event: PointerEvent): boolean {
+    if (this.dockResize !== undefined) {
+      if (event.type === "drag") {
+        this.layout.dragDockEdge(this.dockResize, event.x, this.screen());
+        return true;
+      }
+      if (event.type === "up" || event.type === "drag-end") {
+        this.dockResize = undefined;
+        return true;
+      }
+      this.dockResize = undefined;
+    }
+    if (event.type !== "down") return false;
+    const side = this.layout.dockHandleAt(event.x, this.screen());
+    if (side === undefined) return false;
+    this.dockResize = side;
+    return true;
   }
 
   private paneUnder(x: number, y: number): { id: string; rect: Rect } | undefined {
@@ -973,6 +979,12 @@ export class AppCore {
     }
     for (const side of ["left", "right"] as const) {
       this.registry.register({
+        name: `dock-${side}`,
+        description: `dock this pane to the ${side} edge`,
+        aliases: [`dock${side}`],
+        run: () => this.dockPane(side),
+      });
+      this.registry.register({
         name: `dock-${side}-wider`,
         description: `widen the ${side} dock`,
         run: () => this.layout.growDock(side, 0.05),
@@ -983,6 +995,11 @@ export class AppCore {
         run: () => this.layout.growDock(side, -0.05),
       });
     }
+    this.registry.register({
+      name: "undock",
+      description: "return this pane to the main area",
+      run: () => this.undockPane(),
+    });
     if (this.options.createFilePane !== undefined) {
       this.registry.register({
         name: "open",

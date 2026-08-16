@@ -260,6 +260,43 @@ describe("SessionTreePane focus-or-open", () => {
     expect(recorded.focused).toEqual([]);
   });
 
+  it("a click on a session row activates it, focusing its open chat", async () => {
+    const world = worldOf("s1", "s2");
+    const presence: SessionPresence = {
+      paneFor: (sessionId) => (sessionId === "s2" ? "session-7" : undefined),
+      busy: () => false,
+    };
+    const { pane, recorded } = paneOver(world, { presence });
+    await pane.settled();
+    expect(pane.handleMouse({ x: 3, y: 2 }, { type: "down", x: 3, y: 2 })).toBe(true);
+    await pane.settled();
+    expect(pane.overview.cursor).toBe(1);
+    expect(recorded.focused).toEqual(["session-7"]);
+    expect(recorded.opened).toEqual([]);
+  });
+
+  it("a click below the listed sessions falls through", async () => {
+    const world = worldOf("s1");
+    const { pane, recorded } = paneOver(world);
+    await pane.settled();
+    expect(pane.handleMouse({ x: 3, y: 9 }, { type: "down", x: 3, y: 9 })).toBe(false);
+    await pane.settled();
+    expect(recorded.focused).toEqual([]);
+    expect(recorded.opened).toEqual([]);
+  });
+
+  it("a click at the entries level selects that row without activating", async () => {
+    const world = worldOf("s1");
+    const { pane, recorded } = paneOver(world);
+    await pane.settled();
+    press(pane, "l");
+    await pane.settled();
+    expect(pane.level()).toBe("entries");
+    expect(pane.handleMouse({ x: 3, y: 2 }, { type: "down", x: 3, y: 2 })).toBe(true);
+    expect(pane.model.cursor).toBe(1);
+    expect(recorded.opened).toEqual([]);
+  });
+
   it("an activation landing after dispose opens nothing", async () => {
     const world = worldOf("s1");
     let releaseAttach: (ok: boolean) => void = () => {};

@@ -399,6 +399,22 @@ describe("sessionPort", () => {
     expect(released).toEqual([attachment?.id]);
   });
 
+  it("persists a rename and serves it back as the attachment name", async () => {
+    const dir = await tempDir();
+    const changed: string[] = [];
+    const port = sessionPort(dir, ".", { onChange: (sessionId) => changed.push(sessionId) });
+    const created = await port.create();
+    await created?.append(textMessage("user", "hello"));
+    expect(created?.name).toBeUndefined();
+
+    await created?.rename?.("tidy-title");
+    expect(changed).toContain(created?.id);
+
+    const reopened = await port.open(created?.id ?? "");
+    expect(reopened?.name).toBe("tidy-title");
+    expect((await listSessions(dir))[0]?.title).toBe("tidy-title");
+  });
+
   it("attaches reopened sessions through the same seam", async () => {
     const dir = await tempDir();
     const attached: string[] = [];

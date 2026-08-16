@@ -242,6 +242,33 @@ describe("auto-titling", () => {
 
     expect(model.title).toBeUndefined();
   });
+
+  it("an adopted title shows immediately and silences the titler", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("a")]) });
+    let calls = 0;
+    let notified = 0;
+    const model = new ConversationModel(
+      agent,
+      () => {
+        notified += 1;
+      },
+      async () => {
+        calls += 1;
+        return "llm-title";
+      },
+    );
+
+    model.adoptTitle("stored-title");
+    expect(model.title).toBe("stored-title");
+    expect(notified).toBeGreaterThan(0);
+
+    type(model, "one");
+    await submit(model);
+    await model.lastTitle;
+
+    expect(model.title).toBe("stored-title");
+    expect(calls).toBe(0);
+  });
 });
 
 describe("disposal", () => {

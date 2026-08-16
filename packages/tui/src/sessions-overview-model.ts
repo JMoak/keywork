@@ -97,6 +97,16 @@ export class SessionsOverviewModel {
     return this.rows()[clampIndex(this.cursor, this.items.length)];
   }
 
+  activateVisible(offset: number, rowCount: number): boolean {
+    const target = this.visibleRows(rowCount)[offset];
+    if (target === undefined) return false;
+    this.cursor = target.index;
+    this.anchorId = target.row.id;
+    this.notify();
+    this.effects.activate(target.row.id);
+    return true;
+  }
+
   handleKey(chord: Chord, pageRows: number): boolean {
     this.cursor = clampIndex(this.cursor, this.items.length);
     if (chord.shift || chord.ctrl || chord.meta) return false;

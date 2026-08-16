@@ -225,13 +225,19 @@ export function attachmentOf(
   store: SessionStore,
   seams: Pick<SessionPortSeams, "checkpointTag" | "onChange"> = {},
 ): SessionAttachment {
+  const name = store.name();
   return {
     id: store.header.id,
+    ...(name !== undefined && { name }),
     history: store.messages(),
     replay: (bus) => replaySession(store, bus),
     append: async (message) => {
       const checkpoint = message.role === "user" ? seams.checkpointTag?.() : undefined;
       await store.append(message, undefined, checkpoint);
+      seams.onChange?.(store.header.id);
+    },
+    rename: async (title) => {
+      await store.setName(title);
       seams.onChange?.(store.header.id);
     },
   };

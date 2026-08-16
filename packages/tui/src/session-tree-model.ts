@@ -89,6 +89,15 @@ export class SessionTreeModel {
     return this.rows()[clampIndex(this.cursor, this.rows().length)];
   }
 
+  selectVisible(offset: number, rowCount: number): boolean {
+    const target = this.visibleRows(rowCount)[offset];
+    if (target === undefined) return false;
+    this.cursor = target.index;
+    this.anchorId = target.row.id;
+    this.notify();
+    return true;
+  }
+
   handleKey(chord: Chord, pageRows: number): boolean {
     if (this.labelDraft !== undefined) return this.handleLabelKey(chord);
     const rows = this.rows();

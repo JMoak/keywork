@@ -257,7 +257,10 @@ async function main(argv: string[]): Promise<number> {
 }
 
 process.exitCode = await main(process.argv.slice(2)).catch((cause: unknown) => {
-  if (!(cause instanceof ConfigError)) throw cause;
-  console.error(cause.message);
+  if (cause instanceof ConfigError) {
+    console.error(cause.message);
+    return 1;
+  }
+  console.error(cause instanceof Error ? (cause.stack ?? cause.message) : String(cause));
   return 1;
 });

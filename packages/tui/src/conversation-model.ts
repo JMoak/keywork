@@ -144,6 +144,12 @@ export class ConversationModel {
     return this.buffer.value;
   }
 
+  adoptTitle(title: string): void {
+    this.title = title;
+    this.titleRequested = true;
+    this.notify();
+  }
+
   usageSummary(): string {
     if (this.agent === undefined) return "";
     const { inputTokens, outputTokens } = this.agent.usage();

@@ -113,49 +113,76 @@ describe("split and sticky navigation", () => {
 });
 
 describe("docking", () => {
-  it("docks, stacks a second pane, undocks, and re-docks right", () => {
+  it("docks, stacks a second pane, undocks, and re-docks right via commands", () => {
     const probe = new AppProbe();
     probe.command("split");
     probe.command("split");
 
-    probe.keys("ctrl+k", "d");
+    probe.command("dock-left");
     expect(dockOf(probe, "session-3")).toBe("left");
     expect(dockedIds(probe)).toEqual(["session-3"]);
 
-    probe.keys("l", "d");
+    probe.keys("ctrl+k", "l", "escape");
+    probe.command("dock-left");
     expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
 
-    probe.keys("u");
+    probe.command("undock");
     expect(dockedIds(probe)).toEqual(["session-3"]);
     expect(paneIds(probe)).toContain("session-1");
 
-    probe.keys("shift+d");
+    probe.command("dock-right");
     expect(dockOf(probe, "session-1")).toBe("right");
     expect(dockOf(probe, "session-3")).toBe("left");
   });
 
-  it("leader d on an already-left-docked pane is a no-op", () => {
+  it("/dock-left on an already-left-docked pane is a no-op", () => {
     const probe = new AppProbe();
     probe.command("split");
-    probe.keys("ctrl+k", "d");
+    probe.command("dock-left");
     expect(dockOf(probe, "session-2")).toBe("left");
     const before = probe.workspaceState();
-    probe.keys("d");
+    probe.command("dock-left");
     expect(probe.workspaceState()).toEqual(before);
     expect(probe.snapshot().notice).toBe("");
   });
 
-  it("leader D moves one left-docked pane to the right dock, leaving the rest", () => {
+  it("/dock-right moves one left-docked pane to the right dock, leaving the rest", () => {
     const probe = new AppProbe();
     probe.command("split");
     probe.command("split");
-    probe.keys("ctrl+k", "d", "l", "d");
+    probe.command("dock-left");
+    probe.keys("ctrl+k", "l", "escape");
+    probe.command("dock-left");
     expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
 
-    probe.keys("shift+d");
+    probe.command("dock-right");
     expect(dockOf(probe, "session-1")).toBe("right");
     expect(dockOf(probe, "session-3")).toBe("left");
     expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
+  });
+
+  it("dragging the dock boundary resizes the dock without stealing focus", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("dock-left");
+    expect(probe.rect("session-2").width).toBe(40);
+    probe.keys("ctrl+k", "l", "escape");
+    expect(probe.snapshot().focused).toBe("session-1");
+
+    probe.drag({ x: 40, y: 10 }, { x: 19, y: 10 });
+    expect(probe.rect("session-2").width).toBe(20);
+    expect(probe.snapshot().focused).toBe("session-1");
+
+    probe.drag({ x: 19, y: 10 }, { x: 59, y: 10 });
+    expect(probe.rect("session-2").width).toBe(60);
+  });
+
+  it("leaves an idle main area rather than letting docks take the screen", () => {
+    const probe = new AppProbe();
+    probe.command("dock-left");
+    expect(dockOf(probe, "session-1")).toBe("left");
+    expect(probe.rect("session-1").width).toBeLessThan(probe.screen.width / 2);
+    expect(probe.core.layout.emptyMainRect(probe.screen)).toBeDefined();
   });
 
   it("cycles the focused pane main → left → right → main with leader c", () => {
@@ -183,7 +210,9 @@ describe("docking", () => {
     const probe = new AppProbe();
     probe.command("split");
     probe.command("split");
-    probe.keys("ctrl+k", "d", "l", "shift+d", "escape");
+    probe.command("dock-left");
+    probe.keys("ctrl+k", "l", "escape");
+    probe.command("dock-right");
     expect(dockOf(probe, "session-3")).toBe("left");
     expect(dockOf(probe, "session-1")).toBe("right");
 
@@ -198,6 +227,56 @@ describe("docking", () => {
     expect(width("session-3")).toBeGreaterThan(leftBefore);
     probe.command("dock-left-narrower");
     expect(width("session-3")).toBe(leftBefore);
+  });
+});
+
+describe("moving panes", () => {
+  it("shift+l swaps with the main neighbor and keeps focus on the moved pane", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "h", "shift+l");
+    expect(probe.snapshot().focused).toBe("session-1");
+    expect(probe.rect("session-1").x).toBeGreaterThan(probe.rect("session-2").x);
+  });
+
+  it("shift+h pushes the edge main pane into the left dock", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("dock-left");
+    probe.keys("ctrl+k", "l", "escape");
+    probe.keys("ctrl+k", "shift+h");
+    expect(dockedIds(probe)).toEqual(["session-2", "session-1"]);
+  });
+
+  it("shift+j and shift+k reorder a docked stack", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("split");
+    probe.command("dock-left");
+    probe.keys("ctrl+k", "l", "escape");
+    probe.command("dock-left");
+    expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
+    probe.keys("ctrl+k", "shift+k");
+    expect(dockedIds(probe)).toEqual(["session-1", "session-3"]);
+    probe.keys("shift+j");
+    expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
+  });
+
+  it("shift+l brings a left-docked pane back into the main area", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("dock-left");
+    probe.keys("ctrl+k", "shift+l");
+    expect(dockedIds(probe)).toEqual([]);
+    expect(probe.rect("session-2").x).toBeLessThan(probe.rect("session-1").x);
+  });
+
+  it("/push-right is the command spelling of the move verb", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+k", "h", "escape");
+    expect(probe.command("push-right")).toBe(true);
+    expect(probe.rect("session-1").x).toBeGreaterThan(probe.rect("session-2").x);
   });
 });
 
@@ -355,20 +434,21 @@ describe("splitting from a docked pane", () => {
   it("opens the new session into the main tree, not the dock", () => {
     const probe = new AppProbe();
     probe.command("split");
-    probe.keys("ctrl+k", "d");
+    probe.command("dock-left");
     expect(dockedIds(probe)).toEqual(["session-2"]);
 
-    probe.keys("s");
+    probe.keys("ctrl+k", "s");
     expect(dockedIds(probe)).toEqual(["session-2"]);
     expect(paneIds(probe)).toEqual(["session-2", "session-1", "session-3"]);
     expect(probe.snapshot().focused).toBe("session-3");
   });
 
   it("lands in the main area even when every pane is docked", () => {
-    const probe = new AppProbe().keys("ctrl+k", "d");
+    const probe = new AppProbe();
+    probe.command("dock-left");
     expect(dockedIds(probe)).toEqual(["session-1"]);
 
-    probe.keys("s");
+    probe.keys("ctrl+k", "s");
     expect(dockedIds(probe)).toEqual(["session-1"]);
     expect(paneIds(probe)).toEqual(["session-1", "session-2"]);
     expect(dockOf(probe, "session-1")).toBe("left");
@@ -729,6 +809,7 @@ describe("session tree", () => {
     const { probe, world } = treeProbe();
     world.sessions = [];
     probe.command("tree");
+    probe.keys("r");
     await probe.settled();
     expect(treePane(probe).overview.rows()).toEqual([]);
     expect(probe.snapshot().panes.find((pane) => pane.id === "tree-1")?.title).toBe("session tree");
@@ -2249,6 +2330,19 @@ describe("mcp status pane wiring", () => {
     await probe.settled();
     expect(paneIds(probe)).toEqual(["session-1", "mcp-1"]);
     expect(dockedIds(probe)).toEqual(["mcp-1"]);
+    expect(dockOf(probe, "mcp-1")).toBe("right");
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("a fresh start seeds sessions left, chat in main, mcp right, chat focused", async () => {
+    const probe = new AppProbe({
+      createMcpPane: mcpFactory(),
+      createSessionTreePane: (id) => stubFilePane(id, "sessions"),
+    });
+    await probe.settled();
+    expect(paneIds(probe)).toEqual(["tree-1", "session-1", "mcp-1"]);
+    expect(dockOf(probe, "tree-1")).toBe("left");
+    expect(dockOf(probe, "session-1")).toBeUndefined();
     expect(dockOf(probe, "mcp-1")).toBe("right");
     expect(probe.snapshot().focused).toBe("session-1");
   });

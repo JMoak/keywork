@@ -9,6 +9,7 @@ import {
   paneTitle,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
+import type { PointerEvent } from "./pointer.ts";
 import {
   SessionTreeModel,
   type SessionTreeRow,
@@ -120,6 +121,14 @@ export class SessionTreePane implements Pane {
       return this.returnToOverview();
     }
     return this.model.handleKey(chord, this.lastPageRows);
+  }
+
+  handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (event.type !== "down" || this.tasks.failure() !== undefined) return false;
+    const row = local.y - 1;
+    if (row < 0 || row >= this.lastPageRows) return false;
+    if (this.paneLevel === "overview") return this.overview.activateVisible(row, this.lastPageRows);
+    return this.model.selectVisible(row, this.lastPageRows);
   }
 
   settled(): Promise<void> {
