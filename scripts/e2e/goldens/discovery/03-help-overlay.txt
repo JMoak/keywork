@@ -1,0 +1,32 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│╭─ session-1 ───────────────────╭────────────────── keywork keys ──────────────────╮─────────────────────────────────╮│
+││                               │                                                  │                                 ││
+││                               │ ctrl+k s                        new session pane │                                 ││
+││                               │ ctrl+k x                      close focused pane │                                 ││
+││                               │ ctrl+k z                      zoom pane (toggle) │                                 ││
+││                               │ ctrl+k h                              focus left │                                 ││
+││                               │ ctrl+k j                              focus down │                                 ││
+││                               │ ctrl+k k                                focus up │                                 ││
+││                               │ ctrl+k l                             focus right │                                 ││
+││                               │ ctrl+k shift+h                    swap pane left │                                 ││
+││                               │ ctrl+k shift+j                    swap pane down │                                 ││
+││                               │ ctrl+k shift+k                      swap pane up │                                 ││
+││                               │ ctrl+k shift+l                   swap pane right │                                 ││
+││                               │ ctrl+k d              dock pane to the left edge │                                 ││
+││                               │ ctrl+k shift+d       dock pane to the right edge │                                 ││
+││                               │ ctrl+k u            return pane to the main area │                                 ││
+││                               │ ctrl+k .                          widen the dock │                                 ││
+││                               │ ctrl+k ,                         narrow the dock │                                 ││
+││                               │ ctrl+k shift+.             grow the focused pane │                                 ││
+││                               │ ctrl+k shift+,           shrink the focused pane │                                 ││
+││                               │ ctrl+k f                            file browser │                                 ││
+││                               │ ctrl+k t                            session tree │                                 ││
+││                               │ ctrl+k m                             memory pane │                                 ││
+││                               │ ctrl+k /                            this overlay │                                 ││
+││                               │ ctrl+p                           command palette │                                 ││
+││                               │ ctrl+q                                      quit │                                 ││
+││                               │                    esc closes                    │                                 ││
+││ › ▌                           │                                                  │                                 ││
+│╰───────────────────────────────╰──────────────────────────────────────────────────╯─────────────────────────────────╯│
+│ keywork e2e · 1 panes · ctrl+k nav · ctrl+p commands                                                               / │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

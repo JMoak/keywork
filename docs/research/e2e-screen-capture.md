@@ -87,7 +87,7 @@ frame — diffable, greppable, the assertion medium) and `NN-<step>.svg` (styled
 from `captureSpans` — the human/screenshot medium; a zero-dependency ~100-line SVG
 writer: background rects + monospace text runs, theme colors flowing through
 unmodified). `artifacts/` gets a `.gitignore` entry (part of C40 — it is not ignored
-today); CI uploads it. SVG first because it needs no
+today). SVG first because it needs no
 native deps on any platform; PNG conversion is a later optional bolt-on if something
 requires raster.
 
@@ -144,13 +144,13 @@ reminder when `--live` artifacts are written.
 - **C41 (2pt) — Scenario pack**: S1, S4, S5, S6 scripted; golden text-frame assertions
   on the stable steps (masked); S6's two captures serve as supporting before/after
   evidence for C35/C36.
-- **C42 (1pt) — CI wiring**: Linux CI job running the scenario pack headlessly,
-  artifacts uploaded; **non-gating at first** (report-only), golden-gate flipped on once
-  a week of runs shows no flakes.
+- **C42 — dropped (Jordan, 2026-08-15)**: no CI job — too heavy for the pipeline. The
+  harness is a local/dev tool (`bun run e2e`); goldens gate at the developer's hand.
+  Revisit only if drift actually bites.
 - **C43 (1pt) — Live playground mode**: `--cwd`/`--live` (tier 2) with the safety rails
   above; S7 documented as a manual-invoke scenario, never CI.
 
-~8pt total. C39 → C40 → {C41, C43} → C42; only C39 touches product code, and it is the
+~7pt total. C39 → C40 → {C41, C43}; only C39 touches product code, and it is the
 first PR.
 
 ## Risks
@@ -162,8 +162,10 @@ first PR.
 - **Render-loop coupling**: `runApp` rebuilds `renderer.root` per render and runs
   `renderer.auto()`; if idle-detection proves noisy, the harness falls back to
   frame-count settling via `TestRecorder` — both exist today.
-- **Bun-tier drift**: a suite outside vitest can rot unwatched; C42's CI job is the
-  mitigation and lands in the same wave, not later.
+- **Bun-tier drift**: a suite outside vitest and outside CI can rot unwatched; the
+  accepted trade (C42 dropped as too heavy) is that `bun run e2e` lives in the
+  developer loop — run it before calling TUI-touching work done, same standing as the
+  forensic stress tier.
 - **Golden brittleness**: theme or copy changes will churn frames; masking + opt-in
-  goldens + report-only CI first is the designed answer — the artifact gallery is
-  valuable even with zero gating.
+  goldens is the designed answer — the artifact gallery is valuable even with zero
+  gating, and `--update-goldens` makes churn one command.

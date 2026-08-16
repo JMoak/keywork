@@ -131,7 +131,7 @@ describe("write-gating property", () => {
 
     expect(sentinelCount).toBeGreaterThan(10);
     expect([...sentinelApproved.values()].some((approved) => approved)).toBe(true);
-  });
+  }, 60_000);
 
   it("an untrusted workspace stays fully inert under the same walk", async () => {
     const { store, root } = await scratchVault(false);

@@ -264,11 +264,12 @@ PD6 empty-session litter).
   proving scenarios.
 - **C41 (2pt)** — scenario pack S1/S4/S5/S6 with opt-in masked goldens; S6's captures
   serve as supporting before/after evidence for C35/C36.
-- **C42 (1pt)** — Linux CI job, artifacts uploaded, report-only first, golden-gate after
-  a flake-free week.
+- **C42 — dropped (Jordan, 2026-08-15):** no CI job — too heavy for the pipeline. The
+  harness is a local/dev tool (`bun run e2e`); goldens gate at the developer's hand, not
+  in CI. Revisit only if drift actually bites.
 - **C43 (1pt)** — live playground mode (`--cwd`/`--live` with safety rails; never CI).
 
-Ordering: C39 → C40 → {C41, C43} → C42. This is **work stream W0** — it precedes and
+Ordering: C39 → C40 → {C41, C43}. This is **work stream W0** — it precedes and
 serves W1/W3 (their acceptance cites S6's captures) and only C39 touches product code.
 
 ## Open design questions (answers wanted before the gated pieces build)
@@ -315,7 +316,7 @@ test` green is the merge gate.
 
 | Stream | Tasks | Files (owner) | Depends on |
 |---|---|---|---|
-| **W0 — Screen-capture harness** | C39 → C40 → C41/C43 → C42 | `tui/app.ts` (seams only), new `scripts/e2e-capture.ts` + scenario files | nothing — C39 lands before W1 touches `app.ts` |
+| **W0 — Screen-capture harness** | C39 → C40 → C41/C43 (C42 dropped: no CI job) | `tui/app.ts` (seams only), new `scripts/e2e-capture.ts` + scenario files | nothing — C39 lands before W1 touches `app.ts` |
 | **W1 — Geometry truth** | C35 | `tui/layout.ts` (render seam), `tui/app.ts` `buildBody`/`treeView`, `pane-chrome.ts`, per-pane view sizing | C39 (same file, tiny) — then **first in the tui package** |
 | **W2 — Front door** | D15 | `cli/main.ts`, `cli/chat.ts`, new `cli/compose.ts` | nothing |
 | **W3 — Live sessions** | C36 → C37 | `tui/session-tree-*`, `cli/sessions.ts`, `engine/session/store.ts` (lazy-create), `cli/main.ts` session wiring (small, coordinate with W2) | nothing (C37 after C36) |

@@ -14,7 +14,8 @@
     "check:guardrails": "bun scripts/check-guardrails.ts",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "bun scripts/e2e-capture.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.7",

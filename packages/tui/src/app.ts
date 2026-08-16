@@ -10,6 +10,7 @@ import {
 } from "@keywork/engine";
 import {
   Box,
+  type CliRenderer,
   createCliRenderer,
   type KeyEvent,
   type MouseEvent,
@@ -89,6 +90,8 @@ export interface AppOptions {
   afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
   closers?: readonly Closer[];
   closeTimeoutMs?: number;
+  createRenderer?: () => Promise<CliRenderer>;
+  exit?: (code: number) => void;
   presets?: PresetsPort;
   titler?: Titler;
   statusLabel?: string | (() => string);
@@ -104,7 +107,8 @@ export interface AppOptions {
 export async function runApp(options: AppOptions = {}): Promise<void> {
   const theme = resolveTheme(options.themeOverrides);
   const restored = await loadRestorePlan(options);
-  const renderer = await createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
+  const renderer = await (options.createRenderer ?? defaultRenderer)();
+  const exit = options.exit ?? ((code: number) => process.exit(code));
   const chrome = { border: 1, statusRows: 1 };
   const screen = (): Screen => ({
     width: Math.max(0, renderer.width - 2 * chrome.border),
@@ -215,7 +219,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         options.closers ?? [],
         options.closeTimeoutMs ?? defaultCloseTimeoutMs,
         (error) => console.error(error.message),
-      ).finally(() => process.exit(0));
+      ).finally(() => exit(0));
     }),
   });
 
@@ -294,6 +298,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   core.bindNotify(render);
   core.start();
   render();
+}
+
+function defaultRenderer(): Promise<CliRenderer> {
+  return createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
 }
 
 interface RestorePlan {
