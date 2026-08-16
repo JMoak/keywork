@@ -92,7 +92,7 @@ export class ConversationModel {
     if (agent === undefined) {
       this.entries.push({
         kind: "info",
-        text: "no provider configured — set KEYWORK_OPENROUTER_API_KEY and relaunch",
+        text: "no provider · set KEYWORK_OPENROUTER_API_KEY, then relaunch",
       });
       return;
     }
@@ -127,9 +127,9 @@ export class ConversationModel {
         this.tailFollow = undefined;
         notify();
       }),
-      agent.bus.on("turn.completed", () => {
+      agent.bus.on("turn.completed", ({ replay }) => {
         this.tailFollow = undefined;
-        this.requestTitleOnce();
+        if (replay !== true) this.requestTitleOnce();
         notify();
       }),
       agent.bus.on("turn.interrupted", () => {
@@ -457,13 +457,13 @@ export class ConversationModel {
     this.exitBacktrack();
     if (entry === undefined || entry.kind !== "user" || ordinal < 0) return true;
     if (this.busy) {
-      this.entries.push({ kind: "info", text: "a turn is running — esc interrupts it first" });
+      this.entries.push({ kind: "info", text: "turn still running · esc to interrupt" });
       this.notify();
       return true;
     }
     const fork = this.ports?.forkAtPrompt;
     if (fork === undefined) {
-      this.entries.push({ kind: "info", text: "backtrack fork unavailable — no session port" });
+      this.entries.push({ kind: "info", text: "can't fork · no session store" });
       this.notify();
       return true;
     }
@@ -471,7 +471,7 @@ export class ConversationModel {
       .then((outcome) => {
         if (this.disposed) return;
         if (!outcome.forked) {
-          this.entries.push({ kind: "info", text: "could not fork at that prompt" });
+          this.entries.push({ kind: "info", text: "no fork point there" });
         } else if (outcome.note !== undefined) {
           this.entries.push({ kind: "info", text: outcome.note });
         }

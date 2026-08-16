@@ -47,6 +47,8 @@ export interface BranchSummaryInput {
 }
 
 export class SessionStore {
+  private headerOnDisk: Promise<void> | undefined;
+
   private constructor(
     readonly file: string,
     readonly header: SessionHeader,
@@ -70,8 +72,6 @@ export class SessionStore {
       cwd,
       ...(parentSession !== undefined && { parentSession }),
     };
-    await mkdir(dirname(file), { recursive: true });
-    await appendFile(file, `${JSON.stringify(header)}\n`, "utf8");
     return new SessionStore(file, header, [], new Map(), new Map(), null);
   }
 
@@ -81,6 +81,7 @@ export class SessionStore {
     if (header === undefined) throw new Error(`${file} is not a keywork session file`);
     const log = parsed.filter((entry): entry is SessionEntry => entry.type !== "session");
     const store = new SessionStore(file, header, [], new Map(), new Map(), null);
+    store.headerOnDisk = Promise.resolve();
     for (const entry of log) store.index(entry);
     return store;
   }
@@ -173,6 +174,7 @@ export class SessionStore {
     const path = pathToEntry(this.byId, leafId ?? this.leaf);
     if (path.length === 0) throw new Error("cannot clone an empty session path");
     const clone = await SessionStore.create(targetFile, this.header.cwd, new Date(), this.file);
+    await clone.materialize();
     const lines = path.map((entry) => `${JSON.stringify(entry)}\n`).join("");
     await appendFile(targetFile, lines, "utf8");
     for (const entry of path) clone.index(entry);
@@ -204,9 +206,20 @@ export class SessionStore {
       parentId: this.leaf,
       timestamp: new Date().toISOString(),
     } as T;
+    await this.materialize();
     await appendFile(this.file, `${JSON.stringify(entry)}\n`, "utf8");
     this.index(entry);
     return entry;
+  }
+
+  private materialize(): Promise<void> {
+    this.headerOnDisk ??= this.writeHeader();
+    return this.headerOnDisk;
+  }
+
+  private async writeHeader(): Promise<void> {
+    await mkdir(dirname(this.file), { recursive: true });
+    await appendFile(this.file, `${JSON.stringify(this.header)}\n`, "utf8");
   }
 
   private index(entry: SessionEntry): void {

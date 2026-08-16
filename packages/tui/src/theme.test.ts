@@ -20,4 +20,38 @@ describe("resolveTheme", () => {
   it("rejects malformed colors", () => {
     expect(() => resolveTheme({ accent: "purple" })).toThrow(/#rrggbb/);
   });
+
+  it("defaults the ramp to Tokyo Night violet, blue, cyan", () => {
+    expect(resolveTheme().ramp).toEqual(["#bb9af7", "#7aa2f7", "#7dcfff"]);
+  });
+
+  it("starts the default ramp at the flat accent", () => {
+    expect(resolveTheme().ramp[0]).toBe(keyworkNight.accent);
+  });
+
+  it("applies a ramp override wholesale", () => {
+    const theme = resolveTheme({ ramp: ["#112233", "#445566"] });
+    expect(theme.ramp).toEqual(["#112233", "#445566"]);
+    expect(theme.accent).toBe(keyworkNight.accent);
+  });
+
+  it("accepts a one-stop ramp for flat single-accent themes", () => {
+    expect(resolveTheme({ ramp: ["#ff00ff"] }).ramp).toEqual(["#ff00ff"]);
+  });
+
+  it("rejects a ramp that is empty, oversized, or not an array", () => {
+    expect(() => resolveTheme({ ramp: [] })).toThrow(/1-6 #rrggbb stops/);
+    expect(() => resolveTheme({ ramp: Array.from({ length: 7 }, () => "#112233") })).toThrow(
+      /1-6 #rrggbb stops/,
+    );
+    expect(() => resolveTheme({ ramp: "#112233" })).toThrow(/1-6 #rrggbb stops/);
+  });
+
+  it("rejects malformed ramp stops", () => {
+    expect(() => resolveTheme({ ramp: ["#112233", "teal"] })).toThrow(/#rrggbb/);
+  });
+
+  it("rejects a color token given a stop list", () => {
+    expect(() => resolveTheme({ accent: ["#112233"] })).toThrow(/#rrggbb/);
+  });
 });

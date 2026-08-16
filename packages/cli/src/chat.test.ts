@@ -1,14 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { type Message, SessionStore, textMessage } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
-import { persistNewMessages, startMcpRegistry } from "./chat.ts";
-
-const fixtureServerPath = fileURLToPath(
-  new URL("../../engine/src/mcp/fixture-server.ts", import.meta.url),
-);
+import { persistNewMessages } from "./chat.ts";
 
 const tempDirs: string[] = [];
 
@@ -53,36 +48,5 @@ describe("persistNewMessages", () => {
     const store = await tempStore();
     await persistNewMessages(store, turn("one", "re: one"), 0);
     expect(store.entries()[0]).not.toHaveProperty("checkpoint");
-  });
-});
-
-describe("startMcpRegistry", () => {
-  it("returns nothing when no servers are configured", () => {
-    expect(startMcpRegistry(undefined)).toBeUndefined();
-    expect(startMcpRegistry({})).toBeUndefined();
-  });
-
-  it("starts configured servers and stops them cleanly", async () => {
-    const registry = startMcpRegistry({
-      fixture: {
-        transport: "stdio",
-        command: process.execPath,
-        args: [fixtureServerPath, "basic"],
-      },
-    });
-    expect(registry).toBeDefined();
-    if (registry === undefined) return;
-    try {
-      expect(registry.tools().map((tool) => tool.name)).toContain("mcp_tool_search");
-      const deadline = Date.now() + 10_000;
-      while (registry.status()[0]?.state !== "connected") {
-        if (Date.now() > deadline) throw new Error("fixture server never connected");
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      expect(registry.status()[0]).toMatchObject({ name: "fixture", toolCount: 2 });
-    } finally {
-      await registry.stop();
-    }
-    expect(registry.status()[0]?.state).toBe("down");
   });
 });

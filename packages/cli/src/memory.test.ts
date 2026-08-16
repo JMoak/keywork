@@ -219,7 +219,7 @@ describe("memoryRecall", () => {
     const recall = memoryRecall(memory, "sess-1", (line) => disclosures.push(line));
     await recall?.search.search("ratio");
     expect(disclosures).toEqual([
-      "memory search fell back to lexical — embeddings from fake-embed unavailable",
+      "memory search fell back to lexical, embeddings from fake-embed aren't available",
     ]);
   });
 });
@@ -232,7 +232,7 @@ describe("retrievalDisclosure", () => {
     );
     expect(
       retrievalDisclosure({ kind: "lexical-degraded", embeddings: "voyage-3", reason: "down" }),
-    ).toBe("memory search fell back to lexical — embeddings from voyage-3 unavailable");
+    ).toBe("memory search fell back to lexical, embeddings from voyage-3 aren't available");
   });
 });
 

@@ -71,7 +71,7 @@ export function retrievalDisclosure(source: RetrievalSource): string | undefined
     case "hybrid":
       return `memory search uses embeddings from ${source.embeddings}`;
     case "lexical-degraded":
-      return `memory search fell back to lexical — embeddings from ${source.embeddings} unavailable`;
+      return `memory search fell back to lexical, embeddings from ${source.embeddings} aren't available`;
   }
 }
 

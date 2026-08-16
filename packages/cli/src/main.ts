@@ -11,8 +11,9 @@ import {
   requiresConfirmation,
   TrustStore,
 } from "@keywork/shared";
-import type { PresetsPort, SessionAttachment, SessionPort } from "@keywork/tui";
+import type { PresetsPort } from "@keywork/tui";
 import { chat } from "./chat.ts";
+import { dispatchCommand, nonInteractiveUsage, usage } from "./dispatch.ts";
 import { createPresetSwitch, isPresetName } from "./presets.ts";
 import { providerSetupHint, resolveProvider } from "./provider.ts";
 import { runHeadless } from "./run.ts";
@@ -25,22 +26,14 @@ function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typ
   });
 }
 
-const usage = `keywork — keyboard-first coding agent
-
-Usage:
-  keywork [chat] [--model <model>] [--continue]
-                 [--resume <session-id>]                    interactive session
-  keywork run "<prompt>" [--model <model>] [--json] [--debug]
-              [--session-dir <dir>]                         one-shot headless run
-  keywork panes [--fresh]                                   tiled multi-session workspace
-  keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
-  keywork setup                                             connect a model provider
-  keywork trust | untrust                                   grant or revoke workspace trust
-`;
-
 async function main(argv: string[]): Promise<number> {
-  const command = argv[0] !== undefined && !argv[0].startsWith("-") ? argv[0] : "chat";
-  const rest = argv[0] === command ? argv.slice(1) : argv;
+  const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+  const decision = dispatchCommand(argv, interactive);
+  if (decision.kind === "usage") {
+    console.error(nonInteractiveUsage);
+    return decision.exitCode;
+  }
+  const { command, rest } = decision;
 
   const { values, positionals } = parseArgs({
     args: rest,
@@ -59,7 +52,7 @@ async function main(argv: string[]): Promise<number> {
   const cwd = process.cwd();
   const workspace = openWorkspace(cwd);
   for (const dir of workspace?.missingContextDirs ?? []) {
-    console.warn(`keywork: workspace context dir not found, skipping: ${dir}`);
+    console.warn(`keywork: skipping context dir ${dir}, it doesn't exist`);
   }
   const trustStore = new TrustStore();
   if (command === "trust" || command === "untrust") {
@@ -81,7 +74,7 @@ async function main(argv: string[]): Promise<number> {
 
   const onboardIfNeeded = async (): Promise<void> => {
     if (resolved !== undefined || !process.stdin.isTTY) return;
-    console.log("Welcome to keywork — no model provider is configured yet.\n");
+    console.log("Welcome to keywork. No model provider yet, let's fix that.\n");
     const { runSetup } = await import("./setup.ts");
     if ((await runSetup()) !== 0) return;
     const refreshed = await loadKeyworkConfig(cwd, projectTrusted);
@@ -119,7 +112,7 @@ async function main(argv: string[]): Promise<number> {
     case "run": {
       const prompt = positionals.join(" ").trim();
       if (prompt === "") {
-        console.error("keywork run requires a prompt");
+        console.error(`keywork run needs a prompt, like: keywork run "fix the tests"`);
         return 1;
       }
       await runHeadless({
@@ -137,9 +130,14 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "sessions": {
-      const { sessionsCommand } = await import("./sessions.ts");
+      const { sessionsCommand, terminalConfirm } = await import("./sessions.ts");
       const { defaultSessionDir } = await import("./paths.ts");
-      return sessionsCommand(positionals, values["session-dir"] ?? defaultSessionDir(cwd));
+      return sessionsCommand(
+        positionals,
+        values["session-dir"] ?? defaultSessionDir(cwd),
+        console.log,
+        terminalConfirm(),
+      );
     }
     case "setup": {
       const { runSetup } = await import("./setup.ts");
@@ -149,57 +147,30 @@ async function main(argv: string[]): Promise<number> {
       await onboardIfNeeded();
       const active = resolved;
       const { runApp } = await import("@keywork/tui");
-      const {
-        Agent,
-        buildSystemPrompt,
-        Checkpoints,
-        coreTools,
-        loadProjectInstructions,
-        McpRegistry,
-        MemoryFlush,
-        narrowedPermissions,
-        renderCommand,
-        restrictTools,
-        scanTemplate,
-        SessionStore: Sessions,
-        skillTool,
-        suggestTitle,
-      } = await import("@keywork/engine");
-      const { defaultSessionDir, snapshotGitDir, workspaceIdentity, workspaceStateFile } =
-        await import("./paths.ts");
+      const { renderCommand, scanTemplate, suggestTitle } = await import("@keywork/engine");
+      const { defaultSessionDir, workspaceIdentity, workspaceStateFile } = await import(
+        "./paths.ts"
+      );
+      const { composeAgents, composeWorkspace } = await import("./compose.ts");
       const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
-      const { attachmentOf, findSessionFile, newSessionFileName, sessionTreePort } = await import(
-        "./sessions.ts"
-      );
-      const { commandRuntime, loadWorkspaceExtensions } = await import("./commands.ts");
+      const { sessionChangeFeed, sessionPort, sessionTreePort } = await import("./sessions.ts");
+      const { commandRuntime } = await import("./commands.ts");
       const { mcpPanePort } = await import("./mcp.ts");
-      const {
-        bootstrapInjection,
-        flushAfterTurn,
-        memoryPanePort,
-        memoryRecall,
-        openWorkspaceMemory,
-        sweepOnClose,
-        withMemoryPrompt,
-      } = await import("./memory.ts");
-      const instructions = projectTrusted ? await loadProjectInstructions(cwd) : undefined;
-      const memory = openWorkspaceMemory(cwd, projectTrusted);
-      const systemPrompt = withMemoryPrompt(
-        buildSystemPrompt({
-          ...(instructions !== undefined && { projectInstructions: instructions }),
-          ...(config.prompts !== undefined && { prompts: config.prompts }),
-          ...(active !== undefined && { modelId: active.modelId }),
-        }),
-        await bootstrapInjection(memory),
-      );
-      const checkpoints = await Checkpoints.open({
-        worktree: cwd,
-        gitDir: snapshotGitDir(cwd),
-      }).catch(() => undefined);
+      const { flushAfterTurn, memoryPanePort, sweepOnClose } = await import("./memory.ts");
+      const composition = await composeWorkspace({
+        cwd,
+        projectTrusted,
+        prompts: config.prompts,
+        mcpServers: config.mcpServers,
+        modelId: active?.modelId,
+      });
+      const { checkpoints, extensions, mcp, memory } = composition;
+      const agents =
+        active === undefined
+          ? undefined
+          : composeAgents(composition, { provider: active.provider, permissions: toolPermissions });
       const stateStore = workspaceFile(workspaceStateFile(workspaceIdentity(cwd)));
       const sessionDir = values["session-dir"] ?? defaultSessionDir(cwd);
-      const extensions = await loadWorkspaceExtensions(cwd, projectTrusted);
-      const skillTools = extensions.skills.length > 0 ? [skillTool(extensions.skills)] : [];
       const extensionsView = {
         commands: extensions.commands.map((command) => ({
           name: command.name,
@@ -218,48 +189,20 @@ async function main(argv: string[]): Promise<number> {
           name: agent.name,
           ...(agent.description !== undefined && { description: agent.description }),
         })),
-        failures: extensions.failures.map((failure) => `${failure.file} — ${failure.reason}`),
+        failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
       };
-      const mcp =
-        config.mcpServers === undefined || Object.keys(config.mcpServers).length === 0
-          ? undefined
-          : new McpRegistry({ servers: config.mcpServers });
-      mcp?.start();
 
       const stores = new Map<string, SessionStore>();
-      const attach = (store: SessionStore): SessionAttachment => {
-        stores.set(store.header.id, store);
-        return attachmentOf(store, () => checkpoints?.takeTurnTag());
-      };
-      const sessions: SessionPort = {
-        open: async (id) => {
-          try {
-            const file = await findSessionFile(sessionDir, id);
-            return file === undefined ? undefined : attach(await Sessions.open(file));
-          } catch {
-            return undefined;
-          }
+      const sessionChanges = sessionChangeFeed();
+      const sessions = sessionPort(sessionDir, cwd, {
+        checkpointTag: () => checkpoints?.takeTurnTag(),
+        onAttach: (store) => stores.set(store.header.id, store),
+        onRelease: (sessionId) => {
+          stores.delete(sessionId);
+          agents?.release(sessionId);
         },
-        create: async () => {
-          try {
-            return attach(await Sessions.create(join(sessionDir, newSessionFileName()), cwd));
-          } catch {
-            return undefined;
-          }
-        },
-      };
-
-      const flushes = new Map<string, InstanceType<typeof MemoryFlush>>();
-      const flushFor = (sessionId: string): InstanceType<typeof MemoryFlush> | undefined => {
-        if (memory === undefined || active === undefined) return undefined;
-        const provider = active.provider;
-        let flush = flushes.get(sessionId);
-        if (flush === undefined) {
-          flush = new MemoryFlush({ provider, store: memory.store, systemPrompt });
-          flushes.set(sessionId, flush);
-        }
-        return flush;
-      };
+        onChange: (sessionId) => sessionChanges.emit(sessionId),
+      });
 
       const presetsPort: PresetsPort = {
         names: () => presetOrder,
@@ -274,12 +217,14 @@ async function main(argv: string[]): Promise<number> {
       await runApp({
         workspace: values.fresh ? freshWorkspace(stateStore) : stateStore,
         sessions,
-        sessionTrees: sessionTreePort(sessionDir),
+        sessionTrees: sessionTreePort(sessionDir, sessionChanges),
         presets: presetsPort,
         afterTurn: async ({ sessionId, history }) => {
           const store = stores.get(sessionId);
           if (store === undefined) return [];
-          return flushAfterTurn(flushFor(sessionId), store, history);
+          const joined = await flushAfterTurn(agents?.flushFor(sessionId), store, history);
+          if (joined.length > 0) sessionChanges.emit(sessionId);
+          return joined;
         },
         closers: [() => sweepOnClose(memory), ...(mcp === undefined ? [] : [() => mcp.stop()])],
         extensions: extensionsView,
@@ -287,44 +232,20 @@ async function main(argv: string[]): Promise<number> {
         ...(checkpoints !== undefined && { checkpoints }),
         ...(memory !== undefined && { memory: memoryPanePort(memory) }),
         ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
-        ...(active !== undefined && {
-          agentFactory: (guard, history, seams, agentName) => {
-            const definition = extensions.agents.find((candidate) => candidate.name === agentName);
-            let self: InstanceType<typeof Agent> | undefined;
-            const baseTools = [
-              ...coreTools(
-                cwd,
-                memoryRecall(
-                  memory,
-                  () => seams?.sessionId(),
-                  (disclosure) => seams?.discloseRetrieval(disclosure),
-                ),
-                (chunk) => self?.bus.emit("tool.output", { chunk }),
-              ),
-              ...skillTools,
-            ];
-            const tools = mcp === undefined ? baseTools : mcp.surface(baseTools);
-            const agent = new Agent({
-              provider: active.provider,
-              tools: definition === undefined ? tools : restrictTools(tools, definition),
-              systemPrompt:
-                definition === undefined || definition.prompt === ""
-                  ? systemPrompt
-                  : definition.prompt,
-              guard,
-              permissions:
-                definition === undefined
-                  ? toolPermissions
-                  : narrowedPermissions(definition, toolPermissions),
-              ...(history !== undefined && { history }),
-              ...(seams?.bus !== undefined && { bus: seams.bus }),
-            });
-            self = agent;
-            return agent;
-          },
-          titler: (conversation) => suggestTitle(active.provider, conversation),
-          statusLabel: () => `${active.label} · ${presets.active()}`,
-        }),
+        ...(active !== undefined &&
+          agents !== undefined && {
+            agentFactory: (guard, history, seams, agentName) =>
+              agents.build({
+                guard,
+                history,
+                bus: seams?.bus,
+                sessionId: () => seams?.sessionId(),
+                onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
+                definition: extensions.agents.find((candidate) => candidate.name === agentName),
+              }),
+            titler: (conversation) => suggestTitle(active.provider, conversation),
+            statusLabel: () => `${active.label} · ${presets.active()}`,
+          }),
       });
       return 0;
     }

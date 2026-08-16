@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "keywork": "bun packages/cli/src/main.ts",
     "check": "bun run check:types && bun run check:pins && bun run check:guardrails && bun run lint",
     "check:types": "tsc --build",
     "check:pins": "bun scripts/check-pins.ts",

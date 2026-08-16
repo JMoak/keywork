@@ -312,7 +312,7 @@ describe("McpPaneModel tool listing", () => {
     openTools(model);
     model.setTools("filesystem", { error: "transport closed" });
     const failed = model.rows().find((row) => row.id === "tools:filesystem:failed");
-    expect(failed?.text).toBe("    ▛ tools unavailable · transport closed");
+    expect(failed?.text).toBe("    ▛ tools failed · transport closed");
     expect(failed?.tone).toBe("alert");
     press(model, "j", "enter");
     expect(recorded.listed).toEqual(["filesystem", "filesystem"]);

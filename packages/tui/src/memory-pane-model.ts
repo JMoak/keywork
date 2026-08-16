@@ -1,6 +1,6 @@
 import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
-import type { Theme } from "./theme.ts";
+import type { ThemeColorToken } from "./theme.ts";
 
 export type MemoryProvenance = "user" | "agent" | "untrusted";
 export type CuringStage = 0 | 1 | 2 | 3;
@@ -92,7 +92,7 @@ export function provenanceGlyph(provenance: MemoryProvenance): string {
   return provenanceMarks[provenance];
 }
 
-export function toneToken(tone: RowTone): keyof Theme {
+export function toneToken(tone: RowTone): ThemeColorToken {
   return toneTokens[tone];
 }
 
@@ -211,7 +211,7 @@ export class MemoryPaneModel {
       {
         id: "calm",
         kind: "empty",
-        text: "keywork remembers what you teach it",
+        text: "nothing remembered yet",
         tone: "dim",
         selectable: false,
       },
@@ -453,7 +453,7 @@ const provenanceMarks: Record<MemoryProvenance, string> = {
   agent: "▓",
   untrusted: "░",
 };
-const toneTokens: Record<RowTone, keyof Theme> = {
+const toneTokens: Record<RowTone, ThemeColorToken> = {
   dim: "textDim",
   normal: "text",
   heading: "accentSoft",

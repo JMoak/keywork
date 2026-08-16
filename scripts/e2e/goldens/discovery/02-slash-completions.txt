@@ -24,7 +24,7 @@
 ││                                                                                                                    ││
 ││                                                                                                                    ││
 ││                                                                                                                    ││
-││ ▸ /exit — close this pane (closes keywork from the last one)  ctrl+k x                                             ││
+││ ▸ /exit — close this pane · quits keywork if it's the last  ctrl+k x                                               ││
 ││   /exit-all — close every pane and quit keywork  ctrl+q                                                            ││
 ││ › /ex▌                                                                                                             ││
 │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯│

@@ -3,8 +3,8 @@
 > Decision record from vision-shaping (2026-08-09). Resolves the ten open questions in
 > [`comparison.md`](comparison.md) §4. Each decision is binding until explicitly revisited.
 >
-> **Standing guardrails (restated everywhere on purpose):** Pi and OpenCode are MIT — lift with
-> attribution. Crush is FSL-1.1-MIT — never a source: no code ever, and since 2026-08-10 no
+> **Standing guardrails (restated everywhere on purpose):** Pi and OpenCode are MIT: lift with
+> attribution. Crush is FSL-1.1-MIT and is never a source — no code ever, and since 2026-08-10 no
 > design credits either (formerly Crush-credited features are original designs). Anthropic access is
 > **API-key / Agent-SDK only**; no subscription-OAuth, ever, and no Anthropic provider wiring at
 > all until the dedicated API-key milestone.
@@ -26,8 +26,8 @@ cost ~0 context. CLI-scripts-plus-Bash remains an equally blessed path.
 
 ### D2 — Core vs. batteries: minimal core, blessed extensions
 Core = four tools (`read`/`write`/`edit`/`bash`), shortest-viable system prompt, session
-engine, event bus, extension API, MCP host, keyboard/TUI shell. Everything else — permissions
-gate, Plan/Build modes, theming, notifications, code-intel — ships as **default-on blessed
+engine, event bus, extension API, MCP host, keyboard/TUI shell. Everything else (permissions
+gate, Plan/Build modes, theming, notifications, code-intel) ships as **default-on blessed
 extensions** the user can disable or replace. Zero-config first run must be the best
 experience (Omarchy omakase); every core addition requires a written justification.
 
@@ -45,19 +45,19 @@ Replaceable by power users because it's just an extension (D2).
 
 ### D5 — Code intelligence: all three rungs, phased ("MIT mode online")
 Committed to the full stack, landed in cost order so nothing blocks the core loop:
-1. **v1** — CLI tools via bash (tsc, linters) — free, ships with the four-tool core.
+1. **v1** — CLI tools via bash (tsc, linters): free, ships with the four-tool core.
 2. **v1.x** — Aider-style ranked repo map (Apache-2.0, adaptable) as a blessed extension.
 3. **capstone** — LSP-as-agent-tools (`vtsls`/`typescript-language-server` first): diagnostics
    and symbols exposed to the model. Our own design; implementation is our own or adapted
    from OpenCode's MIT LSP layer.
 
 ### D6 — Panes: keywork owns tiling; panes are bus clients
-The differentiator. Every pane (conversation, diff/files, terminal, session tree, …) is a
+This is the differentiator. Every pane (conversation, diff/files, terminal, session tree, …) is a
 subscriber view onto the typed event bus. **v1:** keywork's OpenTUI app is the tiler —
 Omarchy-style verbs (split/rotate/zoom/close/focus), self-contained, no multiplexer required,
 Windows-first parity. **P2:** the same pane components mount from external processes over the
 workspace server (`keywork attach --pane diff`), making tmux/zellij composition a bonus
-surface, not a dependency. One pane abstraction, two mounting surfaces.
+surface, not a dependency: one pane abstraction with two mounting surfaces.
 
 ### D7 — Topology: in-process bus, server-shaped
 Headless engine as a library emitting **typed events on an internal bus** (own design;

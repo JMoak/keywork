@@ -92,7 +92,7 @@ const garden: NoteSpec[] = [
 describe("MemoryPaneModel zero-memory state", () => {
   it("renders a calm invitation instead of empty sections", () => {
     const { model } = modelOver({});
-    expect(texts(model)).toEqual(["keywork remembers what you teach it", "workspace · user"]);
+    expect(texts(model)).toEqual(["nothing remembered yet", "workspace · user"]);
     expect(model.rows().every((row) => row.tone === "dim" && !row.selectable)).toBe(true);
   });
 

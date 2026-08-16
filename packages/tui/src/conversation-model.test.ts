@@ -1,12 +1,18 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   Agent,
   MockProvider,
+  replaySession,
+  SessionStore,
   type Tool,
   type ToolCallPart,
+  textMessage,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ConversationModel, transcriptLines } from "./conversation-model.ts";
 import { parseChord } from "./keys.ts";
 
@@ -693,5 +699,102 @@ describe("transcriptLines", () => {
   it("wraps CJK text by code points", () => {
     const lines = transcriptLines([{ kind: "assistant", text: "我们在这里写字" }], 3);
     expect(lines.map((line) => line.text)).toEqual(["我们在", "这里写", "字"]);
+  });
+});
+
+const replayTempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    replayTempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
+});
+
+async function replaySessionFile(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "keywork-model-replay-"));
+  replayTempDirs.push(dir);
+  return join(dir, "session.jsonl");
+}
+
+describe("session replay rendering", () => {
+  const listTool: Tool = {
+    name: "list",
+    description: "lists files",
+    parameters: { type: "object" },
+    execute: async () => "total 4\ndrwxr-xr-x 2 u u 4096 .",
+  };
+
+  async function livedAndRevived(): Promise<{
+    live: ConversationModel;
+    revived: ConversationModel;
+  }> {
+    const liveAgent = new Agent({
+      provider: new MockProvider([
+        [
+          {
+            type: "tool-call",
+            call: { type: "tool-call", callId: "c1", name: "list", arguments: {} },
+          },
+          { type: "text", text: "Counting the files now." },
+          { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
+        ],
+        textTurn("There are 4 files here."),
+      ]),
+      tools: [listTool],
+    });
+    const live = new ConversationModel(liveAgent, () => {});
+    live.submitText("how many files?");
+    await live.lastSend;
+
+    const store = await SessionStore.create(await replaySessionFile(), ".");
+    for (const message of liveAgent.history()) await store.append(message);
+    const revivedAgent = new Agent({ provider: new MockProvider([]), history: store.messages() });
+    const revived = new ConversationModel(revivedAgent, () => {});
+    replaySession(store, revivedAgent.bus);
+    return { live, revived };
+  }
+
+  it("renders a revived tool-call turn exactly as it rendered live", async () => {
+    const { live, revived } = await livedAndRevived();
+    expect(revived.entries).toEqual(live.entries);
+  });
+
+  it("never merges prose across turns around a replayed tool entry", async () => {
+    const { revived } = await livedAndRevived();
+    expect(revived.entries.map((entry) => entry.kind)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    expect(revived.entries[1]).toEqual({ kind: "assistant", text: "Counting the files now." });
+    expect(revived.entries[2]).toMatchObject({ kind: "tool", text: "✓ list — total 4" });
+    expect(revived.entries[3]).toEqual({ kind: "assistant", text: "There are 4 files here." });
+  });
+
+  it("does not request a title for replayed turns", async () => {
+    let titled = 0;
+    const agent = new Agent({ provider: new MockProvider([textTurn("live reply")]) });
+    const model = new ConversationModel(
+      agent,
+      () => {},
+      async () => {
+        titled += 1;
+        return "a title";
+      },
+    );
+
+    agent.bus.emit("turn.completed", {
+      message: textMessage("assistant", "revived reply"),
+      usage: { inputTokens: 0, outputTokens: 0 },
+      replay: true,
+    });
+    await model.lastTitle;
+    expect(titled).toBe(0);
+
+    model.submitText("go");
+    await model.lastSend;
+    await model.lastTitle;
+    expect(titled).toBe(1);
   });
 });

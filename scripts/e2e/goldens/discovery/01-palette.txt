@@ -1,21 +1,21 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │╭─ session-1 ────────────────────────────────────────────────────────────────────────────────────────────────────────╮│
-││                         ╭────────────────────────── commands ──────────────────────────╮                           ││
-││                         │                                                              │                           ││
-││                         │ › ▌                                                          │                           ││
-││                         │ ▸ split — open a new session pane                   ctrl+k s │                           ││
-││                         │   zoom — zoom the focused pane                      ctrl+k z │                           ││
-││                         │   move-left — focus the pane to the left            ctrl+k h │                           ││
-││                         │   move-down — focus the pane below                  ctrl+k j │                           ││
-││                         │   move-up — focus the pane above                    ctrl+k k │                           ││
-││                         │   dock-leftt——dockuthisepaneetootheelefthedge       ctrl+k d │                           ││
-││                         │   dock-right — dock this pane to the right    ctrl+k shift+d │                           ││
-││                         │ edge                                                         │                           ││
-││                         │   undock — return this pane to the main area        ctrl+k u │                           ││
-││                         │   dock-wider — widen the dock column                ctrl+k . │                           ││
-││                         │                                                              │                           ││
-││                         ╰──────────────────────────────────────────────────────────────╯                           ││
 ││                                                                                                                    ││
+││                          ╭────────────────────────── commands ──────────────────────────╮                          ││
+││                          │                                                              │                          ││
+││                          │ › ▌                                                          │                          ││
+││                          │ ▸ split — open a new session pane                   ctrl+k s │                          ││
+││                          │   zoom — zoom the focused pane                      ctrl+k z │                          ││
+││                          │   move-left — focus the pane to the left            ctrl+k h │                          ││
+││                          │   move-down — focus the pane below                  ctrl+k j │                          ││
+││                          │   move-up — focus the pane above                    ctrl+k k │                          ││
+││                          │   move-right — focus the pane to the right          ctrl+k l │                          ││
+││                          │   dock-left — dock this pane to the left edge       ctrl+k d │                          ││
+││                          │   dock-right — dock this pane to the right e… ctrl+k shift+d │                          ││
+││                          │   dock-cycle — move this pane to its next home: ma… ctrl+k c │                          ││
+││                          │   undock — return this pane to the main area        ctrl+k u │                          ││
+││                          │                                                              │                          ││
+││                          ╰──────────────────────────────────────────────────────────────╯                          ││
 ││                                                                                                                    ││
 ││                                                                                                                    ││
 ││                                                                                                                    ││

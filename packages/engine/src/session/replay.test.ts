@@ -79,6 +79,32 @@ describe("replaySession", () => {
     expect(comparable(replayEvents)).toEqual(comparable(liveEvents));
   });
 
+  it("keeps prose and tool events in live order when a tool call precedes text", async () => {
+    const provider = new MockProvider([
+      [
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "c1", name: "echo", arguments: { value: "hi" } },
+        },
+        { type: "text", text: "Running the echo now." },
+        { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
+      ],
+      textTurn("all done"),
+    ]);
+    const agent = new Agent({ provider, tools: [echoTool] });
+    const liveEvents = record(agent.bus);
+    await agent.send("run the echo");
+
+    const store = await SessionStore.create(await sessionFile(), ".");
+    for (const message of agent.history()) await store.append(message);
+
+    const bus = new EventBus<EngineEvents>();
+    const replayEvents = record(bus);
+    replaySession(store, bus);
+
+    expect(comparable(replayEvents)).toEqual(comparable(liveEvents));
+  });
+
   it("replays the compacted context, not the summarized history", async () => {
     const store = await SessionStore.create(await sessionFile(), ".");
     await store.append(textMessage("user", "forgotten"));

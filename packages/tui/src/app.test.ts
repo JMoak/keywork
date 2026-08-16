@@ -1,7 +1,15 @@
 import { Agent, type Message, MockProvider, textMessage, textTurn } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { bindSessionLifecycle, type SessionAttachment, startFreshSession } from "./app.ts";
+import {
+  attachOnFork,
+  bindSessionLifecycle,
+  paneSessionIndex,
+  type SessionAttachment,
+  type SessionPort,
+  startFreshSession,
+} from "./app.ts";
 import { ConversationPane } from "./conversation-pane.ts";
+import type { SessionTreePort } from "./session-tree-pane.ts";
 
 function attachmentOf(id: string): SessionAttachment {
   return { id, history: [], replay: () => {}, append: async () => {} };
@@ -9,6 +17,24 @@ function attachmentOf(id: string): SessionAttachment {
 
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function releasingPort(released: string[]): SessionPort {
+  return {
+    open: async (id) => attachmentOf(id),
+    create: async () => undefined,
+    release: (sessionId) => {
+      released.push(sessionId);
+    },
+  };
+}
+
+function forkingTrees(forkedId: string): SessionTreePort {
+  return {
+    load: async () => undefined,
+    setLabel: async () => {},
+    fork: async () => forkedId,
+  };
 }
 
 describe("startFreshSession", () => {
@@ -34,9 +60,10 @@ describe("startFreshSession", () => {
     expect(wired).toBe("s-live");
   });
 
-  it("discards a session that lands after the pane was disposed", async () => {
+  it("discards and releases a session that lands after the pane was disposed", async () => {
     let wired = false;
     let notified = 0;
+    const released: string[] = [];
     let release: (attachment: SessionAttachment | undefined) => void = () => {};
     startFreshSession(
       {
@@ -45,6 +72,9 @@ describe("startFreshSession", () => {
           new Promise((resolve) => {
             release = resolve;
           }),
+        release: (sessionId) => {
+          released.push(sessionId);
+        },
       },
       () => {
         notified += 1;
@@ -58,6 +88,76 @@ describe("startFreshSession", () => {
     await flush();
     expect(wired).toBe(false);
     expect(notified).toBe(0);
+    expect(released).toEqual(["s-late"]);
+  });
+});
+
+describe("attachOnFork", () => {
+  it("disposes a forked attachment nobody claims", async () => {
+    const attachments = new Map<string, SessionAttachment>();
+    const released: string[] = [];
+    const port = attachOnFork(forkingTrees("forked-1"), releasingPort(released), attachments);
+
+    const forkedId = await port.fork("s1", "e1");
+
+    expect(forkedId).toBe("forked-1");
+    expect(attachments.has("forked-1")).toBe(true);
+    await flush();
+    expect(attachments.size).toBe(0);
+    expect(released).toEqual(["forked-1"]);
+  });
+
+  it("leaves a claimed fork attachment alone", async () => {
+    const attachments = new Map<string, SessionAttachment>();
+    const released: string[] = [];
+    const port = attachOnFork(forkingTrees("forked-1"), releasingPort(released), attachments);
+
+    await port.fork("s1", "e1");
+    attachments.delete("forked-1");
+    await flush();
+
+    expect(released).toEqual([]);
+  });
+
+  it("forwards the tree port's subscribe seam", () => {
+    const listeners: string[] = [];
+    const trees: SessionTreePort = {
+      ...forkingTrees("forked-1"),
+      subscribe: (listener) => {
+        listeners.push("subscribed");
+        listener("s1");
+        return () => {};
+      },
+    };
+    const port = attachOnFork(trees, undefined, new Map());
+    const seen: string[] = [];
+    port.subscribe?.((sessionId) => seen.push(sessionId));
+    expect(listeners).toEqual(["subscribed"]);
+    expect(seen).toEqual(["s1"]);
+  });
+});
+
+describe("paneSessionIndex", () => {
+  it("releases a closed pane's session and prunes the index", () => {
+    const released: string[] = [];
+    const index = paneSessionIndex(releasingPort(released));
+    index.bind("session-1", () => "s1");
+    index.bind("session-2", () => undefined);
+    expect(index.size()).toBe(2);
+
+    index.closed("session-1");
+    index.closed("session-2");
+
+    expect(released).toEqual(["s1"]);
+    expect(index.size()).toBe(0);
+  });
+
+  it("tolerates a port without release and unknown panes", () => {
+    const index = paneSessionIndex({ open: async () => undefined, create: async () => undefined });
+    index.bind("session-1", () => "s1");
+    index.closed("session-1");
+    index.closed("never-bound");
+    expect(index.size()).toBe(0);
   });
 });
 

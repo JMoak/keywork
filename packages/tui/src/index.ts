@@ -35,5 +35,11 @@ export type {
   RecallEventView,
 } from "./memory-pane-model.ts";
 export type { SessionTreeView } from "./session-tree-model.ts";
-export type { SessionTreePort } from "./session-tree-pane.ts";
+export type { SessionTreePaneSeams, SessionTreePort } from "./session-tree-pane.ts";
+export type {
+  SessionLiveness,
+  SessionOverviewItem,
+  SessionOverviewRow,
+  SessionPresence,
+} from "./sessions-overview-model.ts";
 export type { WorkspaceState } from "./workspace-state.ts";

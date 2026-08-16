@@ -2,14 +2,21 @@ import { strict as assert } from "node:assert";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createPresetSwitch, isPresetName } from "../../packages/cli/src/presets.ts";
-import { textTurn, writeTool } from "../../packages/engine/src/index.ts";
+import { type Tool, textTurn, writeTool } from "../../packages/engine/src/index.ts";
 import { presetOrder, requiresConfirmation } from "../../packages/shared/src/index.ts";
 import type { PresetsPort } from "../../packages/tui/src/index.ts";
 import type { Scenario, Stage } from "./scenario.ts";
 
 const notesBefore = "alpha\nbeta\ngamma\n";
 const notesAfter = "alpha\nBETA\ngamma\n";
-const askRowMarker = "y allow · a always · n deny";
+const askRowMarker = "[y] allow  [a] always  [n] deny";
+
+const listTool: Tool = {
+  name: "list",
+  description: "lists workspace files",
+  parameters: { type: "object" },
+  execute: async () => "total 4\ndrwxr-xr-x 2 dev dev 4096 .",
+};
 
 export const scenarios: readonly Scenario[] = [
   coldStart(),
@@ -36,7 +43,7 @@ function coldStart(): Scenario {
     provider: "none",
     run: async (stage) => {
       await stage.settle();
-      const boot = await stage.until("no provider configured");
+      const boot = await stage.until("no provider · set");
       assert.ok(boot.includes("set KEYWORK_OPENROUTER_API_KEY"), "guidance names the fix");
       await stage.capture("no-provider-guidance", { golden: true });
       const code = await stage.quit();
@@ -88,13 +95,13 @@ function firstConversation(): Scenario {
 
       await stage.type("/undo");
       await stage.press("enter");
-      await stage.until("files restored");
+      await stage.until("files put back");
       assert.equal(workspaceRead(stage, "notes.txt"), notesBefore);
       await stage.capture("undo-notice");
 
       await stage.type("/redo");
       await stage.press("enter");
-      await stage.until("files brought forward");
+      await stage.until("files redone");
       assert.equal(workspaceRead(stage, "notes.txt"), notesAfter);
       await stage.capture("redo-notice");
 
@@ -106,7 +113,7 @@ function firstConversation(): Scenario {
 function tilingTour(): Scenario {
   return {
     name: "tiling-tour",
-    description: "splits, nav, zoom, docked browser + session tree, dock resize",
+    description: "splits, nav, zoom, dual docks, dock resize, cycling a pane through all homes",
     files: {
       "notes.txt": notesBefore,
       "README.md": "# demo workspace\n",
@@ -138,6 +145,18 @@ function tilingTour(): Scenario {
       const unzoomed = await stage.capture("unzoomed");
       assert.equal(paneTitleCount(unzoomed), 3, "zoom toggles back to the full tiling");
 
+      const borderBefore = columnOf(unzoomed, "session-3");
+      await stage.type("/grow");
+      await stage.press("enter");
+      await stage.type("/grow");
+      await stage.press("enter");
+      await stage.settle();
+      const grown = await stage.capture("pane-grown");
+      assert.ok(
+        columnOf(grown, "session-3") > borderBefore,
+        "growing the focused pane visibly moves the shared border",
+      );
+
       await stage.type("/browse");
       await stage.press("enter");
       const docked = await stage.until(" workspace · 3 entries ");
@@ -160,6 +179,41 @@ function tilingTour(): Scenario {
         "widening the dock pushes the main area right",
       );
 
+      await stage.press("ctrl+k", "l", "shift+d", "escape");
+      await stage.settle();
+      const dualDocks = await stage.capture("dual-docks");
+      assert.ok(dualDocks.includes(" workspace "), "the browser holds the left dock");
+      assert.ok(
+        columnOf(dualDocks, "session-1") > columnOf(dualDocks, "session-2"),
+        "the docked-right session sits past the main area",
+      );
+
+      await stage.press("ctrl+k", "c", "escape");
+      await stage.settle();
+      const cycledToMain = await stage.capture("cycle-to-main");
+      assert.equal(
+        columnOf(cycledToMain, "session-1"),
+        columnOf(cycledToMain, "session-2"),
+        "one cycle brings the pane from the right dock into the main column",
+      );
+
+      await stage.press("ctrl+k", "c", "escape");
+      await stage.settle();
+      const cycledToLeft = await stage.capture("cycle-to-left");
+      assert.ok(
+        columnOf(cycledToLeft, "session-1") < columnOf(cycledToLeft, "session-2"),
+        "the next cycle lands the pane in the left dock",
+      );
+
+      await stage.press("ctrl+k", "c", "escape");
+      await stage.settle();
+      const cycledHome = await stage.capture("cycle-home");
+      assert.equal(
+        columnOf(cycledHome, "session-1"),
+        columnOf(dualDocks, "session-1"),
+        "three cycles return the pane to its right-dock home",
+      );
+
       await stage.quit();
     },
   };
@@ -167,10 +221,26 @@ function tilingTour(): Scenario {
 
 function sessionLifecycle(): Scenario {
   const reply = "Noted — the plan is recorded.";
+  const toolProse = "Counting the files now.";
+  const toolVerdict = "There are 4 files here.";
+  const settledToolLine = "✓ list — total 4";
   return {
     name: "session-lifecycle",
-    description: "converse → tree → label → fork → quit → relaunch restores layout and sessions",
-    turns: [textTurn(reply), textTurn(reply)],
+    description:
+      "converse → sessions overview → drill in → label → fork → live overview → switchboard enter → tool turn → quit → relaunch restores layout, sessions, and clean tool replay",
+    tools: () => [listTool],
+    turns: [
+      textTurn(reply),
+      [
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "call-list", name: "list", arguments: {} },
+        },
+        { type: "text", text: toolProse },
+        { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
+      ],
+      textTurn(toolVerdict),
+    ],
     run: async (stage) => {
       await stage.settle();
       await stage.type("plan the fix");
@@ -180,8 +250,13 @@ function sessionLifecycle(): Scenario {
       await stage.capture("conversation");
 
       await stage.press("ctrl+k", "t", "escape");
+      const overviewOne = await stage.until("▓ plan the fix · now");
+      assert.ok(overviewOne.includes("session tree · 1 session"), "the overview counts its rows");
+      await stage.capture("sessions-overview-one");
+
+      await stage.press("l");
       await stage.until("● user: plan the fix");
-      await stage.capture("tree-docked");
+      await stage.capture("entries-drilled");
 
       await stage.press("shift+l");
       await stage.type("keep");
@@ -195,12 +270,46 @@ function sessionLifecycle(): Scenario {
       const forked = await stage.capture("forked-layout");
       assert.equal(paneTitleCount(forked), 2, "the fork opens a second session pane");
 
+      await stage.press("ctrl+k", "t", "escape");
+      const overview = await stage.until("session tree · 2 sessions");
+      assert.equal(
+        occurrences(overview, "▓ plan the fix · now"),
+        2,
+        "the fork lands in the overview unprompted, both sessions marked attached",
+      );
+      await stage.capture("sessions-overview-live");
+
+      await stage.press("enter");
+      await stage.settle();
+      await stage.type("count the files");
+      await stage.press("enter");
+      await stage.until(settledToolLine);
+      await stage.until(toolVerdict);
+      await stage.settle();
+      await stage.capture("tool-turn");
+
       await stage.relaunch();
       await stage.until(reply);
+      await stage.until(settledToolLine);
       await stage.settle();
       const restored = await stage.capture("relaunched-restored");
       assert.equal(paneTitleCount(restored), 2, "both session panes come back");
+      assert.ok(
+        restored.includes("session tree · 2 sessions"),
+        "the persisted tree pane revives into the sessions overview",
+      );
       assert.ok(restored.includes("plan the fix"), "the revived session replays the prompt");
+      assert.ok(restored.includes(toolVerdict), "the closing prose replays after the tool entry");
+      const proseAt = restored.indexOf(toolProse);
+      const toolAt = restored.indexOf(settledToolLine);
+      assert.ok(
+        proseAt >= 0 && proseAt < toolAt,
+        "replay keeps the streamed prose before the settled tool line, as it rendered live",
+      );
+      assert.ok(
+        !restored.includes(`${toolProse}${toolVerdict}`),
+        "tool-entry replay never merges prose across turns",
+      );
       await stage.quit();
     },
   };
@@ -247,7 +356,8 @@ function discovery(): Scenario {
 function defectRepros(): Scenario {
   return {
     name: "defect-repros",
-    description: "C35 pane-overlap evidence at eight panes; PD6 empty-session litter after quit",
+    description:
+      "C35 pane-overlap evidence at eight panes; C36 lazy sessions keep the litter at zero",
     run: async (stage) => {
       await stage.settle();
       await stage.press("ctrl+k", "s", "s", "s", "s", "s", "s", "s", "escape");
@@ -255,8 +365,13 @@ function defectRepros(): Scenario {
       await stage.capture("eight-panes-overlap");
 
       await stage.quit();
-      const path = stage.evidence("evidence-session-files.txt", sessionLitterReport(stage));
+      const report = sessionLitterReport(stage);
+      const path = stage.evidence("evidence-session-files.txt", report);
       assert.ok(existsSync(path), "the session-litter evidence file was written");
+      assert.ok(
+        report.startsWith("0 session files"),
+        "splitting eight panes and quitting must mint zero session files",
+      );
     },
   };
 }
@@ -276,10 +391,16 @@ function livePlayground(): Scenario {
       assert.ok(restored.includes("session"), "the saved layout revives session panes");
 
       await stage.press("ctrl+k", "t", "escape");
-      const tree = await stage.until("session tree");
-      assert.ok(tree.includes("●"), "the tree shows entries from real history");
+      const overview = await stage.until("session tree");
+      assert.ok(overview.includes("sessions"), "the overview lists real sessions");
       await stage.settle();
-      await stage.capture("session-tree-over-history");
+      await stage.capture("sessions-overview-over-history");
+
+      await stage.press("l");
+      const tree = await stage.until("●");
+      assert.ok(tree.includes("●"), "drilling in shows entries from real history");
+      await stage.settle();
+      await stage.capture("session-entries-over-history");
 
       await stage.quit();
       const delta = sessionDirDelta(filesBeforeBoot, sessionFileListing(stage.sessionDir));
@@ -365,6 +486,10 @@ function workspaceRead(stage: Stage, path: string): string {
 
 function paneTitleCount(frame: string): number {
   return frame.split("session-").length - 1;
+}
+
+function occurrences(frame: string, marker: string): number {
+  return frame.split(marker).length - 1;
 }
 
 function columnOf(frame: string, marker: string): number {

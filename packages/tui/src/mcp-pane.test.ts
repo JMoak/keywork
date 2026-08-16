@@ -170,7 +170,7 @@ describe("McpPane", () => {
     world.failNextTools = "transport closed";
     world.tools.filesystem = ["read_file"];
     await press(pane, "enter", "j", "j", "j", "enter");
-    expect(rendered(pane)).toContain("▛ tools unavailable · transport closed");
+    expect(rendered(pane)).toContain("▛ tools failed · transport closed");
     await press(pane, "j", "enter");
     expect(rendered(pane)).toContain("    read_file");
   });

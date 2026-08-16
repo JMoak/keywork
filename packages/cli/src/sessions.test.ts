@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionStore, textMessage } from "@keywork/engine";
@@ -9,6 +10,7 @@ import {
   listSessions,
   newSessionFileName,
   openOrResumeSession,
+  sessionChangeFeed,
   sessionPort,
   sessionsCommand,
   sessionTreePort,
@@ -185,6 +187,94 @@ describe("sessionsCommand", () => {
     expect(await sessionsCommand(["bogus"], dir, (line) => lines.push(line))).toBe(1);
     expect(await sessionsCommand(["tree", "nope"], dir, (line) => lines.push(line))).toBe(1);
   });
+
+  async function litteredDir(): Promise<{ dir: string; emptyFile: string; keptFile: string }> {
+    const dir = await tempDir();
+    const opened = await openOrResumeSession(dir, ".");
+    await opened.store.append(textMessage("user", "keep me"));
+    const emptyFile = join(dir, "1000000000000-0001-1.jsonl");
+    await writeFile(
+      emptyFile,
+      '{"type":"session","id":"empty-legacy","cwd":".","createdAt":"2026-01-01T00:00:00.000Z"}\n',
+      "utf8",
+    );
+    return { dir, emptyFile, keptFile: opened.store.file };
+  }
+
+  it("offers a prompted cleanup of header-only session files and deletes on consent", async () => {
+    const { dir, emptyFile, keptFile } = await litteredDir();
+    const lines: string[] = [];
+    const questions: string[] = [];
+
+    const code = await sessionsCommand(
+      [],
+      dir,
+      (line) => lines.push(line),
+      async (question) => {
+        questions.push(question);
+        return true;
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(questions).toHaveLength(1);
+    expect(lines.join("\n")).toContain("found 1 empty session file");
+    expect(lines.join("\n")).toContain("removed 1 empty session file");
+    expect(existsSync(emptyFile)).toBe(false);
+    expect(existsSync(keptFile)).toBe(true);
+  });
+
+  it("keeps every file when the cleanup is declined", async () => {
+    const { dir, emptyFile, keptFile } = await litteredDir();
+
+    await sessionsCommand(
+      [],
+      dir,
+      () => {},
+      async () => false,
+    );
+
+    expect(existsSync(emptyFile)).toBe(true);
+    expect(existsSync(keptFile)).toBe(true);
+  });
+
+  it("never prompts without a confirmer (non-TTY) and never during --json", async () => {
+    const { dir, emptyFile } = await litteredDir();
+    const questions: string[] = [];
+
+    await sessionsCommand([], dir, () => {});
+    await sessionsCommand(
+      ["list", "--json"],
+      dir,
+      () => {},
+      async (question) => {
+        questions.push(question);
+        return true;
+      },
+    );
+
+    expect(questions).toEqual([]);
+    expect(existsSync(emptyFile)).toBe(true);
+  });
+
+  it("stays quiet when there is nothing to clean", async () => {
+    const { dir } = await seededDir();
+    const lines: string[] = [];
+    const questions: string[] = [];
+
+    await sessionsCommand(
+      [],
+      dir,
+      (line) => lines.push(line),
+      async (question) => {
+        questions.push(question);
+        return true;
+      },
+    );
+
+    expect(questions).toEqual([]);
+    expect(lines.join("\n")).not.toContain("empty session");
+  });
 });
 
 describe("newSessionFileName", () => {
@@ -226,12 +316,20 @@ describe("latestSessionFile", () => {
 });
 
 describe("findSessionFile", () => {
-  it("finds a session by id prefix", async () => {
+  it("finds a materialized session by id prefix", async () => {
     const dir = await tempDir();
     const opened = await openOrResumeSession(dir, ".");
+    await opened.store.append(textMessage("user", "make it real"));
 
     expect(await findSessionFile(dir, opened.store.header.id.slice(0, 6))).toBe(opened.store.file);
     expect(await findSessionFile(dir, "zzzzzz")).toBeUndefined();
+  });
+
+  it("cannot find a session that was never used", async () => {
+    const dir = await tempDir();
+    const opened = await openOrResumeSession(dir, ".");
+
+    expect(await findSessionFile(dir, opened.store.header.id.slice(0, 6))).toBeUndefined();
   });
 });
 
@@ -267,6 +365,86 @@ describe("sessionPort", () => {
     const store = await SessionStore.open(file ?? "");
     expect(store.entries()[0]).not.toHaveProperty("checkpoint");
   });
+
+  it("a created session never written to leaves no file on disk", async () => {
+    const dir = await tempDir();
+    const port = sessionPort(dir, ".");
+
+    const attachment = await port.create();
+
+    expect(attachment).toBeDefined();
+    expect(await readdir(dir)).toEqual([]);
+    expect(await listSessions(dir)).toEqual([]);
+  });
+
+  it("reports attach, change, and release through the seams", async () => {
+    const dir = await tempDir();
+    const attached: string[] = [];
+    const changed: string[] = [];
+    const released: string[] = [];
+    const port = sessionPort(dir, ".", {
+      onAttach: (store) => attached.push(store.header.id),
+      onChange: (sessionId) => changed.push(sessionId),
+      onRelease: (sessionId) => released.push(sessionId),
+    });
+
+    const attachment = await port.create();
+    expect(attached).toEqual([attachment?.id]);
+
+    await attachment?.append(textMessage("user", "hello"));
+    await attachment?.append(textMessage("assistant", "hi"));
+    expect(changed).toEqual([attachment?.id, attachment?.id]);
+
+    port.release?.(attachment?.id ?? "");
+    expect(released).toEqual([attachment?.id]);
+  });
+
+  it("attaches reopened sessions through the same seam", async () => {
+    const dir = await tempDir();
+    const attached: string[] = [];
+    const port = sessionPort(dir, ".", { onAttach: (store) => attached.push(store.header.id) });
+    const created = await port.create();
+    await created?.append(textMessage("user", "persist me"));
+
+    const reopened = await port.open(created?.id ?? "");
+
+    expect(reopened?.id).toBe(created?.id);
+    expect(attached).toEqual([created?.id, created?.id]);
+  });
+});
+
+describe("sessionChangeFeed", () => {
+  it("pushes label and fork changes to tree-port subscribers", async () => {
+    const dir = await tempDir();
+    const opened = await openOrResumeSession(dir, ".");
+    const first = await opened.store.append(textMessage("user", "root"));
+    const feed = sessionChangeFeed();
+    const port = sessionTreePort(dir, feed);
+    const id = opened.store.header.id;
+    const seen: string[] = [];
+    const unsubscribe = port.subscribe?.((sessionId) => seen.push(sessionId));
+
+    await port.setLabel(id, first.id, "start");
+    await port.fork(id, first.id);
+    expect(seen).toEqual([id, id]);
+
+    unsubscribe?.();
+    await port.setLabel(id, first.id, "again");
+    expect(seen).toEqual([id, id]);
+  });
+
+  it("relays attachment appends emitted through the port seam", async () => {
+    const dir = await tempDir();
+    const feed = sessionChangeFeed();
+    const seen: string[] = [];
+    feed.subscribe((sessionId) => seen.push(sessionId));
+    const port = sessionPort(dir, ".", { onChange: (sessionId) => feed.emit(sessionId) });
+
+    const attachment = await port.create();
+    await attachment?.append(textMessage("user", "typed"));
+
+    expect(seen).toEqual([attachment?.id]);
+  });
 });
 
 describe("sessionTreePort", () => {
@@ -299,5 +477,61 @@ describe("sessionTreePort", () => {
     expect(await port.load("missing")).toBeUndefined();
     expect(await port.fork("missing", "entry")).toBeUndefined();
     await expect(port.setLabel("missing", "entry", "x")).rejects.toThrow("no session matches");
+  });
+
+  it("lists the overview most-recent-first with titles and counts", async () => {
+    const dir = await tempDir();
+    const older = await openOrResumeSession(dir, ".");
+    const root = await older.store.append(textMessage("user", "plan the fix"));
+    await older.store.append(textMessage("assistant", "on it"));
+    await older.store.setLabel(root.id, "keep");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const newer = await openOrResumeSession(dir, ".");
+    await newer.store.setName("release notes");
+    await newer.store.append(textMessage("user", "draft the notes"));
+    const port = sessionTreePort(dir);
+
+    const overview = await port.overview?.();
+
+    expect(overview?.map((item) => item.id)).toEqual([
+      newer.store.header.id,
+      older.store.header.id,
+    ]);
+    expect(overview?.map((item) => item.title)).toEqual(["release notes", "plan the fix"]);
+    const olderItem = overview?.at(1);
+    expect(olderItem?.entryCount).toBe(3);
+    expect(olderItem?.branchCount).toBe(0);
+    expect(olderItem?.labelCount).toBe(1);
+    expect(olderItem?.modifiedAt).toBeLessThanOrEqual(overview?.at(0)?.modifiedAt ?? 0);
+  });
+
+  it("keeps header-only session files out of the overview", async () => {
+    const dir = await tempDir();
+    const used = await openOrResumeSession(dir, ".");
+    await used.store.append(textMessage("user", "hello"));
+    const headerLine = (await readFile(used.store.file, "utf8")).split("\n")[0] ?? "";
+    const phantomHeader = headerLine.replace(
+      used.store.header.id,
+      "00000000-aaaa-bbbb-cccc-000000000000",
+    );
+    await writeFile(join(dir, newSessionFileName()), `${phantomHeader}\n`);
+    const port = sessionTreePort(dir);
+
+    const overview = await port.overview?.();
+
+    expect(overview?.map((item) => item.id)).toEqual([used.store.header.id]);
+  });
+
+  it("a fork shows up in the overview immediately", async () => {
+    const dir = await tempDir();
+    const opened = await openOrResumeSession(dir, ".");
+    const root = await opened.store.append(textMessage("user", "root"));
+    const port = sessionTreePort(dir);
+
+    const forkedId = await port.fork(opened.store.header.id, root.id);
+    const overview = await port.overview?.();
+
+    expect(overview?.map((item) => item.id)).toContain(forkedId);
+    expect(overview?.filter((item) => item.id === forkedId)).toHaveLength(1);
   });
 });

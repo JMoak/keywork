@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { sessionPort, sessionTreePort } from "../../packages/cli/src/sessions.ts";
+import {
+  sessionChangeFeed,
+  sessionPort,
+  sessionTreePort,
+} from "../../packages/cli/src/sessions.ts";
 import { workspaceFile } from "../../packages/cli/src/workspace.ts";
 import { Agent, Checkpoints, MockProvider } from "../../packages/engine/src/index.ts";
 import { type AppOptions, runApp } from "../../packages/tui/src/index.ts";
@@ -183,6 +187,7 @@ async function composeMockApp(
     gitDir: join(paths.root, "snapshots-git"),
   }).catch(() => undefined);
   const tools = scenario.tools?.(paths.workspaceDir) ?? [];
+  const changes = sessionChangeFeed();
   await runApp({
     ...seams,
     ...(scenario.provider !== "none" && {
@@ -195,8 +200,11 @@ async function composeMockApp(
         }),
     }),
     ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
-    sessions: sessionPort(paths.sessionDir, paths.workspaceDir, () => checkpoints?.takeTurnTag()),
-    sessionTrees: sessionTreePort(paths.sessionDir),
+    sessions: sessionPort(paths.sessionDir, paths.workspaceDir, {
+      checkpointTag: () => checkpoints?.takeTurnTag(),
+      onChange: (sessionId) => changes.emit(sessionId),
+    }),
+    sessionTrees: sessionTreePort(paths.sessionDir, changes),
     workspace: workspaceFile(join(paths.root, "workspace-state.json"), 0),
     ...(checkpoints !== undefined && { checkpoints }),
     statusLabel: "keywork e2e",

@@ -20,7 +20,7 @@
 | C32 | **done** | `PaneIntents` (`openFile`/`focusPane`) on `AppCore`, injected into browser factory; `/open <dir>` redirects to the browser via injectable `isDirectory`. |
 | C33 | open | second pass as specced. |
 | H1, H2, H3 | **done** | `AppCore.handleMouse` spine + `pointer.ts`; overlay frames as shared pure functions; split-node `ratio` with min-size clamping, `leader shift+./,` resize verbs, `grow`/`shrink` commands; probe `click`/`hover`/`scroll`. |
-| H4–H6 | open | H4 must account for the ~1-cell chrome offset between `layout.rects` and the bordered render (flagged in H1 work). |
+| H4–H6 | open | The ~1-cell chrome offset H4 was told to account for is gone — C35 (2026-08-16) made `layout.rects` the drawn geometry and border-aligned the overlays, so H4 can hit-test raw rect coordinates. |
 
 **Improvement pass (2026-08-10, two-pronged review → applied, 207 tests / 20 files green).**
 Algo/correctness: stale-read guard on refreshed directory reads (claim-token settle);

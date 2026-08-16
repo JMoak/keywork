@@ -1,12 +1,13 @@
 # keywork — Research Reference Set
 
 This directory is the research foundation for **keywork**, a keyboard-first TypeScript
-coding-agent harness (Bun + TypeScript + Vitest + OpenTUI) being designed by remixing the
-best ideas from existing open-source coding agents. The docs below are *inputs to
-vision-shaping*, not decisions: four dossiers on the tools and systems that most influence
-keywork's taste, one survey of the wider permissively-licensed ecosystem, and two synthesis
-documents that turn the research into comparisons, principles, and open questions. Read them
-in the order given; later docs assume the earlier ones.
+coding-agent harness (Bun + TypeScript + Vitest + OpenTUI) being designed by remixing what
+works in existing open-source coding agents. The docs below are *inputs to vision-shaping*;
+none of them decides anything. Ten dossiers cover the tools and systems that most influence
+keywork's taste, one survey covers the wider permissively-licensed ecosystem, and two
+synthesis documents distill it all into a head-to-head comparison and the UX principles
+with their open questions. Read them in the
+order given; later docs assume the earlier ones.
 
 ---
 
@@ -31,21 +32,21 @@ in the order given; later docs assume the earlier ones.
 
 | # | Doc | What it covers |
 |---|-----|----------------|
-| 5 | [`mit-feature-candidates.md`](mit-feature-candidates.md) | Survey beyond the big three — Aider, Codex CLI, Gemini CLI, Goose, Cline, Roo Code, Zed, OpenHands, Amp — as a 26-row table rated LIFT / REIMPLEMENT / WATCH with per-source license verification. |
+| 11 | [`mit-feature-candidates.md`](mit-feature-candidates.md) | Survey beyond the big three — Aider, Codex CLI, Gemini CLI, Goose, Cline, Roo Code, Zed, OpenHands, Amp — as a 26-row table rated LIFT / REIMPLEMENT / WATCH with per-source license verification. |
 
 ### Synthesis — where the research points
 
 | # | Doc | What it covers |
 |---|-----|----------------|
-| 6 | [`comparison.md`](comparison.md) | Pi vs OpenCode vs Crush head-to-head: philosophy comparison, an 18-row shared-features matrix (keywork's table-stakes baseline), per-tool adoption verdicts, and ten open questions (Q1–Q10) for vision-shaping. |
-| 7 | [`ux-principles.md`](ux-principles.md) | keywork's UX & interaction principles: 13 named design principles, a *proposed* leader-key + palette keyboard model, a *proposed* five-pane window model, and a 14-item simplicity budget of refusals. Sections 2–3 are proposals, not decisions. |
+| 12 | [`comparison.md`](comparison.md) | Pi vs OpenCode vs Crush head-to-head: philosophy comparison, an 18-row shared-features matrix (keywork's table-stakes baseline), per-tool adoption verdicts, and ten open questions (Q1–Q10) for vision-shaping. |
+| 13 | [`ux-principles.md`](ux-principles.md) | keywork's UX & interaction principles: 13 named design principles, a *proposed* leader-key + palette keyboard model, a *proposed* five-pane window model, and a 14-item simplicity budget of refusals. Sections 2–3 are proposals awaiting a decision. |
 
 ### Deep dives — implementation research
 
 | # | Doc | What it covers |
 |---|-----|----------------|
-| 8 | [`research/coding-agent-nuances.md`](research/coding-agent-nuances.md) | Survey & triage of the "million little things" — nuanced behaviors, not headline features — across Claude Code, OpenCode, Pi, Aider, Codex CLI, Gemini CLI, Goose, and Amp, sized against the backlog. |
-| 9 | [`research/forensic-stress-harness.md`](research/forensic-stress-harness.md) | Design + implementation notes for the two-tier MCP forensic stress harness: deterministic fast-check model layer, real-subprocess soak supervisor, leak/quiescence oracles, Windows crash-dump capture (WER/ProcDump vs Bun's VEH), Bun version matrix. |
+| 14 | [`research/coding-agent-nuances.md`](research/coding-agent-nuances.md) | Survey & triage of the "million little things" (nuanced behaviors rather than headline features) across Claude Code, OpenCode, Pi, Aider, Codex CLI, Gemini CLI, Goose, and Amp, sized against the backlog. |
+| 15 | [`research/forensic-stress-harness.md`](research/forensic-stress-harness.md) | Design + implementation notes for the two-tier MCP forensic stress harness: deterministic fast-check model layer, real-subprocess soak supervisor, leak/quiescence oracles, Windows crash-dump capture (WER/ProcDump vs Bun's VEH), Bun version matrix. |
 
 ---
 

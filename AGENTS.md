@@ -14,8 +14,8 @@ overlay).
 2. **Licensing:** Pi (`earendil-works/pi`) and OpenCode (`sst/opencode`) are MIT — code may be
    adapted **with attribution recorded in `NOTICE`**. Crush (`charmbracelet/crush`) is
    FSL-1.1-MIT and is **not a source for keywork at all**: never copy, port, or closely
-   paraphrase its source, and (2026-08-10 decision) its formerly-credited ideas are retired —
-   the `REIMPL:crush` tag no longer exists; design those features from first principles as
+   paraphrase its source, and (2026-08-10 decision) its formerly-credited ideas are retired:
+   the `REIMPL:crush` tag no longer exists. Design those features from first principles as
    `OWN` work rather than from Crush.
 3. **Git:** the user commits; agents never run `git commit` or `git push` unless explicitly
    asked in the current conversation.
@@ -25,10 +25,10 @@ overlay).
 Write with recent-MIT-grad hunger and craft: the cleanest, most elegant code you can produce,
 organized top-down so it reads naturally **without comments**. If code seems to need a
 comment, restructure or rename until it doesn't. The only acceptable comments state genuinely
-irreducible constraints (a ToS rule, a protocol quirk) — never narration, never justification
-of a change. Small well-named functions; public surface at the top of the file, helpers below;
-descriptive names over documentation. Pass this section verbatim to any subagent writing
-keywork code — the perspective is key.
+irreducible constraints (a ToS rule, a protocol quirk): never narration, never justification
+of a change. Small well-named functions. Public surface at the top of the file, helpers below,
+with descriptive names doing the work documentation would. Pass this section verbatim to any
+subagent writing keywork code; the perspective is the point.
 
 ## Conventions
 

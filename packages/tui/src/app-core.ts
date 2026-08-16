@@ -100,7 +100,7 @@ const appActions: Record<string, AppAction> = {
     chords: "leader d",
     help: "dock pane to the left edge",
     sticky: true,
-    invoke: (core) => core.layout.dockFocused("left"),
+    invoke: (core) => core.dockPane("left"),
     command: {
       name: "dock-left",
       description: "dock this pane to the left edge",
@@ -111,33 +111,44 @@ const appActions: Record<string, AppAction> = {
     chords: "leader shift+d",
     help: "dock pane to the right edge",
     sticky: true,
-    invoke: (core) => core.layout.dockFocused("right"),
+    invoke: (core) => core.dockPane("right"),
     command: {
       name: "dock-right",
       description: "dock this pane to the right edge",
       aliases: ["dockright"],
     },
   },
+  "dock.cycle": {
+    chords: "leader c",
+    help: "cycle pane main → left → right",
+    sticky: true,
+    invoke: (core) => core.cyclePane(),
+    command: {
+      name: "dock-cycle",
+      description: "move this pane to its next home: main → left → right",
+      aliases: ["cycle"],
+    },
+  },
   "dock.undock": {
     chords: "leader u",
     help: "return pane to the main area",
     sticky: true,
-    invoke: (core) => core.layout.undockFocused(core.screen()),
+    invoke: (core) => core.undockPane(),
     command: { name: "undock", description: "return this pane to the main area" },
   },
   "dock.grow": {
     chords: "leader .",
-    help: "widen the dock",
+    help: "widen this pane's dock",
     sticky: true,
-    invoke: (core) => core.layout.growDock(0.05),
-    command: { name: "dock-wider", description: "widen the dock column" },
+    invoke: (core) => core.resizeDock(0.05),
+    command: { name: "dock-wider", description: "widen this pane's dock" },
   },
   "dock.shrink": {
     chords: "leader ,",
-    help: "narrow the dock",
+    help: "narrow this pane's dock",
     sticky: true,
-    invoke: (core) => core.layout.growDock(-0.05),
-    command: { name: "dock-narrower", description: "narrow the dock column" },
+    invoke: (core) => core.resizeDock(-0.05),
+    command: { name: "dock-narrower", description: "narrow this pane's dock" },
   },
   "pane.grow": {
     chords: "leader shift+.",
@@ -267,7 +278,7 @@ export interface PaneSnapshot {
   id: string;
   title: string;
   focused: boolean;
-  docked: boolean;
+  dock: DockSide | undefined;
 }
 
 export interface OverlayFrame {
@@ -304,7 +315,6 @@ export interface AppSnapshot {
   panes: PaneSnapshot[];
   focused: string | undefined;
   zoomed: string | undefined;
-  dockSide: DockSide | undefined;
   overlay: "palette" | "help" | "preset" | "preset-confirm" | undefined;
   paletteQuery: string;
   leaderArmed: boolean;
@@ -413,17 +423,15 @@ export class AppCore {
 
   snapshot(): AppSnapshot {
     const focused = this.layout.focused();
-    const dock = this.layout.dock();
     return {
       panes: this.layout.panes().map((id) => ({
         id,
         title: this.panes.get(id)?.title().trim() ?? id,
         focused: id === focused,
-        docked: dock?.panes.includes(id) === true,
+        dock: this.layout.dockSideOf(id),
       })),
       focused,
       zoomed: this.layout.zoomed(),
-      dockSide: dock?.side,
       overlay: this.overlay?.kind,
       paletteQuery: this.paletteQuery,
       leaderArmed: this.leaderArmed,
@@ -497,14 +505,14 @@ export class AppCore {
   }
 
   openPane(resumeSessionId?: string, draft?: string): void {
+    this.focusMainArea();
     const id = `session-${this.nextSession}`;
+    if (!this.openInLayout(id)) return;
     this.nextSession += 1;
     this.panes.set(
       id,
       this.options.createPane(id, this.paneChanged, this.registry, resumeSessionId, draft),
     );
-    this.focusMainArea();
-    this.layout.open(id, this.screen());
     this.persistWorkspace();
     this.notify();
   }
@@ -520,6 +528,22 @@ export class AppCore {
     this.panes.delete(id);
     this.layout.close(id);
     this.options.onPaneClosed?.(id);
+  }
+
+  dockPane(side: DockSide): void {
+    if (!this.layout.dockFocused(side, this.screen())) this.noticeNoRoom(`the ${side} dock`);
+  }
+
+  undockPane(): void {
+    if (!this.layout.undockFocused(this.screen())) this.noticeNoRoom("the main area");
+  }
+
+  cyclePane(): void {
+    if (!this.layout.cycleFocused(this.screen())) this.noticeNoRoom("this pane's next home");
+  }
+
+  resizeDock(delta: number): void {
+    this.layout.growDock(this.focusedDockSide(), delta);
   }
 
   summonBrowser(): void {
@@ -604,6 +628,19 @@ export class AppCore {
   private showNotice(text: string): void {
     this.notice = text;
     this.notify();
+  }
+
+  private noticeNoRoom(where: string): void {
+    this.showNotice(`no room in ${where} · close or resize a pane`);
+  }
+
+  private focusedDockSide(): DockSide {
+    const focused = this.layout.focused();
+    const side = focused === undefined ? undefined : this.layout.dockSideOf(focused);
+    if (side !== undefined) return side;
+    if (this.layout.dock("left") !== undefined) return "left";
+    if (this.layout.dock("right") !== undefined) return "right";
+    return "left";
   }
 
   private palette(): PaletteOverlay | undefined {
@@ -703,57 +740,63 @@ export class AppCore {
     }
   }
 
+  private openInLayout(id: string): boolean {
+    if (this.layout.open(id, this.screen())) return true;
+    this.showNotice("no room for another pane · close or resize one");
+    return false;
+  }
+
   private openFilePane(path: string): void {
     const create = this.options.createFilePane;
     if (create === undefined) return;
+    this.focusMainArea();
     const id = `file-${this.nextFile}`;
+    if (!this.openInLayout(id)) return;
     this.nextFile += 1;
     this.panes.set(id, create(id, path, this.paneChanged));
-    this.focusMainArea();
-    this.layout.open(id, this.screen());
   }
 
   private openBrowserPane(root: string): void {
     const create = this.options.createBrowserPane;
     if (create === undefined) return;
     const id = `browser-${this.nextBrowser}`;
+    if (!this.openInLayout(id)) return;
     this.nextBrowser += 1;
     this.panes.set(id, create(id, root, this.paneChanged, this.intents));
-    this.layout.open(id, this.screen());
-    this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+    this.layout.dockFocused("left", this.screen());
   }
 
   private openSessionTreePane(): void {
     const create = this.options.createSessionTreePane;
     if (create === undefined) return;
     const id = `tree-${this.nextTree}`;
+    if (!this.openInLayout(id)) return;
     this.nextTree += 1;
     this.panes.set(
       id,
       create(id, this.paneChanged, this.intents, () => this.conversationSession()),
     );
-    this.layout.open(id, this.screen());
-    this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+    this.layout.dockFocused("left", this.screen());
   }
 
   private openMemoryPane(): void {
     const create = this.options.createMemoryPane;
     if (create === undefined) return;
     const id = `memory-${this.nextMemory}`;
+    if (!this.openInLayout(id)) return;
     this.nextMemory += 1;
     this.panes.set(id, create(id, this.paneChanged));
-    this.layout.open(id, this.screen());
-    this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+    this.layout.dockFocused("left", this.screen());
   }
 
   private openMcpPane(): void {
     const create = this.options.createMcpPane;
     if (create === undefined) return;
     const id = `mcp-${this.nextMcp}`;
+    if (!this.openInLayout(id)) return;
     this.nextMcp += 1;
     this.panes.set(id, create(id, this.paneChanged));
-    this.layout.open(id, this.screen());
-    this.layout.dockFocused(this.layout.dock()?.side ?? "right");
+    this.layout.dockFocused("right", this.screen());
   }
 
   private dockMcpPaneOnStartup(): void {
@@ -783,10 +826,9 @@ export class AppCore {
   }
 
   private focusMainArea(): void {
-    const docked = this.layout.dock()?.panes ?? [];
     const focused = this.layout.focused();
-    if (focused === undefined || !docked.includes(focused)) return;
-    const main = this.layout.panes().find((id) => !docked.includes(id));
+    if (focused === undefined || this.layout.dockSideOf(focused) === undefined) return;
+    const main = this.layout.panes().find((id) => this.layout.dockSideOf(id) === undefined);
     if (main !== undefined) this.layout.focus(main);
   }
 
@@ -929,6 +971,18 @@ export class AppCore {
         run: () => action.invoke(this),
       });
     }
+    for (const side of ["left", "right"] as const) {
+      this.registry.register({
+        name: `dock-${side}-wider`,
+        description: `widen the ${side} dock`,
+        run: () => this.layout.growDock(side, 0.05),
+      });
+      this.registry.register({
+        name: `dock-${side}-narrower`,
+        description: `narrow the ${side} dock`,
+        run: () => this.layout.growDock(side, -0.05),
+      });
+    }
     if (this.options.createFilePane !== undefined) {
       this.registry.register({
         name: "open",
@@ -955,7 +1009,7 @@ export class AppCore {
     if (this.options.createSessionTreePane !== undefined) {
       this.registry.register({
         name: "tree",
-        aliases: ["session-tree"],
+        aliases: ["session-tree", "sessions"],
         description: "open the session tree: /tree",
         ...shortcut("tree.summon"),
         run: () => this.summonSessionTree(),
@@ -988,18 +1042,18 @@ export class AppCore {
     if (undoPort !== undefined) {
       this.registry.register({
         name: "undo",
-        description: "restore files to before the last agent change",
-        run: () => this.announce(undoPort.undo(), "files restored", "nothing to undo"),
+        description: "undo the last agent file change",
+        run: () => this.announce(undoPort.undo(), "files put back", "nothing to undo"),
       });
       this.registry.register({
         name: "redo",
-        description: "reapply the last undone agent change",
-        run: () => this.announce(undoPort.redo(), "files brought forward", "nothing to redo"),
+        description: "redo the last undone change",
+        run: () => this.announce(undoPort.redo(), "files redone", "nothing to redo"),
       });
     }
     this.registry.register({
       name: "exit",
-      description: "close this pane (closes keywork from the last one)",
+      description: "close this pane · quits keywork if it's the last",
       ...shortcut("pane.close"),
       run: () => this.closePane(),
     });

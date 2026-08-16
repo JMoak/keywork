@@ -2,7 +2,7 @@ import { Text } from "@opentui/core";
 import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
-import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import type { Theme } from "./theme.ts";
 
 export class FilePane implements Pane {
@@ -33,11 +33,11 @@ export class FilePane implements Pane {
 
   view(context: PaneContext): PaneView {
     const { theme, height, width } = context;
-    this.lastPageRows = Math.max(3, height - 3);
+    this.lastPageRows = paneContentHeight(height);
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, Math.max(10, width - 4)),
+      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(width)),
     );
   }
 

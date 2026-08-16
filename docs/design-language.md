@@ -9,13 +9,13 @@
 
 ## The material: density
 
-One ramp carries every meaning — `░ ▒ ▓ █` — state as *texture*, not icons. Terminal-
+One ramp (`░ ▒ ▓ █`) carries every meaning: state as *texture*, not icons. Terminal-
 native (block elements render everywhere), theme-token colored, legible at one cell.
 This is the "terminal video game" identity: ink density is the signal.
 
 | Surface | Mapping |
 |---|---|
-| Curing (memory freshness) | `░` fresh → `▒` → `▓` → `█` settled; the garden literally gains ink as knowledge settles |
+| Curing (memory freshness) | `░` fresh → `▒` → `▓` → `█` settled; the garden gains ink as knowledge settles |
 | Provenance | `█` user-stated · `▓` agent-inferred · `░` external/untrusted — denser = closer to you |
 | Staging | `░` prefix + count (`░3` in the status line): staged items are low-density by definition |
 | MCP server state (D14) | `█` connected · `▒` connecting · `░` down; per-server one-cell mark |
@@ -29,7 +29,7 @@ degrade to stepped density changes.
 
 ## The chroma: gradient depth (added 2026-08-15, 98/PD8)
 
-The second axis gets its systematic role: **hue carries identity and depth — never
+The second axis gets its systematic role: **hue carries identity and depth, never
 state.** Density says *what condition* a thing is in; hue says *which* thing it is among
 many. The theme owns a **ramp** — ordered accent stops (keywork-night: violet → blue →
 cyan, Tokyo Night natives), interpolated perceptually (OKLCH) — and every hued surface
@@ -52,6 +52,15 @@ density first, warmed by saturation lift within the note's arc hue — but hue i
 never acquires a state meaning, and density alone must always suffice (monochrome-safe
 by construction).
 
+## The glyphs: three tiers (added 2026-08-16, 100/PD14)
+
+Every mark declares its tier and its fallback one tier down: **tier 0** pure ASCII (the
+floor every surface must survive at) · **tier 1** Unicode box/block (this document's
+working set — the default material) · **tier 2** sub-cell (half-blocks `▀▄`, quadrants
+`▘▝`, braille `⣿` for fine sparklines and tile-fill). Nerd Fonts are **never a
+dependency**: detected and opted-in, a garnish tier may refine marks; absent, nothing
+is missing — a default-terminal render and a riced render must both look finished.
+
 ## The signature animation: tile-fill
 
 Progress marks are **the dwindle layout in miniature** — a one-cell rectangle splits and
@@ -66,6 +75,35 @@ Determinate when phases are known (MCP handshake → tools listed → ready); a 
 split-cycle when not. Reused everywhere something works: D14 connections, Gardener
 sweeps, index rebuilds, embedding warmup. Never a spinner.
 
+## The motion grammar (drafted 2026-08-16, 100/PD16 — initial draft of record)
+
+Seven rules. The first is the signature law; everything else serves it.
+
+1. **Motion lives in ink, never in geometry.** Layout changes *snap* — rects are truth
+   (97/PD7), and animated geometry lies to hit-testing and reflows text mid-read. What
+   animates is ink: density, saturation, luminance. The terminal's native crossfade is
+   `░▒▓█` — a pane arrives by gaining ink in place, never by sliding.
+2. **Stepped and cell-honest.** No easing illusions fighting the grid; animation is
+   discrete frames. Ease by *step distribution*: arrivals **snap-settle** (large first
+   step, soft final steps, so they present immediately and then finish cleanly); departures
+   **gather** (soft first, decisive last).
+3. **Four named tempos, used by name:** `instant` (≤1 frame — state flips, focus) ·
+   `quick` (~120ms, 2–3 steps — chips, marks, hover) · `settle` (~240ms, 4–6 steps —
+   pane ink-in/out, dock moves, dim transitions) · `ceremony` (600–900ms — startup
+   key-turn, airlock open; at most one per moment, never on the hot path, always
+   skippable). No animation exists outside these four.
+4. **One mover per region.** Concurrent triggers arbitrate; a second animation in the
+   same region settles the first to final frame. The screen never swarms.
+5. **The ambient budget** (conservative by decision): ambient motion only from *real
+   events*, at whisper amplitude, **one ambient mark on screen at a time** — and
+   nothing moves while the user is typing or reading scrollback.
+6. **Input outranks motion, always.** Any keypress settles all animation to final
+   frames immediately — the interface is never waiting for its own choreography.
+7. **Every frame is atomic.** Synchronized output (DEC 2026) wraps every paint where
+   supported; tearing is a bug rather than a degradation. Reduced-motion is the grammar's
+   floor, not an exception: stepped degradation ends at *final frame immediately*, and
+   every choreographed surface must be complete and legible there.
+
 ## The notification formula: needs-you only
 
 A keywork notification always means **a keystroke is wanted**. Exactly two triggers,
@@ -74,7 +112,7 @@ both derived from work state, both when the workspace is unfocused:
 1. An agent is blocked on a decision (ask-gate prompt, protected-core proposal).
 2. The review inbox crossed its configured threshold (95/P3's long-session door).
 
-Completions, failures, milestones: silent — they're dock/status state you see on return.
+Completions, failures, and milestones stay silent; they're dock/status state you see on return.
 Transports (native toast / OSC 777 / bell / off) auto-select per terminal underneath and
 are policy-configurable; the *formula* is not a mode enum.
 

@@ -31,7 +31,7 @@ import {
 import { FilePane } from "./file-pane.ts";
 import type { Keymap } from "./keymap.ts";
 import { chordOf } from "./keys.ts";
-import { dockColumnWidth, type LayoutNode, type Screen } from "./layout.ts";
+import { minPaneSize, type Rect, type Screen } from "./layout.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
@@ -58,6 +58,7 @@ export interface SessionAttachment {
 export interface SessionPort {
   open(id: string): Promise<SessionAttachment | undefined>;
   create(): Promise<SessionAttachment | undefined>;
+  release?(sessionId: string): void;
 }
 
 export interface WorkspacePort {
@@ -109,10 +110,9 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const restored = await loadRestorePlan(options);
   const renderer = await (options.createRenderer ?? defaultRenderer)();
   const exit = options.exit ?? ((code: number) => process.exit(code));
-  const chrome = { border: 1, statusRows: 1 };
   const screen = (): Screen => ({
-    width: Math.max(0, renderer.width - 2 * chrome.border),
-    height: Math.max(0, renderer.height - 2 * chrome.border - chrome.statusRows),
+    width: Math.max(0, renderer.width - 2 * frameChrome.border),
+    height: Math.max(0, renderer.height - 2 * frameChrome.border - frameChrome.statusRows),
   });
   const checkpoints = options.checkpoints;
   const attachments = restored?.attachments ?? new Map<string, SessionAttachment>();
@@ -122,6 +122,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const memoryPort = options.memory;
   const mcpPort = options.mcp;
   const agentSwitchers = new Map<string, (agentName: string | undefined) => boolean>();
+  const paneSessions = paneSessionIndex(options.sessions);
   let closed = false;
   let armedExpiry: ReturnType<typeof setTimeout> | undefined;
   let unsubscribeMcp: (() => void) | undefined;
@@ -158,6 +159,11 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         ...(draft !== undefined && { initialDraft: draft }),
       });
       pane = created;
+      paneSessions.bind(
+        id,
+        () => created.sessionId,
+        () => created.currentAgent()?.busy() ?? false,
+      );
       agentSwitchers.set(id, (agentName) => {
         const factory = options.agentFactory;
         const current = created.currentAgent();
@@ -190,7 +196,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
     ...(treePort !== undefined && {
       createSessionTreePane: (id, notify, intents, targetSession, sessionId) =>
-        new SessionTreePane(id, notify, intents, treePort, targetSession, sessionId),
+        new SessionTreePane(id, notify, intents, treePort, targetSession, {
+          ...(sessionId !== undefined && { sessionId }),
+          presence: paneSessions,
+        }),
     }),
     ...(memoryPort !== undefined && {
       createMemoryPane: (id: string, notify: () => void) => new MemoryPane(id, notify, memoryPort),
@@ -208,6 +217,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     }),
     onPaneClosed: (id) => {
       agentSwitchers.delete(id);
+      paneSessions.closed(id);
     },
     onExit: closeOnce(() => {
       closed = true;
@@ -286,7 +296,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     const pointer = pointerEventOf(event);
     if (pointer === undefined) return;
     core.handleMouse(
-      { ...pointer, x: pointer.x - chrome.border, y: pointer.y - chrome.border },
+      { ...pointer, x: pointer.x - frameChrome.border, y: pointer.y - frameChrome.border },
       performance.now(),
     );
     render();
@@ -299,6 +309,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   core.start();
   render();
 }
+
+const frameChrome = { border: 1, statusRows: 1 } as const;
 
 function defaultRenderer(): Promise<CliRenderer> {
   return createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
@@ -381,7 +393,7 @@ export async function forkAtPrompt(
   return { forked: true, note: await restoreForkedFiles(checkpoints, view.roots, ordinal) };
 }
 
-const unchangedFilesNote = "conversation forked; file state unchanged";
+const unchangedFilesNote = "forked · files untouched";
 
 async function restoreForkedFiles(
   checkpoints: CheckpointsPort | undefined,
@@ -393,9 +405,9 @@ async function restoreForkedFiles(
   if (!checkpoint.restorable) return unchangedFilesNote;
   try {
     await checkpoints.restoreTo(checkpoint.tree);
-    return "files restored to that point";
+    return "files put back to that point";
   } catch (cause) {
-    return `conversation forked — file restore failed: ${(cause as Error).message}`;
+    return `forked · file restore failed: ${(cause as Error).message}`;
   }
 }
 
@@ -430,20 +442,77 @@ function conversationTarget(
   return undefined;
 }
 
-function attachOnFork(
+export function attachOnFork(
   trees: SessionTreePort,
   sessions: SessionPort | undefined,
   attachments: Map<string, SessionAttachment>,
 ): SessionTreePort {
+  const escrow = async (sessionId: string): Promise<boolean> => {
+    if (sessions === undefined) return false;
+    const attachment = await sessions.open(sessionId);
+    if (attachment === undefined) return false;
+    escrowUntilClaimed(attachments, sessions, sessionId, attachment);
+    return true;
+  };
   return {
-    load: (sessionId) => trees.load(sessionId),
-    setLabel: (sessionId, entryId, label) => trees.setLabel(sessionId, entryId, label),
+    ...trees,
     fork: async (sessionId, entryId) => {
       const forkedId = await trees.fork(sessionId, entryId);
-      if (forkedId === undefined || sessions === undefined) return forkedId;
-      const attachment = await sessions.open(forkedId);
-      if (attachment !== undefined) attachments.set(forkedId, attachment);
+      if (forkedId !== undefined) await escrow(forkedId);
       return forkedId;
+    },
+    attach: escrow,
+  };
+}
+
+function escrowUntilClaimed(
+  attachments: Map<string, SessionAttachment>,
+  sessions: SessionPort,
+  sessionId: string,
+  attachment: SessionAttachment,
+): void {
+  attachments.set(sessionId, attachment);
+  const claimWindow = setTimeout(() => {
+    if (attachments.delete(sessionId)) sessions.release?.(sessionId);
+  }, 0);
+  claimWindow.unref?.();
+}
+
+export interface PaneSessionIndex {
+  bind(paneId: string, sessionId: () => string | undefined, busy?: () => boolean): void;
+  closed(paneId: string): void;
+  size(): number;
+  paneFor(sessionId: string): string | undefined;
+  busy(sessionId: string): boolean;
+}
+
+interface PaneSessionBinding {
+  sessionId: () => string | undefined;
+  busy: () => boolean;
+}
+
+export function paneSessionIndex(sessions: SessionPort | undefined): PaneSessionIndex {
+  const bindings = new Map<string, PaneSessionBinding>();
+  const paneFor = (sessionId: string): string | undefined => {
+    for (const [paneId, binding] of bindings) {
+      if (binding.sessionId() === sessionId) return paneId;
+    }
+    return undefined;
+  };
+  return {
+    bind: (paneId, sessionId, busy = () => false) => {
+      bindings.set(paneId, { sessionId, busy });
+    },
+    closed: (paneId) => {
+      const sessionId = bindings.get(paneId)?.sessionId();
+      bindings.delete(paneId);
+      if (sessionId !== undefined) sessions?.release?.(sessionId);
+    },
+    size: () => bindings.size,
+    paneFor,
+    busy: (sessionId) => {
+      const paneId = paneFor(sessionId);
+      return paneId === undefined ? false : (bindings.get(paneId)?.busy() ?? false);
     },
   };
 }
@@ -458,7 +527,11 @@ export function startFreshSession(
   void sessions
     .create()
     .then((created) => {
-      if (created === undefined || !live()) return;
+      if (created === undefined) return;
+      if (!live()) {
+        sessions.release?.(created.id);
+        return;
+      }
       wire(created);
       notify();
     })
@@ -504,45 +577,57 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
 function buildBody(core: AppCore, theme: Theme, screen: Screen) {
   const rects = core.layout.rects(screen);
   const focused = core.layout.focused();
-  const zoomed = core.layout.zoomed();
-  const paneView = (id: string): PaneView | undefined => {
-    const rect = rects.get(id) ?? { x: 0, y: 0, width: screen.width, height: screen.height };
-    return core.panes.get(id)?.view({
-      theme,
-      focused: id === focused,
-      width: rect.width,
-      height: rect.height,
-    });
-  };
-  if (zoomed !== undefined) {
-    return Box({ flexGrow: 1, flexDirection: "row" }, paneView(zoomed) ?? emptyView(theme));
+  if (rects.size === 0) {
+    return Box(
+      { width: screen.width, height: screen.height, flexDirection: "row" },
+      emptyView(theme),
+    );
   }
-  const dock = core.layout.dock();
-  const main = treeView(core.layout.root(), paneView);
-  if (dock === undefined) {
-    return Box({ flexGrow: 1, flexDirection: "row" }, main ?? emptyView(theme));
-  }
-  const dockColumn = Box(
-    { width: dockColumnWidth(screen.width, dock.ratio), flexDirection: "column" },
-    ...dock.panes.map(paneView),
-  );
-  const mainArea = Box({ flexGrow: 1, flexDirection: "row" }, main ?? emptyView(theme));
   return Box(
-    { flexGrow: 1, flexDirection: "row" },
-    ...(dock.side === "left" ? [dockColumn, mainArea] : [mainArea, dockColumn]),
+    { width: screen.width, height: screen.height },
+    ...[...rects].map(([id, rect]) => placedPane(core, theme, id, rect, id === focused)),
   );
 }
 
-function treeView(
-  node: LayoutNode | undefined,
-  paneView: (id: string) => PaneView | undefined,
-): PaneView | undefined {
-  if (node === undefined) return undefined;
-  if (node.kind === "leaf") return paneView(node.id);
+function placedPane(core: AppCore, theme: Theme, id: string, rect: Rect, focused: boolean) {
   return Box(
-    { flexDirection: node.orientation, flexGrow: 1, flexBasis: 0 },
-    treeView(node.first, paneView),
-    treeView(node.second, paneView),
+    {
+      position: "absolute",
+      left: rect.x,
+      top: rect.y,
+      width: rect.width,
+      height: rect.height,
+      flexDirection: "column",
+      overflow: "hidden",
+    },
+    paneViewFor(core, theme, id, rect, focused),
+  );
+}
+
+function paneViewFor(
+  core: AppCore,
+  theme: Theme,
+  id: string,
+  rect: Rect,
+  focused: boolean,
+): PaneView {
+  if (rect.width < minPaneSize.width || rect.height < minPaneSize.height) {
+    return overflowedView(theme);
+  }
+  const view = core.panes.get(id)?.view({ theme, focused, width: rect.width, height: rect.height });
+  return view ?? emptyView(theme);
+}
+
+function overflowedView(theme: Theme) {
+  return Box(
+    {
+      flexGrow: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.panel,
+      overflow: "hidden",
+    },
+    Text({ content: "⋯", fg: theme.textDim }),
   );
 }
 
@@ -560,7 +645,7 @@ function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => str
     core.notice !== ""
       ? core.notice
       : core.leaderArmed
-        ? "nav · h/j/k/l focus  H/J/K/L swap  s split  x close  z zoom  d/D dock  u undock · esc done"
+        ? "nav · h/j/k/l focus  H/J/K/L swap  s split  x close  z zoom  d/D dock  c cycle  u undock · esc done"
         : `${label ?? "keywork"} · ${core.layout.panes().length} panes · ctrl+k nav · ctrl+p commands`;
   return Box(
     {
@@ -581,26 +666,22 @@ function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => str
 
 function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
   const matches = core.paletteMatches();
+  const frame = paletteFrame(screen, matches.length);
+  const innerWidth = overlayInnerWidth(frame);
   const rows = matches.map((command, index) => {
     const active = index === core.paletteIndex;
-    const shortcut = command.shortcut === undefined ? "" : `  ${command.shortcut}`;
-    return Box(
-      { flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1 },
-      Text({
-        content: `${active ? "▸" : " "} ${command.name} — ${command.description}`,
+    return overlayRow(
+      {
+        content: ` ${active ? "▸" : " "} ${command.name} — ${command.description}`,
         fg: active ? theme.accent : theme.text,
-      }),
-      Text({ content: shortcut, fg: theme.textDim }),
+      },
+      { content: command.shortcut === undefined ? " " : `${command.shortcut} `, fg: theme.textDim },
+      innerWidth,
     );
   });
-  const frame = paletteFrame(screen, matches.length);
   return Box(
     {
-      position: "absolute",
-      left: frame.x,
-      top: frame.y,
-      width: frame.width,
-      height: frame.height,
+      ...overlayPosition(frame),
       zIndex: 20,
       border: true,
       borderStyle: "rounded",
@@ -609,12 +690,46 @@ function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
       title: " commands ",
       titleAlignment: "center",
       flexDirection: "column",
+      overflow: "hidden",
       paddingTop: 1,
       paddingBottom: 1,
     },
-    Text({ content: ` › ${core.paletteQuery}▌`, fg: theme.text }),
+    Text({ content: clipLine(` › ${core.paletteQuery}▌`, innerWidth), fg: theme.text }),
     ...(rows.length > 0 ? rows : [Text({ content: "  no matching commands", fg: theme.textDim })]),
   );
+}
+
+function overlayPosition(frame: { x: number; y: number; width: number; height: number }) {
+  return {
+    position: "absolute",
+    left: frame.x + frameChrome.border,
+    top: frame.y + frameChrome.border,
+    width: frame.width,
+    height: frame.height,
+  } as const;
+}
+
+function overlayInnerWidth(frame: { width: number }): number {
+  return Math.max(0, frame.width - 2);
+}
+
+function overlayRow(
+  left: { content: string; fg: string },
+  right: { content: string; fg: string },
+  width: number,
+) {
+  const room = Math.max(0, width - right.content.length);
+  return Box(
+    { flexDirection: "row", height: 1, overflow: "hidden" },
+    Text({ content: clipLine(left.content, Math.max(0, room - 1)).padEnd(room), fg: left.fg }),
+    Text({ content: right.content, fg: right.fg }),
+  );
+}
+
+function clipLine(text: string, width: number): string {
+  if (text.length <= width) return text;
+  if (width <= 1) return text.slice(0, Math.max(0, width));
+  return `${text.slice(0, width - 1)}…`;
 }
 
 function presetOverlay(core: AppCore, theme: Theme, screen: Screen) {
@@ -623,11 +738,7 @@ function presetOverlay(core: AppCore, theme: Theme, screen: Screen) {
   const frame = helpFrame(screen, rows.length);
   return Box(
     {
-      position: "absolute",
-      left: frame.x,
-      top: frame.y,
-      width: frame.width,
-      height: frame.height,
+      ...overlayPosition(frame),
       zIndex: 20,
       border: true,
       borderStyle: "rounded",
@@ -636,6 +747,7 @@ function presetOverlay(core: AppCore, theme: Theme, screen: Screen) {
       title: " permissions ",
       titleAlignment: "center",
       flexDirection: "column",
+      overflow: "hidden",
       paddingTop: 1,
       paddingBottom: 1,
     },
@@ -648,7 +760,7 @@ function presetRows(core: AppCore, theme: Theme) {
   if (confirmation !== undefined) {
     return [
       Text({
-        content: ` switch ${confirmation.from} → ${confirmation.to} loosens permissions`,
+        content: ` ${confirmation.from} → ${confirmation.to} loosens permissions`,
         fg: theme.text,
       }),
       Text({ content: " y confirm · n cancel", fg: theme.accent }),
@@ -669,24 +781,19 @@ function presetRows(core: AppCore, theme: Theme) {
 }
 
 function helpOverlay(keymap: Keymap, theme: Theme, screen: Screen) {
-  const rows = keymap
-    .actions()
-    .map((action) => ({ action, keys: keymap.describe(action) ?? "" }))
-    .map(({ action, keys }) =>
-      Box(
-        { flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1 },
-        Text({ content: keys, fg: theme.accent }),
-        Text({ content: bindingHelp[action] ?? action, fg: theme.text }),
-      ),
-    );
-  const frame = helpFrame(screen, rows.length);
+  const actions = keymap.actions();
+  const frame = helpFrame(screen, actions.length);
+  const innerWidth = overlayInnerWidth(frame);
+  const rows = actions.map((action) =>
+    overlayRow(
+      { content: ` ${keymap.describe(action) ?? ""}`, fg: theme.accent },
+      { content: `${bindingHelp[action] ?? action} `, fg: theme.text },
+      innerWidth,
+    ),
+  );
   return Box(
     {
-      position: "absolute",
-      left: frame.x,
-      top: frame.y,
-      width: frame.width,
-      height: frame.height,
+      ...overlayPosition(frame),
       zIndex: 10,
       border: true,
       borderStyle: "rounded",
@@ -695,6 +802,7 @@ function helpOverlay(keymap: Keymap, theme: Theme, screen: Screen) {
       title: " keywork keys ",
       titleAlignment: "center",
       flexDirection: "column",
+      overflow: "hidden",
       paddingTop: 1,
       paddingBottom: 1,
     },

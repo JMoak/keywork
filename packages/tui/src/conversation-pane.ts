@@ -11,7 +11,7 @@ import type { DiffLine } from "./diff-render.ts";
 import type { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
-import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
 
@@ -112,7 +112,7 @@ export class ConversationPane implements Pane {
 
   view(context: PaneContext): PaneView {
     const { theme, focused, width, height } = context;
-    const innerWidth = Math.max(10, width - 4);
+    const innerWidth = paneContentWidth(width);
     const suggestions = focused ? this.model.suggestions() : [];
     const prompt = promptLines(this.model.buffer, focused);
     const queued = this.model.queued();
@@ -134,7 +134,7 @@ export class ConversationPane implements Pane {
       backtrackHint.length +
       (ask === undefined ? 0 : 1) +
       (this.model.scrollBack > 0 ? 1 : 0);
-    const maxRows = Math.max(3, height - 3 - reservedRows);
+    const maxRows = Math.max(0, paneContentHeight(height) - reservedRows);
     const lines = this.model.visibleTranscript(innerWidth, maxRows);
     const scrollBack = this.model.scrollBack;
     return paneChrome(
@@ -159,7 +159,12 @@ export class ConversationPane implements Pane {
       ...diffRows,
       ...(ask === undefined
         ? []
-        : [Text({ content: `? ${ask.summary} — y allow · a always · n deny`, fg: theme.accent })]),
+        : [
+            Text({
+              content: `? ${ask.summary}  [y] allow  [a] always  [n] deny`,
+              fg: theme.accent,
+            }),
+          ]),
       ...backtrackHint,
       ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
     );

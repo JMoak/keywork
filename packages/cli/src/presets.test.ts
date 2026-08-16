@@ -130,7 +130,7 @@ describe("presetCommand", () => {
   it("rejects unknown names and reports when presets are unavailable", async () => {
     const world = harness();
     await world.run("yolo");
-    expect(world.lines[0]).toContain('unknown preset "yolo"');
+    expect(world.lines[0]).toContain('no preset named "yolo"');
     const lines: string[] = [];
     await presetCommand(
       "",

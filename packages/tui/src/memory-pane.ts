@@ -7,7 +7,13 @@ import {
   toneToken,
 } from "./memory-pane-model.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
-import { paneChrome, paneFailureLine, paneTitle } from "./pane-chrome.ts";
+import {
+  paneChrome,
+  paneContentHeight,
+  paneContentWidth,
+  paneFailureLine,
+  paneTitle,
+} from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
 import type { Theme } from "./theme.ts";
 
@@ -68,11 +74,11 @@ export class MemoryPane implements Pane {
 
   view(context: PaneContext): PaneView {
     const { theme, height, width } = context;
-    this.lastPageRows = Math.max(3, height - 3);
+    this.lastPageRows = paneContentHeight(height);
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, Math.max(10, width - 4)),
+      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(width)),
     );
   }
 

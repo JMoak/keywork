@@ -66,18 +66,26 @@ async function composeLiveApp(cwd: string, seams: AppSeams): Promise<void> {
     presets: presetsPort,
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
     ...(checkpoints !== undefined && { checkpoints }),
-    ...(resolved !== undefined && {
-      // no titler here: session replay emits turn.completed, so a wired titler
-      // would call the real provider for every revived pane at boot.
-      agentFactory: (guard, history) =>
-        new Agent({
-          provider: resolved.provider,
-          tools: coreTools(cwd),
-          guard,
-          permissions: presets.resolver,
-          ...(history !== undefined && { history }),
-        }),
-      statusLabel: () => `${resolved.label} · ${presets.active()}`,
-    }),
+    ...(resolved !== undefined && agentSeamsWithoutBootTitler(cwd, resolved, presets)),
   });
+}
+
+type AgentSeams = Pick<Parameters<typeof runApp>[0], "agentFactory" | "statusLabel">;
+
+function agentSeamsWithoutBootTitler(
+  cwd: string,
+  resolved: NonNullable<ReturnType<typeof resolveProvider>>,
+  presets: ReturnType<typeof createPresetSwitch>,
+): AgentSeams {
+  return {
+    agentFactory: (guard, history) =>
+      new Agent({
+        provider: resolved.provider,
+        tools: coreTools(cwd),
+        guard,
+        permissions: presets.resolver,
+        ...(history !== undefined && { history }),
+      }),
+    statusLabel: () => `${resolved.label} · ${presets.active()}`,
+  };
 }

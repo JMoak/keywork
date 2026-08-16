@@ -9,6 +9,15 @@ export interface Theme {
   accentSoft: string;
   success: string;
   error: string;
+  ramp: readonly string[];
+}
+
+export type ThemeColorToken = Exclude<keyof Theme, "ramp">;
+
+export type ThemeOverrideValue = string | readonly string[];
+
+export interface ThemeOverrides {
+  readonly [token: string]: ThemeOverrideValue | undefined;
 }
 
 export const keyworkNight: Theme = {
@@ -22,16 +31,30 @@ export const keyworkNight: Theme = {
   accentSoft: "#9d7cd8",
   success: "#9ece6a",
   error: "#f7768e",
+  ramp: ["#bb9af7", "#7aa2f7", "#7dcfff"],
 };
 
-export function resolveTheme(overrides: Record<string, string> = {}): Theme {
+export function resolveTheme(overrides: ThemeOverrides = {}): Theme {
   const theme: Theme = { ...keyworkNight };
-  for (const [token, color] of Object.entries(overrides)) {
+  for (const [token, value] of Object.entries(overrides)) {
+    if (value === undefined) continue;
     if (!(token in theme)) throw new Error(`Unknown theme token "${token}"`);
-    if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
-      throw new Error(`Theme token "${token}" needs a #rrggbb color, got "${color}"`);
-    }
-    theme[token as keyof Theme] = color;
+    if (token === "ramp") theme.ramp = validRamp(value);
+    else theme[token as ThemeColorToken] = validColor(token, value);
   }
   return theme;
+}
+
+const rrggbb = /^#[0-9a-fA-F]{6}$/;
+
+function validColor(token: string, value: ThemeOverrideValue): string {
+  if (typeof value === "string" && rrggbb.test(value)) return value;
+  throw new Error(`Theme token "${token}" needs a #rrggbb color, got "${String(value)}"`);
+}
+
+function validRamp(value: ThemeOverrideValue): readonly string[] {
+  if (typeof value === "string" || value.length === 0 || value.length > 6) {
+    throw new Error(`Theme token "ramp" needs 1-6 #rrggbb stops, got "${String(value)}"`);
+  }
+  return value.map((stop) => validColor("ramp", stop));
 }

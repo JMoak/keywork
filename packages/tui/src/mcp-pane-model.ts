@@ -1,6 +1,6 @@
 import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
-import type { Theme } from "./theme.ts";
+import type { ThemeColorToken } from "./theme.ts";
 
 export type McpServerState = "connected" | "connecting" | "down";
 
@@ -57,7 +57,7 @@ export function tileMark(progress?: McpProgress): string {
   return tileFill[clampIndex(step, tileFill.length)] ?? tileFill[0];
 }
 
-export function mcpToneToken(tone: McpRowTone): keyof Theme {
+export function mcpToneToken(tone: McpRowTone): ThemeColorToken {
   return toneTokens[tone];
 }
 
@@ -231,7 +231,7 @@ export class McpPaneModel {
         {
           id: `tools:${name}:failed`,
           kind: "tools-status",
-          text: `    ▛ tools unavailable · ${clip(state.error, errorLimit)}`,
+          text: `    ▛ tools failed · ${clip(state.error, errorLimit)}`,
           tone: "alert",
           selectable: true,
           server: name,
@@ -394,7 +394,7 @@ const stateGlyphs: Record<McpServerState, string> = {
   connecting: "▒",
   down: "░",
 };
-const toneTokens: Record<McpRowTone, keyof Theme> = {
+const toneTokens: Record<McpRowTone, ThemeColorToken> = {
   dim: "textDim",
   normal: "text",
   alert: "error",

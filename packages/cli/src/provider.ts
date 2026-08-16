@@ -29,12 +29,12 @@ const catalog = [
 ] as const;
 
 export const providerSetupHint = `No provider configured. Easiest fix:
-  keywork setup            (interactive — saves the key for you)
+  keywork setup            (interactive, saves the key for you)
 Or set an environment variable:
   KEYWORK_OPENROUTER_API_KEY or OPENROUTER_API_KEY  (any model on OpenRouter)
   KEYWORK_OPENAI_API_KEY or OPENAI_API_KEY          (OpenAI directly)
   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION  (Amazon Bedrock)
-then optionally choose a model with --model or "model" in keywork.json.`;
+want a specific model? pass --model or set "model" in keywork.json.`;
 
 export function resolveProvider(
   env: Record<string, string | undefined>,

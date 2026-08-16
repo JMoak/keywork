@@ -25,7 +25,7 @@
 ││                                                                                                                    ││
 ││                                                                                                                    ││
 ││                                                                                                                    ││
-││ no provider configured — set KEYWORK_OPENROUTER_API_KEY and relaunch                                               ││
+││ no provider · set KEYWORK_OPENROUTER_API_KEY, then relaunch                                                        ││
 ││ › ▌                                                                                                                ││
 │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯│
 │ keywork e2e · 1 panes · ctrl+k nav · ctrl+p commands                                                                 │

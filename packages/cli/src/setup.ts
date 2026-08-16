@@ -7,13 +7,13 @@ import { configSchema, type KeyworkConfig } from "@keywork/shared";
 const providers = [
   {
     name: "openrouter",
-    label: "OpenRouter — one key, hundreds of models",
+    label: "OpenRouter (one key, hundreds of models)",
     url: "https://openrouter.ai/keys",
     prefix: "sk-or-",
   },
   {
     name: "openai",
-    label: "OpenAI — direct",
+    label: "OpenAI (direct)",
     url: "https://platform.openai.com/api-keys",
     prefix: "sk-",
   },
@@ -24,7 +24,7 @@ const erase = new Set([String.fromCharCode(127), "\b"]);
 const interrupt = String.fromCharCode(3);
 
 export async function runSetup(): Promise<number> {
-  console.log("keywork setup — connect a model provider\n");
+  console.log("keywork setup: connect a model provider\n");
   providers.forEach((provider, index) => {
     console.log(`  ${index + 1}. ${provider.label}`);
     console.log(`     get a key: ${provider.url}`);
@@ -39,16 +39,16 @@ export async function runSetup(): Promise<number> {
 
   const key = (await readMaskedLine(`${provider.name} API key: `)).trim();
   if (key === "") {
-    console.error("No key entered — nothing saved.");
+    console.error("no key entered, nothing saved.");
     return 1;
   }
   if (!key.startsWith(provider.prefix)) {
-    console.log(`note: expected the key to start with "${provider.prefix}" — saving anyway.`);
+    console.log(`heads up: that key doesn't start with "${provider.prefix}". saving it anyway.`);
   }
 
   const file = await saveApiKey(provider.name, key);
   console.log(`\nSaved to ${file}`);
-  console.log("keywork will use it automatically; environment variables still take precedence.");
+  console.log("keywork picks it up automatically. env vars still win if you set one.");
   console.log(`Try it:  keywork panes`);
   return 0;
 }

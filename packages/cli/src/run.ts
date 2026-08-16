@@ -13,7 +13,7 @@ import {
   SessionStore,
 } from "@keywork/engine";
 import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
-import { startMcpRegistry } from "./chat.ts";
+import { startMcpRegistry } from "./compose.ts";
 import {
   bootstrapInjection,
   memoryRecall,

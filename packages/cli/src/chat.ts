@@ -1,44 +1,29 @@
 import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import {
-  Agent,
+  type Agent,
   type AgentDefinition,
-  buildSystemPrompt,
-  Checkpoints,
+  type Checkpoints,
   type CommandRuntime,
   compactSession,
-  coreTools,
-  loadProjectInstructions,
-  McpRegistry,
-  MemoryFlush,
   type Message,
-  narrowedPermissions,
   type PermissionResolver,
   type Provider,
   renderCommand,
   replaySession,
-  restrictTools,
   type SessionStore,
-  skillTool,
   type ToolGuard,
 } from "@keywork/engine";
 import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
 import {
   commandRuntime,
-  loadWorkspaceExtensions,
   resolveSlashCommand,
   slashCompleter,
   type WorkspaceExtensions,
 } from "./commands.ts";
-import {
-  bootstrapInjection,
-  flushAfterTurn,
-  memoryRecall,
-  openWorkspaceMemory,
-  sweepOnClose,
-  withMemoryPrompt,
-} from "./memory.ts";
-import { defaultSessionDir, snapshotGitDir } from "./paths.ts";
+import { composeAgents, composeWorkspace } from "./compose.ts";
+import { flushAfterTurn, sweepOnClose } from "./memory.ts";
+import { defaultSessionDir } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
 import { openOrResumeSession } from "./sessions.ts";
 
@@ -58,60 +43,34 @@ export interface ChatOptions {
 }
 
 export async function chat(options: ChatOptions): Promise<void> {
-  const instructions =
-    options.projectTrusted === true ? await loadProjectInstructions(options.cwd) : undefined;
   const dir = options.sessionDir ?? defaultSessionDir(options.cwd);
   const opened = await tryOpenSession(dir, options);
   if (opened === undefined) return;
   const { store, seeded } = opened;
-  const checkpoints = await openCheckpoints(options.cwd);
-  const memory = openWorkspaceMemory(options.cwd, options.projectTrusted === true);
-  const systemPrompt = withMemoryPrompt(
-    buildSystemPrompt({
-      ...(instructions !== undefined && { projectInstructions: instructions }),
-      ...(options.prompts !== undefined && { prompts: options.prompts }),
-      ...(options.modelId !== undefined && { modelId: options.modelId }),
-    }),
-    await bootstrapInjection(memory),
-  );
-  const flush =
-    memory === undefined
-      ? undefined
-      : new MemoryFlush({ provider: options.provider, store: memory.store, systemPrompt });
-  const extensions = await loadWorkspaceExtensions(options.cwd, options.projectTrusted === true);
+  const composition = await composeWorkspace({
+    cwd: options.cwd,
+    projectTrusted: options.projectTrusted === true,
+    prompts: options.prompts,
+    modelId: options.modelId,
+    mcpServers: options.mcpServers,
+    reportCheckpointsUnavailable: (message) => console.log(`can't undo: ${message}`),
+  });
+  const { checkpoints, extensions, mcp, memory } = composition;
+  const agents = composeAgents(composition, {
+    provider: options.provider,
+    permissions: options.permissions,
+  });
+  const flush = agents.flushFor(store.header.id);
   reportExtensionFailures(extensions);
   const guard = mutationGuard(checkpoints);
   const runtime = commandRuntime(options.cwd, guard);
-  const skillTools = extensions.skills.length > 0 ? [skillTool(extensions.skills)] : [];
-  const mcp = startMcpRegistry(options.mcpServers);
 
   let activeAgent: AgentDefinition | undefined;
   const buildAgentFor = (
     definition: AgentDefinition | undefined,
     history: readonly Message[],
   ): Agent => {
-    let self: Agent | undefined;
-    const baseTools = [
-      ...coreTools(options.cwd, memoryRecall(memory, store.header.id), (chunk) =>
-        self?.bus.emit("tool.output", { chunk }),
-      ),
-      ...skillTools,
-    ];
-    const tools = mcp === undefined ? baseTools : mcp.surface(baseTools);
-    const permissions =
-      definition === undefined
-        ? options.permissions
-        : narrowedPermissions(definition, options.permissions);
-    const agent = new Agent({
-      provider: options.provider,
-      tools: definition === undefined ? tools : restrictTools(tools, definition),
-      systemPrompt:
-        definition === undefined || definition.prompt === "" ? systemPrompt : definition.prompt,
-      history,
-      guard,
-      ...(permissions !== undefined && { permissions }),
-    });
-    self = agent;
+    const agent = agents.build({ guard, definition, history, sessionId: store.header.id });
     wireStreamingOutput(agent);
     return agent;
   };
@@ -243,11 +202,11 @@ function selectAgent(
 
 function listAgents(agents: readonly AgentDefinition[], prefix?: string): void {
   if (agents.length === 0) {
-    console.log("no agents defined — add .keywork/agents/<name>.md");
+    console.log("no agents yet, add one at .keywork/agents/<name>.md");
     return;
   }
   if (prefix !== undefined) console.log(prefix);
-  console.log("agents: /agent <name> selects · /agent none resets");
+  console.log("/agent <name> to switch · /agent none to clear");
   for (const agent of agents) {
     console.log(
       `  ${agent.name}${agent.description === undefined ? "" : ` — ${agent.description}`}`,
@@ -257,7 +216,7 @@ function listAgents(agents: readonly AgentDefinition[], prefix?: string): void {
 
 function reportExtensionFailures(extensions: WorkspaceExtensions): void {
   for (const failure of extensions.failures) {
-    console.error(`extension skipped: ${failure.file} — ${failure.reason}`);
+    console.error(`skipped extension ${failure.file}: ${failure.reason}`);
   }
 }
 
@@ -308,21 +267,12 @@ async function compactNow(store: SessionStore, provider: Provider, line: string)
   }
 }
 
-async function openCheckpoints(cwd: string): Promise<Checkpoints | undefined> {
-  try {
-    return await Checkpoints.open({ worktree: cwd, gitDir: snapshotGitDir(cwd) });
-  } catch (cause) {
-    console.log(`undo unavailable — ${(cause as Error).message}`);
-    return undefined;
-  }
-}
-
 function mutationGuard(checkpoints: Checkpoints | undefined): ToolGuard {
   let alwaysAllow = false;
   return {
     confirm: (call) => {
       if (alwaysAllow || !process.stdin.isTTY) return Promise.resolve(true);
-      console.log(`\n  ? ${call.name} ${compact(call.arguments)} — y allow · a always · n deny`);
+      console.log(`\n  ? ${call.name} ${compact(call.arguments)}  [y] allow  [a] always  [n] deny`);
       return nextAnswerKey().then((answer) => {
         alwaysAllow = answer === "always";
         return answer !== "deny";
@@ -360,7 +310,7 @@ async function timeTravel(checkpoints: Checkpoints | undefined, line: string): P
     return;
   }
   const moved = line === "/undo" ? await checkpoints.undo() : await checkpoints.redo();
-  if (moved) console.log(line === "/undo" ? "files restored" : "files brought forward");
+  if (moved) console.log(line === "/undo" ? "files put back" : "files redone");
   else console.log(line === "/undo" ? "nothing to undo" : "nothing to redo");
 }
 
@@ -374,7 +324,7 @@ function greet(
   console.log(`session → ${store.file}`);
   if (seeded.length > 0) console.log(`resumed ${seeded.length} messages`);
   console.log(
-    `Ask for anything · Esc interrupts a running turn · "exit" quits · /session for stats · /undo reverts the last agent change · /compact summarizes old context · /label <name> marks this point · /preset switches permission presets`,
+    `Type to start · Esc stops a turn · "exit" quits · /session stats · /undo takes back the last change · /compact shrinks old context · /label <name> bookmarks here · /preset switches permissions`,
   );
   greetExtensions(extensions);
 }
@@ -443,7 +393,7 @@ function wireStreamingOutput(agent: Agent): void {
   agent.bus.on("turn.completed", ({ replay }) => {
     if (replay !== true) console.log();
   });
-  agent.bus.on("turn.interrupted", () => console.log("\n— interrupted"));
+  agent.bus.on("turn.interrupted", () => console.log("\n(interrupted)"));
 }
 
 function printUsageLine(agent: Agent): void {
@@ -473,15 +423,6 @@ export async function persistNewMessages(
     await store.append(message, undefined, checkpoint);
   }
   return history.length;
-}
-
-export function startMcpRegistry(
-  servers: Record<string, McpServerConfig> | undefined,
-): McpRegistry | undefined {
-  if (servers === undefined || Object.keys(servers).length === 0) return undefined;
-  const registry = new McpRegistry({ servers });
-  registry.start();
-  return registry;
 }
 
 function compact(args: unknown): string {

@@ -1,11 +1,16 @@
 import { z } from "zod";
 
-// Option policy (vision D9): every new option is a design failure until justified.
-// The justification lives in that option's .describe() — no description, no option.
-
 const keybinding = z.union([z.string(), z.array(z.string()), z.literal("none")]);
 
 const themeColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "theme colors must be #rrggbb");
+
+const themeRamp = z
+  .array(themeColor)
+  .min(1)
+  .max(6)
+  .describe(
+    "Ordered #rrggbb accent stops (1-6) that gradient chrome sweeps perceptually (98/PD8: spawn-rank pane hues, derived focus lift, arc anchors); exists because chromatic depth must be theme-driven rather than hardcoded, and a single stop reproduces today's flat single-accent look exactly.",
+  );
 
 const mcpTrusted = z
   .boolean()
@@ -120,9 +125,10 @@ export const configSchema = z
         "Action-name to chord overrides; exists because fully rebindable keys are a core product value.",
       ),
     theme: z
-      .record(z.string(), themeColor)
+      .object({ ramp: themeRamp.optional() })
+      .catchall(themeColor)
       .describe(
-        "Theme-token to #rrggbb overrides on the keywork-night palette; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
+        "Theme-token to #rrggbb overrides (plus the ramp stop list) on the keywork-night palette; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
       ),
     bedrockRegion: z
       .string()
