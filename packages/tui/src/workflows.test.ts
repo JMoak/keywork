@@ -1136,6 +1136,61 @@ describe("mouse", () => {
     expect(paneIds(probe)).toEqual(["session-1"]);
     expect(probe.exited).toBe(false);
   });
+
+  it("drags a pane by its title row onto a sibling, previewing the swap rect", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    const first = probe.rect("session-1");
+    const second = probe.rect("session-2");
+    probe.core.handleMouse({ type: "down", x: first.x + 2, y: first.y, button: 0 }, 1);
+    probe.core.handleMouse({ type: "drag", x: second.x + 5, y: second.y + 5, button: 0 }, 2);
+    expect(probe.core.draggingPane()).toBe("session-1");
+    expect(probe.core.dragPreview()).toEqual(second);
+    probe.core.handleMouse({ type: "up", x: second.x + 5, y: second.y + 5, button: 0 }, 3);
+    expect(probe.core.dragPreview()).toBeUndefined();
+    expect(probe.rect("session-1")).toEqual(second);
+    expect(probe.rect("session-2")).toEqual(first);
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("drags a main pane into a dock at the previewed slot", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("split");
+    probe.command("dock-left");
+    const dock = probe.rect("session-3");
+    const source = probe.rect("session-1");
+    probe.core.handleMouse({ type: "down", x: source.x + 2, y: source.y, button: 0 }, 1);
+    probe.core.handleMouse(
+      { type: "drag", x: dock.x + 1, y: dock.y + dock.height - 1, button: 0 },
+      2,
+    );
+    expect(probe.core.dragPreview()).toMatchObject({ x: dock.x, width: dock.width });
+    probe.core.handleMouse(
+      { type: "up", x: dock.x + 1, y: dock.y + dock.height - 1, button: 0 },
+      3,
+    );
+    expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("a plain title-row click focuses without rearranging anything", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    const first = probe.rect("session-1");
+    probe.click(first.x + 2, first.y);
+    expect(probe.snapshot().focused).toBe("session-1");
+    expect(probe.rect("session-1")).toEqual(first);
+  });
+
+  it("dropping where there is no target leaves the layout unchanged", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    const first = probe.rect("session-1");
+    probe.drag({ x: first.x + 2, y: first.y }, { x: first.x + 10, y: first.y + 10 });
+    expect(probe.rect("session-1")).toEqual(first);
+    expect(probe.core.dragPreview()).toBeUndefined();
+  });
 });
 
 describe("conversation round-trip", () => {

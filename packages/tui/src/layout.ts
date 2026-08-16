@@ -46,6 +46,11 @@ export interface Screen {
   height: number;
 }
 
+export type DropTarget =
+  | { kind: "swap"; with: PaneId; rect: Rect }
+  | { kind: "dock"; side: DockSide; index: number; rect: Rect }
+  | { kind: "main"; rect: Rect };
+
 export const dockSides: readonly DockSide[] = ["left", "right"];
 
 const terminalCellAspect = 2;
@@ -200,6 +205,31 @@ export class Layout {
     return neighbor;
   }
 
+  dropTargetAt(dragged: PaneId, x: number, y: number, screen: Screen): DropTarget | undefined {
+    if (!this.panes().includes(dragged)) return undefined;
+    if (this.zoomedId !== undefined && this.panes().includes(this.zoomedId)) return undefined;
+    const regions = this.regionsFor({ tree: this.tree, ...this.counts() }, screen);
+    const side = dockSides.find((candidate) => {
+      const region = regions[candidate];
+      return region !== undefined && x >= region.x && x < region.x + region.width;
+    });
+    if (side !== undefined)
+      return this.dockDropTarget(dragged, side, y, regions[side] as Rect, screen);
+    return this.mainDropTarget(dragged, x, y, regions.main, screen);
+  }
+
+  applyDrop(dragged: PaneId, target: DropTarget, screen: Screen): boolean {
+    if (!this.panes().includes(dragged)) return false;
+    switch (target.kind) {
+      case "swap":
+        return this.swapPanes(dragged, target.with);
+      case "dock":
+        return this.dropIntoDock(dragged, target.side, target.index, screen);
+      case "main":
+        return this.dropIntoEmptyMain(dragged, screen);
+    }
+  }
+
   move(direction: Direction, screen: Screen): boolean {
     const id = this.focusedId;
     if (id === undefined) return false;
@@ -268,7 +298,7 @@ export class Layout {
 
   dockHandleAt(x: number, screen: Screen): DockSide | undefined {
     if (this.zoomedId !== undefined && this.panes().includes(this.zoomedId)) return undefined;
-    const regions = this.regionsFor(this.counts(), screen);
+    const regions = this.regionsFor({ tree: this.tree, ...this.counts() }, screen);
     const left = regions.left;
     if (left !== undefined && (x === rightEdge(left) || x === rightEdge(left) + 1)) return "left";
     const right = regions.right;
@@ -286,7 +316,7 @@ export class Layout {
     if (this.tree !== undefined) return undefined;
     if (this.zoomedId !== undefined && this.panes().includes(this.zoomedId)) return undefined;
     if (this.docks.left.panes.length === 0 && this.docks.right.panes.length === 0) return undefined;
-    return this.regionsFor(this.counts(), screen).main;
+    return this.regionsFor({ tree: this.tree, ...this.counts() }, screen).main;
   }
 
   resizeFocused(delta: number): void {
@@ -304,18 +334,24 @@ export class Layout {
 
   private tiledRects(screen: Screen): Map<PaneId, Rect> {
     const result = new Map<PaneId, Rect>();
-    const regions = this.regionsFor(this.counts(), screen);
+    const regions = this.regionsFor({ tree: this.tree, ...this.counts() }, screen);
     if (regions.left !== undefined) stackVertically(this.docks.left.panes, regions.left, result);
     if (this.tree !== undefined) collectRects(this.tree, regions.main, result);
     if (regions.right !== undefined) stackVertically(this.docks.right.panes, regions.right, result);
     return result;
   }
 
-  private regionsFor(counts: DockCounts, screen: Screen): Regions {
+  private regionsFor(
+    candidate: { tree: LayoutNode | undefined } & DockCounts,
+    screen: Screen,
+  ): Regions {
     return carveColumns(
       { x: 0, y: 0, width: screen.width, height: screen.height },
-      counts.left > 0 ? this.docks.left.ratio : undefined,
-      counts.right > 0 ? this.docks.right.ratio : undefined,
+      candidate.left > 0 ? this.docks.left.ratio : undefined,
+      candidate.right > 0 ? this.docks.right.ratio : undefined,
+      candidate.tree === undefined
+        ? minPaneSize.width
+        : Math.max(minPaneSize.width, minWidth(candidate.tree)),
     );
   }
 
@@ -363,6 +399,110 @@ export class Layout {
       if (best === undefined || area(rect) > area(best.rect)) best = { id, rect };
     }
     return best;
+  }
+
+  private dockDropTarget(
+    dragged: PaneId,
+    side: DockSide,
+    y: number,
+    region: Rect,
+    screen: Screen,
+  ): DropTarget | undefined {
+    if (!this.dropFits(dragged, side, screen)) return undefined;
+    const slots = this.docks[side].panes.filter((id) => id !== dragged).length + 1;
+    const index = clamp(Math.floor(((y - region.y) / region.height) * slots), 0, slots - 1);
+    return { kind: "dock", side, index, rect: stackSlotRect(region, slots, index) };
+  }
+
+  private mainDropTarget(
+    dragged: PaneId,
+    x: number,
+    y: number,
+    main: Rect,
+    screen: Screen,
+  ): DropTarget | undefined {
+    if (this.tree === undefined) {
+      if (this.dockSideOf(dragged) === undefined) return undefined;
+      if (!this.dropFits(dragged, undefined, screen)) return undefined;
+      return { kind: "main", rect: main };
+    }
+    const rects = this.tiledRects(screen);
+    for (const id of this.mainPanes()) {
+      const rect = rects.get(id) as Rect;
+      if (x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height) {
+        return id === dragged ? undefined : { kind: "swap", with: id, rect };
+      }
+    }
+    return undefined;
+  }
+
+  private dropFits(dragged: PaneId, intoDock: DockSide | undefined, screen: Screen): boolean {
+    const from = this.dockSideOf(dragged);
+    const counts = this.counts();
+    if (from !== undefined) counts[from] -= 1;
+    if (intoDock !== undefined) counts[intoDock] += 1;
+    const lifted =
+      from === undefined && this.tree !== undefined ? removeLeaf(this.tree, dragged) : this.tree;
+    const landed =
+      intoDock === undefined && lifted === undefined
+        ? ({ kind: "leaf", id: dragged } as const)
+        : lifted;
+    return this.fits({ tree: landed, ...counts }, screen);
+  }
+
+  private swapPanes(dragged: PaneId, other: PaneId): boolean {
+    if (dragged === other || !this.panes().includes(other)) return false;
+    const draggedDock = this.dockSideOf(dragged);
+    const otherDock = this.dockSideOf(other);
+    if (draggedDock === undefined && otherDock === undefined) {
+      if (this.tree === undefined) return false;
+      this.tree = swapLeaves(this.tree, dragged, other);
+    } else if (draggedDock !== undefined && otherDock !== undefined) {
+      const draggedPanes = this.docks[draggedDock].panes;
+      const otherPanes = this.docks[otherDock].panes;
+      const draggedAt = draggedPanes.indexOf(dragged);
+      const otherAt = otherPanes.indexOf(other);
+      draggedPanes[draggedAt] = other;
+      otherPanes[otherAt] = dragged;
+    } else {
+      const docked = draggedDock !== undefined ? dragged : other;
+      const mained = draggedDock !== undefined ? other : dragged;
+      if (this.tree === undefined) return false;
+      this.tree = replaceLeaf(this.tree, mained, docked);
+      const panes = this.docks[(draggedDock ?? otherDock) as DockSide].panes;
+      panes[panes.indexOf(docked)] = mained;
+    }
+    this.zoomedId = undefined;
+    this.focusedId = dragged;
+    return true;
+  }
+
+  private dropIntoDock(dragged: PaneId, side: DockSide, index: number, screen: Screen): boolean {
+    if (!this.dropFits(dragged, side, screen)) return false;
+    const from = this.dockSideOf(dragged);
+    if (from === undefined) {
+      this.tree = this.tree === undefined ? undefined : removeLeaf(this.tree, dragged);
+    } else {
+      const panes = this.docks[from].panes;
+      panes.splice(panes.indexOf(dragged), 1);
+    }
+    const panes = this.docks[side].panes;
+    panes.splice(clamp(index, 0, panes.length), 0, dragged);
+    this.zoomedId = undefined;
+    this.focusedId = dragged;
+    return true;
+  }
+
+  private dropIntoEmptyMain(dragged: PaneId, screen: Screen): boolean {
+    const from = this.dockSideOf(dragged);
+    if (from === undefined || this.tree !== undefined) return false;
+    if (!this.dropFits(dragged, undefined, screen)) return false;
+    const panes = this.docks[from].panes;
+    panes.splice(panes.indexOf(dragged), 1);
+    this.tree = { kind: "leaf", id: dragged };
+    this.zoomedId = undefined;
+    this.focusedId = dragged;
+    return true;
   }
 
   private moveDocked(id: PaneId, side: DockSide, direction: Direction, screen: Screen): boolean {
@@ -467,12 +607,14 @@ function carveColumns(
   full: Rect,
   leftRatio: number | undefined,
   rightRatio: number | undefined,
+  mainReserve: number,
 ): Regions {
   if (leftRatio === undefined && rightRatio === undefined) return { main: full };
   const [leftWidth, rightWidth] = fittedDockWidths(
     leftRatio === undefined ? 0 : preferredDockWidth(full.width, leftRatio),
     rightRatio === undefined ? 0 : preferredDockWidth(full.width, rightRatio),
     full.width,
+    mainReserve,
   );
   const mainWidth = full.width - leftWidth - rightWidth;
   return {
@@ -488,8 +630,13 @@ function preferredDockWidth(screenWidth: number, ratio: number): number {
   return Math.max(minPaneSize.width, Math.round(screenWidth * ratio));
 }
 
-function fittedDockWidths(left: number, right: number, room: number): [number, number] {
-  const available = Math.max(0, room - minPaneSize.width);
+function fittedDockWidths(
+  left: number,
+  right: number,
+  room: number,
+  mainReserve: number,
+): [number, number] {
+  const available = Math.max(0, room - mainReserve);
   const wanted = left + right;
   if (wanted <= available) return [left, right];
   if (available === 0 || wanted === 0) return [0, 0];
@@ -539,14 +686,20 @@ function edgeAttached(tree: LayoutNode | undefined, id: PaneId, edge: Direction)
 }
 
 function stackVertically(ids: PaneId[], rect: Rect, into: Map<PaneId, Rect>): void {
-  const base = Math.floor(rect.height / ids.length);
-  const extra = rect.height % ids.length;
-  let y = rect.y;
   ids.forEach((id, index) => {
-    const height = base + (index < extra ? 1 : 0);
-    into.set(id, { x: rect.x, y, width: rect.width, height });
-    y += height;
+    into.set(id, stackSlotRect(rect, ids.length, index));
   });
+}
+
+function stackSlotRect(rect: Rect, slots: number, index: number): Rect {
+  const base = Math.floor(rect.height / slots);
+  const extra = rect.height % slots;
+  return {
+    x: rect.x,
+    y: rect.y + index * base + Math.min(index, extra),
+    width: rect.width,
+    height: base + (index < extra ? 1 : 0),
+  };
 }
 
 function freshDocks(): Record<DockSide, DockState> {
@@ -666,6 +819,15 @@ function removeLeaf(node: LayoutNode, id: PaneId): LayoutNode | undefined {
   if (first === undefined) return second;
   if (second === undefined) return first;
   return { ...node, first, second };
+}
+
+function replaceLeaf(node: LayoutNode, from: PaneId, to: PaneId): LayoutNode {
+  if (node.kind === "leaf") return node.id === from ? { kind: "leaf", id: to } : node;
+  return {
+    ...node,
+    first: replaceLeaf(node.first, from, to),
+    second: replaceLeaf(node.second, from, to),
+  };
 }
 
 function swapLeaves(node: LayoutNode, left: PaneId, right: PaneId): LayoutNode {

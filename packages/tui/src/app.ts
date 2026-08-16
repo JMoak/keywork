@@ -21,6 +21,7 @@ import {
 import { AppCore, bindingHelp, helpFrame, type PresetsPort, paletteFrame } from "./app-core.ts";
 import { promptAnchor } from "./backtrack.ts";
 import { BrowserPane } from "./browser-pane.ts";
+import type { CommandSpec } from "./commands.ts";
 import type { ConversationPorts, ForkOutcome, Titler } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import {
@@ -36,10 +37,11 @@ import { minPaneSize, type Rect, type Screen } from "./layout.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
-import type { PaneView } from "./pane.ts";
+import type { FileOpenOptions, PaneView } from "./pane.ts";
 import { pointerEventOf } from "./pointer.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import { resolveTheme, type Theme } from "./theme.ts";
+import { clipLine, trayRows } from "./tray.ts";
 import { parseWorkspaceState, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
 export interface CheckpointsPort {
@@ -198,7 +200,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       }
       return created;
     },
-    createFilePane: (id, path, notify) => new FilePane(id, process.cwd(), path, notify),
+    createFilePane: (id, path, notify, options) =>
+      new FilePane(id, process.cwd(), path, notify, options),
     createBrowserPane: (id, root, notify, intents) =>
       new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
     ...(treePort !== undefined && {
@@ -241,6 +244,14 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     }),
   });
 
+  core.registry.register(
+    doctorCommand({
+      logFile: crashLogFile,
+      exists: (path) => statKind(path)?.isFile() === true,
+      openFile: core.intents.openFile,
+      notice: (text) => core.postNotice(text),
+    }),
+  );
   unsubscribeMcp = mcpPort?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
   if (options.extensions !== undefined) {
     registerExtensions(core.registry, options.extensions, {
@@ -373,6 +384,25 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
 }
 
 export const crashLogFile = join(homedir(), ".keywork", "tui-crash.log");
+
+export interface DoctorDeps {
+  logFile: string;
+  exists(path: string): boolean;
+  openFile(path: string, options?: FileOpenOptions): void;
+  notice(text: string): void;
+}
+
+export function doctorCommand(deps: DoctorDeps): CommandSpec {
+  return {
+    name: "doctor",
+    aliases: ["crashlog"],
+    description: "open the crash log: /doctor",
+    run: () => {
+      if (deps.exists(deps.logFile)) deps.openFile(deps.logFile, { atEnd: true });
+      else deps.notice("no crashes recorded · nothing to show");
+    },
+  };
+}
 
 function recordCrash(scope: string, cause: unknown): void {
   const error = cause instanceof Error ? cause : new Error(String(cause));
@@ -704,13 +734,30 @@ function buildBody(core: AppCore, theme: Theme, screen: Screen) {
     );
   }
   const idleMain = core.layout.emptyMainRect(screen);
+  const dropPreview = core.dragPreview();
   return Box(
     { width: screen.width, height: screen.height },
     ...[...rects].map(([id, rect]) =>
       placedBox(rect, paneViewFor(core, theme, id, rect, id === focused)),
     ),
     ...(idleMain === undefined ? [] : [placedBox(idleMain, idleMainView(theme))]),
+    ...(dropPreview === undefined ? [] : [dropPreviewBox(dropPreview, theme)]),
   );
+}
+
+function dropPreviewBox(rect: Rect, theme: Theme) {
+  return Box({
+    position: "absolute",
+    left: rect.x,
+    top: rect.y,
+    width: rect.width,
+    height: rect.height,
+    zIndex: 5,
+    border: true,
+    borderStyle: "rounded",
+    borderColor: theme.accent,
+    overflow: "hidden",
+  });
 }
 
 function placedBox(rect: Rect, view: PaneView) {
@@ -810,17 +857,7 @@ function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
   const matches = core.paletteMatches();
   const frame = paletteFrame(screen, matches.length);
   const innerWidth = overlayInnerWidth(frame);
-  const rows = matches.map((command, index) => {
-    const active = index === core.paletteIndex;
-    return overlayRow(
-      {
-        content: ` ${active ? "▸" : " "} ${command.name} — ${command.description}`,
-        fg: active ? theme.accent : theme.text,
-      },
-      { content: command.shortcut === undefined ? " " : `${command.shortcut} `, fg: theme.textDim },
-      innerWidth,
-    );
-  });
+  const rows = trayRows(matches, core.paletteIndex, innerWidth, theme);
   return Box(
     {
       ...overlayPosition(frame),
@@ -866,12 +903,6 @@ function overlayRow(
     Text({ content: clipLine(left.content, Math.max(0, room - 1)).padEnd(room), fg: left.fg }),
     Text({ content: right.content, fg: right.fg }),
   );
-}
-
-function clipLine(text: string, width: number): string {
-  if (text.length <= width) return text;
-  if (width <= 1) return text.slice(0, Math.max(0, width));
-  return `${text.slice(0, width - 1)}…`;
 }
 
 function presetOverlay(core: AppCore, theme: Theme, screen: Screen) {

@@ -14,6 +14,7 @@ import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
+import { trayBox, trayRows } from "./tray.ts";
 
 const askDiffRows = 10;
 
@@ -134,8 +135,9 @@ export class ConversationPane implements Pane {
           }),
         ]
       : [];
+    const trayChromeRows = 2;
     const reservedRows =
-      suggestions.length +
+      (suggestions.length === 0 ? 0 : suggestions.length + trayChromeRows) +
       prompt.length +
       queued.length +
       diffRows.length +
@@ -161,9 +163,16 @@ export class ConversationPane implements Pane {
           ]
         : []),
       ...queued.map((text) => Text({ content: `⋯ ${text}`, fg: theme.textDim })),
-      ...suggestions.map((suggestion, index) =>
-        suggestionRow(suggestion, index === this.model.selectedSuggestion, theme),
-      ),
+      ...(suggestions.length === 0
+        ? []
+        : [
+            trayBox(
+              theme,
+              trayRows(suggestions, this.model.selectedSuggestion, innerWidth - 2, theme, {
+                namePrefix: "/",
+              }),
+            ),
+          ]),
       ...diffRows,
       ...(ask === undefined ? [] : [askRow(ask.summary, innerWidth, theme)]),
       ...backtrackHint,
@@ -222,19 +231,6 @@ function promptLines(buffer: InputBuffer, focused: boolean): string[] {
     const withCursor =
       focused && index === cursorLine ? `${text.slice(0, column)}▌${text.slice(column)}` : text;
     return index === 0 ? `› ${withCursor}` : `  ${withCursor}`;
-  });
-}
-
-function suggestionRow(
-  suggestion: { name: string; description: string; shortcut?: string },
-  selected: boolean,
-  theme: Theme,
-) {
-  const marker = selected ? "▸" : " ";
-  const shortcut = suggestion.shortcut === undefined ? "" : `  ${suggestion.shortcut}`;
-  return Text({
-    content: `${marker} /${suggestion.name} — ${suggestion.description}${shortcut}`,
-    fg: selected ? theme.accent : theme.textDim,
   });
 }
 

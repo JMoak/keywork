@@ -38,6 +38,30 @@
   fully reshapeable). Persisted state now rules completely — furniture is no longer
   force-re-added on every start.
 
+## Landed 2026-08-16, second wave
+
+- **FR1.1 — pane drag with rectangular drop previews.** Dragging a pane's title row lifts
+  it; a ghost rect previews the landing geometry for main↔main swaps, dock insertion
+  slots (band-per-slot, exact landing rect), dock↔dock moves, and the empty-main return.
+  Drop routes through `Layout.dropTargetAt`/`applyDrop`, which reuse the same
+  swap/remove/insert primitives as the keyboard verbs, so mouse and keyboard can never
+  disagree; every target is fits-checked, so an impossible drop simply shows no preview.
+  Landing this surfaced a latent geometry defect: `growDock` could squeeze the main area
+  below its tree's minimum width because column carving only ever reserved one pane's
+  minimum — the carve now reserves the live tree's true minimum, and the layout fuzz walk
+  gained a random drag-drop branch that holds the exact-tiling invariant.
+- **FR3.8 — one command tray grammar.** New `tray.ts` row primitive (marker · aligned
+  name column · description · right-aligned shortcut); the slash suggestions under the
+  prompt render as a bordered tray and the palette renders from the same rows, so the two
+  surfaces cannot drift apart visually. Goldens regenerated.
+- **FR1.3 — `/doctor`.** Opens `~/.keywork/tui-crash.log` in a file pane at its tail
+  (the file viewer gained home/end jumps and an open-at-end seam), or posts a calm
+  notice when nothing has crashed. Alias `/crashlog`.
+
+Still open in FR1–FR6: FR1.2 endurance soak, FR2 entity nodes, FR3.9/3.10 per-entity
+trays and the coverage audit, FR4 providers & cost, FR5 chroma/tastiness/tips, FR6
+LSP/subagent transparency/security scoping.
+
 ## FR1 — Interaction depth (drag, previews, endurance)
 
 1. **(3pt, OWN)** **Drag panes in main and docks.** Building on the boundary-drag

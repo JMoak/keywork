@@ -58,6 +58,27 @@ describe("FileModel", () => {
     expect(model.visibleLines(2)[0]?.number).toBe(2);
   });
 
+  it("jumps to the top and bottom with home and end", async () => {
+    const content = Array.from({ length: 50 }, (_, index) => `line-${index + 1}`).join("\n");
+    const model = await loadedModel(content);
+
+    model.handleKey(parseChord("end"), 10);
+    expect(model.visibleLines(10)[0]?.number).toBe(41);
+
+    model.handleKey(parseChord("home"), 10);
+    expect(model.visibleLines(10)[0]?.number).toBe(1);
+  });
+
+  it("opens at the end when asked, landing on the last page", async () => {
+    const content = Array.from({ length: 50 }, (_, index) => `line-${index + 1}`).join("\n");
+    const { cwd, name } = await fileWith(content);
+    const model = new FileModel(cwd, name, () => {}, { atEnd: true });
+    await model.lastLoad;
+
+    expect(model.visibleLines(10)[0]?.number).toBe(41);
+    expect(model.visibleLines(10).at(-1)?.number).toBe(50);
+  });
+
   it("ignores non-scroll keys so typing stays available to the app", async () => {
     const model = await loadedModel("a");
     expect(model.handleKey(parseChord("x"), 10)).toBe(false);

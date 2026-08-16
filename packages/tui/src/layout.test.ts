@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { Layout, type LayoutState, minPaneSize, type Rect, type Screen } from "./layout.ts";
+import {
+  type DropTarget,
+  Layout,
+  type LayoutState,
+  minPaneSize,
+  type Rect,
+  type Screen,
+} from "./layout.ts";
 import { paneChromeCost } from "./pane-chrome.ts";
 
 const screen: Screen = { width: 120, height: 40 };
@@ -58,7 +65,7 @@ describe("Layout dwindle tiling", () => {
     const directions = ["left", "right", "up", "down"] as const;
     const paneBudget = 10;
     for (let step = 0; step < steps; step += 1) {
-      const roll = alive.length === 0 ? 0 : alive.length >= paneBudget ? 0.95 : random();
+      const roll = alive.length === 0 ? 0 : alive.length >= paneBudget ? 0.98 : random();
       if (roll < 0.35) {
         const id = `p${step}`;
         if (layout.open(id, screen)) alive.push(id);
@@ -83,6 +90,15 @@ describe("Layout dwindle tiling", () => {
         );
       } else if (roll < 0.92) {
         layout.resizeFocused((random() - 0.5) * 0.4);
+      } else if (roll < 0.96) {
+        const dragged = layout.focused() as string;
+        const target = layout.dropTargetAt(
+          dragged,
+          Math.floor(random() * screen.width),
+          Math.floor(random() * screen.height),
+          screen,
+        );
+        if (target !== undefined) expect(layout.applyDrop(dragged, target, screen)).toBe(true);
       } else {
         const victim = alive.splice(Math.floor(random() * alive.length), 1)[0] as string;
         layout.close(victim);
@@ -698,6 +714,103 @@ describe("Layout dock resize handles", () => {
     layout.dragDockEdge("right", 90, screen);
     expect(layout.rects(screen).get("b")).toEqual({ x: 90, y: 0, width: 30, height: 40 });
     assertExactTiling(layout);
+  });
+});
+
+describe("Layout drag & drop", () => {
+  it("targets a sibling main pane for a swap and applies it", () => {
+    const layout = layoutWith("a", "b", "c");
+    const before = layout.rects(screen);
+    const target = layout.dropTargetAt("a", 90, 5, screen);
+    expect(target).toEqual({ kind: "swap", with: "b", rect: before.get("b") });
+    expect(layout.applyDrop("a", target as DropTarget, screen)).toBe(true);
+    const after = layout.rects(screen);
+    expect(after.get("a")).toEqual(before.get("b"));
+    expect(after.get("b")).toEqual(before.get("a"));
+    expect(layout.focused()).toBe("a");
+    assertExactTiling(layout);
+  });
+
+  it("hovering the dragged pane's own rect offers no target", () => {
+    const layout = layoutWith("a", "b");
+    expect(layout.dropTargetAt("a", 10, 10, screen)).toBeUndefined();
+  });
+
+  it("targets a dock insertion slot whose rect is the landing geometry", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("c");
+    layout.dockFocused("left", screen);
+    const dockRect = layout.rects(screen).get("c") as Rect;
+    const target = layout.dropTargetAt(
+      "a",
+      dockRect.x + 1,
+      dockRect.y + dockRect.height - 1,
+      screen,
+    );
+    expect(target).toMatchObject({ kind: "dock", side: "left", index: 1 });
+    expect((target as DropTarget).rect.y).toBe(dockRect.y + Math.floor(dockRect.height / 2));
+    expect(layout.applyDrop("a", target as DropTarget, screen)).toBe(true);
+    expect(layout.dock("left")?.panes).toEqual(["c", "a"]);
+    expect(layout.focused()).toBe("a");
+    assertExactTiling(layout);
+  });
+
+  it("reorders within a dock by dropping into another slot band", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("b");
+    layout.dockFocused("left", screen);
+    layout.focus("c");
+    layout.dockFocused("left", screen);
+    expect(layout.dock("left")?.panes).toEqual(["b", "c"]);
+    const target = layout.dropTargetAt("b", 1, screen.height - 1, screen);
+    expect(target).toMatchObject({ kind: "dock", side: "left", index: 1 });
+    expect(layout.applyDrop("b", target as DropTarget, screen)).toBe(true);
+    expect(layout.dock("left")?.panes).toEqual(["c", "b"]);
+    assertExactTiling(layout);
+  });
+
+  it("swaps a docked pane with a main pane, exchanging their homes", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("c");
+    layout.dockFocused("left", screen);
+    const mainRect = layout.rects(screen).get("b") as Rect;
+    const target = layout.dropTargetAt("c", mainRect.x + 1, mainRect.y + 1, screen);
+    expect(target).toEqual({ kind: "swap", with: "b", rect: mainRect });
+    expect(layout.applyDrop("c", target as DropTarget, screen)).toBe(true);
+    expect(layout.dockSideOf("b")).toBe("left");
+    expect(layout.dockSideOf("c")).toBeUndefined();
+    expect(layout.rects(screen).get("c")).toEqual(mainRect);
+    assertExactTiling(layout);
+  });
+
+  it("lands a lone docked pane back into an empty main area", () => {
+    const layout = layoutWith("a");
+    layout.dockFocused("left", screen);
+    const main = layout.emptyMainRect(screen) as Rect;
+    const target = layout.dropTargetAt("a", main.x + 5, 5, screen);
+    expect(target).toEqual({ kind: "main", rect: main });
+    expect(layout.applyDrop("a", target as DropTarget, screen)).toBe(true);
+    expect(layout.dockSideOf("a")).toBeUndefined();
+    expect(layout.rects(screen).get("a")).toEqual({ x: 0, y: 0, width: 120, height: 40 });
+    assertExactTiling(layout);
+  });
+
+  it("offers no dock target when the dock cannot hold another pane", () => {
+    const short: Screen = { width: 120, height: 8 };
+    const layout = new Layout();
+    for (const id of ["a", "b", "c", "d"]) expect(layout.open(id, short)).toBe(true);
+    layout.focus("b");
+    layout.dockFocused("left", short);
+    layout.focus("c");
+    layout.dockFocused("left", short);
+    expect(layout.dock("left")?.panes).toEqual(["b", "c"]);
+    expect(layout.dropTargetAt("a", 1, 4, short)).toBeUndefined();
+  });
+
+  it("offers no target while a pane is zoomed", () => {
+    const layout = layoutWith("a", "b");
+    layout.zoomToggle();
+    expect(layout.dropTargetAt("a", 90, 10, screen)).toBeUndefined();
   });
 });
 

@@ -4,12 +4,13 @@ import { type Chord, formatChord } from "./keys.ts";
 import {
   type Direction,
   type DockSide,
+  type DropTarget,
   Layout,
   layoutStateIds,
   type Rect,
   type Screen,
 } from "./layout.ts";
-import type { Pane, PaneIntents } from "./pane.ts";
+import type { FileOpenOptions, Pane, PaneIntents } from "./pane.ts";
 import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
 import { captureWorkspace, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
@@ -210,7 +211,12 @@ export type PaneFactory = (
   resumeSessionId?: string,
   draft?: string,
 ) => Pane;
-export type FilePaneFactory = (id: string, path: string, notify: () => void) => Pane;
+export type FilePaneFactory = (
+  id: string,
+  path: string,
+  notify: () => void,
+  options?: FileOpenOptions,
+) => Pane;
 export type BrowserPaneFactory = (
   id: string,
   root: string,
@@ -329,7 +335,7 @@ export class AppCore {
   readonly registry = new CommandRegistry();
   readonly panes = new Map<string, Pane>();
   readonly intents: PaneIntents = {
-    openFile: (path) => this.openFilePane(path),
+    openFile: (path, options) => this.openFilePane(path, options),
     openSession: (sessionId, draft) => this.openPane(sessionId, draft),
     focusPane: (id) => this.layout.focus(id),
   };
@@ -338,6 +344,7 @@ export class AppCore {
   notice = "";
   private overlay: Overlay | undefined;
   private dockResize: DockSide | undefined;
+  private paneDrag: { id: string; lifted: boolean; target: DropTarget | undefined } | undefined;
   private nextSession = 1;
   private nextFile = 1;
   private nextBrowser = 1;
@@ -732,14 +739,14 @@ export class AppCore {
     return false;
   }
 
-  private openFilePane(path: string): void {
+  private openFilePane(path: string, options?: FileOpenOptions): void {
     const create = this.options.createFilePane;
     if (create === undefined) return;
     this.focusMainArea();
     const id = `file-${this.nextFile}`;
     if (!this.openInLayout(id)) return;
     this.nextFile += 1;
-    this.panes.set(id, create(id, path, this.paneChanged));
+    this.panes.set(id, create(id, path, this.paneChanged, options));
   }
 
   private openBrowserPane(root: string): void {
@@ -844,15 +851,47 @@ export class AppCore {
     if (!containsPoint(frame, event.x, event.y)) this.overlay = undefined;
   }
 
+  dragPreview(): Rect | undefined {
+    return this.paneDrag?.lifted === true ? this.paneDrag.target?.rect : undefined;
+  }
+
+  draggingPane(): string | undefined {
+    return this.paneDrag?.lifted === true ? this.paneDrag.id : undefined;
+  }
+
   private routePaneMouse(event: PointerEvent): void {
     if (this.routeDockResize(event)) return;
+    if (this.routePaneDrag(event)) return;
     const hit = this.paneUnder(event.x, event.y);
     if (hit === undefined) return;
-    if (event.type === "down") this.layout.focus(hit.id);
+    if (event.type === "down") {
+      this.layout.focus(hit.id);
+      if (event.y === hit.rect.y) {
+        this.paneDrag = { id: hit.id, lifted: false, target: undefined };
+      }
+    }
     const pane = this.panes.get(hit.id);
     const local = { x: event.x - hit.rect.x, y: event.y - hit.rect.y };
     if (pane?.handleMouse?.(local, event) === true) return;
     if (event.type === "scroll" && event.scroll !== undefined) scrollByKeys(pane, event.scroll);
+  }
+
+  private routePaneDrag(event: PointerEvent): boolean {
+    const drag = this.paneDrag;
+    if (drag === undefined) return false;
+    if (event.type === "drag") {
+      drag.lifted = true;
+      drag.target = this.layout.dropTargetAt(drag.id, event.x, event.y, this.screen());
+      return true;
+    }
+    if (event.type === "up" || event.type === "drag-end") {
+      this.paneDrag = undefined;
+      if (!drag.lifted) return false;
+      if (drag.target !== undefined) this.layout.applyDrop(drag.id, drag.target, this.screen());
+      return true;
+    }
+    if (event.type === "down") this.paneDrag = undefined;
+    return false;
   }
 
   private routeDockResize(event: PointerEvent): boolean {

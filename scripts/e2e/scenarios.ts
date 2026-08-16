@@ -326,8 +326,9 @@ function discovery(): Scenario {
       await stage.settle();
 
       await stage.press("ctrl+p");
-      const palette = await stage.until("▸ split — open a new session pane");
-      assert.ok(palette.includes("zoom — zoom the focused pane"), "palette lists command rows");
+      const palette = await stage.until("▸ split");
+      assert.ok(palette.includes("open a new session pane"), "palette rows carry descriptions");
+      assert.ok(palette.includes("zoom the focused pane"), "palette lists command rows");
       await stage.capture("palette", { golden: true });
       await stage.press("escape");
 

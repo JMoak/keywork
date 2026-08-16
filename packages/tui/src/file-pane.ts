@@ -1,7 +1,7 @@
 import { Text } from "@opentui/core";
 import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
-import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
+import type { FileOpenOptions, Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import type { Theme } from "./theme.ts";
 
@@ -14,8 +14,9 @@ export class FilePane implements Pane {
     cwd: string,
     path: string,
     notify: () => void,
+    options: FileOpenOptions = {},
   ) {
-    this.model = new FileModel(cwd, path, notify);
+    this.model = new FileModel(cwd, path, notify, options);
   }
 
   title(): string {
