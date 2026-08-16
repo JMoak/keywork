@@ -12,10 +12,16 @@ import {
   TrustStore,
 } from "@keywork/shared";
 import type { PresetsPort } from "@keywork/tui";
+import {
+  type CredentialMap,
+  legacyCredentials,
+  readCredentials,
+  saveCredential,
+} from "./auth-store.ts";
 import { chat } from "./chat.ts";
 import { dispatchCommand, nonInteractiveUsage, usage } from "./dispatch.ts";
 import { createPresetSwitch, isPresetName } from "./presets.ts";
-import { providerSetupHint, resolveProvider } from "./provider.ts";
+import { type PersistCredential, providerSetupHint, resolveProvider } from "./provider.ts";
 import { runHeadless } from "./run.ts";
 
 function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typeof loadConfig> {
@@ -70,7 +76,20 @@ async function main(argv: string[]): Promise<number> {
   });
   const toolPermissions = presets.resolver;
   const model = values.model ?? config.model;
-  let resolved = resolveProvider(process.env, model, config.apiKeys, config.bedrockRegion);
+  const persistCredential: PersistCredential = async (provider, credential) => {
+    await saveCredential(provider, credential);
+  };
+  const loadCredentials = async (loaded: typeof config): Promise<CredentialMap> => ({
+    ...legacyCredentials(loaded.apiKeys),
+    ...(await readCredentials()),
+  });
+  let resolved = resolveProvider(
+    process.env,
+    model,
+    await loadCredentials(config),
+    config.bedrockRegion,
+    persistCredential,
+  );
 
   const onboardIfNeeded = async (): Promise<void> => {
     if (resolved !== undefined || !process.stdin.isTTY) return;
@@ -81,8 +100,9 @@ async function main(argv: string[]): Promise<number> {
     resolved = resolveProvider(
       process.env,
       values.model ?? refreshed.model,
-      refreshed.apiKeys,
+      await loadCredentials(refreshed),
       refreshed.bedrockRegion,
+      persistCredential,
     );
   };
 

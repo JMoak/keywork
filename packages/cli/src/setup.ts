@@ -3,8 +3,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { configSchema, type KeyworkConfig } from "@keywork/shared";
+import { saveCredential } from "./auth-store.ts";
+import { loginWithBrowser, loginWithDeviceCode } from "./codex-login.ts";
+import { codexProviderName } from "./provider.ts";
 
-const providers = [
+const keyProviders = [
   {
     name: "openrouter",
     label: "OpenRouter (one key, hundreds of models)",
@@ -19,19 +22,23 @@ const providers = [
   },
 ] as const;
 
+const codexChoice = keyProviders.length + 1;
+
 const enter = new Set(["\r", "\n"]);
 const erase = new Set([String.fromCharCode(127), "\b"]);
 const interrupt = String.fromCharCode(3);
 
 export async function runSetup(): Promise<number> {
   console.log("keywork setup: connect a model provider\n");
-  providers.forEach((provider, index) => {
+  keyProviders.forEach((provider, index) => {
     console.log(`  ${index + 1}. ${provider.label}`);
     console.log(`     get a key: ${provider.url}`);
   });
+  console.log(`  ${codexChoice}. OpenAI via ChatGPT Plus/Pro (subscription sign-in)`);
 
   const choice = (await askLine("\nProvider [1]: ")).trim() || "1";
-  const provider = providers[Number(choice) - 1];
+  if (Number(choice) === codexChoice) return runCodexSignIn();
+  const provider = keyProviders[Number(choice) - 1];
   if (provider === undefined) {
     console.error(`"${choice}" is not an option`);
     return 1;
@@ -48,9 +55,30 @@ export async function runSetup(): Promise<number> {
 
   const file = await saveApiKey(provider.name, key);
   console.log(`\nSaved to ${file}`);
-  console.log("keywork picks it up automatically. env vars still win if you set one.");
+  console.log(savedKeyPrecedenceNote);
   console.log(`Try it:  keywork panes`);
   return 0;
+}
+
+const savedKeyPrecedenceNote =
+  "Saved credentials outrank plain env vars; a KEYWORK_-prefixed var still overrides.";
+
+async function runCodexSignIn(): Promise<number> {
+  const method = (await askLine("Sign in via [b]rowser or [d]evice code (for SSH)? [b]: "))
+    .trim()
+    .toLowerCase();
+  try {
+    const credential = method.startsWith("d")
+      ? await loginWithDeviceCode()
+      : await loginWithBrowser();
+    const file = await saveCredential(codexProviderName, credential);
+    console.log(`\nSigned in. Credentials saved to ${file}`);
+    console.log(`Try it:  keywork panes`);
+    return 0;
+  } catch (cause) {
+    console.error(`sign-in failed: ${(cause as Error).message}`);
+    return 1;
+  }
 }
 
 export interface KeyInput {
@@ -126,10 +154,7 @@ export function saveApiKey(
   key: string,
   dir: string = join(homedir(), ".keywork"),
 ): Promise<string> {
-  return updateUserConfig(
-    (existing) => ({ ...existing, apiKeys: { ...existing.apiKeys, [provider]: key } }),
-    dir,
-  );
+  return saveCredential(provider, { type: "api_key", key }, dir);
 }
 
 function askLine(prompt: string): Promise<string> {

@@ -139,7 +139,7 @@ export const configSchema = z
     apiKeys: z
       .record(z.string(), z.string())
       .describe(
-        "Provider-name to API-key map written by `keywork setup`; exists so onboarding is one command with no shell-profile editing. Environment variables take precedence, and the project config layer is never a credential source.",
+        "Legacy provider-name to API-key map from before credentials moved to ~/.keywork/auth.json; still honored so existing setups keep working, but `keywork setup` now writes auth.json, whose entries outrank this map. Saved credentials outrank ambient environment variables; only KEYWORK_-prefixed variables override them. The project config layer is never a credential source.",
       ),
     mcpServers: z
       .record(z.string(), mcpServer)

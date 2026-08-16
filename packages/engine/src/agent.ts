@@ -247,6 +247,9 @@ function applyDelta(message: Message, delta: TurnDelta, usage: Usage): Usage {
     case "tool-call":
       message.parts.push(delta.call);
       return usage;
+    case "redacted-thinking":
+      message.parts.push(delta.part);
+      return usage;
     case "done":
       return delta.usage;
   }

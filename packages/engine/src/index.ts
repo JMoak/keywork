@@ -207,6 +207,10 @@ export {
   ProviderHttpError,
   ProviderStreamError,
 } from "./providers/openai.ts";
+export {
+  type OpenAiResponsesOptions,
+  OpenAiResponsesProvider,
+} from "./providers/openai-responses.ts";
 export { RetryingProvider, type RetryOptions } from "./providers/retry.ts";
 export {
   type CompactionOptions,

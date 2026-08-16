@@ -2,10 +2,13 @@ import {
   BedrockProvider,
   credentialsFromEnv,
   OpenAiCompatibleProvider,
+  OpenAiResponsesProvider,
   type Provider,
   RetryingProvider,
   regionFromEnv,
 } from "@keywork/engine";
+import type { Credential, CredentialMap, OauthCredential } from "./auth-store.ts";
+import { codexAuthHeaders, freshAccessToken } from "./codex-login.ts";
 
 export interface ResolvedProvider {
   provider: Provider;
@@ -13,23 +16,31 @@ export interface ResolvedProvider {
   modelId: string;
 }
 
+export type PersistCredential = (provider: string, credential: Credential) => Promise<void>;
+
 const catalog = [
   {
     name: "openrouter",
-    keyVariables: ["KEYWORK_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"],
+    scopedKeyVariable: "KEYWORK_OPENROUTER_API_KEY",
+    ambientKeyVariable: "OPENROUTER_API_KEY",
     baseUrl: "https://openrouter.ai/api/v1",
     defaultModel: "openai/gpt-5-mini",
   },
   {
     name: "openai",
-    keyVariables: ["KEYWORK_OPENAI_API_KEY", "OPENAI_API_KEY"],
+    scopedKeyVariable: "KEYWORK_OPENAI_API_KEY",
+    ambientKeyVariable: "OPENAI_API_KEY",
     baseUrl: "https://api.openai.com/v1",
     defaultModel: "gpt-5-mini",
   },
 ] as const;
 
+export const codexProviderName = "openai-codex";
+const codexResponsesUrl = "https://chatgpt.com/backend-api/codex/responses";
+const codexDefaultModel = "gpt-5.5";
+
 export const providerSetupHint = `No provider configured. Easiest fix:
-  keywork setup            (interactive, saves the key for you)
+  keywork setup            (interactive: API key or ChatGPT Plus/Pro sign-in)
 Or set an environment variable:
   KEYWORK_OPENROUTER_API_KEY or OPENROUTER_API_KEY  (any model on OpenRouter)
   KEYWORK_OPENAI_API_KEY or OPENAI_API_KEY          (OpenAI directly)
@@ -39,12 +50,13 @@ want a specific model? pass --model or set "model" in keywork.json.`;
 export function resolveProvider(
   env: Record<string, string | undefined>,
   model?: string,
-  savedKeys?: Record<string, string>,
+  credentials?: CredentialMap,
   bedrockRegion?: string,
+  persistCredential?: PersistCredential,
 ): ResolvedProvider | undefined {
   for (const entry of catalog) {
-    const apiKey = firstPresent(env, entry.keyVariables) ?? savedKeys?.[entry.name];
-    if (apiKey === undefined || apiKey === "") continue;
+    const apiKey = resolveApiKey(env, entry, credentials);
+    if (apiKey === undefined) continue;
     const chosenModel = model ?? entry.defaultModel;
     return {
       provider: new RetryingProvider(
@@ -59,7 +71,59 @@ export function resolveProvider(
       modelId: chosenModel,
     };
   }
-  return resolveBedrock(env, model, bedrockRegion);
+  return (
+    resolveCodex(model, credentials, persistCredential) ??
+    resolveBedrock(env, model, bedrockRegion)
+  );
+}
+
+// A key saved by keywork setup outranks ambient environment; only the
+// KEYWORK_-scoped variable is a deliberate enough signal to override it.
+function resolveApiKey(
+  env: Record<string, string | undefined>,
+  entry: (typeof catalog)[number],
+  credentials: CredentialMap | undefined,
+): string | undefined {
+  const scoped = presentValue(env[entry.scopedKeyVariable]);
+  if (scoped !== undefined) return scoped;
+  const saved = credentials?.[entry.name];
+  if (saved?.type === "api_key" && saved.key !== "") return saved.key;
+  return presentValue(env[entry.ambientKeyVariable]);
+}
+
+function resolveCodex(
+  model: string | undefined,
+  credentials: CredentialMap | undefined,
+  persistCredential: PersistCredential | undefined,
+): ResolvedProvider | undefined {
+  const saved = credentials?.[codexProviderName];
+  if (saved?.type !== "oauth") return undefined;
+  const chosenModel = model ?? codexDefaultModel;
+  return {
+    provider: new RetryingProvider(
+      new OpenAiResponsesProvider({
+        name: codexProviderName,
+        url: codexResponsesUrl,
+        model: chosenModel,
+        authHeaders: refreshingAuthHeaders(saved, persistCredential),
+      }),
+    ),
+    label: `${codexProviderName}/${chosenModel}`,
+    modelId: chosenModel,
+  };
+}
+
+function refreshingAuthHeaders(
+  initial: OauthCredential,
+  persistCredential: PersistCredential | undefined,
+): () => Promise<Record<string, string>> {
+  let current = initial;
+  return async () => {
+    current = await freshAccessToken(current, async (refreshed) => {
+      await persistCredential?.(codexProviderName, refreshed);
+    });
+    return codexAuthHeaders(current);
+  };
 }
 
 const bedrockDefaultModel = "amazon.nova-lite-v1:0";
@@ -82,9 +146,6 @@ function resolveBedrock(
   };
 }
 
-function firstPresent(
-  env: Record<string, string | undefined>,
-  names: readonly string[],
-): string | undefined {
-  return names.map((name) => env[name]).find((value) => value !== undefined && value !== "");
+function presentValue(value: string | undefined): string | undefined {
+  return value !== undefined && value !== "" ? value : undefined;
 }

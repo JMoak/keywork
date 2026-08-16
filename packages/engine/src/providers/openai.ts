@@ -1,6 +1,8 @@
 import type { ToolCallPart, Usage } from "../messages.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
 import { toChatRequest } from "./chat-wire.ts";
+import { ProviderHttpError, ProviderStreamError } from "./errors.ts";
+import { sseJsonEvents } from "./sse.ts";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -13,23 +15,7 @@ export interface OpenAiCompatibleOptions {
   fetchFn?: FetchLike;
 }
 
-export class ProviderHttpError extends Error {
-  constructor(
-    provider: string,
-    readonly status: number,
-    body: string,
-  ) {
-    super(`${provider} request failed (${status}): ${body.slice(0, 500)}`);
-    this.name = "ProviderHttpError";
-  }
-}
-
-export class ProviderStreamError extends Error {
-  constructor(provider: string, detail: string) {
-    super(`${provider} stream failed: ${detail.slice(0, 500)}`);
-    this.name = "ProviderStreamError";
-  }
-}
+export { ProviderHttpError, ProviderStreamError } from "./errors.ts";
 
 export class OpenAiCompatibleProvider implements Provider {
   readonly name: string;
@@ -57,11 +43,10 @@ export class OpenAiCompatibleProvider implements Provider {
       throw new ProviderHttpError(this.name, response.status, await response.text());
     }
     if (response.body === null) throw new Error(`${this.name} returned an empty response body`);
-    yield* assembleTurn(this.name, sseData(this.name, response.body));
+    yield* assembleTurn(this.name, sseJsonEvents(this.name, response.body));
   }
 }
 
-const maxSseBufferBytes = 1_048_576;
 const maxToolArgumentBytes = 1_048_576;
 
 interface StreamEvent {
@@ -153,48 +138,5 @@ function parseArgs(call: PendingCall): unknown {
     return JSON.parse(call.argumentsJson);
   } catch {
     return call.argumentsJson;
-  }
-}
-
-async function* sseData(
-  provider: string,
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<unknown> {
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for await (const chunk of body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    if (buffer.length > maxSseBufferBytes) {
-      throw new ProviderStreamError(provider, "event stream buffer exceeded the size ceiling");
-    }
-    let newline = buffer.indexOf("\n");
-    while (newline !== -1) {
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      newline = buffer.indexOf("\n");
-      const event = parseSseLine(line);
-      if (event === endOfStream) return;
-      if (event !== skipLine) yield event;
-    }
-  }
-  buffer += decoder.decode();
-  const event = parseSseLine(buffer);
-  if (event !== endOfStream && event !== skipLine) yield event;
-}
-
-const endOfStream = Symbol("endOfStream");
-const skipLine = Symbol("skipLine");
-
-function parseSseLine(rawLine: string): unknown {
-  const line = rawLine.trim();
-  if (!line.startsWith("data:")) return skipLine;
-  const data = line.slice(5).trim();
-  if (data === "") return skipLine;
-  if (data === "[DONE]") return endOfStream;
-  try {
-    const event: unknown = JSON.parse(data);
-    return typeof event === "object" && event !== null ? event : skipLine;
-  } catch {
-    return skipLine;
   }
 }
