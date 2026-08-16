@@ -274,6 +274,10 @@ serves W1/W3 (their acceptance cites S6's captures) and only C39 touches product
 
 ## Open design questions (answers wanted before the gated pieces build)
 
+> **2026-08-15, vision pass 3:** Q4 is answered (reversed) and Q6–Q8 are answered by
+> [`98-chroma-and-arcs.md`](98-chroma-and-arcs.md), which also delivers J15 and names
+> the work unit **arc**. Q1–Q3, Q5, Q9–Q10 remain open below.
+
 **Workspace anchoring (J16):**
 1. Materialization: silently auto-create `.keywork/` on every launch, or lazily on first
    durable act / explicit `keywork init`? (Recommendation: lazy — auto-creating dotdirs
@@ -285,22 +289,23 @@ serves W1/W3 (their acceptance cites S6's captures) and only C39 touches product
 3. Launching in a subdir of a declared workspace: join the enclosing workspace
    (git-style, current behavior) or anchor a new workspace at the subdir? (Recommendation:
    join; `keywork init` forces a new anchor when wanted.)
-4. Is "most recent workspace used in this directory" a real requirement — i.e. can
+4. ~~Is "most recent workspace used in this directory" a real requirement — i.e. can
    multiple workspaces overlap one directory — or is one-workspace-per-root enough for
-   v1? (Recommendation: one per root; an MRU pointer only if overlap ever becomes real.)
+   v1?~~ **Answered 2026-08-15 (98/PD10, recommendation reversed): multiple workspaces
+   per root is v1** — compat layout, per-slug identity, per-root MRU; tasks J19/C46.
 5. Sessions/snapshots migration: move existing cwd-hash-keyed data to workspace identity,
    or leave old data behind the fallback key? (Recommendation: migrate-on-open with the
    fallback read path kept one release.)
 
-**Task groups (J15):**
-6. Sub-vault directories (`.keywork/memory/tasks/<slug>/` with own MOC) or a tag/
-   frontmatter layer over one flat vault? (Sub-vault keeps Obsidian citizenship and R1
-   file-truth clean; tags avoid move-on-promote churn.)
-7. Recall semantics: does the active task *filter* workspace recall, *add* a boosted
-   layer on top, or both by policy? (J6's fail-closed instinct says: task layer adds;
-   nothing is hidden from the workspace scope without explicit policy.)
-8. Lifecycle & binding: user-commanded create/switch/archive only, or agent-proposed via
-   the review inbox? Does a session bind to exactly one task, and what do forks inherit?
+**Task groups (J15) — all answered 2026-08-15 by 98/PD9 (the unit is named "arc"):**
+6. ~~Sub-vault directories or a tag/frontmatter layer?~~ **Sub-vaults**
+   (`.keywork/memory/arcs/<slug>/` with own MOC); distillation writes *new* workspace
+   notes with `distilled_from:` links, so there is no move-on-promote churn.
+7. ~~Filter, add, or both?~~ **Adds, never hides** — the active arc's layer is a boosted
+   stratum atop workspace + user scope; other live arcs excluded from ambient recall but
+   explicitly searchable.
+8. ~~Lifecycle & binding?~~ **User-commanded** create/switch/complete/abandon; the agent
+   may *propose* via the review inbox; a session binds to at most one arc; forks inherit.
 
 **Modes (E7):**
 9. Per-pane modes (recommended — the tiler's edge) vs global mode with per-pane
@@ -342,3 +347,6 @@ upgrade; W5/W6 convert direction into buildable specs.
   then remove-by-default.
 - 94's H4 chrome-offset flag — **folded into C35** (the offset is one symptom of the
   PD7 mismatch).
+- J15 and Q4/Q6–Q8 — **delivered/answered by [`98-chroma-and-arcs.md`](98-chroma-and-arcs.md)**
+  (2026-08-15 vision pass 3: arcs, the funding ladder, workspace multiplicity, gradient
+  chrome).

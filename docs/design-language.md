@@ -1,8 +1,9 @@
 # keywork — Design Language (visual vocabulary of record)
 
-> Decided by Jordan, 2026-08-10. This is the one system every surface speaks — memory
-> pane (95/J9), MCP status dock (D14), staging/airlock (95/J11), notifications (G6/P2.4),
-> status line (C18), permission presets (E2). Placeholder glyphs in earlier planning docs
+> Decided by Jordan, 2026-08-10; chroma section added 2026-08-15 (98/PD8). This is the
+> one system every surface speaks — memory pane (95/J9), MCP status dock (D14),
+> staging/airlock (95/J11), notifications (G6/P2.4), status line (C18), permission
+> presets (E2), pane chrome (98/C44–C45). Placeholder glyphs in earlier planning docs
 > (`●◐○ ◇ M+ S±`) are superseded by this direction; exact characters below are the
 > working set, refined in implementation against real terminal fonts.
 
@@ -25,6 +26,31 @@ Rules: color is the second axis, never the only one (`NO_COLOR`/colorblind-safe 
 construction — density survives monochrome); both light and dark themes map density to
 contrast against the pane ground (C17 tokens); reduced-motion honored — animations
 degrade to stepped density changes.
+
+## The chroma: gradient depth (added 2026-08-15, 98/PD8)
+
+The second axis gets its systematic role: **hue carries identity and depth — never
+state.** Density says *what condition* a thing is in; hue says *which* thing it is among
+many. The theme owns a **ramp** — ordered accent stops (keywork-night: violet → blue →
+cyan, Tokyo Night natives), interpolated perceptually (OKLCH) — and every hued surface
+draws from it:
+
+| Surface | Mapping |
+|---|---|
+| Pane borders (ungrouped) | spawn-rank sweep along the ramp — window 1 violet, window 12 cyan; one pane ≡ today's flat accent |
+| Focus | the pane's *own* hue lifted (luminance/saturation), never a separate global accent |
+| Arc identity (98/PD9) | each arc claims an anchor hue (golden-angle spread); member panes micro-gradient around it |
+| Cross-surface arc marks | the same anchor hue on sessions-overview rows, memory-pane arc headers, status-line arc chips |
+
+Rules: hue is identity, so it travels with its pane/arc — never re-derived from screen
+position; transitions are stepped (reduced-motion honored); every arc-hued surface also
+carries the arc's slug tag, so grouping survives `NO_COLOR` and monochrome as text;
+state stays density's job — a hue never means fresh/staged/failed. One clarification
+(2026-08-16, 98 addendum): **saturation/luminance of an identity hue may *reinforce* a
+density-carried state** — e.g. the garden's distillation *heat* (98/C47) renders as
+density first, warmed by saturation lift within the note's arc hue — but hue itself
+never acquires a state meaning, and density alone must always suffice (monochrome-safe
+by construction).
 
 ## The signature animation: tile-fill
 
