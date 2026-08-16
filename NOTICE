@@ -30,6 +30,18 @@ Adaptations:
   trust-manager — per-path persisted trust decisions in a JSON map, canonicalized
   paths, nearest-ancestor resolution via dirname walking, session-only grants, and
   the never-blanket-trust-$HOME edge case.
+- 101/provider-onboarding (packages/cli/src/codex-login.ts, auth-store.ts): OpenAI
+  ChatGPT Plus/Pro sign-in adapted from Pi's openai-codex OAuth module — the PKCE
+  authorization-code flow against auth.openai.com (shared Codex client id,
+  localhost:1455 callback, codex_cli_simplified_flow/originator parameters), the
+  device-code variant (usercode/token polling endpoints, pending/slow_down handling,
+  server-supplied code_verifier), account-id extraction from the access token's
+  `https://api.openai.com/auth` claim, and refresh-token exchange. Credential file
+  shape (provider-to-tagged-credential map in auth.json, api_key | oauth union)
+  follows Pi's auth storage. Request specifics for chatgpt.com/backend-api/codex
+  (chatgpt-account-id/originator/OpenAI-Beta headers, store:false with encrypted
+  reasoning round-trip) follow Pi's openai-codex-responses API module; keywork's
+  Responses-surface provider itself is an independent implementation.
 
 ---
 

@@ -38,6 +38,37 @@
   fully reshapeable). Persisted state now rules completely — furniture is no longer
   force-re-added on every start.
 
+## Landed 2026-08-16, provider-onboarding wave (deltas vs. Pi/OpenCode)
+
+A comparison of `keywork setup` against Pi's and OpenCode's OpenAI onboarding surfaced
+three deltas; all three are addressed. **This amends A14's strategy line** ("no OAuth of
+any kind"): that line was guardrail hygiene around the Anthropic rule, not an OpenAI
+product decision. The Anthropic guardrail is untouched — `check-guardrails.ts` was not
+weakened and still passes; it scopes to Anthropic/Claude endpoints and headers, which is
+exactly why OpenAI subscription sign-in can land without going near it.
+
+- **Credentials moved out of config.** `~/.keywork/auth.json` (0600, dir 0700) now holds
+  provider credentials as a tagged union (`api_key` | `oauth`), written by `keywork
+  setup`; `keywork.json` `apiKeys` is honored as a legacy fallback but no longer written.
+  Config stays shareable without shipping keys (`packages/cli/src/auth-store.ts`).
+- **Precedence flipped to stored-owns-the-provider.** Deliberate credentials (a
+  `KEYWORK_`-scoped variable or anything saved by setup) outrank ambient environment
+  variables across all providers, so a stale `OPENAI_API_KEY`/`OPENROUTER_API_KEY` in a
+  shell profile can no longer hijack a provider the user just connected. Ambient env
+  remains the zero-config fallback. Matches Pi ("a stored credential owns the provider")
+  and OpenCode's merge order.
+- **OpenAI via ChatGPT Plus/Pro subscription sign-in** as a separate `openai-codex`
+  provider (Pi's shape, so the plain API-key provider stays clean): PKCE browser flow
+  with a localhost:1455 callback plus a device-code flow for SSH, token refresh with
+  5-minute skew persisting through the auth store, and requests to
+  `chatgpt.com/backend-api/codex/responses` carrying `originator: keywork` (honest
+  client identification; the shared Codex client id is the openly tolerated norm —
+  OpenCode and Pi both ship it). ADAPT:pi (`codex-login.ts`), attribution in `NOTICE`.
+  Engine grew a Responses-API provider (`OpenAiResponsesProvider` + `responses-wire.ts`)
+  since the codex backend speaks only that surface, including encrypted-reasoning
+  round-trip via a new `redacted-thinking` turn delta (required: the backend rejects a
+  `function_call` input item whose reasoning item is missing). Default model `gpt-5.5`.
+
 ## Landed 2026-08-16, second wave
 
 - **FR1.1 — pane drag with rectangular drop previews.** Dragging a pane's title row lifts
@@ -115,12 +146,13 @@ LSP/subagent transparency/security scoping.
 
 ## FR4 — Providers & cost
 
-11. **(3pt, LIFT:openclaw)** **ChatGPT-subscription provider.** Goal: a paid ChatGPT
-    plan (Plus/Pro) drives keywork the way OpenClaw wires it. **Gate before code:**
-    verify the current OpenAI ToS posture for Codex OAuth outside official surfaces and
-    record the decision in this file; prefer the official Codex mechanisms and adapt
-    OpenClaw's MIT implementation with attribution. The Anthropic guardrail is
-    untouched: this is OpenAI-only, and no Anthropic subscription path ever ships.
+11. **(3pt, ADAPT:pi) — LANDED 2026-08-16** in the provider-onboarding wave above (the
+    source became Pi rather than OpenClaw after a code-level survey of Pi's and
+    OpenCode's flows). **Gate decision of record (Jordan, 2026-08-16): proceed.** Pi and
+    OpenCode both openly ship the Codex OAuth flow with the shared client id and honest
+    originator headers, and OpenAI has tolerated that posture; keywork identifies itself
+    as `originator: keywork` and ships this OpenAI-only. The Anthropic guardrail is
+    untouched: no Anthropic subscription path ever ships.
 12. **(2pt, LIFT:opencode)** **Cost capture.** Per-turn token/cost accounting like
     OpenCode's: model pricing table, per-session and per-arc rollups, surfaced in the
     pane title detail (replacing the raw `in▸out` counters), the sessions node cursored

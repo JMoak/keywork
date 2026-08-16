@@ -2,9 +2,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type Credential =
-  | { type: "api_key"; key: string }
-  | OauthCredential;
+export type Credential = { type: "api_key"; key: string } | OauthCredential;
 
 export interface OauthCredential {
   type: "oauth";

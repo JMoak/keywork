@@ -47,6 +47,9 @@ Or set an environment variable:
   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION  (Amazon Bedrock)
 want a specific model? pass --model or set "model" in keywork.json.`;
 
+// Deliberate credentials (a KEYWORK_-scoped variable or anything saved by
+// keywork setup) outrank ambient environment variables, so a stale key in a
+// shell profile can never hijack a provider the user just connected.
 export function resolveProvider(
   env: Record<string, string | undefined>,
   model?: string,
@@ -54,8 +57,22 @@ export function resolveProvider(
   bedrockRegion?: string,
   persistCredential?: PersistCredential,
 ): ResolvedProvider | undefined {
+  return (
+    firstKeyProvider(model, (entry) => deliberateKey(env, entry, credentials)) ??
+    resolveCodex(model, credentials, persistCredential) ??
+    firstKeyProvider(model, (entry) => presentValue(env[entry.ambientKeyVariable])) ??
+    resolveBedrock(env, model, bedrockRegion)
+  );
+}
+
+type CatalogEntry = (typeof catalog)[number];
+
+function firstKeyProvider(
+  model: string | undefined,
+  keyFor: (entry: CatalogEntry) => string | undefined,
+): ResolvedProvider | undefined {
   for (const entry of catalog) {
-    const apiKey = resolveApiKey(env, entry, credentials);
+    const apiKey = keyFor(entry);
     if (apiKey === undefined) continue;
     const chosenModel = model ?? entry.defaultModel;
     return {
@@ -71,24 +88,18 @@ export function resolveProvider(
       modelId: chosenModel,
     };
   }
-  return (
-    resolveCodex(model, credentials, persistCredential) ??
-    resolveBedrock(env, model, bedrockRegion)
-  );
+  return undefined;
 }
 
-// A key saved by keywork setup outranks ambient environment; only the
-// KEYWORK_-scoped variable is a deliberate enough signal to override it.
-function resolveApiKey(
+function deliberateKey(
   env: Record<string, string | undefined>,
-  entry: (typeof catalog)[number],
+  entry: CatalogEntry,
   credentials: CredentialMap | undefined,
 ): string | undefined {
   const scoped = presentValue(env[entry.scopedKeyVariable]);
   if (scoped !== undefined) return scoped;
   const saved = credentials?.[entry.name];
-  if (saved?.type === "api_key" && saved.key !== "") return saved.key;
-  return presentValue(env[entry.ambientKeyVariable]);
+  return saved?.type === "api_key" && saved.key !== "" ? saved.key : undefined;
 }
 
 function resolveCodex(

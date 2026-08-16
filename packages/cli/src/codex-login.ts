@@ -47,7 +47,12 @@ export async function loginWithDeviceCode(io: LoginIo = {}): Promise<OauthCreden
     await sleep(intervalMs);
     const poll = await pollDeviceAuth(fetchFn, device);
     if (poll.status === "complete") {
-      const token = await exchangeCode(io, poll.authorizationCode, poll.codeVerifier, deviceRedirectUri);
+      const token = await exchangeCode(
+        io,
+        poll.authorizationCode,
+        poll.codeVerifier,
+        deviceRedirectUri,
+      );
       return credentialFromToken(token, now());
     }
     if (poll.status === "slow-down") intervalMs += 5000;
