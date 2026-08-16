@@ -74,11 +74,83 @@ export {
   mcpSearchToolName,
 } from "./mcp/registry.ts";
 export {
+  type AckSweep,
+  ArcAirlock,
+  type ArcAirlockOptions,
+  type ArcCloseCandidate,
+  type ArcCloseDigest,
+  type ArcDelivery,
+  ArcStillActiveError,
+  type CandidateTriage,
+  type CloseDecisions,
+  IneligibleDeliveryError,
+  MissingSuccessorError,
+  type PrepareCloseOptions,
+  type QuestionTriage,
+  type RubricShortfall,
+  UndecidedItemsError,
+  UnknownTriageTargetError,
+  WedgedSessionsError,
+} from "./memory/arcs/airlock.ts";
+export {
+  type ArcBindingChange,
+  type ArcBindingListener,
+  ArcBindings,
+} from "./memory/arcs/bindings.ts";
+export {
+  ArcOpenQuestions,
+  type ArcOpenQuestionsOptions,
+  type CapEvents,
+  type CapOverflowChoice,
+  defaultOpenQuestionCap,
+  MissingOpenQuestionError,
+  type OpenQuestion,
+  OpenQuestionCapError,
+  type OpenQuestionInput,
+  type OpenQuestionStatus,
+} from "./memory/arcs/questions.ts";
+export {
+  ArcRecall,
+  type ArcRecallOptions,
+  type ArcRecallOutcome,
+  type ArcSearchHit,
+  arcBootstrapLayer,
+  defaultArcBoost,
+  type MemoryLayerRef,
+} from "./memory/arcs/recall.ts";
+export {
+  ArcExistsError,
+  ArcNotActiveError,
+  type ArcRecord,
+  ArcRegistry,
+  type ArcRegistryOptions,
+  type ArcStatus,
+  arcMocLink,
+  InvalidArcSlugError,
+  MissingArcError,
+  validateArcSlug,
+} from "./memory/arcs/registry.ts";
+export {
   type BootstrapInjection,
   type BootstrapLayer,
   bootstrapMemory,
   type LayerBootstrap,
 } from "./memory/bootstrap.ts";
+export {
+  type CitationChain,
+  type CitationChainHop,
+  type CitationEvent,
+  CitationLedger,
+  type CitationLedgerEvent,
+  type CitationLedgerOptions,
+  type CitationOutcome,
+  citationChain,
+  citationUsefulnessFeed,
+  type LatencyEvent,
+  type RecallEvent,
+  type RecallSurface,
+  type UsefulnessSink,
+} from "./memory/citations.ts";
 export {
   defaultFlushSettings,
   type FlushOutcome,
@@ -111,6 +183,22 @@ export {
   type SweepReport,
 } from "./memory/gardener.ts";
 export {
+  type DanglingLink,
+  type EntityType,
+  entityTypeSchema,
+  entityTypes,
+  type GraphEdge,
+  type GraphNode,
+  MemoryGraph,
+  type OutlineEntry,
+  type PageRankOptions,
+  type Predicate,
+  predicateSchema,
+  predicates,
+  type RankedEntity,
+  type SkippedRelation,
+} from "./memory/graph.ts";
+export {
   MalformedInboxError,
   ReviewInbox,
   type ReviewInboxOptions,
@@ -134,6 +222,7 @@ export {
   type RecallListener,
 } from "./memory/recall-tools.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
+export type { NoteRelations } from "./memory/search.ts";
 export {
   type EmbeddingsPort,
   MemorySearch,
@@ -179,6 +268,21 @@ export {
   type Usage,
 } from "./messages.ts";
 export { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
+export {
+  type CostRollup,
+  carriesUsage,
+  costNanosOf,
+  emptyCostRollup,
+  formatCostNanos,
+  groupCosts,
+  knownCostNanos,
+  type ModelRates,
+  mergeCostRollups,
+  ratesFor,
+  type SessionCostSource,
+  sessionCost,
+  withTurnCost,
+} from "./pricing.ts";
 export {
   buildSystemPrompt,
   loadProjectInstructions,

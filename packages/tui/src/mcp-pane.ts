@@ -1,6 +1,7 @@
 import { Text } from "@opentui/core";
-import type { Chord } from "./keys.ts";
+import { type Chord, parseChord } from "./keys.ts";
 import {
+  type McpAction,
   McpPaneModel,
   type McpRow,
   type McpServerView,
@@ -16,6 +17,7 @@ import {
   paneTitle,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
+import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import type { Theme } from "./theme.ts";
 
 export interface McpPanePort {
@@ -42,6 +44,7 @@ export function mcpDropWatcher(
 
 export class McpPane implements Pane {
   readonly model: McpPaneModel;
+  readonly tray: PaneTrayModel;
   private readonly tasks: PaneTasks;
   private lastPageRows = 20;
   private readonly unsubscribe: (() => void) | undefined;
@@ -52,6 +55,10 @@ export class McpPane implements Pane {
     private readonly port: McpPanePort,
   ) {
     this.tasks = new PaneTasks(notify);
+    this.tray = new PaneTrayModel(
+      () => this.tasks.emit(),
+      () => this.trayCommands(),
+    );
     this.model = new McpPaneModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
       restart: (name) => this.transition(name, () => this.port.restart(name)),
@@ -79,7 +86,12 @@ export class McpPane implements Pane {
     return { kind: "mcp" };
   }
 
-  handleKey(chord: Chord): boolean {
+  handleKey(chord: Chord, sequence?: string): boolean {
+    if (this.tray.open) return this.tray.handleKey(chord, sequence);
+    if (this.tray.opensOn(chord)) {
+      this.tray.openTray();
+      return true;
+    }
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
@@ -93,12 +105,43 @@ export class McpPane implements Pane {
 
   view(context: PaneContext): PaneView {
     const { theme, height, width } = context;
-    this.lastPageRows = paneContentHeight(height);
+    const innerWidth = paneContentWidth(width);
+    const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
+    this.lastPageRows = Math.max(0, paneContentHeight(height) - (tray?.rows ?? 0));
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(width)),
+      ...this.bodyLines(theme, this.lastPageRows, innerWidth),
+      ...(tray?.children ?? []),
     );
+  }
+
+  private trayCommands(): TrayCommand[] {
+    const act = (action: McpAction): TrayCommand["run"] => {
+      return () => this.model.act(action);
+    };
+    const server = this.model.cursorServer();
+    const serverCommands: TrayCommand[] =
+      server === undefined
+        ? []
+        : [
+            { name: "restart", description: `restart ${server.name}`, run: act("restart") },
+            {
+              name: server.enabled === false ? "enable" : "disable",
+              description: `turn ${server.name} ${server.enabled === false ? "on" : "off"}`,
+              run: act("toggle"),
+            },
+            { name: "tools", description: `list ${server.name}'s tools`, run: act("tools") },
+          ];
+    return [
+      ...serverCommands,
+      {
+        name: "refresh",
+        description: "reload server status",
+        shortcut: "r",
+        run: () => this.handleKey(parseChord("r")),
+      },
+    ];
   }
 
   private async deliverTools(name: string): Promise<void> {

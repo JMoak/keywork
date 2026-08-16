@@ -89,9 +89,62 @@ exactly why OpenAI subscription sign-in can land without going near it.
   (the file viewer gained home/end jumps and an open-at-end seam), or posts a calm
   notice when nothing has crashed. Alias `/crashlog`.
 
-Still open in FR1–FR6: FR1.2 endurance soak, FR2 entity nodes, FR3.9/3.10 per-entity
-trays and the coverage audit, FR4 providers & cost, FR5 chroma/tastiness/tips, FR6
-LSP/subagent transparency/security scoping.
+## Landed 2026-08-16, third wave
+
+- **FR3.9 — per-entity trays.** New `pane-tray.ts`: `PaneTrayModel` (open on `/` or `:`,
+  fuzzy filter over `fuzzyScore`, arrow/tab wrap, enter runs, esc closes, modal while
+  open) + `paneTrayView` rendering through the same `tray.ts` row primitive as the chat
+  tray and palette. Sessions node trays are level-scoped (overview: open/entries/refresh;
+  entries: fork/label/toggle/back/refresh) and their commands literally press the pane's
+  own keys, so tray and keyboard can never disagree; the MCP tray acts on the cursored
+  server (restart, enable/disable, tools, refresh) and reveals its menu so the outcome is
+  visible. Tray never opens while a label is being typed. Known gap: tray rows are not
+  yet clickable (H2 grammar — noted in [`94`](94-file-browser-and-mouse.md)).
+- **FR3.10 — command coverage audit.** Every `appActions` entry now structurally requires
+  either a `command` declaration or a `coveredBy: <registered command>` (the type refuses
+  an uncovered action); `actionCommandNames` exports the map and
+  `command-coverage.test.ts` proves, in a fully equipped app, that every nav-mode action
+  resolves to a registered command, every declared command runs, and names/aliases are
+  collision-free.
+- Fixed the red `scenarios.test.ts` assertion (`toHaveProperty` dotted-path trap:
+  `"notes.txt"` needs the array form).
+- **Live mouse regression root-caused and fixed** (Jordan's "no mouse input at all"):
+  keywork's destroy-every-frame painting left OpenTUI's hit grid pointing at dead
+  renderable ids, so every event was dropped before dispatch. Fixed with the persistent
+  **pointer plane** + move-event repaint gating; full write-up and the forward mouse-UX
+  plan live in [`94`](94-file-browser-and-mouse.md) § "State of mouse input". The e2e
+  stage gained real mouse verbs and the `pointer-tour` scenario locks delivery
+  (click-focus after rebuilds, wheel scrollback, dock drag) through the real renderer.
+
+## Landed 2026-08-16, fourth wave (three parallel agents, gate 1484 tests / 97 files + 7/7 e2e)
+
+- **J17 + J18 arc kernel** (`engine/src/memory/arcs/`): per-arc sub-vault with MOC-as-entity,
+  full lifecycle (bind ≤1 per session, fork inheritance, archive-in-place, never deletes),
+  boosted recall stratum composed over the search API (workspace hits never masked; other
+  live arcs ambient-excluded; archived excluded), question cap with explicit merge-or-drop,
+  and the airlock as the fourth door on the ONE inbox: ack sweep → arc-scoped Gardener →
+  resolve/carry/drop triage (nothing implicit; below-bar delivery refused) → `delivered:`/
+  `valid_from:`/`distilled_from:` stamps + workspace delivery record → stragglers re-staged
+  untrusted. Deferred behind seams: session-entry binding persistence, real flush wiring,
+  TUI surfaces.
+- **J13 + J12 recall depth**: citation ledger (claim → note → provenance → supersession,
+  R6 hallucinated-id rejection, citations = the F2 usefulness signal, F3 latency medians);
+  vault-derived in-memory graph (closed 9-type/16-predicate ontology, `consolidates` pair
+  distinct from supersession) with entity-seeded PPR (LIFT:hipporag, NOTICE) as the third
+  RRF leg — self-muting to byte-identical two-leg behavior, superseded floor held
+  post-fusion, local 1–2-hop outlines only; memory-pane recall/Gardener view helpers.
+- **FR4.12 cost capture**: integer nano-dollar pricing table (no Anthropic ids; scanner
+  clean), cache-aware math, provider-metered cost (OpenRouter `usage.cost`) beats
+  estimates, unknown never renders `$0.00`; per-session rollups derived on read +
+  `groupCosts` seam for arcs; pane-title `$`, sessions-node row cost, conversation-local
+  `/cost`; sessions now persist live usage (replay-filtered). Provisional rates flagged in
+  the module; `model_change` wiring open (table-estimated rollups on disk light up for
+  metered sessions only until then).
+
+Still open in FR1–FR6: FR1.2 endurance soak, FR2 entity nodes (arcs node now unblocked by
+J17), FR3 per-entity trays for the future arcs/workspaces nodes (sessions + MCP shipped),
+FR4.11 ChatGPT provider (ToS gate first), FR5 chroma/tastiness/tips (arc edge chroma now
+unblocked), FR6 LSP/subagent transparency/security scoping.
 
 ## FR1 — Interaction depth (drag, previews, endurance)
 

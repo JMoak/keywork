@@ -150,6 +150,18 @@ export class McpPaneModel {
     return this.rows()[clampIndex(this.cursor, this.rows().length)];
   }
 
+  cursorServer(): McpServerView | undefined {
+    const name = this.cursorRow()?.server;
+    return name === undefined ? undefined : this.findServer(name);
+  }
+
+  act(action: McpAction): boolean {
+    const server = this.cursorServer();
+    if (server === undefined) return false;
+    if (!this.openMenus.has(server.name)) this.toggleMenu(server.name);
+    return this.runAction(server, action);
+  }
+
   handleKey(chord: Chord, pageRows: number): boolean {
     const rows = this.rows();
     this.cursor = clampIndex(this.cursor, rows.length);
@@ -264,9 +276,12 @@ export class McpPaneModel {
     if (row?.server === undefined) return true;
     const server = this.findServer(row.server);
     if (server === undefined) return true;
-    switch (row.kind === "server" ? "menu" : row.action) {
-      case "menu":
-        return this.toggleMenu(server.name);
+    if (row.kind === "server") return this.toggleMenu(server.name);
+    return this.runAction(server, row.action);
+  }
+
+  private runAction(server: McpServerView, action: McpAction | undefined): boolean {
+    switch (action) {
       case "restart":
         if (!this.busyServers.has(server.name)) this.effects.restart(server.name);
         return true;

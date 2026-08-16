@@ -44,8 +44,8 @@ describe("bootstrapMemory", () => {
     ]);
     expect(injection.text).toContain("# Memory");
     expect(injection.text).toContain("## workspace memory");
-    expect(injection.text.indexOf("### Pinned Note")).toBeLessThan(
-      injection.text.indexOf("### Useful Note"),
+    expect(injection.text.indexOf("### [[Pinned Note]]")).toBeLessThan(
+      injection.text.indexOf("### [[Useful Note]]"),
     );
     expect(injection.tokens).toBeGreaterThan(0);
   });
@@ -74,7 +74,7 @@ describe("bootstrapMemory", () => {
     expect(zero.layers[0]?.selection.skipped).toEqual(["Huge", "Tiny"]);
     const small = await bootstrapMemory([{ name: "workspace", store, budget: 20 }]);
     expect(small.layers[0]?.selection.notes.map((note) => note.title)).toEqual(["Tiny"]);
-    expect(small.text).toContain("### Tiny");
+    expect(small.text).toContain("### [[Tiny]]");
     expect(small.text).not.toContain("hhh");
   });
 

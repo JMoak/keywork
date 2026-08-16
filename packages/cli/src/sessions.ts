@@ -2,12 +2,14 @@ import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
+  knownCostNanos,
   type Message,
   messageText,
   replaySession,
   type SessionEntry,
   SessionStore,
   type SessionTreeNode,
+  type Usage,
 } from "@keywork/engine";
 import type {
   SessionAttachment,
@@ -226,14 +228,21 @@ export function attachmentOf(
   seams: Pick<SessionPortSeams, "checkpointTag" | "onChange"> = {},
 ): SessionAttachment {
   const name = store.name();
+  const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
     ...(name !== undefined && { name }),
     history: store.messages(),
-    replay: (bus) => replaySession(store, bus),
+    replay: (bus) => {
+      replaySession(store, bus);
+      bus.on("turn.delta", ({ delta, replay }) => {
+        if (replay !== true && delta.type === "done") finishedTurnUsage.push(delta.usage);
+      });
+    },
     append: async (message) => {
       const checkpoint = message.role === "user" ? seams.checkpointTag?.() : undefined;
-      await store.append(message, undefined, checkpoint);
+      const usage = message.role === "assistant" ? finishedTurnUsage.shift() : undefined;
+      await store.append(message, usage, checkpoint);
       seams.onChange?.(store.header.id);
     },
     rename: async (title) => {
@@ -257,6 +266,7 @@ async function overviewItem(file: string): Promise<SessionOverviewItem | undefin
     const store = await SessionStore.open(file);
     const stats = store.stats();
     if (stats.entries === 0) return undefined;
+    const costNanos = knownCostNanos(stats.cost);
     return {
       id: store.header.id,
       title: store.name() ?? firstUserText(store) ?? "(untitled session)",
@@ -264,6 +274,7 @@ async function overviewItem(file: string): Promise<SessionOverviewItem | undefin
       entryCount: stats.entries,
       branchCount: stats.branchPoints,
       labelCount: stats.labels,
+      ...(costNanos !== undefined && { costNanos }),
     };
   } catch {
     return undefined;

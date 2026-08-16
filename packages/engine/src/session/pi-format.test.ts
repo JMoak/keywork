@@ -165,6 +165,7 @@ describe("Pi session format compatibility", () => {
       labels: 1,
       compactions: 1,
       usage: { inputTokens: 900, outputTokens: 120 },
+      cost: { nanos: 0, pricedTurns: 0, meteredTurns: 0, unpricedTurns: 1 },
       createdAt: "2026-08-01T09:00:00.000Z",
       lastActivityAt: "2026-08-01T09:00:10.000Z",
     });

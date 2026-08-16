@@ -89,6 +89,19 @@ mechanisms (reimplemented in TypeScript); entries will be recorded here as code 
 
 ---
 
+HippoRAG (https://github.com/OSU-NLP-Group/HippoRAG)
+Copyright (c) 2024 OSU NLP Group
+Licensed under the MIT License (full text below).
+
+Adaptations:
+- J12 (packages/engine/src/memory/graph.ts): entity-seeded Personalized PageRank
+  retrieval adapted from HippoRAG's published method — query entities seed a
+  personalized PageRank power iteration over the note graph, and the ranked scores
+  join retrieval fusion as their own list. Reimplemented in TypeScript from the
+  documented design; no code copied.
+
+---
+
 Crush (https://github.com/charmbracelet/crush) is FSL-1.1-MIT licensed and is
 deliberately NOT a source for keywork: no code has ever been adapted from it, and as of
 2026-08-10 it is not a design source either — features once discussed alongside it in

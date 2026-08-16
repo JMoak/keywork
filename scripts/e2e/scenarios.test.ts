@@ -11,6 +11,7 @@ describe("scenario registry", () => {
       "session-lifecycle",
       "discovery",
       "defect-repros",
+      "pointer-tour",
       "live-playground",
     ]);
   });
@@ -24,6 +25,7 @@ describe("scenario registry", () => {
       "session-lifecycle",
       "discovery",
       "defect-repros",
+      "pointer-tour",
     ]);
   });
 
@@ -53,7 +55,7 @@ describe("scenario registry", () => {
     const scenario = scenarioNamed("first-conversation");
     const deltas = scenario?.turns?.flat() ?? [];
     expect(deltas.some((delta) => delta.type === "tool-call")).toBe(true);
-    expect(scenario?.files).toHaveProperty("notes.txt");
+    expect(scenario?.files).toHaveProperty(["notes.txt"]);
     expect(scenario?.tools).toBeDefined();
   });
 

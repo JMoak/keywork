@@ -21,5 +21,6 @@ export interface ProviderRequest {
 
 export interface Provider {
   name: string;
+  modelId?: string | undefined;
   stream(request: ProviderRequest): AsyncIterable<TurnDelta>;
 }

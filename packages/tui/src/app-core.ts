@@ -14,14 +14,16 @@ import type { FileOpenOptions, Pane, PaneIntents } from "./pane.ts";
 import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
 import { captureWorkspace, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
-interface AppAction {
+type AppAction = {
   chords: string | readonly string[];
   help: string;
   sticky?: true;
   chainable?: true;
   invoke: (core: AppCore) => void;
-  command?: { name: string; description: string; aliases?: string[] };
-}
+} & (
+  | { command: { name: string; description: string; aliases?: string[] } }
+  | { coveredBy: string }
+);
 
 const appActions: Record<string, AppAction> = {
   "pane.split": {
@@ -36,6 +38,7 @@ const appActions: Record<string, AppAction> = {
     help: "close focused pane",
     sticky: true,
     invoke: (core) => core.closePane(),
+    coveredBy: "exit",
   },
   "pane.zoom": {
     chords: "leader z",
@@ -152,18 +155,21 @@ const appActions: Record<string, AppAction> = {
     help: "file browser",
     chainable: true,
     invoke: (core) => core.summonBrowser(),
+    coveredBy: "browse",
   },
   "tree.summon": {
     chords: "leader t",
     help: "session tree",
     chainable: true,
     invoke: (core) => core.summonSessionTree(),
+    coveredBy: "tree",
   },
   "memory.summon": {
     chords: "leader m",
     help: "memory pane",
     chainable: true,
     invoke: (core) => core.summonMemoryPane(),
+    coveredBy: "memory",
   },
   "help.toggle": {
     chords: ["leader /", "f1"],
@@ -181,8 +187,16 @@ const appActions: Record<string, AppAction> = {
     chords: "ctrl+q",
     help: "quit",
     invoke: (core) => core.shutdown(),
+    coveredBy: "exit-all",
   },
 };
+
+export const actionCommandNames: Record<string, string> = Object.fromEntries(
+  Object.entries(appActions).map(([name, action]) => [
+    name,
+    "command" in action ? action.command.name : action.coveredBy,
+  ]),
+);
 
 export const appBindings: Record<string, string | readonly string[]> = Object.fromEntries(
   Object.entries(appActions).map(([name, action]) => [name, action.chords]),
@@ -1007,7 +1021,7 @@ export class AppCore {
       return keys === undefined ? {} : { shortcut: keys };
     };
     for (const [name, action] of Object.entries(appActions)) {
-      if (action.command === undefined) continue;
+      if (!("command" in action)) continue;
       const { aliases, ...command } = action.command;
       this.registry.register({
         ...command,

@@ -7,6 +7,7 @@ import {
   discardFrame,
   doctorCommand,
   paneSessionIndex,
+  pointerPlaneId,
   type SessionAttachment,
   type SessionPort,
   startFreshSession,
@@ -69,6 +70,22 @@ describe("discardFrame", () => {
     const frame = mountedFrame(0);
     discardFrame(frame.root);
     expect(frame.destroyed).toEqual([]);
+  });
+
+  it("never destroys the pointer plane, so mouse hits always resolve", () => {
+    const frame = mountedFrame(2);
+    let planeDestroyed = false;
+    frame.mounted.push({
+      id: pointerPlaneId,
+      destroyRecursively: () => {
+        planeDestroyed = true;
+      },
+    });
+
+    discardFrame(frame.root);
+
+    expect(planeDestroyed).toBe(false);
+    expect(frame.destroyed).toEqual(["renderable-0", "renderable-1"]);
   });
 });
 

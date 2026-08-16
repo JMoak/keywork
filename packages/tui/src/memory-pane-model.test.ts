@@ -4,6 +4,7 @@ import {
   type CuringStage,
   curingGlyph,
   emptyMemoryInputs,
+  gardenerSweepView,
   type InboxItemView,
   type MemoryNoteView,
   type MemoryPaneInputs,
@@ -11,6 +12,7 @@ import {
   type MemoryProvenance,
   provenanceGlyph,
   type RecallEventView,
+  recallView,
   toneToken,
 } from "./memory-pane-model.ts";
 import { resolveTheme } from "./theme.ts";
@@ -468,5 +470,56 @@ describe("MemoryPaneModel property: cursor lands on a selectable visible row", (
       expect(rows[model.cursor]?.selectable).toBe(true);
       expect(model.visibleRows(5).some(({ index }) => index === model.cursor)).toBe(true);
     }
+  });
+});
+
+describe("recallView", () => {
+  it("passes the recall through and annotates citation and supersession", () => {
+    expect(recallView({ note: "Ratio Rule", scope: "workspace", provenance: "agent" })).toEqual({
+      note: "Ratio Rule",
+      scope: "workspace",
+      provenance: "agent",
+    });
+    expect(
+      recallView({
+        note: "Old Rule",
+        scope: "workspace",
+        provenance: "user",
+        cited: true,
+        supersededBy: "New Rule",
+      }),
+    ).toEqual({
+      note: "Old Rule",
+      scope: "workspace",
+      provenance: "user",
+      annotation: "cited · superseded by New Rule",
+    });
+  });
+
+  it("renders an annotated recall in the pane", () => {
+    const { model } = modelOver({
+      notes: [noteOf({ name: "Ratio Rule" })],
+      recalls: [
+        recallView({ note: "Ratio Rule", scope: "workspace", provenance: "agent", cited: true }),
+      ],
+    });
+    const recall = model.rows().find((row) => row.kind === "recall");
+    expect(recall?.text).toContain("Ratio Rule");
+    expect(recall?.text).toContain("cited");
+  });
+});
+
+describe("gardenerSweepView", () => {
+  it("summarizes only the phases that did work", () => {
+    expect(gardenerSweepView({ promoted: 2, merged: 0, superseded: 1, flagged: 0 })).toEqual({
+      state: "idle",
+      detail: "2 promoted · 1 superseded",
+    });
+  });
+
+  it("stays a calm idle tile after an uneventful sweep", () => {
+    expect(gardenerSweepView({ promoted: 0, merged: 0, superseded: 0, flagged: 0 })).toEqual({
+      state: "idle",
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { Text } from "@opentui/core";
-import type { Chord } from "./keys.ts";
+import { type Chord, parseChord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   paneChrome,
@@ -9,6 +9,7 @@ import {
   paneTitle,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
+import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import type { PointerEvent } from "./pointer.ts";
 import {
   SessionTreeModel,
@@ -46,6 +47,7 @@ type PaneLevel = "overview" | "entries";
 export class SessionTreePane implements Pane {
   readonly model: SessionTreeModel;
   readonly overview: SessionsOverviewModel;
+  readonly tray: PaneTrayModel;
   private paneLevel: PaneLevel = "overview";
   private sessionId: string | undefined;
   private readonly presence: SessionPresence | undefined;
@@ -83,6 +85,10 @@ export class SessionTreePane implements Pane {
         ...(seams.now !== undefined && { now: seams.now }),
       },
     );
+    this.tray = new PaneTrayModel(
+      () => this.tasks.emit(),
+      () => this.trayCommands(),
+    );
     this.unsubscribe = port.subscribe?.(() => this.scheduleRefresh());
     this.refresh();
   }
@@ -115,7 +121,12 @@ export class SessionTreePane implements Pane {
     };
   }
 
-  handleKey(chord: Chord): boolean {
+  handleKey(chord: Chord, sequence?: string): boolean {
+    if (this.tray.open) return this.tray.handleKey(chord, sequence);
+    if (!this.model.labeling && this.tray.opensOn(chord)) {
+      this.tray.openTray();
+      return true;
+    }
     if (this.paneLevel === "overview") return this.overview.handleKey(chord, this.lastPageRows);
     if (!this.model.labeling && (chord.name === "escape" || chord.name === "backspace")) {
       return this.returnToOverview();
@@ -143,13 +154,19 @@ export class SessionTreePane implements Pane {
 
   view(context: PaneContext): PaneView {
     const { theme, focused, height, width } = context;
+    const innerWidth = paneContentWidth(width);
     const labelLine = this.labelLine(theme, focused);
-    this.lastPageRows = Math.max(0, paneContentHeight(height) - (labelLine === undefined ? 0 : 1));
+    const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
+    this.lastPageRows = Math.max(
+      0,
+      paneContentHeight(height) - (labelLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
+    );
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(width)),
+      ...this.bodyLines(theme, this.lastPageRows, innerWidth),
       ...(labelLine === undefined ? [] : [labelLine]),
+      ...(tray?.children ?? []),
     );
   }
 
@@ -250,6 +267,56 @@ export class SessionTreePane implements Pane {
       return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
     }
     return Text({ content, fg: row.onActivePath ? theme.accentSoft : theme.text });
+  }
+
+  private trayCommands(): TrayCommand[] {
+    const press = (spec: string): TrayCommand["run"] => {
+      return () => this.handleKey(parseChord(spec));
+    };
+    if (this.paneLevel === "overview") {
+      return [
+        {
+          name: "open",
+          description: "open the selected session",
+          shortcut: "⏎",
+          run: press("enter"),
+        },
+        {
+          name: "entries",
+          description: "browse the selected session's entries",
+          shortcut: "l",
+          run: press("l"),
+        },
+        {
+          name: "refresh",
+          description: "reload the sessions list",
+          shortcut: "r",
+          run: press("r"),
+        },
+      ];
+    }
+    return [
+      { name: "fork", description: "fork at the selected entry", shortcut: "f", run: press("f") },
+      {
+        name: "label",
+        description: "label the selected entry",
+        shortcut: "L",
+        run: press("shift+l"),
+      },
+      {
+        name: "toggle",
+        description: "collapse or expand the selected entry",
+        shortcut: "⏎",
+        run: press("enter"),
+      },
+      {
+        name: "back",
+        description: "return to the sessions overview",
+        shortcut: "esc",
+        run: press("escape"),
+      },
+      { name: "refresh", description: "reload this session", shortcut: "r", run: press("r") },
+    ];
   }
 
   private labelLine(theme: Theme, focused: boolean) {

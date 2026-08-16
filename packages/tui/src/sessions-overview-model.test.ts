@@ -173,6 +173,7 @@ describe("overview row rendering", () => {
     entryCount: 7,
     branchCount: 2,
     labelCount: 1,
+    cost: undefined,
   };
 
   it("collapsed rows stay minimal: mark, title, age", () => {
@@ -195,6 +196,29 @@ describe("overview row rendering", () => {
     expect(overviewRowLine({ ...row, arc: "auth-fix" }, false)).toBe(
       "▓ plan the fix · 3m #auth-fix",
     );
+  });
+
+  it("the cursored row gains the session's cost when it is known", () => {
+    expect(overviewRowLine({ ...row, cost: "$0.0042" }, true)).toBe(
+      "▓ plan the fix · 3m · 7e 2b 1l $0.0042",
+    );
+  });
+
+  it("an unknown cost stays off the row instead of showing as free", () => {
+    expect(overviewRowLine(row, true)).toBe("▓ plan the fix · 3m · 7e 2b 1l");
+    expect(overviewRowLine({ ...row, cost: "$0.0042" }, false)).toBe("▓ plan the fix · 3m");
+  });
+});
+
+describe("overview cost formatting", () => {
+  it("formats a known session cost into the row model", () => {
+    const { model } = modelOver([itemOf("a", 1, { costNanos: 4_200_000 })]);
+    expect(model.rows()[0]?.cost).toBe("$0.0042");
+  });
+
+  it("leaves cost undefined when the item carries none", () => {
+    const { model } = modelOver([itemOf("a", 1)]);
+    expect(model.rows()[0]?.cost).toBeUndefined();
   });
 });
 

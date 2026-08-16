@@ -19,12 +19,14 @@ export { ProviderHttpError, ProviderStreamError } from "./errors.ts";
 
 export class OpenAiCompatibleProvider implements Provider {
   readonly name: string;
+  readonly modelId: string;
   private readonly options: Required<Omit<OpenAiCompatibleOptions, "extraHeaders">> & {
     extraHeaders: Record<string, string>;
   };
 
   constructor(options: OpenAiCompatibleOptions) {
     this.name = options.name;
+    this.modelId = options.model;
     this.options = { extraHeaders: {}, fetchFn: fetch, ...options };
   }
 
@@ -36,7 +38,10 @@ export class OpenAiCompatibleProvider implements Provider {
         authorization: `Bearer ${this.options.apiKey}`,
         ...this.options.extraHeaders,
       },
-      body: JSON.stringify(toChatRequest(request, this.options.model)),
+      body: JSON.stringify({
+        ...toChatRequest(request, this.options.model),
+        ...costAccountingFields(this.options.baseUrl),
+      }),
       ...(request.signal !== undefined && { signal: request.signal }),
     });
     if (!response.ok) {
@@ -49,10 +54,29 @@ export class OpenAiCompatibleProvider implements Provider {
 
 const maxToolArgumentBytes = 1_048_576;
 
+// OpenRouter's per-request cost accounting is opt-in through a body field that
+// strict OpenAI-compatible servers reject, so it is added only for that host.
+function costAccountingFields(baseUrl: string): object {
+  try {
+    const host = new URL(baseUrl).hostname;
+    const openRouter = host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+    return openRouter ? { usage: { include: true } } : {};
+  } catch {
+    return {};
+  }
+}
+
+interface WireUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
+  cost?: number;
+}
+
 interface StreamEvent {
   error?: { message?: string } | string;
   choices?: { delta?: WireDelta }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  usage?: WireUsage | null;
 }
 
 interface WireDelta {
@@ -83,12 +107,7 @@ async function* assembleTurn(
     if (event.error != null) {
       throw new ProviderStreamError(provider, describeErrorEvent(event.error));
     }
-    if (event.usage != null) {
-      usage = {
-        inputTokens: event.usage.prompt_tokens ?? 0,
-        outputTokens: event.usage.completion_tokens ?? 0,
-      };
-    }
+    if (event.usage != null) usage = usageFromWire(event.usage);
     const delta = event.choices?.[0]?.delta;
     if (typeof delta?.content === "string" && delta.content !== "") {
       yield { type: "text", text: delta.content };
@@ -99,6 +118,16 @@ async function* assembleTurn(
     yield { type: "tool-call", call: completedCall(index, call) };
   }
   yield { type: "done", usage };
+}
+
+function usageFromWire(wire: WireUsage): Usage {
+  const cachedTokens = wire.prompt_tokens_details?.cached_tokens ?? 0;
+  return {
+    inputTokens: Math.max(0, (wire.prompt_tokens ?? 0) - cachedTokens),
+    outputTokens: wire.completion_tokens ?? 0,
+    ...(cachedTokens > 0 && { cacheReadInputTokens: cachedTokens }),
+    ...(typeof wire.cost === "number" && { costUsd: wire.cost }),
+  };
 }
 
 function describeErrorEvent(error: NonNullable<StreamEvent["error"]>): string {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "../tools/define.ts";
 import type { Tool } from "../tools.ts";
+import type { CitationLedger } from "./citations.ts";
 import { type MemorySearch, type SearchHit, tokenize } from "./search.ts";
 import type { DailyEntry, MemoryStore, Note } from "./store.ts";
 
@@ -10,43 +11,61 @@ export function memoryRecallTools(
   store: MemoryStore,
   search: MemorySearch,
   onRecall?: RecallListener,
+  ledger?: CitationLedger,
 ): Tool[] {
-  return [memorySearchTool(store, search, onRecall), memoryGetTool(store)];
+  return [
+    memorySearchTool(store, search, onRecall, ledger),
+    memoryGetTool(store, onRecall, ledger),
+  ];
 }
 
 export function memorySearchTool(
   store: MemoryStore,
   search: MemorySearch,
   onRecall?: RecallListener,
+  ledger?: CitationLedger,
 ): Tool {
   return defineTool({
     name: "memory_search",
     description:
-      "Search the memory vault (atomic notes and daily logs) for remembered facts, decisions, and conventions. Read a full note afterwards with memory_get.",
+      "Search the memory vault (atomic notes and daily logs) for remembered facts, decisions, and conventions. Read a full note afterwards with memory_get. When a reply relies on a recalled note, cite it inline as a [[Note Name]] wikilink.",
     schema: searchSchema,
     run: async ({ query, limit }) => {
+      const started = performance.now();
       const outcome = await search.search(query, { limit });
       const daily = await searchDaily(store, query, limit);
+      ledger?.recordLatency("search", performance.now() - started);
       if (outcome.hits.length === 0 && daily.length === 0) {
         return `no memories match ${JSON.stringify(query)}`;
       }
-      for (const hit of outcome.hits) onRecall?.(hit.note.name);
+      for (const hit of outcome.hits) {
+        onRecall?.(hit.note.name);
+        ledger?.recordRecall(hit.note.name, "search");
+      }
       return renderSearch(outcome.hits, daily, outcome.source.kind);
     },
   });
 }
 
-export function memoryGetTool(store: MemoryStore): Tool {
+export function memoryGetTool(
+  store: MemoryStore,
+  onRecall?: RecallListener,
+  ledger?: CitationLedger,
+): Tool {
   return defineTool({
     name: "memory_get",
     description:
-      "Read a memory note (or a daily log by date, e.g. daily/2026-08-10) by name, returning numbered lines. Use offset and limit to read a range after a memory_search hit.",
+      "Read a memory note (or a daily log by date, e.g. daily/2026-08-10) by name, returning numbered lines. Use offset and limit to read a range after a memory_search hit. When a reply relies on the note, cite it inline as a [[Note Name]] wikilink.",
     schema: getSchema,
     run: async ({ note, offset, limit }) => {
       const date = dailyDate(note);
       if (date !== undefined) return renderDaily(store, date, offset, limit);
+      const started = performance.now();
       const found = await store.readNote(note);
+      ledger?.recordLatency("get", performance.now() - started);
       if (found === undefined) return `no note named ${JSON.stringify(note)}`;
+      onRecall?.(found.name);
+      ledger?.recordRecall(found.name, "get");
       return renderNote(found, offset, limit);
     },
   });
@@ -110,10 +129,14 @@ function renderSearch(hits: SearchHit[], daily: DailyHit[], retrieval: string): 
 }
 
 function renderHit(hit: SearchHit, index: number): string {
+  const currency = [
+    ...(hit.relations.supersededBy === undefined
+      ? []
+      : [`superseded by [[${hit.relations.supersededBy}]]`]),
+    ...hit.relations.contradicts.map((name) => `contradicts [[${name}]]`),
+  ];
   const line = `${index + 1}. [[${hit.note.name}]] — ${snippet(hit.note.body)}`;
-  return hit.note.supersededBy === undefined
-    ? line
-    : `${line}\n   superseded by [[${hit.note.supersededBy}]]`;
+  return currency.length === 0 ? line : `${line}\n   ${currency.join(" · ")}`;
 }
 
 function renderDailyHit(hit: DailyHit): string {

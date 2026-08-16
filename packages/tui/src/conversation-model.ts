@@ -1,5 +1,15 @@
-import type { Agent, Message, ToolCallPart } from "@keywork/engine";
+import {
+  type Agent,
+  type CostRollup,
+  carriesUsage,
+  formatCostNanos,
+  knownCostNanos,
+  type Message,
+  type ToolCallPart,
+  type Usage,
+} from "@keywork/engine";
 import { clampScroll } from "./clamp.ts";
+import { fuzzyScore } from "./commands.ts";
 import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
@@ -39,6 +49,10 @@ export interface AskDiffWindow {
 
 const suggestionLimit = 5;
 const historyLimit = 50;
+
+const conversationCommands: readonly CommandSuggestion[] = [
+  { name: "cost", description: "token and cost breakdown for this session" },
+];
 
 export type TranscriptEntry =
   | { kind: "user"; text: string }
@@ -152,14 +166,21 @@ export class ConversationModel {
 
   usageSummary(): string {
     if (this.agent === undefined) return "";
+    const cost = knownCostNanos(this.agent.cost());
+    if (cost !== undefined) return formatCostNanos(cost);
     const { inputTokens, outputTokens } = this.agent.usage();
     return inputTokens + outputTokens === 0 ? "" : `${inputTokens}▸${outputTokens}`;
   }
 
   suggestions(): readonly CommandSuggestion[] {
     const query = this.slashQuery();
-    if (query === undefined || this.commands === undefined) return [];
-    return this.commands.search(query).slice(0, suggestionLimit);
+    if (query === undefined) return [];
+    const needle = query.trim().toLowerCase();
+    const local = conversationCommands.filter(({ name }) => fuzzyScore(needle, name) !== undefined);
+    const port = this.commands?.search(query) ?? [];
+    const localLeads = needle !== "" && local.some(({ name }) => name.startsWith(needle));
+    const merged = localLeads ? [...local, ...port] : [...port, ...local];
+    return merged.slice(0, suggestionLimit);
   }
 
   confirmMutation(call: ToolCallPart): Promise<boolean> {
@@ -626,14 +647,33 @@ export class ConversationModel {
   }
 
   private runSlashCommand(suggestions: readonly CommandSuggestion[]): void {
-    if (this.commands === undefined) return;
     const typed = this.input.slice(1).trim();
     const chosen = suggestions[this.selectedSuggestion]?.name;
     this.buffer.clear();
     this.selectedSuggestion = 0;
-    const ran = this.commands.run(typed) || (chosen !== undefined && this.commands.run(chosen));
+    const ran =
+      this.runNamedCommand(typed) || (chosen !== undefined && this.runNamedCommand(chosen));
     if (!ran) this.entries.push({ kind: "error", text: `unknown command /${typed}` });
     this.notify();
+  }
+
+  private runNamedCommand(name: string): boolean {
+    if (name.toLowerCase() === "cost") {
+      this.entries.push({ kind: "info", text: this.costReport() });
+      return true;
+    }
+    return this.commands?.run(name) ?? false;
+  }
+
+  private costReport(): string {
+    const agent = this.agent;
+    if (agent === undefined) return "no provider · nothing to meter";
+    const usage = agent.usage();
+    const cost = agent.cost();
+    if (!carriesUsage(usage) && cost.unpricedTurns === 0) {
+      return "no usage yet · send a prompt first";
+    }
+    return [tokenLine(usage), costLine(cost, agent.modelId())].join("\n");
   }
 
   private requestTitleOnce(): void {
@@ -697,6 +737,30 @@ function isPrintable(chord: Chord, sequence: string | undefined): boolean {
     if (code < 32 || code === 127) return false;
   }
   return true;
+}
+
+function tokenLine(usage: Usage): string {
+  const parts = [`tokens ${usage.inputTokens}▸${usage.outputTokens}`];
+  const read = usage.cacheReadInputTokens ?? 0;
+  const written = usage.cacheCreationInputTokens ?? 0;
+  if (read > 0) parts.push(`cache read ${read}`);
+  if (written > 0) parts.push(`cache write ${written}`);
+  return parts.join(" · ");
+}
+
+function costLine(cost: CostRollup, modelId: string | undefined): string {
+  const known = knownCostNanos(cost);
+  if (known !== undefined) return `cost ${formatCostNanos(known)} · ${costBasis(cost, modelId)}`;
+  if (cost.pricedTurns > 0) {
+    return `cost ${formatCostNanos(cost.nanos)} across ${cost.pricedTurns} priced turns · ${cost.unpricedTurns} more had no pricing`;
+  }
+  return `cost unknown · no pricing for ${modelId ?? "this model"}`;
+}
+
+function costBasis(cost: CostRollup, modelId: string | undefined): string {
+  if (cost.meteredTurns === cost.pricedTurns) return "metered by the provider";
+  if (cost.meteredTurns > 0) return "partly metered, partly estimated";
+  return `estimated from ${modelId ?? "list"} rates`;
 }
 
 function compactJson(value: unknown): string {

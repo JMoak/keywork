@@ -232,6 +232,21 @@ function reviewView(item: ReviewItem): InboxItemView {
         title: `link ${item.note} → ${item.target}`,
         provenance: "agent",
       };
+    case "arc-distillation":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `arc ${item.arc}: deliver ${item.note}`,
+        provenance: "agent",
+        detail: item.eligible ? "eligible" : "below bar",
+      };
+    case "arc-question":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `arc ${item.arc}: triage ${item.note}`,
+        provenance: "agent",
+      };
   }
 }
 

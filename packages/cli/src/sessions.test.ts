@@ -2,7 +2,13 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SessionStore, textMessage } from "@keywork/engine";
+import {
+  type EngineEvents,
+  EventBus,
+  knownCostNanos,
+  SessionStore,
+  textMessage,
+} from "@keywork/engine";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   findSessionFile,
@@ -549,5 +555,70 @@ describe("sessionTreePort", () => {
 
     expect(overview?.map((item) => item.id)).toContain(forkedId);
     expect(overview?.filter((item) => item.id === forkedId)).toHaveLength(1);
+  });
+});
+
+describe("cost capture", () => {
+  it("persists each finished turn's usage and rolls it into the overview", async () => {
+    const dir = await tempDir();
+    const port = sessionPort(dir, ".");
+    const attachment = await port.create();
+    const bus = new EventBus<EngineEvents>();
+    attachment?.replay(bus);
+
+    bus.emit("turn.delta", {
+      delta: {
+        type: "done",
+        usage: { inputTokens: 9, outputTokens: 4, costUsd: 0.0021 },
+      },
+    });
+    await attachment?.append(textMessage("user", "hi"));
+    await attachment?.append(textMessage("assistant", "hey"));
+
+    const file = await latestSessionFile(dir);
+    const store = await SessionStore.open(file ?? "");
+    const assistantEntry = store
+      .entries()
+      .find((entry) => entry.type === "message" && entry.message.role === "assistant");
+    expect(assistantEntry?.type === "message" && assistantEntry.usage).toEqual({
+      inputTokens: 9,
+      outputTokens: 4,
+      costUsd: 0.0021,
+    });
+    expect(knownCostNanos(store.stats().cost)).toBe(2_100_000);
+
+    const overview = await sessionTreePort(dir).overview?.();
+    expect(overview?.at(0)?.costNanos).toBe(2_100_000);
+  });
+
+  it("never mistakes replayed usage for a fresh turn", async () => {
+    const dir = await tempDir();
+    const port = sessionPort(dir, ".");
+    const attachment = await port.create();
+    const bus = new EventBus<EngineEvents>();
+    attachment?.replay(bus);
+
+    bus.emit("turn.delta", {
+      delta: { type: "done", usage: { inputTokens: 9, outputTokens: 4, costUsd: 1 } },
+      replay: true,
+    });
+    await attachment?.append(textMessage("assistant", "restored reply"));
+
+    const file = await latestSessionFile(dir);
+    const store = await SessionStore.open(file ?? "");
+    const entry = store.entries().at(0);
+    expect(entry?.type === "message" && entry.usage).toBeUndefined();
+  });
+
+  it("keeps the overview honest when a session has unpriced usage", async () => {
+    const dir = await tempDir();
+    const opened = await openOrResumeSession(dir, ".");
+    await opened.store.append(textMessage("assistant", "reply"), {
+      inputTokens: 10,
+      outputTokens: 5,
+    });
+
+    const overview = await sessionTreePort(dir).overview?.();
+    expect(overview?.at(0)?.costNanos).toBeUndefined();
   });
 });

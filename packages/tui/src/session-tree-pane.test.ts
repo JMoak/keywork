@@ -488,3 +488,70 @@ function cursorSnapshot(pane: SessionTreePane): {
   const visibleIndexes = pane.model.visibleRows(4).map(({ index }) => index);
   return { cursor: pane.model.cursor, rowCount, visibleIndexes };
 }
+
+describe("SessionTreePane command tray", () => {
+  it("opens on / at the overview and enter runs open on the cursored session", async () => {
+    const world = worldOf("s1", "s2");
+    const { pane, recorded } = paneOver(world);
+    await pane.settled();
+    press(pane, "/");
+    expect(pane.tray.open).toBe(true);
+    expect(pane.tray.matches().map((command) => command.name)).toEqual([
+      "open",
+      "entries",
+      "refresh",
+    ]);
+    press(pane, "enter");
+    await pane.settled();
+    expect(pane.tray.open).toBe(false);
+    expect(recorded.opened).toEqual(["s1"]);
+  });
+
+  it("filters with typed characters and forks through the same key path", async () => {
+    const world = worldOf("s1");
+    const { pane, recorded } = paneOver(world);
+    await pane.settled();
+    press(pane, "l");
+    await pane.settled();
+    press(pane, ":");
+    pane.handleKey(parseChord("f"), "f");
+    expect(pane.tray.matches()[0]?.name).toBe("fork");
+    press(pane, "enter");
+    await pane.settled();
+    expect(world.forkedFrom).toEqual(["s1-e1"]);
+    expect(recorded.opened).toEqual(["forked-1"]);
+  });
+
+  it("closes on escape without acting", async () => {
+    const world = worldOf("s1");
+    const { pane, recorded } = paneOver(world);
+    await pane.settled();
+    press(pane, "/", "escape");
+    expect(pane.tray.open).toBe(false);
+    expect(recorded.opened).toEqual([]);
+  });
+
+  it("offers back at the entries level and returns to the overview", async () => {
+    const world = worldOf("s1");
+    const { pane } = paneOver(world);
+    await pane.settled();
+    press(pane, "l");
+    await pane.settled();
+    press(pane, "/");
+    pane.handleKey(parseChord("b"), "b");
+    press(pane, "enter");
+    await pane.settled();
+    expect(pane.level()).toBe("overview");
+  });
+
+  it("never opens while a label is being typed", async () => {
+    const world = worldOf("s1");
+    const { pane } = paneOver(world);
+    await pane.settled();
+    press(pane, "l");
+    await pane.settled();
+    press(pane, "shift+l", "/");
+    expect(pane.tray.open).toBe(false);
+    expect(pane.model.labeling).toBe(true);
+  });
+});

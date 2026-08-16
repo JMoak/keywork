@@ -825,3 +825,100 @@ describe("session replay rendering", () => {
     expect(titled).toBe(1);
   });
 });
+
+describe("cost accounting", () => {
+  it("shows dollars in the usage summary once every turn is priced", async () => {
+    const provider = new MockProvider(
+      [textTurn("hi", { inputTokens: 10_000, outputTokens: 1_000 })],
+      "gpt-5-mini",
+    );
+    const model = new ConversationModel(new Agent({ provider }), () => {});
+    type(model, "go");
+    await submit(model);
+    expect(model.usageSummary()).toBe("$0.0045");
+  });
+
+  it("keeps showing raw token counts when the model has no pricing", async () => {
+    const provider = new MockProvider([textTurn("hi", { inputTokens: 3, outputTokens: 2 })]);
+    const model = new ConversationModel(new Agent({ provider }), () => {});
+    type(model, "go");
+    await submit(model);
+    expect(model.usageSummary()).toBe("3▸2");
+  });
+
+  it("prefers the provider-metered cost over table estimates", async () => {
+    const provider = new MockProvider(
+      [textTurn("hi", { inputTokens: 10_000, outputTokens: 1_000, costUsd: 0.9 })],
+      "gpt-5-mini",
+    );
+    const model = new ConversationModel(new Agent({ provider }), () => {});
+    type(model, "go");
+    await submit(model);
+    expect(model.usageSummary()).toBe("$0.90");
+  });
+
+  it("stays blank before any usage lands", () => {
+    const model = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
+    expect(model.usageSummary()).toBe("");
+  });
+
+  it("suggests /cost while typing it, without any commands port", () => {
+    const model = new ConversationModel(undefined, () => {});
+    type(model, "/cos");
+    expect(model.suggestions().map((suggestion) => suggestion.name)).toEqual(["cost"]);
+  });
+
+  it("/cost on a fresh session says there is nothing to price yet", () => {
+    const model = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
+    type(model, "/cost");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "no usage yet · send a prompt first",
+    });
+  });
+
+  it("/cost prints tokens plus an estimated total for a priced model", async () => {
+    const provider = new MockProvider(
+      [textTurn("hi", { inputTokens: 10_000, outputTokens: 1_000, cacheReadInputTokens: 500 })],
+      "gpt-5-mini",
+    );
+    const model = new ConversationModel(new Agent({ provider }), () => {});
+    type(model, "go");
+    await submit(model);
+    type(model, "/cost");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "tokens 10000▸1000 · cache read 500\ncost $0.0045 · estimated from gpt-5-mini rates",
+    });
+  });
+
+  it("/cost admits when a model has no pricing instead of claiming zero", async () => {
+    const provider = new MockProvider([textTurn("hi", { inputTokens: 7, outputTokens: 3 })]);
+    const model = new ConversationModel(new Agent({ provider }), () => {});
+    type(model, "go");
+    await submit(model);
+    type(model, "/cost");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "tokens 7▸3\ncost unknown · no pricing for this model",
+    });
+  });
+
+  it("/cost labels a fully provider-metered total as metered", async () => {
+    const provider = new MockProvider([
+      textTurn("hi", { inputTokens: 5, outputTokens: 5, costUsd: 0.002 }),
+    ]);
+    const model = new ConversationModel(new Agent({ provider }), () => {});
+    type(model, "go");
+    await submit(model);
+    type(model, "/cost");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "tokens 5▸5\ncost $0.002 · metered by the provider",
+    });
+  });
+});

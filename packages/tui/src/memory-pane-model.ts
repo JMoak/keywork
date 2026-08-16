@@ -96,6 +96,42 @@ export function toneToken(tone: RowTone): ThemeColorToken {
   return toneTokens[tone];
 }
 
+export interface RecallFeedEntry {
+  note: string;
+  scope: string;
+  provenance: MemoryProvenance;
+  cited?: boolean;
+  supersededBy?: string;
+}
+
+export function recallView(entry: RecallFeedEntry): RecallEventView {
+  const annotations = [
+    ...(entry.cited === true ? ["cited"] : []),
+    ...(entry.supersededBy === undefined ? [] : [`superseded by ${entry.supersededBy}`]),
+  ];
+  return {
+    note: entry.note,
+    scope: entry.scope,
+    provenance: entry.provenance,
+    ...(annotations.length > 0 && { annotation: annotations.join(" · ") }),
+  };
+}
+
+export interface GardenerSweepCounts {
+  promoted: number;
+  merged: number;
+  superseded: number;
+  flagged: number;
+}
+
+export function gardenerSweepView(counts: GardenerSweepCounts): GardenerActivityView {
+  const detail = (Object.entries(counts) as [string, number][])
+    .filter(([, count]) => count > 0)
+    .map(([phase, count]) => `${count} ${phase}`)
+    .join(" · ");
+  return { state: "idle", ...(detail !== "" && { detail }) };
+}
+
 export class MemoryPaneModel {
   cursor = 0;
   scrollTop = 0;

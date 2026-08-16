@@ -316,6 +316,7 @@ describe("SessionStore", () => {
       labels: 1,
       compactions: 1,
       usage: { inputTokens: 250, outputTokens: 60 },
+      cost: { nanos: 0, pricedTurns: 0, meteredTurns: 0, unpricedTurns: 3 },
       createdAt: "2026-08-10T10:00:00.000Z",
       lastActivityAt: stats.lastActivityAt,
     });

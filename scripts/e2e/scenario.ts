@@ -10,11 +10,19 @@ export interface CaptureOptions {
   readonly golden?: boolean;
 }
 
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
 export interface Stage {
   readonly workspaceDir: string;
   readonly sessionDir: string;
   press(...chords: readonly string[]): Promise<void>;
   type(text: string): Promise<void>;
+  click(x: number, y: number): Promise<void>;
+  scroll(x: number, y: number, direction: "up" | "down", times?: number): Promise<void>;
+  drag(from: Point, to: Point): Promise<void>;
   settle(): Promise<void>;
   until(marker: string, timeoutMs?: number): Promise<string>;
   capture(stepName: string, options?: CaptureOptions): Promise<string>;

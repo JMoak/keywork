@@ -38,7 +38,7 @@ import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lif
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { FileOpenOptions, PaneView } from "./pane.ts";
-import { pointerEventOf } from "./pointer.ts";
+import { type PointerEvent, pointerEventOf } from "./pointer.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import { resolveTheme, type Theme } from "./theme.ts";
 import { clipLine, trayRows } from "./tray.ts";
@@ -272,6 +272,22 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     armedExpiry.unref?.();
   };
 
+  // OpenTUI dispatches mouse events through a hit grid of renderable ids; ids of
+  // renderables destroyed by a frame rebuild resolve to nothing and the event is
+  // dropped before reaching root. This persistent transparent plane renders above
+  // every frame, so hits always resolve to a live renderable that bubbles to root.
+  renderer.root.add(
+    Box({
+      id: pointerPlaneId,
+      position: "absolute",
+      left: 0,
+      top: 0,
+      width: "100%",
+      height: "100%",
+      zIndex: pointerPlaneZIndex,
+    }),
+  );
+
   const paintFrame = (): void => {
     watchArmedExpiry();
     discardFrame(renderer.root);
@@ -359,15 +375,16 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   });
 
   renderer.root.onMouse = (event: MouseEvent) => {
+    let pointer: PointerEvent | undefined;
     contain("mouse", () => {
-      const pointer = pointerEventOf(event);
+      pointer = pointerEventOf(event);
       if (pointer === undefined) return;
       core.handleMouse(
         { ...pointer, x: pointer.x - frameChrome.border, y: pointer.y - frameChrome.border },
         performance.now(),
       );
     });
-    render();
+    if (pointer !== undefined && mouseRepaints(core, pointer)) render();
   };
 
   renderer.on("resize", () => render());
@@ -426,15 +443,24 @@ function crashStormGate(): (nowMs: number) => boolean {
 }
 
 const frameChrome = { border: 1, statusRows: 1 } as const;
+export const pointerPlaneId = "pointer-plane";
+const pointerPlaneZIndex = 1000;
 
 interface DiscardableFrame {
-  getChildren(): ReadonlyArray<{ destroyRecursively(): void }>;
+  getChildren(): ReadonlyArray<{ id?: string; destroyRecursively(): void }>;
 }
 
 // OpenTUI frees native text buffers only in destroy; remove() merely detaches,
 // leaking Zig-side allocations until createTextBuffer fails and the app dies.
 export function discardFrame(root: DiscardableFrame): void {
-  for (const child of [...root.getChildren()]) child.destroyRecursively();
+  for (const child of [...root.getChildren()]) {
+    if (child.id !== pointerPlaneId) child.destroyRecursively();
+  }
+}
+
+function mouseRepaints(core: AppCore, pointer: PointerEvent): boolean {
+  if (pointer.type !== "move") return true;
+  return core.paletteOpen || core.helpVisible || core.draggingPane() !== undefined;
 }
 
 function defaultRenderer(): Promise<CliRenderer> {

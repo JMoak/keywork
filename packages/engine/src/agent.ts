@@ -1,5 +1,6 @@
 import { type EngineEvents, EventBus } from "./bus.ts";
 import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
+import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
 import { findTool, type Tool } from "./tools.ts";
 
@@ -44,6 +45,7 @@ export class Agent {
   private readonly guard: ToolGuard | undefined;
   private readonly permissions: PermissionResolver | undefined;
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
+  private costTotals: CostRollup = emptyCostRollup();
   private active: AbortController | undefined;
   private checkpointed = false;
 
@@ -63,6 +65,14 @@ export class Agent {
 
   usage(): Usage {
     return { ...this.totals };
+  }
+
+  cost(): CostRollup {
+    return { ...this.costTotals };
+  }
+
+  modelId(): string | undefined {
+    return this.provider.modelId;
   }
 
   busy(): boolean {
@@ -101,6 +111,7 @@ export class Agent {
     while (true) {
       const turn = await this.streamAssistantTurn(signal);
       this.totals = addUsage(this.totals, turn.usage);
+      this.costTotals = withTurnCost(this.costTotals, turn.usage, this.provider.modelId);
       if (turn.failure !== undefined) throw turn.failure;
       if (turn.interrupted) {
         if (turn.message.parts.length > 0) this.messages.push(turn.message);
@@ -233,9 +244,16 @@ function defaultPermission(tool: Tool): ToolPermission {
 }
 
 function addUsage(left: Usage, right: Usage): Usage {
+  const cacheCreation =
+    (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0);
+  const cacheRead = (left.cacheReadInputTokens ?? 0) + (right.cacheReadInputTokens ?? 0);
+  const metered = left.costUsd !== undefined || right.costUsd !== undefined;
   return {
     inputTokens: left.inputTokens + right.inputTokens,
     outputTokens: left.outputTokens + right.outputTokens,
+    ...(cacheCreation > 0 && { cacheCreationInputTokens: cacheCreation }),
+    ...(cacheRead > 0 && { cacheReadInputTokens: cacheRead }),
+    ...(metered && { costUsd: (left.costUsd ?? 0) + (right.costUsd ?? 0) }),
   };
 }
 

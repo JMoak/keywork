@@ -273,3 +273,56 @@ function describeTree(node: unknown): unknown {
     ...(Array.isArray(record.children) && { children: record.children.map(describeTree) }),
   };
 }
+
+describe("McpPane command tray", () => {
+  const trayFixture = (): McpServerView[] => [
+    { name: "alpha", state: "connected", toolCount: 2 },
+    { name: "beta", state: "down", toolCount: 0, lastError: "boom" },
+  ];
+
+  it("opens on / with the cursored server's actions plus refresh", async () => {
+    const { pane } = await paneOver(trayFixture());
+    pane.handleKey(parseChord("/"));
+    expect(pane.tray.open).toBe(true);
+    expect(pane.tray.matches().map((command) => command.name)).toEqual([
+      "restart",
+      "disable",
+      "tools",
+      "refresh",
+    ]);
+  });
+
+  it("restarts the cursored server and reveals its menu", async () => {
+    const { pane, world } = await paneOver(trayFixture());
+    pane.handleKey(parseChord("/"));
+    pane.handleKey(parseChord("enter"));
+    await pane.settled();
+    expect(world.restarted).toEqual(["alpha"]);
+    expect(pane.model.rows().some((row) => row.id === "menu:alpha:restart")).toBe(true);
+  });
+
+  it("labels the toggle by the server's current state", async () => {
+    const { pane } = await paneOver([
+      { name: "alpha", state: "down", toolCount: 0, enabled: false },
+    ]);
+    pane.handleKey(parseChord("/"));
+    expect(pane.tray.matches().map((command) => command.name)).toContain("enable");
+  });
+
+  it("runs refresh through the pane's own key path", async () => {
+    const { pane, world } = await paneOver(trayFixture());
+    const loadsBefore = world.loads;
+    pane.handleKey(parseChord("/"));
+    for (const character of "ref") pane.handleKey(parseChord(character), character);
+    pane.handleKey(parseChord("enter"));
+    await pane.settled();
+    expect(world.loads).toBe(loadsBefore + 1);
+    expect(pane.tray.open).toBe(false);
+  });
+
+  it("offers only refresh when no server is configured", async () => {
+    const { pane } = await paneOver([]);
+    pane.handleKey(parseChord("/"));
+    expect(pane.tray.matches().map((command) => command.name)).toEqual(["refresh"]);
+  });
+});

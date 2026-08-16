@@ -1,3 +1,4 @@
+import { formatCostNanos } from "@keywork/engine";
 import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
 
@@ -8,6 +9,7 @@ export interface SessionOverviewItem {
   entryCount: number;
   branchCount: number;
   labelCount: number;
+  costNanos?: number;
   arc?: string;
 }
 
@@ -28,6 +30,7 @@ export interface SessionOverviewRow {
   entryCount: number;
   branchCount: number;
   labelCount: number;
+  cost: string | undefined;
 }
 
 export interface SessionsOverviewEffects {
@@ -79,6 +82,7 @@ export class SessionsOverviewModel {
       entryCount: item.entryCount,
       branchCount: item.branchCount,
       labelCount: item.labelCount,
+      cost: item.costNanos === undefined ? undefined : formatCostNanos(item.costNanos),
     }));
   }
 
@@ -190,5 +194,6 @@ function countSummary(row: SessionOverviewRow): string {
   const parts = [`${row.entryCount}e`];
   if (row.branchCount > 0) parts.push(`${row.branchCount}b`);
   if (row.labelCount > 0) parts.push(`${row.labelCount}l`);
+  if (row.cost !== undefined) parts.push(row.cost);
   return parts.join(" ");
 }

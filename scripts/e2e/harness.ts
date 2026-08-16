@@ -235,6 +235,20 @@ function buildStage(context: StageContext): Stage {
       await app.setup.mockInput.typeText(text);
       await sleep(0);
     },
+    click: async (x, y) => {
+      await app.setup.mockMouse.click(x, y);
+      await sleep(0);
+    },
+    scroll: async (x, y, direction, times = 1) => {
+      for (let step = 0; step < times; step += 1) {
+        await app.setup.mockMouse.scroll(x, y, direction);
+      }
+      await sleep(0);
+    },
+    drag: async (from, to) => {
+      await app.setup.mockMouse.drag(from.x, from.y, to.x, to.y);
+      await sleep(0);
+    },
     settle: () => settle(app.setup),
     until: (marker, timeoutMs = untilTimeoutMs) => frameContaining(app.setup, marker, timeoutMs),
     capture: async (stepName, options?: CaptureOptions) => {

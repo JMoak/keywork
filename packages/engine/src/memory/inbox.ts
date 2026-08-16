@@ -21,7 +21,9 @@ export type ReviewItemDetail =
     }
   | { kind: "merge-proposal"; keep: string; retire: string; confidence: number }
   | { kind: "supersession-proposal"; winner: string; loser: string; confidence: number }
-  | { kind: "link-proposal"; note: string; target: string; mention: string };
+  | { kind: "link-proposal"; note: string; target: string; mention: string }
+  | { kind: "arc-distillation"; arc: string; note: string; eligible: boolean }
+  | { kind: "arc-question"; arc: string; note: string };
 
 export type ReviewItem = ReviewItemDetail & { id: string; key: string; created: string };
 
@@ -59,6 +61,10 @@ export function reviewKey(detail: ReviewItemDetail): string {
       return `supersession:${titleKey(detail.loser)}->${titleKey(detail.winner)}`;
     case "link-proposal":
       return `link:${titleKey(detail.note)}->${titleKey(detail.target)}`;
+    case "arc-distillation":
+      return `arc-distillation:${detail.arc}:${titleKey(detail.note)}`;
+    case "arc-question":
+      return `arc-question:${detail.arc}:${titleKey(detail.note)}`;
   }
 }
 
@@ -126,6 +132,8 @@ const reviewKinds = new Set([
   "merge-proposal",
   "supersession-proposal",
   "link-proposal",
+  "arc-distillation",
+  "arc-question",
 ]);
 
 async function readInboxFile(filePath: string): Promise<ReviewItem[]> {

@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Message, Usage } from "../messages.ts";
+import { type CostRollup, sessionCost } from "../pricing.ts";
 import {
   type BranchSummaryEntry,
   buildTree,
@@ -27,6 +28,7 @@ export interface SessionStats {
   labels: number;
   compactions: number;
   usage: Usage;
+  cost: CostRollup;
   createdAt: string;
   lastActivityAt: string;
 }
@@ -192,6 +194,7 @@ export class SessionStore {
       labels: this.labelByTarget.size,
       compactions: this.log.filter((entry) => entry.type === "compaction").length,
       usage: sumUsage(this.log),
+      cost: sessionCost(this.log),
       createdAt: this.header.timestamp,
       lastActivityAt: timestamps.at(-1) ?? this.header.timestamp,
     };
@@ -251,11 +254,20 @@ function countBranchPoints(entries: readonly SessionEntry[]): number {
 function sumUsage(entries: readonly SessionEntry[]): Usage {
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheCreation = 0;
+  let cacheRead = 0;
   for (const entry of entries) {
     if (entry.type !== "message" && entry.type !== "compaction" && entry.type !== "branch_summary")
       continue;
     inputTokens += entry.usage?.inputTokens ?? 0;
     outputTokens += entry.usage?.outputTokens ?? 0;
+    cacheCreation += entry.usage?.cacheCreationInputTokens ?? 0;
+    cacheRead += entry.usage?.cacheReadInputTokens ?? 0;
   }
-  return { inputTokens, outputTokens };
+  return {
+    inputTokens,
+    outputTokens,
+    ...(cacheCreation > 0 && { cacheCreationInputTokens: cacheCreation }),
+    ...(cacheRead > 0 && { cacheReadInputTokens: cacheRead }),
+  };
 }
