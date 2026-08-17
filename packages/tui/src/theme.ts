@@ -1,7 +1,9 @@
 export interface Theme {
   background: string;
   panel: string;
+  panelLift: string;
   text: string;
+  textMid: string;
   textDim: string;
   border: string;
   borderFocus: string;
@@ -23,7 +25,9 @@ export interface ThemeOverrides {
 export const keyworkNight: Theme = {
   background: "#1a1b26",
   panel: "#1f2335",
+  panelLift: "#24283b",
   text: "#c0caf5",
+  textMid: "#828bb8",
   textDim: "#565f89",
   border: "#3b4261",
   borderFocus: "#bb9af7",

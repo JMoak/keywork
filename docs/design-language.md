@@ -122,6 +122,76 @@ are policy-configurable; the *formula* is not a mode enum.
 word (policy-file bundle names, Jordan's naming call; divergence renders `custom`), the
 staging count in ramp texture, token/cost per A15. Every item justified or absent.
 
+## The page: transcript typography (added 2026-08-16, the page pass — 104/PD18)
+
+The reading surface gets its grammar. One honest constraint frames everything: terminal
+cell size is fixed, so **the type scale is a content scale** — what renders and how
+condensed varies, font size never does; "big type" exists only as block-glyph headlines.
+
+**The width-tier grammar.** A pane's width tier governs the page the way flavors govern
+chrome — one resolution, every page property derives from it (working thresholds,
+refined in implementation):
+
+| Tier | Width | Padding | Measure | Tones | Treatment |
+|---|---|---|---|---|---|
+| broadsheet | ≥100 cols | 2 cells | prose ~88, left-anchored, never centered | full ladder (`textFaint` unlocked) | the full page |
+| column | 70–99 | 1 cell | none — the rail composes full bleed | three | the working default |
+| clipping | 40–69 | half | none | three | density-first, chrome shed |
+| masthead | <40 | — | — | — | transcript yields to a fitted headline: session topic in block glyphs (tier-2; tier-0 caps fallback) + one status line |
+
+Prose obeys the measure; machine output (tool detail, diffs, fences, tables) always
+runs full bleed. The newspaper look is embraced where it naturally occurs and composed
+where there's room.
+
+**The density rail.** A two-cell left rail owns the voice stamps; body text hangs from
+it and never touches the border. Full-bleed ink, composed ink — the rail is also where
+arc hue lives when chroma arrives.
+
+**Voice is provenance.** The transcript's spine reuses the provenance ramp — `█` user
+(closest to you) · `▓` agent · `░` machine output — the same "denser = closer to you"
+rule this document already binds, applied to the page rather than a new meaning. The
+agent's stamp builds `░→▒→▓` while the turn streams and settles at `▓` (motion in ink,
+stepped); on tool blocks the stamp doubles as the fold — the disclosure handle for
+collapsed detail.
+
+**Markdown renders, never shows.** Louder in structure, quiet in palette: headings =
+accent + one density mark; list markers accent; code spans on `panelLift`; fences on
+`panel` with a rail and a dim language tag; syntax highlighting through existing theme
+tokens only — the ramp does double duty, no dedicated highlight colors.
+
+**The tonal ladder.** `text` · `textMid` (supporting facts: paths, counts, results) ·
+`textDim` (chrome), with `textFaint` reserved to the broadsheet tier. The `panel`
+surface earns its keep (fences, elevated blocks). `textMid`/`panelLift` land before
+C49 freezes the flavor schema.
+
+**The tool row.** One designed line: fold-stamp · verb · subject · duration/size ·
+outcome — outcome is the only colored word. Expanded detail hangs under a faint rule;
+V2.1's live tail streams inside the row, then settles to the one-liner.
+
+## The title bar (added 2026-08-16, the page pass addendum — 104/PD19)
+
+Two zones on the top border, width-tier resolved by the same grammar as the page:
+
+`╭ [stamp] name · telemetry ─ mode ╮`
+
+- **The lifecycle stamp** (one cell, left of the name — identity intertwined with
+  status) reuses the tile-fill states wholesale: **working** = the tile filling ·
+  **awaiting approval** = full-density accent `█` (the needs-you state, the only
+  notifying one) · **finished, unseen** = the completed tile held quietly until the
+  pane is focused, then the ink drains away (completions stay silent per the
+  notification formula — this is the return-state made visible) · **failed turn** =
+  `▛`, the missing tile · **idle, read** = blank. A calm pane wears zero marks.
+- **Telemetry** is the 102 lens slot — one value, workspace-lens resolved, never a
+  bespoke per-surface detail. Hidden on unfocused panes below the column tier.
+- **Mode word** (PD12): dim, rendered only for non-default modes (`plan`, `recall`);
+  Agent renders nothing — mark the exception, never the default.
+- **Arc** stays off the title text below broadsheet width; the border's arc hue carries
+  identity, and the monochrome slug tag appears at broadsheet only (overview rows
+  always carry it).
+- **Real-estate priority order** under narrowing: stamp survives last (1 cell), then
+  the fitted name, then telemetry, then the mode word — telemetry and mode yield
+  first, the stamp never does.
+
 ## Ledger chips
 
 Session-ledger durable-write chips stay textual (`+mem ±skill ±cfg` styling to be

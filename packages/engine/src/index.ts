@@ -353,7 +353,7 @@ export {
   type SessionStats,
   SessionStore,
 } from "./session/store.ts";
-export { kebabTitle, suggestTitle } from "./titles.ts";
+export { fitTitle, kebabTitle, suggestTitle, type TitleContext } from "./titles.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
 export { coreTools, type MemoryRecall } from "./tools/core.ts";
 export { defineTool } from "./tools/define.ts";
