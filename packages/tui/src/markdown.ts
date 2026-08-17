@@ -9,7 +9,10 @@ export type MarkdownTone =
   | "rule"
   | "fence"
   | "fenceRail"
-  | "fenceTag";
+  | "fenceTag"
+  | "meta"
+  | "ok"
+  | "bad";
 
 export interface MarkdownSpan {
   text: string;

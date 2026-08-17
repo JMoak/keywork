@@ -14,6 +14,7 @@ import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import { type MarkdownRow, type MarkdownSpan, renderMarkdown } from "./markdown.ts";
+import { inkAt } from "./motion.ts";
 import { columnPage, type PageGrammar, proseWidth } from "./page.ts";
 import { TailFollow } from "./tail-follow.ts";
 
@@ -35,6 +36,7 @@ export type ForkOutcome = { forked: false } | { forked: true; note?: string };
 export interface ConversationPorts {
   readFile?: FileReader;
   forkAtPrompt?: (promptOrdinal: number, draft: string) => Promise<ForkOutcome>;
+  now?: () => number;
 }
 
 export interface PendingAsk {
@@ -56,12 +58,29 @@ const conversationCommands: readonly CommandSuggestion[] = [
   { name: "cost", description: "token and cost breakdown for this session" },
 ];
 
+export interface ToolRun {
+  name: string;
+  subject: string;
+  args: string;
+  replay: boolean;
+  startedAtMs: number;
+  folded: boolean;
+  live?: string | undefined;
+  outcome?: "done" | "failed";
+  reason?: string;
+  durationMs?: number;
+  outputChars?: number;
+  detail?: string[];
+}
+
 export type TranscriptEntry =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
-  | { kind: "tool"; text: string; failed: boolean }
+  | { kind: "tool"; text: string; failed: boolean; run?: ToolRun }
   | { kind: "error"; text: string }
   | { kind: "info"; text: string };
+
+type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
 
 export class ConversationModel {
   readonly entries: TranscriptEntry[] = [];
@@ -78,12 +97,15 @@ export class ConversationModel {
   private readonly queue: string[] = [];
   private readonly history: string[] = [];
   private historyIndex: number | undefined;
-  private tailFollow: TailFollow | undefined;
   private askPageRows = 8;
   private backtrackAt: number | undefined;
   private backtrackMoved = false;
   private escapePrimed = false;
-  private readonly runningTools = new Map<string, { entry: TranscriptEntry; name: string }>();
+  private readonly runningTools = new Map<
+    string,
+    { entry: ToolEntry; run: ToolRun; tail: TailFollow }
+  >();
+  private streaming: { entry: TranscriptEntry; steps: number } | undefined;
   private readonly wrapCache = new WeakMap<
     TranscriptEntry,
     {
@@ -92,6 +114,8 @@ export class ConversationModel {
       gutter: number;
       text: string;
       failed: boolean;
+      stamp: string;
+      folded: boolean;
       lines: TranscriptLine[];
     }
   >();
@@ -131,32 +155,41 @@ export class ConversationModel {
         notify();
       }),
       agent.bus.on("tool.started", ({ call, replay }) => {
-        const entry: TranscriptEntry = {
-          kind: "tool",
-          text: `· ${call.name} ${compactJson(call.arguments)}`,
-          failed: false,
+        this.streaming = undefined;
+        const run: ToolRun = {
+          name: call.name,
+          subject: toolSubject(call.arguments),
+          args: compactJson(call.arguments),
+          replay: replay === true,
+          startedAtMs: this.now(),
+          folded: true,
         };
-        this.runningTools.set(call.callId, { entry, name: call.name });
+        const entry: ToolEntry = { kind: "tool", text: toolRowText(run), failed: false, run };
+        this.runningTools.set(call.callId, { entry, run, tail: new TailFollow() });
         this.entries.push(entry);
-        this.tailFollow = replay === true ? undefined : new TailFollow();
         notify();
       }),
-      agent.bus.on("tool.output", ({ chunk }) => {
-        this.tailFollow?.push(chunk);
+      agent.bus.on("tool.output", ({ chunk, callId }) => {
+        const running =
+          (callId === undefined ? undefined : this.runningTools.get(callId)) ??
+          [...this.runningTools.values()].at(-1);
+        if (running === undefined || running.run.replay) return;
+        running.tail.push(chunk);
+        running.run.live = running.tail.rows(liveLineLimit).at(-1);
+        running.entry.text = toolRowText(running.run);
         notify();
       }),
       agent.bus.on("tool.finished", ({ callId, output, isError }) => {
         this.settleTool(callId, output, isError);
-        this.tailFollow = undefined;
         notify();
       }),
       agent.bus.on("turn.completed", ({ replay }) => {
-        this.tailFollow = undefined;
+        this.streaming = undefined;
         if (replay !== true) this.requestTitleOnce();
         notify();
       }),
       agent.bus.on("turn.interrupted", () => {
-        this.tailFollow = undefined;
+        this.streaming = undefined;
         this.entries.push({ kind: "info", text: "— interrupted" });
         notify();
       }),
@@ -229,7 +262,7 @@ export class ConversationModel {
     this.queue.length = 0;
     this.pendingAsk?.resolve(false);
     this.pendingAsk = undefined;
-    this.tailFollow = undefined;
+    this.streaming = undefined;
     this.backtrackAt = undefined;
     this.busy = false;
     this.agent?.interrupt();
@@ -242,10 +275,7 @@ export class ConversationModel {
   visibleTranscript(width: number, rows: number, page: PageGrammar = columnPage): TranscriptLine[] {
     this.pageRows = rows;
     this.revealBacktrack(width, rows, page);
-    const lines = [
-      ...this.linesFromEnd(width, rows + this.scrollBack, page),
-      ...this.tailLines(width),
-    ];
+    const lines = this.linesFromEnd(width, rows + this.scrollBack, page);
     this.scrollBack = clampScroll(this.scrollBack, lines.length, rows);
     const end = lines.length - this.scrollBack;
     return lines.slice(Math.max(0, end - rows), end);
@@ -266,14 +296,6 @@ export class ConversationModel {
     return tail.reverse().flat();
   }
 
-  private tailLines(width: number): TranscriptLine[] {
-    if (this.tailFollow === undefined || this.runningTools.size === 0) return [];
-    const mark = this.tailFollow.mark();
-    return this.tailFollow
-      .rows(Math.max(1, width - 2))
-      .map((text) => ({ kind: "tail" as const, failed: false, text: `${mark} ${text}` }));
-  }
-
   private revealBacktrack(width: number, rows: number, page: PageGrammar): void {
     const at = this.backtrackAt;
     if (at === undefined || !this.backtrackMoved) return;
@@ -292,7 +314,10 @@ export class ConversationModel {
 
   private wrappedLines(entry: TranscriptEntry, width: number, page: PageGrammar): TranscriptLine[] {
     const failed = entry.kind === "tool" && entry.failed;
-    const prose = proseWidth(page, width);
+    const bodyWidth = Math.max(1, width - railWidth);
+    const prose = proseWidth(page, bodyWidth);
+    const stamp = this.stampFor(entry);
+    const folded = entry.kind === "tool" ? entry.run?.folded !== false : true;
     const cached = this.wrapCache.get(entry);
     if (
       cached !== undefined &&
@@ -300,20 +325,44 @@ export class ConversationModel {
       cached.prose === prose &&
       cached.gutter === page.proseGutter &&
       cached.text === entry.text &&
-      cached.failed === failed
+      cached.failed === failed &&
+      cached.stamp === stamp &&
+      cached.folded === folded
     ) {
       return cached.lines;
     }
-    const lines = entryLines(entry, width, page);
+    const lines = entryLines(entry, bodyWidth, page).map((line, index) => ({
+      ...line,
+      stamp: index === 0 ? stamp : railBlank,
+      source: entry,
+    }));
     this.wrapCache.set(entry, {
       width,
       prose,
       gutter: page.proseGutter,
       text: entry.text,
       failed,
+      stamp,
+      folded,
       lines,
     });
     return lines;
+  }
+
+  private stampFor(entry: TranscriptEntry): string {
+    switch (entry.kind) {
+      case "user":
+        return "█ ";
+      case "assistant":
+        return entry === this.streaming?.entry
+          ? `${inkAt(streamRamp, Math.min(1, this.streaming.steps / streamSettleSteps))} `
+          : "▓ ";
+      case "tool":
+      case "error":
+        return "░ ";
+      case "info":
+        return railBlank;
+    }
   }
 
   paste(text: string): boolean {
@@ -359,6 +408,9 @@ export class ConversationModel {
         return this.scrollBy(this.pageRows);
       case "pagedown":
         return this.scrollBy(-this.pageRows);
+      case "tab":
+        if (!this.buffer.isEmpty()) return false;
+        return this.toggleLatestToolFold();
       default:
         if (!isPrintable(chord, sequence)) return false;
         return this.edit(() => this.buffer.insert(sequence ?? ""));
@@ -437,8 +489,38 @@ export class ConversationModel {
     const running = this.runningTools.get(callId);
     if (running === undefined) return;
     this.runningTools.delete(callId);
-    running.entry.text = `${isError ? "✗" : "✓"} ${running.name} — ${firstLine(output)}`;
-    if (running.entry.kind === "tool") running.entry.failed = isError;
+    const { entry, run } = running;
+    run.durationMs = Math.max(0, this.now() - run.startedAtMs);
+    run.outcome = isError ? "failed" : "done";
+    if (isError) run.reason = firstLine(output);
+    run.outputChars = output.length;
+    run.detail = detailLines(output);
+    run.live = undefined;
+    entry.failed = isError;
+    entry.text = toolRowText(run);
+  }
+
+  private now(): number {
+    return this.ports?.now?.() ?? Date.now();
+  }
+
+  toggleLatestToolFold(): boolean {
+    for (let at = this.entries.length - 1; at >= 0; at -= 1) {
+      const entry = this.entries[at];
+      if (entry?.kind === "tool" && entry.run?.detail !== undefined) {
+        return this.toggleToolFold(entry);
+      }
+    }
+    return false;
+  }
+
+  toggleToolFold(entry: TranscriptEntry): boolean {
+    if (entry.kind !== "tool" || entry.run === undefined || entry.run.detail === undefined) {
+      return false;
+    }
+    entry.run.folded = !entry.run.folded;
+    this.notify();
+    return true;
   }
 
   private handleEscape(primed: boolean): boolean {
@@ -715,20 +797,32 @@ export class ConversationModel {
     const last = this.entries.at(-1);
     if (last?.kind === "assistant") {
       last.text += text;
+      if (this.streaming?.entry === last) this.streaming.steps += 1;
       return;
     }
-    this.entries.push({ kind: "assistant", text });
+    const entry: TranscriptEntry = { kind: "assistant", text };
+    this.entries.push(entry);
+    this.streaming = { entry, steps: 0 };
   }
 }
 
 export interface TranscriptLine {
-  kind: TranscriptEntry["kind"] | "tail";
+  kind: TranscriptEntry["kind"];
   failed: boolean;
   text: string;
   spans?: MarkdownSpan[];
   panel?: true;
   selected?: true;
+  stamp?: string;
+  source?: TranscriptEntry;
 }
+
+export const railWidth = 2;
+const railBlank = "  ";
+const streamRamp = ["░", "▒", "▓"] as const;
+const streamSettleSteps = 4;
+const liveLineLimit = 120;
+const detailLineLimit = 12;
 
 export function transcriptLines(
   entries: readonly TranscriptEntry[],
@@ -747,6 +841,9 @@ export function transcriptLines(
 function entryLines(entry: TranscriptEntry, width: number, page: PageGrammar): TranscriptLine[] {
   switch (entry.kind) {
     case "tool":
+      return entry.run === undefined
+        ? transcriptLines([entry], width)
+        : toolEntryLines(entry.run, entry.failed, width, page);
     case "error":
       return transcriptLines([entry], width);
     case "assistant":
@@ -757,14 +854,121 @@ function entryLines(entry: TranscriptEntry, width: number, page: PageGrammar): T
   }
 }
 
+function toolEntryLines(
+  run: ToolRun,
+  failed: boolean,
+  width: number,
+  page: PageGrammar,
+): TranscriptLine[] {
+  const spans = clipSpans(toolRowSpans(run), width);
+  const row: TranscriptLine = { kind: "tool", failed, text: spanText(spans), spans };
+  if (run.folded || run.detail === undefined) return [row];
+  const ruleText = "─".repeat(Math.max(1, Math.min(width, proseWidth(page, width))));
+  const rule: TranscriptLine = {
+    kind: "tool",
+    failed: false,
+    text: ruleText,
+    spans: [{ text: ruleText, tone: "rule" }],
+  };
+  const detail = [...(run.args === "{}" ? [] : [run.args]), ...run.detail]
+    .flatMap((line) => wrap(line, width))
+    .map((text) => ({
+      kind: "tool" as const,
+      failed: false,
+      text,
+      spans: [{ text, tone: "meta" as const }],
+    }));
+  return [row, rule, ...detail];
+}
+
+function toolRowSpans(run: ToolRun): MarkdownSpan[] {
+  const head = run.subject === "" ? run.name : `${run.name} ${run.subject}`;
+  if (run.outcome === undefined) {
+    return [
+      { text: head, tone: "body" },
+      { text: ` · ${run.live ?? "running"}`, tone: "meta" },
+    ];
+  }
+  const meta = [durationText(run), sizeText(run)]
+    .filter((part) => part !== undefined)
+    .map((part) => ` · ${part}`)
+    .join("");
+  const spans: MarkdownSpan[] = [
+    { text: head, tone: "body" },
+    { text: `${meta} · `, tone: "meta" },
+    { text: run.outcome, tone: run.outcome === "done" ? "ok" : "bad" },
+  ];
+  if (run.reason !== undefined && run.reason !== "") {
+    spans.push({ text: ` — ${run.reason}`, tone: "meta" });
+  }
+  return spans;
+}
+
+function toolRowText(run: ToolRun): string {
+  return spanText(toolRowSpans(run));
+}
+
+function toolSubject(args: unknown): string {
+  if (typeof args !== "object" || args === null) return "";
+  const record = args as Record<string, unknown>;
+  const favored = ["path", "file", "filename", "command", "cmd", "url", "query", "name", "pattern"];
+  const key =
+    favored.find((candidate) => typeof record[candidate] === "string") ??
+    Object.keys(record).find((candidate) => typeof record[candidate] === "string");
+  if (key === undefined) return "";
+  const value = record[key] as string;
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length > 40 ? `${flat.slice(0, 39)}…` : flat;
+}
+
+function durationText(run: ToolRun): string | undefined {
+  if (run.replay || run.durationMs === undefined) return undefined;
+  if (run.durationMs < 1000) return `${run.durationMs}ms`;
+  if (run.durationMs < 60_000) return `${(run.durationMs / 1000).toFixed(1)}s`;
+  return `${Math.round(run.durationMs / 60_000)}m`;
+}
+
+function sizeText(run: ToolRun): string | undefined {
+  if (run.outputChars === undefined || run.outputChars < 1000) return undefined;
+  return `${(run.outputChars / 1000).toFixed(1)}k`;
+}
+
+function detailLines(output: string): string[] {
+  const lines = output.split("\n").map((line) => line.replace(/\s+$/, ""));
+  while (lines.length > 0 && lines.at(-1) === "") lines.pop();
+  if (lines.length <= detailLineLimit) return lines;
+  return [...lines.slice(0, detailLineLimit), `… ${lines.length - detailLineLimit} more lines`];
+}
+
+function spanText(spans: readonly MarkdownSpan[]): string {
+  return spans.map((span) => span.text).join("");
+}
+
+function clipSpans(spans: readonly MarkdownSpan[], width: number): MarkdownSpan[] {
+  const clipped: MarkdownSpan[] = [];
+  let used = 0;
+  for (const span of spans) {
+    const points = Array.from(span.text);
+    if (used + points.length <= width) {
+      clipped.push({ ...span });
+      used += points.length;
+      continue;
+    }
+    const room = Math.max(0, width - used - 1);
+    if (room > 0) clipped.push({ ...span, text: points.slice(0, room).join("") });
+    clipped.push({ text: "…", tone: "meta" });
+    return clipped;
+  }
+  return clipped;
+}
+
 function proseEntryLines(
   entry: TranscriptEntry,
   width: number,
   page: PageGrammar,
 ): TranscriptLine[] {
   const gutter = " ".repeat(page.proseGutter);
-  const prefixed = entry.kind === "user" ? `› ${entry.text}` : entry.text;
-  return prefixed
+  return entry.text
     .split("\n")
     .flatMap((line) => wrap(line, proseWidth(page, width)))
     .map((text) => ({

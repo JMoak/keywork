@@ -11,6 +11,23 @@ const notesBefore = "alpha\nbeta\ngamma\n";
 const notesAfter = "alpha\nBETA\ngamma\n";
 const askRowMarker = "[y] allow  [a] always  [n] deny";
 
+const pageProse =
+  "The width tier decides the measure, so a paragraph this long has to fold at the tier's prose width instead of running the whole pane.";
+const pageFenceLine =
+  "export const page = resolvePage(width, thresholds); // fences hold full bleed while prose keeps the measure";
+const pageMarkdown = [
+  "## the page",
+  "",
+  pageProse,
+  "",
+  "- prose keeps the tier measure",
+  "- machine output runs full bleed",
+  "",
+  "```ts",
+  pageFenceLine,
+  "```",
+].join("\n");
+
 const listTool: Tool = {
   name: "list",
   description: "lists workspace files",
@@ -23,6 +40,7 @@ export const scenarios: readonly Scenario[] = [
   firstConversation(),
   tilingTour(),
   chromaSweep(),
+  pageTiers(),
   sessionLifecycle(),
   discovery(),
   defectRepros(),
@@ -90,7 +108,8 @@ function firstConversation(): Scenario {
 
       await stage.press("y");
       const settled = await stage.until("All set — beta is BETA now.");
-      assert.ok(settled.includes("✓ write"), "tool settles to its ✓ line");
+      assert.ok(settled.includes("write notes.txt"), "the tool row names its verb and subject");
+      assert.ok(settled.includes("· done"), "the tool row settles to its outcome word");
       assert.equal(workspaceRead(stage, "notes.txt"), notesAfter);
       await stage.until("─ session-1 ─");
       await stage.capture("turn-complete");
@@ -248,11 +267,83 @@ function chromaSweep(): Scenario {
   };
 }
 
+function pageTiers(): Scenario {
+  return {
+    name: "page-tiers",
+    description:
+      "C59 fixtures: one turn zoomed through broadsheet, column, clipping, and masthead widths",
+    size: { width: 132, height: 36 },
+    tools: () => [listTool],
+    turns: [
+      [
+        { type: "text", text: pageMarkdown },
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "call-page-list", name: "list", arguments: {} },
+        },
+        { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
+      ],
+      textTurn("Tier sweep ready — the same turn at four widths."),
+    ],
+    run: async (stage) => {
+      assert.ok(pageProse.length > 100, "the prose fixture must overrun the broadsheet measure");
+      assert.ok(
+        pageFenceLine.length > 100 && pageFenceLine.length < 124,
+        "the fence fixture must overrun the measure yet fit the broadsheet bleed",
+      );
+
+      await stage.settle();
+      await stage.type("lay out the page grammar");
+      await stage.press("enter");
+      await stage.until("· done");
+      await stage.until("Tier sweep ready");
+      await stage.press("ctrl+k", "z", "escape");
+      await stage.settle();
+
+      const broadsheet = await stage.capture("broadsheet-132");
+      assert.equal(paneTitleCount(broadsheet), 1, "zoom leaves the one pane holding the turn");
+      assert.ok(
+        broadsheet.includes(pageFenceLine),
+        "the fence line runs full bleed past the prose measure",
+      );
+      assert.ok(!broadsheet.includes(pageProse), "prose folds at the broadsheet measure");
+      assert.ok(broadsheet.includes("░ list"), "the tool row rides the rail with its voice stamp");
+      assert.ok(!broadsheet.includes("drwxr-xr-x"), "tool detail starts folded");
+
+      await stage.click(4, rowOf(broadsheet, "░ list"));
+      const disclosed = await stage.until("drwxr-xr-x");
+      await stage.capture("tool-row-open");
+
+      await stage.press("tab");
+      await stage.settle();
+      const refolded = await stage.capture("tool-row-refolded");
+      assert.ok(!refolded.includes("drwxr-xr-x"), "tab folds the disclosed row back down");
+      assert.ok(disclosed.includes("░ list"), "the collapsed row survives disclosure");
+
+      await stage.resize(84, 36);
+      const column = await stage.capture("column-84");
+      assert.ok(
+        !column.includes(pageFenceLine),
+        "at column width the bleed narrows, so the fence folds with it",
+      );
+
+      await stage.resize(56, 36);
+      await stage.capture("clipping-56");
+
+      await stage.resize(32, 36);
+      await stage.capture("masthead-32");
+
+      await stage.quit();
+    },
+  };
+}
+
 function sessionLifecycle(): Scenario {
   const reply = "Noted — the plan is recorded.";
   const toolProse = "Counting the files now.";
   const toolVerdict = "There are 4 files here.";
-  const settledToolLine = "✓ list — total 4";
+  const settledToolMark = "· done";
+  const replayToolLine = "░ list · done";
   return {
     name: "session-lifecycle",
     description:
@@ -312,14 +403,14 @@ function sessionLifecycle(): Scenario {
       await stage.settle();
       await stage.type("count the files");
       await stage.press("enter");
-      await stage.until(settledToolLine);
+      await stage.until(settledToolMark);
       await stage.until(toolVerdict);
       await stage.settle();
       await stage.capture("tool-turn");
 
       await stage.relaunch();
       await stage.until(reply);
-      await stage.until(settledToolLine);
+      await stage.until(replayToolLine);
       await stage.settle();
       const restored = await stage.capture("relaunched-restored");
       assert.equal(paneTitleCount(restored), 2, "both session panes come back");
@@ -330,7 +421,7 @@ function sessionLifecycle(): Scenario {
       assert.ok(restored.includes("plan the fix"), "the revived session replays the prompt");
       assert.ok(restored.includes(toolVerdict), "the closing prose replays after the tool entry");
       const proseAt = restored.indexOf(toolProse);
-      const toolAt = restored.indexOf(settledToolLine);
+      const toolAt = restored.indexOf(replayToolLine);
       assert.ok(
         proseAt >= 0 && proseAt < toolAt,
         "replay keeps the streamed prose before the settled tool line, as it rendered live",

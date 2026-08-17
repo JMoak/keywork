@@ -13,7 +13,7 @@ import {
   toolCallTurn,
 } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
-import { ConversationModel, transcriptLines } from "./conversation-model.ts";
+import { ConversationModel, type TranscriptEntry, transcriptLines } from "./conversation-model.ts";
 import { parseChord } from "./keys.ts";
 import { resolvePage } from "./page.ts";
 
@@ -92,7 +92,11 @@ describe("ConversationModel", () => {
 
     const kinds = model.entries.map((entry) => entry.kind);
     expect(kinds).toEqual(["user", "tool", "assistant"]);
-    expect(model.entries[1]).toMatchObject({ text: "✓ echo — echo: hi", failed: false });
+    expect(model.entries[1]).toMatchObject({ failed: false });
+    expect(model.entries[1]?.text).toMatch(/^echo hi · \d+(\.\d+)?(ms|s|m) · done$/);
+    expect(model.entries[1]).toMatchObject({
+      run: { detail: ["echo: hi"], folded: true },
+    });
   });
 
   it("surfaces provider failures as error entries instead of throwing", async () => {
@@ -782,9 +786,14 @@ describe("session replay rendering", () => {
     return { live, revived };
   }
 
-  it("renders a revived tool-call turn exactly as it rendered live", async () => {
+  it("renders a revived tool-call turn as it rendered live, minus live-only timings", async () => {
     const { live, revived } = await livedAndRevived();
-    expect(revived.entries).toEqual(live.entries);
+    const rendered = (entries: readonly TranscriptEntry[]) =>
+      entries.map(({ kind, text }) => ({
+        kind,
+        text: text.replace(/ · \d+(\.\d+)?(ms|s|m)/, ""),
+      }));
+    expect(rendered(revived.entries)).toEqual(rendered(live.entries));
   });
 
   it("never merges prose across turns around a replayed tool entry", async () => {
@@ -796,7 +805,7 @@ describe("session replay rendering", () => {
       "assistant",
     ]);
     expect(revived.entries[1]).toEqual({ kind: "assistant", text: "Counting the files now." });
-    expect(revived.entries[2]).toMatchObject({ kind: "tool", text: "✓ list — total 4" });
+    expect(revived.entries[2]).toMatchObject({ kind: "tool", text: "list · done" });
     expect(revived.entries[3]).toEqual({ kind: "assistant", text: "There are 4 files here." });
   });
 
@@ -951,7 +960,7 @@ describe("the page grammar in the transcript", () => {
     model.entries.push({ kind: "tool", text: "✓ bash — ok", failed: false });
 
     const lines = model.visibleTranscript(150, 60, resolvePage(156));
-    expect(lines.find((line) => line.kind === "user")?.text).toBe(" › go");
+    expect(lines.find((line) => line.kind === "user")?.text).toBe(" go");
     expect(lines.find((line) => line.kind === "tool")?.text).toBe("✓ bash — ok");
   });
 
@@ -977,7 +986,7 @@ describe("the page grammar in the transcript", () => {
     const user = lines.find((line) => line.kind === "user");
     const assistant = lines.find((line) => line.kind === "assistant");
 
-    expect(user?.text).toBe("› **not markdown**");
+    expect(user?.text).toBe("**not markdown**");
     expect(user?.spans).toBeUndefined();
     expect(assistant?.text).toBe("bold");
     expect(assistant?.spans).toContainEqual({ text: "bold", tone: "body", bold: true });
@@ -993,5 +1002,130 @@ describe("the page grammar in the transcript", () => {
 
     expect(fenceRows.map((line) => line.text)).toEqual(["▎ ts", `▎ ${wide}`]);
     expect(lines.some((line) => line.text.includes("```"))).toBe(false);
+  });
+});
+
+describe("the voice rail and tool rows", () => {
+  function blankModel(): ConversationModel {
+    const model = new ConversationModel(undefined, () => {});
+    model.entries.length = 0;
+    return model;
+  }
+
+  const longOutputTool: Tool = {
+    name: "spool",
+    description: "spools many lines",
+    parameters: { type: "object" },
+    execute: async () => Array.from({ length: 20 }, (_, at) => `line ${at + 1}`).join("\n"),
+  };
+
+  const failingTool: Tool = {
+    name: "detonate",
+    description: "always fails",
+    parameters: { type: "object" },
+    execute: async () => {
+      throw new Error("boom");
+    },
+  };
+
+  async function ranModel(tool: Tool, args: Record<string, unknown> = {}) {
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "c1", name: tool.name, arguments: args }),
+        textTurn("after"),
+      ]),
+      tools: [tool],
+    });
+    const model = new ConversationModel(agent, () => {});
+    model.submitText("go");
+    await model.lastSend;
+    return model;
+  }
+
+  it("stamps entries by voice and blanks continuation rows", () => {
+    const model = blankModel();
+    model.entries.push({ kind: "user", text: "go" });
+    model.entries.push({ kind: "assistant", text: "word ".repeat(20).trim() });
+    model.entries.push({ kind: "info", text: "a notice" });
+
+    const lines = model.visibleTranscript(30, 40);
+    const user = lines.find((line) => line.kind === "user");
+    const prose = lines.filter((line) => line.kind === "assistant");
+    const info = lines.find((line) => line.kind === "info");
+
+    expect(user?.stamp).toBe("█ ");
+    expect(prose[0]?.stamp).toBe("▓ ");
+    expect(prose.slice(1).every((line) => line.stamp === "  ")).toBe(true);
+    expect(prose.length).toBeGreaterThan(1);
+    expect(info?.stamp).toBe("  ");
+    for (const line of lines) expect(Array.from(line.text).length).toBeLessThanOrEqual(28);
+  });
+
+  it("steps the streaming stamp through the ramp and settles it on interrupt", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const model = new ConversationModel(agent, () => {});
+    const stamp = () =>
+      model.visibleTranscript(60, 20).find((line) => line.kind === "assistant")?.stamp;
+
+    agent.bus.emit("turn.delta", { delta: { type: "text", text: "one " } });
+    expect(stamp()).toBe("░ ");
+    agent.bus.emit("turn.delta", { delta: { type: "text", text: "two " } });
+    agent.bus.emit("turn.delta", { delta: { type: "text", text: "three " } });
+    expect(stamp()).toBe("▒ ");
+    agent.bus.emit("turn.interrupted", { message: textMessage("assistant", "one two three") });
+    expect(stamp()).toBe("▓ ");
+  });
+
+  it("collapses a settled tool run and discloses detail under a rule on tab", async () => {
+    const model = await ranModel(echoTool, { text: "hi" });
+    const toolLines = () => model.visibleTranscript(80, 40).filter((line) => line.kind === "tool");
+
+    const folded = toolLines();
+    expect(folded).toHaveLength(1);
+    expect(folded[0]?.spans).toContainEqual({ text: "done", tone: "ok" });
+    expect(folded[0]?.stamp).toBe("░ ");
+
+    expect(model.handleKey(parseChord("tab"), undefined)).toBe(true);
+    const open = toolLines();
+    expect(open.length).toBeGreaterThan(2);
+    expect(open[1]?.spans?.[0]?.tone).toBe("rule");
+    expect(open.at(-1)?.text).toBe("echo: hi");
+    expect(open.slice(1).every((line) => line.stamp === "  ")).toBe(true);
+
+    expect(model.handleKey(parseChord("tab"), undefined)).toBe(true);
+    expect(toolLines()).toHaveLength(1);
+  });
+
+  it("leaves tab alone while the prompt holds text", async () => {
+    const model = await ranModel(echoTool, { text: "hi" });
+    type(model, "draft");
+    expect(model.handleKey(parseChord("tab"), undefined)).toBe(false);
+    expect(model.visibleTranscript(80, 40).filter((line) => line.kind === "tool")).toHaveLength(1);
+  });
+
+  it("caps disclosed detail and marks the overflow", async () => {
+    const model = await ranModel(longOutputTool);
+    model.handleKey(parseChord("tab"), undefined);
+    const lines = model.visibleTranscript(80, 60).filter((line) => line.kind === "tool");
+    expect(lines.at(-1)?.text).toBe("… 8 more lines");
+    expect(lines.filter((line) => line.text.startsWith("line "))).toHaveLength(12);
+  });
+
+  it("carries the failure reason on the collapsed row", async () => {
+    const model = await ranModel(failingTool);
+    const entry = model.entries.find(
+      (candidate): candidate is TranscriptEntry & { kind: "tool" } => candidate.kind === "tool",
+    );
+    expect(entry?.failed).toBe(true);
+    expect(entry?.text).toMatch(/ · failed — /);
+    const row = model.visibleTranscript(80, 40).find((line) => line.kind === "tool");
+    expect(row?.spans).toContainEqual({ text: "failed", tone: "bad" });
+  });
+
+  it("clips an overlong tool row with an ellipsis instead of wrapping", async () => {
+    const model = await ranModel(echoTool, { text: "x".repeat(120) });
+    const rows = model.visibleTranscript(40, 40).filter((line) => line.kind === "tool");
+    expect(rows).toHaveLength(1);
+    expect(Array.from(rows[0]?.text ?? "").length).toBeLessThanOrEqual(38);
   });
 });

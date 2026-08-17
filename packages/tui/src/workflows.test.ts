@@ -1299,11 +1299,10 @@ describe("safety net", () => {
     probe.keys("n");
     await probe.settled();
 
-    expect(probe.model()?.entries).toContainEqual({
-      kind: "tool",
-      text: "✗ scribble — declined by user",
-      failed: true,
-    });
+    const declined = probe.model()?.entries.find((entry) => entry.kind === "tool");
+    expect(declined).toMatchObject({ kind: "tool", failed: true });
+    expect(declined?.text).toContain("scribble");
+    expect(declined?.text).toContain("failed — declined by user");
   });
 });
 
@@ -1338,7 +1337,7 @@ describe("live tool tail-follow", () => {
     return { probe, agents };
   }
 
-  it("grows a bounded dim tail while the tool runs and settles to the ✓ line", async () => {
+  it("streams the live tail inside the tool row and settles it to the one-liner", async () => {
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -1346,33 +1345,33 @@ describe("live tool tail-follow", () => {
     const { probe, agents } = tailProbe(gate);
     probe.type("go").keys("enter");
     await waitFor(() => {
-      const tail = probe
-        .model()
-        ?.visibleTranscript(38, 12)
-        .filter((line) => line.kind === "tail");
-      expect(tail?.length).toBeGreaterThan(0);
+      const entry = probe.model()?.entries.find((candidate) => candidate.kind === "tool");
+      expect(entry?.text).toContain("step 3");
     });
 
-    const tail = (probe.model()?.visibleTranscript(38, 12) ?? []).filter(
-      (line) => line.kind === "tail",
+    const running = probe.model()?.entries.find((entry) => entry.kind === "tool");
+    expect(running?.text).toMatch(/^slow · /);
+    expect(running?.text.includes("\x1b")).toBe(false);
+    expect(running?.text.includes("step 2")).toBe(false);
+    const runningLines = (probe.model()?.visibleTranscript(38, 12) ?? []).filter(
+      (line) => line.kind === "tool",
     );
-    expect(tail.length).toBeLessThanOrEqual(3);
-    for (const line of tail) expect(line.text).toMatch(/^[░▒▓█] /);
-    expect(tail.map((line) => line.text)).toContainEqual(expect.stringContaining("step 2"));
-    expect(tail.some((line) => line.text.includes("\x1b"))).toBe(false);
-    expect(tail.some((line) => line.text.includes("…"))).toBe(true);
-    for (const line of tail) expect(Array.from(line.text).length).toBeLessThanOrEqual(38);
+    expect(runningLines).toHaveLength(1);
+    expect(runningLines[0]?.stamp).toBe("░ ");
+    for (const line of runningLines) {
+      expect(Array.from(line.text).length).toBeLessThanOrEqual(36);
+    }
 
     release();
     await probe.settled();
 
-    const lines = probe.model()?.visibleTranscript(38, 12) ?? [];
-    expect(lines.filter((line) => line.kind === "tail")).toEqual([]);
-    expect(probe.model()?.entries).toContainEqual({
-      kind: "tool",
-      text: "✓ slow — final result",
-      failed: false,
-    });
+    const settled = probe.model()?.entries.find((entry) => entry.kind === "tool");
+    expect(settled?.text).toMatch(/^slow · \d+(\.\d+)?(ms|s|m) · done$/);
+    expect(settled).toMatchObject({ failed: false });
+    if (settled?.kind === "tool") {
+      expect(settled.run?.detail).toEqual(["final result"]);
+      expect(settled.run?.live).toBeUndefined();
+    }
 
     const toolResults = (agents[0]?.history() ?? [])
       .filter((message) => message.role === "tool")
@@ -1534,14 +1533,14 @@ describe("esc-backtrack prompt stepping", () => {
       (probe.model()?.visibleTranscript(60, 12) ?? [])
         .filter((line) => line.selected === true)
         .map((line) => line.text);
-    expect(selectedText()).toEqual(["› two"]);
+    expect(selectedText()).toEqual(["two"]);
 
     probe.keys("up");
-    expect(selectedText()).toEqual(["› one"]);
+    expect(selectedText()).toEqual(["one"]);
     probe.keys("up");
-    expect(selectedText()).toEqual(["› one"]);
+    expect(selectedText()).toEqual(["one"]);
     probe.keys("down");
-    expect(selectedText()).toEqual(["› two"]);
+    expect(selectedText()).toEqual(["two"]);
 
     probe.keys("escape");
     expect(probe.model()?.backtracking()).toBe(false);

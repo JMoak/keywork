@@ -49,6 +49,33 @@
 - **C58 (1pt) — tonal tokens** ✅ 2026-08-16: `textMid` (#828bb8) and `panelLift`
   (#24283b) in `tui/theme.ts`, override-validated like every token. Sequenced ahead of
   C49 deliberately.
+- **C59 (3pt) — width-tier page grammar** ✅ 2026-08-17: `tui/page.ts` (tier resolution,
+  `.describe()`-justified `page` threshold config through cli → runApp → ConversationPane,
+  re-resolved every render so resize crosses tiers within a frame; prose folds at the
+  tier measure behind the gutter while tool rows and fence interiors run full bleed —
+  fences behind the two-cell `▎` rail). Capture leg: `page-tiers` e2e scenario renders
+  the one fixture turn zoomed at 132/84/56/32 with structural assertions (fence intact
+  only at broadsheet, prose never intact); the four captures in
+  `artifacts/e2e/page-tiers/` await Jordan's approval, and the masthead-width capture
+  honestly shows a condensed transcript until C63 builds the tile.
+- **C61 (2pt) — density-stamp voice & the rail** — base LANDED 2026-08-17, options round
+  OPEN: two-cell rail on every transcript entry (`█` user · `▓` agent · `░` machine ·
+  blank for notices; continuation rows hang blank), streaming stamp steps `░→▒→▓` off
+  text deltas (deterministic, no timers; settles `▓` on complete/interrupt — the C53
+  animator integration can replace the delta clock later without changing the surface),
+  stamp-as-fold on tool rows (click any tool row; tab on an empty prompt toggles the
+  newest disclosed-capable row — reaching older rows by keyboard is an options-round
+  question), the user `› ` transcript prefix retired (the rail carries voice; the prompt
+  keeps `›`). Jordan's creative-elevation candidates (C40-rendered) still owed; noted
+  nit for that round: an h2's `▓` heading mark sits beside the agent's `▓` stamp.
+- **C62 (1pt) — the tool row** ✅ 2026-08-17: collapsed form `verb subject · duration ·
+  size · outcome` with outcome the only colored word (failures append the reason dim:
+  `· failed — declined by user`), replay suppresses meaningless durations, disclosure
+  under a faint rule at the prose measure (args + output capped at 12 lines with an
+  overflow mark), V2.1 tail now streams inside the row (`verb · <live line>`,
+  ANSI-stripped via TailFollow) and settles to the one-liner — the separate tail block
+  and its `tail` line kind are retired. Fixtures: `page-tiers` captures 01–03
+  (rail/row/fold round-trip mouse-open → tab-close, structurally asserted).
 
 ## Tasks
 

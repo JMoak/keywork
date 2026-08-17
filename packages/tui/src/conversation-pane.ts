@@ -41,6 +41,8 @@ export class ConversationPane implements Pane {
   private readonly model: ConversationModel;
   private readonly pageThresholds: PageThresholds;
   private closed = false;
+  private lastLines: readonly TranscriptLine[] = [];
+  private lastMaxRows = 0;
 
   constructor(
     readonly id: string,
@@ -77,10 +79,20 @@ export class ConversationPane implements Pane {
     return this.model.paste(text);
   }
 
-  handleMouse(_local: { x: number; y: number }, event: PointerEvent): boolean {
-    if (event.type !== "scroll" || event.scroll === undefined) return false;
-    const steps = wheelSteps(event.scroll.delta);
-    return this.model.scrollBy(event.scroll.direction === "up" ? steps : -steps);
+  handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (event.type === "scroll" && event.scroll !== undefined) {
+      const steps = wheelSteps(event.scroll.delta);
+      return this.model.scrollBy(event.scroll.direction === "up" ? steps : -steps);
+    }
+    if (event.type !== "down") return false;
+    const entry = this.entryAtRow(local.y - 1)?.source;
+    return entry === undefined ? false : this.model.toggleToolFold(entry);
+  }
+
+  private entryAtRow(contentRow: number): TranscriptLine | undefined {
+    const index = contentRow - (this.lastMaxRows - this.lastLines.length);
+    if (index < 0 || index >= this.lastLines.length) return undefined;
+    return this.lastLines[index];
   }
 
   confirmMutation(call: ToolCallPart): Promise<boolean> {
@@ -162,6 +174,8 @@ export class ConversationPane implements Pane {
       (this.model.scrollBack > 0 ? 1 : 0);
     const maxRows = Math.max(0, paneContentHeight(height) - reservedRows);
     const lines = this.model.visibleTranscript(innerWidth, maxRows, page);
+    this.lastLines = lines;
+    this.lastMaxRows = maxRows;
     const scrollBack = this.model.scrollBack;
     return paneChrome(
       context,
@@ -215,20 +229,49 @@ function askRow(summary: string, width: number, theme: Theme) {
 }
 
 function transcriptRow(line: TranscriptLine, width: number, theme: Theme) {
+  const stamp = line.stamp ?? "";
   if (line.selected === true) {
     return Text({
-      content: (line.text || " ").padEnd(width),
+      content: `${stamp}${line.text || " "}`.padEnd(width),
       fg: theme.background,
       bg: theme.accent,
     });
   }
-  if (line.spans !== undefined) return styledRow(line.spans, line.panel === true, width, theme);
-  return Text({ content: line.text || " ", fg: lineColor(line, theme) });
+  const lead = stamp === "" ? [] : [fg(stampColor(line, theme))(stamp)];
+  const bodyWidth = width - Array.from(stamp).length;
+  if (line.spans !== undefined) {
+    return styledRow(lead, line.spans, line.panel === true, bodyWidth, theme);
+  }
+  if (lead.length === 0) return Text({ content: line.text || " ", fg: lineColor(line, theme) });
+  return Text({
+    content: new StyledText([...lead, fg(lineColor(line, theme))(line.text || " ")]),
+  });
 }
 
-function styledRow(spans: MarkdownSpan[], panel: boolean, width: number, theme: Theme) {
-  if (spans.length === 0) return Text({ content: " " });
-  const chunks = spans.map((span) => spanChunk(span, theme, panel));
+function stampColor(line: TranscriptLine, theme: Theme): string {
+  switch (line.kind) {
+    case "user":
+      return theme.accent;
+    case "assistant":
+      return theme.textMid;
+    case "tool":
+      return line.failed ? theme.error : theme.textDim;
+    case "error":
+      return theme.error;
+    case "info":
+      return theme.textDim;
+  }
+}
+
+function styledRow(
+  lead: TextChunk[],
+  spans: MarkdownSpan[],
+  panel: boolean,
+  width: number,
+  theme: Theme,
+) {
+  if (lead.length === 0 && spans.length === 0) return Text({ content: " " });
+  const chunks = [...lead, ...spans.map((span) => spanChunk(span, theme, panel))];
   if (panel) {
     const filled = spans.reduce((total, span) => total + Array.from(span.text).length, 0);
     if (filled < width) chunks.push(bg(theme.panel)(" ".repeat(width - filled)));
@@ -264,6 +307,12 @@ function spanColor(tone: MarkdownTone, theme: Theme): string {
     case "rule":
     case "fenceTag":
       return theme.textDim;
+    case "meta":
+      return theme.textMid;
+    case "ok":
+      return theme.success;
+    case "bad":
+      return theme.error;
   }
 }
 
@@ -300,8 +349,6 @@ function lineColor(line: TranscriptLine, theme: Theme): string {
       return theme.text;
     case "tool":
       return line.failed ? theme.error : theme.success;
-    case "tail":
-      return theme.textDim;
     case "error":
       return theme.error;
     case "info":
