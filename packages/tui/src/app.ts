@@ -21,6 +21,7 @@ import {
 import { AppCore, bindingHelp, helpFrame, type PresetsPort, paletteFrame } from "./app-core.ts";
 import { promptAnchor } from "./backtrack.ts";
 import { BrowserPane } from "./browser-pane.ts";
+import { paneBorder, rampPositions } from "./chroma.ts";
 import type { CommandSpec } from "./commands.ts";
 import type { ConversationPorts, ForkOutcome, Titler } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
@@ -31,16 +32,18 @@ import {
   registerExtensions,
 } from "./extension-commands.ts";
 import { FilePane } from "./file-pane.ts";
+import { FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
 import type { Keymap } from "./keymap.ts";
 import { chordOf } from "./keys.ts";
 import { minPaneSize, type Rect, type Screen } from "./layout.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
 import type { FileOpenOptions, PaneView } from "./pane.ts";
 import { type PointerEvent, pointerEventOf } from "./pointer.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
-import { resolveTheme, type Theme } from "./theme.ts";
+import type { Theme, ThemeOverrides } from "./theme.ts";
 import { clipLine, trayRows } from "./tray.ts";
 import { parseWorkspaceState, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
@@ -91,7 +94,8 @@ export interface SessionTurn {
 }
 
 export interface AppOptions {
-  themeOverrides?: Record<string, string>;
+  themeOverrides?: ThemeOverrides;
+  page?: PageThresholdOverrides;
   agentFactory?: AgentFactory;
   afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
   closers?: readonly Closer[];
@@ -111,7 +115,8 @@ export interface AppOptions {
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
-  const theme = resolveTheme(options.themeOverrides);
+  const flavors = new FlavorSwitch(startupFlavors(options.themeOverrides));
+  const pageThresholds = resolvePageThresholds(options.page);
   const restored = await loadRestorePlan(options);
   const renderer = await (options.createRenderer ?? defaultRenderer)();
   const exit = options.exit ?? ((code: number) => process.exit(code));
@@ -164,6 +169,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       };
       const created = new ConversationPane(id, agent, notify, titler, commands, {
         ports,
+        page: pageThresholds,
         ...(draft !== undefined && { initialDraft: draft }),
       });
       pane = created;
@@ -289,6 +295,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   );
 
   const paintFrame = (): void => {
+    const theme = flavors.theme;
     watchArmedExpiry();
     discardFrame(renderer.root);
     renderer.root.add(
@@ -394,6 +401,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     process.off("unhandledRejection", onRejection);
   };
 
+  registerFlavorCommands(core.registry, flavors, {
+    repaint: render,
+    notice: (text) => core.postNotice(text),
+  });
   renderer.auto();
   core.bindNotify(render);
   core.start();
@@ -761,10 +772,11 @@ function buildBody(core: AppCore, theme: Theme, screen: Screen) {
   }
   const idleMain = core.layout.emptyMainRect(screen);
   const dropPreview = core.dragPreview();
+  const sweep = rampPositions([...core.panes.keys()]);
   return Box(
     { width: screen.width, height: screen.height },
     ...[...rects].map(([id, rect]) =>
-      placedBox(rect, paneViewFor(core, theme, id, rect, id === focused)),
+      placedBox(rect, paneViewFor(core, theme, id, rect, id === focused, sweep.get(id) ?? 0)),
     ),
     ...(idleMain === undefined ? [] : [placedBox(idleMain, idleMainView(theme))]),
     ...(dropPreview === undefined ? [] : [dropPreviewBox(dropPreview, theme)]),
@@ -825,11 +837,18 @@ function paneViewFor(
   id: string,
   rect: Rect,
   focused: boolean,
+  rampPosition: number,
 ): PaneView {
   if (rect.width < minPaneSize.width || rect.height < minPaneSize.height) {
     return overflowedView(theme);
   }
-  const view = core.panes.get(id)?.view({ theme, focused, width: rect.width, height: rect.height });
+  const view = core.panes.get(id)?.view({
+    theme,
+    focused,
+    width: rect.width,
+    height: rect.height,
+    borderColor: paneBorder(theme, rampPosition, focused),
+  });
   return view ?? emptyView(theme);
 }
 

@@ -15,6 +15,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { ConversationModel, transcriptLines } from "./conversation-model.ts";
 import { parseChord } from "./keys.ts";
+import { resolvePage } from "./page.ts";
 
 const echoTool: Tool = {
   name: "echo",
@@ -681,12 +682,12 @@ describe("windowed transcript", () => {
 
   it("matches the full wrap-and-slice result at the live edge and scrolled", () => {
     const model = bigConversation();
-    const full = transcriptLines(model.entries, 40);
+    const full = transcriptLines(model.entries, 40).map((line) => line.text);
 
-    expect(model.visibleTranscript(40, 8)).toEqual(full.slice(-8));
+    expect(model.visibleTranscript(40, 8).map((line) => line.text)).toEqual(full.slice(-8));
 
     model.scrollBy(100);
-    expect(model.visibleTranscript(40, 8)).toEqual(full.slice(-108, -100));
+    expect(model.visibleTranscript(40, 8).map((line) => line.text)).toEqual(full.slice(-108, -100));
   });
 
   it("clamps a scroll past the top to the oldest window", () => {
@@ -920,5 +921,77 @@ describe("cost accounting", () => {
       kind: "info",
       text: "tokens 5▸5\ncost $0.002 · metered by the provider",
     });
+  });
+});
+
+describe("the page grammar in the transcript", () => {
+  function blankModel(): ConversationModel {
+    const model = new ConversationModel(undefined, () => {});
+    model.entries.length = 0;
+    return model;
+  }
+
+  it("wraps prose to the broadsheet measure while machine output runs full bleed", () => {
+    const model = blankModel();
+    model.entries.push({ kind: "assistant", text: "word ".repeat(40).trim() });
+    model.entries.push({ kind: "tool", text: `· bash ${"x".repeat(140)}`, failed: false });
+
+    const lines = model.visibleTranscript(150, 60, resolvePage(156));
+    const prose = lines.filter((line) => line.kind === "assistant");
+    const machine = lines.filter((line) => line.kind === "tool");
+
+    expect(prose.length).toBeGreaterThan(1);
+    for (const line of prose) expect(line.text.length).toBeLessThanOrEqual(89);
+    expect(Math.max(...machine.map((line) => line.text.length))).toBe(147);
+  });
+
+  it("indents prose by the gutter and leaves machine output on the margin", () => {
+    const model = blankModel();
+    model.entries.push({ kind: "user", text: "go" });
+    model.entries.push({ kind: "tool", text: "✓ bash — ok", failed: false });
+
+    const lines = model.visibleTranscript(150, 60, resolvePage(156));
+    expect(lines.find((line) => line.kind === "user")?.text).toBe(" › go");
+    expect(lines.find((line) => line.kind === "tool")?.text).toBe("✓ bash — ok");
+  });
+
+  it("re-wraps when a resize crosses a tier threshold", () => {
+    const model = blankModel();
+    model.entries.push({ kind: "assistant", text: "word ".repeat(40).trim() });
+
+    const broad = model.visibleTranscript(150, 60, resolvePage(156));
+    const column = model.visibleTranscript(76, 60, resolvePage(80));
+
+    expect(Math.max(...broad.map((line) => line.text.length))).toBeLessThanOrEqual(89);
+    expect(Math.max(...column.map((line) => line.text.length))).toBeLessThanOrEqual(76);
+    expect(column.map((line) => line.text)).not.toEqual(broad.map((line) => line.text));
+    expect(column[0]?.text.startsWith(" ")).toBe(false);
+  });
+
+  it("renders assistant markdown as styled spans and user text verbatim", () => {
+    const model = blankModel();
+    model.entries.push({ kind: "user", text: "**not markdown**" });
+    model.entries.push({ kind: "assistant", text: "**bold**" });
+
+    const lines = model.visibleTranscript(60, 10);
+    const user = lines.find((line) => line.kind === "user");
+    const assistant = lines.find((line) => line.kind === "assistant");
+
+    expect(user?.text).toBe("› **not markdown**");
+    expect(user?.spans).toBeUndefined();
+    expect(assistant?.text).toBe("bold");
+    expect(assistant?.spans).toContainEqual({ text: "bold", tone: "body", bold: true });
+  });
+
+  it("runs fence rows on the panel past the prose measure", () => {
+    const model = blankModel();
+    const wide = "x".repeat(100);
+    model.entries.push({ kind: "assistant", text: `\`\`\`ts\n${wide}\n\`\`\`` });
+
+    const lines = model.visibleTranscript(120, 60, resolvePage(126));
+    const fenceRows = lines.filter((line) => line.panel === true);
+
+    expect(fenceRows.map((line) => line.text)).toEqual(["▎ ts", `▎ ${wide}`]);
+    expect(lines.some((line) => line.text.includes("```"))).toBe(false);
   });
 });

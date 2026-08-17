@@ -7,6 +7,15 @@ export {
   type ToolPermission,
 } from "./agent.ts";
 export { type EngineEvents, EventBus } from "./bus.ts";
+export {
+  declaredCapabilitiesFor,
+  type InputModality,
+  type ModelCapabilities,
+  type ModelCapabilityDeclaration,
+  UndeclaredCapabilityError,
+  undeclaredCapabilities,
+  withDeclaredCapabilities,
+} from "./capabilities.ts";
 export { Checkpoints, type CheckpointsOptions, UnknownCheckpointError } from "./checkpoints.ts";
 export {
   type DiagnosticsLevel,
@@ -74,6 +83,13 @@ export {
   mcpSearchToolName,
 } from "./mcp/registry.ts";
 export {
+  anchorFrontmatter,
+  type CheckpointAnchor,
+  type CheckpointAnchorInputs,
+  checkpointAnchor,
+  readAnchor,
+} from "./memory/anchors.ts";
+export {
   type AckSweep,
   ArcAirlock,
   type ArcAirlockOptions,
@@ -131,6 +147,14 @@ export {
   validateArcSlug,
 } from "./memory/arcs/registry.ts";
 export {
+  type AskAnswer,
+  type AskEvent,
+  AskGateLedger,
+  type AskGateLedgerOptions,
+  defaultPreferenceThreshold,
+  toolShape,
+} from "./memory/ask-gate.ts";
+export {
   type BootstrapInjection,
   type BootstrapLayer,
   bootstrapMemory,
@@ -152,9 +176,11 @@ export {
   type UsefulnessSink,
 } from "./memory/citations.ts";
 export {
+  backtrackFlushClause,
   defaultFlushSettings,
   type FlushOutcome,
   type FlushSettings,
+  flushPrompt,
   isMemoryFlushPrompt,
   isNoReply,
   MemoryFlush,
@@ -346,6 +372,21 @@ export {
   sessionFormatVersion,
   type ThinkingLevelChangeEntry,
 } from "./session/entries.ts";
+export {
+  type ContextInjection,
+  type ExtensionState,
+  extensionState,
+  type InjectionSource,
+  type JournalEvent,
+  type JournalTap,
+  journalEvents,
+  type PermissionDecision,
+  type PermissionGate,
+  type PermissionVerdict,
+  recordJournalEvent,
+  replayJournalEntry,
+  tapJournal,
+} from "./session/journal.ts";
 export { replaySession } from "./session/replay.ts";
 export {
   type BranchSummaryInput,
@@ -355,10 +396,22 @@ export {
 } from "./session/store.ts";
 export { fitTitle, kebabTitle, suggestTitle, type TitleContext } from "./titles.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
-export { coreTools, type MemoryRecall } from "./tools/core.ts";
+export {
+  confinedPath,
+  scopeContains,
+  scopeCwd,
+  type ToolScope,
+  toolScope,
+} from "./tools/confine.ts";
+export { type CoreToolTaps, coreTools, type MemoryRecall } from "./tools/core.ts";
 export { defineTool } from "./tools/define.ts";
 export { editTool } from "./tools/edit.ts";
 export { readTool } from "./tools/read.ts";
+export {
+  persistentBashTool,
+  type ShellRunOptions,
+  ShellSession,
+} from "./tools/shell-session.ts";
 export { writeTool } from "./tools/write.ts";
 export { findTool, type Tool, ToolNotFoundError } from "./tools.ts";
 

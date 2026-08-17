@@ -19,8 +19,11 @@ import {
   skillTool,
   type Tool,
   type ToolGuard,
+  type ToolScope,
+  toolScope,
 } from "@keywork/engine";
 import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
+import { openWorkspace, resolveAnchor } from "@keywork/shared";
 import { loadWorkspaceExtensions, type WorkspaceExtensions } from "./commands.ts";
 import {
   bootstrapInjection,
@@ -38,6 +41,7 @@ export interface CompositionOptions {
   prompts?: PromptsConfig | undefined;
   modelId?: string | undefined;
   mcpServers?: Record<string, McpServerConfig> | undefined;
+  onFileSaved?: ((path: string) => void) | undefined;
   reportCheckpointsUnavailable?: (message: string) => void;
   userRoot?: string;
   checkpointsGitDir?: string;
@@ -45,11 +49,13 @@ export interface CompositionOptions {
 
 export interface Composition {
   cwd: string;
+  scope: ToolScope;
   systemPrompt: string;
   memory: WorkspaceMemory | undefined;
   checkpoints: Checkpoints | undefined;
   extensions: WorkspaceExtensions;
   mcp: McpRegistry | undefined;
+  onFileSaved: ((path: string) => void) | undefined;
 }
 
 export async function composeWorkspace(options: CompositionOptions): Promise<Composition> {
@@ -77,7 +83,22 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     options.userRoot ?? join(homedir(), ".keywork"),
   );
   const mcp = startMcpRegistry(options.mcpServers);
-  return { cwd, systemPrompt, memory, checkpoints, extensions, mcp };
+  return {
+    cwd,
+    scope: workspaceToolScope(cwd, projectTrusted),
+    systemPrompt,
+    memory,
+    checkpoints,
+    extensions,
+    mcp,
+    onFileSaved: options.onFileSaved,
+  };
+}
+
+export function workspaceToolScope(cwd: string, projectTrusted: boolean): ToolScope {
+  const anchorRoot = resolveAnchor(cwd).root;
+  const linkedDirs = projectTrusted ? (openWorkspace(cwd)?.contextDirs ?? []) : [];
+  return toolScope(cwd, [anchorRoot, ...linkedDirs]);
 }
 
 export interface AgentCompositionOptions {
@@ -104,11 +125,9 @@ export function composeAgents(
   composition: Composition,
   options: AgentCompositionOptions,
 ): AgentComposition {
-  const skillTools =
-    composition.extensions.skills.length > 0 ? [skillTool(composition.extensions.skills)] : [];
   const flushes = new Map<string, MemoryFlush>();
   return {
-    build: (spec) => buildAgent(composition, options, skillTools, spec),
+    build: (spec) => buildAgent(composition, options, spec),
     flushFor: (sessionId) => {
       if (composition.memory === undefined) return undefined;
       const existing = flushes.get(sessionId);
@@ -139,15 +158,18 @@ export function startMcpRegistry(
 function buildAgent(
   composition: Composition,
   options: AgentCompositionOptions,
-  skillTools: readonly Tool[],
   spec: AgentBuildSpec,
 ): Agent {
   let self: Agent | undefined;
+  const skillTools = skillToolsFor(composition, () => self);
   const baseTools = [
     ...coreTools(
-      composition.cwd,
+      composition.scope,
       memoryRecall(composition.memory, spec.sessionId, spec.onRetrieval),
-      (chunk) => self?.bus.emit("tool.output", { chunk }),
+      {
+        onToolOutput: (chunk) => self?.bus.emit("tool.output", { chunk }),
+        onFileSaved: composition.onFileSaved,
+      },
     ),
     ...skillTools,
   ];
@@ -171,4 +193,13 @@ function buildAgent(
   });
   self = agent;
   return agent;
+}
+
+function skillToolsFor(composition: Composition, agent: () => Agent | undefined): Tool[] {
+  if (composition.extensions.skills.length === 0) return [];
+  return [
+    skillTool(composition.extensions.skills, (skill) =>
+      agent()?.bus.emit("context.injected", { injection: { source: "skill", id: skill.name } }),
+    ),
+  ];
 }

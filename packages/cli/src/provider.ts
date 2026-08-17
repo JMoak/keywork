@@ -1,11 +1,14 @@
 import {
   BedrockProvider,
   credentialsFromEnv,
+  declaredCapabilitiesFor,
+  type ModelCapabilityDeclaration,
   OpenAiCompatibleProvider,
   OpenAiResponsesProvider,
   type Provider,
   RetryingProvider,
   regionFromEnv,
+  withDeclaredCapabilities,
 } from "@keywork/engine";
 import type { Credential, CredentialMap, OauthCredential } from "./auth-store.ts";
 import { codexAuthHeaders, freshAccessToken } from "./codex-login.ts";
@@ -56,13 +59,21 @@ export function resolveProvider(
   credentials?: CredentialMap,
   bedrockRegion?: string,
   persistCredential?: PersistCredential,
+  declaredModels?: Readonly<Record<string, ModelCapabilityDeclaration>>,
 ): ResolvedProvider | undefined {
-  return (
+  const resolved =
     firstKeyProvider(model, (entry) => deliberateKey(env, entry, credentials)) ??
     resolveCodex(model, credentials, persistCredential) ??
     firstKeyProvider(model, (entry) => presentValue(env[entry.ambientKeyVariable])) ??
-    resolveBedrock(env, model, bedrockRegion)
-  );
+    resolveBedrock(env, model, bedrockRegion);
+  if (resolved === undefined) return undefined;
+  return {
+    ...resolved,
+    provider: withDeclaredCapabilities(
+      resolved.provider,
+      declaredCapabilitiesFor(declaredModels, resolved.modelId),
+    ),
+  };
 }
 
 type CatalogEntry = (typeof catalog)[number];

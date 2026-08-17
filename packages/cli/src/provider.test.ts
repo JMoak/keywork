@@ -1,3 +1,4 @@
+import { UndeclaredCapabilityError } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { resolveProvider } from "./provider.ts";
 
@@ -135,5 +136,57 @@ describe("resolveProvider", () => {
       "meta.llama3-70b-instruct-v1:0",
     );
     expect(resolved?.label).toBe("bedrock/meta.llama3-70b-instruct-v1:0");
+  });
+});
+
+describe("declared model capabilities", () => {
+  const imageRequest = {
+    systemPrompt: "",
+    messages: [
+      {
+        role: "user" as const,
+        parts: [{ type: "image" as const, mediaType: "image/png", data: "aGk=" }],
+      },
+    ],
+    tools: [],
+  };
+
+  it("fails fast when an image is sent to a model with no capability declaration", () => {
+    const resolved = resolveProvider({ OPENAI_API_KEY: "k" }, "gpt-5-mini");
+
+    const attempt = () => resolved?.provider.stream(imageRequest);
+
+    expect(attempt).toThrow(UndeclaredCapabilityError);
+    expect(attempt).toThrow('add "image" to models["gpt-5-mini"].input in keywork.json');
+  });
+
+  it("matches declarations by model-id pattern before gating", () => {
+    const resolved = resolveProvider(
+      { OPENAI_API_KEY: "k" },
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      undefined,
+      {
+        "gpt-4*": { input: ["text", "image"] },
+      },
+    );
+
+    expect(() => resolved?.provider.stream(imageRequest)).toThrow(UndeclaredCapabilityError);
+  });
+
+  it("opens the gate once the matching pattern declares image input", () => {
+    const resolved = resolveProvider(
+      { OPENAI_API_KEY: "k" },
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      undefined,
+      {
+        "gpt-5*": { input: ["text", "image"] },
+      },
+    );
+
+    expect(() => resolved?.provider.stream(imageRequest)).not.toThrow();
   });
 });

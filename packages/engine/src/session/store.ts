@@ -6,6 +6,7 @@ import {
   type BranchSummaryEntry,
   buildTree,
   type CompactionEntry,
+  type CustomEntry,
   contextEntriesFor,
   contextMessages,
   type FileTrackingDetails,
@@ -103,6 +104,10 @@ export class SessionStore {
 
   async appendBranchSummary(input: BranchSummaryInput): Promise<BranchSummaryEntry> {
     return this.appendEntry({ type: "branch_summary", ...input });
+  }
+
+  async appendCustom(customType: string, data?: unknown): Promise<CustomEntry> {
+    return this.appendEntry({ type: "custom", customType, ...(data !== undefined && { data }) });
   }
 
   async setLabel(targetId: string, label: string | undefined): Promise<LabelEntry> {

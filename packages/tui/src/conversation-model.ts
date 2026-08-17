@@ -13,6 +13,8 @@ import { fuzzyScore } from "./commands.ts";
 import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
+import { type MarkdownRow, type MarkdownSpan, renderMarkdown } from "./markdown.ts";
+import { columnPage, type PageGrammar, proseWidth } from "./page.ts";
 import { TailFollow } from "./tail-follow.ts";
 
 export type Titler = (conversation: readonly Message[]) => Promise<string | undefined>;
@@ -84,7 +86,14 @@ export class ConversationModel {
   private readonly runningTools = new Map<string, { entry: TranscriptEntry; name: string }>();
   private readonly wrapCache = new WeakMap<
     TranscriptEntry,
-    { width: number; text: string; failed: boolean; lines: TranscriptLine[] }
+    {
+      width: number;
+      prose: number;
+      gutter: number;
+      text: string;
+      failed: boolean;
+      lines: TranscriptLine[];
+    }
   >();
   private readonly subscriptions: Array<() => void> = [];
   private titleRequested = false;
@@ -230,22 +239,25 @@ export class ConversationModel {
     return this.queue;
   }
 
-  visibleTranscript(width: number, rows: number): TranscriptLine[] {
+  visibleTranscript(width: number, rows: number, page: PageGrammar = columnPage): TranscriptLine[] {
     this.pageRows = rows;
-    this.revealBacktrack(width, rows);
-    const lines = [...this.linesFromEnd(width, rows + this.scrollBack), ...this.tailLines(width)];
+    this.revealBacktrack(width, rows, page);
+    const lines = [
+      ...this.linesFromEnd(width, rows + this.scrollBack, page),
+      ...this.tailLines(width),
+    ];
     this.scrollBack = clampScroll(this.scrollBack, lines.length, rows);
     const end = lines.length - this.scrollBack;
     return lines.slice(Math.max(0, end - rows), end);
   }
 
-  private linesFromEnd(width: number, needed: number): TranscriptLine[] {
+  private linesFromEnd(width: number, needed: number, page: PageGrammar): TranscriptLine[] {
     const tail: TranscriptLine[][] = [];
     let count = 0;
     for (let at = this.entries.length - 1; at >= 0 && count < needed; at -= 1) {
       const entry = this.entries[at];
       if (entry === undefined) break;
-      const lines = this.wrappedLines(entry, width);
+      const lines = this.wrappedLines(entry, width, page);
       tail.push(
         at === this.backtrackAt ? lines.map((line) => ({ ...line, selected: true })) : lines,
       );
@@ -262,7 +274,7 @@ export class ConversationModel {
       .map((text) => ({ kind: "tail" as const, failed: false, text: `${mark} ${text}` }));
   }
 
-  private revealBacktrack(width: number, rows: number): void {
+  private revealBacktrack(width: number, rows: number, page: PageGrammar): void {
     const at = this.backtrackAt;
     if (at === undefined || !this.backtrackMoved) return;
     this.backtrackMoved = false;
@@ -270,26 +282,37 @@ export class ConversationModel {
     for (let index = this.entries.length - 1; index > at; index -= 1) {
       const entry = this.entries[index];
       if (entry === undefined) break;
-      below += this.wrappedLines(entry, width).length;
+      below += this.wrappedLines(entry, width, page).length;
     }
     const selected = this.entries[at];
-    const selectedRows = selected === undefined ? 0 : this.wrappedLines(selected, width).length;
+    const selectedRows =
+      selected === undefined ? 0 : this.wrappedLines(selected, width, page).length;
     this.scrollBack = Math.max(0, below + selectedRows - rows);
   }
 
-  private wrappedLines(entry: TranscriptEntry, width: number): TranscriptLine[] {
+  private wrappedLines(entry: TranscriptEntry, width: number, page: PageGrammar): TranscriptLine[] {
     const failed = entry.kind === "tool" && entry.failed;
+    const prose = proseWidth(page, width);
     const cached = this.wrapCache.get(entry);
     if (
       cached !== undefined &&
       cached.width === width &&
+      cached.prose === prose &&
+      cached.gutter === page.proseGutter &&
       cached.text === entry.text &&
       cached.failed === failed
     ) {
       return cached.lines;
     }
-    const lines = transcriptLines([entry], width);
-    this.wrapCache.set(entry, { width, text: entry.text, failed, lines });
+    const lines = entryLines(entry, width, page);
+    this.wrapCache.set(entry, {
+      width,
+      prose,
+      gutter: page.proseGutter,
+      text: entry.text,
+      failed,
+      lines,
+    });
     return lines;
   }
 
@@ -702,6 +725,8 @@ export interface TranscriptLine {
   kind: TranscriptEntry["kind"] | "tail";
   failed: boolean;
   text: string;
+  spans?: MarkdownSpan[];
+  panel?: true;
   selected?: true;
 }
 
@@ -717,6 +742,57 @@ export function transcriptLines(
       .flatMap((line) => wrap(line, width))
       .map((text) => ({ kind: entry.kind, failed, text }));
   });
+}
+
+function entryLines(entry: TranscriptEntry, width: number, page: PageGrammar): TranscriptLine[] {
+  switch (entry.kind) {
+    case "tool":
+    case "error":
+      return transcriptLines([entry], width);
+    case "assistant":
+      return markdownEntryLines(entry.text, width, page);
+    case "user":
+    case "info":
+      return proseEntryLines(entry, width, page);
+  }
+}
+
+function proseEntryLines(
+  entry: TranscriptEntry,
+  width: number,
+  page: PageGrammar,
+): TranscriptLine[] {
+  const gutter = " ".repeat(page.proseGutter);
+  const prefixed = entry.kind === "user" ? `› ${entry.text}` : entry.text;
+  return prefixed
+    .split("\n")
+    .flatMap((line) => wrap(line, proseWidth(page, width)))
+    .map((text) => ({
+      kind: entry.kind,
+      failed: false,
+      text: text === "" ? "" : `${gutter}${text}`,
+    }));
+}
+
+function markdownEntryLines(text: string, width: number, page: PageGrammar): TranscriptLine[] {
+  const gutter = " ".repeat(page.proseGutter);
+  return renderMarkdown(text, proseWidth(page, width), width).map((row) =>
+    markdownLine(row, gutter),
+  );
+}
+
+function markdownLine(row: MarkdownRow, gutter: string): TranscriptLine {
+  const spans =
+    row.panel || gutter === "" || row.spans.length === 0
+      ? row.spans
+      : [{ text: gutter, tone: "body" as const }, ...row.spans];
+  return {
+    kind: "assistant",
+    failed: false,
+    text: spans.map((span) => span.text).join(""),
+    spans,
+    ...(row.panel && { panel: true as const }),
+  };
 }
 
 function wrap(line: string, width: number): string[] {

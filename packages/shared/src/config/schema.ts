@@ -94,6 +94,34 @@ const prompts = z
   .partial()
   .strict();
 
+const modelInputModality = z.enum(["text", "image"]);
+
+const modelCapabilities = z
+  .object({
+    input: z
+      .array(modelInputModality)
+      .min(1)
+      .describe(
+        'Input modalities the model accepts, e.g. ["text", "image"]; exists because capabilities are declarations, never probed: an undeclared model is text-only, and sending an image to it fails fast naming this field.',
+      ),
+    toolCalls: z
+      .boolean()
+      .describe(
+        "Whether the model supports tool calls; exists so a model that cannot drive the tool loop refuses at request time instead of failing mid-turn. Undeclared models are assumed tool-capable because keywork cannot operate without tools.",
+      ),
+    contextWindow: z
+      .number()
+      .int()
+      .positive()
+      .describe(
+        "Declared context ceiling in tokens; exists so budget and compaction decisions read an honest declared limit instead of a probed or guessed one.",
+      ),
+  })
+  .partial()
+  .strict();
+
+const pageThresholdColumns = z.number().int().min(1);
+
 const permissionAction = z.enum(["allow", "ask", "deny"]);
 
 const permissions = z
@@ -119,6 +147,11 @@ export const configSchema = z
       .describe(
         "Provider/model reference for new sessions; exists so a first prompt works with zero ceremony. Honored from the user config layer only — a checked-in project file cannot steer model routing until an explicit trust gate exists.",
       ),
+    models: z
+      .record(z.string(), modelCapabilities)
+      .describe(
+        "Model-id glob patterns (`*` wildcard) to declared capabilities; exists because keywork never probes endpoints for what a model can do: capability is declared config (D9), the most specific matching pattern wins, and anything undeclared stays at the text-only floor.",
+      ),
     keybindings: z
       .record(z.string(), keybinding)
       .describe(
@@ -129,6 +162,28 @@ export const configSchema = z
       .catchall(themeColor)
       .describe(
         "Theme-token to #rrggbb overrides (plus the ramp stop list) on the keywork-night palette; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
+      ),
+    page: z
+      .object({
+        broadsheetAt: pageThresholdColumns
+          .describe(
+            "Pane width in columns where the transcript enters the broadsheet tier (full padding, an ~88-column prose measure, the full tonal ladder); exists because the right boundary depends on font and monitor geometry, and 104/PD18 calls for tuning the tiers against real captures.",
+          )
+          .optional(),
+        columnAt: pageThresholdColumns
+          .describe(
+            "Pane width in columns where the transcript enters the column tier, the working default below broadsheet; exists so the everyday reading tier can be widened or narrowed to taste per setup (104/PD18).",
+          )
+          .optional(),
+        clippingAt: pageThresholdColumns
+          .describe(
+            "Pane width in columns where the transcript enters the clipping tier; panes narrower than this render the masthead tier instead of an unreadable text slit; exists because the point where a transcript stops being readable varies with font geometry (104/PD18).",
+          )
+          .optional(),
+      })
+      .strict()
+      .describe(
+        "Width-tier thresholds for the transcript page grammar (104/PD18: broadsheet / column / clipping / masthead); exists because tier boundaries are taste calls tuned per terminal setup and must be adjustable without code changes. Thresholds must rise clippingAt < columnAt < broadsheetAt.",
       ),
     bedrockRegion: z
       .string()
@@ -162,6 +217,7 @@ export type PermissionAction = z.infer<typeof permissionAction>;
 export type PermissionsConfig = NonNullable<KeyworkConfig["permissions"]>;
 export type PromptsConfig = NonNullable<KeyworkConfig["prompts"]>;
 export type PromptOverride = z.infer<typeof promptOverride>;
+export type ModelCapabilitiesConfig = NonNullable<KeyworkConfig["models"]>;
 
 export const defaultConfig: KeyworkConfig = {
   keybindings: {},

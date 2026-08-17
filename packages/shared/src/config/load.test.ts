@@ -91,6 +91,27 @@ describe("loadConfig", () => {
     expect(config.bedrockRegion).toBeUndefined();
   });
 
+  it("accepts declared model capabilities and rejects unknown modalities", async () => {
+    const userDir = await dirWithConfig({
+      models: { "gpt-5*": { input: ["text", "image"], toolCalls: true, contextWindow: 400000 } },
+    });
+    const config = await loadConfig({ userDir });
+    expect(config.models).toEqual({
+      "gpt-5*": { input: ["text", "image"], toolCalls: true, contextWindow: 400000 },
+    });
+
+    const badDir = await dirWithConfig({ models: { "gpt-5*": { input: ["audio"] } } });
+    await expect(loadConfig({ userDir: badDir })).rejects.toThrow(ConfigError);
+  });
+
+  it("ignores model capability declarations from the project layer even when trusted", async () => {
+    const projectDir = await dirWithConfig({
+      models: { "*": { input: ["text", "image"] } },
+    });
+    const config = await loadConfig({ projectDir, projectTrusted: true });
+    expect(config.models).toBeUndefined();
+  });
+
   it("rejects unknown options with a readable error naming the file", async () => {
     const userDir = await dirWithConfig({ telemtry: true });
 

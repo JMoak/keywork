@@ -1,9 +1,31 @@
-import { keyworkNight } from "./theme.ts";
+import { keyworkNight, type Theme } from "./theme.ts";
 
 export interface Oklch {
   readonly l: number;
   readonly c: number;
   readonly h: number;
+}
+
+export type PaneBorderTheme = Pick<Theme, "border" | "ramp">;
+
+export function paneBorder(theme: PaneBorderTheme, position: number, focused: boolean): string {
+  const hue = rampColor(theme.ramp, position);
+  return focused ? focusLift(hue) : borderCarryingHue(theme, hue);
+}
+
+export function rampPositions(
+  spawnOrderedIds: readonly string[],
+  arcOf: (id: string) => number | undefined = () => undefined,
+): Map<string, number> {
+  const positions = new Map<string, number>();
+  const ungrouped = spawnOrderedIds.filter((id) => arcOf(id) === undefined);
+  const sweep = spawnRankPositions(ungrouped.length);
+  for (const [rank, id] of ungrouped.entries()) positions.set(id, sweep[rank] ?? 0);
+  for (const [arc, members] of arcRoster(spawnOrderedIds, arcOf)) {
+    const around = arcMemberPositions(arcAnchorPosition(arc), members.length);
+    for (const [rank, id] of members.entries()) positions.set(id, around[rank] ?? 0);
+  }
+  return positions;
 }
 
 export function rampColor(ramp: readonly string[], t: number): string {
@@ -34,8 +56,22 @@ export function focusLift(hex: string): string {
 }
 
 export function arcAnchor(ramp: readonly string[], k: number): string {
+  return rampColor(ramp, arcAnchorPosition(k));
+}
+
+export function arcAnchorPosition(k: number): number {
   const turns = k * goldenRatioConjugate;
-  return rampColor(ramp, turns - Math.floor(turns));
+  return turns - Math.floor(turns);
+}
+
+export function arcMemberPositions(anchor: number, count: number): number[] {
+  if (count <= 0) return [];
+  if (count === 1) return [anchor];
+  const start = clamp(anchor - microGradientSpan / 2, 0, 1 - microGradientSpan);
+  return Array.from(
+    { length: count },
+    (_, rank) => start + (microGradientSpan * rank) / (count - 1),
+  );
 }
 
 export function hexToOklch(hex: string): Oklch {
@@ -51,12 +87,43 @@ export function oklchToHex(color: Oklch): string {
 }
 
 const goldenRatioConjugate = 0.618033988749895;
+const microGradientSpan = 0.08;
 const neutralChroma = 1e-4;
 const gamutSlack = 1e-6;
 const rrggbb = /^#[0-9a-fA-F]{6}$/;
 const focusTarget = hexToOklch(keyworkNight.borderFocus);
 
 type Triple = readonly [number, number, number];
+
+function borderCarryingHue(theme: PaneBorderTheme, hue: string): string {
+  const swing = hueSwing(rampColor(theme.ramp, 0), hue);
+  if (swing === 0) return theme.border;
+  const border = hexToOklch(theme.border);
+  return oklchToHex({ ...border, h: normalizedHue(border.h + swing) });
+}
+
+function hueSwing(fromHex: string, toHex: string): number {
+  const from = hexToOklch(fromHex);
+  const to = hexToOklch(toHex);
+  if (from.c < neutralChroma || to.c < neutralChroma) return 0;
+  const spun = normalizedHue(to.h - from.h);
+  return spun > 180 ? spun - 360 : spun;
+}
+
+function arcRoster(
+  ids: readonly string[],
+  arcOf: (id: string) => number | undefined,
+): Map<number, string[]> {
+  const roster = new Map<number, string[]>();
+  for (const id of ids) {
+    const arc = arcOf(id);
+    if (arc === undefined) continue;
+    const members = roster.get(arc) ?? [];
+    members.push(id);
+    roster.set(arc, members);
+  }
+  return roster;
+}
 
 function mixOklch(from: Oklch, to: Oklch, blend: number): Oklch {
   const [fromHue, toHue] = shortestHueArc(from, to);

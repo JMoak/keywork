@@ -1,5 +1,15 @@
 import type { Agent, ToolCallPart } from "@keywork/engine";
-import { Box, Text } from "@opentui/core";
+import {
+  Box,
+  bg,
+  bold,
+  fg,
+  italic,
+  StyledText,
+  Text,
+  type TextChunk,
+  underline,
+} from "@opentui/core";
 import {
   type CommandsPort,
   ConversationModel,
@@ -10,6 +20,8 @@ import {
 import type { DiffLine } from "./diff-render.ts";
 import type { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
+import type { MarkdownSpan, MarkdownTone } from "./markdown.ts";
+import { type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
@@ -21,11 +33,13 @@ const askDiffRows = 10;
 export interface ConversationPaneOptions {
   ports?: ConversationPorts;
   initialDraft?: string;
+  page?: PageThresholds;
 }
 
 export class ConversationPane implements Pane {
   sessionId: string | undefined;
   private readonly model: ConversationModel;
+  private readonly pageThresholds: PageThresholds;
   private closed = false;
 
   constructor(
@@ -37,6 +51,7 @@ export class ConversationPane implements Pane {
     options?: ConversationPaneOptions,
   ) {
     this.model = new ConversationModel(agent, notify, titler, commands, options?.ports);
+    this.pageThresholds = options?.page ?? pageTierThresholds;
     if (options?.initialDraft !== undefined) this.model.buffer.load(options.initialDraft);
   }
 
@@ -122,6 +137,7 @@ export class ConversationPane implements Pane {
   view(context: PaneContext): PaneView {
     const { theme, focused, width, height } = context;
     const innerWidth = paneContentWidth(width);
+    const page = resolvePage(width, this.pageThresholds);
     const suggestions = focused ? this.model.suggestions() : [];
     const prompt = promptLines(this.model.buffer, focused);
     const queued = this.model.queued();
@@ -145,7 +161,7 @@ export class ConversationPane implements Pane {
       (ask === undefined ? 0 : 1) +
       (this.model.scrollBack > 0 ? 1 : 0);
     const maxRows = Math.max(0, paneContentHeight(height) - reservedRows);
-    const lines = this.model.visibleTranscript(innerWidth, maxRows);
+    const lines = this.model.visibleTranscript(innerWidth, maxRows, page);
     const scrollBack = this.model.scrollBack;
     return paneChrome(
       context,
@@ -206,7 +222,49 @@ function transcriptRow(line: TranscriptLine, width: number, theme: Theme) {
       bg: theme.accent,
     });
   }
+  if (line.spans !== undefined) return styledRow(line.spans, line.panel === true, width, theme);
   return Text({ content: line.text || " ", fg: lineColor(line, theme) });
+}
+
+function styledRow(spans: MarkdownSpan[], panel: boolean, width: number, theme: Theme) {
+  if (spans.length === 0) return Text({ content: " " });
+  const chunks = spans.map((span) => spanChunk(span, theme, panel));
+  if (panel) {
+    const filled = spans.reduce((total, span) => total + Array.from(span.text).length, 0);
+    if (filled < width) chunks.push(bg(theme.panel)(" ".repeat(width - filled)));
+  }
+  return Text({ content: new StyledText(chunks) });
+}
+
+function spanChunk(span: MarkdownSpan, theme: Theme, panel: boolean): TextChunk {
+  let chunk = fg(spanColor(span.tone, theme))(span.text);
+  if (span.bold === true) chunk = bold(chunk);
+  if (span.italic === true) chunk = italic(chunk);
+  if (span.tone === "link") chunk = underline(chunk);
+  if (span.tone === "code") chunk = bg(theme.panelLift)(chunk);
+  if (panel) chunk = bg(theme.panel)(chunk);
+  return chunk;
+}
+
+function spanColor(tone: MarkdownTone, theme: Theme): string {
+  switch (tone) {
+    case "body":
+    case "code":
+    case "fence":
+      return theme.text;
+    case "link":
+    case "heading":
+    case "headingMark":
+    case "listMarker":
+      return theme.accent;
+    case "linkUrl":
+      return theme.textMid;
+    case "fenceRail":
+      return theme.accentSoft;
+    case "rule":
+    case "fenceTag":
+      return theme.textDim;
+  }
 }
 
 function diffRow(line: DiffLine, theme: Theme) {

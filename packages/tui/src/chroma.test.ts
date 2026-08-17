@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   arcAnchor,
+  arcAnchorPosition,
+  arcMemberPositions,
   focusLift,
   hexToOklch,
   oklchToHex,
+  paneBorder,
   rampColor,
+  rampPositions,
   spawnRankPositions,
 } from "./chroma.ts";
 import { keyworkNight } from "./theme.ts";
@@ -166,6 +170,101 @@ describe("arcAnchor", () => {
     const hues = anchors.map((anchor) => hexToOklch(anchor).h).sort((a, b) => a - b);
     for (const gap of adjacentDeltas(hues)) {
       expect(gap).toBeGreaterThan(5);
+    }
+  });
+});
+
+describe("paneBorder", () => {
+  it("renders today's exact tokens for a single pane", () => {
+    expect(paneBorder(keyworkNight, 0, true)).toBe(keyworkNight.borderFocus);
+    expect(paneBorder(keyworkNight, 0, false)).toBe(keyworkNight.border);
+  });
+
+  it("renders today's exact tokens at every rank when the ramp is one accent stop", () => {
+    const flat = { border: keyworkNight.border, ramp: [keyworkNight.accent] };
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(paneBorder(flat, t, false)).toBe(keyworkNight.border);
+      expect(paneBorder(flat, t, true)).toBe(keyworkNight.borderFocus);
+    }
+  });
+
+  it("sweeps unfocused hue monotonically while holding the border's dimness", () => {
+    const positions = [0, 0.25, 0.5, 0.75, 1];
+    const rested = positions.map((t) => hexToOklch(paneBorder(keyworkNight, t, false)));
+    const base = hexToOklch(keyworkNight.border);
+    for (const border of rested) {
+      expect(Math.abs(border.l - base.l)).toBeLessThan(0.01);
+      expect(Math.abs(border.c - base.c)).toBeLessThan(0.01);
+    }
+    for (const delta of adjacentDeltas(rested.map((border) => border.h))) {
+      expect(delta).toBeLessThan(0);
+    }
+  });
+
+  it("keeps focus legible in monochrome at every rank", () => {
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      const lifted = hexToOklch(paneBorder(keyworkNight, t, true)).l;
+      const rested = hexToOklch(paneBorder(keyworkNight, t, false)).l;
+      expect(lifted - rested).toBeGreaterThan(0.25);
+    }
+  });
+});
+
+describe("rampPositions", () => {
+  it("sweeps ungrouped panes by spawn rank", () => {
+    expect(rampPositions(["a", "b", "c"])).toEqual(
+      new Map([
+        ["a", 0],
+        ["b", 0.5],
+        ["c", 1],
+      ]),
+    );
+  });
+
+  it("puts a single pane at the ramp start", () => {
+    expect(rampPositions(["only"])).toEqual(new Map([["only", 0]]));
+  });
+
+  it("clusters arc members around their anchor while ungrouped panes keep the sweep", () => {
+    const arcOf = (id: string) => (id.startsWith("x") ? 7 : undefined);
+    const positions = rampPositions(["x1", "a", "x2", "b"], arcOf);
+    expect(positions.get("a")).toBe(0);
+    expect(positions.get("b")).toBe(1);
+    const anchor = arcAnchorPosition(7);
+    for (const member of ["x1", "x2"]) {
+      expect(Math.abs((positions.get(member) ?? Number.NaN) - anchor)).toBeLessThan(0.1);
+    }
+    expect(positions.get("x1")).not.toBe(positions.get("x2"));
+  });
+});
+
+describe("arcMemberPositions", () => {
+  it("puts a lone member exactly on the anchor", () => {
+    expect(arcMemberPositions(0.42, 1)).toEqual([0.42]);
+  });
+
+  it("slides the micro-gradient window inside the ramp near its ends", () => {
+    for (const anchor of [0, 0.999]) {
+      for (const position of arcMemberPositions(anchor, 4)) {
+        expect(position).toBeGreaterThanOrEqual(0);
+        expect(position).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it("spreads members evenly across a narrow window", () => {
+    const positions = arcMemberPositions(0.5, 3);
+    expect(positions).toHaveLength(3);
+    const [first, mid, last] = positions;
+    expect(mid).toBeCloseTo(0.5, 10);
+    expect((last ?? 0) - (first ?? 0)).toBeLessThan(0.1);
+  });
+});
+
+describe("arcAnchorPosition", () => {
+  it("agrees with arcAnchor on every ramp", () => {
+    for (let k = 0; k < 8; k++) {
+      expect(arcAnchor(ramp, k)).toBe(rampColor(ramp, arcAnchorPosition(k)));
     }
   });
 });

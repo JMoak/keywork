@@ -2,7 +2,15 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MockProvider, messageText, SessionStore, textTurn, toolCallTurn } from "@keywork/engine";
+import {
+  extensionState,
+  MockProvider,
+  messageText,
+  type Provider,
+  SessionStore,
+  textTurn,
+  toolCallTurn,
+} from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
 import { runHeadless } from "./run.ts";
 
@@ -33,7 +41,7 @@ describe("runHeadless", () => {
     ]);
     const lines: string[] = [];
 
-    const final = await runHeadless({
+    const outcome = await runHeadless({
       prompt: "run echo",
       cwd,
       json: true,
@@ -42,7 +50,7 @@ describe("runHeadless", () => {
       print: (line) => lines.push(line),
     });
 
-    expect(messageText(final)).toBe("done");
+    expect(outcome.exitCode === 0 && messageText(outcome.message)).toBe("done");
     const events = lines.map((line) => JSON.parse(line));
     const types = events.map((event) => event.type);
     expect(types).toContain("turn.started");
@@ -217,9 +225,56 @@ describe("runHeadless", () => {
     const provider = new MockProvider([textTurn("plain answer")]);
     const lines: string[] = [];
 
-    await runHeadless({ prompt: "hi", cwd, json: false, provider, print: (l) => lines.push(l) });
+    const outcome = await runHeadless({
+      prompt: "hi",
+      cwd,
+      json: false,
+      provider,
+      print: (l) => lines.push(l),
+    });
 
+    expect(outcome.exitCode).toBe(0);
     expect(lines).toEqual(["plain answer"]);
+  });
+});
+
+describe("session journal in headless runs", () => {
+  it("logs gate decisions and context injections as session entries with provenance", async () => {
+    const cwd = await tempDir();
+    const sessionDir = await tempDir();
+    await writeFile(join(cwd, "AGENTS.md"), "be careful");
+    const provider = new MockProvider([
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-1",
+        name: "bash",
+        arguments: { command: "echo hi" },
+      }),
+      textTurn("done"),
+    ]);
+    const lines: string[] = [];
+
+    await runHeadless({
+      prompt: "run it",
+      cwd,
+      json: true,
+      projectTrusted: true,
+      sessionDir,
+      provider,
+      print: (line) => lines.push(line),
+    });
+
+    const types = lines.map((line) => JSON.parse(line).type);
+    expect(types).toContain("context.injected");
+    expect(types).toContain("gate.permission");
+
+    const [file] = await readdir(sessionDir);
+    const store = await SessionStore.open(join(sessionDir, file as string));
+    const state = extensionState(store.activePath());
+    expect(state.injections).toEqual([{ source: "project-instructions", id: "AGENTS.md" }]);
+    expect(state.decisions).toEqual([
+      { tool: "bash", callId: "call-1", verdict: "granted", gate: "default" },
+    ]);
   });
 });
 
@@ -304,5 +359,159 @@ describe("project-instruction trust gating", () => {
 
   it("injects project instructions once the workspace is trusted", async () => {
     expect(await promptSeenWith(true)).toContain("SECRET-REPO-DIRECTIVE");
+  });
+});
+
+describe("persistent shell across tool calls", () => {
+  it("keeps cwd from one bash call live in the next", async () => {
+    const cwd = await tempDir();
+    await mkdir(join(cwd, "nested"));
+    const provider = new MockProvider([
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-1",
+        name: "bash",
+        arguments: { command: "cd nested" },
+      }),
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-2",
+        name: "bash",
+        arguments: { command: "pwd" },
+      }),
+      textTurn("done"),
+    ]);
+    const pwds: string[] = [];
+    const lines: string[] = [];
+
+    await runHeadless({
+      prompt: "move and look",
+      cwd,
+      json: true,
+      provider,
+      print: (line) => lines.push(line),
+    });
+
+    for (const line of lines) {
+      const event = JSON.parse(line);
+      if (event.type === "tool.finished" && event.callId === "call-2") pwds.push(event.output);
+    }
+    expect(pwds[0]?.trim().endsWith("nested")).toBe(true);
+  });
+});
+
+describe("headless exit contract", () => {
+  const brokenProvider: Provider = {
+    name: "broken",
+    stream: () => ({
+      [Symbol.asyncIterator]: () => ({
+        next: () => Promise.reject(new Error("provider unreachable after retries")),
+      }),
+    }),
+  };
+
+  it("exits 0 with stdout carrying exactly the final assistant message", async () => {
+    const lines: string[] = [];
+
+    const outcome = await runHeadless({
+      prompt: "hi",
+      cwd: await tempDir(),
+      json: false,
+      provider: new MockProvider([textTurn("all done")]),
+      print: (line) => lines.push(line),
+    });
+
+    expect(outcome).toMatchObject({ exitCode: 0 });
+    expect(lines).toEqual(["all done"]);
+  });
+
+  it("exits 1 on provider failure with the reason on stderr, never stdout", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+
+    const outcome = await runHeadless({
+      prompt: "hi",
+      cwd: await tempDir(),
+      json: false,
+      provider: brokenProvider,
+      print: (line) => out.push(line),
+      printError: (line) => err.push(line),
+    });
+
+    expect(outcome).toEqual({ exitCode: 1, failure: "provider unreachable after retries" });
+    expect(out).toEqual([]);
+    expect(err).toEqual(["provider unreachable after retries"]);
+  });
+
+  it("emits engine.error on the JSON event stream and exits 1", async () => {
+    const lines: string[] = [];
+
+    const outcome = await runHeadless({
+      prompt: "hi",
+      cwd: await tempDir(),
+      json: true,
+      provider: brokenProvider,
+      print: (line) => lines.push(line),
+    });
+
+    expect(outcome.exitCode).toBe(1);
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events.at(-1)).toEqual({
+      type: "engine.error",
+      message: "provider unreachable after retries",
+    });
+  });
+
+  it("treats a completed turn that reports inability as success", async () => {
+    const outcome = await runHeadless({
+      prompt: "do the impossible",
+      cwd: await tempDir(),
+      json: false,
+      provider: new MockProvider([textTurn("I was unable to complete the task.")]),
+      print: () => {},
+    });
+
+    expect(outcome.exitCode).toBe(0);
+  });
+
+  it("treats a denied tool call as a refused result, not a terminal failure", async () => {
+    const provider = new MockProvider([
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-1",
+        name: "bash",
+        arguments: { command: "echo blocked" },
+      }),
+      textTurn("worked around it"),
+    ]);
+
+    const outcome = await runHeadless({
+      prompt: "try a command",
+      cwd: await tempDir(),
+      json: false,
+      provider,
+      permissions: () => "deny",
+      print: () => {},
+    });
+
+    expect(outcome.exitCode).toBe(0);
+  });
+
+  it("persists the partial session even when the turn fails", async () => {
+    const sessionDir = await tempDir();
+
+    await runHeadless({
+      prompt: "hi",
+      cwd: await tempDir(),
+      json: false,
+      sessionDir,
+      provider: brokenProvider,
+      print: () => {},
+      printError: () => {},
+    });
+
+    const [file] = await readdir(sessionDir);
+    const store = await SessionStore.open(join(sessionDir, file as string));
+    expect(store.messages().map((message) => message.role)).toEqual(["user"]);
   });
 });

@@ -7,15 +7,22 @@ import {
   toolCalls,
   type Usage,
 } from "../messages.ts";
+import { replayJournalEntry } from "./journal.ts";
 import type { SessionStore } from "./store.ts";
 
 const zeroUsage: Usage = { inputTokens: 0, outputTokens: 0 };
 
 export function replaySession(store: SessionStore, bus: EventBus<EngineEvents>): void {
+  const context = store.contextEntries();
+  const inContext = new Set(context.map((entry) => entry.id));
+  for (const entry of store.activePath()) {
+    if (!inContext.has(entry.id)) replayJournalEntry(bus, entry);
+  }
   const pendingCalls = new Map<string, ToolCallPart>();
   let insideFlushTurn = false;
-  for (const entry of store.contextEntries()) {
-    if (entry.type === "message") {
+  for (const entry of context) {
+    if (entry.type === "custom") replayJournalEntry(bus, entry);
+    else if (entry.type === "message") {
       const message = entry.message;
       if (message.role === "user" && isMemoryFlushPrompt(messageText(message))) {
         insideFlushTurn = true;

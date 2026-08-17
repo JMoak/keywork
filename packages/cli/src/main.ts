@@ -56,14 +56,30 @@ async function main(argv: string[]): Promise<number> {
   });
 
   const cwd = process.cwd();
+  const { ensureStateLayout } = await import("./paths.ts");
+  ensureStateLayout();
   const workspace = openWorkspace(cwd);
   for (const dir of workspace?.missingContextDirs ?? []) {
     console.warn(`keywork: skipping context dir ${dir}, it doesn't exist`);
+  }
+  if (command === "doctor") {
+    const { doctorCommand } = await import("./doctor.ts");
+    return doctorCommand({ env: process.env, platform: process.platform }, console.log);
   }
   const trustStore = new TrustStore();
   if (command === "trust" || command === "untrust") {
     const { trustCommand } = await import("./trust.ts");
     return trustCommand(command, cwd, trustStore);
+  }
+  if (command === "init" || command === "link") {
+    const { terminalConfirm } = await import("./sessions.ts");
+    const confirm = terminalConfirm();
+    if (command === "init") {
+      const { initCommand } = await import("./init.ts");
+      return initCommand(cwd, trustStore, {}, confirm);
+    }
+    const { linkCommand } = await import("./link.ts");
+    return linkCommand(positionals[0], cwd, trustStore, {}, confirm);
   }
   const projectTrusted = trustStore.resolve(cwd) === "trusted";
   const config = await loadKeyworkConfig(cwd, projectTrusted);
@@ -89,6 +105,7 @@ async function main(argv: string[]): Promise<number> {
     await loadCredentials(config),
     config.bedrockRegion,
     persistCredential,
+    config.models,
   );
 
   const onboardIfNeeded = async (): Promise<void> => {
@@ -103,6 +120,7 @@ async function main(argv: string[]): Promise<number> {
       await loadCredentials(refreshed),
       refreshed.bedrockRegion,
       persistCredential,
+      refreshed.models,
     );
   };
 
@@ -135,7 +153,7 @@ async function main(argv: string[]): Promise<number> {
         console.error(`keywork run needs a prompt, like: keywork run "fix the tests"`);
         return 1;
       }
-      await runHeadless({
+      const outcome = await runHeadless({
         prompt,
         cwd,
         json: values.json,
@@ -147,7 +165,7 @@ async function main(argv: string[]): Promise<number> {
         ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
       });
-      return 0;
+      return outcome.exitCode;
     }
     case "sessions": {
       const { sessionsCommand, terminalConfirm } = await import("./sessions.ts");
@@ -167,12 +185,18 @@ async function main(argv: string[]): Promise<number> {
       await onboardIfNeeded();
       const active = resolved;
       const { runApp } = await import("@keywork/tui");
-      const { renderCommand, scanTemplate, suggestTitle } = await import("@keywork/engine");
+      const { renderCommand, scanTemplate, suggestTitle, tapJournal } = await import(
+        "@keywork/engine"
+      );
       const { defaultSessionDir, workspaceIdentity, workspaceStateFile } = await import(
         "./paths.ts"
       );
       const { composeAgents, composeWorkspace } = await import("./compose.ts");
       const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
+      const { deferredMaterialization } = await import("./materialize.ts");
+      const materializer = deferredMaterialization({ cwd, trusted: projectTrusted });
+      const provider =
+        active === undefined ? undefined : materializer.wrapProvider(active.provider);
       const { sessionChangeFeed, sessionPort, sessionTreePort } = await import("./sessions.ts");
       const { commandRuntime } = await import("./commands.ts");
       const { mcpPanePort } = await import("./mcp.ts");
@@ -183,12 +207,13 @@ async function main(argv: string[]): Promise<number> {
         prompts: config.prompts,
         mcpServers: config.mcpServers,
         modelId: active?.modelId,
+        onFileSaved: (path) => materializer.fileSaved(path),
       });
       const { checkpoints, extensions, mcp, memory } = composition;
       const agents =
-        active === undefined
+        provider === undefined
           ? undefined
-          : composeAgents(composition, { provider: active.provider, permissions: toolPermissions });
+          : composeAgents(composition, { provider, permissions: toolPermissions });
       const stateStore = workspaceFile(workspaceStateFile(workspaceIdentity(cwd)));
       const sessionDir = values["session-dir"] ?? defaultSessionDir(cwd);
       const extensionsView = {
@@ -249,21 +274,29 @@ async function main(argv: string[]): Promise<number> {
         closers: [() => sweepOnClose(memory), ...(mcp === undefined ? [] : [() => mcp.stop()])],
         extensions: extensionsView,
         ...(config.theme !== undefined && { themeOverrides: config.theme }),
+        ...(config.page !== undefined && { page: config.page }),
         ...(checkpoints !== undefined && { checkpoints }),
         ...(memory !== undefined && { memory: memoryPanePort(memory) }),
         ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
         ...(active !== undefined &&
+          provider !== undefined &&
           agents !== undefined && {
-            agentFactory: (guard, history, seams, agentName) =>
-              agents.build({
+            agentFactory: (guard, history, seams, agentName) => {
+              const agent = agents.build({
                 guard,
                 history,
                 bus: seams?.bus,
                 sessionId: () => seams?.sessionId(),
                 onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
                 definition: extensions.agents.find((candidate) => candidate.name === agentName),
-              }),
-            titler: (conversation) => suggestTitle(active.provider, conversation),
+              });
+              tapJournal(agent.bus, () => {
+                const sessionId = seams?.sessionId();
+                return sessionId === undefined ? undefined : stores.get(sessionId);
+              });
+              return agent;
+            },
+            titler: (conversation) => suggestTitle(provider, conversation),
             statusLabel: () => `${active.label} · ${presets.active()}`,
           }),
       });

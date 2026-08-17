@@ -10,6 +10,7 @@ export interface PaneContext {
   focused: boolean;
   width: number;
   height: number;
+  borderColor?: string;
 }
 
 export interface FileOpenOptions {

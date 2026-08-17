@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { anchorFrontmatter, type CheckpointAnchor } from "./anchors.ts";
 import {
   type Frontmatter,
   MalformedFrontmatterError,
@@ -44,6 +45,7 @@ export interface NoteInput {
   supersedes?: string;
   delivered?: string;
   distilledFrom?: string;
+  anchor?: CheckpointAnchor;
 }
 
 export interface Note {
@@ -384,6 +386,7 @@ export class MemoryStore {
         valid_from: input.delivered,
       }),
       ...(input.distilledFrom !== undefined && { distilled_from: `[[${input.distilledFrom}]]` }),
+      ...(input.anchor !== undefined && anchorFrontmatter(input.anchor)),
     };
   }
 

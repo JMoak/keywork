@@ -2,6 +2,7 @@ import { type EngineEvents, EventBus } from "./bus.ts";
 import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
+import type { PermissionDecision } from "./session/journal.ts";
 import { findTool, type Tool } from "./tools.ts";
 
 export interface ToolGuard {
@@ -212,12 +213,26 @@ export class Agent {
   ): Promise<{ callId: string; output: string; isError: boolean }> {
     try {
       const tool = findTool(this.tools, call.name);
-      const verdict = this.permissions?.(call) ?? defaultPermission(tool);
+      const policyVerdict = this.permissions?.(call);
+      const verdict = policyVerdict ?? defaultPermission(tool);
+      const gate = policyVerdict === undefined ? "default" : "policy";
       if (verdict === "deny") {
+        this.emitPermissionDecision(call, "denied", gate);
         return { callId: call.callId, output: "denied by permission policy", isError: true };
       }
-      if (verdict === "ask" && !(await this.confirmWithGuard(call))) {
-        return { callId: call.callId, output: "declined by user", isError: true };
+      if (verdict === "ask") {
+        const askedUser = this.guard?.confirm !== undefined;
+        const approved = await this.confirmWithGuard(call);
+        this.emitPermissionDecision(
+          call,
+          approved ? "granted" : "denied",
+          askedUser ? "user" : gate,
+        );
+        if (!approved) {
+          return { callId: call.callId, output: "declined by user", isError: true };
+        }
+      } else {
+        this.emitPermissionDecision(call, "granted", gate);
       }
       if (tool.mutates === true) await this.checkpointOnce();
       const output = await tool.execute(call.arguments, signal);
@@ -226,6 +241,16 @@ export class Agent {
       const reason = cause instanceof Error ? cause.message : String(cause);
       return { callId: call.callId, output: reason, isError: true };
     }
+  }
+
+  private emitPermissionDecision(
+    call: ToolCallPart,
+    verdict: PermissionDecision["verdict"],
+    gate: PermissionDecision["gate"],
+  ): void {
+    this.bus.emit("gate.permission", {
+      decision: { tool: call.name, callId: call.callId, verdict, gate },
+    });
   }
 
   private confirmWithGuard(call: ToolCallPart): Promise<boolean> {

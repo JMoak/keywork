@@ -25,14 +25,14 @@ export function paneChrome(
   title: string,
   ...children: PaneChild[]
 ): PaneView {
-  const { theme, focused, width, height } = context;
+  const { theme, focused, width, height, borderColor } = context;
   return Box(
     {
       width,
       height,
       border: true,
       borderStyle: "rounded",
-      borderColor: focused ? theme.borderFocus : theme.border,
+      borderColor: borderColor ?? (focused ? theme.borderFocus : theme.border),
       title,
       titleAlignment: "left",
       flexDirection: "column",

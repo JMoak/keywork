@@ -34,7 +34,10 @@ export async function discoverSkills(root: string): Promise<SkillLoad> {
   return { skills: [...byName.values()], failures };
 }
 
-export function skillTool(skills: readonly SkillDefinition[]): Tool {
+export function skillTool(
+  skills: readonly SkillDefinition[],
+  onLoad?: (skill: SkillDefinition) => void,
+): Tool {
   return defineTool({
     name: "skill",
     description: skillToolDescription(skills),
@@ -46,6 +49,7 @@ export function skillTool(skills: readonly SkillDefinition[]): Tool {
       if (skill === undefined) {
         throw new Error(`unknown skill "${name}"; available: ${names(skills)}`);
       }
+      onLoad?.(skill);
       return `Skill "${skill.name}" (files in ${skill.dir}):\n\n${skill.body}`;
     },
   });

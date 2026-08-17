@@ -1,3 +1,10 @@
+export {
+  contrastFailures,
+  type Flavor,
+  type FlavorTokens,
+  flavorSchema,
+  parseFlavor,
+} from "./flavor.ts";
 export { ConfigError, type ConfigSource, loadConfig, mergeConfigs } from "./load.ts";
 export {
   configSchema,
@@ -11,8 +18,12 @@ export {
 } from "./schema.ts";
 export {
   openWorkspace,
+  resolveAnchor,
   resolveVaultPath,
+  updateWorkspaceDeclaration,
   type Workspace,
+  type WorkspaceAnchor,
   type WorkspaceDeclaration,
   workspaceDeclarationSchema,
+  writeWorkspaceDeclaration,
 } from "./workspace.ts";

@@ -55,7 +55,7 @@ describe("openWorkspace", () => {
     expect(openWorkspace(nested)?.root).toBe(root);
   });
 
-  it("prefers the nearest declaration when several exist above the cwd", async () => {
+  it("rejects a declaration nested inside another declared workspace", async () => {
     const root = await tempRoot();
     await declareWorkspace(root, { name: "outer" });
     const inner = join(root, "sub");
@@ -64,7 +64,7 @@ describe("openWorkspace", () => {
 
     await mkdir(join(inner, "src"), { recursive: true });
 
-    expect(openWorkspace(join(inner, "src"))?.name).toBe("inner");
+    expect(() => openWorkspace(join(inner, "src"))).toThrow("nested workspace anchors");
     expect(openWorkspace(root)?.name).toBe("outer");
   });
 
