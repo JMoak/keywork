@@ -1,6 +1,21 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │╭─ session tree ──────────────────────╮╭─ session-1 ─────────────────────────────────────────────────────────────────╮│
 ││ ░ no sessions yet                   ││                                                                             ││
+││                          ╭────────────────────────── commands ──────────────────────────╮                          ││
+││                          │                                                              │                          ││
+││                          │ › >▌                                                         │                          ││
+││                          │ ▸ split       open a new session pane               ctrl+k s │                          ││
+││                          │   zoom        zoom the focused pane                 ctrl+k z │                          ││
+││                          │   move-left   focus the pane to the left            ctrl+k h │                          ││
+││                          │   move-down   focus the pane below                  ctrl+k j │                          ││
+││                          │   move-up     focus the pane above                  ctrl+k k │                          ││
+││                          │   move-right  focus the pane to the right           ctrl+k l │                          ││
+││                          │   push-left   move this pane left             ctrl+k shift+h │                          ││
+││                          │   push-down   move this pane down             ctrl+k shift+j │                          ││
+││                          │   push-up     move this pane up               ctrl+k shift+k │                          ││
+││                          │   push-right  move this pane right            ctrl+k shift+l │                          ││
+││                          │                                                              │                          ││
+││                          ╰──────────────────────────────────────────────────────────────╯                          ││
 ││                                     ││                                                                             ││
 ││                                     ││                                                                             ││
 ││                                     ││                                                                             ││
@@ -11,22 +26,7 @@
 ││                                     ││                                                                             ││
 ││                                     ││                                                                             ││
 ││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││                                                                             ││
-││                                     ││   no provider · set KEYWORK_OPENROUTER_API_KEY, then relaunch               ││
 ││                                     ││ › ▌                                                                         ││
 │╰─────────────────────────────────────╯╰─────────────────────────────────────────────────────────────────────────────╯│
-│ keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · > commands                                                          │
+│ keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · > commands                                                        > │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
