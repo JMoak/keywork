@@ -86,6 +86,7 @@ export class ConversationModel {
   readonly entries: TranscriptEntry[] = [];
   readonly buffer = new InputBuffer();
   busy = false;
+  activity = 0;
   title: string | undefined;
   pendingAsk: PendingAsk | undefined;
   scrollBack = 0;
@@ -151,6 +152,7 @@ export class ConversationModel {
       }),
       agent.bus.on("turn.delta", ({ delta }) => {
         if (delta.type !== "text") return;
+        this.activity += 1;
         this.appendAssistant(delta.text);
         notify();
       }),
@@ -167,6 +169,7 @@ export class ConversationModel {
         const entry: ToolEntry = { kind: "tool", text: toolRowText(run), failed: false, run };
         this.runningTools.set(call.callId, { entry, run, tail: new TailFollow() });
         this.entries.push(entry);
+        this.activity += 1;
         notify();
       }),
       agent.bus.on("tool.output", ({ chunk, callId }) => {
@@ -177,6 +180,7 @@ export class ConversationModel {
         running.tail.push(chunk);
         running.run.live = running.tail.rows(liveLineLimit).at(-1);
         running.entry.text = toolRowText(running.run);
+        this.activity += 1;
         notify();
       }),
       agent.bus.on("tool.finished", ({ callId, output, isError }) => {

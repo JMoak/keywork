@@ -76,6 +76,25 @@
   ANSI-stripped via TailFollow) and settles to the one-liner — the separate tail block
   and its `tail` line kind are retired. Fixtures: `page-tiers` captures 01–03
   (rail/row/fold round-trip mouse-open → tab-close, structurally asserted).
+- **C64 (2pt) — title-bar grammar & lifecycle stamp** ✅ 2026-08-17: `tui/title-bar.ts`
+  two-zone composer over C59's tiers (broadsheet = stamp·name·telemetry·mode-word seam;
+  column drops mode and shows telemetry focused-only; clipping/masthead = stamp + fitted
+  name via engine `fitTitle` with live sibling avoid-sets; shed order mode → telemetry →
+  name words, stamp last standing; calm idle pane = byte-identical ` name ` — goldens
+  unchanged). Lifecycle stamp on conversation panes: working = event-stepped `░▒▓` fill
+  (model activity ticks, no timers), **needs-you = `█⇄▓` pulse at quick tempo (Jordan's
+  pick this session over a ▓-hold; caveat accepted: under reduced-motion/monochrome the
+  settled pulse frame equals the finished-unseen `█` — accent color and the ask row
+  disambiguate)**, finished-unseen = `█` held until focus then density-drain at settle
+  tempo, failed = `▛` held-then-drain, idle = blank. **C53's Animator is now actually
+  wired** (shared instance in runApp, onFrame → coalesced render, settled on exit);
+  pulse is self-healing per render, drain uses departure shape. Telemetry zone renders
+  `usageSummary` (cost-first) behind the seam until the 102 lens session; `title()`
+  stays clean for jump-commands/snapshots — composition happens in `view()` where width
+  and focus live. Tests: title-bar.test.ts (9) + conversation-pane.test.ts (8, manual-
+  scheduler Animator; drain-only-on-focus, ask-stamp exactness, focused-completion
+  skips the hold). Live pulse visible in the first-conversation ask capture
+  (`▓ session-1`).
 
 ## Tasks
 

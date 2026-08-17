@@ -39,6 +39,7 @@ import { minPaneSize, type Rect, type Screen } from "./layout.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+import { Animator } from "./motion.ts";
 import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
 import type { FileOpenOptions, PaneView } from "./pane.ts";
 import { type PointerEvent, pointerEventOf } from "./pointer.ts";
@@ -137,7 +138,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   let armedExpiry: ReturnType<typeof setTimeout> | undefined;
   let unsubscribeMcp: (() => void) | undefined;
   let releaseFatalGuards: () => void = () => {};
-  const core = new AppCore({
+  const animator = new Animator({ onFrame: () => render() });
+  const core: AppCore = new AppCore({
     screen,
     createPane: (id, notify, commands, resumeSessionId, draft) => {
       let pane: ConversationPane | undefined;
@@ -170,6 +172,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       const created = new ConversationPane(id, agent, notify, titler, commands, {
         ports,
         page: pageThresholds,
+        animator,
+        siblingTitles: () => paneSiblingTitles(core, id),
         ...(draft !== undefined && { initialDraft: draft }),
       });
       pane = created;
@@ -238,6 +242,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     onExit: closeOnce(() => {
       closed = true;
       releaseFatalGuards();
+      animator.settleAll();
       if (armedExpiry !== undefined) clearTimeout(armedExpiry);
       unsubscribeMcp?.();
       renderer.destroy();
@@ -677,6 +682,13 @@ export function paneSessionIndex(sessions: SessionPort | undefined): PaneSession
       return paneId === undefined ? false : (bindings.get(paneId)?.busy() ?? false);
     },
   };
+}
+
+function paneSiblingTitles(core: AppCore, selfId: string): readonly string[] {
+  return core
+    .snapshot()
+    .panes.filter((pane) => pane.id !== selfId)
+    .map((pane) => pane.title.split(" ·")[0] ?? pane.title);
 }
 
 export function startFreshSession(

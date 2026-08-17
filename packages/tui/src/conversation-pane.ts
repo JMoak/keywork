@@ -21,19 +21,26 @@ import type { DiffLine } from "./diff-render.ts";
 import type { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import type { MarkdownSpan, MarkdownTone } from "./markdown.ts";
+import { type Animator, inkAt } from "./motion.ts";
 import { type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
+import { titleBar } from "./title-bar.ts";
 import { trayBox, trayRows } from "./tray.ts";
 
 const askDiffRows = 10;
+const pulseRamp = ["▓", "█"] as const;
+const workRamp = ["░", "▒", "▓"] as const;
+const drainRamp = ["░", "▒", "▓", "█"] as const;
 
 export interface ConversationPaneOptions {
   ports?: ConversationPorts;
   initialDraft?: string;
   page?: PageThresholds;
+  animator?: Animator;
+  siblingTitles?: () => readonly string[];
 }
 
 export class ConversationPane implements Pane {
@@ -43,6 +50,14 @@ export class ConversationPane implements Pane {
   private closed = false;
   private lastLines: readonly TranscriptLine[] = [];
   private lastMaxRows = 0;
+
+  private readonly animator: Animator | undefined;
+  private readonly siblingTitles: (() => readonly string[]) | undefined;
+  private wasBusy = false;
+  private unseen: "finished" | "failed" | undefined;
+  private pulseInk = 1;
+  private pulsing = false;
+  private drainInk: number | undefined;
 
   constructor(
     readonly id: string,
@@ -54,6 +69,8 @@ export class ConversationPane implements Pane {
   ) {
     this.model = new ConversationModel(agent, notify, titler, commands, options?.ports);
     this.pageThresholds = options?.page ?? pageTierThresholds;
+    this.animator = options?.animator;
+    this.siblingTitles = options?.siblingTitles;
     if (options?.initialDraft !== undefined) this.model.buffer.load(options.initialDraft);
   }
 
@@ -146,6 +163,85 @@ export class ConversationPane implements Pane {
     }
   }
 
+  private composedTitle(context: PaneContext): string {
+    this.observeLifecycle(context);
+    return titleBar(
+      {
+        name: this.model.title ?? this.id,
+        stamp: this.stampGlyph(),
+        telemetry: this.model.usageSummary() || undefined,
+        siblings: this.siblingTitles?.(),
+      },
+      context.width,
+      context.focused,
+    );
+  }
+
+  private observeLifecycle(context: PaneContext): void {
+    const settledNow = this.wasBusy && !this.model.busy;
+    if (settledNow && !context.focused) {
+      this.unseen = this.model.entries.at(-1)?.kind === "error" ? "failed" : "finished";
+    }
+    this.wasBusy = this.model.busy;
+    if (this.unseen !== undefined && context.focused && this.drainInk === undefined) {
+      this.beginDrain();
+    }
+    this.syncPulse();
+  }
+
+  private beginDrain(): void {
+    const animator = this.animator;
+    if (animator === undefined) {
+      this.unseen = undefined;
+      return;
+    }
+    animator.play({
+      region: `stamp:${this.id}`,
+      tempo: "settle",
+      shape: "departure",
+      apply: (progress) => {
+        this.drainInk = 1 - progress;
+      },
+      onSettled: () => {
+        this.drainInk = undefined;
+        this.unseen = undefined;
+      },
+    });
+  }
+
+  private syncPulse(): void {
+    const wantsPulse = this.model.pendingAsk !== undefined && this.animator !== undefined;
+    if (!wantsPulse) {
+      if (this.pulsing) this.animator?.settleRegion(`pulse:${this.id}`);
+      this.pulsing = false;
+      this.pulseInk = 1;
+      return;
+    }
+    if (this.pulsing) return;
+    this.pulsing = true;
+    const phase = this.pulseInk >= 1 ? "dim" : "brighten";
+    this.animator?.play({
+      region: `pulse:${this.id}`,
+      tempo: "quick",
+      shape: "arrival",
+      apply: (progress) => {
+        this.pulseInk = phase === "dim" ? 1 - progress : progress;
+      },
+      onSettled: () => {
+        this.pulsing = false;
+      },
+    });
+  }
+
+  private stampGlyph(): string | undefined {
+    if (this.model.pendingAsk !== undefined) return inkAt(pulseRamp, this.pulseInk);
+    if (this.model.busy) return workRamp[this.model.activity % workRamp.length];
+    if (this.drainInk !== undefined) return inkAt(drainRamp, this.drainInk);
+    if (this.unseen === "failed") return "▛";
+    if (this.unseen === "finished") return "█";
+    return undefined;
+  }
+
   view(context: PaneContext): PaneView {
     const { theme, focused, width, height } = context;
     const innerWidth = paneContentWidth(width);
@@ -179,7 +275,7 @@ export class ConversationPane implements Pane {
     const scrollBack = this.model.scrollBack;
     return paneChrome(
       context,
-      this.title(),
+      this.composedTitle(context),
       Box(
         { flexGrow: 1, flexDirection: "column", justifyContent: "flex-end", overflow: "hidden" },
         ...lines.map((line) => transcriptRow(line, innerWidth, theme)),

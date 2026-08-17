@@ -92,4 +92,5 @@ export type {
   SessionPresence,
 } from "./sessions-overview-model.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
+export { type LifecycleState, type TitleBarState, titleBar } from "./title-bar.ts";
 export type { WorkspaceState } from "./workspace-state.ts";
