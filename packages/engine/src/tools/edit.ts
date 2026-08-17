@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
-import { confinedPath } from "./confine.ts";
+import { confinedPath, type ToolScope } from "./confine.ts";
 import { defineTool } from "./define.ts";
 
 const schema = z.object({
@@ -10,14 +10,14 @@ const schema = z.object({
   replaceAll: z.boolean().optional().describe("Replace every occurrence instead of exactly one."),
 });
 
-export function editTool(cwd: string) {
+export function editTool(scope: string | ToolScope, onSaved?: (path: string) => void) {
   return defineTool({
     name: "edit",
     description: "Replace exact text in a file. oldText must match exactly once unless replaceAll.",
     schema,
     mutates: true,
     run: async ({ path, oldText, newText, replaceAll = false }) => {
-      const target = confinedPath(cwd, path);
+      const target = confinedPath(scope, path);
       const raw = await readFile(target, "utf8");
       const crlf = raw.includes("\r\n");
       const content = toUnixEol(raw);
@@ -33,6 +33,7 @@ export function editTool(cwd: string) {
       }
       const edited = content.replaceAll(search, toUnixEol(newText));
       await writeFile(target, crlf ? edited.replaceAll("\n", "\r\n") : edited, "utf8");
+      onSaved?.(target);
       const label = occurrences === 1 ? "1 occurrence" : `${occurrences} occurrences`;
       return `Replaced ${label} in ${path}`;
     },

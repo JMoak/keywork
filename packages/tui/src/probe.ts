@@ -22,6 +22,7 @@ export interface AppProbeOptions
       | "presets"
       | "restoreWorkspace"
       | "saveWorkspace"
+      | "onPaneClosed"
     >
   > {
   screen?: Screen;
@@ -60,6 +61,7 @@ export class AppProbe {
         restoreWorkspace: options.restoreWorkspace,
       }),
       ...(options.saveWorkspace !== undefined && { saveWorkspace: options.saveWorkspace }),
+      ...(options.onPaneClosed !== undefined && { onPaneClosed: options.onPaneClosed }),
       onExit: () => {
         this.exited = true;
       },
@@ -101,6 +103,14 @@ export class AppProbe {
 
   hover(x: number, y: number): this {
     this.point({ type: "move", x, y });
+    return this;
+  }
+
+  drag(from: { x: number; y: number }, ...path: { x: number; y: number }[]): this {
+    this.point({ type: "down", x: from.x, y: from.y, button: 0 });
+    for (const at of path) this.point({ type: "drag", x: at.x, y: at.y, button: 0 });
+    const last = path.at(-1) ?? from;
+    this.point({ type: "up", x: last.x, y: last.y, button: 0 });
     return this;
   }
 

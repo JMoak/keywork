@@ -18,9 +18,10 @@ export class FileModel {
     cwd: string,
     readonly path: string,
     private readonly notify: () => void,
+    options: { atEnd?: true } = {},
   ) {
     this.name = basename(path);
-    this.lastLoad = this.load(resolve(cwd, path));
+    this.lastLoad = this.load(resolve(cwd, path), options.atEnd === true);
   }
 
   handleKey(chord: Chord, pageRows: number): boolean {
@@ -33,6 +34,10 @@ export class FileModel {
         return this.scrollBy(-pageRows);
       case "pagedown":
         return this.scrollBy(pageRows);
+      case "home":
+        return this.scrollTo(0);
+      case "end":
+        return this.scrollTo(this.lineCount());
       default:
         return false;
     }
@@ -56,7 +61,13 @@ export class FileModel {
     return true;
   }
 
-  private async load(absolutePath: string): Promise<void> {
+  private scrollTo(top: number): boolean {
+    this.scrollTop = Math.max(0, top);
+    this.notify();
+    return true;
+  }
+
+  private async load(absolutePath: string, atEnd: boolean): Promise<void> {
     try {
       const { size } = await stat(absolutePath);
       if (size > maxFileBytes) {
@@ -68,6 +79,7 @@ export class FileModel {
       this.state = content.includes("\u0000")
         ? { kind: "failed", reason: "binary file" }
         : { kind: "loaded", lines: content.split(/\r?\n/) };
+      if (atEnd) this.scrollTop = this.lineCount();
     } catch (cause) {
       this.state = { kind: "failed", reason: (cause as Error).message };
     }

@@ -47,14 +47,14 @@ function editDiff(args: unknown, read: FileReader): DiffLine[] | undefined {
   const newText = stringField(args, "newText");
   if (path === undefined || oldText === undefined || newText === undefined) return undefined;
   const raw = read(path);
-  if (raw === undefined) return [note(`${path} cannot be read — this edit will fail`)];
+  if (raw === undefined) return [note(`can't read ${path} · this edit will fail`)];
   const content = toUnixEol(raw);
   const search = toUnixEol(oldText);
   const occurrences = countOccurrences(content, search);
-  if (occurrences === 0) return [note(`oldText not found in ${path} — this edit will fail`)];
+  if (occurrences === 0) return [note(`oldText not found in ${path} · this edit will fail`)];
   const replaceAll = booleanField(args, "replaceAll") === true;
   if (occurrences > 1 && !replaceAll) {
-    return [note(`oldText matches ${occurrences} places in ${path} — this edit will fail`)];
+    return [note(`oldText matches ${occurrences} places in ${path} · this edit will fail`)];
   }
   return unifiedDiff(content, content.replaceAll(search, toUnixEol(newText)));
 }

@@ -1,7 +1,9 @@
 import { Layout, type LayoutState, layoutStateIds } from "./layout.ts";
 import type { Pane, PaneDescriptor } from "./pane.ts";
 
-export const workspaceStateVersion = 1;
+export const workspaceStateVersion = 2;
+
+const readableVersions: ReadonlySet<unknown> = new Set([1, workspaceStateVersion]);
 
 export type WorkspacePane = { id: string } & PaneDescriptor;
 
@@ -21,7 +23,7 @@ export function captureWorkspace(layout: Layout, panes: ReadonlyMap<string, Pane
 }
 
 export function parseWorkspaceState(value: unknown): WorkspaceState | undefined {
-  if (!isRecord(value) || value.version !== workspaceStateVersion) return undefined;
+  if (!isRecord(value) || !readableVersions.has(value.version)) return undefined;
   const layout = Layout.parse(value.layout);
   if (layout === undefined || !Array.isArray(value.panes)) return undefined;
   const knownIds = new Set(layoutStateIds(layout));

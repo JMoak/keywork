@@ -7,7 +7,7 @@ import {
 } from "./browser-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
-import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import type { Theme } from "./theme.ts";
 
 export class BrowserPane implements Pane {
@@ -46,11 +46,11 @@ export class BrowserPane implements Pane {
   view(context: PaneContext): PaneView {
     const { theme, focused, height, width } = context;
     const filterLine = this.filterLine(theme, focused);
-    this.lastPageRows = Math.max(3, height - 3 - (filterLine === undefined ? 0 : 1));
+    this.lastPageRows = Math.max(0, paneContentHeight(height) - (filterLine === undefined ? 0 : 1));
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, Math.max(10, width - 4)),
+      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(width)),
       ...(filterLine === undefined ? [] : [filterLine]),
     );
   }

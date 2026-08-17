@@ -30,6 +30,18 @@ Adaptations:
   trust-manager — per-path persisted trust decisions in a JSON map, canonicalized
   paths, nearest-ancestor resolution via dirname walking, session-only grants, and
   the never-blanket-trust-$HOME edge case.
+- 101/provider-onboarding (packages/cli/src/codex-login.ts, auth-store.ts): OpenAI
+  ChatGPT Plus/Pro sign-in adapted from Pi's openai-codex OAuth module — the PKCE
+  authorization-code flow against auth.openai.com (shared Codex client id,
+  localhost:1455 callback, codex_cli_simplified_flow/originator parameters), the
+  device-code variant (usercode/token polling endpoints, pending/slow_down handling,
+  server-supplied code_verifier), account-id extraction from the access token's
+  `https://api.openai.com/auth` claim, and refresh-token exchange. Credential file
+  shape (provider-to-tagged-credential map in auth.json, api_key | oauth union)
+  follows Pi's auth storage. Request specifics for chatgpt.com/backend-api/codex
+  (chatgpt-account-id/originator/OpenAI-Beta headers, store:false with encrypted
+  reasoning round-trip) follow Pi's openai-codex-responses API module; keywork's
+  Responses-surface provider itself is an independent implementation.
 
 ---
 
@@ -74,6 +86,19 @@ Licensed under the MIT License (full text below).
 
 Adaptations: none yet. keywork's self-healing-skills tasks plan adaptations of its skill
 mechanisms (reimplemented in TypeScript); entries will be recorded here as code lands.
+
+---
+
+HippoRAG (https://github.com/OSU-NLP-Group/HippoRAG)
+Copyright (c) 2024 OSU NLP Group
+Licensed under the MIT License (full text below).
+
+Adaptations:
+- J12 (packages/engine/src/memory/graph.ts): entity-seeded Personalized PageRank
+  retrieval adapted from HippoRAG's published method — query entities seed a
+  personalized PageRank power iteration over the note graph, and the ranked scores
+  join retrieval fusion as their own list. Reimplemented in TypeScript from the
+  documented design; no code copied.
 
 ---
 

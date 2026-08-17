@@ -18,24 +18,24 @@ afterEach(async () => {
 });
 
 const state: WorkspaceState = {
-  version: 1,
+  version: 2,
   layout: { tree: { kind: "leaf", id: "session-1" }, focused: "session-1" },
   panes: [{ id: "session-1", kind: "conversation", sessionId: "abc" }],
 };
 
 describe("workspaceFile", () => {
-  it("round-trips state through save, flush, and load", async () => {
+  it("round-trips state through save, seal, and load", async () => {
     const port = workspaceFile(await tempStateFile());
     port.save(state);
-    port.flush();
+    port.seal();
     expect(await port.load()).toEqual(state);
   });
 
-  it("debounces writes until flush", async () => {
+  it("debounces writes until sealed", async () => {
     const port = workspaceFile(await tempStateFile(), 60_000);
     port.save(state);
     expect(await port.load()).toBeUndefined();
-    port.flush();
+    port.seal();
     expect(await port.load()).toEqual(state);
   });
 
@@ -44,19 +44,29 @@ describe("workspaceFile", () => {
     const port = workspaceFile(file);
     expect(await port.load()).toBeUndefined();
     port.save(state);
-    port.flush();
+    port.seal();
     await writeFile(file, "{ definitely not json", "utf8");
     expect(await port.load()).toBeUndefined();
   });
 
   it("fresh mode ignores saved state but keeps saving", async () => {
-    const port = workspaceFile(await tempStateFile());
-    port.save(state);
-    port.flush();
-    const fresh = freshWorkspace(port);
+    const file = await tempStateFile();
+    const seed = workspaceFile(file);
+    seed.save(state);
+    seed.seal();
+    const fresh = freshWorkspace(workspaceFile(file));
     expect(await fresh.load()).toBeUndefined();
     fresh.save({ ...state, panes: [] });
-    fresh.flush();
-    expect(await port.load()).toEqual({ ...state, panes: [] });
+    fresh.seal();
+    expect(await workspaceFile(file).load()).toEqual({ ...state, panes: [] });
+  });
+
+  it("ignores saves after sealing", async () => {
+    const port = workspaceFile(await tempStateFile());
+    port.save(state);
+    port.seal();
+    port.save({ ...state, panes: [] });
+    port.seal();
+    expect(await port.load()).toEqual(state);
   });
 });

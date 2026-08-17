@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  AskGateLedger,
   bootstrapMemory,
   type EmbeddingsPort,
   estimateContextTokens,
@@ -30,6 +31,7 @@ export interface WorkspaceMemory {
   search: MemorySearch;
   inbox: ReviewInbox;
   gardener: Gardener;
+  askGate: AskGateLedger;
   embeddings?: EmbeddingsPort;
 }
 
@@ -46,6 +48,9 @@ export function openWorkspaceMemory(cwd: string, trusted: boolean): WorkspaceMem
     search: new MemorySearch(store),
     inbox,
     gardener: new Gardener({ store, inbox }),
+    askGate: trusted
+      ? new AskGateLedger({ filePath: join(vaultRoot, ".staging", "ask-gate.json") })
+      : new AskGateLedger(),
   };
 }
 
@@ -71,7 +76,7 @@ export function retrievalDisclosure(source: RetrievalSource): string | undefined
     case "hybrid":
       return `memory search uses embeddings from ${source.embeddings}`;
     case "lexical-degraded":
-      return `memory search fell back to lexical — embeddings from ${source.embeddings} unavailable`;
+      return `memory search fell back to lexical, embeddings from ${source.embeddings} aren't available`;
   }
 }
 
@@ -126,6 +131,10 @@ export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise
   if (memory === undefined) return;
   try {
     await memory.gardener.sweep();
+  } catch {}
+  if (!memory.store.trusted) return;
+  try {
+    await memory.askGate.proposePreferences(memory.inbox, memory.store);
   } catch {}
 }
 
@@ -231,6 +240,29 @@ function reviewView(item: ReviewItem): InboxItemView {
         kind: "proposal",
         title: `link ${item.note} → ${item.target}`,
         provenance: "agent",
+      };
+    case "arc-distillation":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `arc ${item.arc}: deliver ${item.note}`,
+        provenance: "agent",
+        detail: item.eligible ? "eligible" : "below bar",
+      };
+    case "arc-question":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `arc ${item.arc}: triage ${item.note}`,
+        provenance: "agent",
+      };
+    case "preference-proposal":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `allow ${item.toolShape} without asking`,
+        provenance: "user",
+        detail: `approved ${item.approvals} times in a row`,
       };
   }
 }

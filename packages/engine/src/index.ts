@@ -7,6 +7,15 @@ export {
   type ToolPermission,
 } from "./agent.ts";
 export { type EngineEvents, EventBus } from "./bus.ts";
+export {
+  declaredCapabilitiesFor,
+  type InputModality,
+  type ModelCapabilities,
+  type ModelCapabilityDeclaration,
+  UndeclaredCapabilityError,
+  undeclaredCapabilities,
+  withDeclaredCapabilities,
+} from "./capabilities.ts";
 export { Checkpoints, type CheckpointsOptions, UnknownCheckpointError } from "./checkpoints.ts";
 export {
   type DiagnosticsLevel,
@@ -47,6 +56,7 @@ export {
 } from "./extensions/skills.ts";
 export {
   connectStdioServer,
+  McpAbortedError,
   type McpConnection,
   McpProtocolError,
   McpRequestTimeoutError,
@@ -62,6 +72,7 @@ export {
   isMcpBackedTool,
   type McpBackedTool,
   McpRegistry,
+  McpRegistryClosedError,
   type McpRegistryOptions,
   McpServerNotFoundError,
   type McpServerState,
@@ -72,15 +83,104 @@ export {
   mcpSearchToolName,
 } from "./mcp/registry.ts";
 export {
+  anchorFrontmatter,
+  type CheckpointAnchor,
+  type CheckpointAnchorInputs,
+  checkpointAnchor,
+  readAnchor,
+} from "./memory/anchors.ts";
+export {
+  type AckSweep,
+  ArcAirlock,
+  type ArcAirlockOptions,
+  type ArcCloseCandidate,
+  type ArcCloseDigest,
+  type ArcDelivery,
+  ArcStillActiveError,
+  type CandidateTriage,
+  type CloseDecisions,
+  IneligibleDeliveryError,
+  MissingSuccessorError,
+  type PrepareCloseOptions,
+  type QuestionTriage,
+  type RubricShortfall,
+  UndecidedItemsError,
+  UnknownTriageTargetError,
+  WedgedSessionsError,
+} from "./memory/arcs/airlock.ts";
+export {
+  type ArcBindingChange,
+  type ArcBindingListener,
+  ArcBindings,
+} from "./memory/arcs/bindings.ts";
+export {
+  ArcOpenQuestions,
+  type ArcOpenQuestionsOptions,
+  type CapEvents,
+  type CapOverflowChoice,
+  defaultOpenQuestionCap,
+  MissingOpenQuestionError,
+  type OpenQuestion,
+  OpenQuestionCapError,
+  type OpenQuestionInput,
+  type OpenQuestionStatus,
+} from "./memory/arcs/questions.ts";
+export {
+  ArcRecall,
+  type ArcRecallOptions,
+  type ArcRecallOutcome,
+  type ArcSearchHit,
+  arcBootstrapLayer,
+  defaultArcBoost,
+  type MemoryLayerRef,
+} from "./memory/arcs/recall.ts";
+export {
+  ArcExistsError,
+  ArcNotActiveError,
+  type ArcRecord,
+  ArcRegistry,
+  type ArcRegistryOptions,
+  type ArcStatus,
+  arcMocLink,
+  InvalidArcSlugError,
+  MissingArcError,
+  validateArcSlug,
+} from "./memory/arcs/registry.ts";
+export {
+  type AskAnswer,
+  type AskEvent,
+  AskGateLedger,
+  type AskGateLedgerOptions,
+  defaultPreferenceThreshold,
+  toolShape,
+} from "./memory/ask-gate.ts";
+export {
   type BootstrapInjection,
   type BootstrapLayer,
   bootstrapMemory,
   type LayerBootstrap,
 } from "./memory/bootstrap.ts";
 export {
+  type CitationChain,
+  type CitationChainHop,
+  type CitationEvent,
+  CitationLedger,
+  type CitationLedgerEvent,
+  type CitationLedgerOptions,
+  type CitationOutcome,
+  citationChain,
+  citationUsefulnessFeed,
+  type LatencyEvent,
+  type RecallEvent,
+  type RecallSurface,
+  type UsefulnessSink,
+} from "./memory/citations.ts";
+export {
+  backtrackFlushClause,
   defaultFlushSettings,
   type FlushOutcome,
   type FlushSettings,
+  flushPrompt,
   isMemoryFlushPrompt,
   isNoReply,
   MemoryFlush,
@@ -109,6 +209,22 @@ export {
   type SweepReport,
 } from "./memory/gardener.ts";
 export {
+  type DanglingLink,
+  type EntityType,
+  entityTypeSchema,
+  entityTypes,
+  type GraphEdge,
+  type GraphNode,
+  MemoryGraph,
+  type OutlineEntry,
+  type PageRankOptions,
+  type Predicate,
+  predicateSchema,
+  predicates,
+  type RankedEntity,
+  type SkippedRelation,
+} from "./memory/graph.ts";
+export {
   MalformedInboxError,
   ReviewInbox,
   type ReviewInboxOptions,
@@ -132,6 +248,7 @@ export {
   type RecallListener,
 } from "./memory/recall-tools.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
+export type { NoteRelations } from "./memory/search.ts";
 export {
   type EmbeddingsPort,
   MemorySearch,
@@ -178,6 +295,21 @@ export {
 } from "./messages.ts";
 export { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
 export {
+  type CostRollup,
+  carriesUsage,
+  costNanosOf,
+  emptyCostRollup,
+  formatCostNanos,
+  groupCosts,
+  knownCostNanos,
+  type ModelRates,
+  mergeCostRollups,
+  ratesFor,
+  type SessionCostSource,
+  sessionCost,
+  withTurnCost,
+} from "./pricing.ts";
+export {
   buildSystemPrompt,
   loadProjectInstructions,
   type SystemPromptOptions,
@@ -205,6 +337,10 @@ export {
   ProviderHttpError,
   ProviderStreamError,
 } from "./providers/openai.ts";
+export {
+  type OpenAiResponsesOptions,
+  OpenAiResponsesProvider,
+} from "./providers/openai-responses.ts";
 export { RetryingProvider, type RetryOptions } from "./providers/retry.ts";
 export {
   type CompactionOptions,
@@ -236,6 +372,21 @@ export {
   sessionFormatVersion,
   type ThinkingLevelChangeEntry,
 } from "./session/entries.ts";
+export {
+  type ContextInjection,
+  type ExtensionState,
+  extensionState,
+  type InjectionSource,
+  type JournalEvent,
+  type JournalTap,
+  journalEvents,
+  type PermissionDecision,
+  type PermissionGate,
+  type PermissionVerdict,
+  recordJournalEvent,
+  replayJournalEntry,
+  tapJournal,
+} from "./session/journal.ts";
 export { replaySession } from "./session/replay.ts";
 export {
   type BranchSummaryInput,
@@ -243,12 +394,24 @@ export {
   type SessionStats,
   SessionStore,
 } from "./session/store.ts";
-export { kebabTitle, suggestTitle } from "./titles.ts";
+export { fitTitle, kebabTitle, suggestTitle, type TitleContext } from "./titles.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
-export { coreTools, type MemoryRecall } from "./tools/core.ts";
+export {
+  confinedPath,
+  scopeContains,
+  scopeCwd,
+  type ToolScope,
+  toolScope,
+} from "./tools/confine.ts";
+export { type CoreToolTaps, coreTools, type MemoryRecall } from "./tools/core.ts";
 export { defineTool } from "./tools/define.ts";
 export { editTool } from "./tools/edit.ts";
 export { readTool } from "./tools/read.ts";
+export {
+  persistentBashTool,
+  type ShellRunOptions,
+  ShellSession,
+} from "./tools/shell-session.ts";
 export { writeTool } from "./tools/write.ts";
 export { findTool, type Tool, ToolNotFoundError } from "./tools.ts";
 

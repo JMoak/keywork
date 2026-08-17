@@ -1,45 +1,114 @@
 import { Text } from "@opentui/core";
-import type { Chord } from "./keys.ts";
+import { type Chord, parseChord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
-import { paneChrome, paneTitle } from "./pane-chrome.ts";
+import {
+  paneChrome,
+  paneContentHeight,
+  paneContentWidth,
+  paneFailureLine,
+  paneTitle,
+} from "./pane-chrome.ts";
+import { PaneTasks } from "./pane-tasks.ts";
+import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import type { PointerEvent } from "./pointer.ts";
 import {
   SessionTreeModel,
   type SessionTreeRow,
   type SessionTreeView,
 } from "./session-tree-model.ts";
+import {
+  overviewRowLine,
+  type SessionOverviewItem,
+  type SessionOverviewRow,
+  type SessionPresence,
+  SessionsOverviewModel,
+} from "./sessions-overview-model.ts";
 import type { Theme } from "./theme.ts";
 
 export interface SessionTreePort {
   load(sessionId: string): Promise<SessionTreeView | undefined>;
   setLabel(sessionId: string, entryId: string, label: string | undefined): Promise<void>;
   fork(sessionId: string, entryId: string): Promise<string | undefined>;
+  overview?(): Promise<SessionOverviewItem[]>;
+  attach?(sessionId: string): Promise<boolean>;
+  subscribe?(listener: (sessionId: string) => void): () => void;
 }
+
+export interface SessionTreePaneSeams {
+  sessionId?: string;
+  presence?: SessionPresence;
+  now?: () => number;
+}
+
+const refreshFrameMs = 16;
+
+type PaneLevel = "overview" | "entries";
 
 export class SessionTreePane implements Pane {
   readonly model: SessionTreeModel;
+  readonly overview: SessionsOverviewModel;
+  readonly tray: PaneTrayModel;
+  private paneLevel: PaneLevel = "overview";
   private sessionId: string | undefined;
-  private failure: string | undefined;
-  private readonly pending = new Set<Promise<void>>();
+  private readonly presence: SessionPresence | undefined;
+  private readonly tasks: PaneTasks;
+  private readonly unsubscribe: (() => void) | undefined;
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private lastPageRows = 20;
 
   constructor(
     readonly id: string,
-    private readonly notify: () => void,
+    notify: () => void,
     intents: PaneIntents,
     private readonly port: SessionTreePort,
-    private readonly targetSession: () => string | undefined,
-    initialSessionId?: string,
+    currentSession: () => string | undefined,
+    seams: SessionTreePaneSeams = {},
   ) {
-    this.sessionId = initialSessionId;
-    this.model = new SessionTreeModel(notify, {
+    this.sessionId = seams.sessionId;
+    this.presence = seams.presence;
+    this.tasks = new PaneTasks(notify);
+    this.model = new SessionTreeModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
-      fork: (entryId) => this.track(this.fork(entryId, intents)),
-      setLabel: (entryId, label) => this.track(this.relabel(entryId, label)),
+      fork: (entryId) => this.tasks.track(() => this.fork(entryId, intents)),
+      setLabel: (entryId, label) => this.tasks.track(() => this.relabel(entryId, label)),
     });
+    this.overview = new SessionsOverviewModel(
+      () => this.tasks.emit(),
+      {
+        refresh: () => this.refresh(),
+        activate: (sessionId) => this.tasks.track(() => this.focusOrOpen(sessionId, intents)),
+        drill: (sessionId) => this.drillInto(sessionId),
+      },
+      {
+        currentSession,
+        ...(seams.presence !== undefined && { presence: seams.presence }),
+        ...(seams.now !== undefined && { now: seams.now }),
+      },
+    );
+    this.tray = new PaneTrayModel(
+      () => this.tasks.emit(),
+      () => this.trayCommands(),
+    );
+    this.unsubscribe = port.subscribe?.(() => this.scheduleRefresh());
     this.refresh();
   }
 
+  dispose(): void {
+    this.tasks.dispose();
+    this.unsubscribe?.();
+    if (this.refreshTimer !== undefined) clearTimeout(this.refreshTimer);
+    this.refreshTimer = undefined;
+  }
+
+  level(): PaneLevel {
+    return this.paneLevel;
+  }
+
   title(): string {
+    if (this.paneLevel === "overview") {
+      const count = this.overview.sessionCount();
+      return paneTitle("session tree", count === 0 ? undefined : sessionCountDetail(count));
+    }
     const count = this.model.entryCount();
     const name = this.model.sessionName() ?? "session tree";
     return paneTitle(name, count === 0 ? undefined : `${count} entries`);
@@ -52,80 +121,202 @@ export class SessionTreePane implements Pane {
     };
   }
 
-  handleKey(chord: Chord): boolean {
+  handleKey(chord: Chord, sequence?: string): boolean {
+    if (this.tray.open) return this.tray.handleKey(chord, sequence);
+    if (!this.model.labeling && this.tray.opensOn(chord)) {
+      this.tray.openTray();
+      return true;
+    }
+    if (this.paneLevel === "overview") return this.overview.handleKey(chord, this.lastPageRows);
+    if (!this.model.labeling && (chord.name === "escape" || chord.name === "backspace")) {
+      return this.returnToOverview();
+    }
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
-  async settled(): Promise<void> {
-    while (this.pending.size > 0) await Promise.all([...this.pending]);
+  handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (event.type !== "down" || this.tasks.failure() !== undefined) return false;
+    const row = local.y - 1;
+    if (row < 0 || row >= this.lastPageRows) return false;
+    if (this.paneLevel === "overview") return this.overview.activateVisible(row, this.lastPageRows);
+    return this.model.selectVisible(row, this.lastPageRows);
+  }
+
+  settled(): Promise<void> {
+    return this.tasks.settled();
   }
 
   refresh(): void {
-    const target = this.targetSession() ?? this.sessionId;
-    if (target === undefined) return;
-    this.sessionId = target;
-    this.track(this.port.load(target).then((view) => this.model.setView(view)));
+    const drilled = this.sessionId;
+    if (this.paneLevel === "entries" && drilled !== undefined) this.refreshEntries(drilled);
+    else this.refreshOverview();
   }
 
   view(context: PaneContext): PaneView {
     const { theme, focused, height, width } = context;
+    const innerWidth = paneContentWidth(width);
     const labelLine = this.labelLine(theme, focused);
-    this.lastPageRows = Math.max(3, height - 3 - (labelLine === undefined ? 0 : 1));
+    const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
+    this.lastPageRows = Math.max(
+      0,
+      paneContentHeight(height) - (labelLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
+    );
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, Math.max(10, width - 4)),
+      ...this.bodyLines(theme, this.lastPageRows, innerWidth),
       ...(labelLine === undefined ? [] : [labelLine]),
+      ...(tray?.children ?? []),
     );
+  }
+
+  private refreshOverview(): void {
+    this.tasks.track(async () => {
+      const items = (await this.port.overview?.()) ?? [];
+      this.overview.setItems(items);
+    });
+  }
+
+  private refreshEntries(sessionId: string): void {
+    this.tasks.track(() => this.port.load(sessionId).then((view) => this.model.setView(view)));
+  }
+
+  private scheduleRefresh(): void {
+    if (this.refreshTimer !== undefined || !this.tasks.live()) return;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      this.refresh();
+    }, refreshFrameMs);
+    this.refreshTimer.unref?.();
+  }
+
+  private drillInto(sessionId: string): void {
+    this.sessionId = sessionId;
+    this.paneLevel = "entries";
+    this.refreshEntries(sessionId);
+    this.tasks.emit();
+  }
+
+  private returnToOverview(): boolean {
+    this.paneLevel = "overview";
+    this.refreshOverview();
+    this.tasks.emit();
+    return true;
+  }
+
+  private async focusOrOpen(sessionId: string, intents: PaneIntents): Promise<void> {
+    const paneId = this.presence?.paneFor(sessionId);
+    if (paneId !== undefined) {
+      intents.focusPane(paneId);
+      return;
+    }
+    await this.port.attach?.(sessionId);
+    if (this.tasks.live()) intents.openSession(sessionId);
   }
 
   private async fork(entryId: string, intents: PaneIntents): Promise<void> {
     if (this.sessionId === undefined) return;
     const forkedId = await this.port.fork(this.sessionId, entryId);
-    if (forkedId !== undefined) intents.openSession(forkedId);
+    if (forkedId !== undefined && this.tasks.live()) intents.openSession(forkedId);
   }
 
   private async relabel(entryId: string, label: string | undefined): Promise<void> {
     if (this.sessionId === undefined) return;
     await this.port.setLabel(this.sessionId, entryId, label);
+    if (!this.tasks.live()) return;
     this.model.setView(await this.port.load(this.sessionId));
   }
 
-  private track(work: Promise<void>): void {
-    const settled = work
-      .then(() => {
-        this.failure = undefined;
-      })
-      .catch((cause: unknown) => {
-        this.failure = (cause as Error).message;
-      })
-      .then(() => {
-        this.pending.delete(settled);
-        this.notify();
-      });
-    this.pending.add(settled);
+  private bodyLines(theme: Theme, rows: number, width: number) {
+    const failure = this.tasks.failure();
+    if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
+    if (this.paneLevel === "overview") return this.overviewLines(theme, rows, width);
+    return this.entryLines(theme, rows, width);
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number) {
-    if (this.failure !== undefined) {
-      return [Text({ content: this.failure.slice(0, width), fg: theme.error })];
-    }
-    if (this.model.sessionId() === undefined) {
-      return [Text({ content: "no session yet — r retries", fg: theme.textDim })];
-    }
-    const visible = this.model.visibleRows(rows);
-    if (visible.length === 0) return [Text({ content: "empty session", fg: theme.textDim })];
+  private overviewLines(theme: Theme, rows: number, width: number) {
+    const visible = this.overview.visibleRows(rows);
+    if (visible.length === 0) return [dimLine("░ no sessions yet", theme, width)];
     return visible.map(({ index, row }) =>
-      this.rowLine(row, index === this.model.cursor, theme, width),
+      this.overviewLine(row, index === this.overview.cursor, theme, width),
     );
   }
 
-  private rowLine(row: SessionTreeRow, selected: boolean, theme: Theme, width: number) {
-    const content = rowText(row).slice(0, width);
+  private overviewLine(row: SessionOverviewRow, selected: boolean, theme: Theme, width: number) {
+    const content = overviewRowLine(row, selected).slice(0, width);
+    if (selected) {
+      return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
+    }
+    return Text({ content, fg: row.current ? theme.accentSoft : theme.text });
+  }
+
+  private entryLines(theme: Theme, rows: number, width: number) {
+    if (this.model.sessionId() === undefined) {
+      return [dimLine("loading session…", theme, width)];
+    }
+    const visible = this.model.visibleRows(rows);
+    if (visible.length === 0) return [dimLine("empty session", theme, width)];
+    return visible.map(({ index, row }) =>
+      this.entryLine(row, index === this.model.cursor, theme, width),
+    );
+  }
+
+  private entryLine(row: SessionTreeRow, selected: boolean, theme: Theme, width: number) {
+    const content = entryRowText(row).slice(0, width);
     if (selected) {
       return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
     }
     return Text({ content, fg: row.onActivePath ? theme.accentSoft : theme.text });
+  }
+
+  private trayCommands(): TrayCommand[] {
+    const press = (spec: string): TrayCommand["run"] => {
+      return () => this.handleKey(parseChord(spec));
+    };
+    if (this.paneLevel === "overview") {
+      return [
+        {
+          name: "open",
+          description: "open the selected session",
+          shortcut: "⏎",
+          run: press("enter"),
+        },
+        {
+          name: "entries",
+          description: "browse the selected session's entries",
+          shortcut: "l",
+          run: press("l"),
+        },
+        {
+          name: "refresh",
+          description: "reload the sessions list",
+          shortcut: "r",
+          run: press("r"),
+        },
+      ];
+    }
+    return [
+      { name: "fork", description: "fork at the selected entry", shortcut: "f", run: press("f") },
+      {
+        name: "label",
+        description: "label the selected entry",
+        shortcut: "L",
+        run: press("shift+l"),
+      },
+      {
+        name: "toggle",
+        description: "collapse or expand the selected entry",
+        shortcut: "⏎",
+        run: press("enter"),
+      },
+      {
+        name: "back",
+        description: "return to the sessions overview",
+        shortcut: "esc",
+        run: press("escape"),
+      },
+      { name: "refresh", description: "reload this session", shortcut: "r", run: press("r") },
+    ];
   }
 
   private labelLine(theme: Theme, focused: boolean) {
@@ -135,7 +326,15 @@ export class SessionTreePane implements Pane {
   }
 }
 
-function rowText(row: SessionTreeRow): string {
+function sessionCountDetail(count: number): string {
+  return count === 1 ? "1 session" : `${count} sessions`;
+}
+
+function dimLine(text: string, theme: Theme, width: number) {
+  return Text({ content: [...text].slice(0, width).join(""), fg: theme.textDim });
+}
+
+function entryRowText(row: SessionTreeRow): string {
   const indent = "  ".repeat(row.depth);
   const affordance = row.collapsed ? "▸ " : row.branchPoint ? "▾ " : "  ";
   const marker = row.onActivePath ? "●" : "○";

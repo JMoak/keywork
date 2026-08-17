@@ -2,12 +2,12 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { killTree } from "../proc.ts";
 import { defineTool } from "./define.ts";
 
 const defaultTimeoutMs = 120_000;
 const maxOutputChars = 30_000;
 const settleAfterExitMs = 100;
-const killGraceMs = 2_000;
 
 const schema = z.object({
   command: z.string().min(1).describe("Shell command to execute."),
@@ -19,6 +19,8 @@ export interface Shell {
   args: (command: string) => string[];
   name: string;
 }
+
+type TerminationReason = "abort" | "timeout";
 
 export function detectShell(platform: NodeJS.Platform = process.platform): Shell {
   if (platform !== "win32") {
@@ -82,9 +84,11 @@ function execute(
       detached: process.platform !== "win32",
       env: scrubbedEnv(process.env),
     });
+    const closed = childClosed(child);
     let output = "";
     let truncated = false;
-    let timedOut = false;
+    let terminationReason: TerminationReason | undefined;
+    let termination: Promise<void> | undefined;
     let settled = false;
     let settleTimer: NodeJS.Timeout | undefined;
 
@@ -100,13 +104,6 @@ function execute(
     child.stdout.on("data", capture);
     child.stderr.on("data", capture);
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree(child);
-    }, timeoutMs);
-    const onAbort = () => killTree(child);
-    signal?.addEventListener("abort", onAbort, { once: true });
-
     const rendered = () => (truncated ? `${output}\n... (output truncated)` : output);
 
     const settle = (outcome: () => void) => {
@@ -118,41 +115,58 @@ function execute(
       outcome();
     };
 
-    const finish = (code: number | null) =>
+    const finish = async (code: number | null) => {
+      let terminationFailure: unknown;
+      try {
+        await termination;
+      } catch (cause) {
+        terminationFailure = cause;
+      }
       settle(() => {
-        if (timedOut) {
-          rejectPromise(new Error(`Command timed out after ${timeoutMs}ms:\n${rendered()}`));
+        if (terminationReason === "timeout") {
+          rejectPromise(
+            new Error(`Command timed out after ${timeoutMs}ms:\n${rendered()}`, {
+              ...(terminationFailure !== undefined && { cause: terminationFailure }),
+            }),
+          );
           return;
         }
-        if (signal?.aborted) {
-          rejectPromise(new Error("Command aborted"));
+        if (terminationReason === "abort") {
+          rejectPromise(
+            new Error("Command aborted", {
+              ...(terminationFailure !== undefined && { cause: terminationFailure }),
+            }),
+          );
           return;
         }
         const body = rendered().trimEnd();
         resolvePromise(code === 0 ? body : `${body}\n(exit code ${code})`.trimStart());
       });
+    };
+
+    const terminate = (reason: TerminationReason) => {
+      if (settled || termination !== undefined) return;
+      terminationReason = reason;
+      termination = killTree(child, closed);
+      void termination.then(
+        () => finish(null),
+        () => finish(null),
+      );
+    };
+
+    const timer = setTimeout(() => terminate("timeout"), timeoutMs);
+    const onAbort = () => terminate("abort");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) terminate("abort");
 
     child.on("error", (error) => settle(() => rejectPromise(error)));
-    child.on("close", (code) => finish(code));
+    child.on("close", (code) => void finish(code));
     child.on("exit", (code) => {
-      settleTimer = setTimeout(() => finish(code), settleAfterExitMs);
+      settleTimer = setTimeout(() => void finish(code), settleAfterExitMs);
     });
   });
 }
 
-function killTree(child: ChildProcess): void {
-  const pid = child.pid;
-  if (pid === undefined) return;
-  if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { windowsHide: true });
-    return;
-  }
-  signalGroup(pid, "SIGTERM");
-  setTimeout(() => signalGroup(pid, "SIGKILL"), killGraceMs).unref();
-}
-
-function signalGroup(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, signal);
-  } catch {}
+function childClosed(child: ChildProcess): Promise<void> {
+  return new Promise((resolvePromise) => child.once("close", () => resolvePromise()));
 }

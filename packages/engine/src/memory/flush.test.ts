@@ -6,7 +6,9 @@ import { messageText, textMessage } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
 import { defaultCompactionSettings, shouldCompact } from "../session/compaction.ts";
 import {
+  backtrackFlushClause,
   defaultFlushSettings,
+  flushPrompt,
   isMemoryFlushPrompt,
   isNoReply,
   MemoryFlush,
@@ -146,5 +148,68 @@ describe("MemoryFlush", () => {
     const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
     expect(outcome.persisted).toBe(false);
     expect(await store.readDaily("2026-08-10")).toEqual([]);
+  });
+});
+
+describe("backtrack capture", () => {
+  it("asks about abandoned attempts and lands the answer in the arc daily log", async () => {
+    const { store } = await openVault();
+    const arc = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([
+        textTurn("Tried CSS grid for the dock; it broke resize, flexbox is the way."),
+      ]),
+      store,
+      dailyStore: () => arc.store,
+    });
+    flush.noteBacktrack();
+
+    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+
+    expect(outcome.persisted).toBe(true);
+    expect(messageText(outcome.messages[0] ?? textMessage("user", ""))).toContain(
+      backtrackFlushClause,
+    );
+    const arcDaily = await readFile(join(arc.root, "daily", "2026-08-10.md"), "utf8");
+    expect(arcDaily).toContain("[prov: agent] Tried CSS grid for the dock");
+    await expect(
+      readFile(join((await openVault()).root, "daily", "2026-08-10.md")),
+    ).rejects.toThrow();
+  });
+
+  it("captures to the workspace daily when the session is unbound", async () => {
+    const { store, root } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn("Abandoned the sed approach, quoting was hopeless.")]),
+      store,
+    });
+    flush.noteBacktrack();
+
+    await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+
+    const daily = await readFile(join(root, "daily", "2026-08-10.md"), "utf8");
+    expect(daily).toContain("[prov: agent] Abandoned the sed approach");
+  });
+
+  it("keeps the ordinary prompt when nothing was backtracked, and clears the clause after a flush", async () => {
+    const { store } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn("First."), textTurn("Second.")]),
+      store,
+    });
+    flush.noteBacktrack();
+    const first = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    flush.compactionCompleted();
+    const second = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+
+    expect(messageText(first.messages[0] ?? textMessage("user", ""))).toContain(
+      backtrackFlushClause,
+    );
+    expect(messageText(second.messages[0] ?? textMessage("user", ""))).toBe(memoryFlushPrompt);
+  });
+
+  it("recognizes both prompt forms", () => {
+    expect(isMemoryFlushPrompt(flushPrompt(true))).toBe(true);
+    expect(isMemoryFlushPrompt(flushPrompt(false))).toBe(true);
   });
 });

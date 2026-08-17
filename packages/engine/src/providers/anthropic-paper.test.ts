@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Message, Part, Usage } from "../messages.ts";
 
-// Paper fixtures hand-written from public Messages-API documentation (90 §Resequencing):
-// they prove the neutral model is lossless before G1 — no client, endpoint, or auth exists here.
+// Paper fixtures hand-written from public Messages-API documentation (90 §Resequencing);
+// no client, endpoint, or auth exists here.
 
 type PaperBlock =
   | { type: "text"; text: string }

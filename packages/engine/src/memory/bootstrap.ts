@@ -45,5 +45,5 @@ function renderLayer(layer: LayerBootstrap): string {
 }
 
 function renderNote(note: Note): string {
-  return `### ${note.title}\n\n${note.body.trim()}\n`;
+  return `### [[${note.name}]]\n\n${note.body.trim()}\n`;
 }

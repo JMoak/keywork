@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,26 @@ afterEach(async () => {
 });
 
 describe("SessionStore", () => {
+  it("materializes on disk only when the first entry lands", async () => {
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+
+    expect(existsSync(file)).toBe(false);
+    await store.append(textMessage("user", "first"));
+    expect(existsSync(file)).toBe(true);
+
+    const reopened = await SessionStore.open(file);
+    expect(reopened.header.id).toBe(store.header.id);
+    expect(reopened.messages()).toEqual([textMessage("user", "first")]);
+  });
+
+  it("a session created but never used leaves no file behind", async () => {
+    const file = await sessionFile();
+    await SessionStore.create(file, ".");
+
+    expect(existsSync(file)).toBe(false);
+  });
+
   it("round-trips a conversation through disk", async () => {
     const file = await sessionFile();
     const store = await SessionStore.create(file, "C:\\repo");
@@ -295,6 +316,7 @@ describe("SessionStore", () => {
       labels: 1,
       compactions: 1,
       usage: { inputTokens: 250, outputTokens: 60 },
+      cost: { nanos: 0, pricedTurns: 0, meteredTurns: 0, unpricedTurns: 3 },
       createdAt: "2026-08-10T10:00:00.000Z",
       lastActivityAt: stats.lastActivityAt,
     });

@@ -5,10 +5,12 @@ const zeroUsage: Usage = { inputTokens: 0, outputTokens: 0 };
 
 export class MockProvider implements Provider {
   readonly name = "mock";
+  readonly modelId: string | undefined;
   private readonly script: TurnDelta[][];
 
-  constructor(turns: TurnDelta[][]) {
+  constructor(turns: TurnDelta[][], modelId?: string) {
     this.script = [...turns];
+    this.modelId = modelId;
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {

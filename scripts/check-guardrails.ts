@@ -19,7 +19,7 @@ const forbiddenPatterns: ReadonlyArray<{ name: string; pattern: RegExp }> = [
 ];
 
 const scannedExtensions = /\.(ts|tsx|js|json)$/;
-const excludedDirectories = new Set(["node_modules", ".git", "dist", "docs"]);
+const excludedDirectories = new Set(["node_modules", ".git", ".claude", "dist", "docs"]);
 const patternDefinitionFiles = new Set([
   join("scripts", "check-guardrails.ts"),
   join("scripts", "checks.test.ts"),

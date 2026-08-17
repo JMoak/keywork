@@ -126,7 +126,9 @@ describe("commandRuntime", () => {
         return Promise.resolve(false);
       },
     });
-    await expect(runtime.runShell("echo pwned")).rejects.toThrow("shell interpolation declined");
+    await expect(runtime.runShell("echo pwned")).rejects.toThrow(
+      "you declined the shell interpolation",
+    );
     expect(asked).toHaveLength(1);
     expect(asked[0]).toMatchObject({ name: "bash", arguments: { command: "echo pwned" } });
   });

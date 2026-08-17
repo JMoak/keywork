@@ -20,7 +20,9 @@
 | C32 | **done** | `PaneIntents` (`openFile`/`focusPane`) on `AppCore`, injected into browser factory; `/open <dir>` redirects to the browser via injectable `isDirectory`. |
 | C33 | open | second pass as specced. |
 | H1, H2, H3 | **done** | `AppCore.handleMouse` spine + `pointer.ts`; overlay frames as shared pure functions; split-node `ratio` with min-size clamping, `leader shift+./,` resize verbs, `grow`/`shrink` commands; probe `click`/`hover`/`scroll`. |
-| H4–H6 | open | H4 must account for the ~1-cell chrome offset between `layout.rects` and the bordered render (flagged in H1 work). |
+| H5 | **done** | Delivered as FR1.1 (2026-08-16, [`101`](101-feedback-round-4.md)): title-row grab, ghost-rect drop previews, `Layout.dropTargetAt`/`applyDrop` sharing the keyboard verbs' primitives. |
+| H4 | half | Dock boundary columns drag-resize (`dockHandleAt`/`dragDockEdge`, FR round 4); interior split borders still have no grip. The ~1-cell chrome offset H4 was told to account for is gone — C35 (2026-08-16) made `layout.rects` the drawn geometry and border-aligned the overlays, so the remaining half can hit-test raw rect coordinates. |
+| H6 | open | Folds into Track L's terminal pass; `pointer: "on" \| "off"` config option not yet built. |
 
 **Improvement pass (2026-08-10, two-pronged review → applied, 207 tests / 20 files green).**
 Algo/correctness: stale-read guard on refreshed directory reads (claim-token settle);
@@ -33,6 +35,79 @@ Craft: one declarative action table drives bindings/help/sticky/dispatch/command
 a discriminated union; factory types derived `AppCoreOptions` → `AppProbeOptions`; `index.ts`
 trimmed to the real public surface; `Layout.dock()` exposes `ratio`. Deferred (reviewed, not
 defects): incremental filtering, notify batching/render coalescing (C2's perf-budget work).
+
+## State of mouse input (2026-08-16)
+
+The whole-app picture, taken after FR round 4 landed drag-drop. One spine, no view-layer
+event soup: OpenTUI's `onMouse` → `pointerEventOf` (action whitelist, sanitized wheel
+deltas) → frame-chrome offset subtraction → `AppCore.handleMouse` behind the crash-contain
+guard. Every gesture resolves to an existing keyboard action ("mouse as garnish" holds).
+
+**Live-delivery regression found and fixed (2026-08-16).** OpenTUI dispatches mouse
+through a hit grid of renderable ids resolved against the live-renderable map — a
+retained-mode contract. keywork paints immediate-mode: every frame destroys the whole
+tree (`discardFrame`) and builds a fresh one, so after any queued repaint the grid held
+destroyed ids, the lookup missed, and OpenTUI dropped the event before anything keywork
+owns could see it. Because `app.ts` queues a repaint on every input event — including
+mouse-move, which streams while the pointer approaches a click target — live mouse was
+dead-on-arrival everywhere; probe tests never caught it because they drive `AppCore`
+directly, below the adapter. The fix is the **pointer plane**: one persistent transparent
+full-screen renderable (`pointerPlaneId`, top zIndex, exempt from `discardFrame`) that
+always renders last, so every hit-grid cell permanently resolves to a live renderable
+that bubbles to `root.onMouse`. Delivery no longer depends on the frame tree at all —
+which is the honest shape of keywork's doctrine, since all routing already lives in
+`AppCore`. Plain mouse-move events now also skip the frame rebuild unless an overlay or
+drag needs them (`mouseRepaints`). Regression net: the e2e stage grew real mouse verbs
+(`click`/`scroll`/`drag` via OpenTUI's mock mouse) and the `pointer-tour` scenario proves
+click-to-focus survives rebuilds, wheel scrollback, and dock-boundary drag through the
+real renderer pipeline.
+
+**Routing precedence inside `AppCore.handleMouse`:**
+1. Palette open → hover moves the selection, click runs the row, outside-click dismisses.
+2. Help open → outside-click dismisses.
+3. Any other overlay (preset picker/confirm) → any `down` dismisses; no row semantics yet.
+4. Dock-edge resize → `down` on a boundary column claims the drag (`dockHandleAt`),
+   `drag` retiles live (`dragDockEdge`), `up` releases.
+5. Pane drag → `down` on a title row arms it; first `drag` lifts and renders the ghost
+   rect from `dropTargetAt` (fits-checked: impossible drop = no preview); `up` commits
+   through `applyDrop`, which reuses the keyboard `move`/insert primitives.
+6. Pane hit → `down` focuses; the event forwards to `pane.handleMouse` in local
+   coordinates; an unclaimed `scroll` degrades to arrow-key presses (`scrollByKeys`,
+   `wheelSteps` clamped at 10) so hover-scroll works on every pane for free.
+
+**Per-surface coverage:**
+
+| Surface | Click | Wheel | Gaps |
+|---|---|---|---|
+| Conversation | — | scrolls transcript | ask row, diff window, and slash tray are not clickable (deliberate so far) |
+| Session tree | activates (overview) / selects (entries) | key-fallback | no hover highlight |
+| MCP node | **none** | key-fallback | rows not clickable — below the sessions-node bar (FR2.4 territory) |
+| Browser | none | key-fallback | rows not click-activatable |
+| File / memory | none | key-fallback scroll | — |
+| Pane trays (FR3.9) | **none** | — | tray rows should adopt the H2 hover/click grammar |
+| Palette / help | H2 grammar done | — | — |
+
+**Probe parity:** `probe.click/hover/drag/scroll` cover every gesture headless; the layout
+fuzz walk includes a random drag-drop branch holding the exact-tiling invariant.
+
+**Next rungs, in order:**
+
+1. **Hover grammar (design first, Jordan's call).** One hover mark, distinct from the
+   inverted-accent selection bar so the two never overlap: hover proposes, selection
+   holds. Candidate treatments to render as C40-style options: dim accent `▸` in the
+   marker column, underline, or a soft background a step above the pane ground. Rules:
+   one hovered row per screen, hover never moves the keyboard cursor, mouse-leave clears,
+   `move` events repaint only the affected rows (extend `mouseRepaints`).
+2. **Row-click parity + scroll circumstances.** MCP node, browser rows, and FR3.9 tray
+   rows adopt the sessions-node treatment (click = the row's enter-equivalent); wheel
+   stays hover-routed (scroll under the pointer, never a focus change), with the
+   key-fallback reserved for panes with no scroll model of their own. Session-tree
+   advanced behaviors (click drills, click-and-drag reorder, per-row affordances) ride
+   on the same grammar afterward.
+3. **H4 interior split borders** — extend the dock-edge drag mechanism; the geometry
+   blocker is gone.
+4. **H6 terminal-reality pass** with Track L (`pointer: "off"` escape hatch, SGR
+   validation on Windows Terminal/kitty/alacritty/ghostty/tmux).
 
 ## Why now
 

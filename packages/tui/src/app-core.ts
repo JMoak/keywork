@@ -1,19 +1,29 @@
 import { CommandRegistry } from "./commands.ts";
 import { Keymap } from "./keymap.ts";
 import { type Chord, formatChord } from "./keys.ts";
-import { type DockSide, Layout, layoutStateIds, type Rect, type Screen } from "./layout.ts";
-import type { Pane, PaneIntents } from "./pane.ts";
+import {
+  type Direction,
+  type DockSide,
+  type DropTarget,
+  Layout,
+  layoutStateIds,
+  type Rect,
+  type Screen,
+} from "./layout.ts";
+import type { FileOpenOptions, Pane, PaneIntents } from "./pane.ts";
 import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
 import { captureWorkspace, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
-interface AppAction {
+type AppAction = {
   chords: string | readonly string[];
   help: string;
   sticky?: true;
   chainable?: true;
   invoke: (core: AppCore) => void;
-  command?: { name: string; description: string; aliases?: string[] };
-}
+} & (
+  | { command: { name: string; description: string; aliases?: string[] } }
+  | { coveredBy: string }
+);
 
 const appActions: Record<string, AppAction> = {
   "pane.split": {
@@ -28,6 +38,7 @@ const appActions: Record<string, AppAction> = {
     help: "close focused pane",
     sticky: true,
     invoke: (core) => core.closePane(),
+    coveredBy: "exit",
   },
   "pane.zoom": {
     chords: "leader z",
@@ -72,72 +83,58 @@ const appActions: Record<string, AppAction> = {
       aliases: ["moveright"],
     },
   },
-  "swap.left": {
+  "move.left": {
     chords: "leader shift+h",
-    help: "swap pane left",
+    help: "move pane left",
     sticky: true,
-    invoke: (core) => core.layout.swap("left", core.screen()),
+    invoke: (core) => core.movePane("left"),
+    command: { name: "push-left", description: "move this pane left", aliases: ["pushleft"] },
   },
-  "swap.down": {
+  "move.down": {
     chords: "leader shift+j",
-    help: "swap pane down",
+    help: "move pane down",
     sticky: true,
-    invoke: (core) => core.layout.swap("down", core.screen()),
+    invoke: (core) => core.movePane("down"),
+    command: { name: "push-down", description: "move this pane down", aliases: ["pushdown"] },
   },
-  "swap.up": {
+  "move.up": {
     chords: "leader shift+k",
-    help: "swap pane up",
+    help: "move pane up",
     sticky: true,
-    invoke: (core) => core.layout.swap("up", core.screen()),
+    invoke: (core) => core.movePane("up"),
+    command: { name: "push-up", description: "move this pane up", aliases: ["pushup"] },
   },
-  "swap.right": {
+  "move.right": {
     chords: "leader shift+l",
-    help: "swap pane right",
+    help: "move pane right",
     sticky: true,
-    invoke: (core) => core.layout.swap("right", core.screen()),
+    invoke: (core) => core.movePane("right"),
+    command: { name: "push-right", description: "move this pane right", aliases: ["pushright"] },
   },
-  "dock.left": {
-    chords: "leader d",
-    help: "dock pane to the left edge",
+  "dock.cycle": {
+    chords: "leader c",
+    help: "cycle pane main → left → right",
     sticky: true,
-    invoke: (core) => core.layout.dockFocused("left"),
+    invoke: (core) => core.cyclePane(),
     command: {
-      name: "dock-left",
-      description: "dock this pane to the left edge",
-      aliases: ["dockleft"],
+      name: "dock-cycle",
+      description: "move this pane to its next home: main → left → right",
+      aliases: ["cycle"],
     },
-  },
-  "dock.right": {
-    chords: "leader shift+d",
-    help: "dock pane to the right edge",
-    sticky: true,
-    invoke: (core) => core.layout.dockFocused("right"),
-    command: {
-      name: "dock-right",
-      description: "dock this pane to the right edge",
-      aliases: ["dockright"],
-    },
-  },
-  "dock.undock": {
-    chords: "leader u",
-    help: "return pane to the main area",
-    sticky: true,
-    invoke: (core) => core.layout.undockFocused(core.screen()),
-    command: { name: "undock", description: "return this pane to the main area" },
   },
   "dock.grow": {
     chords: "leader .",
-    help: "widen the dock",
+    help: "widen this pane's dock",
     sticky: true,
-    invoke: (core) => core.layout.growDock(0.05),
-    command: { name: "dock-wider", description: "widen the dock column" },
+    invoke: (core) => core.resizeDock(0.05),
+    command: { name: "dock-wider", description: "widen this pane's dock" },
   },
   "dock.shrink": {
     chords: "leader ,",
-    help: "narrow the dock",
+    help: "narrow this pane's dock",
     sticky: true,
-    invoke: (core) => core.layout.growDock(-0.05),
-    command: { name: "dock-narrower", description: "narrow the dock column" },
+    invoke: (core) => core.resizeDock(-0.05),
+    command: { name: "dock-narrower", description: "narrow this pane's dock" },
   },
   "pane.grow": {
     chords: "leader shift+.",
@@ -158,18 +155,21 @@ const appActions: Record<string, AppAction> = {
     help: "file browser",
     chainable: true,
     invoke: (core) => core.summonBrowser(),
+    coveredBy: "browse",
   },
   "tree.summon": {
     chords: "leader t",
     help: "session tree",
     chainable: true,
     invoke: (core) => core.summonSessionTree(),
+    coveredBy: "tree",
   },
   "memory.summon": {
     chords: "leader m",
     help: "memory pane",
     chainable: true,
     invoke: (core) => core.summonMemoryPane(),
+    coveredBy: "memory",
   },
   "help.toggle": {
     chords: ["leader /", "f1"],
@@ -187,8 +187,16 @@ const appActions: Record<string, AppAction> = {
     chords: "ctrl+q",
     help: "quit",
     invoke: (core) => core.shutdown(),
+    coveredBy: "exit-all",
   },
 };
+
+export const actionCommandNames: Record<string, string> = Object.fromEntries(
+  Object.entries(appActions).map(([name, action]) => [
+    name,
+    "command" in action ? action.command.name : action.coveredBy,
+  ]),
+);
 
 export const appBindings: Record<string, string | readonly string[]> = Object.fromEntries(
   Object.entries(appActions).map(([name, action]) => [name, action.chords]),
@@ -217,7 +225,12 @@ export type PaneFactory = (
   resumeSessionId?: string,
   draft?: string,
 ) => Pane;
-export type FilePaneFactory = (id: string, path: string, notify: () => void) => Pane;
+export type FilePaneFactory = (
+  id: string,
+  path: string,
+  notify: () => void,
+  options?: FileOpenOptions,
+) => Pane;
 export type BrowserPaneFactory = (
   id: string,
   root: string,
@@ -259,6 +272,7 @@ export interface AppCoreOptions {
   presets?: PresetsPort;
   restoreWorkspace?: WorkspaceState;
   saveWorkspace?: (state: WorkspaceState) => void;
+  onPaneClosed?: (id: string) => void;
   onExit: () => void;
 }
 
@@ -266,7 +280,7 @@ export interface PaneSnapshot {
   id: string;
   title: string;
   focused: boolean;
-  docked: boolean;
+  dock: DockSide | undefined;
 }
 
 export interface OverlayFrame {
@@ -303,7 +317,6 @@ export interface AppSnapshot {
   panes: PaneSnapshot[];
   focused: string | undefined;
   zoomed: string | undefined;
-  dockSide: DockSide | undefined;
   overlay: "palette" | "help" | "preset" | "preset-confirm" | undefined;
   paletteQuery: string;
   leaderArmed: boolean;
@@ -336,7 +349,7 @@ export class AppCore {
   readonly registry = new CommandRegistry();
   readonly panes = new Map<string, Pane>();
   readonly intents: PaneIntents = {
-    openFile: (path) => this.openFilePane(path),
+    openFile: (path, options) => this.openFilePane(path, options),
     openSession: (sessionId, draft) => this.openPane(sessionId, draft),
     focusPane: (id) => this.layout.focus(id),
   };
@@ -344,6 +357,8 @@ export class AppCore {
   lastKey = "";
   notice = "";
   private overlay: Overlay | undefined;
+  private dockResize: DockSide | undefined;
+  private paneDrag: { id: string; lifted: boolean; target: DropTarget | undefined } | undefined;
   private nextSession = 1;
   private nextFile = 1;
   private nextBrowser = 1;
@@ -367,8 +382,7 @@ export class AppCore {
 
   start(): void {
     const saved = this.options.restoreWorkspace;
-    if (saved === undefined || !this.restoreFrom(saved)) this.openPane();
-    this.dockMcpPaneOnStartup();
+    if (saved === undefined || !this.restoreFrom(saved)) this.seedDefaultWorkspace();
     this.persistWorkspace();
   }
 
@@ -412,17 +426,15 @@ export class AppCore {
 
   snapshot(): AppSnapshot {
     const focused = this.layout.focused();
-    const dock = this.layout.dock();
     return {
       panes: this.layout.panes().map((id) => ({
         id,
         title: this.panes.get(id)?.title().trim() ?? id,
         focused: id === focused,
-        docked: dock?.panes.includes(id) === true,
+        dock: this.layout.dockSideOf(id),
       })),
       focused,
       zoomed: this.layout.zoomed(),
-      dockSide: dock?.side,
       overlay: this.overlay?.kind,
       paletteQuery: this.paletteQuery,
       leaderArmed: this.leaderArmed,
@@ -496,14 +508,14 @@ export class AppCore {
   }
 
   openPane(resumeSessionId?: string, draft?: string): void {
+    this.focusMainArea();
     const id = `session-${this.nextSession}`;
+    if (!this.openInLayout(id)) return;
     this.nextSession += 1;
     this.panes.set(
       id,
       this.options.createPane(id, this.paneChanged, this.registry, resumeSessionId, draft),
     );
-    this.focusMainArea();
-    this.layout.open(id, this.screen());
     this.persistWorkspace();
     this.notify();
   }
@@ -518,6 +530,27 @@ export class AppCore {
     this.panes.get(id)?.dispose?.();
     this.panes.delete(id);
     this.layout.close(id);
+    this.options.onPaneClosed?.(id);
+  }
+
+  dockPane(side: DockSide): void {
+    if (!this.layout.dockFocused(side, this.screen())) this.noticeNoRoom(`the ${side} dock`);
+  }
+
+  undockPane(): void {
+    if (!this.layout.undockFocused(this.screen())) this.noticeNoRoom("the main area");
+  }
+
+  cyclePane(): void {
+    if (!this.layout.cycleFocused(this.screen())) this.noticeNoRoom("this pane's next home");
+  }
+
+  movePane(direction: Direction): void {
+    this.layout.move(direction, this.screen());
+  }
+
+  resizeDock(delta: number): void {
+    this.layout.growDock(this.focusedDockSide(), delta);
   }
 
   summonBrowser(): void {
@@ -602,6 +635,19 @@ export class AppCore {
   private showNotice(text: string): void {
     this.notice = text;
     this.notify();
+  }
+
+  private noticeNoRoom(where: string): void {
+    this.showNotice(`no room in ${where} · close or resize a pane`);
+  }
+
+  private focusedDockSide(): DockSide {
+    const focused = this.layout.focused();
+    const side = focused === undefined ? undefined : this.layout.dockSideOf(focused);
+    if (side !== undefined) return side;
+    if (this.layout.dock("left") !== undefined) return "left";
+    if (this.layout.dock("right") !== undefined) return "right";
+    return "left";
   }
 
   private palette(): PaletteOverlay | undefined {
@@ -701,62 +747,68 @@ export class AppCore {
     }
   }
 
-  private openFilePane(path: string): void {
+  private openInLayout(id: string): boolean {
+    if (this.layout.open(id, this.screen())) return true;
+    this.showNotice("no room for another pane · close or resize one");
+    return false;
+  }
+
+  private openFilePane(path: string, options?: FileOpenOptions): void {
     const create = this.options.createFilePane;
     if (create === undefined) return;
-    const id = `file-${this.nextFile}`;
-    this.nextFile += 1;
-    this.panes.set(id, create(id, path, this.paneChanged));
     this.focusMainArea();
-    this.layout.open(id, this.screen());
+    const id = `file-${this.nextFile}`;
+    if (!this.openInLayout(id)) return;
+    this.nextFile += 1;
+    this.panes.set(id, create(id, path, this.paneChanged, options));
   }
 
   private openBrowserPane(root: string): void {
     const create = this.options.createBrowserPane;
     if (create === undefined) return;
     const id = `browser-${this.nextBrowser}`;
+    if (!this.openInLayout(id)) return;
     this.nextBrowser += 1;
     this.panes.set(id, create(id, root, this.paneChanged, this.intents));
-    this.layout.open(id, this.screen());
-    this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+    this.layout.dockFocused("left", this.screen());
   }
 
   private openSessionTreePane(): void {
     const create = this.options.createSessionTreePane;
     if (create === undefined) return;
     const id = `tree-${this.nextTree}`;
+    if (!this.openInLayout(id)) return;
     this.nextTree += 1;
     this.panes.set(
       id,
       create(id, this.paneChanged, this.intents, () => this.conversationSession()),
     );
-    this.layout.open(id, this.screen());
-    this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+    this.layout.dockFocused("left", this.screen());
   }
 
   private openMemoryPane(): void {
     const create = this.options.createMemoryPane;
     if (create === undefined) return;
     const id = `memory-${this.nextMemory}`;
+    if (!this.openInLayout(id)) return;
     this.nextMemory += 1;
     this.panes.set(id, create(id, this.paneChanged));
-    this.layout.open(id, this.screen());
-    this.layout.dockFocused(this.layout.dock()?.side ?? "left");
+    this.layout.dockFocused("left", this.screen());
   }
 
   private openMcpPane(): void {
     const create = this.options.createMcpPane;
     if (create === undefined) return;
     const id = `mcp-${this.nextMcp}`;
+    if (!this.openInLayout(id)) return;
     this.nextMcp += 1;
     this.panes.set(id, create(id, this.paneChanged));
-    this.layout.open(id, this.screen());
-    this.layout.dockFocused(this.layout.dock()?.side ?? "right");
+    this.layout.dockFocused("right", this.screen());
   }
 
-  private dockMcpPaneOnStartup(): void {
-    if (this.options.createMcpPane === undefined) return;
-    if ([...this.panes.keys()].some((id) => id.startsWith("mcp-"))) return;
+  private seedDefaultWorkspace(): void {
+    this.openPane();
+    this.openSessionTreePane();
     this.openMcpPane();
     this.focusMainArea();
   }
@@ -781,10 +833,9 @@ export class AppCore {
   }
 
   private focusMainArea(): void {
-    const docked = this.layout.dock()?.panes ?? [];
     const focused = this.layout.focused();
-    if (focused === undefined || !docked.includes(focused)) return;
-    const main = this.layout.panes().find((id) => !docked.includes(id));
+    if (focused === undefined || this.layout.dockSideOf(focused) === undefined) return;
+    const main = this.layout.panes().find((id) => this.layout.dockSideOf(id) === undefined);
     if (main !== undefined) this.layout.focus(main);
   }
 
@@ -814,14 +865,66 @@ export class AppCore {
     if (!containsPoint(frame, event.x, event.y)) this.overlay = undefined;
   }
 
+  dragPreview(): Rect | undefined {
+    return this.paneDrag?.lifted === true ? this.paneDrag.target?.rect : undefined;
+  }
+
+  draggingPane(): string | undefined {
+    return this.paneDrag?.lifted === true ? this.paneDrag.id : undefined;
+  }
+
   private routePaneMouse(event: PointerEvent): void {
+    if (this.routeDockResize(event)) return;
+    if (this.routePaneDrag(event)) return;
     const hit = this.paneUnder(event.x, event.y);
     if (hit === undefined) return;
-    if (event.type === "down") this.layout.focus(hit.id);
+    if (event.type === "down") {
+      this.layout.focus(hit.id);
+      if (event.y === hit.rect.y) {
+        this.paneDrag = { id: hit.id, lifted: false, target: undefined };
+      }
+    }
     const pane = this.panes.get(hit.id);
     const local = { x: event.x - hit.rect.x, y: event.y - hit.rect.y };
     if (pane?.handleMouse?.(local, event) === true) return;
     if (event.type === "scroll" && event.scroll !== undefined) scrollByKeys(pane, event.scroll);
+  }
+
+  private routePaneDrag(event: PointerEvent): boolean {
+    const drag = this.paneDrag;
+    if (drag === undefined) return false;
+    if (event.type === "drag") {
+      drag.lifted = true;
+      drag.target = this.layout.dropTargetAt(drag.id, event.x, event.y, this.screen());
+      return true;
+    }
+    if (event.type === "up" || event.type === "drag-end") {
+      this.paneDrag = undefined;
+      if (!drag.lifted) return false;
+      if (drag.target !== undefined) this.layout.applyDrop(drag.id, drag.target, this.screen());
+      return true;
+    }
+    if (event.type === "down") this.paneDrag = undefined;
+    return false;
+  }
+
+  private routeDockResize(event: PointerEvent): boolean {
+    if (this.dockResize !== undefined) {
+      if (event.type === "drag") {
+        this.layout.dragDockEdge(this.dockResize, event.x, this.screen());
+        return true;
+      }
+      if (event.type === "up" || event.type === "drag-end") {
+        this.dockResize = undefined;
+        return true;
+      }
+      this.dockResize = undefined;
+    }
+    if (event.type !== "down") return false;
+    const side = this.layout.dockHandleAt(event.x, this.screen());
+    if (side === undefined) return false;
+    this.dockResize = side;
+    return true;
   }
 
   private paneUnder(x: number, y: number): { id: string; rect: Rect } | undefined {
@@ -918,7 +1021,7 @@ export class AppCore {
       return keys === undefined ? {} : { shortcut: keys };
     };
     for (const [name, action] of Object.entries(appActions)) {
-      if (action.command === undefined) continue;
+      if (!("command" in action)) continue;
       const { aliases, ...command } = action.command;
       this.registry.register({
         ...command,
@@ -927,6 +1030,29 @@ export class AppCore {
         run: () => action.invoke(this),
       });
     }
+    for (const side of ["left", "right"] as const) {
+      this.registry.register({
+        name: `dock-${side}`,
+        description: `dock this pane to the ${side} edge`,
+        aliases: [`dock${side}`],
+        run: () => this.dockPane(side),
+      });
+      this.registry.register({
+        name: `dock-${side}-wider`,
+        description: `widen the ${side} dock`,
+        run: () => this.layout.growDock(side, 0.05),
+      });
+      this.registry.register({
+        name: `dock-${side}-narrower`,
+        description: `narrow the ${side} dock`,
+        run: () => this.layout.growDock(side, -0.05),
+      });
+    }
+    this.registry.register({
+      name: "undock",
+      description: "return this pane to the main area",
+      run: () => this.undockPane(),
+    });
     if (this.options.createFilePane !== undefined) {
       this.registry.register({
         name: "open",
@@ -953,7 +1079,7 @@ export class AppCore {
     if (this.options.createSessionTreePane !== undefined) {
       this.registry.register({
         name: "tree",
-        aliases: ["session-tree"],
+        aliases: ["session-tree", "sessions"],
         description: "open the session tree: /tree",
         ...shortcut("tree.summon"),
         run: () => this.summonSessionTree(),
@@ -986,18 +1112,18 @@ export class AppCore {
     if (undoPort !== undefined) {
       this.registry.register({
         name: "undo",
-        description: "restore files to before the last agent change",
-        run: () => this.announce(undoPort.undo(), "files restored", "nothing to undo"),
+        description: "undo the last agent file change",
+        run: () => this.announce(undoPort.undo(), "files put back", "nothing to undo"),
       });
       this.registry.register({
         name: "redo",
-        description: "reapply the last undone agent change",
-        run: () => this.announce(undoPort.redo(), "files brought forward", "nothing to redo"),
+        description: "redo the last undone change",
+        run: () => this.announce(undoPort.redo(), "files redone", "nothing to redo"),
       });
     }
     this.registry.register({
       name: "exit",
-      description: "close this pane (closes keywork from the last one)",
+      description: "close this pane · quits keywork if it's the last",
       ...shortcut("pane.close"),
       run: () => this.closePane(),
     });

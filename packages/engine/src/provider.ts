@@ -1,8 +1,9 @@
-import type { Message, ToolCallPart, Usage } from "./messages.ts";
+import type { Message, RedactedThinkingPart, ToolCallPart, Usage } from "./messages.ts";
 
 export type TurnDelta =
   | { type: "text"; text: string }
   | { type: "tool-call"; call: ToolCallPart }
+  | { type: "redacted-thinking"; part: RedactedThinkingPart }
   | { type: "done"; usage: Usage };
 
 export interface ToolDefinition {
@@ -20,5 +21,6 @@ export interface ProviderRequest {
 
 export interface Provider {
   name: string;
+  modelId?: string | undefined;
   stream(request: ProviderRequest): AsyncIterable<TurnDelta>;
 }

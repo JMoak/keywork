@@ -31,12 +31,14 @@ export class BedrockExceptionError extends Error {
 
 export class BedrockProvider implements Provider {
   readonly name = "bedrock";
+  readonly modelId: string;
   private readonly options: Required<BedrockOptions>;
 
   constructor(options: BedrockOptions) {
     if (!awsRegionPattern.test(options.region)) {
       throw new Error(`bedrock region must look like us-east-1, got "${options.region}"`);
     }
+    this.modelId = options.model;
     this.options = { fetchFn: fetch, clock: () => new Date(), ...options };
   }
 

@@ -231,6 +231,48 @@ describe("McpPaneModel server menu", () => {
   });
 });
 
+describe("McpPaneModel transition holds", () => {
+  it("dims restart and toggle while a server transition is in flight", () => {
+    const { model } = modelOver(pair);
+    press(model, "enter");
+    model.setBusy("filesystem", true);
+    const actions = model
+      .rows()
+      .filter((row) => row.kind === "action")
+      .map((row) => [row.id, row.tone]);
+    expect(actions).toEqual([
+      ["menu:filesystem:restart", "dim"],
+      ["menu:filesystem:toggle", "dim"],
+      ["menu:filesystem:tools", "normal"],
+    ]);
+  });
+
+  it("ignores restart and toggle for a busy server and resumes after release", () => {
+    const { model, recorded } = modelOver(pair);
+    model.setBusy("filesystem", true);
+    press(model, "enter", "j", "enter", "j", "enter");
+    expect(recorded.restarted).toEqual([]);
+    expect(recorded.toggled).toEqual([]);
+    model.setBusy("filesystem", false);
+    press(model, "enter");
+    expect(recorded.toggled).toEqual([["filesystem", false]]);
+  });
+
+  it("still lists tools for a busy server", () => {
+    const { model, recorded } = modelOver(pair);
+    model.setBusy("filesystem", true);
+    press(model, "enter", "j", "j", "j", "enter");
+    expect(recorded.listed).toEqual(["filesystem"]);
+  });
+
+  it("clears the hold for vanished servers", () => {
+    const { model } = modelOver(pair);
+    model.setBusy("filesystem", true);
+    model.setServers([serverOf({ name: "linear", state: "down" })]);
+    expect(model.isBusy("filesystem")).toBe(false);
+  });
+});
+
 describe("McpPaneModel tool listing", () => {
   function openTools(model: McpPaneModel): void {
     press(model, "enter", "j", "j", "j", "enter");
@@ -270,7 +312,7 @@ describe("McpPaneModel tool listing", () => {
     openTools(model);
     model.setTools("filesystem", { error: "transport closed" });
     const failed = model.rows().find((row) => row.id === "tools:filesystem:failed");
-    expect(failed?.text).toBe("    ▛ tools unavailable · transport closed");
+    expect(failed?.text).toBe("    ▛ tools failed · transport closed");
     expect(failed?.tone).toBe("alert");
     press(model, "j", "enter");
     expect(recorded.listed).toEqual(["filesystem", "filesystem"]);

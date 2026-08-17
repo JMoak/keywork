@@ -1,6 +1,8 @@
 import { type EngineEvents, EventBus } from "./bus.ts";
 import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
+import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
+import type { PermissionDecision } from "./session/journal.ts";
 import { findTool, type Tool } from "./tools.ts";
 
 export interface ToolGuard {
@@ -44,6 +46,7 @@ export class Agent {
   private readonly guard: ToolGuard | undefined;
   private readonly permissions: PermissionResolver | undefined;
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
+  private costTotals: CostRollup = emptyCostRollup();
   private active: AbortController | undefined;
   private checkpointed = false;
 
@@ -63,6 +66,14 @@ export class Agent {
 
   usage(): Usage {
     return { ...this.totals };
+  }
+
+  cost(): CostRollup {
+    return { ...this.costTotals };
+  }
+
+  modelId(): string | undefined {
+    return this.provider.modelId;
   }
 
   busy(): boolean {
@@ -101,6 +112,7 @@ export class Agent {
     while (true) {
       const turn = await this.streamAssistantTurn(signal);
       this.totals = addUsage(this.totals, turn.usage);
+      this.costTotals = withTurnCost(this.costTotals, turn.usage, this.provider.modelId);
       if (turn.failure !== undefined) throw turn.failure;
       if (turn.interrupted) {
         if (turn.message.parts.length > 0) this.messages.push(turn.message);
@@ -201,12 +213,26 @@ export class Agent {
   ): Promise<{ callId: string; output: string; isError: boolean }> {
     try {
       const tool = findTool(this.tools, call.name);
-      const verdict = this.permissions?.(call) ?? defaultPermission(tool);
+      const policyVerdict = this.permissions?.(call);
+      const verdict = policyVerdict ?? defaultPermission(tool);
+      const gate = policyVerdict === undefined ? "default" : "policy";
       if (verdict === "deny") {
+        this.emitPermissionDecision(call, "denied", gate);
         return { callId: call.callId, output: "denied by permission policy", isError: true };
       }
-      if (verdict === "ask" && !(await this.confirmWithGuard(call))) {
-        return { callId: call.callId, output: "declined by user", isError: true };
+      if (verdict === "ask") {
+        const askedUser = this.guard?.confirm !== undefined;
+        const approved = await this.confirmWithGuard(call);
+        this.emitPermissionDecision(
+          call,
+          approved ? "granted" : "denied",
+          askedUser ? "user" : gate,
+        );
+        if (!approved) {
+          return { callId: call.callId, output: "declined by user", isError: true };
+        }
+      } else {
+        this.emitPermissionDecision(call, "granted", gate);
       }
       if (tool.mutates === true) await this.checkpointOnce();
       const output = await tool.execute(call.arguments, signal);
@@ -215,6 +241,16 @@ export class Agent {
       const reason = cause instanceof Error ? cause.message : String(cause);
       return { callId: call.callId, output: reason, isError: true };
     }
+  }
+
+  private emitPermissionDecision(
+    call: ToolCallPart,
+    verdict: PermissionDecision["verdict"],
+    gate: PermissionDecision["gate"],
+  ): void {
+    this.bus.emit("gate.permission", {
+      decision: { tool: call.name, callId: call.callId, verdict, gate },
+    });
   }
 
   private confirmWithGuard(call: ToolCallPart): Promise<boolean> {
@@ -233,9 +269,16 @@ function defaultPermission(tool: Tool): ToolPermission {
 }
 
 function addUsage(left: Usage, right: Usage): Usage {
+  const cacheCreation =
+    (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0);
+  const cacheRead = (left.cacheReadInputTokens ?? 0) + (right.cacheReadInputTokens ?? 0);
+  const metered = left.costUsd !== undefined || right.costUsd !== undefined;
   return {
     inputTokens: left.inputTokens + right.inputTokens,
     outputTokens: left.outputTokens + right.outputTokens,
+    ...(cacheCreation > 0 && { cacheCreationInputTokens: cacheCreation }),
+    ...(cacheRead > 0 && { cacheReadInputTokens: cacheRead }),
+    ...(metered && { costUsd: (left.costUsd ?? 0) + (right.costUsd ?? 0) }),
   };
 }
 
@@ -246,6 +289,9 @@ function applyDelta(message: Message, delta: TurnDelta, usage: Usage): Usage {
       return usage;
     case "tool-call":
       message.parts.push(delta.call);
+      return usage;
+    case "redacted-thinking":
+      message.parts.push(delta.part);
       return usage;
     case "done":
       return delta.usage;

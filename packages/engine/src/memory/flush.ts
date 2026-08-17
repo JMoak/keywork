@@ -28,13 +28,21 @@ export function isNoReply(message: Message): boolean {
   return messageText(message).trim() === noReplyToken;
 }
 
+export const backtrackFlushClause =
+  "This session backtracked at least once. For each abandoned attempt, state what was tried and why it was wrong, so the approach is not repeated.";
+
+export function flushPrompt(backtracked: boolean): string {
+  return backtracked ? [memoryFlushPrompt, backtrackFlushClause].join("\n") : memoryFlushPrompt;
+}
+
 export function isMemoryFlushPrompt(text: string): boolean {
-  return text === memoryFlushPrompt;
+  return text === memoryFlushPrompt || text === flushPrompt(true);
 }
 
 export interface MemoryFlushOptions {
   provider: Provider;
   store: MemoryStore;
+  dailyStore?: () => MemoryStore;
   systemPrompt?: string;
   settings?: Partial<FlushSettings>;
 }
@@ -48,15 +56,22 @@ export interface FlushOutcome {
 export class MemoryFlush {
   private readonly provider: Provider;
   private readonly store: MemoryStore;
+  private readonly dailyStore: () => MemoryStore;
   private readonly systemPrompt: string;
   private readonly settings: FlushSettings;
   private latched = false;
+  private backtracked = false;
 
   constructor(options: MemoryFlushOptions) {
     this.provider = options.provider;
     this.store = options.store;
+    this.dailyStore = options.dailyStore ?? (() => options.store);
     this.systemPrompt = options.systemPrompt ?? "";
     this.settings = { ...defaultFlushSettings, ...options.settings };
+  }
+
+  noteBacktrack(): void {
+    this.backtracked = true;
   }
 
   async maybeFlush(
@@ -75,12 +90,13 @@ export class MemoryFlush {
   }
 
   private async flush(conversation: readonly Message[]): Promise<FlushOutcome> {
-    const prompt = textMessage("user", memoryFlushPrompt);
+    const prompt = textMessage("user", flushPrompt(this.backtracked));
+    this.backtracked = false;
     const reply = await this.streamReply([...conversation, prompt]);
     const messages = [prompt, reply];
     const text = messageText(reply).trim();
     if (text === "" || text === noReplyToken) return { flushed: true, persisted: false, messages };
-    await this.store.appendDaily(text, "agent");
+    await this.dailyStore().appendDaily(text, "agent");
     return { flushed: true, persisted: true, messages };
   }
 

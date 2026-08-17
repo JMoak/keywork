@@ -21,7 +21,7 @@ export function trustCommand(
     return 1;
   }
   print(`${cwd} is now ${action === "trust" ? "trusted" : "untrusted"}`);
-  print(`recorded in ${store.file} — run \`keywork ${opposite(action)}\` to reverse`);
+  print(`saved in ${store.file}. run \`keywork ${opposite(action)}\` to undo`);
   return 0;
 }
 

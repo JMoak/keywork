@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { anchorFrontmatter, type CheckpointAnchor } from "./anchors.ts";
 import {
   type Frontmatter,
   MalformedFrontmatterError,
@@ -42,6 +43,9 @@ export interface NoteInput {
   usefulness?: number;
   pinned?: boolean;
   supersedes?: string;
+  delivered?: string;
+  distilledFrom?: string;
+  anchor?: CheckpointAnchor;
 }
 
 export interface Note {
@@ -60,6 +64,8 @@ export interface Note {
   usefulness?: number;
   supersedes?: string;
   supersededBy?: string;
+  delivered?: string;
+  distilledFrom?: string;
 }
 
 export interface DailyEntry {
@@ -143,6 +149,7 @@ export class LedgerEntryNotFoundError extends Error {
 const mocFile = "MEMORY.md";
 const auditFile = "curation.md";
 const stagingDir = ".staging";
+const arcsDir = "arcs";
 const hiddenDirs = new Set([stagingDir, ".obsidian"]);
 const wikilinkPattern = /\[\[([^[\]|#]+)(?:#[^[\]|]*)?(?:\|[^[\]]*)?\]\]/g;
 const dailyMarkerPattern = /^- (\d{2}:\d{2}) \[prov: (user|agent|untrusted)\] (.*)$/;
@@ -374,6 +381,12 @@ export class MemoryStore {
       ...(input.usefulness !== undefined && { usefulness: input.usefulness }),
       ...(aliases.length > 0 && { aliases }),
       ...(supersedes !== undefined && { supersedes: `[[${supersedes}]]` }),
+      ...(input.delivered !== undefined && {
+        delivered: input.delivered,
+        valid_from: input.delivered,
+      }),
+      ...(input.distilledFrom !== undefined && { distilled_from: `[[${input.distilledFrom}]]` }),
+      ...(input.anchor !== undefined && anchorFrontmatter(input.anchor)),
     };
   }
 
@@ -520,6 +533,8 @@ export class MemoryStore {
     const usefulness = frontmatter.usefulness;
     const supersedes = linkTarget(frontmatter.supersedes);
     const supersededBy = linkTarget(frontmatter.superseded_by);
+    const delivered = firstString(frontmatter.delivered);
+    const distilledFrom = linkTarget(frontmatter.distilled_from);
     return {
       name: noteName(path),
       path,
@@ -536,6 +551,8 @@ export class MemoryStore {
       ...(typeof usefulness === "number" && { usefulness }),
       ...(supersedes !== undefined && { supersedes }),
       ...(supersededBy !== undefined && { supersededBy }),
+      ...(delivered !== undefined && { delivered }),
+      ...(distilledFrom !== undefined && { distilledFrom }),
     };
   }
 
@@ -549,7 +566,7 @@ export class MemoryStore {
     for (const entry of await this.listDirEntries(dir)) {
       const rel = dir === "" ? entry.name : `${dir}/${entry.name}`;
       if (entry.isDirectory()) {
-        if (hiddenDirs.has(entry.name) || rel === "daily") continue;
+        if (hiddenDirs.has(entry.name) || rel === "daily" || rel === arcsDir) continue;
         await this.walk(rel, paths);
         continue;
       }

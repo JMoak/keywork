@@ -91,6 +91,27 @@ describe("loadConfig", () => {
     expect(config.bedrockRegion).toBeUndefined();
   });
 
+  it("accepts declared model capabilities and rejects unknown modalities", async () => {
+    const userDir = await dirWithConfig({
+      models: { "gpt-5*": { input: ["text", "image"], toolCalls: true, contextWindow: 400000 } },
+    });
+    const config = await loadConfig({ userDir });
+    expect(config.models).toEqual({
+      "gpt-5*": { input: ["text", "image"], toolCalls: true, contextWindow: 400000 },
+    });
+
+    const badDir = await dirWithConfig({ models: { "gpt-5*": { input: ["audio"] } } });
+    await expect(loadConfig({ userDir: badDir })).rejects.toThrow(ConfigError);
+  });
+
+  it("ignores model capability declarations from the project layer even when trusted", async () => {
+    const projectDir = await dirWithConfig({
+      models: { "*": { input: ["text", "image"] } },
+    });
+    const config = await loadConfig({ projectDir, projectTrusted: true });
+    expect(config.models).toBeUndefined();
+  });
+
   it("rejects unknown options with a readable error naming the file", async () => {
     const userDir = await dirWithConfig({ telemtry: true });
 
@@ -153,6 +174,53 @@ describe("loadConfig", () => {
     const config = await loadConfig({ userDir });
 
     expect(config.theme).toEqual({ accent: "#AABBCC" });
+  });
+
+  it("round-trips a theme ramp beside token overrides", async () => {
+    const userDir = await dirWithConfig({
+      theme: { accent: "#112233", ramp: ["#bb9af7", "#7aa2f7", "#7dcfff"] },
+    });
+
+    const config = await loadConfig({ userDir });
+
+    expect(config.theme).toEqual({
+      accent: "#112233",
+      ramp: ["#bb9af7", "#7aa2f7", "#7dcfff"],
+    });
+  });
+
+  it("accepts a one-stop ramp", async () => {
+    const userDir = await dirWithConfig({ theme: { ramp: ["#112233"] } });
+
+    const config = await loadConfig({ userDir });
+
+    expect(config.theme?.ramp).toEqual(["#112233"]);
+  });
+
+  it("rejects a ramp that is empty, oversized, malformed, or not an array", async () => {
+    const empty = await dirWithConfig({ theme: { ramp: [] } });
+    const oversized = await dirWithConfig({
+      theme: {
+        ramp: ["#000001", "#000002", "#000003", "#000004", "#000005", "#000006", "#000007"],
+      },
+    });
+    const malformed = await dirWithConfig({ theme: { ramp: ["#112233", "teal"] } });
+    const notArray = await dirWithConfig({ theme: { ramp: "#112233" } });
+
+    for (const userDir of [empty, oversized, malformed, notArray]) {
+      await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
+    }
+  });
+
+  it("lets a project ramp override the user ramp wholesale", async () => {
+    const userDir = await dirWithConfig({
+      theme: { accent: "#112233", ramp: ["#000001", "#000002"] },
+    });
+    const projectDir = await dirWithConfig({ theme: { ramp: ["#0000aa", "#0000bb"] } });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.theme).toEqual({ accent: "#112233", ramp: ["#0000aa", "#0000bb"] });
   });
 
   it("accepts stdio and http MCP servers with a trusted flag", async () => {

@@ -58,7 +58,7 @@ function shellCommand(name: string, template: string, ran: string[] = []): Exten
       renderCommand(template, args, {
         runShell: async (command) => {
           if (!(await confirmShell(command))) {
-            throw new Error(`shell interpolation declined: ${command}`);
+            throw new Error(`you declined the shell interpolation: ${command}`);
           }
           ran.push(command);
           return "shell-output";
@@ -108,7 +108,9 @@ describe("palette-surfaced workspace commands", () => {
     await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
     probe.keys("n");
     await waitFor(() =>
-      expect(recorded.notices).toEqual(["/ship failed: shell interpolation declined: rm -rf /"]),
+      expect(recorded.notices).toEqual([
+        "/ship failed: you declined the shell interpolation: rm -rf /",
+      ]),
     );
     expect(ran).toEqual([]);
     expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([]);
@@ -160,7 +162,7 @@ describe("palette-surfaced workspace agents", () => {
     const probe = new AppProbe({ script: [] });
     const recorded = wire(probe, { agents: [{ name: "scout" }] }, { switchAgent: () => false });
     expect(probe.command("agent-scout")).toBe(true);
-    expect(recorded.notices).toEqual(["agent switch unavailable — finish the running turn first"]);
+    expect(recorded.notices).toEqual(["agent busy · finish the turn first"]);
   });
 
   it("registers no agent entries when none are defined", () => {
@@ -173,11 +175,11 @@ describe("palette-surfaced workspace agents", () => {
 describe("extensionFailureNotice", () => {
   it("collapses failures into one calm line", () => {
     expect(extensionFailureNotice([])).toBeUndefined();
-    expect(extensionFailureNotice(["a.md — bad frontmatter"])).toBe(
-      "extension skipped: a.md — bad frontmatter",
+    expect(extensionFailureNotice(["a.md: bad frontmatter"])).toBe(
+      "skipped extension a.md: bad frontmatter",
     );
-    expect(extensionFailureNotice(["a.md — x", "b.md — y", "c.md — z"])).toBe(
-      "extension skipped: a.md — x (+2 more)",
+    expect(extensionFailureNotice(["a.md: x", "b.md: y", "c.md: z"])).toBe(
+      "skipped extension a.md: x (+2 more)",
     );
   });
 });

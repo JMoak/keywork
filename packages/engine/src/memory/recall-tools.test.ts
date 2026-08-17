@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { Agent } from "../agent.ts";
 import type { ToolResultPart } from "../messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "../mock-provider.ts";
 import { coreTools } from "../tools/core.ts";
+import { CitationLedger } from "./citations.ts";
 import { memoryGetTool, memoryRecallTools, memorySearchTool } from "./recall-tools.ts";
 import { MemorySearch } from "./search.ts";
 import { MemoryStore } from "./store.ts";
@@ -228,6 +229,65 @@ describe("tool registration", () => {
     const store = openStore(await vaultRoot());
     const withMemory = coreTools(".", { store, search: new MemorySearch(store) });
     expect(withMemory.map((tool) => tool.name)).toContain("memory_get");
+  });
+});
+
+describe("citation ledger wiring", () => {
+  it("records search recalls with latency so replies can cite them", async () => {
+    const root = await vaultRoot();
+    const store = openStore(root);
+    await store.writeNote({ title: "Ratio Rule", body: "split 60/40\n", provenance: "agent" });
+    const ledger = new CitationLedger();
+    await runTool(memorySearchTool(store, new MemorySearch(store), undefined, ledger), {
+      query: "ratio split",
+    });
+    expect(ledger.uncitedRecalls()).toEqual(["Ratio Rule"]);
+    expect(ledger.medianLatencyMs("search")).toBeGreaterThanOrEqual(0);
+    expect(ledger.recordReply("per [[Ratio Rule]], not [[Made Up]]")).toEqual({
+      cited: ["Ratio Rule"],
+      rejected: ["Made Up"],
+    });
+    expect(ledger.citedRecalls()).toEqual(["Ratio Rule"]);
+  });
+
+  it("records a note read through memory_get as a recall", async () => {
+    const root = await vaultRoot();
+    const store = openStore(root);
+    await store.writeNote({ title: "Layout Decision", body: "one line\n", provenance: "agent" });
+    const recalled: string[] = [];
+    const ledger = new CitationLedger();
+    await runTool(
+      memoryGetTool(store, (name) => recalled.push(name), ledger),
+      {
+        note: "Layout Decision",
+      },
+    );
+    expect(recalled).toEqual(["Layout Decision"]);
+    expect(ledger.uncitedRecalls()).toEqual(["Layout Decision"]);
+    expect(ledger.medianLatencyMs("get")).toBeGreaterThanOrEqual(0);
+    await runTool(
+      memoryGetTool(store, (name) => recalled.push(name), ledger),
+      {
+        note: "Never Written",
+      },
+    );
+    expect(recalled).toEqual(["Layout Decision"]);
+  });
+
+  it("renders contradiction currency on search hits", async () => {
+    const root = await vaultRoot();
+    const store = openStore(root);
+    await store.writeNote({ title: "Use Node", body: "tests run on node\n", provenance: "user" });
+    await writeFile(
+      join(root, "Use Bun.md"),
+      '---\ncontradicts: "[[Use Node]]"\n---\ntests run on bun\n',
+      "utf8",
+    );
+    const output = await runTool(memorySearchTool(store, new MemorySearch(store)), {
+      query: "tests run",
+    });
+    expect(output).toContain("contradicts [[Use Node]]");
+    expect(output).toContain("contradicts [[Use Bun]]");
   });
 });
 

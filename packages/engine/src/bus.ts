@@ -1,5 +1,6 @@
 import type { Message, ToolCallPart, Usage } from "./messages.ts";
 import type { TurnDelta } from "./provider.ts";
+import type { ContextInjection, PermissionDecision } from "./session/journal.ts";
 
 interface LiveEvents {
   "turn.started": { userText: string };
@@ -9,6 +10,11 @@ interface LiveEvents {
   "tool.started": { call: ToolCallPart };
   "tool.output": { chunk: string; callId?: string };
   "tool.finished": { callId: string; output: string; isError: boolean };
+  "gate.permission": { decision: PermissionDecision };
+  "gate.preset": { from: string; to: string };
+  "session.mode": { mode: string };
+  "context.injected": { injection: ContextInjection };
+  "shell.reset": Record<never, never>;
   "engine.error": { error: Error };
 }
 

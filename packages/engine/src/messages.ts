@@ -54,6 +54,7 @@ export interface Usage {
   outputTokens: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  costUsd?: number;
 }
 
 export function textMessage(role: Role, text: string): Message {

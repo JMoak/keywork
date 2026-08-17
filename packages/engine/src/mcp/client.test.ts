@@ -1,7 +1,12 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { processExists } from "../proc.ts";
 import {
   connectStdioServer,
+  McpAbortedError,
   type McpConnection,
   McpRequestTimeoutError,
   McpServerExitedError,
@@ -12,6 +17,21 @@ const fixturePath = fileURLToPath(new URL("./fixture-server.ts", import.meta.url
 
 function fixtureSpec(profile: string): StdioServerSpec {
   return { command: process.execPath, args: [fixturePath, profile] };
+}
+
+async function recordedPids(marker: string): Promise<number[]> {
+  return (await readFile(marker, "utf8"))
+    .split("\n")
+    .map(Number)
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+}
+
+async function waitForGone(pid: number, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (processExists(pid)) {
+    if (Date.now() > deadline) throw new Error(`process ${pid} is still alive`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 async function withConnection(
@@ -75,6 +95,57 @@ describe("stdio MCP client", () => {
         { requestTimeoutMs: 2_000 },
       ),
     ).rejects.toThrow();
+  });
+
+  it("kills the whole process tree on close, grandchildren included", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "keywork-mcp-"));
+    try {
+      const marker = join(dir, "pids");
+      const connection = await connectStdioServer(
+        { command: process.execPath, args: [fixturePath, "leaky", marker] },
+        { requestTimeoutMs: 5_000 },
+      );
+      const pids = await recordedPids(marker);
+      expect(pids).toHaveLength(2);
+      for (const pid of pids) expect(processExists(pid)).toBe(true);
+      await connection.close();
+      for (const pid of pids) await waitForGone(pid);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts a hung handshake without waiting out the request timeout", async () => {
+    const controller = new AbortController();
+    const connecting = connectStdioServer(fixtureSpec("silent"), {
+      requestTimeoutMs: 8_000,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 50);
+    const begun = Date.now();
+    await expect(connecting).rejects.toBeInstanceOf(McpAbortedError);
+    expect(Date.now() - begun).toBeLessThan(4_000);
+  });
+
+  it("rejects immediately on an already-aborted signal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      connectStdioServer(fixtureSpec("basic"), { signal: controller.signal }),
+    ).rejects.toBeInstanceOf(McpAbortedError);
+  });
+
+  it("abort after a successful connect is inert once the connection is closed", async () => {
+    const controller = new AbortController();
+    const connection = await connectStdioServer(fixtureSpec("basic"), {
+      requestTimeoutMs: 5_000,
+      signal: controller.signal,
+    });
+    const echoed = await connection.callTool("echo", { text: "pre-abort" });
+    expect(echoed.text).toBe("pre-abort");
+    await connection.close();
+    controller.abort();
+    await connection.close();
   });
 
   it("fails in-flight calls cleanly when the server crashes mid-call", async () => {

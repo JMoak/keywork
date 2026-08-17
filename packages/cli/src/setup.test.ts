@@ -98,50 +98,42 @@ describe("readMaskedLine", () => {
 });
 
 describe("saveApiKey", () => {
-  async function savedConfig(dir: string): Promise<Record<string, unknown>> {
-    return JSON.parse(await readFile(join(dir, "keywork.json"), "utf8"));
+  async function savedAuth(dir: string): Promise<Record<string, unknown>> {
+    return JSON.parse(await readFile(join(dir, "auth.json"), "utf8"));
   }
 
-  it("writes the key under the provider name", async () => {
+  it("writes an api_key credential under the provider name", async () => {
     const dir = await tempDir();
 
     await saveApiKey("openrouter", "sk-or-new", dir);
 
-    expect(await savedConfig(dir)).toEqual({ apiKeys: { openrouter: "sk-or-new" } });
-  });
-
-  it("keeps schema-known fields and drops unknown ones", async () => {
-    const dir = await tempDir();
-    const poisoned = {
-      model: "openrouter/some-model",
-      apiKeys: { openai: "sk-old" },
-      injected: { hooks: "evil" },
-    };
-    await writeFile(join(dir, "keywork.json"), JSON.stringify(poisoned), "utf8");
-
-    await saveApiKey("openrouter", "sk-or-new", dir);
-
-    expect(await savedConfig(dir)).toEqual({
-      model: "openrouter/some-model",
-      apiKeys: { openai: "sk-old", openrouter: "sk-or-new" },
+    expect(await savedAuth(dir)).toEqual({
+      openrouter: { type: "api_key", key: "sk-or-new" },
     });
   });
 
-  it("starts clean when known fields fail validation", async () => {
+  it("keeps other providers' credentials and never touches keywork.json", async () => {
     const dir = await tempDir();
-    await writeFile(join(dir, "keywork.json"), JSON.stringify({ model: 42 }), "utf8");
+    await writeFile(join(dir, "keywork.json"), JSON.stringify({ model: "some-model" }), "utf8");
+    await saveApiKey("openai", "sk-old", dir);
 
-    await saveApiKey("openai", "sk-fresh", dir);
+    await saveApiKey("openrouter", "sk-or-new", dir);
 
-    expect(await savedConfig(dir)).toEqual({ apiKeys: { openai: "sk-fresh" } });
+    expect(await savedAuth(dir)).toEqual({
+      openai: { type: "api_key", key: "sk-old" },
+      openrouter: { type: "api_key", key: "sk-or-new" },
+    });
+    expect(JSON.parse(await readFile(join(dir, "keywork.json"), "utf8"))).toEqual({
+      model: "some-model",
+    });
   });
 
-  it("tolerates a malformed config file", async () => {
+  it("tolerates a malformed auth file", async () => {
     const dir = await tempDir();
-    await writeFile(join(dir, "keywork.json"), "not json", "utf8");
+    await writeFile(join(dir, "auth.json"), "not json", "utf8");
 
     await saveApiKey("openai", "sk-fresh", dir);
 
-    expect(await savedConfig(dir)).toEqual({ apiKeys: { openai: "sk-fresh" } });
+    expect(await savedAuth(dir)).toEqual({ openai: { type: "api_key", key: "sk-fresh" } });
   });
 });

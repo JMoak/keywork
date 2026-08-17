@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -194,5 +194,98 @@ describe("MemorySearch", () => {
     await seeded(store, [{ title: "Dock ratio", body: "0.3" }]);
     const outcome = await new MemorySearch(store).search("   ");
     expect(outcome.hits).toEqual([]);
+  });
+});
+
+describe("graph leg", () => {
+  it("surfaces a linked note the lexical leg cannot reach", async () => {
+    const store = await vault();
+    await seeded(store, [
+      { title: "Dock ratio", body: "defaults follow [[Column policy]]" },
+      { title: "Column policy", body: "widths settle at startup" },
+      { title: "Unrelated", body: "nothing here" },
+    ]);
+    const outcome = await new MemorySearch(store).search("dock ratio");
+    const policy = outcome.hits.find((hit) => hit.note.title === "Column policy");
+    expect(policy?.legs).toEqual(["graph"]);
+    expect(outcome.hits[0]?.note.title).toBe("Dock ratio");
+  });
+
+  it("stays byte-identical to two-leg fusion when the vault has no graph signal", async () => {
+    const notes = [
+      { title: "Dock ratio", body: "the column defaults to 0.3" },
+      { title: "Layout tree", body: "the dock ratio lives elsewhere" },
+    ];
+    const bare = await vault();
+    await seeded(bare, notes);
+    const withGraph = await new MemorySearch(bare).search("dock ratio");
+    expect(withGraph.hits.map((hit) => hit.legs)).toEqual([["lexical"], ["lexical"]]);
+    expect(withGraph.hits.map((hit) => hit.score)).toEqual([1 / (60 + 1), 1 / (60 + 2)]);
+  });
+
+  it("converges and answers on cyclic wikilinks", async () => {
+    const store = await vault();
+    await seeded(store, [
+      { title: "Alpha loop", body: "see [[Beta loop]]" },
+      { title: "Beta loop", body: "see [[Gamma loop]]" },
+      { title: "Gamma loop", body: "back to [[Alpha loop]]" },
+    ]);
+    const outcome = await new MemorySearch(store).search("alpha loop");
+    expect(outcome.hits.length).toBeGreaterThan(1);
+    expect(outcome.hits[0]?.note.title).toBe("Alpha loop");
+  });
+
+  it("survives dangling wikilinks without crashing", async () => {
+    const store = await vault();
+    await seeded(store, [{ title: "Dock ratio", body: "see [[Never Written]]" }]);
+    const outcome = await new MemorySearch(store).search("dock ratio");
+    expect(outcome.hits.map((hit) => hit.note.title)).toEqual(["Dock ratio"]);
+  });
+
+  it("never lets a superseded hub outrank its successor through the graph leg", async () => {
+    const store = await vault();
+    await seeded(store, [
+      { title: "Old dock rule", body: "dock ratio dock ratio links [[Panel note]] [[Frame note]]" },
+      { title: "Panel note", body: "about [[Old dock rule]]" },
+      { title: "Frame note", body: "about [[Old dock rule]]" },
+    ]);
+    await store.writeNote({
+      title: "New dock rule",
+      body: "ratio is 0.4",
+      provenance: "user",
+      supersedes: "Old dock rule",
+    });
+    const outcome = await new MemorySearch(store).search("old dock rule ratio");
+    const oldAt = outcome.hits.findIndex((hit) => hit.note.title === "Old dock rule");
+    const newAt = outcome.hits.findIndex((hit) => hit.note.title === "New dock rule");
+    expect(newAt).toBeGreaterThanOrEqual(0);
+    expect(oldAt).toBeGreaterThan(newAt);
+    expect(outcome.hits[oldAt]?.superseded).toBe(true);
+  });
+
+  it("always attaches supersedes and contradicts relations to hits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "keywork-search-"));
+    cleanups.push(root);
+    const store = new MemoryStore({ vaultRoot: root, trusted: true });
+    await seeded(store, [{ title: "Old ratio", body: "50/50" }]);
+    await store.writeNote({
+      title: "New ratio",
+      body: "60/40",
+      provenance: "user",
+      supersedes: "Old ratio",
+    });
+    await writeFile(
+      join(root, "Rival ratio.md"),
+      '---\ncontradicts: "[[New ratio]]"\n---\n55/45 ratio\n',
+      "utf8",
+    );
+    const outcome = await new MemorySearch(store).search("ratio");
+    const byTitle = new Map(outcome.hits.map((hit) => [hit.note.title, hit.relations]));
+    expect(byTitle.get("New ratio")).toEqual({
+      supersedes: "Old ratio",
+      contradicts: ["Rival ratio"],
+    });
+    expect(byTitle.get("Old ratio")).toEqual({ supersededBy: "New ratio", contradicts: [] });
+    expect(byTitle.get("Rival ratio")).toEqual({ contradicts: ["New ratio"] });
   });
 });

@@ -1,6 +1,8 @@
 import type { ToolCallPart, Usage } from "../messages.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
 import { toChatRequest } from "./chat-wire.ts";
+import { ProviderHttpError, ProviderStreamError } from "./errors.ts";
+import { sseJsonEvents } from "./sse.ts";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -13,32 +15,18 @@ export interface OpenAiCompatibleOptions {
   fetchFn?: FetchLike;
 }
 
-export class ProviderHttpError extends Error {
-  constructor(
-    provider: string,
-    readonly status: number,
-    body: string,
-  ) {
-    super(`${provider} request failed (${status}): ${body.slice(0, 500)}`);
-    this.name = "ProviderHttpError";
-  }
-}
-
-export class ProviderStreamError extends Error {
-  constructor(provider: string, detail: string) {
-    super(`${provider} stream failed: ${detail.slice(0, 500)}`);
-    this.name = "ProviderStreamError";
-  }
-}
+export { ProviderHttpError, ProviderStreamError } from "./errors.ts";
 
 export class OpenAiCompatibleProvider implements Provider {
   readonly name: string;
+  readonly modelId: string;
   private readonly options: Required<Omit<OpenAiCompatibleOptions, "extraHeaders">> & {
     extraHeaders: Record<string, string>;
   };
 
   constructor(options: OpenAiCompatibleOptions) {
     this.name = options.name;
+    this.modelId = options.model;
     this.options = { extraHeaders: {}, fetchFn: fetch, ...options };
   }
 
@@ -50,24 +38,45 @@ export class OpenAiCompatibleProvider implements Provider {
         authorization: `Bearer ${this.options.apiKey}`,
         ...this.options.extraHeaders,
       },
-      body: JSON.stringify(toChatRequest(request, this.options.model)),
+      body: JSON.stringify({
+        ...toChatRequest(request, this.options.model),
+        ...costAccountingFields(this.options.baseUrl),
+      }),
       ...(request.signal !== undefined && { signal: request.signal }),
     });
     if (!response.ok) {
       throw new ProviderHttpError(this.name, response.status, await response.text());
     }
     if (response.body === null) throw new Error(`${this.name} returned an empty response body`);
-    yield* assembleTurn(this.name, sseData(this.name, response.body));
+    yield* assembleTurn(this.name, sseJsonEvents(this.name, response.body));
   }
 }
 
-const maxSseBufferBytes = 1_048_576;
 const maxToolArgumentBytes = 1_048_576;
+
+// OpenRouter's per-request cost accounting is opt-in through a body field that
+// strict OpenAI-compatible servers reject, so it is added only for that host.
+function costAccountingFields(baseUrl: string): object {
+  try {
+    const host = new URL(baseUrl).hostname;
+    const openRouter = host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+    return openRouter ? { usage: { include: true } } : {};
+  } catch {
+    return {};
+  }
+}
+
+interface WireUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
+  cost?: number;
+}
 
 interface StreamEvent {
   error?: { message?: string } | string;
   choices?: { delta?: WireDelta }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  usage?: WireUsage | null;
 }
 
 interface WireDelta {
@@ -98,12 +107,7 @@ async function* assembleTurn(
     if (event.error != null) {
       throw new ProviderStreamError(provider, describeErrorEvent(event.error));
     }
-    if (event.usage != null) {
-      usage = {
-        inputTokens: event.usage.prompt_tokens ?? 0,
-        outputTokens: event.usage.completion_tokens ?? 0,
-      };
-    }
+    if (event.usage != null) usage = usageFromWire(event.usage);
     const delta = event.choices?.[0]?.delta;
     if (typeof delta?.content === "string" && delta.content !== "") {
       yield { type: "text", text: delta.content };
@@ -114,6 +118,16 @@ async function* assembleTurn(
     yield { type: "tool-call", call: completedCall(index, call) };
   }
   yield { type: "done", usage };
+}
+
+function usageFromWire(wire: WireUsage): Usage {
+  const cachedTokens = wire.prompt_tokens_details?.cached_tokens ?? 0;
+  return {
+    inputTokens: Math.max(0, (wire.prompt_tokens ?? 0) - cachedTokens),
+    outputTokens: wire.completion_tokens ?? 0,
+    ...(cachedTokens > 0 && { cacheReadInputTokens: cachedTokens }),
+    ...(typeof wire.cost === "number" && { costUsd: wire.cost }),
+  };
 }
 
 function describeErrorEvent(error: NonNullable<StreamEvent["error"]>): string {
@@ -153,48 +167,5 @@ function parseArgs(call: PendingCall): unknown {
     return JSON.parse(call.argumentsJson);
   } catch {
     return call.argumentsJson;
-  }
-}
-
-async function* sseData(
-  provider: string,
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<unknown> {
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for await (const chunk of body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    if (buffer.length > maxSseBufferBytes) {
-      throw new ProviderStreamError(provider, "event stream buffer exceeded the size ceiling");
-    }
-    let newline = buffer.indexOf("\n");
-    while (newline !== -1) {
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      newline = buffer.indexOf("\n");
-      const event = parseSseLine(line);
-      if (event === endOfStream) return;
-      if (event !== skipLine) yield event;
-    }
-  }
-  buffer += decoder.decode();
-  const event = parseSseLine(buffer);
-  if (event !== endOfStream && event !== skipLine) yield event;
-}
-
-const endOfStream = Symbol("endOfStream");
-const skipLine = Symbol("skipLine");
-
-function parseSseLine(rawLine: string): unknown {
-  const line = rawLine.trim();
-  if (!line.startsWith("data:")) return skipLine;
-  const data = line.slice(5).trim();
-  if (data === "") return skipLine;
-  if (data === "[DONE]") return endOfStream;
-  try {
-    const event: unknown = JSON.parse(data);
-    return typeof event === "object" && event !== null ? event : skipLine;
-  } catch {
-    return skipLine;
   }
 }

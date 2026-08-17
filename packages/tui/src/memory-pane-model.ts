@@ -1,6 +1,6 @@
 import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
-import type { Theme } from "./theme.ts";
+import type { ThemeColorToken } from "./theme.ts";
 
 export type MemoryProvenance = "user" | "agent" | "untrusted";
 export type CuringStage = 0 | 1 | 2 | 3;
@@ -92,8 +92,44 @@ export function provenanceGlyph(provenance: MemoryProvenance): string {
   return provenanceMarks[provenance];
 }
 
-export function toneToken(tone: RowTone): keyof Theme {
+export function toneToken(tone: RowTone): ThemeColorToken {
   return toneTokens[tone];
+}
+
+export interface RecallFeedEntry {
+  note: string;
+  scope: string;
+  provenance: MemoryProvenance;
+  cited?: boolean;
+  supersededBy?: string;
+}
+
+export function recallView(entry: RecallFeedEntry): RecallEventView {
+  const annotations = [
+    ...(entry.cited === true ? ["cited"] : []),
+    ...(entry.supersededBy === undefined ? [] : [`superseded by ${entry.supersededBy}`]),
+  ];
+  return {
+    note: entry.note,
+    scope: entry.scope,
+    provenance: entry.provenance,
+    ...(annotations.length > 0 && { annotation: annotations.join(" · ") }),
+  };
+}
+
+export interface GardenerSweepCounts {
+  promoted: number;
+  merged: number;
+  superseded: number;
+  flagged: number;
+}
+
+export function gardenerSweepView(counts: GardenerSweepCounts): GardenerActivityView {
+  const detail = (Object.entries(counts) as [string, number][])
+    .filter(([, count]) => count > 0)
+    .map(([phase, count]) => `${count} ${phase}`)
+    .join(" · ");
+  return { state: "idle", ...(detail !== "" && { detail }) };
 }
 
 export class MemoryPaneModel {
@@ -211,7 +247,7 @@ export class MemoryPaneModel {
       {
         id: "calm",
         kind: "empty",
-        text: "keywork remembers what you teach it",
+        text: "nothing remembered yet",
         tone: "dim",
         selectable: false,
       },
@@ -453,7 +489,7 @@ const provenanceMarks: Record<MemoryProvenance, string> = {
   agent: "▓",
   untrusted: "░",
 };
-const toneTokens: Record<RowTone, keyof Theme> = {
+const toneTokens: Record<RowTone, ThemeColorToken> = {
   dim: "textDim",
   normal: "text",
   heading: "accentSoft",

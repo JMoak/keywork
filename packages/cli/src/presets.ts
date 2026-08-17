@@ -54,7 +54,7 @@ export async function presetCommand(
     return;
   }
   if (!isPresetName(args)) {
-    print(`unknown preset "${args}" — options: ${presetOrder.join(" · ")}`);
+    print(`no preset named "${args}". options: ${presetOrder.join(" · ")}`);
     return;
   }
   if (active === args) {
@@ -62,7 +62,9 @@ export async function presetCommand(
     return;
   }
   if (requiresConfirmation(active, args)) {
-    const agreed = await confirm(`switch ${active} → ${args} loosens permissions — continue? y/n `);
+    const agreed = await confirm(
+      `switching ${active} → ${args} loosens permissions. continue? y/n `,
+    );
     if (!agreed) {
       print("left unchanged");
       return;

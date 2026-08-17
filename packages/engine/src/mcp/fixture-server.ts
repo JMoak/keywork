@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
@@ -24,7 +25,13 @@ function main(): void {
     writeFileSync(markerPath, "crashed");
     process.exit(1);
   }
-  serve(profile === "hazard" ? hazardTools() : basicTools());
+  if (profile === "leaky" && markerPath !== undefined) {
+    const grandchild = spawn(process.execPath, [process.argv[1] ?? "", "silent"], {
+      stdio: "ignore",
+    });
+    writeFileSync(markerPath, `${process.pid}\n${grandchild.pid ?? 0}`);
+  }
+  serve(profile === "hazard" ? hazardTools() : basicTools(), profile === "leaky");
 }
 
 function basicTools(): FixtureTool[] {
@@ -69,7 +76,7 @@ function hazardTools(): FixtureTool[] {
   ];
 }
 
-function serve(tools: FixtureTool[]): void {
+function serve(tools: FixtureTool[], lingerAfterEof: boolean): void {
   let buffer = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk: string) => {
@@ -82,7 +89,10 @@ function serve(tools: FixtureTool[]): void {
       newline = buffer.indexOf("\n");
     }
   });
-  process.stdin.on("end", () => process.exit(0));
+  process.stdin.on("end", () => {
+    if (lingerAfterEof) setInterval(() => {}, 60_000);
+    else process.exit(0);
+  });
 }
 
 function handle(message: Json, tools: FixtureTool[]): void {

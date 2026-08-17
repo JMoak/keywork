@@ -1,3 +1,5 @@
+import { MemoryGraph } from "./graph.ts";
+import { titleKey } from "./naming.ts";
 import type { MemoryStore, Note } from "./store.ts";
 
 export interface EmbeddingsPort {
@@ -5,13 +7,20 @@ export interface EmbeddingsPort {
   embed(texts: string[]): Promise<number[][]>;
 }
 
-export type SearchLeg = "lexical" | "semantic";
+export type SearchLeg = "lexical" | "semantic" | "graph";
+
+export interface NoteRelations {
+  supersedes?: string;
+  supersededBy?: string;
+  contradicts: string[];
+}
 
 export interface SearchHit {
   note: Note;
   score: number;
   legs: SearchLeg[];
   superseded: boolean;
+  relations: NoteRelations;
 }
 
 export type RetrievalSource =
@@ -62,10 +71,14 @@ export class MemorySearch {
     const limit = options.limit ?? defaultLimit;
     const notes = await this.store.listNotes();
     if (notes.length === 0 || query.trim() === "") return { hits: [], source: this.source() };
+    const graph = MemoryGraph.fromNotes(notes);
     const lexical = lexicalRanking(notes, query);
     const { semantic, source } = await this.semanticRanking(notes, query);
-    const fused = fuseRankings([lexical, semantic]);
-    return { hits: applySupersededFloor(fused).slice(0, limit), source };
+    const fused = fuseRankings([lexical, semantic, graphRanking(graph, notes, query)]);
+    const hits = applySupersededFloor(fused)
+      .slice(0, limit)
+      .map((hit) => withRelations(hit, graph));
+    return { hits, source };
   }
 
   private async semanticRanking(
@@ -146,9 +159,37 @@ export function lexicalRanking(notes: Note[], query: string): RankedNote[] {
     .slice(0, legDepth);
 }
 
-function fuseRankings(rankings: RankedNote[][]): SearchHit[] {
-  const legNames: SearchLeg[] = ["lexical", "semantic"];
-  const byPath = new Map<string, SearchHit>();
+function graphRanking(graph: MemoryGraph, notes: Note[], query: string): RankedNote[] {
+  const seeds = seedEntities(notes, query);
+  if (seeds.length === 0) return [];
+  const byKey = new Map(notes.map((note) => [titleKey(note.name), note]));
+  return graph
+    .rank(seeds.map((seed) => seed.name))
+    .flatMap(({ name, score }) => {
+      const note = byKey.get(titleKey(name));
+      return note === undefined ? [] : [{ note, score }];
+    })
+    .slice(0, legDepth);
+}
+
+function seedEntities(notes: Note[], query: string): Note[] {
+  const queryTerms = new Set(tokenize(query));
+  if (queryTerms.size === 0) return [];
+  return notes.filter((note) =>
+    [note.title, ...note.aliases].some((name) => isSeedName(name, queryTerms)),
+  );
+}
+
+function isSeedName(name: string, queryTerms: Set<string>): boolean {
+  const terms = tokenize(name);
+  return terms.length > 0 && terms.every((term) => queryTerms.has(term));
+}
+
+type FusedHit = Omit<SearchHit, "relations">;
+
+function fuseRankings(rankings: RankedNote[][]): FusedHit[] {
+  const legNames: SearchLeg[] = ["lexical", "semantic", "graph"];
+  const byPath = new Map<string, FusedHit>();
   rankings.forEach((ranking, legIndex) => {
     ranking.forEach((entry, rank) => {
       const hit = byPath.get(entry.note.path) ?? {
@@ -166,7 +207,18 @@ function fuseRankings(rankings: RankedNote[][]): SearchHit[] {
   return [...byPath.values()].sort((a, b) => b.score - a.score);
 }
 
-function applySupersededFloor(hits: SearchHit[]): SearchHit[] {
+function withRelations(hit: FusedHit, graph: MemoryGraph): SearchHit {
+  return {
+    ...hit,
+    relations: {
+      ...(hit.note.supersedes !== undefined && { supersedes: hit.note.supersedes }),
+      ...(hit.note.supersededBy !== undefined && { supersededBy: hit.note.supersededBy }),
+      contradicts: graph.contradictionsOf(hit.note.name),
+    },
+  };
+}
+
+function applySupersededFloor(hits: FusedHit[]): FusedHit[] {
   return [...hits.filter((hit) => !hit.superseded), ...hits.filter((hit) => hit.superseded)];
 }
 

@@ -130,7 +130,7 @@ describe("mutationDiff", () => {
     ).toContain("not found");
     expect(
       mutationDiff("edit", { path: "gone.txt", oldText: "a", newText: "b" }, read)?.[0]?.text,
-    ).toContain("cannot be read");
+    ).toContain("can't read");
     expect(
       mutationDiff("edit", { path: "notes.txt", oldText: "a", newText: "b" }, read)?.[0]?.text,
     ).toContain("matches");

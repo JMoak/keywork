@@ -49,7 +49,7 @@ export function extensionFailureNotice(failures: readonly string[]): string | un
   const first = failures[0];
   if (first === undefined) return undefined;
   const more = failures.length - 1;
-  return more === 0 ? `extension skipped: ${first}` : `extension skipped: ${first} (+${more} more)`;
+  return more === 0 ? `skipped extension ${first}` : `skipped extension ${first} (+${more} more)`;
 }
 
 function registerAgents(
@@ -75,11 +75,11 @@ function registerAgents(
 function switchAgent(name: string | undefined, seams: ExtensionSeams): void {
   const target = seams.conversation();
   if (target === undefined) {
-    seams.notice("no conversation pane to switch");
+    seams.notice("no conversation pane here");
     return;
   }
   if (!target.switchAgent(name)) {
-    seams.notice("agent switch unavailable — finish the running turn first");
+    seams.notice("agent busy · finish the turn first");
     return;
   }
   seams.notice(name === undefined ? "agent → default" : `agent → ${name}`);

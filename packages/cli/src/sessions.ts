@@ -1,15 +1,19 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import {
+  knownCostNanos,
   type Message,
   messageText,
   replaySession,
   type SessionEntry,
   SessionStore,
   type SessionTreeNode,
+  type Usage,
 } from "@keywork/engine";
 import type {
   SessionAttachment,
+  SessionOverviewItem,
   SessionPort,
   SessionTreePort,
   SessionTreeView,
@@ -59,37 +63,73 @@ export async function listSessions(dir: string): Promise<SessionSummary[]> {
 
 export type CheckpointTagSource = () => string | undefined;
 
+export interface SessionPortSeams {
+  checkpointTag?: CheckpointTagSource;
+  onAttach?(store: SessionStore): void;
+  onRelease?(sessionId: string): void;
+  onChange?(sessionId: string): void;
+}
+
+export interface SessionChangeFeed {
+  emit(sessionId: string): void;
+  subscribe(listener: (sessionId: string) => void): () => void;
+}
+
+export function sessionChangeFeed(): SessionChangeFeed {
+  const listeners = new Set<(sessionId: string) => void>();
+  return {
+    emit: (sessionId) => {
+      for (const listener of [...listeners]) listener(sessionId);
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
 export function sessionPort(
   dir: string,
   cwd: string,
-  checkpointTag?: CheckpointTagSource,
+  seams: CheckpointTagSource | SessionPortSeams = {},
 ): SessionPort {
+  const resolved = typeof seams === "function" ? { checkpointTag: seams } : seams;
+  const attach = (store: SessionStore): SessionAttachment => {
+    resolved.onAttach?.(store);
+    return attachmentOf(store, resolved);
+  };
   return {
     async open(id: string): Promise<SessionAttachment | undefined> {
       try {
         const file = await findSessionFile(dir, id);
-        return file === undefined
-          ? undefined
-          : attachmentOf(await SessionStore.open(file), checkpointTag);
+        return file === undefined ? undefined : attach(await SessionStore.open(file));
       } catch {
         return undefined;
       }
     },
     async create(): Promise<SessionAttachment | undefined> {
       try {
-        return attachmentOf(
-          await SessionStore.create(join(dir, newSessionFileName()), cwd),
-          checkpointTag,
-        );
+        return attach(await SessionStore.create(join(dir, newSessionFileName()), cwd));
       } catch {
         return undefined;
       }
     },
+    release(sessionId: string): void {
+      resolved.onRelease?.(sessionId);
+    },
   };
 }
 
-export function sessionTreePort(dir: string): SessionTreePort {
+export function sessionTreePort(dir: string, changes?: SessionChangeFeed): SessionTreePort {
   return {
+    async overview(): Promise<SessionOverviewItem[]> {
+      const items: SessionOverviewItem[] = [];
+      for (const name of await sessionFileNames(dir)) {
+        const item = await overviewItem(join(dir, name));
+        if (item !== undefined) items.push(item);
+      }
+      return items.sort((a, b) => b.modifiedAt - a.modifiedAt);
+    },
     async load(sessionId: string): Promise<SessionTreeView | undefined> {
       const store = await openById(dir, sessionId);
       if (store === undefined) return undefined;
@@ -104,13 +144,18 @@ export function sessionTreePort(dir: string): SessionTreePort {
       const store = await openById(dir, sessionId);
       if (store === undefined) throw new Error(`no session matches id ${sessionId}`);
       await store.setLabel(entryId, label);
+      changes?.emit(store.header.id);
     },
     async fork(sessionId: string, entryId: string): Promise<string | undefined> {
       const store = await openById(dir, sessionId);
       if (store === undefined) return undefined;
       const clone = await store.clone(join(dir, newSessionFileName()), entryId);
+      changes?.emit(store.header.id);
       return clone.header.id;
     },
+    ...(changes !== undefined && {
+      subscribe: (listener: (sessionId: string) => void) => changes.subscribe(listener),
+    }),
   };
 }
 
@@ -121,15 +166,18 @@ export async function findSessionFile(dir: string, idPrefix: string): Promise<st
   return undefined;
 }
 
+export type CleanupConfirm = (question: string) => Promise<boolean>;
+
 export async function sessionsCommand(
   args: readonly string[],
   dir: string,
   print: (line: string) => void = console.log,
+  confirmCleanup?: CleanupConfirm,
 ): Promise<number> {
   const [subcommand = "list", ...rest] = args;
   switch (subcommand) {
     case "list":
-      return printList(dir, print, rest.includes("--json"));
+      return printList(dir, print, rest.includes("--json"), confirmCleanup);
     case "tree":
       return printTree(dir, rest[0], print);
     case "fork":
@@ -138,6 +186,18 @@ export async function sessionsCommand(
       print(`unknown sessions subcommand: ${subcommand} (expected list, tree, or fork)`);
       return 1;
   }
+}
+
+export function terminalConfirm(): CleanupConfirm | undefined {
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return undefined;
+  return async (question) => {
+    const readline = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      return (await readline.question(question)).trim().toLowerCase().startsWith("y");
+    } finally {
+      readline.close();
+    }
+  };
 }
 
 export function newSessionFileName(): string {
@@ -165,15 +225,29 @@ async function openById(dir: string, idPrefix: string): Promise<SessionStore | u
 
 export function attachmentOf(
   store: SessionStore,
-  checkpointTag?: CheckpointTagSource,
+  seams: Pick<SessionPortSeams, "checkpointTag" | "onChange"> = {},
 ): SessionAttachment {
+  const name = store.name();
+  const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
+    ...(name !== undefined && { name }),
     history: store.messages(),
-    replay: (bus) => replaySession(store, bus),
+    replay: (bus) => {
+      replaySession(store, bus);
+      bus.on("turn.delta", ({ delta, replay }) => {
+        if (replay !== true && delta.type === "done") finishedTurnUsage.push(delta.usage);
+      });
+    },
     append: async (message) => {
-      const checkpoint = message.role === "user" ? checkpointTag?.() : undefined;
-      await store.append(message, undefined, checkpoint);
+      const checkpoint = message.role === "user" ? seams.checkpointTag?.() : undefined;
+      const usage = message.role === "assistant" ? finishedTurnUsage.shift() : undefined;
+      await store.append(message, usage, checkpoint);
+      seams.onChange?.(store.header.id);
+    },
+    rename: async (title) => {
+      await store.setName(title);
+      seams.onChange?.(store.header.id);
     },
   };
 }
@@ -185,6 +259,26 @@ async function resumableFile(dir: string, request: ResumeRequest): Promise<strin
     return file;
   }
   return request.continueLatest === true ? latestSessionFile(dir) : undefined;
+}
+
+async function overviewItem(file: string): Promise<SessionOverviewItem | undefined> {
+  try {
+    const store = await SessionStore.open(file);
+    const stats = store.stats();
+    if (stats.entries === 0) return undefined;
+    const costNanos = knownCostNanos(stats.cost);
+    return {
+      id: store.header.id,
+      title: store.name() ?? firstUserText(store) ?? "(untitled session)",
+      modifiedAt: Date.parse(stats.lastActivityAt),
+      entryCount: stats.entries,
+      branchCount: stats.branchPoints,
+      labelCount: stats.labels,
+      ...(costNanos !== undefined && { costNanos }),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 async function summarize(file: string): Promise<SessionSummary | undefined> {
@@ -217,6 +311,7 @@ async function printList(
   dir: string,
   print: (line: string) => void,
   json: boolean,
+  confirmCleanup?: CleanupConfirm,
 ): Promise<number> {
   const sessions = await listSessions(dir);
   if (json) {
@@ -232,7 +327,33 @@ async function printList(
     const count = String(session.messageCount).padStart(3);
     print(`${session.id.slice(0, 8)}  ${stamp}  ${count} msgs  ${session.title}`);
   }
+  if (confirmCleanup !== undefined) await offerEmptySessionCleanup(dir, print, confirmCleanup);
   return 0;
+}
+
+async function offerEmptySessionCleanup(
+  dir: string,
+  print: (line: string) => void,
+  confirm: CleanupConfirm,
+): Promise<void> {
+  const empties = await emptySessionFiles(dir);
+  if (empties.length === 0) return;
+  const noun = empties.length === 1 ? "file" : "files";
+  print(`found ${empties.length} empty session ${noun} (just a header, never used)`);
+  if (!(await confirm(`delete ${empties.length === 1 ? "it" : "them"} now? [y/N] `))) return;
+  for (const file of empties) await unlink(file);
+  print(`removed ${empties.length} empty session ${noun}`);
+}
+
+async function emptySessionFiles(dir: string): Promise<string[]> {
+  const empties: string[] = [];
+  for (const name of await sessionFileNames(dir)) {
+    const file = join(dir, name);
+    try {
+      if ((await SessionStore.open(file)).entries().length === 0) empties.push(file);
+    } catch {}
+  }
+  return empties;
 }
 
 async function printTree(
@@ -288,7 +409,7 @@ async function forkSession(
   }
   const clone = await store.clone(join(dir, newSessionFileName()), fromId);
   print(`forked → ${clone.header.id.slice(0, 8)} (${clone.file})`);
-  print(`resume it with: keywork --resume ${clone.header.id.slice(0, 8)}`);
+  print(`resume it with: keywork chat --resume ${clone.header.id.slice(0, 8)}`);
   return 0;
 }
 

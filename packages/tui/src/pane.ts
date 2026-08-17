@@ -10,10 +10,15 @@ export interface PaneContext {
   focused: boolean;
   width: number;
   height: number;
+  borderColor?: string;
+}
+
+export interface FileOpenOptions {
+  atEnd?: true;
 }
 
 export interface PaneIntents {
-  openFile(path: string): void;
+  openFile(path: string, options?: FileOpenOptions): void;
   openSession(sessionId: string, draft?: string): void;
   focusPane(id: string): void;
 }

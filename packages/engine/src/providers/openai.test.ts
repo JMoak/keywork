@@ -210,6 +210,49 @@ describe("OpenAiCompatibleProvider", () => {
     await expect(collect(streaming.stream(emptyRequest))).rejects.toThrow(/size ceiling/);
   });
 
+  it("splits cached prompt tokens out and captures a metered cost when reported", async () => {
+    const lines = [
+      '{"choices":[{"delta":{"content":"hi"}}]}',
+      '{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":9,"prompt_tokens_details":{"cached_tokens":60},"cost":0.00123}}',
+      "[DONE]",
+    ];
+    const deltas = await collect(provider(async () => sseResponse(lines)).stream(emptyRequest));
+
+    expect(deltas.at(-1)).toEqual({
+      type: "done",
+      usage: {
+        inputTokens: 40,
+        outputTokens: 9,
+        cacheReadInputTokens: 60,
+        costUsd: 0.00123,
+      },
+    });
+  });
+
+  it("opts into cost accounting only on openrouter.ai, never on other hosts", async () => {
+    const bodies: string[] = [];
+    const fetchFn: FetchLike = async (_url, init) => {
+      bodies.push(init?.body as string);
+      return sseResponse(["[DONE]"]);
+    };
+    await collect(provider(fetchFn).stream(emptyRequest));
+    const openrouter = new OpenAiCompatibleProvider({
+      name: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "key",
+      model: "some/model",
+      fetchFn,
+    });
+    await collect(openrouter.stream(emptyRequest));
+
+    expect(JSON.parse(bodies[0] as string).usage).toBeUndefined();
+    expect(JSON.parse(bodies[1] as string).usage).toEqual({ include: true });
+  });
+
+  it("exposes the configured model id for cost accounting", () => {
+    expect(provider(async () => sseResponse(["[DONE]"])).modelId).toBe("test-model");
+  });
+
   it("fails the turn when accumulated tool-call arguments exceed the size ceiling", async () => {
     const fragment = (piece: string) =>
       `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"arguments":"${piece}"}}]}}]}`;

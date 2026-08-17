@@ -1,10 +1,12 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Message, Usage } from "../messages.ts";
+import { type CostRollup, sessionCost } from "../pricing.ts";
 import {
   type BranchSummaryEntry,
   buildTree,
   type CompactionEntry,
+  type CustomEntry,
   contextEntriesFor,
   contextMessages,
   type FileTrackingDetails,
@@ -27,6 +29,7 @@ export interface SessionStats {
   labels: number;
   compactions: number;
   usage: Usage;
+  cost: CostRollup;
   createdAt: string;
   lastActivityAt: string;
 }
@@ -47,6 +50,8 @@ export interface BranchSummaryInput {
 }
 
 export class SessionStore {
+  private headerOnDisk: Promise<void> | undefined;
+
   private constructor(
     readonly file: string,
     readonly header: SessionHeader,
@@ -70,8 +75,6 @@ export class SessionStore {
       cwd,
       ...(parentSession !== undefined && { parentSession }),
     };
-    await mkdir(dirname(file), { recursive: true });
-    await appendFile(file, `${JSON.stringify(header)}\n`, "utf8");
     return new SessionStore(file, header, [], new Map(), new Map(), null);
   }
 
@@ -81,6 +84,7 @@ export class SessionStore {
     if (header === undefined) throw new Error(`${file} is not a keywork session file`);
     const log = parsed.filter((entry): entry is SessionEntry => entry.type !== "session");
     const store = new SessionStore(file, header, [], new Map(), new Map(), null);
+    store.headerOnDisk = Promise.resolve();
     for (const entry of log) store.index(entry);
     return store;
   }
@@ -100,6 +104,10 @@ export class SessionStore {
 
   async appendBranchSummary(input: BranchSummaryInput): Promise<BranchSummaryEntry> {
     return this.appendEntry({ type: "branch_summary", ...input });
+  }
+
+  async appendCustom(customType: string, data?: unknown): Promise<CustomEntry> {
+    return this.appendEntry({ type: "custom", customType, ...(data !== undefined && { data }) });
   }
 
   async setLabel(targetId: string, label: string | undefined): Promise<LabelEntry> {
@@ -173,6 +181,7 @@ export class SessionStore {
     const path = pathToEntry(this.byId, leafId ?? this.leaf);
     if (path.length === 0) throw new Error("cannot clone an empty session path");
     const clone = await SessionStore.create(targetFile, this.header.cwd, new Date(), this.file);
+    await clone.materialize();
     const lines = path.map((entry) => `${JSON.stringify(entry)}\n`).join("");
     await appendFile(targetFile, lines, "utf8");
     for (const entry of path) clone.index(entry);
@@ -190,6 +199,7 @@ export class SessionStore {
       labels: this.labelByTarget.size,
       compactions: this.log.filter((entry) => entry.type === "compaction").length,
       usage: sumUsage(this.log),
+      cost: sessionCost(this.log),
       createdAt: this.header.timestamp,
       lastActivityAt: timestamps.at(-1) ?? this.header.timestamp,
     };
@@ -204,9 +214,20 @@ export class SessionStore {
       parentId: this.leaf,
       timestamp: new Date().toISOString(),
     } as T;
+    await this.materialize();
     await appendFile(this.file, `${JSON.stringify(entry)}\n`, "utf8");
     this.index(entry);
     return entry;
+  }
+
+  private materialize(): Promise<void> {
+    this.headerOnDisk ??= this.writeHeader();
+    return this.headerOnDisk;
+  }
+
+  private async writeHeader(): Promise<void> {
+    await mkdir(dirname(this.file), { recursive: true });
+    await appendFile(this.file, `${JSON.stringify(this.header)}\n`, "utf8");
   }
 
   private index(entry: SessionEntry): void {
@@ -238,11 +259,20 @@ function countBranchPoints(entries: readonly SessionEntry[]): number {
 function sumUsage(entries: readonly SessionEntry[]): Usage {
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheCreation = 0;
+  let cacheRead = 0;
   for (const entry of entries) {
     if (entry.type !== "message" && entry.type !== "compaction" && entry.type !== "branch_summary")
       continue;
     inputTokens += entry.usage?.inputTokens ?? 0;
     outputTokens += entry.usage?.outputTokens ?? 0;
+    cacheCreation += entry.usage?.cacheCreationInputTokens ?? 0;
+    cacheRead += entry.usage?.cacheReadInputTokens ?? 0;
   }
-  return { inputTokens, outputTokens };
+  return {
+    inputTokens,
+    outputTokens,
+    ...(cacheCreation > 0 && { cacheCreationInputTokens: cacheCreation }),
+    ...(cacheRead > 0 && { cacheReadInputTokens: cacheRead }),
+  };
 }

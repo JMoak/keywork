@@ -85,7 +85,7 @@ function guardedShellRunner(cwd: string, guard: ToolGuard): (command: string) =>
       arguments: { command },
     };
     const approved = (await guard.confirm?.(call)) ?? true;
-    if (!approved) throw new Error(`shell interpolation declined: ${command}`);
+    if (!approved) throw new Error(`you declined the shell interpolation: ${command}`);
     return bash.execute({ command });
   };
 }

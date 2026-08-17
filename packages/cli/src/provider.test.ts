@@ -1,3 +1,4 @@
+import { UndeclaredCapabilityError } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { resolveProvider } from "./provider.ts";
 
@@ -30,20 +31,60 @@ describe("resolveProvider", () => {
     expect(resolved?.label).toBe("openrouter/openai/gpt-5-mini");
   });
 
-  it("falls back to keys saved by keywork setup", () => {
-    const resolved = resolveProvider({}, undefined, { openrouter: "saved-key" });
+  it("resolves keys saved by keywork setup", () => {
+    const resolved = resolveProvider({}, undefined, {
+      openrouter: { type: "api_key", key: "saved-key" },
+    });
     expect(resolved?.label).toBe("openrouter/openai/gpt-5-mini");
   });
 
   it("ignores saved keys for providers outside the hard-coded catalog", () => {
-    expect(resolveProvider({}, undefined, { attacker: "planted-key" })).toBeUndefined();
+    expect(
+      resolveProvider({}, undefined, { attacker: { type: "api_key", key: "planted-key" } }),
+    ).toBeUndefined();
   });
 
-  it("lets environment variables outrank saved keys", () => {
-    const resolved = resolveProvider({ KEYWORK_OPENAI_API_KEY: "env" }, undefined, {
-      openrouter: "",
+  it("lets saved keys outrank ambient environment variables, even across providers", () => {
+    const resolved = resolveProvider({ OPENROUTER_API_KEY: "ambient" }, undefined, {
+      openai: { type: "api_key", key: "saved" },
     });
     expect(resolved?.label).toBe("openai/gpt-5-mini");
+  });
+
+  it("lets KEYWORK_-scoped variables outrank saved keys", () => {
+    const resolved = resolveProvider({ KEYWORK_OPENAI_API_KEY: "scoped" }, undefined, {
+      openrouter: { type: "api_key", key: "" },
+    });
+    expect(resolved?.label).toBe("openai/gpt-5-mini");
+  });
+
+  it("resolves a ChatGPT subscription sign-in to the codex provider", () => {
+    const resolved = resolveProvider({}, undefined, {
+      "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 9e15 },
+    });
+    expect(resolved?.label).toBe("openai-codex/gpt-5.5");
+  });
+
+  it("honors an explicit model choice on the codex provider", () => {
+    const resolved = resolveProvider({}, "gpt-5.4-mini", {
+      "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 9e15 },
+    });
+    expect(resolved?.label).toBe("openai-codex/gpt-5.4-mini");
+  });
+
+  it("prefers a saved API key over the codex subscription", () => {
+    const resolved = resolveProvider({}, undefined, {
+      openrouter: { type: "api_key", key: "saved" },
+      "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 9e15 },
+    });
+    expect(resolved?.label).toBe("openrouter/openai/gpt-5-mini");
+  });
+
+  it("prefers the codex sign-in over an ambient environment key", () => {
+    const resolved = resolveProvider({ OPENAI_API_KEY: "ambient" }, undefined, {
+      "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 9e15 },
+    });
+    expect(resolved?.label).toBe("openai-codex/gpt-5.5");
   });
 
   it("resolves bedrock from AWS credentials and region in the environment", () => {
@@ -95,5 +136,57 @@ describe("resolveProvider", () => {
       "meta.llama3-70b-instruct-v1:0",
     );
     expect(resolved?.label).toBe("bedrock/meta.llama3-70b-instruct-v1:0");
+  });
+});
+
+describe("declared model capabilities", () => {
+  const imageRequest = {
+    systemPrompt: "",
+    messages: [
+      {
+        role: "user" as const,
+        parts: [{ type: "image" as const, mediaType: "image/png", data: "aGk=" }],
+      },
+    ],
+    tools: [],
+  };
+
+  it("fails fast when an image is sent to a model with no capability declaration", () => {
+    const resolved = resolveProvider({ OPENAI_API_KEY: "k" }, "gpt-5-mini");
+
+    const attempt = () => resolved?.provider.stream(imageRequest);
+
+    expect(attempt).toThrow(UndeclaredCapabilityError);
+    expect(attempt).toThrow('add "image" to models["gpt-5-mini"].input in keywork.json');
+  });
+
+  it("matches declarations by model-id pattern before gating", () => {
+    const resolved = resolveProvider(
+      { OPENAI_API_KEY: "k" },
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      undefined,
+      {
+        "gpt-4*": { input: ["text", "image"] },
+      },
+    );
+
+    expect(() => resolved?.provider.stream(imageRequest)).toThrow(UndeclaredCapabilityError);
+  });
+
+  it("opens the gate once the matching pattern declares image input", () => {
+    const resolved = resolveProvider(
+      { OPENAI_API_KEY: "k" },
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      undefined,
+      {
+        "gpt-5*": { input: ["text", "image"] },
+      },
+    );
+
+    expect(() => resolved?.provider.stream(imageRequest)).not.toThrow();
   });
 });

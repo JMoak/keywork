@@ -219,7 +219,7 @@ describe("memoryRecall", () => {
     const recall = memoryRecall(memory, "sess-1", (line) => disclosures.push(line));
     await recall?.search.search("ratio");
     expect(disclosures).toEqual([
-      "memory search fell back to lexical — embeddings from fake-embed unavailable",
+      "memory search fell back to lexical, embeddings from fake-embed aren't available",
     ]);
   });
 });
@@ -232,7 +232,7 @@ describe("retrievalDisclosure", () => {
     );
     expect(
       retrievalDisclosure({ kind: "lexical-degraded", embeddings: "voyage-3", reason: "down" }),
-    ).toBe("memory search fell back to lexical — embeddings from voyage-3 unavailable");
+    ).toBe("memory search fell back to lexical, embeddings from voyage-3 aren't available");
   });
 });
 
@@ -308,5 +308,43 @@ describe("sweepOnClose", () => {
     const memory = openWorkspaceMemory(await declaredWorkspace(), false);
     await expect(sweepOnClose(memory)).resolves.toBeUndefined();
     await expect(sweepOnClose(undefined)).resolves.toBeUndefined();
+  });
+});
+
+describe("ask-gate preferences at close", () => {
+  it("proposes a preference through the inbox after repeated approvals", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, true);
+    if (memory === undefined) throw new Error("memory expected");
+    for (const _ of [1, 2, 3]) await memory.askGate.record("bash git", "yes");
+
+    await sweepOnClose(memory);
+
+    const items = await memory.inbox.list();
+    expect(items.filter((item) => item.kind === "preference-proposal")).toHaveLength(1);
+  });
+
+  it("stays inert for an untrusted workspace", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, false);
+    if (memory === undefined) throw new Error("memory expected");
+    for (const _ of [1, 2, 3]) await memory.askGate.record("bash git", "yes");
+
+    await sweepOnClose(memory);
+
+    expect(await memory.inbox.list()).toHaveLength(0);
+  });
+});
+
+describe("ask-gate persistence", () => {
+  it("never writes ask events into an untrusted clone", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, false);
+    if (memory === undefined) throw new Error("memory expected");
+    await memory.askGate.record("bash git", "yes");
+
+    await expect(
+      readFile(join(cwd, ".keywork", "memory", ".staging", "ask-gate.json")),
+    ).rejects.toThrow();
   });
 });
