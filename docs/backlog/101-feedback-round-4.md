@@ -183,6 +183,22 @@ unblocked), FR6 LSP/subagent transparency/security scoping.
 
 ## FR3 — Command surface
 
+**FR3.0 (decision + landed 2026-08-17, Jordan): the VS Code palette model.** Ctrl+P =
+quick open (" go " overlay: jump targets only — open panes today; sessions/arcs nodes
+are future jump sources via the same `jump: true` CommandSpec marker); typing `>` as
+the first character flips the same overlay into the full command palette; backspace
+past the `>` flips back. Ctrl+Shift+P opens pre-filled with `>` — a convenience alias
+only, never load-bearing, because terminal reality forbids it: Windows Terminal binds
+Ctrl+Shift+P to its own palette (keywork never sees it), and legacy input encoding
+can't distinguish Ctrl+Shift+P from Ctrl+P at all (both 0x10; only kitty-protocol
+terminals deliver the shift). This mirrors VS Code's own internals, where Ctrl+Shift+P
+IS quick-open pre-filled with `>`. Jump rows render their plain title (the `go-` slash
+name stays for `/go-<title>` compat, searched via the new `label` field); status hint
+now reads `ctrl+p go · > commands`; `keywork doctor` should note the WT keybinding
+collision (open nit). Landed: `paletteModeOf`/mode-filtered `paletteFor` in app-core,
+mode-aware overlay chrome, `palette.go`/`palette.commands` actions, tests + discovery
+e2e goldens for both modes.
+
 8. **(2pt, OWN)** **Command tray in chat.** The slash suggestions under the prompt
    become a proper tray: bordered, column-aligned (name · description · shortcut),
    arrow/tab navigation, and shown for `/` in any conversation pane. The palette and

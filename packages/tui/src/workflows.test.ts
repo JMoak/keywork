@@ -292,30 +292,59 @@ describe("zoom", () => {
 });
 
 describe("command palette", () => {
-  it("opens, takes a query, and runs the top match on enter", () => {
+  it("opens in go mode on ctrl+p and flips to commands on the > prefix", () => {
     const probe = new AppProbe().keys("ctrl+p");
     expect(probe.snapshot().overlay).toBe("palette");
+    expect(probe.core.paletteMode).toBe("go");
+    expect(probe.core.paletteMatches().every((entry) => entry.jump === true)).toBe(true);
 
-    probe.type("split");
-    expect(probe.snapshot().paletteQuery).toBe("split");
+    probe.type(">split");
+    expect(probe.core.paletteMode).toBe("commands");
+    expect(probe.snapshot().paletteQuery).toBe(">split");
 
     probe.keys("enter");
     expect(probe.snapshot().overlay).toBeUndefined();
     expect(paneIds(probe)).toEqual(["session-1", "session-2"]);
   });
 
+  it("opens straight into command mode on ctrl+shift+p", () => {
+    const probe = new AppProbe().keys("ctrl+shift+p");
+    expect(probe.snapshot().overlay).toBe("palette");
+    expect(probe.core.paletteMode).toBe("commands");
+    expect(probe.snapshot().paletteQuery).toBe(">");
+    expect(probe.core.paletteMatches().some((entry) => entry.name === "split")).toBe(true);
+    expect(probe.core.paletteMatches().every((entry) => entry.jump !== true)).toBe(true);
+  });
+
+  it("returns to go mode when backspace erases the > prefix", () => {
+    const probe = new AppProbe().keys("ctrl+shift+p");
+    probe.keys("backspace");
+    expect(probe.snapshot().overlay).toBe("palette");
+    expect(probe.core.paletteMode).toBe("go");
+  });
+
   it("closes on escape without running anything", () => {
-    const probe = new AppProbe().keys("ctrl+p").type("split").keys("escape");
+    const probe = new AppProbe().keys("ctrl+shift+p").type("split").keys("escape");
     expect(probe.snapshot().overlay).toBeUndefined();
     expect(paneIds(probe)).toEqual(["session-1"]);
   });
 
   it("hides arg-requiring commands from the palette but keeps them for slash input", () => {
     const probe = new AppProbe({ createFilePane: (id, path) => stubFilePane(id, path) });
-    probe.keys("ctrl+p").type("open");
+    probe.keys("ctrl+shift+p").type("open");
     expect(probe.core.paletteMatches().map((entry) => entry.name)).not.toContain("open");
     probe.keys("escape");
     expect(probe.core.registry.search("open").map((entry) => entry.name)).toContain("open");
+  });
+
+  it("finds jump targets in go mode by their plain title", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.keys("ctrl+p").type("session-1");
+    const matches = probe.core.paletteMatches();
+    expect(matches.map((entry) => entry.label ?? entry.name)).toContain("session-1");
+    probe.keys("enter");
+    expect(probe.snapshot().focused).toBe("session-1");
   });
 
   it("keeps the matched entries stable when a pane retitles mid-selection", () => {
@@ -1098,7 +1127,7 @@ describe("mouse", () => {
   });
 
   it("moves the palette selection on hover, and arrows still win afterwards", () => {
-    const probe = new AppProbe().keys("ctrl+p");
+    const probe = new AppProbe().keys("ctrl+shift+p");
     const rows = Math.min(paletteRowLimit, probe.core.registry.search("").length);
     const frame = paletteFrame(probe.screen, rows);
     probe.hover(frame.x + 2, frame.firstRowY + 2);
@@ -1108,7 +1137,7 @@ describe("mouse", () => {
   });
 
   it("runs the clicked palette row", () => {
-    const probe = new AppProbe().keys("ctrl+p").type("split");
+    const probe = new AppProbe().keys("ctrl+shift+p").type("split");
     const rows = Math.min(paletteRowLimit, probe.core.registry.search("split").length);
     const frame = paletteFrame(probe.screen, rows);
     probe.click(frame.x + 2, frame.firstRowY);
@@ -1117,7 +1146,7 @@ describe("mouse", () => {
   });
 
   it("closes the palette on an outside click without running anything", () => {
-    const probe = new AppProbe().keys("ctrl+p").type("split");
+    const probe = new AppProbe().keys("ctrl+shift+p").type("split");
     probe.click(0, 0);
     expect(probe.snapshot().overlay).toBeUndefined();
     expect(paneIds(probe)).toEqual(["session-1"]);

@@ -881,7 +881,10 @@ function emptyView(theme: Theme) {
   return Box(
     { flexGrow: 1, flexDirection: "column", alignItems: "center", justifyContent: "center" },
     Text({ content: "no sessions open", fg: theme.textDim }),
-    Text({ content: "ctrl+k s starts one · ctrl+p commands · ctrl+q quits", fg: theme.textDim }),
+    Text({
+      content: "ctrl+k s starts one · ctrl+p go · > commands · ctrl+q quits",
+      fg: theme.textDim,
+    }),
   );
 }
 
@@ -892,7 +895,7 @@ function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => str
       ? core.notice
       : core.leaderArmed
         ? "nav · h/j/k/l focus  H/J/K/L move  s split  x close  z zoom  c cycle  ,/. dock width · esc done"
-        : `${label ?? "keywork"} · ${core.layout.panes().length} panes · ctrl+k nav · ctrl+p commands`;
+        : `${label ?? "keywork"} · ${core.layout.panes().length} panes · ctrl+k nav · ctrl+p go · > commands`;
   return Box(
     {
       height: 1,
@@ -914,7 +917,14 @@ function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
   const matches = core.paletteMatches();
   const frame = paletteFrame(screen, matches.length);
   const innerWidth = overlayInnerWidth(frame);
-  const rows = trayRows(matches, core.paletteIndex, innerWidth, theme);
+  const commandMode = core.paletteMode === "commands";
+  const rows = trayRows(
+    matches.map((match) => ({ ...match, name: match.label ?? match.name })),
+    core.paletteIndex,
+    innerWidth,
+    theme,
+  );
+  const empty = commandMode ? "  no matching commands" : "  nowhere to jump · type > for commands";
   return Box(
     {
       ...overlayPosition(frame),
@@ -923,7 +933,7 @@ function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
       borderStyle: "rounded",
       borderColor: theme.accent,
       backgroundColor: theme.panel,
-      title: " commands ",
+      title: commandMode ? " commands " : " go ",
       titleAlignment: "center",
       flexDirection: "column",
       overflow: "hidden",
@@ -931,7 +941,7 @@ function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
       paddingBottom: 1,
     },
     Text({ content: clipLine(` › ${core.paletteQuery}▌`, innerWidth), fg: theme.text }),
-    ...(rows.length > 0 ? rows : [Text({ content: "  no matching commands", fg: theme.textDim })]),
+    ...(rows.length > 0 ? rows : [Text({ content: empty, fg: theme.textDim })]),
   );
 }
 

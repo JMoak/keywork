@@ -124,9 +124,9 @@ describe("palette-surfaced workspace commands", () => {
         { name: "wants-args", needsArgs: true, render: async (args) => args },
       ],
     });
-    probe.keys("ctrl+p").type("plain");
+    probe.keys("ctrl+shift+p").type("plain");
     expect(probe.core.paletteMatches().map((entry) => entry.name)).toContain("plain");
-    probe.keys("escape").keys("ctrl+p").type("wants");
+    probe.keys("escape").keys("ctrl+shift+p").type("wants");
     expect(probe.core.paletteMatches().map((entry) => entry.name)).not.toContain("wants-args");
     probe.keys("escape");
     expect(probe.core.registry.search("wants-args")[0]?.name).toBe("wants-args");

@@ -177,11 +177,21 @@ const appActions: Record<string, AppAction> = {
     invoke: (core) => core.toggleHelp(),
     command: { name: "keys", description: "show the hotkeys overlay", aliases: ["help"] },
   },
-  "palette.toggle": {
-    chords: ["ctrl+p", "leader p"],
-    help: "command palette",
+  "palette.go": {
+    chords: "ctrl+p",
+    help: "quick open (> commands)",
     invoke: (core) => core.openPalette(),
-    command: { name: "palette", description: "open the command palette" },
+    command: { name: "go", description: "jump to a pane (type > for commands)" },
+  },
+  "palette.commands": {
+    chords: ["ctrl+shift+p", "leader p"],
+    help: "command palette",
+    invoke: (core) => core.openPalette(">"),
+    command: {
+      name: "palette",
+      description: "open the command palette",
+      aliases: ["commands"],
+    },
   },
   "app.quit": {
     chords: "ctrl+q",
@@ -291,6 +301,10 @@ export interface OverlayFrame {
 }
 
 export const paletteRowLimit = 10;
+
+export function paletteModeOf(query: string): "go" | "commands" {
+  return query.startsWith(">") ? "commands" : "go";
+}
 
 export function paletteFrame(
   screen: Screen,
@@ -597,8 +611,12 @@ export class AppCore {
     this.overlay = this.helpVisible ? undefined : { kind: "help" };
   }
 
-  openPalette(): void {
-    this.overlay = this.paletteFor("");
+  openPalette(initialQuery = ""): void {
+    this.overlay = this.paletteFor(initialQuery);
+  }
+
+  get paletteMode(): "go" | "commands" {
+    return paletteModeOf(this.paletteQuery);
   }
 
   openPresetPicker(): void {
@@ -655,13 +673,15 @@ export class AppCore {
   }
 
   private paletteFor(query: string): PaletteOverlay {
+    const commandMode = paletteModeOf(query) === "commands";
     return {
       kind: "palette",
       query,
       index: 0,
       entries: this.registry
-        .search(query)
+        .search(commandMode ? query.slice(1) : query)
         .filter((command) => command.needsArgs !== true)
+        .filter((command) => (command.jump === true) !== commandMode)
         .slice(0, paletteRowLimit),
     };
   }
@@ -1141,11 +1161,16 @@ export class AppCore {
         .map((id) => ({ id, title: this.panes.get(id)?.title().trim().split(" ·")[0] ?? id }));
       const titleCounts = new Map<string, number>();
       for (const { title } of targets) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
-      return targets.map(({ id, title }) => ({
-        name: `go-${(titleCounts.get(title) ?? 0) > 1 ? `${title} ${id}` : title}`,
-        description: "jump to this session",
-        run: () => this.layout.focus(id),
-      }));
+      return targets.map(({ id, title }) => {
+        const distinct = (titleCounts.get(title) ?? 0) > 1 ? `${title} ${id}` : title;
+        return {
+          name: `go-${distinct}`,
+          label: distinct,
+          description: "jump to this pane",
+          jump: true as const,
+          run: () => this.layout.focus(id),
+        };
+      });
     });
   }
 }

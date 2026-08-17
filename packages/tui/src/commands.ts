@@ -4,6 +4,8 @@ export interface CommandSpec {
   aliases?: readonly string[];
   shortcut?: string;
   needsArgs?: true;
+  jump?: true;
+  label?: string;
   run(args?: string): void;
 }
 
@@ -65,7 +67,11 @@ function findByName(commands: readonly CommandSpec[], raw: string): CommandSpec 
 }
 
 function bestScore(command: CommandSpec, query: string): number | undefined {
-  const candidates = [command.name, ...(command.aliases ?? [])];
+  const candidates = [
+    command.name,
+    ...(command.label === undefined ? [] : [command.label.toLowerCase()]),
+    ...(command.aliases ?? []),
+  ];
   const scores = candidates
     .map((candidate) => fuzzyScore(query, candidate))
     .filter((score): score is number => score !== undefined);

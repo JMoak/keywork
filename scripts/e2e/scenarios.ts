@@ -444,9 +444,16 @@ function discovery(): Scenario {
       await stage.settle();
 
       await stage.press("ctrl+p");
+      const quickOpen = await stage.until("jump to this pane");
+      assert.ok(!quickOpen.includes("▸ split"), "quick open holds no command rows");
+      await stage.capture("quick-open", { golden: true });
+
+      await stage.type(">");
       const palette = await stage.until("▸ split");
+      assert.ok(palette.includes(" commands "), "the > prefix flips the overlay to command mode");
       assert.ok(palette.includes("open a new session pane"), "palette rows carry descriptions");
       assert.ok(palette.includes("zoom the focused pane"), "palette lists command rows");
+      assert.ok(!palette.includes("jump to this pane"), "command mode hides the jump rows");
       await stage.capture("palette", { golden: true });
       await stage.press("escape");
 
