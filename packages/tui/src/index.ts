@@ -1,8 +1,10 @@
 export {
+  type AfterTurn,
   type AgentFactory,
   type AgentSeams,
   type AppOptions,
   type CheckpointsPort,
+  type Compactor,
   runApp,
   type SessionAttachment,
   type SessionPort,
@@ -28,7 +30,16 @@ export {
   type TieredRamp,
   tile,
 } from "./capability.ts";
-export type { ForkOutcome, Titler } from "./conversation-model.ts";
+export {
+  barCells,
+  contextGauge,
+  contextReadout,
+  type GaugeOptions,
+  type GaugeStyle,
+  gaugeStyleFor,
+  type InstrumentTier,
+} from "./context-gauge.ts";
+export type { CompactionHook, ForkOutcome, Titler } from "./conversation-model.ts";
 export type {
   ConversationTarget,
   ExtensionAgentEntry,

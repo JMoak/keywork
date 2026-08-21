@@ -7,6 +7,7 @@ describe("inferencePort", () => {
     env: { OPENAI_API_KEY: "k" },
     config: {
       connections: { ollama: { endpoint: "http://localhost:11434/v1", models: ["qwen3"] } },
+      models: { qwen3: { contextWindow: 32_768 } },
     },
     credentials: {},
     observations: {
@@ -25,7 +26,7 @@ describe("inferencePort", () => {
       ["openai-codex/gpt-5.5", false],
       ["openrouter/openai/gpt-5-mini", false],
     ]);
-    expect(choices[1]?.facts).toEqual(["chat-completions", "no credential", "declared"]);
+    expect(choices[1]?.facts).toEqual(["chat-completions", "no credential", "declared", "ctx 33k"]);
     expect(choices[0]?.facts).toEqual(["chat-completions", "no credential", "reported"]);
     expect(choices[2]?.facts).toEqual(["chat-completions", "OPENAI_API_KEY", "provider default"]);
     expect(choices[5]?.facts[1]).toContain("needs KEYWORK_OPENROUTER_API_KEY");
@@ -34,7 +35,11 @@ describe("inferencePort", () => {
   it("describes a reference without side effects, carrying the typed failure forward", () => {
     expect(port.describe("ollama/qwen3")).toEqual({
       ok: true,
-      message: "ollama/qwen3 · chat-completions",
+      message: "ollama/qwen3 · chat-completions · ctx 33k",
+    });
+    expect(port.describe("ollama/llama3")).toEqual({
+      ok: true,
+      message: "ollama/llama3 · chat-completions · ctx assumed",
     });
     expect(port.describe("openrouter/x")).toMatchObject({
       ok: false,

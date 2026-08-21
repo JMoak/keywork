@@ -1,17 +1,9 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  MemoryFlush,
-  MockProvider,
-  ReviewItemNotFoundError,
-  SessionStore,
-  textMessage,
-  textTurn,
-} from "@keywork/engine";
+import { ReviewItemNotFoundError } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  flushAfterTurn,
   memoryPanePort,
   memoryRecall,
   openWorkspaceMemory,
@@ -240,56 +232,6 @@ describe("withMemoryPrompt", () => {
   it("appends the injection only when there is one", () => {
     expect(withMemoryPrompt("base", "")).toBe("base");
     expect(withMemoryPrompt("base", "# Memory\n\nnotes")).toBe("base\n\n# Memory\n\nnotes");
-  });
-});
-
-describe("flushAfterTurn", () => {
-  async function sessionWith(messages: number): Promise<SessionStore> {
-    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), ".");
-    for (let index = 0; index < messages; index += 1) {
-      await store.append(textMessage(index % 2 === 0 ? "user" : "assistant", `turn ${index}`));
-    }
-    return store;
-  }
-
-  it("persists the flush turn to the session JSONL when the threshold trips", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    const session = await sessionWith(4);
-    const flush = new MemoryFlush({
-      provider: new MockProvider([textTurn("tests run on Node, not Bun")]),
-      store: memory.store,
-    });
-    const flushed = await flushAfterTurn(flush, session, session.messages(), 100);
-    expect(flushed).toHaveLength(2);
-    expect(session.messages()).toHaveLength(6);
-    expect((await memory.store.readDaily()).map((entry) => entry.text)).toEqual([
-      "tests run on Node, not Bun",
-    ]);
-  });
-
-  it("stays calm when the provider fails mid-flush: nothing persisted, session continues", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    const session = await sessionWith(4);
-    const flush = new MemoryFlush({
-      provider: {
-        name: "failing",
-        stream: () => {
-          throw new Error("socket reset");
-        },
-      },
-      store: memory.store,
-    });
-    const flushed = await flushAfterTurn(flush, session, session.messages(), 100);
-    expect(flushed).toEqual([]);
-    expect(session.messages()).toHaveLength(4);
-    expect(await memory.store.readDaily()).toEqual([]);
-  });
-
-  it("does nothing below the threshold or without a flush", async () => {
-    const session = await sessionWith(2);
-    expect(await flushAfterTurn(undefined, session, session.messages())).toEqual([]);
   });
 });
 

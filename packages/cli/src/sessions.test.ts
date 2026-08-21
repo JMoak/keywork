@@ -591,6 +591,19 @@ describe("cost capture", () => {
     expect(overview?.at(0)?.costNanos).toBe(2_100_000);
   });
 
+  it("stops listening to the bus when the session is released", async () => {
+    const dir = await tempDir();
+    const port = sessionPort(dir, ".");
+    const attachment = await port.create();
+    const bus = new EventBus<EngineEvents>();
+    attachment?.replay(bus);
+    expect(bus.listenerCount("turn.delta")).toBe(1);
+
+    port.release?.(attachment?.id ?? "");
+
+    expect(bus.listenerCount("turn.delta")).toBe(0);
+  });
+
   it("never mistakes replayed usage for a fresh turn", async () => {
     const dir = await tempDir();
     const port = sessionPort(dir, ".");

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Opens keywork in a Terminal window. Finds the binary on PATH or in ~/.local/bin.
+set -eu
+binary=$(command -v keywork 2>/dev/null || true)
+if [ -z "$binary" ] && [ -x "$HOME/.local/bin/keywork" ]; then
+  binary="$HOME/.local/bin/keywork"
+fi
+if [ -z "$binary" ]; then
+  osascript -e 'display alert "keywork is not installed" message "Install it first: curl -fsSL https://raw.githubusercontent.com/JMoak/keywork/main/scripts/install.sh | sh"'
+  exit 1
+fi
+exec open -a Terminal "$binary"

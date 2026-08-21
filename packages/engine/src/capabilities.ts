@@ -47,6 +47,7 @@ export function withDeclaredCapabilities(
   return {
     name: provider.name,
     modelId: provider.modelId,
+    capabilities,
     stream: (request) => {
       assertRequestWithinDeclarations(request, capabilities, provider.modelId ?? provider.name);
       return provider.stream(request);

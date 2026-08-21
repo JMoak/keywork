@@ -39,4 +39,11 @@ export class EventBus<Events = EngineEvents> {
       (listener as Listener<Events[K]>)(payload);
     }
   }
+
+  listenerCount(type?: keyof Events): number {
+    if (type !== undefined) return this.listeners.get(type)?.size ?? 0;
+    let total = 0;
+    for (const listeners of this.listeners.values()) total += listeners.size;
+    return total;
+  }
 }

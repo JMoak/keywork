@@ -1,0 +1,11 @@
+{"type":"run.started","cwd":"<cwd>","provider":"mock","model":"mock-model","session":null}
+{"type":"turn.started","userText":"try a command"}
+{"type":"turn.delta","delta":{"type":"tool-call","call":{"type":"tool-call","callId":"call-1","name":"bash","arguments":{"command":"echo hi"}}}}
+{"type":"turn.delta","delta":{"type":"done","usage":{"inputTokens":0,"outputTokens":0}}}
+{"type":"tool.started","call":{"type":"tool-call","callId":"call-1","name":"bash","arguments":{"command":"echo hi"}}}
+{"type":"gate.permission","decision":{"tool":"bash","callId":"call-1","verdict":"denied","gate":"headless"}}
+{"type":"tool.finished","callId":"call-1","output":"not approved: this run has no one to ask, so the call was refused","isError":true}
+{"type":"turn.delta","delta":{"type":"text","text":"I could not run it."}}
+{"type":"turn.delta","delta":{"type":"done","usage":{"inputTokens":0,"outputTokens":0}}}
+{"type":"turn.completed","message":{"role":"assistant","parts":[{"type":"text","text":"I could not run it."}]},"usage":{"inputTokens":0,"outputTokens":0}}
+{"type":"run.finished","outcome":"denied","exitCode":4,"message":"I could not run it.","refused":[{"tool":"bash","callId":"call-1"}]}

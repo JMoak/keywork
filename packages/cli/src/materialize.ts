@@ -49,6 +49,7 @@ export function deferredMaterialization(
     wrapProvider: (provider) => ({
       name: provider.name,
       modelId: provider.modelId,
+      capabilities: provider.capabilities,
       stream: (request) => {
         attemptOnce();
         return provider.stream(request);

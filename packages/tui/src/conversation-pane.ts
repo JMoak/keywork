@@ -18,8 +18,10 @@ import {
   type TieredRamp,
   tile,
 } from "./capability.ts";
+import { contextGauge, gaugeStyleFor } from "./context-gauge.ts";
 import {
   type CommandsPort,
+  type CompactionHook,
   ConversationModel,
   type ConversationPorts,
   type Titler,
@@ -149,6 +151,23 @@ export class ConversationPane implements Pane {
     this.model.bindAfterTurn(hook);
   }
 
+  bindCompaction(hook: CompactionHook): void {
+    this.model.bindCompaction(hook);
+  }
+
+  postNotice(text: string): void {
+    this.model.postNotice(text);
+  }
+
+  telemetry(instruments: "calm" | "cockpit" = "calm"): string {
+    const reading = this.model.contextReading();
+    const gauge =
+      reading === undefined
+        ? ""
+        : contextGauge(reading, { style: gaugeStyleFor(instruments), glyphs: this.glyphs });
+    return [gauge, this.model.usageSummary()].filter((part) => part !== "").join(" · ");
+  }
+
   submitPrompt(text: string): void {
     this.model.submitText(text);
   }
@@ -198,7 +217,7 @@ export class ConversationPane implements Pane {
       {
         name: this.model.title ?? this.id,
         stamp: this.stampGlyph(),
-        telemetry: this.model.usageSummary() || undefined,
+        telemetry: this.telemetry(context.instruments) || undefined,
         siblings: this.siblingTitles?.(),
       },
       context.width,
@@ -307,19 +326,22 @@ export class ConversationPane implements Pane {
       Box(
         { flexGrow: 1, flexDirection: "column", overflow: "hidden" },
         ...head.lines.map((line) => Text({ content: line || " ", fg: theme.text })),
-        Text({ content: clipCells(this.mastheadStatus(), innerWidth), fg: theme.textMid }),
+        Text({
+          content: clipCells(this.mastheadStatus(context.instruments), innerWidth),
+          fg: theme.textMid,
+        }),
       ),
       ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
     );
   }
 
-  private mastheadStatus(): string {
+  private mastheadStatus(instruments: PaneContext["instruments"]): string {
     const state = this.model.busy
       ? "working"
       : this.model.entries.at(-1)?.kind === "error"
         ? "failed"
         : "idle";
-    const telemetry = this.model.usageSummary();
+    const telemetry = this.telemetry(instruments);
     return telemetry === "" ? state : `${state} · ${telemetry}`;
   }
 

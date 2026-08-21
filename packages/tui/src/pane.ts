@@ -11,6 +11,7 @@ export interface PaneContext {
   width: number;
   height: number;
   borderColor?: string;
+  instruments?: "calm" | "cockpit";
 }
 
 export interface FileOpenOptions {

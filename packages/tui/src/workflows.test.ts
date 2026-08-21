@@ -6,18 +6,20 @@ import {
   type SessionTreeNode,
   type Tool,
   type TurnDelta,
+  type TurnSettlement,
   textMessage,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import {
+  type AfterTurn,
   bindSessionLifecycle,
   type CheckpointsPort,
+  type Compactor,
   forkAtPrompt,
   paneSessionIndex,
   type SessionAttachment,
-  type SessionTurn,
 } from "./app.ts";
 import { type PresetsPort, paletteFrame, paletteRowLimit } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
@@ -1991,7 +1993,8 @@ describe("session after-turn lifecycle", () => {
 
   function lifecycleProbe(options: {
     turns: TurnDelta[][];
-    afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
+    afterTurn?: AfterTurn;
+    compact?: Compactor;
   }) {
     const attachment = recordedAttachment("sess-1");
     const rebuilt: Agent[] = [];
@@ -2004,6 +2007,7 @@ describe("session after-turn lifecycle", () => {
           pane,
           attachment,
           ...(options.afterTurn !== undefined && { afterTurn: options.afterTurn }),
+          ...(options.compact !== undefined && { compact: options.compact }),
           rebuild: (history) => {
             const next = new Agent({ provider, bus: agent.bus, history });
             rebuilt.push(next);
@@ -2027,9 +2031,9 @@ describe("session after-turn lifecycle", () => {
       turns: [textTurn("first reply"), textTurn("second reply")],
       afterTurn: async ({ sessionId, history }) => {
         seen.push(`${sessionId}:${history.length}`);
-        if (seen.length > 1) return [];
+        if (seen.length > 1) return undefined;
         for (const message of flushMessages) await attachment.append(message);
-        return flushMessages;
+        return settlement([...history, ...flushMessages]);
       },
     });
     probe.type("hi").keys("enter");
@@ -2065,7 +2069,7 @@ describe("session after-turn lifecycle", () => {
       turns: [textTurn("reply")],
       afterTurn: async () => {
         await gate;
-        return [];
+        return undefined;
       },
     });
     probe.type("hi").keys("enter");
@@ -2094,6 +2098,89 @@ describe("session after-turn lifecycle", () => {
     await probe.settled();
     expect(probe.model()?.entries).toContainEqual({ kind: "assistant", text: "second" });
   });
+
+  it("posts settlement notices and rebuilds on the compacted history", async () => {
+    const summary = textMessage("user", "## Goal\nfolded");
+    const { probe, rebuilt } = lifecycleProbe({
+      turns: [textTurn("first reply"), textTurn("second reply")],
+      afterTurn: async ({ history }) =>
+        history.length >= 4
+          ? {
+              history: [summary, ...history.slice(-2)],
+              notices: ["compacted 1k tokens into a summary · context now 200 of 2k"],
+              flushed: [],
+              compacted: undefined,
+            }
+          : undefined,
+    });
+    probe.type("one").keys("enter");
+    await probe.settled();
+    expect(rebuilt).toHaveLength(0);
+
+    probe.type("two").keys("enter");
+    await probe.settled();
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0]?.history().map((message) => messageText(message))).toEqual([
+      "## Goal\nfolded",
+      "two",
+      "second reply",
+    ]);
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "compacted 1k tokens into a summary · context now 200 of 2k",
+    });
+  });
+
+  it("/compact runs the compactor while the pane is busy, then applies its settlement", async () => {
+    const requests: string[] = [];
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { probe, rebuilt } = lifecycleProbe({
+      turns: [textTurn("reply")],
+      compact: async ({ history }, instructions) => {
+        requests.push(instructions);
+        await gate;
+        return settlement(
+          [textMessage("user", "summary"), ...history.slice(-1)],
+          ["compacted 3 tokens into a summary · context now 1 of 2k"],
+        );
+      },
+    });
+    probe.type("hello").keys("enter");
+    await probe.settled();
+
+    probe.type("/compact keep the file names").keys("enter");
+    await waitFor(() => expect(requests).toEqual(["keep the file names"]));
+    expect(probe.model()?.busy).toBe(true);
+    release();
+    await probe.settled();
+    expect(probe.model()?.busy).toBe(false);
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0]?.history().map((message) => messageText(message))).toEqual([
+      "summary",
+      "reply",
+    ]);
+    expect(probe.model()?.entries.at(-1)?.text).toContain("compacted 3 tokens");
+  });
+
+  it("/compact without a compactor says so instead of hanging", async () => {
+    const { probe } = lifecycleProbe({ turns: [] });
+    probe.type("/compact").keys("enter");
+    await probe.settled();
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "can't compact · no session store",
+    });
+  });
+
+  function settlement(
+    history: readonly Message[],
+    notices: readonly string[] = [],
+  ): TurnSettlement {
+    return { history, notices, flushed: [], compacted: undefined };
+  }
 });
 
 describe("preset overlay", () => {

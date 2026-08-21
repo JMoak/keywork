@@ -932,6 +932,123 @@ describe("cost accounting", () => {
       text: "tokens 5▸5\ncost $0.002 · metered by the provider",
     });
   });
+
+  it("carries cost and tokens across agent swaps and attributes them per model", async () => {
+    const first = new Agent({
+      provider: new MockProvider([textTurn("a", { inputTokens: 10_000, outputTokens: 1_000 })], {
+        modelId: "gpt-5-mini",
+      }),
+    });
+    const model = new ConversationModel(first, () => {});
+    type(model, "one");
+    await submit(model);
+    expect(model.usageSummary()).toBe("$0.0045");
+
+    const second = new Agent({
+      provider: new MockProvider([textTurn("b", { inputTokens: 2_000, outputTokens: 100 })], {
+        modelId: "gpt-5",
+      }),
+      bus: first.bus,
+      history: first.history(),
+    });
+    model.swapAgent(second);
+    expect(model.usageSummary()).toBe("$0.0045");
+    type(model, "two");
+    await submit(model);
+    expect(model.usageSummary()).toBe("$0.008");
+
+    type(model, "/cost");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: [
+        "tokens 12000▸1100",
+        "cost $0.008 · estimated from gpt-5 rates",
+        "  mock/gpt-5-mini · 1 turn · 10000▸1000 · $0.0045",
+        "  mock/gpt-5 · 1 turn · 2000▸100 · $0.0035",
+      ].join("\n"),
+    });
+  });
+});
+
+describe("context budget in the conversation", () => {
+  it("reads the context off the live agent against its declared window", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("a reply of some length")], {
+        capabilities: { input: ["text"], toolCalls: true, contextWindow: 8_000 },
+      }),
+    });
+    const model = new ConversationModel(agent, () => {});
+    expect(model.contextReading()).toMatchObject({ used: 0, window: 8_000, declared: true });
+    type(model, "hello there");
+    await submit(model);
+    const reading = model.contextReading();
+    expect(reading?.used).toBeGreaterThan(0);
+    expect(reading).toMatchObject({ window: 8_000, flushAt: 7_000, compactAt: 7_334 });
+    expect(model.contextReading()).toBe(reading);
+  });
+
+  it("/context prints the readout, assuming the window when none is declared", async () => {
+    const model = new ConversationModel(
+      new Agent({ provider: new MockProvider([textTurn("hi")]) }),
+      () => {},
+    );
+    type(model, "go");
+    await submit(model);
+    type(model, "/context");
+    model.handleKey(parseChord("return"), undefined);
+    const text = model.entries.at(-1)?.text ?? "";
+    expect(text).toMatch(/^context \d+ of 200000 tokens · estimated from the conversation text\n/);
+    expect(text).toContain("memory flush at 175424 · compaction at 183616");
+    expect(text).toContain("window assumed at 200000");
+  });
+
+  it("suggests /context and /compact by prefix only, never by loose fuzz", () => {
+    const model = new ConversationModel(undefined, () => {});
+    type(model, "/co");
+    expect(model.suggestions().map((suggestion) => suggestion.name)).toEqual([
+      "cost",
+      "context",
+      "compact",
+    ]);
+  });
+
+  it("/compact without a model or a hook says so", async () => {
+    const idle = new ConversationModel(undefined, () => {});
+    type(idle, "/compact");
+    idle.handleKey(parseChord("return"), undefined);
+    expect(idle.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "no model bound · nothing to compact",
+    });
+
+    const unbound = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
+    type(unbound, "/compact");
+    unbound.handleKey(parseChord("return"), undefined);
+    expect(unbound.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "can't compact · no session store",
+    });
+  });
+
+  it("/compact occupies the pane while the hook runs and passes the focus text through", async () => {
+    const model = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
+    const asked: string[] = [];
+    let release = () => {};
+    model.bindCompaction(async (instructions) => {
+      asked.push(instructions);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    type(model, "/compact keep the file names");
+    model.handleKey(parseChord("return"), undefined);
+    expect(asked).toEqual(["keep the file names"]);
+    expect(model.busy).toBe(true);
+    release();
+    await model.lastSend;
+    expect(model.busy).toBe(false);
+  });
 });
 
 describe("the page grammar in the transcript", () => {

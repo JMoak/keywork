@@ -211,6 +211,19 @@ describe("paneSessionIndex", () => {
     index.closed("never-bound");
     expect(index.size()).toBe(0);
   });
+
+  it("releases every bound session at shutdown so nothing outlives the app", () => {
+    const released: string[] = [];
+    const index = paneSessionIndex(releasingPort(released));
+    index.bind("session-1", () => "s1");
+    index.bind("session-2", () => "s2");
+    index.bind("session-3", () => undefined);
+
+    index.closeAll();
+
+    expect(released.sort()).toEqual(["s1", "s2"]);
+    expect(index.size()).toBe(0);
+  });
 });
 
 describe("doctorCommand", () => {
@@ -258,7 +271,12 @@ describe("bindSessionLifecycle", () => {
     bindSessionLifecycle({
       pane,
       attachment,
-      afterTurn: async () => [textMessage("user", "joined")],
+      afterTurn: async ({ history }) => ({
+        history: [...history, textMessage("user", "joined")],
+        notices: [],
+        flushed: [],
+        compacted: undefined,
+      }),
       rebuild: () => next,
     });
     pane.submitPrompt("go");

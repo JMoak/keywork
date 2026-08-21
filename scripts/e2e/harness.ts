@@ -8,7 +8,16 @@ import {
   sessionTreePort,
 } from "../../packages/cli/src/sessions.ts";
 import { workspaceFile } from "../../packages/cli/src/workspace.ts";
-import { Agent, Checkpoints, MockProvider } from "../../packages/engine/src/index.ts";
+import {
+  Agent,
+  Checkpoints,
+  compactNow,
+  contextBudgetFor,
+  declaredContextWindow,
+  MockProvider,
+  type SessionStore,
+  settleTurn,
+} from "../../packages/engine/src/index.ts";
 import { type AppOptions, assumedGlyphs, runApp } from "../../packages/tui/src/index.ts";
 import { scenarioArtifactDir, stepFileBase } from "./artifacts.ts";
 import type { CapturedFrame } from "./frame.ts";
@@ -188,20 +197,54 @@ async function composeMockApp(
   }).catch(() => undefined);
   const tools = scenario.tools?.(paths.workspaceDir) ?? [];
   const changes = sessionChangeFeed();
+  const stores = new Map<string, SessionStore>();
+  const freshScript = () =>
+    new MockProvider([...(scenario.turns ?? [])], {
+      ...(scenario.contextWindow !== undefined && {
+        capabilities: { input: ["text"], toolCalls: true, contextWindow: scenario.contextWindow },
+      }),
+    });
+  const sharedScript = scenario.script === "shared" ? freshScript() : undefined;
   await runApp({
     ...seams,
     ...(scenario.provider !== "none" && {
-      agentFactory: (guard, history) =>
-        new Agent({
-          provider: new MockProvider([...(scenario.turns ?? [])]),
-          tools,
-          guard,
-          ...(history !== undefined && { history }),
-        }),
+      agentFactory:
+        scenario.agentFactory ??
+        ((guard, history, seams) =>
+          new Agent({
+            provider: sharedScript ?? freshScript(),
+            tools,
+            guard,
+            ...(history !== undefined && { history }),
+            ...(seams?.bus !== undefined && { bus: seams.bus }),
+          })),
+      afterTurn: async ({ sessionId, history, agent }) => {
+        const store = stores.get(sessionId);
+        if (store === undefined) return undefined;
+        return settleTurn({
+          store,
+          provider: agent.provider,
+          history,
+          budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+        });
+      },
+      compact: async ({ sessionId, agent }, instructions) => {
+        const store = stores.get(sessionId);
+        if (store === undefined) throw new Error("no session store for this pane");
+        return compactNow({
+          store,
+          provider: agent.provider,
+          budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+          instructions,
+        });
+      },
     }),
     ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
+    ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
     sessions: sessionPort(paths.sessionDir, paths.workspaceDir, {
       checkpointTag: () => checkpoints?.takeTurnTag(),
+      onAttach: (store) => stores.set(store.header.id, store),
+      onRelease: (sessionId) => stores.delete(sessionId),
       onChange: (sessionId) => changes.emit(sessionId),
     }),
     sessionTrees: sessionTreePort(paths.sessionDir, changes),
@@ -278,6 +321,11 @@ function buildStage(context: StageContext): Stage {
     resize: async (width, height) => {
       app.setup.resize(width, height);
       await settle(app.setup);
+    },
+    renderOnce: async () => {
+      const startedAt = performance.now();
+      await app.setup.renderOnce();
+      return performance.now() - startedAt;
     },
     relaunch: async () => {
       await quit();

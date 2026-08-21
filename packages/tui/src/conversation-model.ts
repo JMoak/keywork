@@ -1,15 +1,24 @@
 import {
   type Agent,
+  addUsage,
+  type ContextReading,
   type CostRollup,
   carriesUsage,
+  contextBudgetFor,
+  declaredContextWindow,
+  emptyCostRollup,
+  estimateConversationTokens,
   formatCostNanos,
   knownCostNanos,
   type Message,
+  mergeCostRollups,
+  modelReferenceOf,
+  readContext,
   type ToolCallPart,
   type Usage,
 } from "@keywork/engine";
 import { clampScroll } from "./clamp.ts";
-import { fuzzyScore } from "./commands.ts";
+import { contextReadout } from "./context-gauge.ts";
 import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
@@ -63,7 +72,16 @@ const historyLimit = 50;
 
 const conversationCommands: readonly CommandSuggestion[] = [
   { name: "cost", description: "token and cost breakdown for this session" },
+  { name: "context", description: "how full the context is and where compaction fires" },
+  { name: "compact", description: "fold older context into a summary: /compact [focus]" },
 ];
+
+export type CompactionHook = (instructions: string) => Promise<void>;
+
+interface ModelLedger {
+  usage: Usage;
+  cost: CostRollup;
+}
 
 export interface ToolRun {
   name: string;
@@ -135,6 +153,9 @@ export class ConversationModel {
   private pageRows = 10;
   private agent: Agent | undefined;
   private afterTurn: (() => Promise<void>) | undefined;
+  private compaction: CompactionHook | undefined;
+  private readonly ledger = new Map<string, ModelLedger>();
+  private contextCache: { agent: Agent; messages: number; reading: ContextReading } | undefined;
   private retrievalDisclosed = false;
   private disposed = false;
 
@@ -223,17 +244,61 @@ export class ConversationModel {
 
   usageSummary(): string {
     if (this.agent === undefined) return "";
-    const cost = knownCostNanos(this.agent.cost());
-    if (cost !== undefined) return formatCostNanos(cost);
-    const { inputTokens, outputTokens } = this.agent.usage();
-    return inputTokens + outputTokens === 0 ? "" : `${inputTokens}▸${outputTokens}`;
+    const { usage, cost } = this.sessionTotals();
+    const known = knownCostNanos(cost);
+    if (known !== undefined) return formatCostNanos(known);
+    return usage.inputTokens + usage.outputTokens === 0
+      ? ""
+      : `${usage.inputTokens}▸${usage.outputTokens}`;
+  }
+
+  contextReading(): ContextReading | undefined {
+    const agent = this.agent;
+    if (agent === undefined) return undefined;
+    const messages = agent.history().length;
+    if (this.contextCache?.agent === agent && this.contextCache.messages === messages) {
+      return this.contextCache.reading;
+    }
+    const reading = readContext(
+      estimateConversationTokens(agent.history()),
+      contextBudgetFor(declaredContextWindow(agent.provider)),
+    );
+    this.contextCache = { agent, messages, reading };
+    return reading;
+  }
+
+  private sessionTotals(): ModelLedger {
+    return this.ledgerRows()
+      .map(([, entry]) => entry)
+      .reduce(addLedgers, { usage: { inputTokens: 0, outputTokens: 0 }, cost: emptyCostRollup() });
+  }
+
+  private ledgerRows(): [string, ModelLedger][] {
+    const rows = new Map(this.ledger);
+    const agent = this.agent;
+    if (agent !== undefined) {
+      const key = ledgerKey(agent);
+      const live = { usage: agent.usage(), cost: agent.cost() };
+      const carried = rows.get(key);
+      rows.set(key, carried === undefined ? live : addLedgers(carried, live));
+    }
+    return [...rows].filter(
+      ([, entry]) => carriesUsage(entry.usage) || entry.cost.unpricedTurns > 0,
+    );
+  }
+
+  private retireAgentTotals(agent: Agent): void {
+    const key = ledgerKey(agent);
+    const live = { usage: agent.usage(), cost: agent.cost() };
+    const carried = this.ledger.get(key);
+    this.ledger.set(key, carried === undefined ? live : addLedgers(carried, live));
   }
 
   suggestions(): readonly CommandSuggestion[] {
     const query = this.slashQuery();
     if (query === undefined) return [];
     const needle = query.trim().toLowerCase();
-    const local = conversationCommands.filter(({ name }) => fuzzyScore(needle, name) !== undefined);
+    const local = conversationCommands.filter(({ name }) => name.startsWith(needle));
     const port = this.commands?.search(query) ?? [];
     const localLeads = needle !== "" && local.some(({ name }) => name.startsWith(needle));
     const merged = localLeads ? [...local, ...port] : [...port, ...local];
@@ -491,10 +556,16 @@ export class ConversationModel {
     this.afterTurn = hook;
   }
 
+  bindCompaction(hook: CompactionHook): void {
+    this.compaction = hook;
+  }
+
   swapAgent(agent: Agent): void {
-    const first = this.agent === undefined;
+    const previous = this.agent;
+    if (previous === agent) return;
+    if (previous !== undefined) this.retireAgentTotals(previous);
     this.agent = agent;
-    if (first) this.subscribe(agent);
+    if (previous === undefined) this.subscribe(agent);
   }
 
   discloseRetrieval(text: string): void {
@@ -504,15 +575,23 @@ export class ConversationModel {
     this.notify();
   }
 
+  postNotice(text: string): void {
+    if (this.disposed) return;
+    this.entries.push({ kind: "info", text });
+    this.notify();
+  }
+
   private deliver(text: string): void {
     if (this.disposed || this.agent === undefined) return;
     const agent = this.agent;
     this.entries.push({ kind: "user", text });
-    this.busy = true;
     this.scrollBack = 0;
-    this.lastSend = agent
-      .send(text)
-      .then(() => this.afterTurn?.())
+    this.occupy(() => agent.send(text).then(() => this.afterTurn?.()));
+  }
+
+  private occupy(work: () => Promise<void>): void {
+    this.busy = true;
+    this.lastSend = work()
       .catch((cause: unknown) => {
         if (this.disposed) return;
         this.entries.push({ kind: "error", text: (cause as Error).message });
@@ -524,6 +603,23 @@ export class ConversationModel {
         this.notify();
       });
     this.notify();
+  }
+
+  private compactNow(instructions: string): void {
+    const hook = this.compaction;
+    if (this.agent === undefined) {
+      this.postNotice("no model bound · nothing to compact");
+      return;
+    }
+    if (hook === undefined) {
+      this.postNotice("can't compact · no session store");
+      return;
+    }
+    if (this.busy) {
+      this.postNotice("turn still running · compact once it settles");
+      return;
+    }
+    this.occupy(() => hook(instructions));
   }
 
   private drainQueue(): void {
@@ -833,23 +929,41 @@ export class ConversationModel {
     this.notify();
   }
 
-  private runNamedCommand(name: string): boolean {
-    if (name.toLowerCase() === "cost") {
-      this.entries.push({ kind: "info", text: this.costReport() });
-      return true;
+  private runNamedCommand(typed: string): boolean {
+    const [verb = "", ...rest] = typed.split(/\s+/);
+    const argument = rest.join(" ").trim();
+    switch (verb.toLowerCase()) {
+      case "cost":
+        this.entries.push({ kind: "info", text: this.costReport() });
+        return true;
+      case "context":
+        this.entries.push({ kind: "info", text: this.contextReport() });
+        return true;
+      case "compact":
+        this.compactNow(argument);
+        return true;
+      default:
+        return this.commands?.run(typed) ?? false;
     }
-    return this.commands?.run(name) ?? false;
   }
 
   private costReport(): string {
     const agent = this.agent;
     if (agent === undefined) return "no provider · nothing to meter";
-    const usage = agent.usage();
-    const cost = agent.cost();
+    const { usage, cost } = this.sessionTotals();
     if (!carriesUsage(usage) && cost.unpricedTurns === 0) {
       return "no usage yet · send a prompt first";
     }
-    return [tokenLine(usage), costLine(cost, agent.modelId())].join("\n");
+    const rows = this.ledgerRows();
+    const perModel =
+      rows.length < 2 ? [] : rows.map(([reference, entry]) => modelLine(reference, entry));
+    return [tokenLine(usage), costLine(cost, agent.modelId()), ...perModel].join("\n");
+  }
+
+  private contextReport(): string {
+    const reading = this.contextReading();
+    if (reading === undefined) return "no provider · nothing to measure";
+    return contextReadout(reading).join("\n");
   }
 
   private requestTitleOnce(): void {
@@ -1122,6 +1236,29 @@ function costBasis(cost: CostRollup, modelId: string | undefined): string {
   if (cost.meteredTurns === cost.pricedTurns) return "metered by the provider";
   if (cost.meteredTurns > 0) return "partly metered, partly estimated";
   return `estimated from ${modelId ?? "list"} rates`;
+}
+
+function modelLine(reference: string, entry: ModelLedger): string {
+  const known = knownCostNanos(entry.cost);
+  const turns = entry.cost.pricedTurns + entry.cost.unpricedTurns;
+  const spend =
+    known !== undefined
+      ? formatCostNanos(known)
+      : entry.cost.pricedTurns > 0
+        ? `${formatCostNanos(entry.cost.nanos)} + ${entry.cost.unpricedTurns} unpriced`
+        : "no pricing";
+  return `  ${reference} · ${turns} ${turns === 1 ? "turn" : "turns"} · ${entry.usage.inputTokens}▸${entry.usage.outputTokens} · ${spend}`;
+}
+
+function ledgerKey(agent: Agent): string {
+  return modelReferenceOf(agent.provider) ?? agent.provider.name;
+}
+
+function addLedgers(left: ModelLedger, right: ModelLedger): ModelLedger {
+  return {
+    usage: addUsage(left.usage, right.usage),
+    cost: mergeCostRollups(left.cost, right.cost),
+  };
 }
 
 function compactJson(value: unknown): string {

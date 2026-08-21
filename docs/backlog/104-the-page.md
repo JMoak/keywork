@@ -144,9 +144,9 @@
   record:** OpenTUI's border `title` is a single-color string, so the title-bar rung
   waits on keywork drawing its own top border (or an upstream styled title) — left
   honest rather than faked.
-- **C55** not started: the gauge needs the model's `contextWindow` and the turn's context
-  tokens, which arrive with IR-G1's `ModelSpec`/binding; the title-bar telemetry zone is
-  the ready seam.
+- **C55** gauge half ✅ 2026-08-21: the title-bar telemetry zone now carries the context gauge
+  beside cost (`session-1 · ▒ 1.6k · $0.01`), the masthead status line carries it too; see
+  [`109-long-session-survivability.md`](109-long-session-survivability.md) for the ledger and the open options round.
 
 ## Tasks
 
@@ -293,7 +293,69 @@ hand-rolls slug styling.
 **Accept:** captures of the same slug across the ladder approved; monochrome render
 still reads (dim separators survive NO_COLOR as plain hyphens); masthead words carry
 no separators.
-**Strategy:** `OWN`. Rides C64/C63.
+**Strategy:** `OWN`. Rides C64/C63. The title-bar rung's blocker (single-color
+OpenTUI title, see the 2026-08-21 landed note) is lifted by C69's own title row.
+
+## Addendum 3 — needs-you chrome (PD25, Jordan, 2026-08-21)
+
+The lifecycle stamp (PD19 item 2, landed as C64) carries state in one cell. This
+addendum lets the *rest* of the pane chrome answer it, under the rules already written:
+the notification formula (needs-you is the only notifying state), PD8's "hue is
+identity, never state" with its 2026-08-16 clause (saturation/luminance may reinforce a
+density-carried state), and the existing meaning of inversion (the selected/cursored
+row, borrowed by the fold cursor and backtrack). Decided:
+
+1. **Inversion extends to the title label, needs-you only.** A pane with a pending ask
+   renders its title label inverted: ground = the pane's own ramp hue, ink =
+   `background`, one cell of padding each side, stamp `█` inside it. The meaning is the
+   one inversion already has (*the thing your keystroke targets*), applied to a pane
+   instead of a row. No other lifecycle state ever inverts; finished-unseen inverting
+   would make completions notify, which the formula forbids.
+2. **The outline reinforces, never carries.** On needs-you the pane border takes its
+   own identity hue with a **saturation lift only** (luminance untouched, so the focused
+   pane's luminance lift stays unambiguous). Hue acquires no state meaning; the
+   density-carried state (inverted label + `█`) must read alone in monochrome.
+3. **The quiet states get one quiet step each.** Finished-unseen: name ink steps from
+   border ink to `textMid` ("something to read"), draining on focus with the stamp.
+   Failed-unseen: name ink = `error` (outcome ink on the outcome word, the tool-row
+   rule). Neither touches the border or the ground. Idle and working stay byte-identical
+   to C64.
+4. **Motion rides C53.** The inverted ground *arrives* at quick tempo (ground fades up
+   from border ink to the full hue), leaves instantly on the next keystroke (input
+   outranks motion); reduced-motion renders the final frame only.
+5. **The away-state stays G6's.** This addendum is the return-state made visible in the
+   TUI; terminal-unfocused delivery (focus tracking + OpenTUI's native
+   `triggerNotification` / OSC 777 / bell) remains G6 (90-plan-review), decoupled.
+
+Open, decided by C40 captures rather than argument:
+
+- **Q-P1 Pulse vs. steady.** C64's `█⇄▓` pulse was chosen when inversion was not on the
+  table; with the inverted label carrying needs-you the pulse is a second signal on the
+  same cell and an unfocused pane pulsing while you read another is the "nothing flashing
+  while the user reads" case. Recommendation: steady inverted label; the pulse retires to
+  the monochrome / `NO_COLOR` floor where inversion cannot carry the state.
+- **Q-P2 Saturation lift vs. border weight.** Heavy `┃━` is denser ink (monochrome-honest)
+  but OpenTUI's heavy style has square corners and would break corner consistency against
+  `╭╮` neighbors. Recommendation: saturation lift (item 2 as written).
+
+### C69 (2pt) — Own title row & needs-you chrome (implements PD25)
+`paneChrome` stops passing `title` to the OpenTUI Box: a borderless wrapper at the pane
+rect holds the bordered Box plus an absolutely positioned `StyledText` title over the
+border row (`zIndex` above), so `titleBar()` composes spans (stamp · name · telemetry ·
+mode word, each with its own ink) instead of a string; `title()` stays clean for
+jump-commands/snapshots as C64 left it. One resolver beside `paneBorder` in `chroma.ts`,
+`lifecycleChrome(state, focused, hue, theme) → { labelInk, labelGround, borderColor }`,
+fed by the `LifecycleState` the stamp already computes; `paneViewFor` and the
+conversation pane read from it, never hand-pick colors. No new flavor tokens: ground =
+ramp hue, ink = `background`, warmed border = OKLCH chroma step on the identity hue
+(`focusLift`'s shape with a saturation-only target).
+**Accept:** captures across the five stamp states × focused/unfocused × tier ×
+monochrome approved; idle and working goldens byte-identical to C64; inversion appears
+iff a pending ask exists (the ask-stamp exactness test, extended); finished-unseen and
+failed never invert and never touch the border (pinning tests); monochrome capture reads
+every state from density alone; arrival/settle timings match the C53 tables; the C66
+slug rung renders through the same span composer with no second title path.
+**Strategy:** `OWN`. Rides C64/C53; unblocks C66's title-bar rung. G6 separate.
 
 ## Deltas of record
 

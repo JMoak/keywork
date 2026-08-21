@@ -1,0 +1,1 @@
+{"type":"run.finished","outcome":"unresolved","exitCode":3,"failure":{"code":"unconfigured","message":"no inference provider is configured","nextAction":"run keywork connect"}}

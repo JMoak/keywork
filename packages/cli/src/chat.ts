@@ -5,14 +5,18 @@ import {
   type AgentDefinition,
   type Checkpoints,
   type CommandRuntime,
-  compactSession,
+  compactNow,
+  contextBudgetFor,
+  declaredContextWindow,
   type Message,
   type PermissionResolver,
   type Provider,
   renderCommand,
   replaySession,
   type SessionStore,
+  settleTurn,
   type ToolGuard,
+  type TurnSettlement,
 } from "@keywork/engine";
 import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
 import {
@@ -22,7 +26,7 @@ import {
   type WorkspaceExtensions,
 } from "./commands.ts";
 import { composeAgents, composeWorkspace } from "./compose.ts";
-import { flushAfterTurn, sweepOnClose } from "./memory.ts";
+import { sweepOnClose } from "./memory.ts";
 import { defaultSessionDir } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
 import { openOrResumeSession } from "./sessions.ts";
@@ -117,10 +121,16 @@ export async function chat(options: ChatOptions): Promise<void> {
         continue;
       }
       if (line.startsWith("/compact")) {
-        const compacted = await compactNow(store, options.provider, line);
-        if (compacted) {
-          flush?.compactionCompleted();
-          agent = buildAgent(store.messages());
+        const settlement = await compactNow({
+          store,
+          provider: options.provider,
+          budget: contextBudgetFor(declaredContextWindow(options.provider)),
+          instructions: line.slice("/compact".length).trim(),
+          flush,
+        });
+        reportSettlement(settlement);
+        if (settlement.history !== undefined) {
+          agent = buildAgent(settlement.history);
           persisted = agent.history().length;
         }
         continue;
@@ -142,9 +152,16 @@ export async function chat(options: ChatOptions): Promise<void> {
       await runTurn(turnAgent, submission.prompt);
       printUsageLine(turnAgent);
       persisted = await persistNewMessages(store, turnAgent.history(), persisted, checkpoints);
-      const flushed = await flushAfterTurn(flush, store, turnAgent.history());
-      if (turnAgent !== agent || flushed.length > 0) {
-        agent = buildAgent([...turnAgent.history(), ...flushed]);
+      const settlement = await settleTurn({
+        store,
+        provider: turnAgent.provider,
+        history: turnAgent.history(),
+        budget: contextBudgetFor(declaredContextWindow(turnAgent.provider)),
+        flush,
+      });
+      reportSettlement(settlement);
+      if (turnAgent !== agent || settlement.history !== undefined) {
+        agent = buildAgent(settlement.history ?? turnAgent.history());
         persisted = agent.history().length;
       }
     }
@@ -251,22 +268,8 @@ async function labelLeaf(store: SessionStore, name: string): Promise<void> {
   console.log(`labeled ${leaf.slice(0, 8)} as "${name}"`);
 }
 
-async function compactNow(store: SessionStore, provider: Provider, line: string): Promise<boolean> {
-  const instructions = line.slice("/compact".length).trim();
-  try {
-    const entry = await compactSession(store, provider, {
-      ...(instructions !== "" && { instructions }),
-    });
-    if (entry === undefined) {
-      console.log("nothing to compact yet");
-      return false;
-    }
-    console.log(`compacted ${entry.tokensBefore} tokens into a summary`);
-    return true;
-  } catch (cause) {
-    console.error(`compaction failed: ${(cause as Error).message}`);
-    return false;
-  }
+function reportSettlement(settlement: TurnSettlement): void {
+  for (const notice of settlement.notices) console.log(`  · ${notice}`);
 }
 
 function mutationGuard(checkpoints: Checkpoints | undefined): ToolGuard {

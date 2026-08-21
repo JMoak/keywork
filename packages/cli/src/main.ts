@@ -2,12 +2,19 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { debugEnabled, ResolutionError, type SessionStore } from "@keywork/engine";
+import {
+  debugEnabled,
+  type PermissionResolver,
+  ResolutionError,
+  type SessionStore,
+} from "@keywork/engine";
 import {
   ConfigError,
   type KeyworkConfig,
   loadConfig,
   openWorkspace,
+  permissionPolicy,
+  permissionPresets,
   presetOrder,
   requiresConfirmation,
   TrustStore,
@@ -20,14 +27,15 @@ import {
   saveCredential,
 } from "./auth-store.ts";
 import { chat } from "./chat.ts";
-import { dispatchCommand, nonInteractiveUsage, usage } from "./dispatch.ts";
+import { dispatchCommand, exitCodes, nonInteractiveUsage, usage } from "./dispatch.ts";
 import { connectionsPort } from "./inference/connections.ts";
 import { type ObservationMap, readObservations } from "./inference/observations.ts";
 import { inferencePort } from "./inference/port.ts";
 import { composeInference, connectHint, type InferenceRuntime } from "./inference/runtime.ts";
 import { createPresetSwitch, isPresetName } from "./presets.ts";
-import { runHeadless } from "./run.ts";
+import { conclude, exitCodeOf, runHeadless } from "./run.ts";
 import { updateUserConfig, userConfigDir } from "./user-config.ts";
+import { versionLine } from "./version.ts";
 
 function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typeof loadConfig> {
   return loadConfig({
@@ -63,8 +71,12 @@ async function loadInferenceState(cwd: string, projectTrusted: boolean): Promise
 async function main(argv: string[]): Promise<number> {
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const decision = dispatchCommand(argv, interactive);
+  if (decision.kind === "version") {
+    console.log(versionLine());
+    return 0;
+  }
   if (decision.kind === "usage") {
-    console.error(nonInteractiveUsage);
+    console.error(`keywork: ${decision.reason}\n\n${nonInteractiveUsage}`);
     return decision.exitCode;
   }
   const { command, rest } = decision;
@@ -76,6 +88,7 @@ async function main(argv: string[]): Promise<number> {
       json: { type: "boolean", default: false },
       debug: { type: "boolean", default: false },
       model: { type: "string" },
+      preset: { type: "string" },
       continue: { type: "boolean", default: false },
       fresh: { type: "boolean", default: false },
       resume: { type: "string" },
@@ -90,11 +103,18 @@ async function main(argv: string[]): Promise<number> {
   for (const dir of workspace?.missingContextDirs ?? []) {
     console.warn(`keywork: skipping context dir ${dir}, it doesn't exist`);
   }
+  const trustStore = new TrustStore();
   if (command === "doctor") {
     const { doctorCommand } = await import("./doctor.ts");
-    return doctorCommand({ env: process.env, platform: process.platform }, console.log);
+    return doctorCommand(
+      { env: process.env, platform: process.platform },
+      console.log,
+      async () => {
+        const loaded = await loadInferenceState(cwd, trustStore.resolve(cwd) === "trusted");
+        return loaded.runtime.registry;
+      },
+    );
   }
-  const trustStore = new TrustStore();
   if (command === "trust" || command === "untrust") {
     const { trustCommand } = await import("./trust.ts");
     return trustCommand(command, cwd, trustStore);
@@ -157,33 +177,53 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "run": {
+      const io = { json: values.json, print: console.log, printError: console.error };
       const prompt = positionals.join(" ").trim();
       if (prompt === "") {
-        console.error(`keywork run needs a prompt, like: keywork run "fix the tests"`);
-        return 1;
+        return conclude(
+          {
+            outcome: "usage",
+            error: `keywork run needs a prompt, like: keywork run "fix the tests"`,
+          },
+          io,
+        );
+      }
+      if (values.preset !== undefined && !isPresetName(values.preset)) {
+        return conclude(
+          {
+            outcome: "usage",
+            error: `keywork run: no preset named "${values.preset}" (options: ${presetOrder.join(" · ")})`,
+          },
+          io,
+        );
       }
       const bound = state.runtime.resolve(defaultSelection);
-      if (!bound.ok) {
-        if (values.json)
-          console.log(JSON.stringify({ type: "resolution.failed", ...bound.failure }));
-        else
-          console.error(`${bound.failure.message} · ${bound.failure.nextAction}\n\n${connectHint}`);
-        return 1;
+      if (!bound.ok) return conclude({ outcome: "unresolved", failure: bound.failure }, io);
+      const interrupts = new AbortController();
+      const interrupt = () => interrupts.abort();
+      process.once("SIGINT", interrupt);
+      process.once("SIGTERM", interrupt);
+      try {
+        const outcome = await runHeadless({
+          prompt,
+          cwd,
+          json: values.json,
+          projectTrusted,
+          permissions:
+            values.preset === undefined ? toolPermissions : runScopedPermissions(values.preset),
+          debug: values.debug || debugEnabled(process.env),
+          provider: state.runtime.provider(bound.binding),
+          modelId: bound.binding.reference.model,
+          signal: interrupts.signal,
+          ...(config.prompts !== undefined && { prompts: config.prompts }),
+          ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
+          ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
+        });
+        return exitCodeOf(outcome);
+      } finally {
+        process.off("SIGINT", interrupt);
+        process.off("SIGTERM", interrupt);
       }
-      const outcome = await runHeadless({
-        prompt,
-        cwd,
-        json: values.json,
-        projectTrusted,
-        permissions: toolPermissions,
-        debug: values.debug || debugEnabled(process.env),
-        provider: state.runtime.provider(bound.binding),
-        modelId: bound.binding.reference.model,
-        ...(config.prompts !== undefined && { prompts: config.prompts }),
-        ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
-        ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
-      });
-      return outcome.exitCode;
     }
     case "sessions": {
       const { sessionsCommand, terminalConfirm } = await import("./sessions.ts");
@@ -215,7 +255,10 @@ async function main(argv: string[]): Promise<number> {
       const { sessionChangeFeed, sessionPort, sessionTreePort } = await import("./sessions.ts");
       const { commandRuntime } = await import("./commands.ts");
       const { mcpPanePort } = await import("./mcp.ts");
-      const { flushAfterTurn, memoryPanePort, sweepOnClose } = await import("./memory.ts");
+      const { memoryPanePort, sweepOnClose } = await import("./memory.ts");
+      const { compactNow, contextBudgetFor, declaredContextWindow, settleTurn } = await import(
+        "@keywork/engine"
+      );
       const composition = await composeWorkspace({
         cwd,
         projectTrusted,
@@ -282,14 +325,29 @@ async function main(argv: string[]): Promise<number> {
         connections,
         afterTurn: async ({ sessionId, history, agent }) => {
           const store = stores.get(sessionId);
-          if (store === undefined) return [];
-          const joined = await flushAfterTurn(
-            agents.flushFor(sessionId, agent.provider),
+          if (store === undefined) return undefined;
+          const settlement = await settleTurn({
             store,
+            provider: agent.provider,
             history,
-          );
-          if (joined.length > 0) sessionChanges.emit(sessionId);
-          return joined;
+            budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+            flush: agents.flushFor(sessionId, agent.provider),
+          });
+          if (settlement.history !== undefined) sessionChanges.emit(sessionId);
+          return settlement;
+        },
+        compact: async ({ sessionId, agent }, instructions) => {
+          const store = stores.get(sessionId);
+          if (store === undefined) throw new Error("no session store for this pane");
+          const settlement = await compactNow({
+            store,
+            provider: agent.provider,
+            budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+            instructions,
+            flush: agents.flushFor(sessionId, agent.provider),
+          });
+          if (settlement.history !== undefined) sessionChanges.emit(sessionId);
+          return settlement;
         },
         closers: [() => sweepOnClose(memory), ...(mcp === undefined ? [] : [() => mcp.stop()])],
         extensions: extensionsView,
@@ -325,9 +383,14 @@ async function main(argv: string[]): Promise<number> {
     }
     default: {
       console.log(usage);
-      return command === "help" ? 0 : 1;
+      return command === "help" ? 0 : exitCodes.usage;
     }
   }
+}
+
+function runScopedPermissions(preset: string): PermissionResolver {
+  const policy = permissionPolicy(isPresetName(preset) ? permissionPresets[preset] : undefined);
+  return (call) => policy(call.name, call.arguments);
 }
 
 process.exitCode = await main(process.argv.slice(2)).catch((cause: unknown) => {

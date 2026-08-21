@@ -69,6 +69,7 @@ export interface SessionPortSeams {
   onAttach?(store: SessionStore): void;
   onRelease?(sessionId: string): void;
   onChange?(sessionId: string): void;
+  onListen?(sessionId: string, stop: () => void): void;
 }
 
 export interface SessionChangeFeed {
@@ -95,9 +96,18 @@ export function sessionPort(
   seams: CheckpointTagSource | SessionPortSeams = {},
 ): SessionPort {
   const resolved = typeof seams === "function" ? { checkpointTag: seams } : seams;
+  const listeners = new Map<string, Set<() => void>>();
   const attach = (store: SessionStore): SessionAttachment => {
     resolved.onAttach?.(store);
-    return attachmentOf(store, resolved);
+    return attachmentOf(store, {
+      ...resolved,
+      onListen: (sessionId, stop) => {
+        const stops = listeners.get(sessionId) ?? new Set();
+        stops.add(stop);
+        listeners.set(sessionId, stops);
+        resolved.onListen?.(sessionId, stop);
+      },
+    });
   };
   return {
     async open(id: string): Promise<SessionAttachment | undefined> {
@@ -116,6 +126,8 @@ export function sessionPort(
       }
     },
     release(sessionId: string): void {
+      for (const stop of listeners.get(sessionId) ?? []) stop();
+      listeners.delete(sessionId);
       resolved.onRelease?.(sessionId);
     },
   };
@@ -226,7 +238,7 @@ async function openById(dir: string, idPrefix: string): Promise<SessionStore | u
 
 export function attachmentOf(
   store: SessionStore,
-  seams: Pick<SessionPortSeams, "checkpointTag" | "onChange"> = {},
+  seams: Pick<SessionPortSeams, "checkpointTag" | "onChange" | "onListen"> = {},
 ): SessionAttachment {
   const name = store.name();
   const selection = store.modelSelection();
@@ -240,9 +252,10 @@ export function attachmentOf(
     history: store.messages(),
     replay: (bus) => {
       replaySession(store, bus);
-      bus.on("turn.delta", ({ delta, replay }) => {
+      const stop = bus.on("turn.delta", ({ delta, replay }) => {
         if (replay !== true && delta.type === "done") finishedTurnUsage.push(delta.usage);
       });
+      seams.onListen?.(store.header.id, stop);
     },
     append: async (message) => {
       const checkpoint = message.role === "user" ? seams.checkpointTag?.() : undefined;

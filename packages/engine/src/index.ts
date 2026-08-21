@@ -2,6 +2,8 @@ export {
   Agent,
   AgentBusyError,
   type AgentOptions,
+  addUsage,
+  type ConfirmingGate,
   type PermissionResolver,
   type ToolGuard,
   type ToolPermission,
@@ -211,9 +213,7 @@ export {
 } from "./memory/citations.ts";
 export {
   backtrackFlushClause,
-  defaultFlushSettings,
   type FlushOutcome,
-  type FlushSettings,
   flushPrompt,
   isMemoryFlushPrompt,
   isNoReply,
@@ -329,7 +329,12 @@ export {
   toolCalls,
   type Usage,
 } from "./messages.ts";
-export { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
+export {
+  MockProvider,
+  type MockProviderOptions,
+  textTurn,
+  toolCallTurn,
+} from "./mock-provider.ts";
 export {
   type CostRollup,
   carriesUsage,
@@ -350,11 +355,12 @@ export {
   loadProjectInstructions,
   type SystemPromptOptions,
 } from "./prompt.ts";
-export type {
-  Provider,
-  ProviderRequest,
-  ToolDefinition,
-  TurnDelta,
+export {
+  declaredContextWindow,
+  type Provider,
+  type ProviderRequest,
+  type ToolDefinition,
+  type TurnDelta,
 } from "./provider.ts";
 export {
   BedrockExceptionError,
@@ -384,13 +390,27 @@ export {
   type CompactionOptions,
   type CompactionPlan,
   type CompactionSettings,
+  compactionSettingsFor,
   compactSession,
   defaultCompactionSettings,
   estimateContextTokens,
+  estimateConversationTokens,
   planCompaction,
   serializeConversation,
   shouldCompact,
 } from "./session/compaction.ts";
+export {
+  assumedContextWindow,
+  type ContextBudget,
+  type ContextReading,
+  compactionDue,
+  contextBudgetFor,
+  contextFullness,
+  flushDue,
+  formatTokenCount,
+  readContext,
+  reserveCaps,
+} from "./session/context-budget.ts";
 export {
   type BranchSummaryEntry,
   type CompactionEntry,
@@ -426,6 +446,14 @@ export {
   tapJournal,
 } from "./session/journal.ts";
 export { replaySession } from "./session/replay.ts";
+export {
+  type CompactNowOptions,
+  compactNow,
+  readStore,
+  type SettleOptions,
+  settleTurn,
+  type TurnSettlement,
+} from "./session/settle.ts";
 export {
   type BranchSummaryInput,
   type CompactionInput,

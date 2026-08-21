@@ -20,6 +20,8 @@ function modelOf(pane: ConversationPane): ConversationModel {
   return (pane as unknown as { model: ConversationModel }).model;
 }
 
+const settledTitle = (stamp = "") => new RegExp(`^ ${stamp}session-1 · ░ \\d+ $`);
+
 function manualScheduler(): { schedule: Scheduler; runAll: () => void } {
   const queue: Array<() => void> = [];
   return {
@@ -74,7 +76,7 @@ describe("the lifecycle stamp", () => {
 
     release();
     await modelOf(pane).lastSend;
-    expect(titleOf(pane, true)).toBe(" session-1 ");
+    expect(titleOf(pane, true)).toMatch(settledTitle());
   });
 
   it("matches the needs-you stamp to the ask-gate state exactly", async () => {
@@ -103,11 +105,11 @@ describe("the lifecycle stamp", () => {
     titleOf(pane, false);
     await modelOf(pane).lastSend;
 
-    expect(titleOf(pane, false)).toBe(" █ session-1 ");
-    expect(titleOf(pane, false)).toBe(" █ session-1 ");
+    expect(titleOf(pane, false)).toMatch(settledTitle("█ "));
+    expect(titleOf(pane, false)).toMatch(settledTitle("█ "));
 
-    expect(titleOf(pane, true)).toBe(" session-1 ");
-    expect(titleOf(pane, true)).toBe(" session-1 ");
+    expect(titleOf(pane, true)).toMatch(settledTitle());
+    expect(titleOf(pane, true)).toMatch(settledTitle());
   });
 
   it("skips the unseen hold when the pane was focused at completion", async () => {
@@ -118,8 +120,8 @@ describe("the lifecycle stamp", () => {
     titleOf(pane, true);
     await modelOf(pane).lastSend;
 
-    expect(titleOf(pane, true)).toBe(" session-1 ");
-    expect(titleOf(pane, false)).toBe(" session-1 ");
+    expect(titleOf(pane, true)).toMatch(settledTitle());
+    expect(titleOf(pane, false)).toMatch(settledTitle());
   });
 
   it("marks an unseen failure with the missing tile", async () => {
@@ -141,8 +143,8 @@ describe("the lifecycle stamp", () => {
     titleOf(pane, false);
     await modelOf(pane).lastSend;
 
-    expect(titleOf(pane, false)).toBe(" ▛ session-1 ");
-    expect(titleOf(pane, true)).toBe(" session-1 ");
+    expect(titleOf(pane, false)).toMatch(settledTitle("▛ "));
+    expect(titleOf(pane, true)).toMatch(settledTitle());
   });
 
   it("drains the held tile through the ramp when an animator is wired", async () => {
@@ -156,12 +158,12 @@ describe("the lifecycle stamp", () => {
     modelOf(pane).submitText("go");
     titleOf(pane, false);
     await modelOf(pane).lastSend;
-    expect(titleOf(pane, false)).toBe(" █ session-1 ");
+    expect(titleOf(pane, false)).toMatch(settledTitle("█ "));
 
     const first = titleOf(pane, true);
     expect(first).toMatch(/^ [░▒▓█] session-1/);
     runAll();
-    expect(titleOf(pane, true)).toBe(" session-1 ");
+    expect(titleOf(pane, true)).toMatch(settledTitle());
   });
 
   it("pulses the needs-you stamp between ▓ and █ through the animator", () => {
@@ -199,7 +201,7 @@ describe("the masthead tile", () => {
     const rows = frame(pane, true, 36);
     expect(rows.join("\n")).toMatch(/[▀▄]/);
     expect(rows.some((row) => row.includes("a long enough reply"))).toBe(false);
-    expect(rows).toContain("idle");
+    expect(rows.find((row) => row.startsWith("idle"))).toMatch(/^idle · ░ \d+$/);
     expect(rows.at(-1)).toBe("› ▌");
   });
 
@@ -246,10 +248,10 @@ describe("the masthead tile", () => {
     const pane = new ConversationPane("session-1", agent, () => {});
     modelOf(pane).submitText("go");
     await Promise.resolve();
-    expect(frame(pane, false, 36)).toContain("working");
+    expect(frame(pane, false, 36).some((row) => row.startsWith("working"))).toBe(true);
     release();
     await modelOf(pane).lastSend;
-    expect(frame(pane, false, 36)).toContain("idle");
+    expect(frame(pane, false, 36).some((row) => row.startsWith("idle"))).toBe(true);
   });
 
   it("sets the headline in caps and keeps ASCII stamps at glyph tier 0", async () => {
@@ -263,8 +265,8 @@ describe("the masthead tile", () => {
     await modelOf(pane).lastSend;
 
     expect(frame(pane, false, 36)).toContain("AUTH RETRY FIX");
-    expect(titleOf(pane, false)).toBe(" # auth-retry-fix ");
-    expect(titleOf(pane, true)).toMatch(/^ [.:+#] auth-retry-fix | auth-retry-fix $/);
+    expect(titleOf(pane, false)).toMatch(/^ # auth-retry-fix · \. \d+ $/);
+    expect(titleOf(pane, true)).toMatch(/^ [.:+#] auth-retry-fix | auth-retry-fix · \. \d+ $/);
     const rows = frame(pane, true, 132);
     for (const row of rows) expect(row).toMatch(/^[\x20-\x7e▌›]*$/);
   });

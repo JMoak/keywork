@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type AgentDefinition,
+  extensionState,
   MockProvider,
   messageText,
   type Provider,
   type ProviderRequest,
+  SessionStore,
   type TurnDelta,
+  tapJournal,
   textTurn,
 } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
@@ -130,6 +133,40 @@ describe("composeAgents", () => {
 
     expect(provider.requests[0]?.systemPrompt).toBe(composition.systemPromptFor(undefined));
     expect(provider.requests[1]?.systemPrompt).toBe("be brief");
+  });
+
+  it("journals what every built agent was handed: instructions and bootstrap, but not a definition's own prompt", async () => {
+    const cwd = await declaredWorkspace();
+    await writeFile(join(cwd, "AGENTS.md"), "be careful");
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "memory", "MEMORY.md"), "- [[Runtime Convention]]\n");
+    await writeFile(
+      join(cwd, ".keywork", "memory", "Runtime Convention.md"),
+      "---\nprovenance: user\npinned: true\n---\nTests run on Node, not Bun.\n",
+    );
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const agents = composeAgents(composition);
+    const store = await SessionStore.create(join(cwd, "session.jsonl"), cwd);
+
+    const composed = agents.build({ provider: new MockProvider([textTurn("ok")]), guard: {} });
+    const tap = tapJournal(composed.bus, store);
+    await composed.send("hello");
+    await tap.flush();
+    tap.stop();
+    const defined = agents.build({
+      provider: new MockProvider([textTurn("ok")]),
+      guard: {},
+      definition: briefAgent,
+    });
+    const announced: string[] = [];
+    defined.bus.on("context.injected", ({ injection }) => announced.push(injection.source));
+    await defined.send("hello");
+
+    expect(extensionState(store.entries()).injections).toEqual([
+      { source: "project-instructions", id: "AGENTS.md" },
+      { source: "memory-bootstrap", scope: "workspace" },
+    ]);
+    expect(announced).toEqual([]);
   });
 
   it("skips memory flushes when the workspace has no memory", async () => {

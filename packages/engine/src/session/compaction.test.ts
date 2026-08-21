@@ -6,11 +6,13 @@ import { type Message, messageText, textMessage } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
 import {
+  compactionSettingsFor,
   compactSession,
   planCompaction,
   serializeConversation,
   shouldCompact,
 } from "./compaction.ts";
+import { contextBudgetFor, readContext } from "./context-budget.ts";
 import { SessionStore } from "./store.ts";
 
 const tempDirs: string[] = [];
@@ -55,13 +57,18 @@ async function longSession(): Promise<SessionStore> {
 const tinyBudget = { reserveTokens: 10, keepRecentTokens: 60 };
 
 describe("shouldCompact", () => {
-  it("triggers when context exceeds the window minus the reserve", () => {
-    expect(shouldCompact(90_001, 100_000, { reserveTokens: 10_000, keepRecentTokens: 0 })).toBe(
-      true,
-    );
-    expect(shouldCompact(90_000, 100_000, { reserveTokens: 10_000, keepRecentTokens: 0 })).toBe(
-      false,
-    );
+  it("triggers once the reading passes the compaction mark", () => {
+    const budget = contextBudgetFor(100_000);
+    expect(budget.compactionReserve).toBe(8_333);
+    expect(shouldCompact(readContext(100_000 - 8_333 + 1, budget))).toBe(true);
+    expect(shouldCompact(readContext(100_000 - 8_333, budget))).toBe(false);
+  });
+
+  it("derives the plan settings from the budget", () => {
+    expect(compactionSettingsFor(contextBudgetFor(8_000))).toEqual({
+      reserveTokens: 666,
+      keepRecentTokens: 800,
+    });
   });
 });
 

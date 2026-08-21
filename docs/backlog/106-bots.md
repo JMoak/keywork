@@ -231,35 +231,37 @@ extension would cover bots without a bot-specific knob.
 ## Process discipline (open — Jordan, 2026-08-21)
 
 ⟨J⟩ *"We need to ensure these processes are next level cleanly defined and effective and
-not fluffy if we have this many. There's a better path we may need to discuss."*
+not fluffy if we have this many. There's a better path we may need to discuss."* Then,
+on the first cut of this section: *"lets simplify, 5 is like a lot."*
 
-The honest inventory of memory processes, landed and planned, before bots add anything:
+Memory does two things: it takes knowledge in and gives it back. Two verbs; everything
+with a name today is a stage of one of them. ⟨J⟩ *"can we alias them for intuitiveness?"*
+— proposed user-facing pair: **learn** (in) and **recall** (out). You teach, it learns
+(95's empty-state line "keywork remembers what you teach it" already says so); it recalls
+(PD12's Recall mode already owns the word, so no second concept). "remember" stays the
+umbrella in prose, never a process label. On surfaces: `/learn` stages something now,
+`/recall <query>` is explicit search, `◇n` reads "n to review" (the human half of learn),
+a bot row can read "learned 3 · recalled 7 this week".
 
-| Verb | Processes today (landed ✔ / planned) | Trigger |
-|---|---|---|
-| capture | session ledger chips ✔ · daily logs ✔ · pre-compaction flush J8 ✔ · signal pack J20 (backtracks, ask-gates, checkpoint anchors) | turn / reserve threshold |
-| cure | Gardener sweep J7 ✔ (promote · merge · supersede · usefulness · unlinked mentions) · scoped micro-sweep F4 · skill healing J10 · sync reconciliation J14 · re-attestation J25 | session close / idle / overlay size |
-| promote | arc airlock J18 ✔ (ack sweep → distill → digest → archive) · cross-arc meta-distillation J24 · skill genesis (98 idea 11) | arc close / ≥3 arcs |
-| review | the one inbox R3 ✔ with doors: exit digest · while-you-were-away · long-running offer · arc airlock | boundary events |
-| recall | bootstrap R4 ✔ · arc slice · arc briefing J21 · point-of-action J22 · return delta J23 | session start / tool boundary |
+| Verb | What already carries a name (landed ✔ / planned) |
+|---|---|
+| **learn** | ledger chips ✔ · daily logs ✔ · flush J8 ✔ · signal pack J20 · Gardener J7 ✔ · micro-sweep F4 · skill healing J10 · sync reconciliation J14 · re-attestation J25 · arc airlock J18 ✔ · meta-distillation J24 · skill genesis · **the one inbox R3 ✔** (the human's seat in this path: exit digest · while-you-were-away · long-running offer · arc airlock door) |
+| **recall** | bootstrap R4 ✔ · arc slice · arc briefing J21 · point-of-action J22 · return delta J23 |
 
-That is five verbs and roughly fifteen named processes. Bots as drafted in PD22/PD23 add
-a flush clause, a bot-scoped micro-sweep, digest tagging, a bootstrap slice, and a return
-delta — five more names for zero new verbs. The drift Jordan is pointing at is real: each
-layer is growing its own *processes* when it should only own *policy*.
+Roughly fifteen names for two verbs, and the bot draft in PD22/PD23 would have added five
+more (flush clause, bot micro-sweep, digest tagging, bootstrap slice, bot return delta).
+That is the drift Jordan is pointing at: layers growing their own *processes* when they
+should only own *policy*.
 
-**Candidate better path (for discussion, not adopted): one pipeline, N policies.** Every
-memory layer (session · arc · bot · workspace · user) runs the same five verbs; what
-differs per layer is a small declarative policy record — what to capture, when to cure,
-where promotion goes, which inbox door, what bootstrap slice — schema-validated per D9
-and readable in `/policy`. Under that framing a bot's "distillation methodology" is not a
-bespoke process; it is the bot layer's policy row (and `learning:` is a preset over that
-row). Arc close is the arc layer's promotion event; session end is the bot layer's cure
-event; nothing gains a name that is not one of the five verbs. J17/J18's landed code
-already has this shape in miniature (arc store = `MemoryStore` over a sub-vault, arc
-recall = composition over the one search API); the path would generalize that instead of
-adding bot-specific siblings. If Jordan's better path is different, it replaces this
-paragraph; either way PD22/PD23 wait on the outcome (Q-B8).
+**Candidate (for discussion, not adopted):** every layer (session · arc · bot · workspace ·
+user) learns and recalls the same way; the only per-layer thing is a small policy row —
+what it remembers, when it cures, where it promotes, which inbox door; what it recalls
+and how big its bootstrap slice is — schema-validated per D9, readable in `/policy`. A
+bot's "distillation methodology" is then its policy row, `learning:` is a preset over
+that row, and no bot-specific process names exist. The landed arc code already has the
+shape in miniature (arc store = `MemoryStore` over a sub-vault, arc recall = composition
+over the one search API). If Jordan's better path is different it replaces this
+paragraph; PD22/PD23 wait on the outcome (Q-B8).
 
 ## Non-goals (v1)
 

@@ -178,6 +178,51 @@ describe("Agent end-to-end with mock provider", () => {
     expect(toolResult).toMatchObject({ isError: true, output: "declined by user" });
   });
 
+  it("labels a guard-answered ask with the guard's gate", async () => {
+    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+      textTurn("Understood."),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool],
+      guard: { confirm: async () => false, gate: "headless" },
+    });
+    const gates: string[] = [];
+    agent.bus.on("gate.permission", ({ decision }) =>
+      gates.push(`${decision.verdict}:${decision.gate}`),
+    );
+
+    await agent.send("Change something");
+
+    expect(gates).toEqual(["denied:headless"]);
+  });
+
+  it("announces standing injections once, before the first turn, after subscribers attach", async () => {
+    const provider = new MockProvider([textTurn("one"), textTurn("two")]);
+    const agent = new Agent({
+      provider,
+      standingInjections: [
+        { source: "project-instructions", id: "AGENTS.md" },
+        { source: "memory-bootstrap", scope: "workspace" },
+      ],
+    });
+    const seen: string[] = [];
+    agent.bus.on("context.injected", ({ injection }) => seen.push(`injected:${injection.source}`));
+    agent.bus.on("turn.started", () => seen.push("turn.started"));
+
+    await agent.send("first");
+    await agent.send("second");
+
+    expect(seen).toEqual([
+      "injected:project-instructions",
+      "injected:memory-bootstrap",
+      "turn.started",
+      "turn.started",
+    ]);
+  });
+
   it("checkpoints once per send, before the first mutating tool only", async () => {
     const order: string[] = [];
     const mutatingTool: Tool = {

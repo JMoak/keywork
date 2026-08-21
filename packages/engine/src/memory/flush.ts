@@ -1,12 +1,7 @@
 import { type Message, messageText, textMessage } from "../messages.ts";
 import type { Provider } from "../provider.ts";
+import { type ContextReading, flushDue } from "../session/context-budget.ts";
 import type { MemoryStore } from "./store.ts";
-
-export interface FlushSettings {
-  reserveTokens: number;
-}
-
-export const defaultFlushSettings: FlushSettings = { reserveTokens: 24576 };
 
 export const noReplyToken = "NO_REPLY";
 
@@ -16,12 +11,8 @@ export const memoryFlushPrompt = [
   `Reply with only the facts, one per line. If nothing is worth keeping, reply with exactly ${noReplyToken}.`,
 ].join("\n");
 
-export function shouldFlush(
-  contextTokens: number,
-  contextWindow: number,
-  settings: FlushSettings = defaultFlushSettings,
-): boolean {
-  return contextTokens > contextWindow - settings.reserveTokens;
+export function shouldFlush(reading: ContextReading): boolean {
+  return flushDue(reading);
 }
 
 export function isNoReply(message: Message): boolean {
@@ -44,7 +35,6 @@ export interface MemoryFlushOptions {
   store: MemoryStore;
   dailyStore?: () => MemoryStore;
   systemPrompt?: string;
-  settings?: Partial<FlushSettings>;
 }
 
 export interface FlushOutcome {
@@ -58,7 +48,6 @@ export class MemoryFlush {
   private readonly store: MemoryStore;
   private readonly dailyStore: () => MemoryStore;
   private readonly systemPrompt: string;
-  private readonly settings: FlushSettings;
   private latched = false;
   private backtracked = false;
 
@@ -67,7 +56,6 @@ export class MemoryFlush {
     this.store = options.store;
     this.dailyStore = options.dailyStore ?? (() => options.store);
     this.systemPrompt = options.systemPrompt ?? "";
-    this.settings = { ...defaultFlushSettings, ...options.settings };
   }
 
   noteBacktrack(): void {
@@ -76,11 +64,10 @@ export class MemoryFlush {
 
   async maybeFlush(
     conversation: readonly Message[],
-    contextTokens: number,
-    contextWindow: number,
+    reading: ContextReading,
   ): Promise<FlushOutcome> {
     if (this.latched || !this.store.trusted) return skipped();
-    if (!shouldFlush(contextTokens, contextWindow, this.settings)) return skipped();
+    if (!shouldFlush(reading)) return skipped();
     this.latched = true;
     return this.flush(conversation);
   }

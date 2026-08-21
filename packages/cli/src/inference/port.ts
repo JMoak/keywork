@@ -1,5 +1,7 @@
 import {
+  declaredCapabilitiesFor,
   formatReference,
+  formatTokenCount,
   type InferenceRegistry,
   type ProviderRegistration,
 } from "@keywork/engine";
@@ -31,6 +33,7 @@ export function choicesOf(
       entry.spec.protocol ?? entry.registration.protocol,
       credentialFact(entry.registration),
       ...originFact(entry.spec.origin, observations[entry.registration.name]?.modelsReportedAt),
+      ...windowFact(entry.registration, entry.spec.id),
     ],
   }));
   const defaults = registry
@@ -44,7 +47,12 @@ export function choicesOf(
       provider: registration.name,
       model: registration.defaultModel as string,
       available: registration.credential.kind !== "missing",
-      facts: [registration.protocol, credentialFact(registration), "provider default"],
+      facts: [
+        registration.protocol,
+        credentialFact(registration),
+        "provider default",
+        ...windowFact(registration, registration.defaultModel as string),
+      ],
     }));
   return [...listed, ...defaults].sort(byAvailabilityThenName);
 }
@@ -55,9 +63,11 @@ export function describeResolution(
 ): ResolutionNotice {
   const resolution = registry.bind(reference);
   if (resolution.ok) {
+    const window = resolution.binding.capabilities.contextWindow;
+    const ctx = window === undefined ? "ctx assumed" : `ctx ${formatTokenCount(window)}`;
     return {
       ok: true,
-      message: `${formatReference(resolution.binding.reference)} · ${resolution.binding.protocol}`,
+      message: `${formatReference(resolution.binding.reference)} · ${resolution.binding.protocol} · ${ctx}`,
     };
   }
   return {
@@ -66,6 +76,20 @@ export function describeResolution(
     message: resolution.failure.message,
     nextAction: resolution.failure.nextAction,
   };
+}
+
+export function declaredWindowOf(
+  registration: ProviderRegistration,
+  modelId: string,
+): number | undefined {
+  const listed = registration.models.find((spec) => spec.id === modelId)?.capabilities;
+  if (listed?.contextWindow !== undefined) return listed.contextWindow;
+  return declaredCapabilitiesFor(registration.capabilityDeclarations, modelId).contextWindow;
+}
+
+function windowFact(registration: ProviderRegistration, modelId: string): string[] {
+  const window = declaredWindowOf(registration, modelId);
+  return window === undefined ? [] : [`ctx ${formatTokenCount(window)}`];
 }
 
 function credentialFact(registration: ProviderRegistration): string {

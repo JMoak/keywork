@@ -1,3 +1,4 @@
+import type { ModelCapabilities } from "../capabilities.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
 import { ProviderHttpError } from "./openai.ts";
 
@@ -10,6 +11,7 @@ export interface RetryOptions {
 export class RetryingProvider implements Provider {
   readonly name: string;
   readonly modelId: string | undefined;
+  readonly capabilities: ModelCapabilities | undefined;
   private readonly attempts: number;
   private readonly baseDelayMs: number;
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -20,6 +22,7 @@ export class RetryingProvider implements Provider {
   ) {
     this.name = inner.name;
     this.modelId = inner.modelId;
+    this.capabilities = inner.capabilities;
     this.attempts = options.attempts ?? 3;
     this.baseDelayMs = options.baseDelayMs ?? 500;
     this.sleep = options.sleep ?? abortableSleep;

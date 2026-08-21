@@ -205,6 +205,12 @@ survives the delete-test); gauge thresholds equal the resolved flush/compaction
 reserves and fire visibly in a long-session fixture; calm flavor shows the minimal
 set, cockpit flavor the full set; Jordan picked the gauge from real captures.
 **Strategy:** `OWN`. After C49 (flavors carry instrumentation density).
+**Landed (gauge half)** 2026-08-21 — `tui/context-gauge.ts` on the engine's context budget:
+calm = one ramp cell + count, cockpit = ten-cell bar with the flush/compaction marks as
+cells, tier-0 ASCII; thresholds are the resolved reserves and the `long-session` e2e fixture
+shows them fire. Ledger and the open options round (ramp cell · bar · tile-fill) in
+[`109-long-session-survivability.md`](109-long-session-survivability.md). Sparklines and the dock instruments pane
+remain open under this task.
 
 ### C56 (2pt) — Capture as product (item 11; absorbs item 10 softly)
 `/screenshot` (SVG/PNG via C40's writer) as a user command **and an agent-facing

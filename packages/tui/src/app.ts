@@ -9,6 +9,7 @@ import {
   type SessionTreeNode,
   type ToolCallPart,
   type ToolGuard,
+  type TurnSettlement,
 } from "@keywork/engine";
 import {
   Box,
@@ -35,7 +36,7 @@ import {
   registerExtensions,
 } from "./extension-commands.ts";
 import { FilePane } from "./file-pane.ts";
-import { FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
+import { type Flavor, FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import type { Keymap } from "./keymap.ts";
 import { chordOf } from "./keys.ts";
@@ -103,12 +104,17 @@ export interface SessionTurn {
   agent: Agent;
 }
 
+export type AfterTurn = (turn: SessionTurn) => Promise<TurnSettlement | undefined>;
+export type Compactor = (turn: SessionTurn, instructions: string) => Promise<TurnSettlement>;
+
 export interface AppOptions {
   themeOverrides?: ThemeOverrides;
+  flavors?: readonly Flavor[];
   page?: PageThresholdOverrides;
   glyphs?: GlyphSupport;
   agentFactory?: AgentFactory;
-  afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
+  afterTurn?: AfterTurn;
+  compact?: Compactor;
   closers?: readonly Closer[];
   closeTimeoutMs?: number;
   createRenderer?: () => Promise<CliRenderer>;
@@ -128,7 +134,10 @@ export interface AppOptions {
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
-  const flavors = new FlavorSwitch(startupFlavors(options.themeOverrides));
+  const flavors = new FlavorSwitch([
+    ...startupFlavors(options.themeOverrides),
+    ...(options.flavors ?? []),
+  ]);
   const pageThresholds = resolvePageThresholds(options.page);
   const glyphs: GlyphSupport = options.glyphs ?? detectCapabilities();
   const restored = await loadRestorePlan(options);
@@ -236,6 +245,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
           attachment: adopted,
           modelInForce,
           ...(options.afterTurn !== undefined && { afterTurn: options.afterTurn }),
+          ...(options.compact !== undefined && { compact: options.compact }),
           rebuild: (history, agent) => options.agentFactory?.(guard, history, seamsFor(agent.bus)),
         });
       };
@@ -292,6 +302,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       animator.settleAll();
       if (armedExpiry !== undefined) clearTimeout(armedExpiry);
       unsubscribeMcp?.();
+      paneSessions.closeAll();
       renderer.destroy();
       options.workspace?.seal();
       void runClosers(
@@ -362,7 +373,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
           borderStyle: "rounded",
           borderColor: core.leaderArmed ? theme.accent : theme.border,
         },
-        buildBody(core, theme, screen()),
+        buildBody(core, theme, screen(), flavors.active.instruments),
         statusBar(core, theme, options.statusLabel),
       ),
     );
@@ -721,6 +732,7 @@ function escrowUntilClaimed(
 export interface PaneSessionIndex {
   bind(paneId: string, sessionId: () => string | undefined, busy?: () => boolean): void;
   closed(paneId: string): void;
+  closeAll(): void;
   size(): number;
   paneFor(sessionId: string): string | undefined;
   busy(sessionId: string): boolean;
@@ -747,6 +759,13 @@ export function paneSessionIndex(sessions: SessionPort | undefined): PaneSession
       const sessionId = bindings.get(paneId)?.sessionId();
       bindings.delete(paneId);
       if (sessionId !== undefined) sessions?.release?.(sessionId);
+    },
+    closeAll: () => {
+      for (const binding of bindings.values()) {
+        const sessionId = binding.sessionId();
+        if (sessionId !== undefined) sessions?.release?.(sessionId);
+      }
+      bindings.clear();
     },
     size: () => bindings.size,
     paneFor,
@@ -824,7 +843,8 @@ export interface SessionLifecycleOptions {
   pane: ConversationPane;
   attachment: SessionAttachment;
   modelInForce?: () => string | undefined;
-  afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
+  afterTurn?: AfterTurn;
+  compact?: Compactor;
   rebuild?: (history: readonly Message[], agent: Agent) => Agent | undefined;
 }
 
@@ -832,6 +852,20 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
   const { pane, attachment } = options;
   let persisted = attachment.history.length;
   let modelRecorded = attachment.modelReference !== undefined;
+  const turnOf = (agent: Agent): SessionTurn => ({
+    sessionId: attachment.id,
+    history: agent.history(),
+    agent,
+  });
+  const apply = (settlement: TurnSettlement | undefined, agent: Agent): void => {
+    if (settlement === undefined || pane.disposed()) return;
+    for (const notice of settlement.notices) pane.postNotice(notice);
+    if (settlement.history === undefined) return;
+    const next = options.rebuild?.(settlement.history, agent);
+    if (next === undefined) return;
+    persisted = next.history().length;
+    pane.swapAgent(next);
+  };
   pane.bindAfterTurn(async () => {
     const agent = pane.currentAgent();
     if (agent === undefined) return;
@@ -843,18 +877,23 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
       if (reference !== undefined) await attachment.recordModel?.(reference);
     }
     for (const message of fresh) await attachment.append(message);
-    const joined =
-      (await options.afterTurn?.({ sessionId: attachment.id, history: agent.history(), agent })) ??
-      [];
-    if (joined.length === 0 || pane.disposed()) return;
-    const next = options.rebuild?.([...agent.history(), ...joined], agent);
-    if (next === undefined) return;
-    persisted = next.history().length;
-    pane.swapAgent(next);
+    apply(await options.afterTurn?.(turnOf(agent)), agent);
+  });
+  const compact = options.compact;
+  if (compact === undefined) return;
+  pane.bindCompaction(async (instructions) => {
+    const agent = pane.currentAgent();
+    if (agent === undefined) return;
+    apply(await compact(turnOf(agent), instructions), agent);
   });
 }
 
-function buildBody(core: AppCore, theme: Theme, screen: Screen) {
+function buildBody(
+  core: AppCore,
+  theme: Theme,
+  screen: Screen,
+  instruments: Flavor["instruments"],
+) {
   const rects = core.layout.rects(screen);
   const focused = core.layout.focused();
   if (rects.size === 0) {
@@ -869,7 +908,10 @@ function buildBody(core: AppCore, theme: Theme, screen: Screen) {
   return Box(
     { width: screen.width, height: screen.height },
     ...[...rects].map(([id, rect]) =>
-      placedBox(rect, paneViewFor(core, theme, id, rect, id === focused, sweep.get(id) ?? 0)),
+      placedBox(
+        rect,
+        paneViewFor(core, theme, id, rect, id === focused, sweep.get(id) ?? 0, instruments),
+      ),
     ),
     ...(idleMain === undefined ? [] : [placedBox(idleMain, idleMainView(theme))]),
     ...(dropPreview === undefined ? [] : [dropPreviewBox(dropPreview, theme)]),
@@ -931,6 +973,7 @@ function paneViewFor(
   rect: Rect,
   focused: boolean,
   rampPosition: number,
+  instruments: Flavor["instruments"],
 ): PaneView {
   if (rect.width < minPaneSize.width || rect.height < minPaneSize.height) {
     return overflowedView(theme);
@@ -941,6 +984,7 @@ function paneViewFor(
     width: rect.width,
     height: rect.height,
     borderColor: paneBorder(theme, rampPosition, focused),
+    instruments,
   });
   return view ?? emptyView(theme);
 }

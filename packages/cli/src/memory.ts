@@ -3,18 +3,14 @@ import {
   AskGateLedger,
   bootstrapMemory,
   type EmbeddingsPort,
-  estimateContextTokens,
   Gardener,
-  type MemoryFlush,
   type MemoryRecall,
   MemorySearch,
   MemoryStore,
-  type Message,
   type Note,
   type RetrievalSource,
   ReviewInbox,
   type ReviewItem,
-  type SessionStore,
   type StagedItem,
 } from "@keywork/engine";
 import { resolveVaultPath } from "@keywork/shared";
@@ -36,7 +32,6 @@ export interface WorkspaceMemory {
 }
 
 export const memoryBootstrapBudget = 4096;
-export const assumedContextWindow = 200_000;
 
 export function openWorkspaceMemory(cwd: string, trusted: boolean): WorkspaceMemory | undefined {
   const vaultRoot = resolveVaultPath(cwd);
@@ -109,22 +104,6 @@ export async function bootstrapInjection(memory: WorkspaceMemory | undefined): P
 
 export function withMemoryPrompt(systemPrompt: string, injection: string): string {
   return injection === "" ? systemPrompt : `${systemPrompt}\n\n${injection}`;
-}
-
-export async function flushAfterTurn(
-  flush: MemoryFlush | undefined,
-  store: SessionStore,
-  history: readonly Message[],
-  contextWindow: number = assumedContextWindow,
-): Promise<Message[]> {
-  if (flush === undefined) return [];
-  try {
-    const outcome = await flush.maybeFlush(history, estimateContextTokens(store), contextWindow);
-    for (const message of outcome.messages) await store.append(message);
-    return outcome.messages;
-  } catch {
-    return [];
-  }
 }
 
 export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise<void> {

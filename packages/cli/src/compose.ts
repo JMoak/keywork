@@ -5,12 +5,14 @@ import {
   type AgentDefinition,
   buildSystemPrompt,
   Checkpoints,
+  type ContextInjection,
   coreTools,
   type EngineEvents,
   type EventBus,
   loadProjectInstructions,
   McpRegistry,
   MemoryFlush,
+  type MemoryRecall,
   type Message,
   narrowedPermissions,
   type PermissionResolver,
@@ -50,6 +52,7 @@ export interface Composition {
   cwd: string;
   scope: ToolScope;
   systemPromptFor(modelId: string | undefined): string;
+  standingInjections: readonly ContextInjection[];
   memory: WorkspaceMemory | undefined;
   checkpoints: Checkpoints | undefined;
   extensions: WorkspaceExtensions;
@@ -88,6 +91,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     cwd,
     scope: workspaceToolScope(cwd, projectTrusted),
     systemPromptFor,
+    standingInjections: standingInjectionsFor(instructions, bootstrap),
     memory,
     checkpoints,
     extensions,
@@ -100,6 +104,34 @@ export function workspaceToolScope(cwd: string, projectTrusted: boolean): ToolSc
   const anchorRoot = resolveAnchor(cwd).root;
   const linkedDirs = projectTrusted ? (openWorkspace(cwd)?.contextDirs ?? []) : [];
   return toolScope(cwd, [anchorRoot, ...linkedDirs]);
+}
+
+export function standingInjectionsFor(
+  projectInstructions: string | undefined,
+  bootstrap: string,
+): ContextInjection[] {
+  return [
+    ...(projectInstructions === undefined
+      ? []
+      : [{ source: "project-instructions" as const, id: "AGENTS.md" }]),
+    ...(bootstrap === "" ? [] : [{ source: "memory-bootstrap" as const, scope: "workspace" }]),
+  ];
+}
+
+export function journalingRecall(
+  recall: MemoryRecall | undefined,
+  agent: () => Agent | undefined,
+): MemoryRecall | undefined {
+  if (recall === undefined) return undefined;
+  return {
+    ...recall,
+    onRecall: (noteName) => {
+      recall.onRecall?.(noteName);
+      agent()?.bus.emit("context.injected", {
+        injection: { source: "memory-recall", id: noteName, scope: "workspace" },
+      });
+    },
+  };
 }
 
 export interface AgentCompositionOptions {
@@ -158,6 +190,9 @@ function followingProvider(current: () => Provider): Provider {
     get modelId() {
       return current().modelId;
     },
+    get capabilities() {
+      return current().capabilities;
+    },
     stream: (request) => current().stream(request),
   };
 }
@@ -181,7 +216,10 @@ function buildAgent(
   const baseTools = [
     ...coreTools(
       composition.scope,
-      memoryRecall(composition.memory, spec.sessionId, spec.onRetrieval),
+      journalingRecall(
+        memoryRecall(composition.memory, spec.sessionId, spec.onRetrieval),
+        () => self,
+      ),
       {
         onToolOutput: (chunk) => self?.bus.emit("tool.output", { chunk }),
         onFileSaved: composition.onFileSaved,
@@ -195,13 +233,14 @@ function buildAgent(
     definition === undefined
       ? options.permissions
       : narrowedPermissions(definition, options.permissions);
+  const composedPrompt = definition === undefined || definition.prompt === "";
   const agent = new Agent({
     provider: spec.provider,
     tools: definition === undefined ? tools : restrictTools(tools, definition),
-    systemPrompt:
-      definition === undefined || definition.prompt === ""
-        ? composition.systemPromptFor(spec.provider.modelId)
-        : definition.prompt,
+    systemPrompt: composedPrompt
+      ? composition.systemPromptFor(spec.provider.modelId)
+      : definition.prompt,
+    standingInjections: composedPrompt ? composition.standingInjections : [],
     guard: spec.guard,
     ...(permissions !== undefined && { permissions }),
     ...(spec.history !== undefined && { history: spec.history }),

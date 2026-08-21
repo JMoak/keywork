@@ -1,0 +1,14 @@
+{
+  "$help": "https://aka.ms/terminal-fragment-extensions",
+  "$schema": "https://aka.ms/terminal-profiles-schema",
+  "profiles": [
+    {
+      "name": "keywork",
+      "commandline": "keywork",
+      "startingDirectory": "%USERPROFILE%",
+      "icon": "▒",
+      "suppressApplicationTitle": false,
+      "useAcrylic": false
+    }
+  ]
+}
