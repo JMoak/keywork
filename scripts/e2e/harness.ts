@@ -9,7 +9,7 @@ import {
 } from "../../packages/cli/src/sessions.ts";
 import { workspaceFile } from "../../packages/cli/src/workspace.ts";
 import { Agent, Checkpoints, MockProvider } from "../../packages/engine/src/index.ts";
-import { type AppOptions, runApp } from "../../packages/tui/src/index.ts";
+import { type AppOptions, assumedGlyphs, runApp } from "../../packages/tui/src/index.ts";
 import { scenarioArtifactDir, stepFileBase } from "./artifacts.ts";
 import type { CapturedFrame } from "./frame.ts";
 import { goldenPath, verifyGolden, writeGolden } from "./goldens.ts";
@@ -207,6 +207,7 @@ async function composeMockApp(
     sessionTrees: sessionTreePort(paths.sessionDir, changes),
     workspace: workspaceFile(join(paths.root, "workspace-state.json"), 0),
     ...(checkpoints !== undefined && { checkpoints }),
+    glyphs: assumedGlyphs,
     statusLabel: "keywork e2e",
   });
 }

@@ -51,16 +51,12 @@ export async function chat(options: ChatOptions): Promise<void> {
     cwd: options.cwd,
     projectTrusted: options.projectTrusted === true,
     prompts: options.prompts,
-    modelId: options.modelId,
     mcpServers: options.mcpServers,
     reportCheckpointsUnavailable: (message) => console.log(`can't undo: ${message}`),
   });
   const { checkpoints, extensions, mcp, memory } = composition;
-  const agents = composeAgents(composition, {
-    provider: options.provider,
-    permissions: options.permissions,
-  });
-  const flush = agents.flushFor(store.header.id);
+  const agents = composeAgents(composition, { permissions: options.permissions });
+  const flush = agents.flushFor(store.header.id, options.provider);
   reportExtensionFailures(extensions);
   const guard = mutationGuard(checkpoints);
   const runtime = commandRuntime(options.cwd, guard);
@@ -70,7 +66,13 @@ export async function chat(options: ChatOptions): Promise<void> {
     definition: AgentDefinition | undefined,
     history: readonly Message[],
   ): Agent => {
-    const agent = agents.build({ guard, definition, history, sessionId: store.header.id });
+    const agent = agents.build({
+      provider: options.provider,
+      guard,
+      definition,
+      history,
+      sessionId: store.header.id,
+    });
     wireStreamingOutput(agent);
     return agent;
   };

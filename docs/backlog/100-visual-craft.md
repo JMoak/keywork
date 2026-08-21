@@ -169,6 +169,9 @@ frame budget on a 5k-line block (A18 bar); unknown languages render calmly unsty
 diffs colored via the existing diff-render path, one system.
 **Strategy:** `OWN` (tokenizer scope deliberately minimal — highlight well, never
 parse).
+**Landed** 2026-08-21 — the highlighter half (`tui/highlighter.ts`, fence interiors via
+C60's renderer, theme-token palette only); details in `104-the-page.md` "Landed — stream 2".
+Rhythm rules ride C59/C61's page grammar; the fixture-capture approval closes the task.
 
 ### C53 (2pt) — Motion grammar implementation (implements PD16)
 One shared animator honoring the grammar (tempo tables, step-shapes, one-mover

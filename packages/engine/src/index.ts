@@ -55,6 +55,40 @@ export {
   skillTool,
 } from "./extensions/skills.ts";
 export {
+  type AdapterOptions,
+  type CredentialMaterial,
+  CredentialMaterialError,
+  type CredentialVault,
+  modelReferenceOf,
+  providerFor,
+} from "./inference/adapters.ts";
+export {
+  endpointScheme,
+  formatReference,
+  isLoopbackEndpoint,
+  parseReference,
+  sameReference,
+} from "./inference/references.ts";
+export { type CatalogEntry, InferenceRegistry } from "./inference/registry.ts";
+export {
+  type CredentialHandle,
+  type CredentialState,
+  type InferenceBinding,
+  InvalidRegistrationError,
+  type ModelOrigin,
+  type ModelReference,
+  type ModelSpec,
+  type Protocol,
+  type ProviderRegistration,
+  protocols,
+  type RequestDecorations,
+  type Resolution,
+  ResolutionError,
+  type ResolutionFailure,
+  type ResolutionFailureCode,
+  type ResolutionRequest,
+} from "./inference/types.ts";
+export {
   connectStdioServer,
   McpAbortedError,
   type McpConnection,
@@ -282,7 +316,9 @@ export {
   type ImagePart,
   type Message,
   messageText,
+  ownedBy,
   type Part,
+  type ProviderStateOwner,
   type RedactedThinkingPart,
   type Role,
   type TextPart,
@@ -331,6 +367,8 @@ export {
   regionFromEnv,
 } from "./providers/bedrock/sigv4.ts";
 export {
+  type AuthHeaders,
+  bearerHeaders,
   type FetchLike,
   type OpenAiCompatibleOptions,
   OpenAiCompatibleProvider,

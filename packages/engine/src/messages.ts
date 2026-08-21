@@ -17,9 +17,27 @@ export interface ThinkingPart {
   signature: string;
 }
 
+export interface ProviderStateOwner {
+  provider: string;
+  model: string;
+}
+
 export interface RedactedThinkingPart {
   type: "redacted-thinking";
   data: string;
+  owner?: ProviderStateOwner;
+}
+
+export function ownedBy(
+  part: RedactedThinkingPart,
+  owner: ProviderStateOwner | undefined,
+): boolean {
+  if (part.owner === undefined) return true;
+  return (
+    owner !== undefined &&
+    part.owner.provider === owner.provider &&
+    part.owner.model === owner.model
+  );
 }
 
 export interface ToolCallPart {

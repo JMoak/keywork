@@ -45,6 +45,18 @@ export async function saveCredential(
   return file;
 }
 
+export async function deleteCredential(
+  provider: string,
+  dir: string = defaultAuthDir(),
+): Promise<boolean> {
+  const { [provider]: removed, ...rest } = await readCredentials(dir);
+  if (removed === undefined) return false;
+  const file = join(dir, "auth.json");
+  await writeFile(file, `${JSON.stringify(rest, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(file, 0o600);
+  return true;
+}
+
 export function legacyCredentials(apiKeys: Record<string, string> | undefined): CredentialMap {
   return Object.fromEntries(
     Object.entries(apiKeys ?? {})

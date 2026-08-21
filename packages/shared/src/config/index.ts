@@ -7,7 +7,12 @@ export {
 } from "./flavor.ts";
 export { ConfigError, type ConfigSource, loadConfig, mergeConfigs } from "./load.ts";
 export {
+  type ConnectionConfig,
+  type ConnectionCredentialSource,
+  type ConnectionProtocol,
+  type ConnectionsConfig,
   configSchema,
+  connectionNamePattern,
   defaultConfig,
   type KeyworkConfig,
   type McpServerConfig,

@@ -12,6 +12,7 @@ import {
   type FileTrackingDetails,
   type LabelEntry,
   type MessageEntry,
+  type ModelChangeEntry,
   parseFileEntries,
   pathToEntry,
   type SessionEntry,
@@ -122,6 +123,16 @@ export class SessionStore {
   name(): string | undefined {
     return this.log.findLast((entry): entry is SessionInfoEntry => entry.type === "session_info")
       ?.name;
+  }
+
+  async appendModelChange(provider: string, modelId: string): Promise<ModelChangeEntry> {
+    return this.appendEntry({ type: "model_change", provider, modelId });
+  }
+
+  modelSelection(): ModelChangeEntry | undefined {
+    return this.activePath().findLast(
+      (entry): entry is ModelChangeEntry => entry.type === "model_change",
+    );
   }
 
   branch(fromId: string): void {

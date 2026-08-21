@@ -120,6 +120,59 @@ const modelCapabilities = z
   .partial()
   .strict();
 
+export const connectionNamePattern = /^[a-z0-9][a-z0-9._-]*$/;
+
+const connectionName = z
+  .string()
+  .regex(connectionNamePattern, "connection names are lowercase letters, digits, . _ -");
+
+const connectionCredential = z.union([
+  z.literal("none"),
+  z.literal("saved"),
+  z
+    .string()
+    .regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/, 'credential must be "none", "saved", or "env:VAR_NAME"'),
+]);
+
+const connection = z
+  .object({
+    endpoint: z
+      .url()
+      .describe(
+        "Base URL of an OpenAI-compatible server, e.g. http://localhost:11434/v1 for a local model or https://gateway.example/v1 for a broker; exists because every local port or gateway is one registration that differs from the built-ins by data alone (105/IR-15). Plain http is accepted only on loopback unless insecureTransport is set (IR-17).",
+      ),
+    protocol: z
+      .enum(["chat-completions", "responses"])
+      .describe(
+        "Wire protocol the endpoint truthfully speaks; defaults to chat-completions, the compatibility protocol most local servers and brokers implement. Declared, never probed or downgraded (105/IR-08): a mismatch fails naming this field.",
+      )
+      .optional(),
+    credential: connectionCredential
+      .describe(
+        'Where the bearer credential comes from: "none" (the default on loopback), "saved" (the default elsewhere; the key /connect stored in ~/.keywork/auth.json under this connection name), or "env:VAR_NAME" to read one environment variable; exists so secrets are referenced by handle and never written into this file (105/IR-17).',
+      )
+      .optional(),
+    models: z
+      .array(z.string().min(1))
+      .describe(
+        "Model ids this endpoint serves, as the /model picker should list them; exists because inventory is declared or reported, never guessed (105/IR-10). Capabilities still come from the top-level `models` declarations. An endpoint with no list still accepts any id written as <connection>/<model>.",
+      )
+      .optional(),
+    insecureTransport: z
+      .boolean()
+      .describe(
+        "Permits plain http to a non-loopback endpoint. Credentials and every prompt then cross the network unencrypted and can be read or altered in transit; exists only so a trusted LAN box can be reached deliberately (105/IR-17). Leave unset for anything reachable from the internet.",
+      )
+      .optional(),
+    enabled: z
+      .boolean()
+      .describe(
+        "Set false to keep a connection configured but out of resolution and the /model picker; exists so a box that is down for a while does not have to be deleted and re-entered (105/IR-15).",
+      )
+      .optional(),
+  })
+  .strict();
+
 const pageThresholdColumns = z.number().int().min(1);
 
 const permissionAction = z.enum(["allow", "ask", "deny"]);
@@ -185,6 +238,11 @@ export const configSchema = z
       .describe(
         "Width-tier thresholds for the transcript page grammar (104/PD18: broadsheet / column / clipping / masthead); exists because tier boundaries are taste calls tuned per terminal setup and must be adjustable without code changes. Thresholds must rise clippingAt < columnAt < broadsheetAt.",
       ),
+    connections: z
+      .record(connectionName, connection)
+      .describe(
+        "Named inference connections beyond the built-ins (openrouter, openai, openai-codex, bedrock): each local port or gateway becomes a provider whose models are addressed as <name>/<model>; exists because provider management is one durable surface over data, not a setup flow per vendor (105/IR-15). Written by /connect, hand-editable, honored from the user config layer only.",
+      ),
     bedrockRegion: z
       .string()
       .regex(/^[a-z]{2}(-[a-z]+)+-\d+$/, "bedrockRegion must look like us-east-1")
@@ -218,6 +276,10 @@ export type PermissionsConfig = NonNullable<KeyworkConfig["permissions"]>;
 export type PromptsConfig = NonNullable<KeyworkConfig["prompts"]>;
 export type PromptOverride = z.infer<typeof promptOverride>;
 export type ModelCapabilitiesConfig = NonNullable<KeyworkConfig["models"]>;
+export type ConnectionConfig = z.infer<typeof connection>;
+export type ConnectionsConfig = NonNullable<KeyworkConfig["connections"]>;
+export type ConnectionCredentialSource = z.infer<typeof connectionCredential>;
+export type ConnectionProtocol = NonNullable<ConnectionConfig["protocol"]>;
 
 export const defaultConfig: KeyworkConfig = {
   keybindings: {},

@@ -6,13 +6,17 @@ import { sseJsonEvents } from "./sse.ts";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+export type AuthHeaders = () => Promise<Record<string, string>>;
+
 export interface OpenAiCompatibleOptions {
   name: string;
   baseUrl: string;
-  apiKey: string;
   model: string;
-  extraHeaders?: Record<string, string>;
-  fetchFn?: FetchLike;
+  apiKey?: string | undefined;
+  authHeaders?: AuthHeaders | undefined;
+  extraHeaders?: Readonly<Record<string, string>> | undefined;
+  extraBody?: Readonly<Record<string, unknown>> | undefined;
+  fetchFn?: FetchLike | undefined;
 }
 
 export { ProviderHttpError, ProviderStreamError } from "./errors.ts";
@@ -20,28 +24,31 @@ export { ProviderHttpError, ProviderStreamError } from "./errors.ts";
 export class OpenAiCompatibleProvider implements Provider {
   readonly name: string;
   readonly modelId: string;
-  private readonly options: Required<Omit<OpenAiCompatibleOptions, "extraHeaders">> & {
-    extraHeaders: Record<string, string>;
-  };
+  private readonly baseUrl: string;
+  private readonly authHeaders: AuthHeaders;
+  private readonly extraHeaders: Readonly<Record<string, string>>;
+  private readonly extraBody: Readonly<Record<string, unknown>>;
+  private readonly fetchFn: FetchLike;
 
   constructor(options: OpenAiCompatibleOptions) {
     this.name = options.name;
     this.modelId = options.model;
-    this.options = { extraHeaders: {}, fetchFn: fetch, ...options };
+    this.baseUrl = options.baseUrl;
+    this.authHeaders = options.authHeaders ?? bearerHeaders(options.apiKey);
+    this.extraHeaders = options.extraHeaders ?? {};
+    this.extraBody = options.extraBody ?? {};
+    this.fetchFn = options.fetchFn ?? fetch;
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
-    const response = await this.options.fetchFn(`${this.options.baseUrl}/chat/completions`, {
+    const response = await this.fetchFn(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${this.options.apiKey}`,
-        ...this.options.extraHeaders,
+        ...(await this.authHeaders()),
+        ...this.extraHeaders,
       },
-      body: JSON.stringify({
-        ...toChatRequest(request, this.options.model),
-        ...costAccountingFields(this.options.baseUrl),
-      }),
+      body: JSON.stringify({ ...toChatRequest(request, this.modelId), ...this.extraBody }),
       ...(request.signal !== undefined && { signal: request.signal }),
     });
     if (!response.ok) {
@@ -52,19 +59,12 @@ export class OpenAiCompatibleProvider implements Provider {
   }
 }
 
-const maxToolArgumentBytes = 1_048_576;
-
-// OpenRouter's per-request cost accounting is opt-in through a body field that
-// strict OpenAI-compatible servers reject, so it is added only for that host.
-function costAccountingFields(baseUrl: string): object {
-  try {
-    const host = new URL(baseUrl).hostname;
-    const openRouter = host === "openrouter.ai" || host.endsWith(".openrouter.ai");
-    return openRouter ? { usage: { include: true } } : {};
-  } catch {
-    return {};
-  }
+export function bearerHeaders(apiKey: string | undefined): AuthHeaders {
+  const headers = apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` };
+  return async () => headers;
 }
+
+const maxToolArgumentBytes = 1_048_576;
 
 interface WireUsage {
   prompt_tokens?: number;

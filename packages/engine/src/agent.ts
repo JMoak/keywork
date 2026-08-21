@@ -39,7 +39,7 @@ interface AssistantTurn {
 
 export class Agent {
   readonly bus: EventBus<EngineEvents>;
-  private readonly provider: Provider;
+  readonly provider: Provider;
   private readonly systemPrompt: string;
   private readonly tools: readonly Tool[];
   private readonly messages: Message[];

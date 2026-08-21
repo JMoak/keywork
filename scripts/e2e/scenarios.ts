@@ -63,8 +63,9 @@ function coldStart(): Scenario {
     provider: "none",
     run: async (stage) => {
       await stage.settle();
-      const boot = await stage.until("no provider · set");
-      assert.ok(boot.includes("set KEYWORK_OPENROUTER_API_KEY"), "guidance names the fix");
+      const boot = await stage.until("no model bound");
+      assert.ok(boot.includes("/connect adds a provider"), "guidance teaches /connect and waits");
+      assert.ok(boot.includes("/model picks one"), "guidance teaches /model and waits");
       await stage.capture("no-provider-guidance", { golden: true });
       const code = await stage.quit();
       assert.equal(code, 0, "the real exit path reaches the exit seam cleanly");
@@ -320,6 +321,18 @@ function pageTiers(): Scenario {
       assert.ok(!refolded.includes("drwxr-xr-x"), "tab folds the disclosed row back down");
       assert.ok(disclosed.includes("░ list"), "the collapsed row survives disclosure");
 
+      await stage.press("shift+tab");
+      const cursored = await stage.until("disclose · tab toggles");
+      assert.ok(!cursored.includes("drwxr-xr-x"), "shift+tab only places the fold cursor");
+      await stage.press("tab");
+      await stage.until("drwxr-xr-x");
+      await stage.capture("tool-row-keyboard-open");
+      await stage.press("escape", "tab");
+      await stage.settle();
+      const keyboardRefolded = await stage.capture("tool-row-keyboard-refolded");
+      assert.ok(!keyboardRefolded.includes("drwxr-xr-x"), "tab closes the row after esc");
+      assert.ok(!keyboardRefolded.includes("disclose ·"), "esc leaves disclosure");
+
       await stage.resize(84, 36);
       const column = await stage.capture("column-84");
       assert.ok(
@@ -330,8 +343,22 @@ function pageTiers(): Scenario {
       await stage.resize(56, 36);
       await stage.capture("clipping-56");
 
+      await stage.resize(38, 36);
+      const masthead = await stage.capture("masthead-38");
+      assert.ok(!masthead.includes("The width tier"), "the masthead tile replaces the transcript");
+      assert.ok(/[▀▄]/.test(masthead), "the headline is set in the half-block face");
+      assert.ok(masthead.includes("idle"), "one status line sits under the headline");
+
+      await stage.type("x");
+      const typing = await stage.until("The width tier");
+      assert.ok(!/[▀▄]/.test(typing), "typing dismisses the masthead; input outranks ceremony");
+      await stage.press("backspace");
+      await stage.until("idle");
+
       await stage.resize(32, 36);
-      await stage.capture("masthead-32");
+      const caps = await stage.capture("masthead-32");
+      assert.ok(caps.includes("SESSION 1"), "a word too wide for the face falls to caps");
+      assert.ok(!/[▀▄]/.test(caps), "caps fallback sets no half-blocks");
 
       await stage.quit();
     },

@@ -39,7 +39,6 @@ export interface CompositionOptions {
   cwd: string;
   projectTrusted: boolean;
   prompts?: PromptsConfig | undefined;
-  modelId?: string | undefined;
   mcpServers?: Record<string, McpServerConfig> | undefined;
   onFileSaved?: ((path: string) => void) | undefined;
   reportCheckpointsUnavailable?: (message: string) => void;
@@ -50,7 +49,7 @@ export interface CompositionOptions {
 export interface Composition {
   cwd: string;
   scope: ToolScope;
-  systemPrompt: string;
+  systemPromptFor(modelId: string | undefined): string;
   memory: WorkspaceMemory | undefined;
   checkpoints: Checkpoints | undefined;
   extensions: WorkspaceExtensions;
@@ -62,14 +61,16 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   const { cwd, projectTrusted } = options;
   const instructions = projectTrusted ? await loadProjectInstructions(cwd) : undefined;
   const memory = openWorkspaceMemory(cwd, projectTrusted);
-  const systemPrompt = withMemoryPrompt(
-    buildSystemPrompt({
-      ...(instructions !== undefined && { projectInstructions: instructions }),
-      ...(options.prompts !== undefined && { prompts: options.prompts }),
-      ...(options.modelId !== undefined && { modelId: options.modelId }),
-    }),
-    await bootstrapInjection(memory),
-  );
+  const bootstrap = await bootstrapInjection(memory);
+  const systemPromptFor = (modelId: string | undefined): string =>
+    withMemoryPrompt(
+      buildSystemPrompt({
+        ...(instructions !== undefined && { projectInstructions: instructions }),
+        ...(options.prompts !== undefined && { prompts: options.prompts }),
+        ...(modelId !== undefined && { modelId }),
+      }),
+      bootstrap,
+    );
   const checkpoints = await Checkpoints.open({
     worktree: cwd,
     gitDir: options.checkpointsGitDir ?? snapshotGitDir(cwd),
@@ -86,7 +87,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   return {
     cwd,
     scope: workspaceToolScope(cwd, projectTrusted),
-    systemPrompt,
+    systemPromptFor,
     memory,
     checkpoints,
     extensions,
@@ -102,11 +103,11 @@ export function workspaceToolScope(cwd: string, projectTrusted: boolean): ToolSc
 }
 
 export interface AgentCompositionOptions {
-  provider: Provider;
   permissions?: PermissionResolver | undefined;
 }
 
 export interface AgentBuildSpec {
+  provider: Provider;
   guard: ToolGuard;
   definition?: AgentDefinition | undefined;
   history?: readonly Message[] | undefined;
@@ -117,32 +118,47 @@ export interface AgentBuildSpec {
 
 export interface AgentComposition {
   build(spec: AgentBuildSpec): Agent;
-  flushFor(sessionId: string): MemoryFlush | undefined;
+  flushFor(sessionId: string, provider: Provider): MemoryFlush | undefined;
   release(sessionId: string): void;
 }
 
 export function composeAgents(
   composition: Composition,
-  options: AgentCompositionOptions,
+  options: AgentCompositionOptions = {},
 ): AgentComposition {
   const flushes = new Map<string, MemoryFlush>();
+  const providers = new Map<string, Provider>();
   return {
     build: (spec) => buildAgent(composition, options, spec),
-    flushFor: (sessionId) => {
+    flushFor: (sessionId, provider) => {
       if (composition.memory === undefined) return undefined;
+      providers.set(sessionId, provider);
       const existing = flushes.get(sessionId);
       if (existing !== undefined) return existing;
       const flush = new MemoryFlush({
-        provider: options.provider,
+        provider: followingProvider(() => providers.get(sessionId) ?? provider),
         store: composition.memory.store,
-        systemPrompt: composition.systemPrompt,
+        systemPrompt: composition.systemPromptFor(undefined),
       });
       flushes.set(sessionId, flush);
       return flush;
     },
     release: (sessionId) => {
       flushes.delete(sessionId);
+      providers.delete(sessionId);
     },
+  };
+}
+
+function followingProvider(current: () => Provider): Provider {
+  return {
+    get name() {
+      return current().name;
+    },
+    get modelId() {
+      return current().modelId;
+    },
+    stream: (request) => current().stream(request),
   };
 }
 
@@ -180,11 +196,11 @@ function buildAgent(
       ? options.permissions
       : narrowedPermissions(definition, options.permissions);
   const agent = new Agent({
-    provider: options.provider,
+    provider: spec.provider,
     tools: definition === undefined ? tools : restrictTools(tools, definition),
     systemPrompt:
       definition === undefined || definition.prompt === ""
-        ? composition.systemPrompt
+        ? composition.systemPromptFor(spec.provider.modelId)
         : definition.prompt,
     guard: spec.guard,
     ...(permissions !== undefined && { permissions }),

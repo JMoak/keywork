@@ -96,6 +96,58 @@
   skips the hold). Live pulse visible in the first-conversation ask capture
   (`▓ session-1`).
 
+## Landed — stream 2, the page finished (2026-08-21)
+
+- **C60 (2pt) — markdown in the transcript** ✅ 2026-08-21 (completes the 08-17 base):
+  every page mark now resolves through one tier seam, `tui/marks.ts` —
+  `pageMarks(GlyphSupport)` → voice stamps, streaming ramp, heading weights, bullet,
+  rule, fence rail (tier-0 ASCII: `# + .` voice · `= - : .` headings · `-` bullet/rule ·
+  `|` rail). `ConversationPane` takes `glyphs`; the default is the deterministic
+  `assumedGlyphs` (tier 2) so captures never depend on the host terminal, and the
+  `runApp` line (`glyphs: options.glyphs ?? detectCapabilities()`) lands after stream 1's
+  `app.ts` entry settles. **Heading marks left the density ramp for a weight ramp**
+  `█ ▌ ▎ ▏` (h1 · h2 · h3 · h4+): the `▓ ▓` heading-beside-agent-stamp nit is gone — the
+  broadsheet capture now reads `▓  ▌ the page`. Accept met: literal `**`/backticks never
+  visible, malformed markdown stays calm plain text, tier-0 render legible.
+- **C52 (2pt) — fence highlighting** ✅ 2026-08-21: `tui/highlighter.ts`, a zero-dep
+  lexical tokenizer written as grammar *data* over one scanner — ts/js/tsx/jsx, json
+  (keys vs values), sh/bash/zsh (`$VAR`, boundary-only `#`), py (triple quotes), go, rust,
+  diff (line marks), md — with per-fence block state so block comments, template
+  literals, and docstrings carry across lines. Classes keyword · type · constant ·
+  string · comment · punctuation · added · removed · hunk, colored **through theme tokens
+  only**: keyword/type/constant = ramp stops 0/1/2 (the ramp does double duty), string =
+  `success`, comment/hunk = `textDim`, punctuation = `textMid`, added/removed =
+  `success`/`error`. Unknown languages render unstyled; hard-wrap preserves spans; a
+  5k-line block tokenizes well inside the frame budget (bounded test). Rhythm rules ride
+  C59/C61; the fixture-capture approval closes C52.
+- **C63 (2pt) — the masthead** ✅ 2026-08-21: `tui/masthead.ts`, an own 3×5 block-letter
+  face (A–Z, 0–9) rasterized as half-blocks at tier 2, full blocks at tier 1, caps at
+  tier 0 — no figlet. The arc prefix is shed (the border hue carries the family), slug
+  separators fall away, and `fitTitle` drops words by sibling rarity when rows run short.
+  The block face is used only when **every** word of the title sets within the line;
+  otherwise the whole headline goes to caps, so a too-wide word never degrades into a
+  lone generic leftover (`session-1` at 26 cells → `SESSION 1`, not a giant `1`). One
+  status line beneath (working · failed · idle, plus telemetry). Never renders while a
+  draft, ask, backtrack, or disclosure is live — input outranks ceremony. Captures:
+  `page-tiers/08-masthead-38` (block face), `09-masthead-32` (caps fallback), plus the
+  typing leg that dismisses and restores the tile.
+- **C61 options round — keyboard reach** ✅ 2026-08-21: `shift+tab` on an empty prompt
+  walks a fold cursor to older disclosable rows (wrapping to newest), `tab` toggles the
+  cursored row, `esc` or typing leaves; the cursored row borrows backtrack's inversion
+  (no new vocabulary) and a hint row names the keys; the reveal scrolls the row into
+  view. Captures `04-tool-row-keyboard-open` / `05-…-refolded`. Still owed from the round:
+  the creative-elevation candidates (arc-hued user stamps, turn-age fading, stamp column
+  as scroll map) as C40 renders for Jordan's pick.
+- **C66 (1pt) — slug display grammar** — partial ✅ 2026-08-21: `tui/slug.ts` is the one
+  renderer (`slugParts` → lit words, `textDim` separators, `accentSoft` colon;
+  `slugWords` → human words), applied to overview rows and the masthead. **Constraint of
+  record:** OpenTUI's border `title` is a single-color string, so the title-bar rung
+  waits on keywork drawing its own top border (or an upstream styled title) — left
+  honest rather than faked.
+- **C55** not started: the gauge needs the model's `contextWindow` and the turn's context
+  tokens, which arrive with IR-G1's `ModelSpec`/binding; the title-bar telemetry zone is
+  the ready seam.
+
 ## Tasks
 
 IDs continue the C-scheme. Same scale and style as the workstream files.

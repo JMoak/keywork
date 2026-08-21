@@ -173,10 +173,25 @@ export const livenessMark: Record<SessionLiveness, string> = {
   idle: "░",
 };
 
-export function overviewRowLine(row: SessionOverviewRow, cursored: boolean): string {
+export interface OverviewRowParts {
+  readonly lead: string;
+  readonly title: string;
+  readonly tail: string;
+}
+
+export function overviewRowParts(row: SessionOverviewRow, cursored: boolean): OverviewRowParts {
   const arc = row.arc === undefined ? "" : ` #${row.arc}`;
   const counts = cursored ? ` · ${countSummary(row)}` : "";
-  return `${livenessMark[row.liveness]} ${row.title} · ${row.age}${arc}${counts}`;
+  return {
+    lead: `${livenessMark[row.liveness]} `,
+    title: row.title,
+    tail: ` · ${row.age}${arc}${counts}`,
+  };
+}
+
+export function overviewRowLine(row: SessionOverviewRow, cursored: boolean): string {
+  const { lead, title, tail } = overviewRowParts(row, cursored);
+  return `${lead}${title}${tail}`;
 }
 
 export function relativeAge(nowMs: number, thenMs: number): string {

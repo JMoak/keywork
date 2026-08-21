@@ -11,6 +11,14 @@ import {
   underline,
 } from "@opentui/core";
 import {
+  density,
+  type GlyphSupport,
+  resolveMark,
+  resolveRamp,
+  type TieredRamp,
+  tile,
+} from "./capability.ts";
+import {
   type CommandsPort,
   ConversationModel,
   type ConversationPorts,
@@ -21,8 +29,10 @@ import type { DiffLine } from "./diff-render.ts";
 import type { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import type { MarkdownSpan, MarkdownTone } from "./markdown.ts";
+import { assumedGlyphs, type PageMarks, pageMarks } from "./marks.ts";
+import { headline } from "./masthead.ts";
 import { type Animator, inkAt } from "./motion.ts";
-import { type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
+import { type PageGrammar, type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
@@ -31,14 +41,27 @@ import { titleBar } from "./title-bar.ts";
 import { trayBox, trayRows } from "./tray.ts";
 
 const askDiffRows = 10;
-const pulseRamp = ["▓", "█"] as const;
-const workRamp = ["░", "▒", "▓"] as const;
-const drainRamp = ["░", "▒", "▓", "█"] as const;
+const mastheadStatusRows = 1;
+
+const lifecycleRamps = {
+  pulse: { tier1: ["▓", "█"], tier0: ["+", "#"] },
+  work: { tier1: ["░", "▒", "▓"], tier0: [".", ":", "+"] },
+  drain: density,
+} satisfies Record<string, TieredRamp>;
+
+interface LifecycleGlyphs {
+  readonly pulse: readonly string[];
+  readonly work: readonly string[];
+  readonly drain: readonly string[];
+  readonly finished: string;
+  readonly failed: string;
+}
 
 export interface ConversationPaneOptions {
   ports?: ConversationPorts;
   initialDraft?: string;
   page?: PageThresholds;
+  glyphs?: GlyphSupport;
   animator?: Animator;
   siblingTitles?: () => readonly string[];
 }
@@ -47,6 +70,9 @@ export class ConversationPane implements Pane {
   sessionId: string | undefined;
   private readonly model: ConversationModel;
   private readonly pageThresholds: PageThresholds;
+  private readonly glyphs: GlyphSupport;
+  private readonly marks: PageMarks;
+  private readonly lifecycle: LifecycleGlyphs;
   private closed = false;
   private lastLines: readonly TranscriptLine[] = [];
   private lastMaxRows = 0;
@@ -69,6 +95,9 @@ export class ConversationPane implements Pane {
   ) {
     this.model = new ConversationModel(agent, notify, titler, commands, options?.ports);
     this.pageThresholds = options?.page ?? pageTierThresholds;
+    this.glyphs = options?.glyphs ?? assumedGlyphs;
+    this.marks = pageMarks(this.glyphs);
+    this.lifecycle = lifecycleGlyphs(this.glyphs);
     this.animator = options?.animator;
     this.siblingTitles = options?.siblingTitles;
     if (options?.initialDraft !== undefined) this.model.buffer.load(options.initialDraft);
@@ -234,42 +263,86 @@ export class ConversationPane implements Pane {
   }
 
   private stampGlyph(): string | undefined {
-    if (this.model.pendingAsk !== undefined) return inkAt(pulseRamp, this.pulseInk);
-    if (this.model.busy) return workRamp[this.model.activity % workRamp.length];
-    if (this.drainInk !== undefined) return inkAt(drainRamp, this.drainInk);
-    if (this.unseen === "failed") return "▛";
-    if (this.unseen === "finished") return "█";
+    const glyphs = this.lifecycle;
+    if (this.model.pendingAsk !== undefined) return inkAt(glyphs.pulse, this.pulseInk);
+    if (this.model.busy) return glyphs.work[this.model.activity % glyphs.work.length];
+    if (this.drainInk !== undefined) return inkAt(glyphs.drain, this.drainInk);
+    if (this.unseen === "failed") return glyphs.failed;
+    if (this.unseen === "finished") return glyphs.finished;
     return undefined;
   }
 
   view(context: PaneContext): PaneView {
+    const page = resolvePage(context.width, this.pageThresholds);
+    return this.wearsMasthead(page)
+      ? this.mastheadView(context)
+      : this.transcriptView(context, page);
+  }
+
+  private wearsMasthead(page: PageGrammar): boolean {
+    return (
+      page.masthead &&
+      this.model.buffer.isEmpty() &&
+      this.model.pendingAsk === undefined &&
+      !this.model.backtracking() &&
+      !this.model.disclosing()
+    );
+  }
+
+  private mastheadView(context: PaneContext): PaneView {
     const { theme, focused, width, height } = context;
     const innerWidth = paneContentWidth(width);
-    const page = resolvePage(width, this.pageThresholds);
+    const prompt = promptLines(this.model.buffer, focused);
+    const head = headline(this.model.title ?? this.id, {
+      width: innerWidth,
+      rows: Math.max(0, paneContentHeight(height) - mastheadStatusRows - prompt.length),
+      glyphs: this.glyphs,
+      siblings: this.siblingTitles?.(),
+    });
+    this.lastLines = [];
+    this.lastMaxRows = 0;
+    return paneChrome(
+      context,
+      this.composedTitle(context),
+      Box(
+        { flexGrow: 1, flexDirection: "column", overflow: "hidden" },
+        ...head.lines.map((line) => Text({ content: line || " ", fg: theme.text })),
+        Text({ content: clipCells(this.mastheadStatus(), innerWidth), fg: theme.textMid }),
+      ),
+      ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
+    );
+  }
+
+  private mastheadStatus(): string {
+    const state = this.model.busy
+      ? "working"
+      : this.model.entries.at(-1)?.kind === "error"
+        ? "failed"
+        : "idle";
+    const telemetry = this.model.usageSummary();
+    return telemetry === "" ? state : `${state} · ${telemetry}`;
+  }
+
+  private transcriptView(context: PaneContext, page: PageGrammar): PaneView {
+    const { theme, focused, width, height } = context;
+    const innerWidth = paneContentWidth(width);
     const suggestions = focused ? this.model.suggestions() : [];
     const prompt = promptLines(this.model.buffer, focused);
     const queued = this.model.queued();
     const ask = this.model.pendingAsk;
     const diffRows = ask?.diff === undefined ? [] : this.askDiffRows(theme);
-    const backtrackHint = this.model.backtracking()
-      ? [
-          Text({
-            content: "backtrack · ↑ older · ↓ newer · enter edit & fork · esc cancel",
-            fg: theme.accent,
-          }),
-        ]
-      : [];
+    const keyHint = this.keyHint(theme);
     const trayChromeRows = 2;
     const reservedRows =
       (suggestions.length === 0 ? 0 : suggestions.length + trayChromeRows) +
       prompt.length +
       queued.length +
       diffRows.length +
-      backtrackHint.length +
+      keyHint.length +
       (ask === undefined ? 0 : 1) +
       (this.model.scrollBack > 0 ? 1 : 0);
     const maxRows = Math.max(0, paneContentHeight(height) - reservedRows);
-    const lines = this.model.visibleTranscript(innerWidth, maxRows, page);
+    const lines = this.model.visibleTranscript(innerWidth, maxRows, page, this.marks);
     this.lastLines = lines;
     this.lastMaxRows = maxRows;
     const scrollBack = this.model.scrollBack;
@@ -301,9 +374,29 @@ export class ConversationPane implements Pane {
           ]),
       ...diffRows,
       ...(ask === undefined ? [] : [askRow(ask.summary, innerWidth, theme)]),
-      ...backtrackHint,
+      ...keyHint,
       ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
     );
+  }
+
+  private keyHint(theme: Theme) {
+    if (this.model.backtracking()) {
+      return [
+        Text({
+          content: "backtrack · ↑ older · ↓ newer · enter edit & fork · esc cancel",
+          fg: theme.accent,
+        }),
+      ];
+    }
+    if (this.model.disclosing()) {
+      return [
+        Text({
+          content: "disclose · tab toggles · shift+tab older · esc done",
+          fg: theme.accent,
+        }),
+      ];
+    }
+    return [];
   }
 
   private askDiffRows(theme: Theme) {
@@ -406,10 +499,45 @@ function spanColor(tone: MarkdownTone, theme: Theme): string {
     case "meta":
       return theme.textMid;
     case "ok":
+    case "added":
+    case "string":
       return theme.success;
     case "bad":
+    case "removed":
       return theme.error;
+    case "keyword":
+      return rampStop(theme, 0);
+    case "type":
+      return rampStop(theme, 1);
+    case "constant":
+      return rampStop(theme, 2);
+    case "comment":
+    case "hunk":
+      return theme.textDim;
+    case "punctuation":
+      return theme.textMid;
   }
+}
+
+function rampStop(theme: Theme, stop: number): string {
+  return theme.ramp[Math.min(stop, theme.ramp.length - 1)] ?? theme.accent;
+}
+
+function clipCells(text: string, width: number): string {
+  const points = Array.from(text);
+  if (points.length <= width) return text;
+  return width < 1 ? "" : `${points.slice(0, width - 1).join("")}…`;
+}
+
+function lifecycleGlyphs(glyphs: GlyphSupport): LifecycleGlyphs {
+  const drain = resolveRamp(lifecycleRamps.drain, glyphs);
+  return {
+    pulse: resolveRamp(lifecycleRamps.pulse, glyphs),
+    work: resolveRamp(lifecycleRamps.work, glyphs),
+    drain,
+    finished: drain.at(-1) ?? "#",
+    failed: resolveMark(tile.failed, glyphs),
+  };
 }
 
 function diffRow(line: DiffLine, theme: Theme) {

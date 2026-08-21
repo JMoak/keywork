@@ -1,4 +1,6 @@
 import { CommandRegistry } from "./commands.ts";
+import { ConnectModel } from "./connect-model.ts";
+import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import { Keymap } from "./keymap.ts";
 import { type Chord, formatChord } from "./keys.ts";
 import {
@@ -10,6 +12,7 @@ import {
   type Rect,
   type Screen,
 } from "./layout.ts";
+import { ModelPicker } from "./model-picker.ts";
 import type { FileOpenOptions, Pane, PaneIntents } from "./pane.ts";
 import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
 import { captureWorkspace, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
@@ -280,6 +283,10 @@ export interface AppCoreOptions {
   isDirectory?: (path: string) => boolean;
   undo?: UndoPort;
   presets?: PresetsPort;
+  inference?: InferencePort;
+  connections?: ConnectionsPort;
+  currentModel?: () => string | undefined;
+  switchModel?: (reference: string) => Promise<string>;
   restoreWorkspace?: WorkspaceState;
   saveWorkspace?: (state: WorkspaceState) => void;
   onPaneClosed?: (id: string) => void;
@@ -331,7 +338,7 @@ export interface AppSnapshot {
   panes: PaneSnapshot[];
   focused: string | undefined;
   zoomed: string | undefined;
-  overlay: "palette" | "help" | "preset" | "preset-confirm" | undefined;
+  overlay: Overlay["kind"] | undefined;
   paletteQuery: string;
   leaderArmed: boolean;
   lastKey: string;
@@ -355,7 +362,9 @@ type Overlay =
   | PaletteOverlay
   | { kind: "help" }
   | { kind: "preset"; names: readonly string[]; index: number }
-  | { kind: "preset-confirm"; name: string };
+  | { kind: "preset-confirm"; name: string }
+  | { kind: "model"; picker: ModelPicker }
+  | { kind: "connect"; model: ConnectModel };
 
 export class AppCore {
   readonly layout = new Layout();
@@ -488,6 +497,14 @@ export class AppCore {
     }
     if (this.overlay?.kind === "preset-confirm") {
       this.handlePresetConfirmKey(this.overlay.name, chord);
+      return;
+    }
+    if (this.overlay?.kind === "model") {
+      this.handleModelKey(this.overlay.picker, chord, sequence);
+      return;
+    }
+    if (this.overlay?.kind === "connect") {
+      if (this.overlay.model.handleKey(chord, sequence) === "close") this.overlay = undefined;
       return;
     }
     const result = this.keymap.press(chord, nowMs, repeat);
@@ -636,6 +653,68 @@ export class AppCore {
     const port = this.options.presets;
     if (port === undefined || this.overlay?.kind !== "preset-confirm") return undefined;
     return { from: port.active(), to: this.overlay.name };
+  }
+
+  openModelPicker(argument = ""): void {
+    const port = this.options.inference;
+    if (port === undefined) return;
+    const reference = argument.trim();
+    if (reference !== "") {
+      this.selectModel(reference);
+      return;
+    }
+    this.overlay = {
+      kind: "model",
+      picker: new ModelPicker(port.choices(), this.options.currentModel?.()),
+    };
+  }
+
+  modelPicker(): ModelPicker | undefined {
+    return this.overlay?.kind === "model" ? this.overlay.picker : undefined;
+  }
+
+  openConnect(argument = ""): void {
+    const port = this.options.connections;
+    if (port === undefined) return;
+    const model = new ConnectModel(port, {
+      notify: () => this.notify(),
+      chooseModel: () => this.openModelPicker(),
+      notice: (text) => this.showNotice(text),
+    });
+    model.open(argument);
+    this.overlay = { kind: "connect", model };
+  }
+
+  connectModel(): ConnectModel | undefined {
+    return this.overlay?.kind === "connect" ? this.overlay.model : undefined;
+  }
+
+  private handleModelKey(picker: ModelPicker, chord: Chord, sequence: string | undefined): void {
+    const outcome = picker.handleKey(chord, sequence);
+    if (outcome === "stay") return;
+    if (outcome === "close") {
+      this.overlay = undefined;
+      return;
+    }
+    const chosen = picker.selected();
+    if (chosen === undefined) return;
+    this.overlay = undefined;
+    this.selectModel(chosen.reference);
+  }
+
+  private selectModel(reference: string): void {
+    const port = this.options.inference;
+    const switchModel = this.options.switchModel;
+    if (port === undefined || switchModel === undefined) return;
+    const notice = port.describe(reference);
+    if (!notice.ok) {
+      this.showNotice(`${notice.message} · ${notice.nextAction ?? ""}`.trim());
+      return;
+    }
+    switchModel(reference)
+      .then((text) => this.showNotice(text))
+      .catch((cause: unknown) => this.showNotice((cause as Error).message))
+      .finally(() => this.notify());
   }
 
   shutdown(): void {
@@ -1126,6 +1205,22 @@ export class AppCore {
         aliases: ["presets"],
         description: "switch the permissions preset: /preset",
         run: () => this.openPresetPicker(),
+      });
+    }
+    if (this.options.inference !== undefined) {
+      this.registry.register({
+        name: "model",
+        aliases: ["models"],
+        description: "pick the model for this session: /model [provider/model]",
+        run: (args) => this.openModelPicker(args),
+      });
+    }
+    if (this.options.connections !== undefined) {
+      this.registry.register({
+        name: "connect",
+        aliases: ["setup", "new-provider"],
+        description: "add or verify an inference provider: /connect [target|url]",
+        run: (args) => this.openConnect(args),
       });
     }
     const undoPort = this.options.undo;

@@ -1,4 +1,4 @@
-import { Text } from "@opentui/core";
+import { fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import { type Chord, parseChord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
@@ -18,11 +18,13 @@ import {
 } from "./session-tree-model.ts";
 import {
   overviewRowLine,
+  overviewRowParts,
   type SessionOverviewItem,
   type SessionOverviewRow,
   type SessionPresence,
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
+import { slugChunks, slugInk } from "./slug.ts";
 import type { Theme } from "./theme.ts";
 
 export interface SessionTreePort {
@@ -243,11 +245,14 @@ export class SessionTreePane implements Pane {
   }
 
   private overviewLine(row: SessionOverviewRow, selected: boolean, theme: Theme, width: number) {
-    const content = overviewRowLine(row, selected).slice(0, width);
     if (selected) {
+      const content = overviewRowLine(row, selected).slice(0, width);
       return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
     }
-    return Text({ content, fg: row.current ? theme.accentSoft : theme.text });
+    const color = row.current ? theme.accentSoft : theme.text;
+    const { lead, title, tail } = overviewRowParts(row, selected);
+    const chunks = [fg(color)(lead), ...slugChunks(title, slugInk(theme, color)), fg(color)(tail)];
+    return Text({ content: new StyledText(clipChunks(chunks, width)) });
   }
 
   private entryLines(theme: Theme, rows: number, width: number) {
@@ -340,4 +345,18 @@ function entryRowText(row: SessionTreeRow): string {
   const marker = row.onActivePath ? "●" : "○";
   const label = row.label === undefined ? "" : ` [${row.label}]`;
   return `${indent}${affordance}${marker} ${row.text}${label}`;
+}
+
+function clipChunks(chunks: readonly TextChunk[], width: number): TextChunk[] {
+  const clipped: TextChunk[] = [];
+  let used = 0;
+  for (const chunk of chunks) {
+    const points = Array.from(chunk.text);
+    const room = width - used;
+    if (room <= 0) break;
+    const text = points.length <= room ? chunk.text : points.slice(0, room).join("");
+    clipped.push({ ...chunk, text });
+    used += Math.min(points.length, room);
+  }
+  return clipped;
 }

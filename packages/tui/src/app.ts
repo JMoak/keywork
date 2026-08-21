@@ -5,6 +5,7 @@ import {
   type Agent,
   checkpointForPrompt,
   type Message,
+  modelReferenceOf,
   type SessionTreeNode,
   type ToolCallPart,
   type ToolGuard,
@@ -21,8 +22,10 @@ import {
 import { AppCore, bindingHelp, helpFrame, type PresetsPort, paletteFrame } from "./app-core.ts";
 import { promptAnchor } from "./backtrack.ts";
 import { BrowserPane } from "./browser-pane.ts";
+import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import { paneBorder, rampPositions } from "./chroma.ts";
 import type { CommandSpec } from "./commands.ts";
+import type { ConnectModel, EditorField } from "./connect-model.ts";
 import type { ConversationPorts, ForkOutcome, Titler } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import {
@@ -33,12 +36,14 @@ import {
 } from "./extension-commands.ts";
 import { FilePane } from "./file-pane.ts";
 import { FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
+import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import type { Keymap } from "./keymap.ts";
 import { chordOf } from "./keys.ts";
 import { minPaneSize, type Rect, type Screen } from "./layout.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+import { describeChoice, type ModelPicker } from "./model-picker.ts";
 import { Animator } from "./motion.ts";
 import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
 import type { FileOpenOptions, PaneView } from "./pane.ts";
@@ -58,10 +63,12 @@ export interface CheckpointsPort {
 export interface SessionAttachment {
   id: string;
   name?: string;
+  modelReference?: string;
   history: readonly Message[];
   replay(bus: Agent["bus"]): void;
   append(message: Message): Promise<void>;
   rename?(name: string): Promise<void>;
+  recordModel?(reference: string): Promise<void>;
 }
 
 export interface SessionPort {
@@ -80,6 +87,7 @@ export interface AgentSeams {
   sessionId(): string | undefined;
   discloseRetrieval(text: string): void;
   bus?: Agent["bus"];
+  modelReference?: string;
 }
 
 export type AgentFactory = (
@@ -92,11 +100,13 @@ export type AgentFactory = (
 export interface SessionTurn {
   sessionId: string;
   history: readonly Message[];
+  agent: Agent;
 }
 
 export interface AppOptions {
   themeOverrides?: ThemeOverrides;
   page?: PageThresholdOverrides;
+  glyphs?: GlyphSupport;
   agentFactory?: AgentFactory;
   afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
   closers?: readonly Closer[];
@@ -104,6 +114,8 @@ export interface AppOptions {
   createRenderer?: () => Promise<CliRenderer>;
   exit?: (code: number) => void;
   presets?: PresetsPort;
+  inference?: InferencePort;
+  connections?: ConnectionsPort;
   titler?: Titler;
   statusLabel?: string | (() => string);
   checkpoints?: CheckpointsPort;
@@ -118,6 +130,7 @@ export interface AppOptions {
 export async function runApp(options: AppOptions = {}): Promise<void> {
   const flavors = new FlavorSwitch(startupFlavors(options.themeOverrides));
   const pageThresholds = resolvePageThresholds(options.page);
+  const glyphs: GlyphSupport = options.glyphs ?? detectCapabilities();
   const restored = await loadRestorePlan(options);
   const renderer = await (options.createRenderer ?? defaultRenderer)();
   const exit = options.exit ?? ((code: number) => process.exit(code));
@@ -133,6 +146,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const memoryPort = options.memory;
   const mcpPort = options.mcp;
   const agentSwitchers = new Map<string, (agentName: string | undefined) => boolean>();
+  const modelSwitchers = new Map<string, (reference: string) => Promise<string>>();
   const paneSessions = paneSessionIndex(options.sessions);
   let closed = false;
   let armedExpiry: ReturnType<typeof setTimeout> | undefined;
@@ -150,11 +164,23 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       const attachment =
         resumeSessionId === undefined ? undefined : attachments.get(resumeSessionId);
       if (resumeSessionId !== undefined) attachments.delete(resumeSessionId);
+      let selectedModel = attachment?.modelReference;
+      const modelInForce = (): string | undefined => {
+        const current = pane?.currentAgent();
+        return (
+          (current === undefined ? undefined : modelReferenceOf(current.provider)) ?? selectedModel
+        );
+      };
       const seams: AgentSeams = {
         sessionId: () => pane?.sessionId,
         discloseRetrieval: (text) => pane?.discloseRetrieval(text),
       };
-      const agent = options.agentFactory?.(guard, attachment?.history, seams);
+      const seamsFor = (bus?: Agent["bus"], modelReference = modelInForce()): AgentSeams => ({
+        ...seams,
+        ...(bus !== undefined && { bus }),
+        ...(modelReference !== undefined && { modelReference }),
+      });
+      const initial = buildAgent(options.agentFactory, guard, attachment?.history, seamsFor());
       let liveSession: SessionAttachment | undefined;
       const titler = persistingTitler(options.titler, () => liveSession);
       const ports: ConversationPorts = {
@@ -168,10 +194,12 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
             ordinal,
             promptDraft,
           ),
+        ...(initial.failure !== undefined && { idleNotice: initial.failure }),
       };
-      const created = new ConversationPane(id, agent, notify, titler, commands, {
+      const created = new ConversationPane(id, initial.agent, notify, titler, commands, {
         ports,
         page: pageThresholds,
+        glyphs,
         animator,
         siblingTitles: () => paneSiblingTitles(core, id),
         ...(draft !== undefined && { initialDraft: draft }),
@@ -186,26 +214,33 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         const factory = options.agentFactory;
         const current = created.currentAgent();
         if (factory === undefined || current === undefined || current.busy()) return false;
-        created.swapAgent(
-          factory(guard, current.history(), { ...seams, bus: current.bus }, agentName),
-        );
+        created.swapAgent(factory(guard, current.history(), seamsFor(current.bus), agentName));
         return true;
+      });
+      modelSwitchers.set(id, async (reference) => {
+        const factory = options.agentFactory;
+        if (factory === undefined) throw new Error("no inference runtime in this session");
+        const current = created.currentAgent();
+        if (current?.busy() === true) throw new Error("agent busy · finish the turn first");
+        const next = factory(guard, current?.history(), seamsFor(current?.bus, reference));
+        await liveSession?.recordModel?.(reference);
+        selectedModel = reference;
+        created.swapAgent(next);
+        return `model → ${modelReferenceOf(next.provider) ?? reference}`;
       });
       const wireSession = (adopted: SessionAttachment): void => {
         liveSession = adopted;
-        adoptSession(created, agent, adopted);
-        if (agent === undefined) return;
+        adoptSession(created, initial.agent, adopted);
         bindSessionLifecycle({
           pane: created,
-          agent,
           attachment: adopted,
+          modelInForce,
           ...(options.afterTurn !== undefined && { afterTurn: options.afterTurn }),
-          rebuild: (history) =>
-            options.agentFactory?.(guard, history, { ...seams, bus: agent.bus }),
+          rebuild: (history, agent) => options.agentFactory?.(guard, history, seamsFor(agent.bus)),
         });
       };
       if (attachment !== undefined) wireSession(attachment);
-      else if (resumeSessionId === undefined && agent !== undefined) {
+      else if (resumeSessionId === undefined) {
         startFreshSession(options.sessions, notify, wireSession, () => !created.disposed());
       }
       return created;
@@ -231,6 +266,18 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       statSync(resolve(process.cwd(), path), { throwIfNoEntry: false })?.isDirectory() === true,
     ...(checkpoints !== undefined && { undo: checkpoints }),
     ...(options.presets !== undefined && { presets: options.presets }),
+    ...(options.inference !== undefined && { inference: options.inference }),
+    ...(options.connections !== undefined && { connections: options.connections }),
+    currentModel: () => {
+      const agent = focusedConversationPane(core)?.pane.currentAgent();
+      return agent === undefined ? undefined : modelReferenceOf(agent.provider);
+    },
+    switchModel: (reference) => {
+      const found = focusedConversationPane(core);
+      const switcher = found === undefined ? undefined : modelSwitchers.get(found.id);
+      if (switcher === undefined) return Promise.reject(new Error("no conversation pane here"));
+      return switcher(reference);
+    },
     ...(restored !== undefined && { restoreWorkspace: restored.state }),
     ...(options.workspace !== undefined && {
       saveWorkspace: (state: WorkspaceState) => options.workspace?.save(state),
@@ -323,6 +370,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     if (core.paletteOpen) renderer.root.add(paletteOverlay(core, theme, screen()));
     const preset = presetOverlay(core, theme, screen());
     if (preset !== undefined) renderer.root.add(preset);
+    const model = modelOverlay(core, theme, screen());
+    if (model !== undefined) renderer.root.add(model);
+    const connect = connectOverlay(core, theme, screen());
+    if (connect !== undefined) renderer.root.add(connect);
     renderer.requestRender();
   };
 
@@ -594,19 +645,41 @@ function conversationTarget(
   core: AppCore,
   switchers: ReadonlyMap<string, (agentName: string | undefined) => boolean>,
 ): ConversationTarget | undefined {
+  const found = focusedConversationPane(core);
+  if (found === undefined) return undefined;
+  const { id, pane } = found;
+  return {
+    confirmShell: (command) => pane.confirmMutation(shellConfirmCall(command)),
+    submitPrompt: (text) => pane.submitPrompt(text),
+    switchAgent: (agentName) => switchers.get(id)?.(agentName) ?? false,
+  };
+}
+
+function focusedConversationPane(
+  core: AppCore,
+): { id: string; pane: ConversationPane } | undefined {
   const focused = core.layout.focused();
   const ids = core.layout.panes();
   const ordered = focused === undefined ? ids : [focused, ...ids.filter((id) => id !== focused)];
   for (const id of ordered) {
     const pane = core.panes.get(id);
-    if (!(pane instanceof ConversationPane)) continue;
-    return {
-      confirmShell: (command) => pane.confirmMutation(shellConfirmCall(command)),
-      submitPrompt: (text) => pane.submitPrompt(text),
-      switchAgent: (agentName) => switchers.get(id)?.(agentName) ?? false,
-    };
+    if (pane instanceof ConversationPane) return { id, pane };
   }
   return undefined;
+}
+
+function buildAgent(
+  factory: AgentFactory | undefined,
+  guard: ToolGuard,
+  history: readonly Message[] | undefined,
+  seams: AgentSeams,
+): { agent?: Agent; failure?: string } {
+  if (factory === undefined) return {};
+  try {
+    return { agent: factory(guard, history, seams) };
+  } catch (cause) {
+    return { failure: (cause as Error).message };
+  }
 }
 
 export function attachOnFork(
@@ -737,8 +810,8 @@ function persistingTitler(
   session: () => SessionAttachment | undefined,
 ): Titler | undefined {
   if (titler === undefined) return undefined;
-  return async (conversation) => {
-    const title = await titler(conversation);
+  return async (conversation, agent) => {
+    const title = await titler(conversation, agent);
     if (title !== undefined)
       void session()
         ?.rename?.(title)
@@ -749,24 +822,32 @@ function persistingTitler(
 
 export interface SessionLifecycleOptions {
   pane: ConversationPane;
-  agent: Agent;
   attachment: SessionAttachment;
+  modelInForce?: () => string | undefined;
   afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
-  rebuild?: (history: readonly Message[]) => Agent | undefined;
+  rebuild?: (history: readonly Message[], agent: Agent) => Agent | undefined;
 }
 
 export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
   const { pane, attachment } = options;
   let persisted = attachment.history.length;
+  let modelRecorded = attachment.modelReference !== undefined;
   pane.bindAfterTurn(async () => {
-    const agent = pane.currentAgent() ?? options.agent;
+    const agent = pane.currentAgent();
+    if (agent === undefined) return;
     const fresh = agent.history().slice(persisted);
     persisted += fresh.length;
+    if (!modelRecorded && fresh.length > 0) {
+      modelRecorded = true;
+      const reference = modelReferenceOf(agent.provider) ?? options.modelInForce?.();
+      if (reference !== undefined) await attachment.recordModel?.(reference);
+    }
     for (const message of fresh) await attachment.append(message);
     const joined =
-      (await options.afterTurn?.({ sessionId: attachment.id, history: agent.history() })) ?? [];
+      (await options.afterTurn?.({ sessionId: attachment.id, history: agent.history(), agent })) ??
+      [];
     if (joined.length === 0 || pane.disposed()) return;
-    const next = options.rebuild?.([...agent.history(), ...joined]);
+    const next = options.rebuild?.([...agent.history(), ...joined], agent);
     if (next === undefined) return;
     persisted = next.history().length;
     pane.swapAgent(next);
@@ -1018,6 +1099,147 @@ function presetRows(core: AppCore, theme: Theme) {
     rows.push(Text({ content: `  ${picker.active} · active (edited config)`, fg: theme.textDim }));
   }
   return rows;
+}
+
+function modelOverlay(core: AppCore, theme: Theme, screen: Screen) {
+  const picker = core.modelPicker();
+  if (picker === undefined) return undefined;
+  const rows = modelRows(picker, theme);
+  const frame = paletteFrame(screen, rows.length);
+  const innerWidth = overlayInnerWidth(frame);
+  return Box(
+    {
+      ...overlayPosition(frame),
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " model ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    Text({ content: clipLine(` › ${picker.query}▌`, innerWidth), fg: theme.text }),
+    ...(rows.length > 0
+      ? rows
+      : [Text({ content: "  nothing matches · /connect adds a provider", fg: theme.textDim })]),
+  );
+}
+
+function modelRows(picker: ModelPicker, theme: Theme) {
+  return picker.rows().map(({ choice, selected, current }) =>
+    Text({
+      content: `${selected ? "▸" : " "} ${describeChoice(choice)}${current ? " · current" : ""}`,
+      fg: selected ? theme.accent : choice.available ? theme.text : theme.textDim,
+    }),
+  );
+}
+
+function connectOverlay(core: AppCore, theme: Theme, screen: Screen) {
+  const model = core.connectModel();
+  if (model === undefined) return undefined;
+  const rows = connectRows(model, theme);
+  const frame = helpFrame(screen, rows.length);
+  return Box(
+    {
+      ...overlayPosition(frame),
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " connect ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    ...rows,
+  );
+}
+
+function connectRows(model: ConnectModel, theme: Theme) {
+  const { stage } = model;
+  switch (stage.kind) {
+    case "targets":
+      return model.targetRows().map((row, index) =>
+        Text({
+          content: `${index === stage.index ? "▸" : " "} ${row.label} · ${row.detail}`,
+          fg: index === stage.index ? theme.accent : theme.text,
+        }),
+      );
+    case "editor":
+      return [
+        ...model.fields().map((field, index) => editorRow(field, index === stage.field, theme)),
+        Text({
+          content: " ↑↓ field · type to edit · ←→ toggle · enter acts · esc discards",
+          fg: theme.textDim,
+        }),
+      ];
+    case "verifying":
+      return [Text({ content: ` verifying ${stage.draft.endpoint}/models …`, fg: theme.text })];
+    case "failed":
+      return [
+        Text({ content: ` not saved · ${stage.reason}`, fg: theme.accent }),
+        Text({
+          content: ` observed ${stage.at} · any key returns to the editor`,
+          fg: theme.textDim,
+        }),
+      ];
+    case "receipt":
+      return [
+        Text({ content: ` saved ${stage.draft.name} · ${stage.draft.endpoint}`, fg: theme.text }),
+        Text({ content: ` verified ${stage.at} · ${modelsFact(stage.models)}`, fg: theme.textDim }),
+        Text({ content: " enter choose a model · esc done", fg: theme.accent }),
+      ];
+    case "remove-confirm":
+      return [
+        Text({
+          content: ` remove connection ${stage.name} and its ${stage.credential}?`,
+          fg: theme.text,
+        }),
+        Text({ content: " y remove · n keep", fg: theme.accent }),
+      ];
+    case "removed":
+      return [
+        Text({
+          content: ` removed ${stage.receipt.removed.join(", ") || "nothing"}`,
+          fg: theme.text,
+        }),
+        ...stage.receipt.retained.map((fact) =>
+          Text({ content: ` kept ${fact}`, fg: theme.textDim }),
+        ),
+        Text({ content: " any key closes", fg: theme.accent }),
+      ];
+  }
+}
+
+function editorRow(field: EditorField, selected: boolean, theme: Theme) {
+  const value =
+    field.kind === "secret"
+      ? field.value === ""
+        ? "(saved or none)"
+        : "•".repeat(field.value.length)
+      : field.value;
+  const shown =
+    field.kind === "toggle"
+      ? `‹ ${value} ›`
+      : field.kind === "action" || field.kind === "danger"
+        ? value
+        : `${value}${selected ? "▌" : ""}`;
+  const fg = selected ? theme.accent : field.kind === "danger" ? theme.textDim : theme.text;
+  return Text({ content: `${selected ? "▸" : " "} ${field.label.padEnd(12)} ${shown}`, fg });
+}
+
+function modelsFact(models: readonly string[]): string {
+  if (models.length === 0) return "no models reported";
+  return models.length === 1
+    ? `1 model reported: ${models[0]}`
+    : `${models.length} models reported`;
 }
 
 function helpOverlay(keymap: Keymap, theme: Theme, screen: Screen) {

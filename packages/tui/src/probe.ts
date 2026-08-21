@@ -20,6 +20,10 @@ export interface AppProbeOptions
       | "isDirectory"
       | "undo"
       | "presets"
+      | "inference"
+      | "connections"
+      | "currentModel"
+      | "switchModel"
       | "restoreWorkspace"
       | "saveWorkspace"
       | "onPaneClosed"
@@ -57,6 +61,10 @@ export class AppProbe {
       ...(options.isDirectory !== undefined && { isDirectory: options.isDirectory }),
       ...(options.undo !== undefined && { undo: options.undo }),
       ...(options.presets !== undefined && { presets: options.presets }),
+      ...(options.inference !== undefined && { inference: options.inference }),
+      ...(options.connections !== undefined && { connections: options.connections }),
+      ...(options.currentModel !== undefined && { currentModel: options.currentModel }),
+      ...(options.switchModel !== undefined && { switchModel: options.switchModel }),
       ...(options.restoreWorkspace !== undefined && {
         restoreWorkspace: options.restoreWorkspace,
       }),

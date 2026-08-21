@@ -257,7 +257,6 @@ describe("bindSessionLifecycle", () => {
     const pane = new ConversationPane("session-1", agent, () => {});
     bindSessionLifecycle({
       pane,
-      agent,
       attachment,
       afterTurn: async () => [textMessage("user", "joined")],
       rebuild: () => next,

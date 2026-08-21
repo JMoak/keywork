@@ -15,6 +15,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { ConversationModel, type TranscriptEntry, transcriptLines } from "./conversation-model.ts";
 import { parseChord } from "./keys.ts";
+import { pageMarks } from "./marks.ts";
 import { resolvePage } from "./page.ts";
 
 const echoTool: Tool = {
@@ -1127,5 +1128,118 @@ describe("the voice rail and tool rows", () => {
     const rows = model.visibleTranscript(40, 40).filter((line) => line.kind === "tool");
     expect(rows).toHaveLength(1);
     expect(Array.from(rows[0]?.text ?? "").length).toBeLessThanOrEqual(38);
+  });
+});
+
+describe("keyboard disclosure of older tool rows", () => {
+  const twoTools = (): Agent =>
+    new Agent({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "c1", name: "echo", arguments: { text: "one" } }),
+        toolCallTurn({ type: "tool-call", callId: "c2", name: "echo", arguments: { text: "two" } }),
+        textTurn("done"),
+      ]),
+      tools: [echoTool],
+    });
+
+  async function ranTwoTools(): Promise<ConversationModel> {
+    const model = new ConversationModel(twoTools(), () => {});
+    type(model, "go");
+    await submit(model);
+    return model;
+  }
+
+  const toolLines = (model: ConversationModel) =>
+    model.visibleTranscript(80, 40).filter((line) => line.kind === "tool");
+
+  it("walks the fold cursor to older rows with shift+tab and toggles them with tab", async () => {
+    const model = await ranTwoTools();
+    expect(model.disclosing()).toBe(false);
+
+    expect(model.handleKey(parseChord("shift+tab"), undefined)).toBe(true);
+    expect(model.disclosing()).toBe(true);
+    expect(toolLines(model).at(-1)?.selected).toBe(true);
+
+    expect(model.handleKey(parseChord("shift+tab"), undefined)).toBe(true);
+    const lines = toolLines(model);
+    expect(lines[0]?.selected).toBe(true);
+    expect(lines[1]?.selected).toBeUndefined();
+
+    expect(model.handleKey(parseChord("tab"), undefined)).toBe(true);
+    const open = toolLines(model);
+    expect(open[0]?.selected).toBe(true);
+    expect(open[1]?.spans?.[0]?.tone).toBe("rule");
+    expect(open[1]?.selected).toBeUndefined();
+    expect(open.some((line) => line.text === "echo: one")).toBe(true);
+    expect(open.some((line) => line.text === "echo: two")).toBe(false);
+  });
+
+  it("wraps from the oldest row back to the newest", async () => {
+    const model = await ranTwoTools();
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("shift+tab"), undefined);
+    expect(toolLines(model).at(-1)?.selected).toBe(true);
+  });
+
+  it("leaves disclosure on escape or typing, keeping the rows as they were", async () => {
+    const model = await ranTwoTools();
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("tab"), undefined);
+    expect(model.handleKey(parseChord("escape"), undefined)).toBe(true);
+    expect(model.disclosing()).toBe(false);
+    expect(toolLines(model).some((line) => line.text === "echo: two")).toBe(true);
+    expect(toolLines(model).every((line) => line.selected === undefined)).toBe(true);
+
+    model.handleKey(parseChord("shift+tab"), undefined);
+    type(model, "x");
+    expect(model.disclosing()).toBe(false);
+    expect(model.input).toBe("x");
+  });
+
+  it("does nothing when no row can be disclosed", () => {
+    const model = new ConversationModel(undefined, () => {});
+    expect(model.handleKey(parseChord("shift+tab"), undefined)).toBe(false);
+    expect(model.disclosing()).toBe(false);
+  });
+
+  it("scrolls the cursored row into view and returns to live on escape", async () => {
+    const model = await ranTwoTools();
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("shift+tab"), undefined);
+    const visible = model.visibleTranscript(80, 2);
+    expect(visible.some((line) => line.selected === true)).toBe(true);
+    expect(model.scrollBack).toBeGreaterThan(0);
+    model.handleKey(parseChord("escape"), undefined);
+    expect(model.scrollBack).toBe(0);
+  });
+});
+
+describe("tiered transcript marks", () => {
+  it("stamps voice and rules in ASCII at glyph tier 0", async () => {
+    const model = await (async () => {
+      const agent = new Agent({
+        provider: new MockProvider([
+          toolCallTurn({
+            type: "tool-call",
+            callId: "c1",
+            name: "echo",
+            arguments: { text: "hi" },
+          }),
+          textTurn("# Title\nbody"),
+        ]),
+        tools: [echoTool],
+      });
+      const built = new ConversationModel(agent, () => {});
+      type(built, "go");
+      await submit(built);
+      return built;
+    })();
+    const ascii = pageMarks({ glyphTier: 0, nerdFont: false });
+    model.handleKey(parseChord("tab"), undefined);
+    const lines = model.visibleTranscript(80, 40, resolvePage(80), ascii);
+    expect(lines.map((line) => line.stamp)).toEqual(["# ", ". ", "  ", "  ", "  ", "+ ", "  "]);
+    expect(lines[2]?.text).toBe("-".repeat(78));
+    expect(lines[5]?.text).toBe("= Title");
   });
 });

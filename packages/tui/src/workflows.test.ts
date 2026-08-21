@@ -2002,7 +2002,6 @@ describe("session after-turn lifecycle", () => {
         const pane = new ConversationPane(id, agent, notify, undefined, commands);
         bindSessionLifecycle({
           pane,
-          agent,
           attachment,
           ...(options.afterTurn !== undefined && { afterTurn: options.afterTurn }),
           rebuild: (history) => {

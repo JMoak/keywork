@@ -2,9 +2,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { debugEnabled, type SessionStore } from "@keywork/engine";
+import { debugEnabled, ResolutionError, type SessionStore } from "@keywork/engine";
 import {
   ConfigError,
+  type KeyworkConfig,
   loadConfig,
   openWorkspace,
   presetOrder,
@@ -20,9 +21,13 @@ import {
 } from "./auth-store.ts";
 import { chat } from "./chat.ts";
 import { dispatchCommand, nonInteractiveUsage, usage } from "./dispatch.ts";
+import { connectionsPort } from "./inference/connections.ts";
+import { type ObservationMap, readObservations } from "./inference/observations.ts";
+import { inferencePort } from "./inference/port.ts";
+import { composeInference, connectHint, type InferenceRuntime } from "./inference/runtime.ts";
 import { createPresetSwitch, isPresetName } from "./presets.ts";
-import { type PersistCredential, providerSetupHint, resolveProvider } from "./provider.ts";
 import { runHeadless } from "./run.ts";
+import { updateUserConfig, userConfigDir } from "./user-config.ts";
 
 function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typeof loadConfig> {
   return loadConfig({
@@ -30,6 +35,29 @@ function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typ
     projectDir: join(cwd, ".keywork"),
     projectTrusted,
   });
+}
+
+interface InferenceState {
+  config: KeyworkConfig;
+  credentials: CredentialMap;
+  observations: ObservationMap;
+  runtime: InferenceRuntime;
+}
+
+async function loadInferenceState(cwd: string, projectTrusted: boolean): Promise<InferenceState> {
+  const config = await loadKeyworkConfig(cwd, projectTrusted);
+  const credentials = { ...legacyCredentials(config.apiKeys), ...(await readCredentials()) };
+  const observations = await readObservations();
+  const runtime = composeInference({
+    env: process.env,
+    config,
+    credentials,
+    observations,
+    persistCredential: (provider, credential) =>
+      saveCredential(provider, credential).then(() => {}),
+  });
+  for (const warning of runtime.warnings) console.warn(`keywork: ${warning}`);
+  return { config, credentials, observations, runtime };
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -82,60 +110,41 @@ async function main(argv: string[]): Promise<number> {
     return linkCommand(positionals[0], cwd, trustStore, {}, confirm);
   }
   const projectTrusted = trustStore.resolve(cwd) === "trusted";
-  const config = await loadKeyworkConfig(cwd, projectTrusted);
+  let state = await loadInferenceState(cwd, projectTrusted);
+  const reloadInference = async (): Promise<void> => {
+    state = await loadInferenceState(cwd, projectTrusted);
+  };
+  const { config } = state;
   const presets = createPresetSwitch({
     initial: config.permissions,
     persist: async (permissions) => {
-      const { updateUserConfig } = await import("./setup.ts");
       await updateUserConfig((existing) => ({ ...existing, permissions }));
     },
   });
   const toolPermissions = presets.resolver;
-  const model = values.model ?? config.model;
-  const persistCredential: PersistCredential = async (provider, credential) => {
-    await saveCredential(provider, credential);
-  };
-  const loadCredentials = async (loaded: typeof config): Promise<CredentialMap> => ({
-    ...legacyCredentials(loaded.apiKeys),
-    ...(await readCredentials()),
+  const defaultSelection = { override: values.model, default: config.model };
+  const connections = connectionsPort({
+    env: process.env,
+    userDir: userConfigDir(),
+    config: () => state.config,
+    credentials: () => state.credentials,
+    observations: () => state.observations,
+    changed: reloadInference,
   });
-  let resolved = resolveProvider(
-    process.env,
-    model,
-    await loadCredentials(config),
-    config.bedrockRegion,
-    persistCredential,
-    config.models,
-  );
-
-  const onboardIfNeeded = async (): Promise<void> => {
-    if (resolved !== undefined || !process.stdin.isTTY) return;
-    console.log("Welcome to keywork. No model provider yet, let's fix that.\n");
-    const { runSetup } = await import("./setup.ts");
-    if ((await runSetup()) !== 0) return;
-    const refreshed = await loadKeyworkConfig(cwd, projectTrusted);
-    resolved = resolveProvider(
-      process.env,
-      values.model ?? refreshed.model,
-      await loadCredentials(refreshed),
-      refreshed.bedrockRegion,
-      persistCredential,
-      refreshed.models,
-    );
-  };
 
   switch (command) {
     case "chat": {
-      await onboardIfNeeded();
-      if (resolved === undefined) {
-        console.error(providerSetupHint);
+      const bound = state.runtime.resolve(defaultSelection);
+      if (!bound.ok) {
+        console.error(`${bound.failure.message} · ${bound.failure.nextAction}\n\n${connectHint}`);
         return 1;
       }
+      const provider = state.runtime.provider(bound.binding);
       await chat({
         cwd,
-        provider: resolved.provider,
-        label: resolved.label,
-        modelId: resolved.modelId,
+        provider,
+        label: `${bound.binding.reference.provider}/${bound.binding.reference.model}`,
+        modelId: bound.binding.reference.model,
         resume: values.continue,
         projectTrusted,
         permissions: toolPermissions,
@@ -153,6 +162,14 @@ async function main(argv: string[]): Promise<number> {
         console.error(`keywork run needs a prompt, like: keywork run "fix the tests"`);
         return 1;
       }
+      const bound = state.runtime.resolve(defaultSelection);
+      if (!bound.ok) {
+        if (values.json)
+          console.log(JSON.stringify({ type: "resolution.failed", ...bound.failure }));
+        else
+          console.error(`${bound.failure.message} · ${bound.failure.nextAction}\n\n${connectHint}`);
+        return 1;
+      }
       const outcome = await runHeadless({
         prompt,
         cwd,
@@ -160,7 +177,8 @@ async function main(argv: string[]): Promise<number> {
         projectTrusted,
         permissions: toolPermissions,
         debug: values.debug || debugEnabled(process.env),
-        ...(resolved !== undefined && { provider: resolved.provider, modelId: resolved.modelId }),
+        provider: state.runtime.provider(bound.binding),
+        modelId: bound.binding.reference.model,
         ...(config.prompts !== undefined && { prompts: config.prompts }),
         ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
         ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
@@ -177,13 +195,12 @@ async function main(argv: string[]): Promise<number> {
         terminalConfirm(),
       );
     }
+    case "connect":
     case "setup": {
-      const { runSetup } = await import("./setup.ts");
-      return runSetup();
+      const { connectCommand } = await import("./setup.ts");
+      return connectCommand(connections, { argument: positionals[0] });
     }
     case "panes": {
-      await onboardIfNeeded();
-      const active = resolved;
       const { runApp } = await import("@keywork/tui");
       const { renderCommand, scanTemplate, suggestTitle, tapJournal } = await import(
         "@keywork/engine"
@@ -195,8 +212,6 @@ async function main(argv: string[]): Promise<number> {
       const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
       const { deferredMaterialization } = await import("./materialize.ts");
       const materializer = deferredMaterialization({ cwd, trusted: projectTrusted });
-      const provider =
-        active === undefined ? undefined : materializer.wrapProvider(active.provider);
       const { sessionChangeFeed, sessionPort, sessionTreePort } = await import("./sessions.ts");
       const { commandRuntime } = await import("./commands.ts");
       const { mcpPanePort } = await import("./mcp.ts");
@@ -206,14 +221,10 @@ async function main(argv: string[]): Promise<number> {
         projectTrusted,
         prompts: config.prompts,
         mcpServers: config.mcpServers,
-        modelId: active?.modelId,
         onFileSaved: (path) => materializer.fileSaved(path),
       });
       const { checkpoints, extensions, mcp, memory } = composition;
-      const agents =
-        provider === undefined
-          ? undefined
-          : composeAgents(composition, { provider, permissions: toolPermissions });
+      const agents = composeAgents(composition, { permissions: toolPermissions });
       const stateStore = workspaceFile(workspaceStateFile(workspaceIdentity(cwd)));
       const sessionDir = values["session-dir"] ?? defaultSessionDir(cwd);
       const extensionsView = {
@@ -244,7 +255,7 @@ async function main(argv: string[]): Promise<number> {
         onAttach: (store) => stores.set(store.header.id, store),
         onRelease: (sessionId) => {
           stores.delete(sessionId);
-          agents?.release(sessionId);
+          agents.release(sessionId);
         },
         onChange: (sessionId) => sessionChanges.emit(sessionId),
       });
@@ -264,10 +275,19 @@ async function main(argv: string[]): Promise<number> {
         sessions,
         sessionTrees: sessionTreePort(sessionDir, sessionChanges),
         presets: presetsPort,
-        afterTurn: async ({ sessionId, history }) => {
+        inference: inferencePort({
+          registry: () => state.runtime.registry,
+          observations: () => state.observations,
+        }),
+        connections,
+        afterTurn: async ({ sessionId, history, agent }) => {
           const store = stores.get(sessionId);
           if (store === undefined) return [];
-          const joined = await flushAfterTurn(agents?.flushFor(sessionId), store, history);
+          const joined = await flushAfterTurn(
+            agents.flushFor(sessionId, agent.provider),
+            store,
+            history,
+          );
           if (joined.length > 0) sessionChanges.emit(sessionId);
           return joined;
         },
@@ -278,27 +298,28 @@ async function main(argv: string[]): Promise<number> {
         ...(checkpoints !== undefined && { checkpoints }),
         ...(memory !== undefined && { memory: memoryPanePort(memory) }),
         ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
-        ...(active !== undefined &&
-          provider !== undefined &&
-          agents !== undefined && {
-            agentFactory: (guard, history, seams, agentName) => {
-              const agent = agents.build({
-                guard,
-                history,
-                bus: seams?.bus,
-                sessionId: () => seams?.sessionId(),
-                onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
-                definition: extensions.agents.find((candidate) => candidate.name === agentName),
-              });
-              tapJournal(agent.bus, () => {
-                const sessionId = seams?.sessionId();
-                return sessionId === undefined ? undefined : stores.get(sessionId);
-              });
-              return agent;
-            },
-            titler: (conversation) => suggestTitle(provider, conversation),
-            statusLabel: () => `${active.label} · ${presets.active()}`,
-          }),
+        agentFactory: (guard, history, seams, agentName) => {
+          const bound = state.runtime.open({
+            ...defaultSelection,
+            selection: seams?.modelReference,
+          });
+          const agent = agents.build({
+            provider: materializer.wrapProvider(bound.provider),
+            guard,
+            history,
+            bus: seams?.bus,
+            sessionId: () => seams?.sessionId(),
+            onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
+            definition: extensions.agents.find((candidate) => candidate.name === agentName),
+          });
+          tapJournal(agent.bus, () => {
+            const sessionId = seams?.sessionId();
+            return sessionId === undefined ? undefined : stores.get(sessionId);
+          });
+          return agent;
+        },
+        titler: (conversation, agent) => suggestTitle(agent.provider, conversation),
+        statusLabel: () => presets.active(),
       });
       return 0;
     }
@@ -310,7 +331,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 process.exitCode = await main(process.argv.slice(2)).catch((cause: unknown) => {
-  if (cause instanceof ConfigError) {
+  if (cause instanceof ConfigError || cause instanceof ResolutionError) {
     console.error(cause.message);
     return 1;
   }

@@ -5,6 +5,7 @@ import {
   knownCostNanos,
   type Message,
   messageText,
+  parseReference,
   replaySession,
   type SessionEntry,
   SessionStore,
@@ -228,10 +229,14 @@ export function attachmentOf(
   seams: Pick<SessionPortSeams, "checkpointTag" | "onChange"> = {},
 ): SessionAttachment {
   const name = store.name();
+  const selection = store.modelSelection();
   const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
     ...(name !== undefined && { name }),
+    ...(selection !== undefined && {
+      modelReference: `${selection.provider}/${selection.modelId}`,
+    }),
     history: store.messages(),
     replay: (bus) => {
       replaySession(store, bus);
@@ -247,6 +252,14 @@ export function attachmentOf(
     },
     rename: async (title) => {
       await store.setName(title);
+      seams.onChange?.(store.header.id);
+    },
+    recordModel: async (reference) => {
+      const current = store.modelSelection();
+      const parsed = parseReference(reference);
+      if (parsed === undefined) return;
+      if (current?.provider === parsed.provider && current.modelId === parsed.model) return;
+      await store.appendModelChange(parsed.provider, parsed.model);
       seams.onChange?.(store.header.id);
     },
   };

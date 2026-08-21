@@ -17,6 +17,7 @@ import {
 } from "@keywork/engine";
 import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
 import { startMcpRegistry } from "./compose.ts";
+import { connectHint } from "./inference/runtime.ts";
 import {
   bootstrapInjection,
   memoryRecall,
@@ -24,7 +25,6 @@ import {
   withMemoryPrompt,
 } from "./memory.ts";
 import { defaultSessionDir } from "./paths.ts";
-import { providerSetupHint } from "./provider.ts";
 import { newSessionFileName } from "./sessions.ts";
 
 export interface RunOptions {
@@ -156,6 +156,6 @@ function openDiagnostics(options: RunOptions): Promise<DiagnosticsLog> {
 
 function refuseWithoutProvider(options: RunOptions): never {
   const printError = options.printError ?? console.error;
-  printError(providerSetupHint);
+  printError(connectHint);
   return (options.exit ?? process.exit)(1);
 }

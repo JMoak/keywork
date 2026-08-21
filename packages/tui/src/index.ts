@@ -43,6 +43,47 @@ export {
   startupFlavors,
   themeOf,
 } from "./flavor.ts";
+export {
+  type Highlighter,
+  highlightedLanguages,
+  highlighterFor,
+  type SyntaxClass,
+  type SyntaxSpan,
+} from "./highlighter.ts";
+export type {
+  ConnectionDraft,
+  ConnectionProtocol,
+  ConnectionsPort,
+  ConnectionTarget,
+  CredentialChoice,
+  InferencePort,
+  ModelChoice,
+  RemovalReceipt,
+  ResolutionNotice,
+  SavedConnection,
+  VerificationOutcome,
+} from "./inference-port.ts";
+export {
+  type MarkdownRow,
+  type MarkdownSpan,
+  type MarkdownTone,
+  markdownRowText,
+  renderMarkdown,
+} from "./markdown.ts";
+export {
+  assumedGlyphs,
+  defaultPageMarks,
+  type PageMarks,
+  pageMarkFamilies,
+  pageMarks,
+  type VoiceStamps,
+} from "./marks.ts";
+export {
+  type Headline,
+  type HeadlineFace,
+  type HeadlineFrame,
+  headline,
+} from "./masthead.ts";
 export { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 export type {
   McpProgress,
@@ -91,6 +132,15 @@ export type {
   SessionOverviewRow,
   SessionPresence,
 } from "./sessions-overview-model.ts";
+export {
+  type SlugInk,
+  type SlugPart,
+  type SlugRole,
+  slugChunks,
+  slugInk,
+  slugParts,
+  slugWords,
+} from "./slug.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
 export { type LifecycleState, type TitleBarState, titleBar } from "./title-bar.ts";
 export type { WorkspaceState } from "./workspace-state.ts";

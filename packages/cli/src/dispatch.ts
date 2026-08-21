@@ -5,7 +5,8 @@ Usage:
   keywork run "<prompt>" [--model <model>] [--json] [--debug]
               [--session-dir <dir>]                         one-shot headless run
   keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
-  keywork setup                                             connect a model provider
+  keywork connect [target|url]                              add or verify an inference provider
+                                                            (setup is an alias)
   keywork init                                              set up the workspace at its anchor
   keywork link <dir>                                        widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust

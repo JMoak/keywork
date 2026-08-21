@@ -14,11 +14,17 @@ import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import { type MarkdownRow, type MarkdownSpan, renderMarkdown } from "./markdown.ts";
+import { defaultPageMarks, type PageMarks } from "./marks.ts";
 import { inkAt } from "./motion.ts";
 import { columnPage, type PageGrammar, proseWidth } from "./page.ts";
 import { TailFollow } from "./tail-follow.ts";
 
-export type Titler = (conversation: readonly Message[]) => Promise<string | undefined>;
+export type Titler = (
+  conversation: readonly Message[],
+  agent: Agent,
+) => Promise<string | undefined>;
+
+export const defaultIdleNotice = "no model bound · /connect adds a provider · /model picks one";
 
 export interface CommandSuggestion {
   name: string;
@@ -36,6 +42,7 @@ export type ForkOutcome = { forked: false } | { forked: true; note?: string };
 export interface ConversationPorts {
   readFile?: FileReader;
   forkAtPrompt?: (promptOrdinal: number, draft: string) => Promise<ForkOutcome>;
+  idleNotice?: string;
   now?: () => number;
 }
 
@@ -100,7 +107,8 @@ export class ConversationModel {
   private historyIndex: number | undefined;
   private askPageRows = 8;
   private backtrackAt: number | undefined;
-  private backtrackMoved = false;
+  private foldCursor: number | undefined;
+  private revealAt: number | undefined;
   private escapePrimed = false;
   private readonly runningTools = new Map<
     string,
@@ -113,6 +121,7 @@ export class ConversationModel {
       width: number;
       prose: number;
       gutter: number;
+      marks: PageMarks;
       text: string;
       failed: boolean;
       stamp: string;
@@ -138,12 +147,14 @@ export class ConversationModel {
   ) {
     this.agent = agent;
     if (agent === undefined) {
-      this.entries.push({
-        kind: "info",
-        text: "no provider · set KEYWORK_OPENROUTER_API_KEY, then relaunch",
-      });
+      this.entries.push({ kind: "info", text: ports?.idleNotice ?? defaultIdleNotice });
       return;
     }
+    this.subscribe(agent);
+  }
+
+  private subscribe(agent: Agent): void {
+    const notify = this.notify;
     this.subscriptions.push(
       agent.bus.on("turn.started", ({ userText, replay }) => {
         if (replay !== true) return;
@@ -259,6 +270,10 @@ export class ConversationModel {
     return this.backtrackAt !== undefined;
   }
 
+  disclosing(): boolean {
+    return this.foldCursor !== undefined;
+  }
+
   dispose(): void {
     this.disposed = true;
     for (const unsubscribe of this.subscriptions) unsubscribe();
@@ -268,6 +283,7 @@ export class ConversationModel {
     this.pendingAsk = undefined;
     this.streaming = undefined;
     this.backtrackAt = undefined;
+    this.foldCursor = undefined;
     this.busy = false;
     this.agent?.interrupt();
   }
@@ -276,51 +292,70 @@ export class ConversationModel {
     return this.queue;
   }
 
-  visibleTranscript(width: number, rows: number, page: PageGrammar = columnPage): TranscriptLine[] {
+  visibleTranscript(
+    width: number,
+    rows: number,
+    page: PageGrammar = columnPage,
+    marks: PageMarks = defaultPageMarks,
+  ): TranscriptLine[] {
     this.pageRows = rows;
-    this.revealBacktrack(width, rows, page);
-    const lines = this.linesFromEnd(width, rows + this.scrollBack, page);
+    this.revealPending(width, rows, page, marks);
+    const lines = this.linesFromEnd(width, rows + this.scrollBack, page, marks);
     this.scrollBack = clampScroll(this.scrollBack, lines.length, rows);
     const end = lines.length - this.scrollBack;
     return lines.slice(Math.max(0, end - rows), end);
   }
 
-  private linesFromEnd(width: number, needed: number, page: PageGrammar): TranscriptLine[] {
+  private linesFromEnd(
+    width: number,
+    needed: number,
+    page: PageGrammar,
+    marks: PageMarks,
+  ): TranscriptLine[] {
     const tail: TranscriptLine[][] = [];
     let count = 0;
     for (let at = this.entries.length - 1; at >= 0 && count < needed; at -= 1) {
       const entry = this.entries[at];
       if (entry === undefined) break;
-      const lines = this.wrappedLines(entry, width, page);
-      tail.push(
-        at === this.backtrackAt ? lines.map((line) => ({ ...line, selected: true })) : lines,
-      );
+      const lines = this.wrappedLines(entry, width, page, marks);
+      tail.push(this.highlighted(at, lines));
       count += lines.length;
     }
     return tail.reverse().flat();
   }
 
-  private revealBacktrack(width: number, rows: number, page: PageGrammar): void {
-    const at = this.backtrackAt;
-    if (at === undefined || !this.backtrackMoved) return;
-    this.backtrackMoved = false;
+  private highlighted(at: number, lines: TranscriptLine[]): TranscriptLine[] {
+    if (at === this.backtrackAt) return lines.map((line) => ({ ...line, selected: true }));
+    if (at !== this.foldCursor) return lines;
+    return lines.map((line, index) => (index === 0 ? { ...line, selected: true } : line));
+  }
+
+  private revealPending(width: number, rows: number, page: PageGrammar, marks: PageMarks): void {
+    const at = this.revealAt;
+    if (at === undefined) return;
+    this.revealAt = undefined;
     let below = 0;
     for (let index = this.entries.length - 1; index > at; index -= 1) {
       const entry = this.entries[index];
       if (entry === undefined) break;
-      below += this.wrappedLines(entry, width, page).length;
+      below += this.wrappedLines(entry, width, page, marks).length;
     }
-    const selected = this.entries[at];
-    const selectedRows =
-      selected === undefined ? 0 : this.wrappedLines(selected, width, page).length;
-    this.scrollBack = Math.max(0, below + selectedRows - rows);
+    const revealed = this.entries[at];
+    const revealedRows =
+      revealed === undefined ? 0 : this.wrappedLines(revealed, width, page, marks).length;
+    this.scrollBack = Math.max(0, below + revealedRows - rows);
   }
 
-  private wrappedLines(entry: TranscriptEntry, width: number, page: PageGrammar): TranscriptLine[] {
+  private wrappedLines(
+    entry: TranscriptEntry,
+    width: number,
+    page: PageGrammar,
+    marks: PageMarks,
+  ): TranscriptLine[] {
     const failed = entry.kind === "tool" && entry.failed;
     const bodyWidth = Math.max(1, width - railWidth);
     const prose = proseWidth(page, bodyWidth);
-    const stamp = this.stampFor(entry);
+    const stamp = this.stampFor(entry, marks);
     const folded = entry.kind === "tool" ? entry.run?.folded !== false : true;
     const cached = this.wrapCache.get(entry);
     if (
@@ -328,6 +363,7 @@ export class ConversationModel {
       cached.width === width &&
       cached.prose === prose &&
       cached.gutter === page.proseGutter &&
+      cached.marks === marks &&
       cached.text === entry.text &&
       cached.failed === failed &&
       cached.stamp === stamp &&
@@ -335,7 +371,7 @@ export class ConversationModel {
     ) {
       return cached.lines;
     }
-    const lines = entryLines(entry, bodyWidth, page).map((line, index) => ({
+    const lines = entryLines(entry, bodyWidth, page, marks).map((line, index) => ({
       ...line,
       stamp: index === 0 ? stamp : railBlank,
       source: entry,
@@ -344,6 +380,7 @@ export class ConversationModel {
       width,
       prose,
       gutter: page.proseGutter,
+      marks,
       text: entry.text,
       failed,
       stamp,
@@ -353,17 +390,17 @@ export class ConversationModel {
     return lines;
   }
 
-  private stampFor(entry: TranscriptEntry): string {
+  private stampFor(entry: TranscriptEntry, marks: PageMarks): string {
     switch (entry.kind) {
       case "user":
-        return "█ ";
+        return `${marks.voice.user} `;
       case "assistant":
         return entry === this.streaming?.entry
-          ? `${inkAt(streamRamp, Math.min(1, this.streaming.steps / streamSettleSteps))} `
-          : "▓ ";
+          ? `${inkAt(marks.streamRamp, Math.min(1, this.streaming.steps / streamSettleSteps))} `
+          : `${marks.voice.agent} `;
       case "tool":
       case "error":
-        return "░ ";
+        return `${marks.voice.machine} `;
       case "info":
         return railBlank;
     }
@@ -383,6 +420,10 @@ export class ConversationModel {
   handleKey(chord: Chord, sequence: string | undefined): boolean {
     if (this.pendingAsk !== undefined) return this.answerAsk(chord);
     if (this.backtrackAt !== undefined) return this.handleBacktrackKey(chord, sequence);
+    if (this.foldCursor !== undefined && chord.name !== "tab") {
+      this.exitDisclosure();
+      if (chord.name === "escape") return true;
+    }
     const primed = this.escapePrimed;
     this.escapePrimed = false;
     if (this.slashQuery() !== undefined && this.handleSlashKey(chord)) return true;
@@ -414,7 +455,7 @@ export class ConversationModel {
         return this.scrollBy(-this.pageRows);
       case "tab":
         if (!this.buffer.isEmpty()) return false;
-        return this.toggleLatestToolFold();
+        return chord.shift ? this.stepFoldCursor() : this.toggleCursoredFold();
       default:
         if (!isPrintable(chord, sequence)) return false;
         return this.edit(() => this.buffer.insert(sequence ?? ""));
@@ -451,7 +492,9 @@ export class ConversationModel {
   }
 
   swapAgent(agent: Agent): void {
+    const first = this.agent === undefined;
     this.agent = agent;
+    if (first) this.subscribe(agent);
   }
 
   discloseRetrieval(text: string): void {
@@ -509,13 +552,9 @@ export class ConversationModel {
   }
 
   toggleLatestToolFold(): boolean {
-    for (let at = this.entries.length - 1; at >= 0; at -= 1) {
-      const entry = this.entries[at];
-      if (entry?.kind === "tool" && entry.run?.detail !== undefined) {
-        return this.toggleToolFold(entry);
-      }
-    }
-    return false;
+    const newest = this.disclosableIndices().at(-1);
+    const entry = newest === undefined ? undefined : this.entries[newest];
+    return entry === undefined ? false : this.toggleToolFold(entry);
   }
 
   toggleToolFold(entry: TranscriptEntry): boolean {
@@ -525,6 +564,34 @@ export class ConversationModel {
     entry.run.folded = !entry.run.folded;
     this.notify();
     return true;
+  }
+
+  private toggleCursoredFold(): boolean {
+    const cursored = this.foldCursor === undefined ? undefined : this.entries[this.foldCursor];
+    return cursored === undefined ? this.toggleLatestToolFold() : this.toggleToolFold(cursored);
+  }
+
+  private stepFoldCursor(): boolean {
+    const disclosable = this.disclosableIndices();
+    if (disclosable.length === 0) return false;
+    const position = disclosable.indexOf(this.foldCursor ?? -1);
+    const older = position <= 0 ? disclosable.length - 1 : position - 1;
+    this.foldCursor = disclosable[older];
+    this.revealAt = this.foldCursor;
+    this.notify();
+    return true;
+  }
+
+  private exitDisclosure(): void {
+    this.foldCursor = undefined;
+    this.scrollBack = 0;
+    this.notify();
+  }
+
+  private disclosableIndices(): number[] {
+    return this.entries.flatMap((entry, index) =>
+      entry.kind === "tool" && entry.run?.detail !== undefined ? [index] : [],
+    );
   }
 
   private handleEscape(primed: boolean): boolean {
@@ -544,7 +611,7 @@ export class ConversationModel {
     const newest = prompts.at(-1);
     if (newest === undefined) return false;
     this.backtrackAt = newest;
-    this.backtrackMoved = true;
+    this.revealAt = newest;
     this.notify();
     return true;
   }
@@ -581,7 +648,7 @@ export class ConversationModel {
     }
     if (next < 0) return true;
     this.backtrackAt = prompts[next];
-    this.backtrackMoved = true;
+    this.revealAt = this.backtrackAt;
     this.notify();
     return true;
   }
@@ -624,7 +691,7 @@ export class ConversationModel {
 
   private exitBacktrack(): void {
     this.backtrackAt = undefined;
-    this.backtrackMoved = false;
+    this.revealAt = undefined;
     this.scrollBack = 0;
     this.notify();
   }
@@ -788,7 +855,7 @@ export class ConversationModel {
   private requestTitleOnce(): void {
     if (this.titleRequested || this.titler === undefined || this.agent === undefined) return;
     this.titleRequested = true;
-    this.lastTitle = this.titler(this.agent.history())
+    this.lastTitle = this.titler(this.agent.history(), this.agent)
       .then((title) => {
         if (title === undefined || this.disposed) return;
         this.title = title;
@@ -823,7 +890,6 @@ export interface TranscriptLine {
 
 export const railWidth = 2;
 const railBlank = "  ";
-const streamRamp = ["░", "▒", "▓"] as const;
 const streamSettleSteps = 4;
 const liveLineLimit = 120;
 const detailLineLimit = 12;
@@ -842,16 +908,21 @@ export function transcriptLines(
   });
 }
 
-function entryLines(entry: TranscriptEntry, width: number, page: PageGrammar): TranscriptLine[] {
+function entryLines(
+  entry: TranscriptEntry,
+  width: number,
+  page: PageGrammar,
+  marks: PageMarks,
+): TranscriptLine[] {
   switch (entry.kind) {
     case "tool":
       return entry.run === undefined
         ? transcriptLines([entry], width)
-        : toolEntryLines(entry.run, entry.failed, width, page);
+        : toolEntryLines(entry.run, entry.failed, width, page, marks);
     case "error":
       return transcriptLines([entry], width);
     case "assistant":
-      return markdownEntryLines(entry.text, width, page);
+      return markdownEntryLines(entry.text, width, page, marks);
     case "user":
     case "info":
       return proseEntryLines(entry, width, page);
@@ -863,11 +934,12 @@ function toolEntryLines(
   failed: boolean,
   width: number,
   page: PageGrammar,
+  marks: PageMarks,
 ): TranscriptLine[] {
   const spans = clipSpans(toolRowSpans(run), width);
   const row: TranscriptLine = { kind: "tool", failed, text: spanText(spans), spans };
   if (run.folded || run.detail === undefined) return [row];
-  const ruleText = "─".repeat(Math.max(1, Math.min(width, proseWidth(page, width))));
+  const ruleText = marks.rule.repeat(Math.max(1, Math.min(width, proseWidth(page, width))));
   const rule: TranscriptLine = {
     kind: "tool",
     failed: false,
@@ -982,9 +1054,14 @@ function proseEntryLines(
     }));
 }
 
-function markdownEntryLines(text: string, width: number, page: PageGrammar): TranscriptLine[] {
+function markdownEntryLines(
+  text: string,
+  width: number,
+  page: PageGrammar,
+  marks: PageMarks,
+): TranscriptLine[] {
   const gutter = " ".repeat(page.proseGutter);
-  return renderMarkdown(text, proseWidth(page, width), width).map((row) =>
+  return renderMarkdown(text, proseWidth(page, width), width, marks).map((row) =>
     markdownLine(row, gutter),
   );
 }

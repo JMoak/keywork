@@ -22,7 +22,7 @@ function sseResponse(lines: string[], chunkSize = 7): Response {
 function provider(fetchFn: FetchLike, headers?: () => Promise<Record<string, string>>) {
   return new OpenAiResponsesProvider({
     name: "test",
-    url: "https://example.test/responses",
+    baseUrl: "https://example.test",
     model: "test-model",
     authHeaders: headers ?? (async () => ({ authorization: "Bearer token" })),
     fetchFn,
@@ -60,6 +60,7 @@ describe("OpenAiResponsesProvider", () => {
         part: {
           type: "redacted-thinking",
           data: '{"type":"reasoning","id":"rs_1","encrypted_content":"blob"}',
+          owner: { provider: "test", model: "test-model" },
         },
       },
       {
