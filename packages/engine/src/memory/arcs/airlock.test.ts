@@ -199,7 +199,7 @@ describe("completing the close", () => {
     expect(record?.links).toContain("arcs/dock-v2/MOC");
     expect(record?.delivered).toBe("2026-08-16T09:00:00.000Z");
     const daily = await f.workspace.readDaily("2026-08-16");
-    expect(daily.map((entry) => entry.text)).toContain("arc dock-v2 delivered — distilled 1 notes");
+    expect(daily.map((entry) => entry.text)).toContain("arc dock-v2 delivered · distilled 1 notes");
     expect((await f.registry.readArc("dock-v2"))?.status).toBe("archived");
     expect(f.bindings.bindingOf("s1")).toBeUndefined();
     expect(await f.inbox.list()).toEqual([]);

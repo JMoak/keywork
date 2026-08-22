@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { discoverSkills, skillTool } from "./skills.ts";
 
 const cleanups: string[] = [];
+const directoryLinksSupported = await probeDirectoryLinkSupport();
 
 afterEach(async () => {
   while (cleanups.length > 0) {
@@ -74,14 +75,14 @@ describe("discoverSkills", () => {
     expect(failures[0]?.reason).toContain("frontmatter");
   });
 
-  it("survives symlink cycles without looping", async () => {
+  it.skipIf(!directoryLinksSupported)("survives symlink cycles without looping", async () => {
     const root = await scratchRepo();
     await seedSkill(root, ".keywork/skills/looped", "Looped skill.");
-    const cycleCreated = await tryCycleLink(
+    await symlink(
       join(root, ".keywork", "skills"),
       join(root, ".keywork", "skills", "looped", "back"),
+      "junction",
     );
-    if (!cycleCreated) return;
     const { skills } = await discoverSkills(root);
     expect(skills.map((skill) => skill.name)).toEqual(["looped"]);
   });
@@ -116,11 +117,15 @@ describe("skillTool", () => {
   });
 });
 
-async function tryCycleLink(target: string, path: string): Promise<boolean> {
+async function probeDirectoryLinkSupport(): Promise<boolean> {
+  const root = await mkdtemp(join(tmpdir(), "keywork-skills-probe-"));
   try {
-    await symlink(target, path, "junction");
+    await mkdir(join(root, "target"));
+    await symlink(join(root, "target"), join(root, "link"), "junction");
     return true;
   } catch {
     return false;
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 }

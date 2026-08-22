@@ -1,9 +1,10 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { slugProblem } from "@keywork/shared";
 import { type Frontmatter, parseDocument, serializeDocument } from "../frontmatter.ts";
-import { MemoryInertError, MemoryStore } from "../store.ts";
-import { ArcOpenQuestions } from "./questions.ts";
+import { MemoryInertError, MemoryStore, type Note } from "../store.ts";
+import { isMissingFileError } from "../vault-files.ts";
+import { ArcOpenQuestions, questionsDir } from "./questions.ts";
 
 export type ArcStatus = "active" | "archived";
 
@@ -58,8 +59,12 @@ export class ArcNotActiveError extends Error {
   }
 }
 
+export const arcMocName = "MOC";
+const arcMocFile = `${arcMocName}.md`;
+const arcReservedPaths = [arcMocFile, `${questionsDir}/`];
+
 export function arcMocLink(slug: string): string {
-  return `arcs/${slug}/MOC`;
+  return `arcs/${slug}/${arcMocName}`;
 }
 
 export class ArcRegistry {
@@ -68,6 +73,7 @@ export class ArcRegistry {
   private readonly now: () => Date;
   private readonly secrets: Record<string, string>;
   private readonly openQuestionCap: number | undefined;
+  private readonly stores = new Map<string, MemoryStore>();
 
   constructor(options: ArcRegistryOptions) {
     this.root = options.vaultRoot;
@@ -103,10 +109,13 @@ export class ArcRegistry {
 
   async readArc(slug: string): Promise<ArcRecord | undefined> {
     if (!this.trusted) return undefined;
-    validateArcSlug(slug);
-    const raw = await this.readMocRaw(slug);
+    const raw = await this.arcStore(slug).readReserved(arcMocFile);
     if (raw === null) return undefined;
-    return parseRecord(slug, parseDocument(raw, this.mocPath(slug)).frontmatter);
+    return parseRecord(slug, parseDocument(raw, arcMocLink(slug)).frontmatter);
+  }
+
+  async readMocNote(slug: string): Promise<Note | undefined> {
+    return this.arcStore(slug).readNote(arcMocName);
   }
 
   async requireActive(slug: string): Promise<ArcRecord> {
@@ -129,29 +138,31 @@ export class ArcRegistry {
       abandoned: stamps.abandoned ?? false,
       ...(stamps.delivered !== undefined && { delivered: stamps.delivered }),
     };
-    const raw = await this.readMocRaw(slug);
-    const body = raw === null ? "" : parseDocument(raw, this.mocPath(slug)).body;
+    const raw = await this.arcStore(slug).readReserved(arcMocFile);
+    const body = raw === null ? "" : parseDocument(raw, arcMocLink(slug)).body;
     await this.writeMoc(slug, recordFrontmatter(archived), body);
     return archived;
   }
 
   arcStore(slug: string): MemoryStore {
     validateArcSlug(slug);
-    return new MemoryStore({
-      vaultRoot: this.arcDir(slug),
+    const cached = this.stores.get(slug);
+    if (cached !== undefined) return cached;
+    const store = new MemoryStore({
+      vaultRoot: join(this.root, "arcs", slug),
       trusted: this.trusted,
       now: this.now,
       secrets: this.secrets,
+      reservedPaths: arcReservedPaths,
     });
+    this.stores.set(slug, store);
+    return store;
   }
 
   openQuestions(slug: string): ArcOpenQuestions {
-    validateArcSlug(slug);
     return new ArcOpenQuestions({
-      questionsDir: join(this.arcDir(slug), "questions"),
-      trusted: this.trusted,
+      store: this.arcStore(slug),
       now: this.now,
-      secrets: this.secrets,
       ...(this.openQuestionCap !== undefined && { cap: this.openQuestionCap }),
     });
   }
@@ -160,26 +171,8 @@ export class ArcRegistry {
     if (!this.trusted) throw new MemoryInertError();
   }
 
-  private arcDir(slug: string): string {
-    return join(this.root, "arcs", slug);
-  }
-
-  private mocPath(slug: string): string {
-    return join(this.arcDir(slug), "MOC.md");
-  }
-
-  private async readMocRaw(slug: string): Promise<string | null> {
-    try {
-      return await readFile(this.mocPath(slug), "utf8");
-    } catch (error) {
-      if (isMissingFileError(error)) return null;
-      throw error;
-    }
-  }
-
   private async writeMoc(slug: string, frontmatter: Frontmatter, body: string): Promise<void> {
-    await mkdir(this.arcDir(slug), { recursive: true });
-    await writeFile(this.mocPath(slug), serializeDocument(frontmatter, body), "utf8");
+    await this.arcStore(slug).writeReserved(arcMocFile, serializeDocument(frontmatter, body));
   }
 
   private async listArcDirs(): Promise<string[]> {
@@ -233,14 +226,4 @@ function parseRecord(slug: string, frontmatter: Frontmatter): ArcRecord {
     ...(archived !== undefined && { archived }),
     ...(delivered !== undefined && { delivered }),
   };
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    ((error as { code: unknown }).code === "ENOENT" ||
-      (error as { code: unknown }).code === "ENOTDIR")
-  );
 }

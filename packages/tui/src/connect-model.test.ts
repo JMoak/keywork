@@ -213,6 +213,33 @@ describe("ConnectModel editing", () => {
     ).toContain("http://10.0.0.9:8080/v1/models");
   });
 
+  it("pastes into the selected text or secret field and nowhere else", () => {
+    const { model: m } = model(fakePort());
+    m.open("openai");
+    m.paste("ignored on a toggle");
+    expect(m.stage.kind === "editor" && m.stage.draft.protocol).toBe("chat-completions");
+    const keyField = m.fields().findIndex((field) => field.id === "apiKey");
+    for (let step = 0; step < keyField; step += 1) m.handleKey(chord("down"), undefined);
+    m.paste("sk-live-123");
+    expect(m.stage.kind === "editor" && m.stage.draft.apiKey).toBe("sk-live-123");
+    m.open(undefined);
+    m.paste("nowhere to land");
+    expect(m.stage).toEqual({ kind: "targets", index: 0 });
+  });
+
+  it("counts its rows per stage and lets a click pick a target or focus a field", () => {
+    const { model: m } = model(fakePort());
+    m.open(undefined);
+    expect(m.rowCount()).toBe(3);
+    expect(m.clickRow(1)).toBe("stay");
+    expect(m.stage.kind === "editor" && m.stage.draft.name).toBe("ollama");
+    expect(m.rowCount()).toBe(m.fields().length + 1);
+    expect(m.clickRow(2)).toBe("stay");
+    expect(m.stage.kind === "editor" && m.stage.field).toBe(2);
+    expect(m.clickRow(m.fields().length)).toBe("stay");
+    expect(m.stage.kind === "editor" && m.stage.field).toBe(2);
+  });
+
   it("discards the draft on escape without any effect", () => {
     const port = fakePort();
     const { model: m } = model(port);
@@ -249,6 +276,20 @@ describe("ConnectModel verify and save (CD-01, CD-09)", () => {
     expect(m.stage).toMatchObject({ kind: "failed", reason: "HTTP 401" });
     m.handleKey(chord("a"), "a");
     expect(m.stage.kind).toBe("editor");
+  });
+
+  it("returns to the editor on a click while failed and closes on a click once removed", async () => {
+    const port = fakePort({ verification: { ok: false, at: "t", reason: "HTTP 401" } });
+    const { model: m } = model(port);
+    m.open("ollama");
+    m.handleKey(chord("return"), undefined);
+    await settled();
+    expect(m.rowCount()).toBe(2);
+    expect(m.clickRow(0)).toBe("stay");
+    expect(m.stage.kind).toBe("editor");
+    m.stage = { kind: "removed", receipt: { removed: ["connection lab"], retained: ["the key"] } };
+    expect(m.rowCount()).toBe(3);
+    expect(m.clickRow(0)).toBe("close");
   });
 
   it("refuses an incomplete draft with a notice instead of a network call", async () => {

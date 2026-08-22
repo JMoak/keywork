@@ -260,6 +260,40 @@ describe("named workspaces (PD10)", () => {
     );
     expect(listWorkspaces(root)).toHaveLength(1);
   });
+
+  it("lists a corrupt named declaration as an unavailable slot beside the healthy ones", async () => {
+    const root = await tempRoot();
+    await declareWorkspace(root, { name: "alpha" });
+    writeNamedWorkspaceDeclaration(root, "good", { name: "Good" });
+    const badFile = join(namedWorkspaceDir(root, "bad"), "workspace.json");
+    await mkdir(namedWorkspaceDir(root, "bad"), { recursive: true });
+    await writeFile(badFile, "{ corrupt");
+
+    const slots = listWorkspaces(root);
+
+    expect(slots.map((slot) => [slot.slug, slot.name, slot.declared])).toEqual([
+      [undefined, "alpha", true],
+      ["bad", undefined, true],
+      ["good", "Good", true],
+    ]);
+    expect(slots[1]?.problem).toMatch(/not valid JSON/);
+    expect(slots[1]?.declarationFile).toBe(badFile);
+    expect(
+      slots.filter((slot) => slot.slug !== "bad").every((slot) => slot.problem === undefined),
+    ).toBe(true);
+  });
+
+  it("lists a corrupt default declaration as unavailable without hiding named ones", async () => {
+    const root = await tempRoot();
+    await declareWorkspace(root, { name: 42 });
+    writeNamedWorkspaceDeclaration(root, "good", { name: "Good" });
+
+    const [defaultSlot, named] = listWorkspaces(root);
+
+    expect(defaultSlot).toMatchObject({ slug: undefined, name: undefined, declared: true });
+    expect(defaultSlot?.problem).toMatch(/workspace\.json/);
+    expect(named).toMatchObject({ slug: "good", name: "Good" });
+  });
 });
 
 describe("resolveVaultPath", () => {

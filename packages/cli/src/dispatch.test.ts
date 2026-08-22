@@ -66,12 +66,19 @@ describe("dispatchCommand", () => {
     expect(dispatchCommand(["-V"], true)).toEqual({ kind: "version" });
   });
 
-  it("lets unknown commands through so main can explain them as usage", () => {
+  it("answers --help, -h, and the help word before anything else, terminal or not", () => {
+    expect(dispatchCommand(["--help"], false)).toEqual({ kind: "help" });
+    expect(dispatchCommand(["-h"], true)).toEqual({ kind: "help" });
+    expect(dispatchCommand(["help"], false)).toEqual({ kind: "help" });
+  });
+
+  it("refuses unknown commands as usage errors, pointing at --help", () => {
     expect(dispatchCommand(["frobnicate"], false)).toEqual({
-      kind: "command",
-      command: "frobnicate",
-      rest: [],
+      kind: "usage",
+      exitCode: exitCodes.usage,
+      reason: 'unknown command "frobnicate" · keywork --help lists the commands',
     });
+    expect(dispatchCommand(["constructor"], true).kind).toBe("usage");
   });
 });
 

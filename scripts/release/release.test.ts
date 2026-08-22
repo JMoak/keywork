@@ -1,10 +1,13 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { BuildInputError, outdirInside, resolveBuildVersion } from "./build-inputs.ts";
 import { npmManifestFor } from "./npm-manifest.ts";
 import {
   assetNameFor,
   buildVersionDefine,
   checksumLine,
   hostTarget,
+  isReleaseVersion,
   releaseTargets,
   tagMatchesVersion,
   versionFromTag,
@@ -50,6 +53,82 @@ describe("release targets", () => {
 
   it("passes the build version to bun as a JSON string define", () => {
     expect(buildVersionDefine("0.1.0")).toEqual(["--define", 'KEYWORK_BUILD_VERSION="0.1.0"']);
+  });
+
+  it("accepts only MAJOR.MINOR.PATCH with an optional prerelease as a release version", () => {
+    expect(isReleaseVersion("0.1.0")).toBe(true);
+    expect(isReleaseVersion("1.2.3-rc.1")).toBe(true);
+    expect(isReleaseVersion("v0.1.0")).toBe(false);
+    expect(isReleaseVersion("0.1")).toBe(false);
+    expect(isReleaseVersion("undefined")).toBe(false);
+    expect(isReleaseVersion("")).toBe(false);
+  });
+});
+
+describe("build version resolution", () => {
+  const manifestPath = "packages/cli/package.json";
+
+  it("reads a valid version out of the manifest", () => {
+    expect(resolveBuildVersion({ manifest: { version: "0.1.0" }, manifestPath })).toBe("0.1.0");
+  });
+
+  it("fails by name when the manifest has no version instead of shipping keywork undefined", () => {
+    const attempt = () => resolveBuildVersion({ manifest: { name: "keywork" }, manifestPath });
+    expect(attempt).toThrow(BuildInputError);
+    expect(attempt).toThrow('packages/cli/package.json has no "version" field');
+  });
+
+  it("rejects a manifest version outside the release grammar", () => {
+    expect(() => resolveBuildVersion({ manifest: { version: "next" }, manifestPath })).toThrow(
+      'packages/cli/package.json version "next" is not a release version',
+    );
+    expect(() => resolveBuildVersion({ manifest: { version: 1 }, manifestPath })).toThrow(
+      BuildInputError,
+    );
+    expect(() => resolveBuildVersion({ manifest: null, manifestPath })).toThrow(BuildInputError);
+  });
+
+  it("lets --version override the manifest but holds it to the same grammar", () => {
+    expect(
+      resolveBuildVersion({
+        manifest: { version: "0.1.0" },
+        manifestPath,
+        override: "0.0.0-local",
+      }),
+    ).toBe("0.0.0-local");
+    expect(() =>
+      resolveBuildVersion({ manifest: { version: "0.1.0" }, manifestPath, override: "local" }),
+    ).toThrow('--version version "local" is not a release version');
+  });
+
+  it("insists the expected tag names the resolved version", () => {
+    const manifest = { version: "0.1.0" };
+    expect(resolveBuildVersion({ manifest, manifestPath, expectTag: "v0.1.0" })).toBe("0.1.0");
+    expect(() => resolveBuildVersion({ manifest, manifestPath, expectTag: "v0.2.0" })).toThrow(
+      "release tag v0.2.0 does not match packages/cli/package.json version 0.1.0",
+    );
+  });
+});
+
+describe("npm outdir guard", () => {
+  const cwd = resolve("/repo");
+
+  it("resolves a directory inside dist/", () => {
+    expect(outdirInside("dist", "dist/npm", cwd)).toBe(resolve(cwd, "dist/npm"));
+    expect(outdirInside("dist", "dist/nested/deeper", cwd)).toBe(
+      resolve(cwd, "dist/nested/deeper"),
+    );
+  });
+
+  it("refuses dist/ itself, the repo root, parents and escapes", () => {
+    for (const requested of ["dist", ".", "..", "dist/../src", "../elsewhere", cwd]) {
+      expect(() => outdirInside("dist", requested, cwd)).toThrow(BuildInputError);
+      expect(() => outdirInside("dist", requested, cwd)).toThrow("inside dist/");
+    }
+  });
+
+  it("does not mistake a sibling whose name starts with dist for dist/", () => {
+    expect(() => outdirInside("dist", "distro/npm", cwd)).toThrow(BuildInputError);
   });
 });
 

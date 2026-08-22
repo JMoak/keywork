@@ -17,12 +17,15 @@ export function pickerIntentOf(chord: Chord, sequence: string | undefined): Pick
     return { kind: "move", step: chord.name === "down" ? 1 : -1 };
   }
   if (chord.name === "backspace") return { kind: "erase" };
-  if (isTypedCharacter(chord, sequence)) return { kind: "type", text: sequence };
+  if (isPrintable(chord, sequence)) return { kind: "type", text: sequence };
   return { kind: "ignore" };
 }
 
-function isTypedCharacter(chord: Chord, sequence: string | undefined): sequence is string {
-  return (
-    sequence !== undefined && sequence.length === 1 && !chord.ctrl && !chord.meta && sequence >= " "
-  );
+export function isPrintable(chord: Chord, sequence: string | undefined): sequence is string {
+  if (sequence === undefined || sequence === "" || chord.ctrl || chord.meta) return false;
+  for (const character of sequence) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 32 || code === 127) return false;
+  }
+  return true;
 }

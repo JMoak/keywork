@@ -177,6 +177,10 @@ export class ConversationPane implements Pane {
     this.model.adoptTitle(title);
   }
 
+  adoptPromptId(entryId: string): void {
+    this.model.adoptPromptId(entryId);
+  }
+
   titled(): string | undefined {
     return this.model.title;
   }
@@ -380,7 +384,7 @@ export class ConversationPane implements Pane {
       ...(scrollBack > 0 && !this.model.backtracking()
         ? [
             Text({
-              content: `— ↓ ${scrollBack} more · esc returns to live —`,
+              content: `↓ ${scrollBack} more · esc returns to live`,
               fg: theme.textDim,
             }),
           ]

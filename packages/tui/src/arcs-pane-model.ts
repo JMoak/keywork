@@ -2,6 +2,7 @@ import { formatCostNanos } from "@keywork/engine";
 import { type ArcStatus, type ArcSummary, isArcSlug } from "./arcs.ts";
 import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
+import { isPrintable } from "./picker-keys.ts";
 import {
   livenessMark,
   relativeAge,
@@ -147,8 +148,8 @@ export class ArcsPaneModel {
     return true;
   }
 
-  handleKey(chord: Chord, pageRows: number): boolean {
-    if (this.nameDraft !== undefined) return this.handleNameKey(chord);
+  handleKey(chord: Chord, pageRows: number, sequence?: string): boolean {
+    if (this.nameDraft !== undefined) return this.handleNameKey(chord, sequence);
     if (this.drilledGroup !== undefined) return this.handleSessionsKey(chord, pageRows);
     const rows = this.rows();
     this.cursor = clampIndex(this.cursor, rows.length);
@@ -187,7 +188,7 @@ export class ArcsPaneModel {
     return this.sessions.handleKey(chord, pageRows);
   }
 
-  private handleNameKey(chord: Chord): boolean {
+  private handleNameKey(chord: Chord, sequence: string | undefined): boolean {
     const draft = this.nameDraft ?? "";
     switch (chord.name) {
       case "escape":
@@ -202,8 +203,8 @@ export class ArcsPaneModel {
         this.notify();
         return true;
       default:
-        if (!isPrintable(chord)) return false;
-        this.nameDraft = draft + (chord.name === "space" ? " " : chord.name);
+        if (!isPrintable(chord, sequence)) return false;
+        this.nameDraft = draft + sequence;
         this.notify();
         return true;
     }
@@ -354,8 +355,4 @@ export function arcGroupParts(row: ArcGroupRow, cursored: boolean): ArcGroupPart
 function sessionsFact(count: number): string {
   if (count === 0) return "no sessions";
   return count === 1 ? "1 session" : `${count} sessions`;
-}
-
-function isPrintable(chord: Chord): boolean {
-  return (chord.name.length === 1 || chord.name === "space") && !chord.ctrl && !chord.meta;
 }

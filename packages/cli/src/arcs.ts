@@ -42,6 +42,7 @@ export const arcsUnavailable =
 
 export function arcService(options: ArcServiceOptions): ArcService {
   const bindings = new ArcBindings();
+  const attachedStores = new Map<string, SessionStore>();
   const listeners = new Set<() => void>();
   const registries = new Map<string, ArcRegistry>();
   const recalls = new WeakMap<ArcRegistry, ArcRecall>();
@@ -78,6 +79,12 @@ export function arcService(options: ArcServiceOptions): ArcService {
       ...(options.now !== undefined && { now: options.now }),
     });
   };
+  const persistRelease = async (sessionIds: readonly string[]): Promise<void> => {
+    for (const sessionId of sessionIds) {
+      const store = attachedStores.get(sessionId);
+      if (store?.arcBinding() !== undefined) await store.appendArcBinding(undefined);
+    }
+  };
   const port: ArcsPort = {
     list: async () => {
       const found = registry();
@@ -96,12 +103,15 @@ export function arcService(options: ArcServiceOptions): ArcService {
       return { slug: record.slug, status: record.status, created: record.created, sessions: 0 };
     },
     close: async (slug) => {
-      const outcome = await closeThroughAirlock(airlock(), slug);
+      const { outcome, releasedSessions } = await closeThroughAirlock(airlock(), slug);
+      await persistRelease(releasedSessions);
       changed();
       return outcome;
     },
     abandon: async (slug) => {
+      const boundSessions = bindings.sessionsBoundTo(slug);
       await airlock().abandon(slug);
+      await persistRelease(boundSessions);
       changed();
     },
     subscribe: (listener) => {
@@ -114,11 +124,13 @@ export function arcService(options: ArcServiceOptions): ArcService {
     bindings,
     registry,
     attached: (store) => {
+      attachedStores.set(store.header.id, store);
       const arc = store.arcBinding();
       if (arc === undefined) bindings.unbind(store.header.id);
       else bindings.bind(store.header.id, arc);
     },
     released: (sessionId) => {
+      attachedStores.delete(sessionId);
       bindings.unbind(sessionId);
     },
     recordBinding: (sessionId, arc) => {
@@ -147,21 +159,32 @@ export function arcService(options: ArcServiceOptions): ArcService {
   };
 }
 
-async function closeThroughAirlock(airlock: ArcAirlock, slug: string): Promise<ArcCloseOutcome> {
+interface AirlockClose {
+  outcome: ArcCloseOutcome;
+  releasedSessions: readonly string[];
+}
+
+async function closeThroughAirlock(airlock: ArcAirlock, slug: string): Promise<AirlockClose> {
   const digest = await airlock.prepareClose(slug, { force: true });
   if (digest.candidates.length > 0 || digest.questions.length > 0) {
     return {
-      kind: "pending",
-      candidates: digest.candidates.length,
-      questions: digest.questions.length,
-      wedged: digest.sweep.wedged.length,
+      outcome: {
+        kind: "pending",
+        candidates: digest.candidates.length,
+        questions: digest.questions.length,
+        wedged: digest.sweep.wedged.length,
+      },
+      releasedSessions: [],
     };
   }
   const delivery = await airlock.completeClose(slug, { candidates: {}, questions: {} });
   return {
-    kind: "closed",
-    delivered: delivery.delivered.length,
-    released: delivery.releasedSessions.length,
+    outcome: {
+      kind: "closed",
+      delivered: delivery.delivered.length,
+      released: delivery.releasedSessions.length,
+    },
+    releasedSessions: delivery.releasedSessions,
   };
 }
 

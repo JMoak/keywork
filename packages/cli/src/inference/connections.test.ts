@@ -1,12 +1,12 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FetchLike } from "@keywork/engine";
-import type { KeyworkConfig } from "@keywork/shared";
+import { ConfigError, type KeyworkConfig } from "@keywork/shared";
 import type { ConnectionDraft, ConnectionsPort } from "@keywork/tui";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CredentialMap, readCredentials } from "../auth-store.ts";
-import { readUserConfig } from "../user-config.ts";
+import { readUserConfig, updateUserConfig } from "../user-config.ts";
 import { type ConnectionsDeps, connectionsPort } from "./connections.ts";
 import { type ObservationMap, readObservations } from "./observations.ts";
 
@@ -167,7 +167,61 @@ describe("connectionsPort verify and save", () => {
       connections: { broker: { endpoint: "https://broker.example/v1" } },
     });
     expect(await readCredentials(dir)).toEqual({ broker: { type: "api_key", key: "sk-live" } });
-    expect(JSON.parse(await readFile(join(dir, "keywork.json"), "utf8"))).not.toContain("sk-live");
+    expect(await readFile(join(dir, "keywork.json"), "utf8")).not.toContain("sk-live");
+  });
+
+  it("keeps hand-written models and a disabled flag across a re-save", async () => {
+    const { port, dir } = await harness();
+    await updateUserConfig(
+      () => ({
+        connections: {
+          lan: {
+            endpoint: "http://10.0.0.9:8080/v1",
+            credential: "none",
+            insecureTransport: true,
+            models: ["qwen3", "llama3"],
+            enabled: false,
+          },
+        },
+      }),
+      dir,
+    );
+    const lan = draft({
+      name: "lan",
+      endpoint: "http://10.0.0.9:8080/v1",
+      credential: "none",
+      insecureTransport: true,
+    });
+    const verification = await port.verify(lan);
+    if (!verification.ok) return;
+
+    await port.save(lan, verification);
+
+    expect(await readUserConfig(dir)).toEqual({
+      connections: {
+        lan: {
+          endpoint: "http://10.0.0.9:8080/v1",
+          credential: "none",
+          insecureTransport: true,
+          models: ["qwen3", "llama3"],
+          enabled: false,
+        },
+      },
+    });
+  });
+
+  it("refuses to save over a keywork.json with one invalid field and leaves it untouched", async () => {
+    const { port, dir } = await harness();
+    const file = join(dir, "keywork.json");
+    const damaged = `{ "model": "openai/gpt-5-mini", "bedrockRegion": "nowhere" }\n`;
+    await writeFile(file, damaged, "utf8");
+    const verification = await port.verify(draft());
+    if (!verification.ok) return;
+
+    await expect(port.save(draft(), verification)).rejects.toThrow(ConfigError);
+
+    expect(await readFile(file, "utf8")).toBe(damaged);
+    expect(await readObservations(dir)).toEqual({});
   });
 
   it("writes only non-default fields: protocol, env credential, and insecure transport", async () => {
@@ -225,6 +279,42 @@ describe("connectionsPort verify and save", () => {
     expect(verification).toMatchObject({ ok: false, reason: expect.stringContaining("HTTP 401") });
     expect(await readUserConfig(dir)).toEqual({});
     expect(await readCredentials(dir)).toEqual({});
+  });
+
+  it("remembers a failed verification of a saved connection and clears it on the next successful save", async () => {
+    const endpoint = { status: 200 };
+    const fetchFn: FetchLike = async () =>
+      new Response(JSON.stringify({ data: [{ id: "m1" }] }), { status: endpoint.status });
+    const { port, dir } = await harness({ fetchFn });
+    const ollama = draft();
+    const first = await port.verify(ollama);
+    if (!first.ok) return;
+    await port.save(ollama, first);
+
+    endpoint.status = 503;
+    const failed = await port.verify(ollama);
+    expect(failed.ok).toBe(false);
+    expect(port.saved().map((row) => [row.name, row.lastFailure?.reason])).toEqual([
+      ["ollama", expect.stringContaining("HTTP 503")],
+    ]);
+    expect((await readObservations(dir)).ollama?.lastFailure).toEqual({
+      at: "2026-08-21T12:00:00.000Z",
+      reason: expect.stringContaining("HTTP 503"),
+    });
+
+    endpoint.status = 200;
+    const recovered = await port.verify(ollama);
+    if (!recovered.ok) return;
+    await port.save(ollama, recovered);
+    expect(port.saved().map((row) => [row.name, row.lastFailure])).toEqual([["ollama", undefined]]);
+    expect((await readObservations(dir)).ollama?.lastFailure).toBeUndefined();
+  });
+
+  it("records nothing for a failed verification of a connection that was never saved", async () => {
+    const { port, dir } = await harness({ status: 503 });
+    const verification = await port.verify(draft());
+    expect(verification.ok).toBe(false);
+    expect(await readObservations(dir)).toEqual({});
   });
 
   it("reuses the saved key when an edit leaves the key field blank", async () => {

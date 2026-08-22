@@ -6,10 +6,6 @@ export interface FrameSize {
   readonly height: number;
 }
 
-export interface CaptureOptions {
-  readonly golden?: boolean;
-}
-
 export interface Point {
   readonly x: number;
   readonly y: number;
@@ -25,7 +21,7 @@ export interface Stage {
   drag(from: Point, to: Point): Promise<void>;
   settle(): Promise<void>;
   until(marker: string, timeoutMs?: number): Promise<string>;
-  capture(stepName: string, options?: CaptureOptions): Promise<string>;
+  capture(stepName: string): Promise<string>;
   evidence(fileName: string, content: string): string;
   resize(width: number, height: number): Promise<void>;
   renderOnce(): Promise<number>;
@@ -52,6 +48,7 @@ export interface Scenario {
   readonly contextWindow?: number;
   readonly flavors?: readonly Flavor[];
   readonly presets?: (stateDir: string) => PresetsPort;
+  readonly goldens?: readonly string[];
   beforeBoot?(world: WorldPaths): void;
   run(stage: Stage): Promise<void>;
 }

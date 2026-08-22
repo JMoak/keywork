@@ -11,7 +11,7 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { conclude, exitCodeOf, runHeadless } from "./run.ts";
 
 const tempDirs: string[] = [];
@@ -613,7 +613,7 @@ describe("headless exit contract", () => {
       print: (line) => lines.push(line),
     });
 
-    expect(outcome.outcome).toBe("interrupted");
+    expect(outcome).toMatchObject({ outcome: "interrupted", saved: true });
     expect(exitCodeOf(outcome)).toBe(130);
     await expectGolden("interrupted", lines, cwd);
     const [file] = await readdir(sessionDir);
@@ -665,6 +665,62 @@ describe("headless exit contract", () => {
 
     expect(code).toBe(2);
     await expectGolden("usage", lines, "");
+  });
+
+  it("still ends with exactly one run.finished when saving the session fails, as a failed run", async () => {
+    const cwd = await tempDir();
+    const lines: string[] = [];
+    const append = vi
+      .spyOn(SessionStore.prototype, "append")
+      .mockRejectedValue(new Error("disk full"));
+    try {
+      const outcome = await runHeadless({
+        prompt: "hi",
+        cwd,
+        json: true,
+        sessionDir: await tempDir(),
+        provider: new MockProvider([textTurn("all done")]),
+        print: (line) => lines.push(line),
+      });
+
+      expect(outcome).toEqual({
+        outcome: "failed",
+        error: "keywork run: the turn ended but saving the session failed: disk full",
+      });
+      expect(exitCodeOf(outcome)).toBe(1);
+      const finished = lines
+        .map((line) => JSON.parse(line))
+        .filter((e) => e.type === "run.finished");
+      expect(finished).toEqual([
+        {
+          type: "run.finished",
+          outcome: "failed",
+          exitCode: 1,
+          error: "keywork run: the turn ended but saving the session failed: disk full",
+        },
+      ]);
+    } finally {
+      append.mockRestore();
+    }
+  });
+
+  it("interrupted without a session dir says so instead of claiming a save", async () => {
+    const err: string[] = [];
+    const interrupts = new AbortController();
+
+    const outcome = await runHeadless({
+      prompt: "think for a while",
+      cwd: await tempDir(),
+      json: false,
+      provider: hangingProvider(() => interrupts.abort()),
+      signal: interrupts.signal,
+      print: () => {},
+      printError: (line) => err.push(line),
+    });
+
+    expect(outcome).toMatchObject({ outcome: "interrupted", saved: false });
+    expect(err.join("\n")).toContain("nothing was saved");
+    expect(err.join("\n")).not.toContain("was saved up to this point");
   });
 
   it("persists the partial session even when the turn fails", async () => {

@@ -52,15 +52,17 @@ export interface BranchSummaryInput {
 }
 
 export class SessionStore {
+  private readonly log: SessionEntry[] = [];
+  private readonly byId = new Map<string, SessionEntry>();
+  private readonly labelByTarget = new Map<string, string>();
+  private leaf: string | null = null;
   private headerOnDisk: Promise<void> | undefined;
+  private writes: Promise<unknown> = Promise.resolve();
 
   private constructor(
     readonly file: string,
     readonly header: SessionHeader,
-    private readonly log: SessionEntry[],
-    private readonly byId: Map<string, SessionEntry>,
-    private readonly labelByTarget: Map<string, string>,
-    private leaf: string | null,
+    readonly droppedLines: number,
   ) {}
 
   static async create(
@@ -77,17 +79,16 @@ export class SessionStore {
       cwd,
       ...(parentSession !== undefined && { parentSession }),
     };
-    return new SessionStore(file, header, [], new Map(), new Map(), null);
+    return new SessionStore(file, header, 0);
   }
 
   static async open(file: string): Promise<SessionStore> {
-    const parsed = parseFileEntries(await readFile(file, "utf8"));
-    const header = parsed.find((entry): entry is SessionHeader => entry.type === "session");
+    const { entries, droppedLines } = parseFileEntries(await readFile(file, "utf8"));
+    const header = entries.find((entry): entry is SessionHeader => entry.type === "session");
     if (header === undefined) throw new Error(`${file} is not a keywork session file`);
-    const log = parsed.filter((entry): entry is SessionEntry => entry.type !== "session");
-    const store = new SessionStore(file, header, [], new Map(), new Map(), null);
+    const store = new SessionStore(file, header, droppedLines);
     store.headerOnDisk = Promise.resolve();
-    for (const entry of log) store.index(entry);
+    store.adopt(entries.filter((entry): entry is SessionEntry => entry.type !== "session"));
     return store;
   }
 
@@ -206,7 +207,7 @@ export class SessionStore {
     await clone.materialize();
     const lines = path.map((entry) => `${JSON.stringify(entry)}\n`).join("");
     await appendFile(targetFile, lines, "utf8");
-    for (const entry of path) clone.index(entry);
+    clone.adopt(path);
     return clone;
   }
 
@@ -227,7 +228,15 @@ export class SessionStore {
     };
   }
 
-  private async appendEntry<T extends SessionEntry>(
+  private appendEntry<T extends SessionEntry>(
+    body: Omit<T, "id" | "parentId" | "timestamp">,
+  ): Promise<T> {
+    const write = this.writes.then(() => this.persistAsLeaf<T>(body));
+    this.writes = write.catch(() => undefined);
+    return write;
+  }
+
+  private async persistAsLeaf<T extends SessionEntry>(
     body: Omit<T, "id" | "parentId" | "timestamp">,
   ): Promise<T> {
     const entry = {
@@ -239,6 +248,7 @@ export class SessionStore {
     await this.materialize();
     await appendFile(this.file, `${JSON.stringify(entry)}\n`, "utf8");
     this.index(entry);
+    this.leaf = entry.id;
     return entry;
   }
 
@@ -252,10 +262,14 @@ export class SessionStore {
     await appendFile(this.file, `${JSON.stringify(this.header)}\n`, "utf8");
   }
 
+  private adopt(entries: readonly SessionEntry[]): void {
+    for (const entry of entries) this.index(entry);
+    this.leaf = entries.at(-1)?.id ?? null;
+  }
+
   private index(entry: SessionEntry): void {
     this.log.push(entry);
     this.byId.set(entry.id, entry);
-    this.leaf = entry.id;
     if (entry.type !== "label") return;
     if (entry.label === undefined || entry.label === "") this.labelByTarget.delete(entry.targetId);
     else this.labelByTarget.set(entry.targetId, entry.label);

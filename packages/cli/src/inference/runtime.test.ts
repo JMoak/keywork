@@ -1,7 +1,12 @@
-import { type Resolution, UndeclaredCapabilityError } from "@keywork/engine";
+import {
+  type FetchLike,
+  type ProviderRequest,
+  type Resolution,
+  UndeclaredCapabilityError,
+} from "@keywork/engine";
 import type { KeyworkConfig } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
-import type { CredentialMap } from "../auth-store.ts";
+import type { Credential, CredentialMap } from "../auth-store.ts";
 import type { ObservationMap } from "./observations.ts";
 import { composeInference, type InferenceInputs } from "./runtime.ts";
 
@@ -175,6 +180,55 @@ describe("composeInference connections", () => {
     expect(code(runtime({ config: off }).resolve({ override: "ollama/qwen3" }))).toBe(
       "disabled-provider",
     );
+  });
+});
+
+describe("composeInference oauth refresh", () => {
+  const textRequest: ProviderRequest = {
+    systemPrompt: "",
+    messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+    tools: [],
+  };
+
+  async function drain(stream: AsyncIterable<unknown>): Promise<unknown[]> {
+    const deltas: unknown[] = [];
+    try {
+      for await (const delta of stream) deltas.push(delta);
+    } catch {
+      return deltas;
+    }
+    return deltas;
+  }
+
+  it("issues one token refresh for ten concurrent requests and persists the result once", async () => {
+    let tokenRequests = 0;
+    const bearers: (string | undefined)[] = [];
+    const fetchFn: FetchLike = async (url, init) => {
+      if (url.endsWith("/oauth/token")) {
+        tokenRequests += 1;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return Response.json({ access_token: "fresh", refresh_token: "r2", expires_in: 3600 });
+      }
+      bearers.push((init?.headers as Record<string, string> | undefined)?.authorization);
+      return new Response("", { status: 400 });
+    };
+    const persisted: Credential[] = [];
+    const built = runtime({
+      credentials: {
+        "openai-codex": { type: "oauth", access: "stale", refresh: "r1", expires: Date.now() },
+      },
+      fetchFn,
+      persistCredential: async (_provider, credential) => {
+        persisted.push(credential);
+      },
+    });
+    const { provider } = built.open({ override: "openai-codex/gpt-5.5" });
+
+    await Promise.all(Array.from({ length: 10 }, () => drain(provider.stream(textRequest))));
+
+    expect(tokenRequests).toBe(1);
+    expect(bearers).toEqual(Array.from({ length: 10 }, () => "Bearer fresh"));
+    expect(persisted).toEqual([expect.objectContaining({ type: "oauth", refresh: "r2" })]);
   });
 });
 

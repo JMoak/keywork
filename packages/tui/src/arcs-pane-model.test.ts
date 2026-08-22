@@ -88,7 +88,12 @@ function modelOver(
 }
 
 function press(model: ArcsPaneModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5);
+  for (const spec of specs) model.handleKey(parseChord(spec), 5, typedSequence(spec));
+}
+
+function typedSequence(spec: string): string | undefined {
+  if (spec === "space") return " ";
+  return spec.length === 1 ? spec : undefined;
 }
 
 function lines(rows: ArcGroupRow[], cursor = -1): string[] {
@@ -190,6 +195,16 @@ describe("ArcsPaneModel keys", () => {
     for (const character of "infra") press(model, character);
     press(model, "enter");
     expect(recorded.rejected[1]).toContain("already exists");
+  });
+
+  it("spells the name draft from the raw sequence and drops control input", () => {
+    const { model, recorded } = modelOver();
+    press(model, "n");
+    model.handleKey(parseChord("shift+a"), 5, "A");
+    expect(model.handleKey(parseChord("ctrl+a"), 5, "")).toBe(false);
+    press(model, "b", "enter");
+    expect(recorded.created).toEqual([]);
+    expect(recorded.rejected[0]).toContain('"Ab" isn\'t an arc slug');
   });
 
   it("escape abandons the name draft without creating", () => {

@@ -97,12 +97,11 @@ export class Agent {
     const forwardAbort = () => controller.abort();
     if (signal?.aborted) controller.abort();
     signal?.addEventListener("abort", forwardAbort, { once: true });
-
-    this.checkpointed = false;
-    this.messages.push(textMessage("user", userText));
-    this.announceStandingInjections();
-    this.bus.emit("turn.started", { userText });
     try {
+      this.checkpointed = false;
+      this.messages.push(textMessage("user", userText));
+      this.announceStandingInjections();
+      this.bus.emit("turn.started", { userText });
       return await this.runUntilFinalMessage(controller);
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
@@ -120,9 +119,13 @@ export class Agent {
       const turn = await this.streamAssistantTurn(signal);
       this.totals = addUsage(this.totals, turn.usage);
       this.costTotals = withTurnCost(this.costTotals, turn.usage, this.provider.modelId);
-      if (turn.failure !== undefined) throw turn.failure;
+      if (turn.failure !== undefined) {
+        this.keepPartialMessage(turn.message);
+        this.settleOrphanedToolCalls(turn.message);
+        throw turn.failure;
+      }
       if (turn.interrupted) {
-        if (turn.message.parts.length > 0) this.messages.push(turn.message);
+        this.keepPartialMessage(turn.message);
         return this.finishInterrupted(controller, turn.message);
       }
       this.messages.push(turn.message);
@@ -145,6 +148,10 @@ export class Agent {
     this.release(controller);
     this.bus.emit("turn.interrupted", { message });
     return message;
+  }
+
+  private keepPartialMessage(message: Message): void {
+    if (message.parts.length > 0) this.messages.push(message);
   }
 
   private settleOrphanedToolCalls(message: Message): void {

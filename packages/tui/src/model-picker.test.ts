@@ -64,6 +64,17 @@ describe("ModelPicker", () => {
     expect(picker.query).toBe("gp");
   });
 
+  it("selects a row directly, clamped to the visible list, and pastes into the query", () => {
+    const picker = new ModelPicker(choices, undefined);
+    picker.select(2);
+    expect(picker.selected()?.reference).toBe("openrouter/openai/gpt-5-mini");
+    picker.select(99);
+    expect(picker.selected()?.reference).toBe("openrouter/openai/gpt-5-mini");
+    picker.paste("qwen");
+    expect(picker.query).toBe("qwen");
+    expect(picker.selected()?.reference).toBe("ollama/qwen3");
+  });
+
   it("describes a choice as reference plus its facts", () => {
     expect(describeChoice(choices[0] as ModelChoice)).toBe(
       "ollama/qwen3 · chat-completions · no credential",

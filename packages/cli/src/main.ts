@@ -37,112 +37,78 @@ import { conclude, exitCodeOf, runHeadless } from "./run.ts";
 import { updateUserConfig, userConfigDir } from "./user-config.ts";
 import { versionLine } from "./version.ts";
 
-function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typeof loadConfig> {
-  return loadConfig({
-    userDir: join(homedir(), ".keywork"),
-    projectDir: join(cwd, ".keywork"),
-    projectTrusted,
-  });
+export interface MainSeams {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  interactive?: boolean;
+  print?: (line: string) => void;
+  printError?: (line: string) => void;
+  composeInference?: typeof composeInference;
 }
 
-interface InferenceState {
-  config: KeyworkConfig;
-  credentials: CredentialMap;
-  observations: ObservationMap;
-  runtime: InferenceRuntime;
-}
-
-async function loadInferenceState(cwd: string, projectTrusted: boolean): Promise<InferenceState> {
-  const config = await loadKeyworkConfig(cwd, projectTrusted);
-  const credentials = { ...legacyCredentials(config.apiKeys), ...(await readCredentials()) };
-  const observations = await readObservations();
-  const runtime = composeInference({
-    env: process.env,
-    config,
-    credentials,
-    observations,
-    persistCredential: (provider, credential) =>
-      saveCredential(provider, credential).then(() => {}),
-  });
-  for (const warning of runtime.warnings) console.warn(`keywork: ${warning}`);
-  return { config, credentials, observations, runtime };
-}
-
-async function main(argv: string[]): Promise<number> {
-  const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
-  const decision = dispatchCommand(argv, interactive);
+export async function main(argv: readonly string[], seams: MainSeams = {}): Promise<number> {
+  const io = resolveSeams(seams);
+  const decision = dispatchCommand(argv, io.interactive);
   if (decision.kind === "version") {
-    console.log(versionLine());
+    io.print(versionLine());
+    return 0;
+  }
+  if (decision.kind === "help") {
+    io.print(usage);
     return 0;
   }
   if (decision.kind === "usage") {
-    console.error(`keywork: ${decision.reason}\n\n${nonInteractiveUsage}`);
+    io.printError(`keywork: ${decision.reason}\n\n${io.interactive ? usage : nonInteractiveUsage}`);
     return decision.exitCode;
   }
   const { command, rest } = decision;
+  const invocation = parseInvocation(rest);
+  if (!invocation.ok) return refuseInvocation(command, rest, invocation.problem, io);
+  const { values, positionals } = invocation;
 
-  const { values, positionals } = parseArgs({
-    args: rest,
-    allowPositionals: true,
-    options: {
-      json: { type: "boolean", default: false },
-      debug: { type: "boolean", default: false },
-      model: { type: "string" },
-      preset: { type: "string" },
-      continue: { type: "boolean", default: false },
-      fresh: { type: "boolean", default: false },
-      resume: { type: "string" },
-      "session-dir": { type: "string" },
-      workspace: { type: "string" },
-    },
-  });
-
-  const cwd = process.cwd();
+  const { cwd } = io;
   const { ensureStateLayout } = await import("./paths.ts");
   ensureStateLayout();
   const { fileWorkspaceRecall, selectWorkspace, workspaceCommand } = await import(
     "./workspaces.ts"
   );
   const workspaceRecall = fileWorkspaceRecall();
-  const workspaceSlug = selectWorkspace(cwd, values.workspace, workspaceRecall, console.warn);
+  const workspaceSlug = selectWorkspace(cwd, values.workspace, workspaceRecall, io.printError);
   const workspace = openWorkspace(cwd, workspaceSlug);
   for (const dir of workspace?.missingContextDirs ?? []) {
-    console.warn(`keywork: skipping context dir ${dir}, it doesn't exist`);
+    io.printError(`keywork: skipping context dir ${dir}, it doesn't exist`);
   }
   const trustStore = new TrustStore();
+  const commandIo = { print: io.print, printError: io.printError };
   if (command === "workspace") {
     const { terminalConfirm } = await import("./sessions.ts");
-    return workspaceCommand(positionals, cwd, {}, terminalConfirm(), workspaceRecall);
+    return workspaceCommand(positionals, cwd, commandIo, terminalConfirm(), workspaceRecall);
   }
   if (command === "doctor") {
     const { doctorCommand } = await import("./doctor.ts");
-    return doctorCommand(
-      { env: process.env, platform: process.platform },
-      console.log,
-      async () => {
-        const loaded = await loadInferenceState(cwd, trustStore.resolve(cwd) === "trusted");
-        return loaded.runtime.registry;
-      },
-    );
+    return doctorCommand({ env: io.env, platform: process.platform }, io.print, async () => {
+      const loaded = await loadInferenceState(cwd, trustStore.resolve(cwd) === "trusted", io);
+      return loaded.runtime.registry;
+    });
   }
   if (command === "trust" || command === "untrust") {
     const { trustCommand } = await import("./trust.ts");
-    return trustCommand(command, cwd, trustStore);
+    return trustCommand(command, cwd, trustStore, commandIo);
   }
   if (command === "init" || command === "link") {
     const { terminalConfirm } = await import("./sessions.ts");
     const confirm = terminalConfirm();
     if (command === "init") {
       const { initCommand } = await import("./init.ts");
-      return initCommand(cwd, trustStore, {}, confirm);
+      return initCommand(cwd, trustStore, commandIo, confirm);
     }
     const { linkCommand } = await import("./link.ts");
-    return linkCommand(positionals[0], cwd, trustStore, {}, confirm);
+    return linkCommand(positionals[0], cwd, trustStore, commandIo, confirm);
   }
   const projectTrusted = trustStore.resolve(cwd) === "trusted";
-  let state = await loadInferenceState(cwd, projectTrusted);
+  let state = await loadInferenceState(cwd, projectTrusted, io);
   const reloadInference = async (): Promise<void> => {
-    state = await loadInferenceState(cwd, projectTrusted);
+    state = await loadInferenceState(cwd, projectTrusted, io);
   };
   const { config } = state;
   const presets = createPresetSwitch({
@@ -154,7 +120,7 @@ async function main(argv: string[]): Promise<number> {
   const toolPermissions = presets.resolver;
   const defaultSelection = { override: values.model, default: config.model };
   const connections = connectionsPort({
-    env: process.env,
+    env: io.env,
     userDir: userConfigDir(),
     config: () => state.config,
     credentials: () => state.credentials,
@@ -166,7 +132,7 @@ async function main(argv: string[]): Promise<number> {
     case "chat": {
       const bound = state.runtime.resolve(defaultSelection);
       if (!bound.ok) {
-        console.error(`${bound.failure.message} · ${bound.failure.nextAction}\n\n${connectHint}`);
+        io.printError(`${bound.failure.message} · ${bound.failure.nextAction}\n\n${connectHint}`);
         return 1;
       }
       const provider = state.runtime.provider(bound.binding);
@@ -179,6 +145,7 @@ async function main(argv: string[]): Promise<number> {
         projectTrusted,
         permissions: toolPermissions,
         presets,
+        ...(workspaceSlug !== undefined && { workspaceSlug }),
         ...(config.prompts !== undefined && { prompts: config.prompts }),
         ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
         ...(values.resume !== undefined && { resumeId: values.resume }),
@@ -187,7 +154,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "run": {
-      const io = { json: values.json, print: console.log, printError: console.error };
+      const headlessIo = { json: values.json, print: io.print, printError: io.printError };
       const prompt = positionals.join(" ").trim();
       if (prompt === "") {
         return conclude(
@@ -195,7 +162,7 @@ async function main(argv: string[]): Promise<number> {
             outcome: "usage",
             error: `keywork run needs a prompt, like: keywork run "fix the tests"`,
           },
-          io,
+          headlessIo,
         );
       }
       if (values.preset !== undefined && !isPresetName(values.preset)) {
@@ -204,11 +171,11 @@ async function main(argv: string[]): Promise<number> {
             outcome: "usage",
             error: `keywork run: no preset named "${values.preset}" (options: ${presetOrder.join(" · ")})`,
           },
-          io,
+          headlessIo,
         );
       }
       const bound = state.runtime.resolve(defaultSelection);
-      if (!bound.ok) return conclude({ outcome: "unresolved", failure: bound.failure }, io);
+      if (!bound.ok) return conclude({ outcome: "unresolved", failure: bound.failure }, headlessIo);
       const interrupts = new AbortController();
       const interrupt = () => interrupts.abort();
       process.once("SIGINT", interrupt);
@@ -221,10 +188,13 @@ async function main(argv: string[]): Promise<number> {
           projectTrusted,
           permissions:
             values.preset === undefined ? toolPermissions : runScopedPermissions(values.preset),
-          debug: values.debug || debugEnabled(process.env),
+          debug: values.debug || debugEnabled(io.env),
           provider: state.runtime.provider(bound.binding),
           modelId: bound.binding.reference.model,
           signal: interrupts.signal,
+          print: io.print,
+          printError: io.printError,
+          ...(workspaceSlug !== undefined && { workspaceSlug }),
           ...(config.prompts !== undefined && { prompts: config.prompts }),
           ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
           ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
@@ -241,8 +211,12 @@ async function main(argv: string[]): Promise<number> {
       return sessionsCommand(
         positionals,
         values["session-dir"] ?? defaultSessionDir(cwd, workspaceSlug),
-        console.log,
-        terminalConfirm(),
+        {
+          json: values.json,
+          print: io.print,
+          printError: io.printError,
+          confirm: terminalConfirm(),
+        },
       );
     }
     case "connect":
@@ -273,10 +247,6 @@ async function main(argv: string[]): Promise<number> {
       const { compactNow, contextBudgetFor, declaredContextWindow, settleTurn } = await import(
         "@keywork/engine"
       );
-      const launchPanes = (slug: string | undefined): Promise<string | undefined> =>
-        new Promise((switchTo) => {
-          void openPanes(slug, switchTo);
-        });
       const openPanes = async (
         slug: string | undefined,
         switchTo: (next: string | undefined) => void,
@@ -432,13 +402,123 @@ async function main(argv: string[]): Promise<number> {
         });
       };
       let selected = workspaceSlug;
-      for (;;) selected = await launchPanes(selected);
+      for (;;) selected = await runUntilSwitch((switchTo) => openPanes(selected, switchTo));
     }
     default: {
-      console.log(usage);
-      return command === "help" ? 0 : exitCodes.usage;
+      io.printError(`keywork: unknown command "${command}"\n\n${usage}`);
+      return exitCodes.usage;
     }
   }
+}
+
+export function runUntilSwitch(
+  open: (switchTo: (next: string | undefined) => void) => Promise<void>,
+): Promise<string | undefined> {
+  return new Promise((switchTo, reject) => {
+    open(switchTo).catch(reject);
+  });
+}
+
+interface MainIo {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  interactive: boolean;
+  print: (line: string) => void;
+  printError: (line: string) => void;
+  composeInference: typeof composeInference;
+}
+
+function resolveSeams(seams: MainSeams): MainIo {
+  return {
+    cwd: seams.cwd ?? process.cwd(),
+    env: seams.env ?? process.env,
+    interactive:
+      seams.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true),
+    print: seams.print ?? console.log,
+    printError: seams.printError ?? console.error,
+    composeInference: seams.composeInference ?? composeInference,
+  };
+}
+
+function parseInvocationArgs(args: readonly string[]) {
+  return parseArgs({
+    args: [...args],
+    allowPositionals: true,
+    options: {
+      json: { type: "boolean", default: false },
+      debug: { type: "boolean", default: false },
+      model: { type: "string" },
+      preset: { type: "string" },
+      continue: { type: "boolean", default: false },
+      fresh: { type: "boolean", default: false },
+      resume: { type: "string" },
+      "session-dir": { type: "string" },
+      workspace: { type: "string" },
+    },
+  });
+}
+
+type Invocation =
+  | ({ ok: true } & ReturnType<typeof parseInvocationArgs>)
+  | { ok: false; problem: string };
+
+function parseInvocation(args: readonly string[]): Invocation {
+  try {
+    return { ok: true, ...parseInvocationArgs(args) };
+  } catch (cause) {
+    return { ok: false, problem: cause instanceof Error ? cause.message : String(cause) };
+  }
+}
+
+function refuseInvocation(
+  command: string,
+  rest: readonly string[],
+  problem: string,
+  io: MainIo,
+): number {
+  if (command === "run") {
+    return conclude(
+      { outcome: "usage", error: `keywork run: ${problem}` },
+      { json: rest.includes("--json"), print: io.print, printError: io.printError },
+    );
+  }
+  io.printError(`keywork: ${problem}\n\n${usage}`);
+  return exitCodes.usage;
+}
+
+function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typeof loadConfig> {
+  return loadConfig({
+    userDir: join(homedir(), ".keywork"),
+    projectDir: join(cwd, ".keywork"),
+    projectTrusted,
+  });
+}
+
+interface InferenceState {
+  config: KeyworkConfig;
+  credentials: CredentialMap;
+  observations: ObservationMap;
+  runtime: InferenceRuntime;
+}
+
+async function loadInferenceState(
+  cwd: string,
+  projectTrusted: boolean,
+  io: MainIo,
+): Promise<InferenceState> {
+  const config = await loadKeyworkConfig(cwd, projectTrusted);
+  const credentials = { ...legacyCredentials(config.apiKeys), ...(await readCredentials()) };
+  const observations = await readObservations();
+  const runtime = io.composeInference({
+    env: io.env,
+    config,
+    credentials,
+    observations,
+    persistCredential: (provider, credential) =>
+      saveCredential(provider, credential).then(() => {}),
+  });
+  for (const warning of runtime.warnings) io.printError(`keywork: ${warning}`);
+  return { config, credentials, observations, runtime };
 }
 
 function runScopedPermissions(preset: string): PermissionResolver {
@@ -446,11 +526,13 @@ function runScopedPermissions(preset: string): PermissionResolver {
   return (call) => policy(call.name, call.arguments);
 }
 
-process.exitCode = await main(process.argv.slice(2)).catch((cause: unknown) => {
-  if (cause instanceof ConfigError || cause instanceof ResolutionError) {
-    console.error(cause.message);
+if (import.meta.main) {
+  process.exitCode = await main(process.argv.slice(2)).catch((cause: unknown) => {
+    if (cause instanceof ConfigError || cause instanceof ResolutionError) {
+      console.error(cause.message);
+      return 1;
+    }
+    console.error(cause instanceof Error ? (cause.stack ?? cause.message) : String(cause));
     return 1;
-  }
-  console.error(cause instanceof Error ? (cause.stack ?? cause.message) : String(cause));
-  return 1;
-});
+  });
+}

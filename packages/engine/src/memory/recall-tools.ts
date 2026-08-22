@@ -135,7 +135,7 @@ function renderHit(hit: SearchHit, index: number): string {
       : [`superseded by [[${hit.relations.supersededBy}]]`]),
     ...hit.relations.contradicts.map((name) => `contradicts [[${name}]]`),
   ];
-  const line = `${index + 1}. [[${hit.note.name}]] — ${snippet(hit.note.body)}`;
+  const line = `${index + 1}. [[${hit.note.name}]] · ${snippet(hit.note.body)}`;
   return currency.length === 0 ? line : `${line}\n   ${currency.join(" · ")}`;
 }
 

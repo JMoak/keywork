@@ -11,6 +11,7 @@ import {
   writeNamedWorkspaceDeclaration,
 } from "@keywork/shared";
 import type { WorkspaceChoice, WorkspacesPort } from "@keywork/tui";
+import { exitCodes } from "./dispatch.ts";
 import { keyworkHome } from "./paths.ts";
 
 export interface WorkspaceRecall {
@@ -79,8 +80,10 @@ export async function workspaceCommand(
     case "prune":
       return removeWorkspace(cwd, root, slug, recall, print, printError, confirm);
     default:
-      printError(`unknown workspace subcommand: ${subcommand} (expected list, new, use, or rm)`);
-      return 1;
+      printError(
+        `keywork workspace: unknown subcommand "${subcommand}" (expected list, new, use, or rm)`,
+      );
+      return exitCodes.usage;
   }
 }
 
@@ -118,7 +121,7 @@ export function nameFromSlug(slug: string): string {
 function choiceOf(slot: WorkspaceSlot, current: string | undefined): WorkspaceChoice {
   return {
     slug: slot.slug,
-    name: slot.name ?? "default",
+    name: slot.problem === undefined ? (slot.name ?? "default") : "(unavailable)",
     declared: slot.declared,
     current: slot.slug === current,
     notes: noteCount(slot.vaultPath),
@@ -133,11 +136,15 @@ function printWorkspaces(
   for (const slot of listWorkspaces(root)) {
     const mark = slot.slug === recalled ? "*" : " ";
     const label = (slot.slug ?? "default").padEnd(20);
-    const name = slot.declared ? (slot.name ?? "") : "(not set up yet)";
-    print(`${mark} ${label} ${name.padEnd(24)} ${relative(root, slot.vaultPath)}`);
+    print(`${mark} ${label} ${slotName(slot).padEnd(24)} ${relative(root, slot.vaultPath)}`);
   }
   print(`root ${root} · * opens next`);
   return 0;
+}
+
+function slotName(slot: WorkspaceSlot): string {
+  if (slot.problem !== undefined) return `(unavailable · ${slot.problem})`;
+  return slot.declared ? (slot.name ?? "") : "(not set up yet)";
 }
 
 function createWorkspace(

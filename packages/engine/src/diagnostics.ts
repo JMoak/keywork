@@ -20,14 +20,22 @@ export function debugLogFile(sessionDir: string, now = Date.now(), pid = process
   return join(sessionDir, "debug", `${now}-${pid}.jsonl`);
 }
 
+export interface DiagnosticsOptions {
+  onWriteFailure?: (error: Error) => void;
+}
+
 export class DiagnosticsLog {
   private pending = Promise.resolve();
+  private failureReported = false;
 
-  private constructor(readonly file: string) {}
+  private constructor(
+    readonly file: string,
+    private readonly onWriteFailure: (error: Error) => void,
+  ) {}
 
-  static async open(file: string): Promise<DiagnosticsLog> {
+  static async open(file: string, options: DiagnosticsOptions = {}): Promise<DiagnosticsLog> {
     await mkdir(dirname(file), { recursive: true });
-    return new DiagnosticsLog(file);
+    return new DiagnosticsLog(file, options.onWriteFailure ?? (() => undefined));
   }
 
   log(level: DiagnosticsLevel, event: string, payload: unknown): void {
@@ -37,9 +45,7 @@ export class DiagnosticsLog {
       event,
       payload: redactSecrets(payload),
     };
-    this.pending = this.pending.then(() =>
-      appendFile(this.file, `${JSON.stringify(line)}\n`, "utf8"),
-    );
+    this.pending = this.pending.then(() => this.append(line));
   }
 
   tap(bus: EventBus<EngineEvents>): () => void {
@@ -59,6 +65,21 @@ export class DiagnosticsLog {
 
   flush(): Promise<void> {
     return this.pending;
+  }
+
+  private async append(line: DiagnosticsLine): Promise<void> {
+    try {
+      await appendFile(this.file, `${JSON.stringify(line)}\n`, "utf8");
+      this.failureReported = false;
+    } catch (cause) {
+      this.reportWriteFailureOnce(cause);
+    }
+  }
+
+  private reportWriteFailureOnce(cause: unknown): void {
+    if (this.failureReported) return;
+    this.failureReported = true;
+    this.onWriteFailure(cause instanceof Error ? cause : new Error(String(cause)));
   }
 }
 

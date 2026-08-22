@@ -41,34 +41,41 @@ export interface TurnSettlement {
 
 export async function settleTurn(options: SettleOptions): Promise<TurnSettlement> {
   const { store, provider, budget } = options;
-  const flushed = await flushIfDue(options, readStore(store, budget));
+  const flush = await flushIfDue(options, readStore(store, budget));
   const reading = readStore(store, budget);
-  if (!shouldCompact(reading)) return settled(flushed, options.history, undefined, []);
-  return compact({ store, provider, budget, flush: options.flush }, flushed, options.history);
+  if (!shouldCompact(reading)) return settled(flush, options.history, undefined, []);
+  return compact({ store, provider, budget, flush: options.flush }, flush, options.history);
 }
 
 export async function compactNow(options: CompactNowOptions): Promise<TurnSettlement> {
-  return compact(options, [], undefined);
+  return compact(options, noFlush, undefined);
 }
 
 export function readStore(store: SessionStore, budget: ContextBudget): ContextReading {
   return readContext(estimateContextTokens(store), budget);
 }
 
-async function flushIfDue(options: SettleOptions, reading: ContextReading): Promise<Message[]> {
-  if (options.flush === undefined) return [];
+interface FlushStep {
+  readonly messages: readonly Message[];
+  readonly notices: readonly string[];
+}
+
+const noFlush: FlushStep = { messages: [], notices: [] };
+
+async function flushIfDue(options: SettleOptions, reading: ContextReading): Promise<FlushStep> {
+  if (options.flush === undefined) return noFlush;
   try {
     const outcome = await options.flush.maybeFlush(options.history, reading);
     for (const message of outcome.messages) await options.store.append(message);
-    return outcome.messages;
-  } catch {
-    return [];
+    return { messages: outcome.messages, notices: [] };
+  } catch (cause) {
+    return { messages: [], notices: [`flush failed: ${reasonOf(cause)}`] };
   }
 }
 
 async function compact(
   options: CompactNowOptions,
-  flushed: readonly Message[],
+  flush: FlushStep,
   history: readonly Message[] | undefined,
 ): Promise<TurnSettlement> {
   const { store, provider, budget } = options;
@@ -79,34 +86,38 @@ async function compact(
         options.instructions !== "" && { instructions: options.instructions }),
     });
     if (entry === undefined) {
-      return settled(flushed, history, undefined, history === undefined ? [nothingToCompact] : []);
+      return settled(flush, history, undefined, history === undefined ? [nothingToCompact] : []);
     }
     options.flush?.compactionCompleted();
     const after = readStore(store, budget);
     return {
       history: store.messages(),
-      notices: [compactedNotice(entry, after)],
-      flushed,
+      notices: [...flush.notices, compactedNotice(entry, after)],
+      flushed: flush.messages,
       compacted: entry,
     };
   } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    return settled(flushed, history, undefined, [`compaction failed: ${reason}`]);
+    return settled(flush, history, undefined, [`compaction failed: ${reasonOf(cause)}`]);
   }
 }
 
 function settled(
-  flushed: readonly Message[],
+  flush: FlushStep,
   history: readonly Message[] | undefined,
   compacted: CompactionEntry | undefined,
   notices: readonly string[],
 ): TurnSettlement {
+  const flushed = flush.messages;
   return {
     history: flushed.length === 0 || history === undefined ? undefined : [...history, ...flushed],
-    notices,
+    notices: [...flush.notices, ...notices],
     flushed,
     compacted,
   };
+}
+
+function reasonOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 const nothingToCompact = "nothing to compact yet · the recent turns are all that's here";

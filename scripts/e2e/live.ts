@@ -16,15 +16,15 @@ import { createPresetSwitch, isPresetName } from "../../packages/cli/src/presets
 import { sessionPort, sessionTreePort } from "../../packages/cli/src/sessions.ts";
 import { updateUserConfig } from "../../packages/cli/src/user-config.ts";
 import { workspaceFile } from "../../packages/cli/src/workspace.ts";
-import { Agent, Checkpoints, coreTools } from "../../packages/engine/src/index.ts";
+import { Agent, coreTools } from "../../packages/engine/src/index.ts";
 import {
   loadConfig,
   presetOrder,
   requiresConfirmation,
   TrustStore,
 } from "../../packages/shared/src/index.ts";
-import { type PresetsPort, runApp } from "../../packages/tui/src/index.ts";
-import type { AppSeams, ComposedWorld } from "./harness.ts";
+import { type AppOptions, type PresetsPort, runApp } from "../../packages/tui/src/index.ts";
+import { type AppSeams, type ComposedWorld, openCheckpoints } from "./harness.ts";
 
 export function liveWorld(cwd: string): ComposedWorld {
   return {
@@ -55,10 +55,7 @@ async function composeLiveApp(cwd: string, seams: AppSeams): Promise<void> {
     observations: await readObservations(),
   });
   const sessionDir = defaultSessionDir(cwd);
-  const checkpoints = await Checkpoints.open({
-    worktree: cwd,
-    gitDir: snapshotGitDir(cwd),
-  }).catch(() => undefined);
+  const checkpoints = await openCheckpoints({ worktree: cwd, gitDir: snapshotGitDir(cwd) });
   const presetsPort: PresetsPort = {
     names: () => presetOrder,
     active: () => presets.active(),
@@ -80,7 +77,7 @@ async function composeLiveApp(cwd: string, seams: AppSeams): Promise<void> {
   });
 }
 
-type AgentSeams = Pick<Parameters<typeof runApp>[0], "agentFactory" | "statusLabel">;
+type AgentSeams = Pick<AppOptions, "agentFactory" | "statusLabel">;
 
 function agentSeamsWithoutBootTitler(
   cwd: string,

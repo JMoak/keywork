@@ -41,7 +41,12 @@ async function browserOver(tree: Tree) {
 }
 
 function press(model: BrowserModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5);
+  for (const spec of specs) model.handleKey(parseChord(spec), 5, typedSequence(spec));
+}
+
+function typedSequence(spec: string): string | undefined {
+  if (spec === "space") return " ";
+  return spec.length === 1 ? spec : undefined;
 }
 
 async function pressSettled(model: BrowserModel, ...specs: string[]): Promise<void> {
@@ -198,6 +203,59 @@ describe("BrowserModel filter", () => {
     const { model } = await browserOver(sampleTree);
     press(model, "j", "j", "j", "/", "d");
     expect(model.rows()[model.cursor]?.name).toBe("docs");
+  });
+
+  it("accepts a space and keeps the typed case from the raw sequence", async () => {
+    const { model } = await browserOver({ "My Notes.md": "file", "other.ts": "file" });
+    press(model, "/");
+    model.handleKey(parseChord("shift+m"), 5, "M");
+    press(model, "y", "space");
+    expect(model.filterQuery).toBe("My ");
+    expect(model.rows().map((row) => row.name)).toEqual(["My Notes.md"]);
+  });
+
+  it("drops control sequences and modified chords from the query", async () => {
+    const { model } = await browserOver(sampleTree);
+    press(model, "/");
+    expect(model.handleKey(parseChord("ctrl+a"), 5, "")).toBe(false);
+    expect(model.handleKey(parseChord("tab"), 5, "\t")).toBe(false);
+    expect(model.handleKey(parseChord("alt+x"), 5, "x")).toBe(false);
+    expect(model.filterQuery).toBe("");
+  });
+});
+
+describe("BrowserModel modifier guard", () => {
+  it("ignores shifted and control chords outside the filter", async () => {
+    const { model, disk } = await browserOver(sampleTree);
+    expect(model.handleKey(parseChord("ctrl+r"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("shift+j"), 5)).toBe(false);
+    await model.settled();
+    expect(disk.reads.get("root")).toBe(1);
+    expect(model.cursor).toBe(0);
+  });
+});
+
+describe("BrowserModel disposal", () => {
+  it("stays silent after dispose even when a read lands", async () => {
+    let release: (entries: Entry[]) => void = () => {};
+    let notified = 0;
+    const model = new BrowserModel(
+      "root",
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      () => {
+        notified += 1;
+      },
+      () => {},
+    );
+    model.dispose();
+    release([{ name: "late.ts", kind: "file" }]);
+    await model.settled();
+    expect(notified).toBe(0);
+    expect(model.handleKey(parseChord("."), 5)).toBe(true);
+    expect(notified).toBe(0);
   });
 });
 

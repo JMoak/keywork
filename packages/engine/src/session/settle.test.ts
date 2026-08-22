@@ -123,6 +123,34 @@ describe("settleTurn", () => {
     expect(store.messages()).toHaveLength(10);
   });
 
+  it("reports a failed flush as a notice and still finishes the turn", async () => {
+    const store = await sessionOf(4, 100);
+    const used = readStore(store, contextBudgetFor(200_000)).used;
+    const budget = contextBudgetFor(Math.round(used / (1 - 1 / 8 + 0.01)));
+    const flush = new MemoryFlush({
+      provider: {
+        name: "broken",
+        stream: () => {
+          throw new Error("vault offline");
+        },
+      },
+      store: await trustedVault(),
+    });
+
+    const settlement = await settleTurn({
+      store,
+      provider: new MockProvider([]),
+      history: store.messages(),
+      budget,
+      flush,
+    });
+
+    expect(settlement.notices).toEqual(["flush failed: vault offline"]);
+    expect(settlement.flushed).toEqual([]);
+    expect(settlement.history).toBeUndefined();
+    expect(settlement.compacted).toBeUndefined();
+  });
+
   it("reports a failed compaction and keeps the history intact", async () => {
     const store = await sessionOf(6);
     const provider = new MockProvider([textTurn("   ")]);
@@ -164,6 +192,27 @@ describe("compactNow", () => {
     expect(settlement.compacted?.summary).toBe("focused summary");
     expect(settlement.history?.length).toBeLessThan(12);
     expect(settlement.notices[0]).toMatch(/^compacted /);
+  });
+
+  it("folds twice in a row into one summary at the front, in chronological order", async () => {
+    const store = await sessionOf(8);
+    const budget = contextBudgetFor(200_000);
+
+    await compactNow({ store, provider: new MockProvider([textTurn("SUMMARY-ONE")]), budget });
+    await compactNow({ store, provider: new MockProvider([textTurn("SUMMARY-TWO")]), budget });
+
+    const heads = store
+      .messages()
+      .map((message) => /^(SUMMARY-\w+|question \d+|answer \d+)/.exec(messageText(message))?.[0]);
+    expect(heads.filter((head) => head?.startsWith("SUMMARY"))).toEqual(["SUMMARY-TWO"]);
+    expect(heads[0]).toBe("SUMMARY-TWO");
+    const chronological = Array.from({ length: 8 }, (_, index) => [
+      `question ${index + 1}`,
+      `answer ${index + 1}`,
+    ]).flat();
+    const tail = heads.slice(1);
+    expect(tail).toEqual(chronological.slice(chronological.length - tail.length));
+    expect((await SessionStore.open(store.file)).messages()).toEqual(store.messages());
   });
 
   it("says so when there is nothing to fold yet", async () => {

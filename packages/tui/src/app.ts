@@ -3,10 +3,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   type Agent,
-  checkpointForPrompt,
   type Message,
   modelReferenceOf,
-  type SessionTreeNode,
   type ToolCallPart,
   type ToolGuard,
   type TurnSettlement,
@@ -41,7 +39,7 @@ import {
   suggestArcSlug,
 } from "./arcs.ts";
 import { ArcsPane } from "./arcs-pane.ts";
-import { promptAnchor } from "./backtrack.ts";
+import { type PromptAnchor, promptAnchor } from "./backtrack.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import { paneBorder, rampPositions } from "./chroma.ts";
@@ -82,6 +80,10 @@ export interface CheckpointsPort {
   restoreTo(tree: string): Promise<void>;
 }
 
+export interface AppendReceipt {
+  entryId: string;
+}
+
 export interface SessionAttachment {
   id: string;
   name?: string;
@@ -89,7 +91,7 @@ export interface SessionAttachment {
   arc?: string;
   history: readonly Message[];
   replay(bus: Agent["bus"]): void;
-  append(message: Message): Promise<void>;
+  append(message: Message): Promise<AppendReceipt | undefined>;
   rename?(name: string): Promise<void>;
   recordModel?(reference: string): Promise<void>;
   bindArc?(slug: string | undefined): Promise<void>;
@@ -165,7 +167,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   ]);
   const pageThresholds = resolvePageThresholds(options.page);
   const glyphs: GlyphSupport = options.glyphs ?? detectCapabilities();
-  const restored = await loadRestorePlan(options);
+  const escrow = sessionEscrow(options.sessions);
+  const restored = await loadRestorePlan(options, escrow);
   const renderer = await (options.createRenderer ?? defaultRenderer)();
   const exit = options.exit ?? ((code: number) => process.exit(code));
   const screen = (): Screen => ({
@@ -173,10 +176,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     height: Math.max(0, renderer.height - 2 * frameChrome.border - frameChrome.statusRows),
   });
   const checkpoints = options.checkpoints;
-  const attachments = restored?.attachments ?? new Map<string, SessionAttachment>();
   const trees = options.sessionTrees;
-  const treePort =
-    trees === undefined ? undefined : attachOnFork(trees, options.sessions, attachments);
+  const treePort = trees === undefined ? undefined : attachOnFork(trees, options.sessions, escrow);
   const memoryPort = options.memory;
   const mcpPort = options.mcp;
   const agentSwitchers = new Map<string, (agentName: string | undefined) => boolean>();
@@ -198,9 +199,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true),
         ...(checkpoints !== undefined && { beforeMutation: () => checkpoints.capture() }),
       };
-      const attachment =
-        resumeSessionId === undefined ? undefined : attachments.get(resumeSessionId);
-      if (resumeSessionId !== undefined) attachments.delete(resumeSessionId);
+      const attachment = resumeSessionId === undefined ? undefined : escrow.claim(resumeSessionId);
+      if (resumeSessionId !== undefined && attachment === undefined) return undefined;
       let selectedModel = attachment?.modelReference;
       const modelInForce = (): string | undefined => {
         const current = pane?.currentAgent();
@@ -222,14 +222,14 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       const titler = persistingTitler(options.titler, () => liveSession);
       const ports: ConversationPorts = {
         readFile: readWorkspaceFile,
-        forkAtPrompt: (ordinal, promptDraft) =>
+        forkAtPrompt: (promptId, promptDraft) =>
           forkAtPrompt(
             treePort,
             (sessionId, forkDraft) =>
               core.openPane(sessionId, forkDraft, { sourcePaneId: id, arc: "inherit" }),
             checkpoints,
             pane?.sessionId,
-            ordinal,
+            promptId,
             promptDraft,
           ),
         ...(initial.failure !== undefined && { idleNotice: initial.failure }),
@@ -288,7 +288,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         });
       };
       if (attachment !== undefined) wireSession(attachment);
-      else if (resumeSessionId === undefined) {
+      else {
         startFreshSession(
           options.sessions,
           notify,
@@ -364,7 +364,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       if (switcher === undefined) return Promise.reject(new Error("no conversation pane here"));
       return switcher(reference);
     },
-    ...(restored !== undefined && { restoreWorkspace: restored.state }),
+    ...(restored !== undefined && { restoreWorkspace: restored }),
     ...(options.workspace !== undefined && {
       saveWorkspace: (state: WorkspaceState) => options.workspace?.save(state),
     }),
@@ -383,6 +383,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       unsubscribeMcp?.();
       arcIndex.dispose();
       paneSessions.closeAll();
+      escrow.releaseAll();
       renderer.destroy();
       options.workspace?.seal();
       void runClosers(
@@ -677,42 +678,39 @@ export function discardFrame(root: DiscardableFrame): void {
 
 function mouseRepaints(core: AppCore, pointer: PointerEvent): boolean {
   if (pointer.type !== "move") return true;
-  return core.paletteOpen || core.helpVisible || core.draggingPane() !== undefined;
+  return core.overlayOpen || core.draggingPane() !== undefined;
 }
 
 function defaultRenderer(): Promise<CliRenderer> {
   return createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
 }
 
-interface RestorePlan {
-  state: WorkspaceState;
-  attachments: Map<string, SessionAttachment>;
-}
-
-async function loadRestorePlan(options: AppOptions): Promise<RestorePlan | undefined> {
+async function loadRestorePlan(
+  options: AppOptions,
+  escrow: SessionEscrow,
+): Promise<WorkspaceState | undefined> {
   if (options.workspace === undefined) return undefined;
   const state = parseWorkspaceState(await options.workspace.load());
   if (state === undefined) return undefined;
-  const attachments = new Map<string, SessionAttachment>();
   const panes: WorkspacePane[] = [];
   for (const pane of state.panes) {
-    if (await restorable(pane, options.sessions, attachments)) panes.push(pane);
+    if (await restorable(pane, options.sessions, escrow)) panes.push(pane);
   }
   if (panes.length === 0) return undefined;
-  return { state: { ...state, panes }, attachments };
+  return { ...state, panes };
 }
 
 async function restorable(
   pane: WorkspacePane,
   sessions: SessionPort | undefined,
-  attachments: Map<string, SessionAttachment>,
+  escrow: SessionEscrow,
 ): Promise<boolean> {
   switch (pane.kind) {
     case "conversation": {
       if (pane.sessionId === undefined) return true;
       const attachment = await sessions?.open(pane.sessionId);
       if (attachment === undefined) return false;
-      attachments.set(pane.sessionId, attachment);
+      escrow.hold(pane.sessionId, attachment);
       return true;
     }
     case "file":
@@ -744,36 +742,33 @@ export async function forkAtPrompt(
   open: (sessionId: string | undefined, draft: string) => void,
   checkpoints: CheckpointsPort | undefined,
   sessionId: string | undefined,
-  ordinal: number,
+  promptId: string,
   draft: string,
 ): Promise<ForkOutcome> {
   if (trees === undefined || sessionId === undefined) return { forked: false };
   const view = await trees.load(sessionId);
   if (view === undefined) return { forked: false };
-  const anchor = promptAnchor(view.roots, ordinal);
+  const anchor = promptAnchor(view.roots, promptId);
   if (anchor === undefined) return { forked: false };
   if (anchor.parentId === null) {
     open(undefined, draft);
-    return { forked: true, note: await restoreForkedFiles(checkpoints, view.roots, ordinal) };
+    return { forked: true, note: await restoreForkedFiles(checkpoints, anchor) };
   }
   const forked = await trees.fork(sessionId, anchor.parentId);
   if (forked === undefined) return { forked: false };
   open(forked, draft);
-  return { forked: true, note: await restoreForkedFiles(checkpoints, view.roots, ordinal) };
+  return { forked: true, note: await restoreForkedFiles(checkpoints, anchor) };
 }
 
 const unchangedFilesNote = "forked · files untouched";
 
 async function restoreForkedFiles(
   checkpoints: CheckpointsPort | undefined,
-  roots: readonly SessionTreeNode[],
-  ordinal: number,
+  anchor: PromptAnchor,
 ): Promise<string> {
-  if (checkpoints === undefined) return unchangedFilesNote;
-  const checkpoint = checkpointForPrompt(roots, ordinal);
-  if (!checkpoint.restorable) return unchangedFilesNote;
+  if (checkpoints === undefined || anchor.checkpoint === undefined) return unchangedFilesNote;
   try {
-    await checkpoints.restoreTo(checkpoint.tree);
+    await checkpoints.restoreTo(anchor.checkpoint);
     return "files put back to that point";
   } catch (cause) {
     return `forked · file restore failed: ${(cause as Error).message}`;
@@ -833,40 +828,52 @@ function buildAgent(
   }
 }
 
+export interface SessionEscrow {
+  hold(sessionId: string, attachment: SessionAttachment): void;
+  claim(sessionId: string): SessionAttachment | undefined;
+  releaseAll(): void;
+}
+
+export function sessionEscrow(sessions: SessionPort | undefined): SessionEscrow {
+  const held = new Map<string, SessionAttachment>();
+  return {
+    hold: (sessionId, attachment) => {
+      if (held.has(sessionId)) sessions?.release?.(sessionId);
+      held.set(sessionId, attachment);
+    },
+    claim: (sessionId) => {
+      const attachment = held.get(sessionId);
+      held.delete(sessionId);
+      return attachment;
+    },
+    releaseAll: () => {
+      for (const sessionId of held.keys()) sessions?.release?.(sessionId);
+      held.clear();
+    },
+  };
+}
+
 export function attachOnFork(
   trees: SessionTreePort,
   sessions: SessionPort | undefined,
-  attachments: Map<string, SessionAttachment>,
+  escrow: SessionEscrow,
 ): SessionTreePort {
-  const escrow = async (sessionId: string): Promise<boolean> => {
+  const attach = async (sessionId: string): Promise<boolean> => {
     if (sessions === undefined) return false;
     const attachment = await sessions.open(sessionId);
     if (attachment === undefined) return false;
-    escrowUntilClaimed(attachments, sessions, sessionId, attachment);
+    escrow.hold(sessionId, attachment);
     return true;
   };
   return {
     ...trees,
     fork: async (sessionId, entryId) => {
       const forkedId = await trees.fork(sessionId, entryId);
-      if (forkedId !== undefined) await escrow(forkedId);
+      if (forkedId !== undefined) await attach(forkedId);
       return forkedId;
     },
-    attach: escrow,
+    attach,
   };
-}
-
-function escrowUntilClaimed(
-  attachments: Map<string, SessionAttachment>,
-  sessions: SessionPort,
-  sessionId: string,
-  attachment: SessionAttachment,
-): void {
-  attachments.set(sessionId, attachment);
-  const claimWindow = setTimeout(() => {
-    if (attachments.delete(sessionId)) sessions.release?.(sessionId);
-  }, 0);
-  claimWindow.unref?.();
 }
 
 export interface PaneSessionIndex {
@@ -1017,7 +1024,10 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
       const reference = modelReferenceOf(agent.provider) ?? options.modelInForce?.();
       if (reference !== undefined) await attachment.recordModel?.(reference);
     }
-    for (const message of fresh) await attachment.append(message);
+    for (const message of fresh) {
+      const receipt = await attachment.append(message);
+      if (message.role === "user" && receipt !== undefined) pane.adoptPromptId(receipt.entryId);
+    }
     apply(await options.afterTurn?.(turnOf(agent)), agent);
   });
   const compact = options.compact;
@@ -1438,7 +1448,7 @@ function connectOverlay(core: AppCore, theme: Theme, screen: Screen) {
   const model = core.connectModel();
   if (model === undefined) return undefined;
   const rows = connectRows(model, theme);
-  const frame = helpFrame(screen, rows.length);
+  const frame = helpFrame(screen, model.rowCount());
   return Box(
     {
       ...overlayPosition(frame),

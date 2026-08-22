@@ -38,14 +38,23 @@ export interface SessionTreePort {
   subscribe?(listener: (sessionId: string) => void): () => void;
 }
 
+export type FrameScheduler = (run: () => void) => () => void;
+
 export interface SessionTreePaneSeams {
   sessionId?: string;
   presence?: SessionPresence;
   now?: () => number;
   arcOrdinal?: ArcOrdinals;
+  scheduleFrame?: FrameScheduler;
 }
 
 const refreshFrameMs = 16;
+
+const nextFrame: FrameScheduler = (run) => {
+  const timer = setTimeout(run, refreshFrameMs);
+  timer.unref?.();
+  return () => clearTimeout(timer);
+};
 
 type PaneLevel = "overview" | "entries";
 
@@ -59,7 +68,8 @@ export class SessionTreePane implements Pane {
   private readonly arcOrdinal: ArcOrdinals | undefined;
   private readonly tasks: PaneTasks;
   private readonly unsubscribe: (() => void) | undefined;
-  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly scheduleFrame: FrameScheduler;
+  private cancelPendingRefresh: (() => void) | undefined;
   private lastPageRows = 20;
 
   constructor(
@@ -73,6 +83,7 @@ export class SessionTreePane implements Pane {
     this.sessionId = seams.sessionId;
     this.presence = seams.presence;
     this.arcOrdinal = seams.arcOrdinal;
+    this.scheduleFrame = seams.scheduleFrame ?? nextFrame;
     this.tasks = new PaneTasks(notify);
     this.model = new SessionTreeModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
@@ -103,8 +114,8 @@ export class SessionTreePane implements Pane {
   dispose(): void {
     this.tasks.dispose();
     this.unsubscribe?.();
-    if (this.refreshTimer !== undefined) clearTimeout(this.refreshTimer);
-    this.refreshTimer = undefined;
+    this.cancelPendingRefresh?.();
+    this.cancelPendingRefresh = undefined;
   }
 
   level(): PaneLevel {
@@ -138,7 +149,7 @@ export class SessionTreePane implements Pane {
     if (!this.model.labeling && (chord.name === "escape" || chord.name === "backspace")) {
       return this.returnToOverview();
     }
-    return this.model.handleKey(chord, this.lastPageRows);
+    return this.model.handleKey(chord, this.lastPageRows, sequence);
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
@@ -189,12 +200,11 @@ export class SessionTreePane implements Pane {
   }
 
   private scheduleRefresh(): void {
-    if (this.refreshTimer !== undefined || !this.tasks.live()) return;
-    this.refreshTimer = setTimeout(() => {
-      this.refreshTimer = undefined;
+    if (this.cancelPendingRefresh !== undefined || !this.tasks.live()) return;
+    this.cancelPendingRefresh = this.scheduleFrame(() => {
+      this.cancelPendingRefresh = undefined;
       this.refresh();
-    }, refreshFrameMs);
-    this.refreshTimer.unref?.();
+    });
   }
 
   private drillInto(sessionId: string): void {

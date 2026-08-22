@@ -387,6 +387,16 @@ describe("McpPaneModel refresh under the cursor", () => {
 });
 
 describe("McpPaneModel navigation edges", () => {
+  it("ignores modified chords so ctrl+r is not a refresh", () => {
+    const { model, recorded } = modelOver(pair);
+    expect(model.handleKey(parseChord("ctrl+r"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("shift+j"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("alt+enter"), 5)).toBe(false);
+    expect(recorded.refreshes).toBe(0);
+    expect(model.cursorRow()?.id).toBe("server:filesystem");
+    expect(model.rows()).toHaveLength(3);
+  });
+
   it("clamps at the top and bottom and skips non-selectable rows", () => {
     const { model } = modelOver(pair);
     press(model, "k", "k");

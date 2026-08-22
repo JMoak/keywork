@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { ConnectionsPort, InferencePort, ModelChoice } from "./inference-port.ts";
+import { helpFrame, paletteFrame } from "./app-core.ts";
+import type {
+  ConnectionsPort,
+  ConnectionTarget,
+  InferencePort,
+  ModelChoice,
+} from "./inference-port.ts";
 import { AppProbe } from "./probe.ts";
 
 const choices: ModelChoice[] = [
@@ -34,15 +40,27 @@ function inference(): InferencePort {
   };
 }
 
+const openai: ConnectionTarget = {
+  id: "openai",
+  label: "OpenAI",
+  kind: "built-in",
+  name: "openai",
+  endpoint: "https://api.openai.com/v1",
+  protocol: "chat-completions",
+  credential: "api-key",
+  endpointEditable: false,
+  nameEditable: false,
+};
+
 function connections(): ConnectionsPort {
   return {
-    targets: () => [],
+    targets: () => [openai],
     saved: () => [],
-    draftFor: () => ({
-      name: "",
-      endpoint: "",
+    draftFor: (pick) => ({
+      name: pick.name,
+      endpoint: pick.endpoint,
       protocol: "chat-completions",
-      credential: "none",
+      credential: "kind" in pick ? pick.credential : "none",
       apiKey: "",
       insecureTransport: false,
     }),
@@ -114,5 +132,75 @@ describe("/model", () => {
     await probe.settled();
     expect(probe.snapshot().overlay).toBeUndefined();
     expect(switched).toEqual([]);
+  });
+
+  it("selects the model under a click and closes on a click outside", async () => {
+    const { probe, switched } = probeWithInference();
+    probe.command("model");
+    const frame = paletteFrame(probe.screen, choices.length);
+    probe.hover(frame.x + 2, frame.firstRowY);
+    expect(probe.core.modelPicker()?.selected()?.reference).toBe("ollama/qwen3");
+    probe.click(frame.x + 2, frame.firstRowY);
+    await probe.settled();
+    expect(switched).toEqual(["ollama/qwen3"]);
+    expect(probe.snapshot().overlay).toBeUndefined();
+
+    probe.command("model");
+    probe.click(0, 0);
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(switched).toEqual(["ollama/qwen3"]);
+  });
+
+  it("pastes into the picker's query", () => {
+    const { probe } = probeWithInference();
+    probe.command("model");
+    probe.paste("qwen\n");
+    expect(probe.core.modelPicker()?.query).toBe("qwen");
+    expect(probe.core.modelPicker()?.selected()?.reference).toBe("ollama/qwen3");
+  });
+});
+
+describe("/connect", () => {
+  function connectEditor() {
+    const { probe } = probeWithInference();
+    probe.core.registry.run("connect openai");
+    const model = probe.core.connectModel();
+    if (model === undefined) throw new Error("expected the connect editor to be open");
+    return { probe, model };
+  }
+
+  it("pastes an API key into the secret field", () => {
+    const { probe, model } = connectEditor();
+    const keyField = model.fields().findIndex((field) => field.id === "apiKey");
+    for (let step = 0; step < keyField; step += 1) probe.keys("down");
+    probe.paste("sk-live-123\n");
+    expect(model.stage.kind === "editor" && model.stage.draft.apiKey).toBe("sk-live-123");
+    expect(probe.snapshot().overlay).toBe("connect");
+  });
+
+  it("keeps the draft on a click inside the editor and focuses the clicked field", () => {
+    const { probe, model } = connectEditor();
+    probe.keys("down", "down").type("x");
+    const frame = helpFrame(probe.screen, model.rowCount());
+    probe.click(frame.x + 2, frame.firstRowY);
+    expect(probe.snapshot().overlay).toBe("connect");
+    expect(model.stage.kind === "editor" && model.stage.field).toBe(0);
+    expect(model.stage.kind === "editor" && model.stage.draft.apiKey).toBe("x");
+  });
+
+  it("discards the editor on a click outside, like escape", () => {
+    const { probe } = connectEditor();
+    probe.click(0, 0);
+    expect(probe.snapshot().overlay).toBeUndefined();
+  });
+
+  it("opens the clicked target from the target list", () => {
+    const { probe } = probeWithInference();
+    probe.command("connect");
+    const model = probe.core.connectModel();
+    const frame = helpFrame(probe.screen, model?.rowCount() ?? 0);
+    probe.click(frame.x + 2, frame.firstRowY);
+    expect(model?.stage.kind).toBe("editor");
+    expect(probe.snapshot().overlay).toBe("connect");
   });
 });

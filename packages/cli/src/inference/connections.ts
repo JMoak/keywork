@@ -36,13 +36,16 @@ export function connectionsPort(deps: ConnectionsDeps): ConnectionsPort {
     saved: () => savedRows(deps),
     draftFor: (target) =>
       "kind" in target ? draftFromTarget(target) : draftFromSaved(target, deps),
-    verify: (draft) =>
-      verifyEndpoint({
+    verify: async (draft) => {
+      const report = await verifyEndpoint({
         endpoint: draft.endpoint,
         headers: authHeadersFor(draft, deps),
         ...(deps.fetchFn !== undefined && { fetchFn: deps.fetchFn }),
         ...(deps.now !== undefined && { now: deps.now }),
-      }),
+      });
+      if (!report.ok) await rememberFailure(draft.name, report, deps);
+      return report;
+    },
     save: async (draft, verification) => {
       await persistDraft(draft, deps);
       await recordObservation(
@@ -51,6 +54,7 @@ export function connectionsPort(deps: ConnectionsDeps): ConnectionsPort {
           verifiedAt: verification.at,
           modelsReportedAt: verification.at,
           models: verification.models,
+          lastFailure: undefined,
         },
         deps.userDir,
       );
@@ -267,20 +271,50 @@ async function persistDraft(draft: ConnectionDraft, deps: ConnectionsDeps): Prom
   await updateUserConfig(
     (existing) => ({
       ...existing,
-      connections: { ...existing.connections, [draft.name]: connectionConfigOf(draft) },
+      connections: {
+        ...existing.connections,
+        [draft.name]: connectionConfigOf(draft, existing.connections?.[draft.name]),
+      },
     }),
     deps.userDir,
   );
 }
 
-function connectionConfigOf(draft: ConnectionDraft): ConnectionConfig {
+function connectionConfigOf(
+  draft: ConnectionDraft,
+  existing: ConnectionConfig | undefined,
+): ConnectionConfig {
   const source = draft.credential === "api-key" ? "saved" : draft.credential;
   return {
     endpoint: draft.endpoint,
     ...(draft.protocol !== "chat-completions" && { protocol: draft.protocol }),
     ...(source !== defaultCredentialSource(draft.endpoint) && { credential: source }),
     ...(draft.insecureTransport && { insecureTransport: true }),
+    ...fieldsOutsideTheDraft(existing),
   };
+}
+
+function fieldsOutsideTheDraft(
+  existing: ConnectionConfig | undefined,
+): Pick<ConnectionConfig, "models" | "enabled"> {
+  return {
+    ...(existing?.models !== undefined && { models: existing.models }),
+    ...(existing?.enabled !== undefined && { enabled: existing.enabled }),
+  };
+}
+
+async function rememberFailure(
+  name: string,
+  failure: { at: string; reason: string },
+  deps: ConnectionsDeps,
+): Promise<void> {
+  if (!savedRows(deps).some((row) => row.name === name)) return;
+  await recordObservation(
+    name,
+    { lastFailure: { at: failure.at, reason: failure.reason } },
+    deps.userDir,
+  );
+  await deps.changed();
 }
 
 async function removeConnection(name: string, deps: ConnectionsDeps): Promise<RemovalReceipt> {

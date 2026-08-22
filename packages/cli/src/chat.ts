@@ -35,6 +35,7 @@ export interface ChatOptions {
   cwd: string;
   provider: Provider;
   label: string;
+  workspaceSlug?: string;
   sessionDir?: string;
   resume?: boolean;
   resumeId?: string;
@@ -47,13 +48,14 @@ export interface ChatOptions {
 }
 
 export async function chat(options: ChatOptions): Promise<void> {
-  const dir = options.sessionDir ?? defaultSessionDir(options.cwd);
+  const dir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
   const opened = await tryOpenSession(dir, options);
   if (opened === undefined) return;
   const { store, seeded } = opened;
   const composition = await composeWorkspace({
     cwd: options.cwd,
     projectTrusted: options.projectTrusted === true,
+    workspaceSlug: options.workspaceSlug,
     prompts: options.prompts,
     mcpServers: options.mcpServers,
     reportCheckpointsUnavailable: (message) => console.log(`can't undo: ${message}`),
@@ -228,7 +230,7 @@ function listAgents(agents: readonly AgentDefinition[], prefix?: string): void {
   console.log("/agent <name> to switch · /agent none to clear");
   for (const agent of agents) {
     console.log(
-      `  ${agent.name}${agent.description === undefined ? "" : ` — ${agent.description}`}`,
+      `  ${agent.name}${agent.description === undefined ? "" : ` · ${agent.description}`}`,
     );
   }
 }

@@ -197,12 +197,27 @@ describe("keywork workspace", () => {
     expect(existsSync(vault)).toBe(false);
   });
 
-  it("rejects an unknown subcommand", async () => {
+  it("rejects an unknown subcommand as usage on stderr", async () => {
     const root = await declaredRoot();
     const bad = consoleOf();
     expect(
       await workspaceCommand(["frobnicate"], root, bad.io, undefined, await recallIn(root)),
-    ).toBe(1);
+    ).toBe(2);
+    expect(bad.err[0]).toContain('unknown subcommand "frobnicate"');
+  });
+
+  it("lists a workspace whose declaration will not parse as unavailable instead of failing", async () => {
+    const root = await declaredRoot();
+    const recall = await recallIn(root);
+    await workspaceCommand(["new", "broken"], root, consoleOf().io, undefined, recall);
+    await writeFile(join(root, ".keywork", "workspaces", "broken", "workspace.json"), "{nope");
+    const listing = consoleOf();
+
+    expect(await workspaceCommand(["list"], root, listing.io, undefined, recall)).toBe(0);
+
+    expect(listing.out[1]).toMatch(/^ {2}broken\s+\(unavailable · /);
+    const port = workspacesPort({ cwd: root, current: undefined, recall, requestSwitch: () => {} });
+    expect((await port.list())[1]).toMatchObject({ slug: "broken", name: "(unavailable)" });
   });
 });
 

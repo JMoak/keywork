@@ -153,6 +153,10 @@ function respond(id: number | undefined, result: Json): void {
 
 function emit(message: Json): void {
   const line = `${JSON.stringify(message)}\n`;
+  if (profile === "flood") {
+    process.stdout.write("x".repeat(10 * 1024 * 1024));
+    return;
+  }
   if (profile === "garbage") {
     process.stdout.write("this line is not json at all\n");
     const half = Math.floor(line.length / 2);

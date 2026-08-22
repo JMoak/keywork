@@ -18,8 +18,8 @@ if (!parsed.ok) {
 
 if (parsed.args.list) {
   for (const scenario of scenarios) {
-    const marker = scenario.manual === true ? "  [manual — run with --cwd <dir> --live]" : "";
-    console.log(`${scenario.name} — ${scenario.description}${marker}`);
+    const marker = scenario.manual === true ? "  [manual: run with --cwd <dir> --live]" : "";
+    console.log(`${scenario.name}: ${scenario.description}${marker}`);
   }
   process.exit(0);
 }

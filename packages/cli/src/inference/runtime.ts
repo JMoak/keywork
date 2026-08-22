@@ -235,22 +235,33 @@ function oauthCredential(
   return present(
     `${provider}:oauth`,
     "ChatGPT sign-in",
-    { kind: "bearer", headers: refreshingAuthHeaders(saved, inputs.persistCredential) },
+    { kind: "bearer", headers: refreshingAuthHeaders(saved, inputs) },
     materials,
   );
 }
 
 function refreshingAuthHeaders(
   initial: OauthCredential,
-  persistCredential: PersistCredential | undefined,
+  inputs: InferenceInputs,
 ): () => Promise<Record<string, string>> {
   let current = initial;
-  return async () => {
-    current = await freshAccessToken(current, async (refreshed) => {
-      await persistCredential?.(codexProviderName, refreshed);
-    });
-    return codexAuthHeaders(current);
+  let pending: Promise<OauthCredential> | undefined;
+  const persist = async (refreshed: OauthCredential): Promise<void> => {
+    await inputs.persistCredential?.(codexProviderName, refreshed);
   };
+  const io = inputs.fetchFn === undefined ? {} : { fetchFn: inputs.fetchFn };
+  const currentOrRefreshed = (): Promise<OauthCredential> => {
+    pending ??= freshAccessToken(current, persist, io)
+      .then((credential) => {
+        current = credential;
+        return credential;
+      })
+      .finally(() => {
+        pending = undefined;
+      });
+    return pending;
+  };
+  return async () => codexAuthHeaders(await currentOrRefreshed());
 }
 
 function present(

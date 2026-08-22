@@ -14,6 +14,7 @@ Usage:
   keywork trust | untrust                                   grant or revoke workspace trust
   keywork doctor                                            show what your terminal supports
   keywork --version                                         print the version and exit
+  keywork --help                                            print this usage and exit
   keywork chat [--model <model>] [--continue]
                [--resume <session-id>]                      engine smoke REPL (debug)
 
@@ -54,25 +55,36 @@ export const withoutTerminal: Readonly<Record<string, WithoutTerminal>> = {
   trust: { behavior: "runs" },
   untrust: { behavior: "runs" },
   doctor: { behavior: "runs" },
-  help: { behavior: "runs" },
 };
 
 export type Dispatch =
   | { kind: "command"; command: string; rest: string[] }
   | { kind: "version" }
+  | { kind: "help" }
   | { kind: "usage"; exitCode: typeof exitCodes.usage; reason: string };
 
 const versionFlags = new Set(["--version", "-V"]);
+const helpWords = new Set(["help", "--help", "-h"]);
 
 export function dispatchCommand(argv: readonly string[], interactive: boolean): Dispatch {
   const [first] = argv;
   if (first !== undefined && versionFlags.has(first)) return { kind: "version" };
+  if (first !== undefined && helpWords.has(first)) return { kind: "help" };
   const command = first !== undefined && !first.startsWith("-") ? first : undefined;
   const rest = command === undefined ? [...argv] : argv.slice(1);
   if (command === undefined && interactive) return { kind: "command", command: "panes", rest };
-  const posture = withoutTerminal[command ?? ""];
-  if (!interactive && posture?.behavior === "refused") {
-    return { kind: "usage", exitCode: exitCodes.usage, reason: posture.reason };
+  const posture = postureOf(command ?? "");
+  if (posture === undefined) {
+    return usageRefusal(`unknown command "${command}" · keywork --help lists the commands`);
   }
+  if (!interactive && posture.behavior === "refused") return usageRefusal(posture.reason);
   return { kind: "command", command: command ?? "panes", rest };
+}
+
+function postureOf(command: string): WithoutTerminal | undefined {
+  return Object.hasOwn(withoutTerminal, command) ? withoutTerminal[command] : undefined;
+}
+
+function usageRefusal(reason: string): Dispatch {
+  return { kind: "usage", exitCode: exitCodes.usage, reason };
 }

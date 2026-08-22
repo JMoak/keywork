@@ -45,6 +45,22 @@ describe("connection observations", () => {
     expect(JSON.parse(await readFile(join(dir, "connections.json"), "utf8"))).toEqual(merged);
   });
 
+  it("clears a field when a patch names it as undefined", async () => {
+    const dir = await tempDir();
+    await recordObservation(
+      "ollama",
+      { verifiedAt: "t1", lastFailure: { at: "t0", reason: "down" } },
+      dir,
+    );
+    const cleared = await recordObservation(
+      "ollama",
+      { verifiedAt: "t2", lastFailure: undefined },
+      dir,
+    );
+    expect(cleared).toEqual({ ollama: { verifiedAt: "t2" } });
+    expect(await readObservations(dir)).toEqual({ ollama: { verifiedAt: "t2" } });
+  });
+
   it("forgets one connection without touching the others", async () => {
     const dir = await tempDir();
     await recordObservation("a", { verifiedAt: "t" }, dir);

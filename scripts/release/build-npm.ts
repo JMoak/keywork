@@ -1,7 +1,13 @@
 #!/usr/bin/env bun
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import {
+  exitOnBuildInputError,
+  outdirInside,
+  readManifest,
+  resolveBuildVersion,
+} from "./build-inputs.ts";
 import { npmBinPath, npmManifestFor } from "./npm-manifest.ts";
 import { buildVersionDefine } from "./targets.ts";
 
@@ -19,10 +25,16 @@ const { values } = parseArgs({
   },
 });
 
-const version = values.version ?? manifestField(cliManifestPath, "version");
+const { version, outdir } = exitOnBuildInputError(() => ({
+  version: resolveBuildVersion({
+    manifest: readManifest(cliManifestPath),
+    manifestPath: cliManifestPath,
+    override: values.version,
+  }),
+  outdir: outdirInside("dist", values.outdir),
+}));
 const opentuiVersion = dependencyVersion(tuiManifestPath, "@opentui/core");
 const treeSitterVersion = lockedVersion("web-tree-sitter");
-const outdir = resolve(values.outdir);
 rmSync(outdir, { recursive: true, force: true });
 mkdirSync(dirname(join(outdir, npmBinPath)), { recursive: true });
 
@@ -81,10 +93,6 @@ if (!values["skip-smoke"]) {
   console.log(`smoke ok: ${printed}`);
 }
 console.log(`wrote ${outdir} (publish with: cd ${values.outdir} && npm publish --access public)`);
-
-function manifestField(path: string, field: string): string {
-  return (JSON.parse(readFileSync(path, "utf8")) as Record<string, string>)[field] as string;
-}
 
 function dependencyVersion(path: string, name: string): string {
   const manifest = JSON.parse(readFileSync(path, "utf8")) as {

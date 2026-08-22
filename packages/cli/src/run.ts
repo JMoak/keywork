@@ -33,6 +33,7 @@ export interface RunOptions {
   prompt: string;
   cwd: string;
   json: boolean;
+  workspaceSlug?: string;
   projectTrusted?: boolean;
   debug?: boolean;
   sessionDir?: string;
@@ -50,7 +51,7 @@ export interface RunOptions {
 export type HeadlessOutcome =
   | { outcome: "completed"; message: Message }
   | { outcome: "denied"; message: Message; refused: readonly PermissionDecision[] }
-  | { outcome: "interrupted"; message: Message }
+  | { outcome: "interrupted"; message: Message; saved: boolean }
   | { outcome: "failed"; error: string }
   | { outcome: "unresolved"; failure: ResolutionFailure }
   | { outcome: "usage"; error: string };
@@ -84,7 +85,11 @@ export async function runHeadless(options: RunOptions): Promise<HeadlessOutcome>
 
   const instructions =
     options.projectTrusted === true ? await loadProjectInstructions(options.cwd) : undefined;
-  const memory = openWorkspaceMemory(options.cwd, options.projectTrusted === true);
+  const memory = openWorkspaceMemory(
+    options.cwd,
+    options.projectTrusted === true,
+    options.workspaceSlug,
+  );
   const bootstrap = await bootstrapInjection(memory);
   const mcp = startMcpRegistry(options.mcpServers);
   const shell = new ShellSession(options.cwd);
@@ -150,22 +155,57 @@ export async function runHeadless(options: RunOptions): Promise<HeadlessOutcome>
   try {
     const message = await agent.send(options.prompt, options.signal);
     outcome = interrupted
-      ? { outcome: "interrupted", message }
+      ? { outcome: "interrupted", message, saved: store !== undefined }
       : refused.length > 0
         ? { outcome: "denied", message, refused }
         : { outcome: "completed", message };
   } catch (cause) {
-    outcome = { outcome: "failed", error: cause instanceof Error ? cause.message : String(cause) };
-  } finally {
-    await shell.close();
-    journal?.stop();
-    await journal?.flush();
-    if (store !== undefined) for (const message of agent.history()) await store.append(message);
-    await diagnostics?.flush();
-    await mcp?.stop();
+    outcome = { outcome: "failed", error: messageOf(cause) };
   }
-  conclude(outcome, io);
-  return outcome;
+  const teardownFailures = await tearDown([
+    ["closing the shell", () => shell.close()],
+    [
+      "flushing the session journal",
+      async () => {
+        journal?.stop();
+        await journal?.flush();
+      },
+    ],
+    [
+      "saving the session",
+      async () => {
+        if (store === undefined) return;
+        for (const message of agent.history()) await store.append(message);
+      },
+    ],
+    ["flushing the debug log", async () => diagnostics?.flush()],
+    ["stopping MCP servers", async () => mcp?.stop()],
+  ]);
+  const settled = teardownFailures.length === 0 ? outcome : failedTeardown(teardownFailures);
+  conclude(settled, io);
+  return settled;
+}
+
+type TeardownStep = [name: string, run: () => Promise<unknown>];
+
+async function tearDown(steps: readonly TeardownStep[]): Promise<string[]> {
+  const failures: string[] = [];
+  for (const [name, run] of steps) {
+    try {
+      await run();
+    } catch (cause) {
+      failures.push(`${name} failed: ${messageOf(cause)}`);
+    }
+  }
+  return failures;
+}
+
+function failedTeardown(failures: readonly string[]): HeadlessOutcome {
+  return { outcome: "failed", error: `keywork run: the turn ended but ${failures.join(" · ")}` };
+}
+
+function messageOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function finishedPayload(outcome: HeadlessOutcome): Record<string, unknown> {
@@ -200,7 +240,11 @@ function narrate(outcome: HeadlessOutcome, io: HeadlessIo): void {
     case "interrupted": {
       const partial = messageText(outcome.message);
       if (partial !== "") io.print(partial);
-      io.printError("keywork run: interrupted · the session was saved up to this point");
+      io.printError(
+        outcome.saved
+          ? "keywork run: interrupted · the session was saved up to this point"
+          : "keywork run: interrupted · nothing was saved, pass --session-dir to keep partial runs",
+      );
       return;
     }
     case "failed":
@@ -227,8 +271,11 @@ function openSessionStore(options: RunOptions): Promise<SessionStore> | undefine
 }
 
 function openDiagnostics(options: RunOptions): Promise<DiagnosticsLog> {
-  const sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd);
-  return DiagnosticsLog.open(debugLogFile(sessionDir));
+  const sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
+  const printError = options.printError ?? console.error;
+  return DiagnosticsLog.open(debugLogFile(sessionDir), {
+    onWriteFailure: (error) => printError(`keywork run: debug log write failed · ${error.message}`),
+  });
 }
 
 function refuseWithoutProvider(options: RunOptions): never {

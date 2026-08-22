@@ -44,6 +44,15 @@ export class ModelPicker {
     }));
   }
 
+  select(at: number): void {
+    this.index = Math.max(0, Math.min(at, this.visible().length - 1));
+  }
+
+  paste(text: string): void {
+    this.query += text;
+    this.index = 0;
+  }
+
   handleKey(chord: Chord, sequence: string | undefined): PickerKeyOutcome {
     const intent = pickerIntentOf(chord, sequence);
     switch (intent.kind) {

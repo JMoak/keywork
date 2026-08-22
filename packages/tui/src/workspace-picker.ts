@@ -50,6 +50,14 @@ export class WorkspacePicker {
       : { kind: "use", slug: row.choice.slug };
   }
 
+  select(at: number): void {
+    this.index = Math.max(0, Math.min(at, this.seeds().length - 1));
+  }
+
+  paste(text: string): void {
+    this.retype(this.query + text);
+  }
+
   handleKey(chord: Chord, sequence: string | undefined): PickerKeyOutcome {
     const intent = pickerIntentOf(chord, sequence);
     switch (intent.kind) {

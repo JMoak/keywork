@@ -140,6 +140,51 @@ export class ConnectModel {
     return fields;
   }
 
+  rowCount(): number {
+    switch (this.stage.kind) {
+      case "targets":
+        return this.targetRows().length;
+      case "editor":
+        return this.fields().length + editorHintRows;
+      case "verifying":
+        return 1;
+      case "failed":
+      case "remove-confirm":
+        return 2;
+      case "receipt":
+        return 3;
+      case "removed":
+        return 2 + this.stage.receipt.retained.length;
+    }
+  }
+
+  clickRow(row: number): ConnectKeyOutcome {
+    switch (this.stage.kind) {
+      case "targets": {
+        const picked = this.targetRows()[row];
+        if (picked !== undefined) this.edit(picked.pick);
+        return "stay";
+      }
+      case "editor":
+        if (row < this.fields().length) this.stage = { ...this.stage, field: row };
+        return "stay";
+      case "failed":
+        this.returnToEditor(this.stage.draft);
+        return "stay";
+      case "removed":
+        return "close";
+      default:
+        return "stay";
+    }
+  }
+
+  paste(text: string): void {
+    if (this.stage.kind !== "editor") return;
+    const field = this.fields()[this.stage.field];
+    if (field === undefined || (field.kind !== "text" && field.kind !== "secret")) return;
+    this.setText(field.id, this.textValue(field.id) + text);
+  }
+
   handleKey(chord: Chord, sequence: string | undefined): ConnectKeyOutcome {
     switch (this.stage.kind) {
       case "targets":
@@ -149,11 +194,7 @@ export class ConnectModel {
       case "verifying":
         return "stay";
       case "failed":
-        this.stage = editorStage(
-          this.stage.draft,
-          this.fixedFor(this.stage.draft),
-          this.isSaved(this.stage.draft.name),
-        );
+        this.returnToEditor(this.stage.draft);
         return "stay";
       case "receipt":
         if (chord.name === "return" || chord.name === "enter") {
@@ -251,6 +292,10 @@ export class ConnectModel {
         ? { name: !pick.nameEditable, endpoint: !pick.endpointEditable }
         : this.fixedFor(draft);
     this.stage = editorStage(draft, fixed, !("kind" in pick));
+  }
+
+  private returnToEditor(draft: ConnectionDraft): void {
+    this.stage = editorStage(draft, this.fixedFor(draft), this.isSaved(draft.name));
   }
 
   private fixedFor(draft: ConnectionDraft): FixedFields {
@@ -383,6 +428,8 @@ export class ConnectModel {
     }
   }
 }
+
+const editorHintRows = 1;
 
 function editorStage(draft: ConnectionDraft, fixed: FixedFields, existing: boolean): ConnectStage {
   return {

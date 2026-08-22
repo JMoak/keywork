@@ -3,6 +3,8 @@ import { basename, dirname, join } from "node:path";
 import { clampIndex, clampScroll } from "./clamp.ts";
 import { fuzzyScore } from "./commands.ts";
 import type { Chord } from "./keys.ts";
+import { failureMessage, PaneTasks } from "./pane-tasks.ts";
+import { isPrintable } from "./picker-keys.ts";
 
 export interface Entry {
   name: string;
@@ -40,7 +42,7 @@ export class BrowserModel {
 
   private readonly directories = new Map<string, DirectoryState>();
   private readonly expandedDirs = new Set<string>();
-  private readonly pendingReads = new Set<Promise<void>>();
+  private readonly tasks: PaneTasks;
   private anchorPath: string | undefined;
   private revision = 0;
   private cachedRows: { revision: number; rows: BrowserRow[] } | undefined;
@@ -48,10 +50,11 @@ export class BrowserModel {
   constructor(
     readonly rootPath: string,
     private readonly readDirectory: ReadDirectory,
-    private readonly notify: () => void,
+    notify: () => void,
     private readonly openFile: (path: string) => void,
   ) {
     this.name = basename(rootPath) || rootPath;
+    this.tasks = new PaneTasks(notify);
     this.expandedDirs.add(rootPath);
     this.ensureLoaded(rootPath);
   }
@@ -87,8 +90,9 @@ export class BrowserModel {
     return this.directories.get(this.rootPath)?.kind !== "loaded";
   }
 
-  handleKey(chord: Chord, pageRows: number): boolean {
-    if (this.filtering) return this.handleFilterKey(chord, pageRows);
+  handleKey(chord: Chord, pageRows: number, sequence?: string): boolean {
+    if (this.filtering) return this.handleFilterKey(chord, pageRows, sequence);
+    if (chord.shift || chord.ctrl || chord.meta) return false;
     const rows = this.rows();
     this.cursor = clampIndex(this.cursor, rows.length);
     switch (chord.name) {
@@ -128,11 +132,15 @@ export class BrowserModel {
     }
   }
 
-  async settled(): Promise<void> {
-    while (this.pendingReads.size > 0) await Promise.all([...this.pendingReads]);
+  settled(): Promise<void> {
+    return this.tasks.settled();
   }
 
-  private handleFilterKey(chord: Chord, pageRows: number): boolean {
+  dispose(): void {
+    this.tasks.dispose();
+  }
+
+  private handleFilterKey(chord: Chord, pageRows: number, sequence: string | undefined): boolean {
     switch (chord.name) {
       case "escape":
         this.filtering = false;
@@ -157,11 +165,15 @@ export class BrowserModel {
       case "pagedown":
         return this.moveCursor(pageRows, this.rows());
       default:
-        if (!isPrintable(chord)) return false;
+        if (!isPrintable(chord, sequence)) return false;
         return this.mutate(() => {
-          this.filterQuery += chord.name;
+          this.filterQuery += sequence;
         });
     }
+  }
+
+  private notify(): void {
+    this.tasks.emit();
   }
 
   private moveCursor(delta: number, rows: BrowserRow[]): boolean {
@@ -263,19 +275,16 @@ export class BrowserModel {
     const claim: DirectoryState = { kind: "loading" };
     this.directories.set(path, claim);
     this.touch();
-    const read = this.readDirectory(path)
-      .then((entries) => {
-        this.settle(path, claim, { kind: "loaded", entries: sortEntries(entries) });
-      })
-      .catch((cause: unknown) => {
-        this.settle(path, claim, { kind: "failed", reason: (cause as Error).message });
-      })
-      .then(() => {
-        this.pendingReads.delete(read);
-        this.reanchor();
-        this.notify();
-      });
-    this.pendingReads.add(read);
+    this.tasks.track(() =>
+      this.readDirectory(path)
+        .then((entries) => {
+          this.settle(path, claim, { kind: "loaded", entries: sortEntries(entries) });
+        })
+        .catch((cause: unknown) => {
+          this.settle(path, claim, { kind: "failed", reason: failureMessage(cause) });
+        })
+        .then(() => this.reanchor()),
+    );
   }
 
   private settle(path: string, claim: DirectoryState, state: DirectoryState): void {
@@ -304,8 +313,4 @@ function sortEntries(entries: Entry[]): Entry[] {
       left.name.localeCompare(right.name)
     );
   });
-}
-
-function isPrintable(chord: Chord): boolean {
-  return chord.name.length === 1 && !chord.ctrl && !chord.meta;
 }

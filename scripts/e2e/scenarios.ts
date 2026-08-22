@@ -78,12 +78,13 @@ function coldStart(): Scenario {
     name: "cold-start",
     description: "boot with no provider → guidance in the conversation pane → real quit path",
     provider: "none",
+    goldens: ["no-provider-guidance"],
     run: async (stage) => {
       await stage.settle();
       const boot = await stage.until("no model bound");
       assert.ok(boot.includes("/connect adds a provider"), "guidance teaches /connect and waits");
       assert.ok(boot.includes("/model picks one"), "guidance teaches /model and waits");
-      await stage.capture("no-provider-guidance", { golden: true });
+      await stage.capture("no-provider-guidance");
       const code = await stage.quit();
       assert.equal(code, 0, "the real exit path reaches the exit seam cleanly");
     },
@@ -110,7 +111,7 @@ function firstConversation(): Scenario {
         },
         { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
       ],
-      textTurn("All set — beta is BETA now."),
+      textTurn("All set, beta is BETA now."),
     ],
     run: async (stage) => {
       await stage.settle();
@@ -125,7 +126,7 @@ function firstConversation(): Scenario {
       await stage.capture("ask-with-diff");
 
       await stage.press("y");
-      const settled = await stage.until("All set — beta is BETA now.");
+      const settled = await stage.until("All set, beta is BETA now.");
       assert.ok(settled.includes("write notes.txt"), "the tool row names its verb and subject");
       assert.ok(settled.includes("· done"), "the tool row settles to its outcome word");
       assert.equal(workspaceRead(stage, "notes.txt"), notesAfter);
@@ -301,7 +302,7 @@ function pageTiers(): Scenario {
         },
         { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
       ],
-      textTurn("Tier sweep ready — the same turn at four widths."),
+      textTurn("Tier sweep ready: the same turn at four widths."),
     ],
     run: async (stage) => {
       assert.ok(pageProse.length > 100, "the prose fixture must overrun the broadsheet measure");
@@ -383,7 +384,7 @@ function pageTiers(): Scenario {
 }
 
 function sessionLifecycle(): Scenario {
-  const reply = "Noted — the plan is recorded.";
+  const reply = "Noted. The plan is recorded.";
   const toolProse = "Counting the files now.";
   const toolVerdict = "There are 4 files here.";
   const settledToolMark = "· done";
@@ -671,13 +672,14 @@ function discovery(): Scenario {
     name: "discovery",
     description: "palette, slash autocomplete, help overlay, preset picker",
     presets: harnessPresets,
+    goldens: ["quick-open", "palette", "slash-completions", "help-overlay", "preset-picker"],
     run: async (stage) => {
       await stage.settle();
 
       await stage.press("ctrl+p");
       const quickOpen = await stage.until("jump to this pane");
       assert.ok(!quickOpen.includes("▸ split"), "quick open holds no command rows");
-      await stage.capture("quick-open", { golden: true });
+      await stage.capture("quick-open");
 
       await stage.type(">");
       const palette = await stage.until("▸ split");
@@ -685,26 +687,26 @@ function discovery(): Scenario {
       assert.ok(palette.includes("open a new session pane"), "palette rows carry descriptions");
       assert.ok(palette.includes("zoom the focused pane"), "palette lists command rows");
       assert.ok(!palette.includes("jump to this pane"), "command mode hides the jump rows");
-      await stage.capture("palette", { golden: true });
+      await stage.capture("palette");
       await stage.press("escape");
 
       await stage.type("/ex");
       await stage.settle();
       const completions = await stage.until("exit-all");
       assert.ok(completions.includes("exit"), "slash input ranks the exit commands");
-      await stage.capture("slash-completions", { golden: true });
+      await stage.capture("slash-completions");
       await stage.press("backspace", "backspace", "backspace");
 
       await stage.press("ctrl+k", "/");
       await stage.until(" keywork keys ");
-      await stage.capture("help-overlay", { golden: true });
+      await stage.capture("help-overlay");
       await stage.press("escape");
 
       await stage.type("/preset");
       await stage.press("enter");
       const picker = await stage.until("standard · active");
       assert.ok(picker.includes("careful") && picker.includes("open"), "picker lists every preset");
-      await stage.capture("preset-picker", { golden: true });
+      await stage.capture("preset-picker");
       await stage.press("escape");
 
       await stage.quit();
@@ -796,8 +798,8 @@ function sessionDirDelta(before: SessionFileListing, after: SessionFileListing):
   const report = [
     `session files before boot: ${before.size} · after quit: ${after.size}`,
     added.length === 0
-      ? "added: none — restore revived sessions without minting files"
-      : `added: ${added.length} — PRODUCT FINDING: a plain open/quit cycle minted session files`,
+      ? "added: none · restore revived sessions without minting files"
+      : `added: ${added.length} · PRODUCT FINDING: a plain open/quit cycle minted session files`,
     ...added.map((name) => `  + ${name}  ${after.get(name)} bytes`),
     removed.length === 0 ? "removed: none" : `removed: ${removed.length}`,
     ...removed.map((name) => `  - ${name}  ${before.get(name)} bytes`),
@@ -909,7 +911,7 @@ function rowOf(frame: string, marker: string): number {
 }
 
 function paneTitleCount(frame: string): number {
-  return frame.split("session-").length - 1;
+  return [...frame.matchAll(/╭─ (?:[░▒▓█] )?session-\d+\b/g)].length;
 }
 
 function occurrences(frame: string, marker: string): number {

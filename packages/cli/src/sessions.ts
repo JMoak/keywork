@@ -19,6 +19,7 @@ import type {
   SessionTreePort,
   SessionTreeView,
 } from "@keywork/tui";
+import { exitCodes } from "./dispatch.ts";
 
 export interface OpenedSession {
   store: SessionStore;
@@ -182,23 +183,33 @@ export async function findSessionFile(dir: string, idPrefix: string): Promise<st
 
 export type CleanupConfirm = (question: string) => Promise<boolean>;
 
+export interface SessionsCommandIo {
+  json?: boolean;
+  print?: (line: string) => void;
+  printError?: (line: string) => void;
+  confirm?: CleanupConfirm | undefined;
+}
+
 export async function sessionsCommand(
   args: readonly string[],
   dir: string,
-  print: (line: string) => void = console.log,
-  confirmCleanup?: CleanupConfirm,
+  io: SessionsCommandIo = {},
 ): Promise<number> {
+  const print = io.print ?? console.log;
+  const printError = io.printError ?? console.error;
   const [subcommand = "list", ...rest] = args;
   switch (subcommand) {
     case "list":
-      return printList(dir, print, rest.includes("--json"), confirmCleanup);
+      return printList(dir, print, io.json === true, io.confirm);
     case "tree":
       return printTree(dir, rest[0], print);
     case "fork":
       return forkSession(dir, rest[0], rest[1], print);
     default:
-      print(`unknown sessions subcommand: ${subcommand} (expected list, tree, or fork)`);
-      return 1;
+      printError(
+        `keywork sessions: unknown subcommand "${subcommand}" (expected list, tree, or fork)`,
+      );
+      return exitCodes.usage;
   }
 }
 
@@ -263,8 +274,9 @@ export function attachmentOf(
     append: async (message) => {
       const checkpoint = message.role === "user" ? seams.checkpointTag?.() : undefined;
       const usage = message.role === "assistant" ? finishedTurnUsage.shift() : undefined;
-      await store.append(message, usage, checkpoint);
+      const entry = await store.append(message, usage, checkpoint);
       seams.onChange?.(store.header.id);
+      return { entryId: entry.id };
     },
     rename: async (title) => {
       await store.setName(title);

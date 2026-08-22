@@ -1,7 +1,8 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { configSchema, type KeyworkConfig } from "@keywork/shared";
+import { dirname, join } from "node:path";
+import { ConfigError, configSchema, type KeyworkConfig } from "@keywork/shared";
 
 export function userConfigDir(): string {
   return join(homedir(), ".keywork");
@@ -12,28 +13,71 @@ export async function updateUserConfig(
   dir: string = userConfigDir(),
 ): Promise<string> {
   const file = join(dir, "keywork.json");
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const merged = mutate(await readKnownConfig(file));
-  await writeFile(file, `${JSON.stringify(merged, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await chmod(file, 0o600);
+  const merged = mutate(await readConfigFile(file));
+  await writePrivateFile(file, `${JSON.stringify(merged, null, 2)}\n`);
   return file;
 }
 
 export async function readUserConfig(dir: string = userConfigDir()): Promise<KeyworkConfig> {
-  return readKnownConfig(join(dir, "keywork.json"));
+  return readConfigFile(join(dir, "keywork.json"));
 }
 
-async function readKnownConfig(file: string): Promise<KeyworkConfig> {
-  const raw = await readFile(file, "utf8")
-    .then((text) => JSON.parse(text) as unknown)
-    .catch(() => undefined);
-  if (typeof raw !== "object" || raw === null) return {};
-  const fields = raw as Record<string, unknown>;
-  const known = Object.fromEntries(
-    Object.keys(configSchema.shape)
-      .filter((field) => field in fields)
-      .map((field) => [field, fields[field]]),
-  );
-  const parsed = configSchema.safeParse(known);
-  return parsed.success ? parsed.data : {};
+export type PrivateFileDisk = Pick<
+  typeof import("node:fs/promises"),
+  "mkdir" | "writeFile" | "chmod" | "rename" | "rm"
+>;
+
+const realDisk: PrivateFileDisk = { mkdir, writeFile, chmod, rename, rm };
+
+export async function writePrivateFile(
+  file: string,
+  contents: string,
+  disk: PrivateFileDisk = realDisk,
+): Promise<void> {
+  await disk.mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  const staging = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    await disk.writeFile(staging, contents, { encoding: "utf8", mode: 0o600 });
+    await disk.chmod(staging, 0o600);
+    await disk.rename(staging, file);
+  } catch (cause) {
+    await disk.rm(staging, { force: true });
+    throw cause;
+  }
+}
+
+async function readConfigFile(file: string): Promise<KeyworkConfig> {
+  const raw = await readFileIfExists(file);
+  if (raw === undefined) return {};
+  const parsed = configSchema.safeParse(parseJson(file, raw));
+  if (!parsed.success) throw new ConfigError(file, describeIssues(parsed.error.issues));
+  return parsed.data;
+}
+
+const absenceCodes = new Set(["ENOENT", "ENOTDIR"]);
+
+async function readFileIfExists(file: string): Promise<string | undefined> {
+  try {
+    return await readFile(file, "utf8");
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code ?? "unknown";
+    if (absenceCodes.has(code)) return undefined;
+    throw new ConfigError(file, `unreadable (${code}): ${(cause as Error).message}`);
+  }
+}
+
+function parseJson(file: string, raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch (cause) {
+    throw new ConfigError(file, `not valid JSON: ${(cause as Error).message}`);
+  }
+}
+
+function describeIssues(
+  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
+): string {
+  return issues
+    .map((issue) => `${issue.path.map(String).join(".") || "config"}: ${issue.message}`)
+    .join("\n");
 }

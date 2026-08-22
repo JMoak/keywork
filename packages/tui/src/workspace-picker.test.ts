@@ -42,6 +42,15 @@ describe("WorkspacePicker", () => {
     expect(picker.handleKey(...key("escape"))).toBe("close");
   });
 
+  it("selects a row directly and pastes into the query", () => {
+    const picker = new WorkspacePicker(choices);
+    picker.select(2);
+    expect(picker.selected()).toEqual({ kind: "use", slug: "infra" });
+    picker.paste("front");
+    expect(picker.query).toBe("front");
+    expect(picker.selected()).toEqual({ kind: "use", slug: "frontend" });
+  });
+
   it("filters by slug and offers to create an unknown slug", () => {
     const picker = new WorkspacePicker(choices);
     typed(picker, "in");

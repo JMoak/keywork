@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { buildVersionDefine, checksumLine, hostTarget, tagMatchesVersion } from "./targets.ts";
+import { exitOnBuildInputError, readManifest, resolveBuildVersion } from "./build-inputs.ts";
+import { buildVersionDefine, checksumLine, hostTarget } from "./targets.ts";
 
 const entrypoint = "packages/cli/src/main.ts";
 const manifestPath = "packages/cli/package.json";
@@ -18,13 +19,14 @@ const { values } = parseArgs({
   },
 });
 
-const version = values.version ?? manifestVersion();
-if (values["expect-tag"] !== undefined && !tagMatchesVersion(values["expect-tag"], version)) {
-  console.error(
-    `release tag ${values["expect-tag"]} does not match ${manifestPath} version ${version}; bump the manifest or retag`,
-  );
-  process.exit(2);
-}
+const version = exitOnBuildInputError(() =>
+  resolveBuildVersion({
+    manifest: readManifest(manifestPath),
+    manifestPath,
+    override: values.version,
+    expectTag: values["expect-tag"],
+  }),
+);
 
 const target = hostTarget();
 const outdir = resolve(values.outdir);
@@ -56,7 +58,3 @@ if (!values["skip-smoke"]) {
   console.log(`smoke ok: ${printed}`);
 }
 console.log(`wrote ${outfile}\nwrote ${outfile}.sha256`);
-
-function manifestVersion(): string {
-  return (JSON.parse(readFileSync(manifestPath, "utf8")) as { version: string }).version;
-}

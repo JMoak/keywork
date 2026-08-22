@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -105,6 +105,49 @@ describe("DiagnosticsLog", () => {
     expect(content).not.toContain("sk-");
     expect(content).toContain("[redacted]");
     expect(content).toContain("openrouter/auto");
+  });
+
+  it("fails open: one rejected append is reported once and later lines still land", async () => {
+    const file = join(await tempDir(), "debug.jsonl");
+    const failures: string[] = [];
+    const log = await DiagnosticsLog.open(file, {
+      onWriteFailure: (error) => failures.push(error.message),
+    });
+    await mkdir(file);
+
+    log.log("info", "first", {});
+    log.log("info", "second", {});
+    await expect(log.flush()).resolves.toBeUndefined();
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/EISDIR|EPERM|EACCES/);
+
+    await rm(file, { recursive: true, force: true });
+    log.log("info", "third", {});
+    await log.flush();
+
+    expect((await readLines(file)).map((line) => line.event)).toEqual(["third"]);
+    expect(failures).toHaveLength(1);
+  });
+
+  it("reports again when a cleared fault returns", async () => {
+    const file = join(await tempDir(), "debug.jsonl");
+    const failures: string[] = [];
+    const log = await DiagnosticsLog.open(file, {
+      onWriteFailure: (error) => failures.push(error.message),
+    });
+
+    await mkdir(file);
+    log.log("info", "blocked", {});
+    await log.flush();
+    await rm(file, { recursive: true, force: true });
+    log.log("info", "landed", {});
+    await log.flush();
+    await rm(file, { force: true });
+    await mkdir(file);
+    log.log("info", "blocked again", {});
+    await log.flush();
+
+    expect(failures).toHaveLength(2);
   });
 
   it("keeps token counts while redacting token-named strings", async () => {

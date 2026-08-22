@@ -11,6 +11,7 @@ import {
   type SessionAttachment,
   type SessionPort,
   seedArcFromOrigin,
+  sessionEscrow,
   startFreshSession,
 } from "./app.ts";
 import type { ArcsPort } from "./arcs.ts";
@@ -19,7 +20,7 @@ import { AppProbe } from "./probe.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
 
 function attachmentOf(id: string): SessionAttachment {
-  return { id, history: [], replay: () => {}, append: async () => {} };
+  return { id, history: [], replay: () => {}, append: async () => undefined };
 }
 
 function flush(): Promise<void> {
@@ -147,31 +148,64 @@ describe("startFreshSession", () => {
   });
 });
 
-describe("attachOnFork", () => {
-  it("disposes a forked attachment nobody claims", async () => {
-    const attachments = new Map<string, SessionAttachment>();
+describe("sessionEscrow", () => {
+  it("hands a held attachment to exactly one claimant", () => {
     const released: string[] = [];
-    const port = attachOnFork(forkingTrees("forked-1"), releasingPort(released), attachments);
+    const escrow = sessionEscrow(releasingPort(released));
+    const attachment = attachmentOf("s1");
+    escrow.hold("s1", attachment);
+    expect(escrow.claim("s1")).toBe(attachment);
+    expect(escrow.claim("s1")).toBeUndefined();
+    expect(released).toEqual([]);
+  });
+
+  it("releases an unclaimed attachment when the same session is held again", () => {
+    const released: string[] = [];
+    const escrow = sessionEscrow(releasingPort(released));
+    escrow.hold("s1", attachmentOf("s1"));
+    const fresher = attachmentOf("s1");
+    escrow.hold("s1", fresher);
+    expect(released).toEqual(["s1"]);
+    expect(escrow.claim("s1")).toBe(fresher);
+  });
+
+  it("releases everything still held at shutdown", () => {
+    const released: string[] = [];
+    const escrow = sessionEscrow(releasingPort(released));
+    escrow.hold("s1", attachmentOf("s1"));
+    escrow.hold("s2", attachmentOf("s2"));
+    escrow.claim("s2");
+    escrow.releaseAll();
+    expect(released).toEqual(["s1"]);
+    expect(escrow.claim("s1")).toBeUndefined();
+  });
+});
+
+describe("attachOnFork", () => {
+  it("holds a forked attachment in escrow until a pane claims it", async () => {
+    const released: string[] = [];
+    const escrow = sessionEscrow(releasingPort(released));
+    const port = attachOnFork(forkingTrees("forked-1"), releasingPort(released), escrow);
 
     const forkedId = await port.fork("s1", "e1");
 
     expect(forkedId).toBe("forked-1");
-    expect(attachments.has("forked-1")).toBe(true);
-    await flush();
-    expect(attachments.size).toBe(0);
-    expect(released).toEqual(["forked-1"]);
+    expect(escrow.claim("forked-1")?.id).toBe("forked-1");
+    expect(released).toEqual([]);
   });
 
-  it("leaves a claimed fork attachment alone", async () => {
-    const attachments = new Map<string, SessionAttachment>();
-    const released: string[] = [];
-    const port = attachOnFork(forkingTrees("forked-1"), releasingPort(released), attachments);
+  it("attach reports whether a session could be opened and holds what it opened", async () => {
+    const escrow = sessionEscrow(undefined);
+    const opening: SessionPort = {
+      open: async (id) => (id === "gone" ? undefined : attachmentOf(id)),
+      create: async () => undefined,
+    };
+    const port = attachOnFork(forkingTrees("forked-1"), opening, escrow);
 
-    await port.fork("s1", "e1");
-    attachments.delete("forked-1");
-    await flush();
-
-    expect(released).toEqual([]);
+    expect(await port.attach?.("gone")).toBe(false);
+    expect(await port.attach?.("s2")).toBe(true);
+    expect(escrow.claim("gone")).toBeUndefined();
+    expect(escrow.claim("s2")?.id).toBe("s2");
   });
 
   it("forwards the tree port's subscribe seam", () => {
@@ -184,7 +218,7 @@ describe("attachOnFork", () => {
         return () => {};
       },
     };
-    const port = attachOnFork(trees, undefined, new Map());
+    const port = attachOnFork(trees, undefined, sessionEscrow(undefined));
     const seen: string[] = [];
     port.subscribe?.((sessionId) => seen.push(sessionId));
     expect(listeners).toEqual(["subscribed"]);
@@ -342,7 +376,55 @@ describe("seedArcFromOrigin (PD13 splits)", () => {
   });
 });
 
+describe("resuming a session with no attachment", () => {
+  it("posts a notice and opens no pane when the factory refuses the resume", () => {
+    const probe = new AppProbe({
+      createPane: (id, notify, commands, resumeSessionId) =>
+        resumeSessionId === undefined
+          ? new ConversationPane(id, undefined, notify, undefined, commands)
+          : undefined,
+    });
+    probe.core.intents.openSession("gone-1");
+    expect(probe.snapshot().panes.map((pane) => pane.id)).toEqual(["session-1"]);
+    expect(probe.snapshot().focused).toBe("session-1");
+    expect(probe.snapshot().notice).toBe(
+      "can't open session gone-1 · its store is missing or unreadable",
+    );
+    probe.command("split");
+    expect(probe.snapshot().panes.map((pane) => pane.id)).toEqual(["session-1", "session-2"]);
+  });
+});
+
 describe("bindSessionLifecycle", () => {
+  it("hands each persisted prompt's entry id back to the pane", async () => {
+    let sequence = 0;
+    const attachment: SessionAttachment = {
+      id: "s1",
+      history: [],
+      replay: () => {},
+      append: async (message) => {
+        sequence += 1;
+        return { entryId: `${message.role}-${sequence}` };
+      },
+    };
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const provider = new MockProvider([textTurn("reply"), textTurn("again")]);
+        const pane = new ConversationPane(id, new Agent({ provider }), notify, undefined, commands);
+        bindSessionLifecycle({ pane, attachment });
+        return pane;
+      },
+    });
+    probe.type("one").keys("enter");
+    await probe.settled();
+    probe.type("two").keys("enter");
+    await probe.settled();
+    expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([
+      { kind: "user", text: "one", entryId: "user-1" },
+      { kind: "user", text: "two", entryId: "user-3" },
+    ]);
+  });
+
   it("persists a turn in flight at close but skips the agent swap", async () => {
     const appended: Message[] = [];
     const attachment: SessionAttachment = {
@@ -351,6 +433,7 @@ describe("bindSessionLifecycle", () => {
       replay: () => {},
       append: async (message) => {
         appended.push(message);
+        return undefined;
       },
     };
     const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });

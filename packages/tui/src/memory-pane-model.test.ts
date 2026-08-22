@@ -422,6 +422,41 @@ describe("MemoryPaneModel navigation edges", () => {
     expect(model.handleKey(parseChord("z"), 5)).toBe(false);
     expect(model.handleKey(parseChord("q"), 5)).toBe(false);
   });
+
+  it("ignores modified chords so shift+d and ctrl+a never touch the inbox", () => {
+    const { model, recorded } = modelOver({ notes: garden.map(noteOf), inbox: [inboxOf("only")] });
+    press(model, "i");
+    expect(model.cursorRow()?.inboxId).toBe("only");
+    expect(model.handleKey(parseChord("shift+d"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("ctrl+a"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("ctrl+r"), 5)).toBe(false);
+    expect(recorded.discarded).toEqual([]);
+    expect(recorded.approved).toEqual([]);
+    expect(recorded.refreshes).toBe(0);
+  });
+
+  it("keeps the cursor on the same recall when a newer recall is appended", () => {
+    const recallOf = (note: string): RecallEventView => ({
+      note,
+      scope: "workspace",
+      provenance: "agent",
+    });
+    const recalls = Array.from({ length: 10 }, (_, at) => recallOf(`note-${at}`));
+    const { model } = modelOver({ notes: garden.map(noteOf), recalls });
+    const rows = model.rows();
+    model.cursor = rows.findIndex((row) => row.kind === "recall" && row.note === "note-5");
+    press(model, "j");
+    expect(model.cursorRow()?.note).toBe("note-6");
+    const anchored = model.cursorRow()?.id;
+    model.setInputs({
+      ...emptyMemoryInputs,
+      scopes: ["workspace", "user"],
+      notes: garden.map(noteOf),
+      recalls: [...recalls, recallOf("note-10")],
+    });
+    expect(model.cursorRow()?.id).toBe(anchored);
+    expect(model.cursorRow()?.note).toBe("note-6");
+  });
 });
 
 describe("MemoryPaneModel property: cursor lands on a selectable visible row", () => {

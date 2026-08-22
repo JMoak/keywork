@@ -36,9 +36,12 @@ export function checksumLine(sha256Hex: string, assetName: string): string {
   return `${sha256Hex}  ${assetName}\n`;
 }
 
+export function isReleaseVersion(candidate: string): boolean {
+  return releaseVersion.test(candidate);
+}
+
 export function versionFromTag(tag: string): string | undefined {
-  const match = /^v(\d+\.\d+\.\d+(?:-[\w.]+)?)$/.exec(tag);
-  return match?.[1];
+  return releaseTag.exec(tag)?.[1];
 }
 
 export function tagMatchesVersion(tag: string, version: string): boolean {
@@ -48,6 +51,10 @@ export function tagMatchesVersion(tag: string, version: string): boolean {
 export function buildVersionDefine(version: string): readonly string[] {
   return ["--define", `KEYWORK_BUILD_VERSION=${JSON.stringify(version)}`];
 }
+
+const releaseVersionGrammar = String.raw`\d+\.\d+\.\d+(?:-[\w.]+)?`;
+const releaseVersion = new RegExp(`^${releaseVersionGrammar}$`);
+const releaseTag = new RegExp(`^v(${releaseVersionGrammar})$`);
 
 function target(os: ReleaseOs, arch: ReleaseArch): ReleaseTarget {
   return { os, arch, assetName: assetNameFor(os, arch) };

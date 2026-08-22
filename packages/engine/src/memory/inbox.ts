@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import { titleKey } from "./naming.ts";
 import type { Provenance } from "./store.ts";
+import { isMissingFileError, writeFileAtomic } from "./vault-files.ts";
 
 export type ReviewItemDetail =
   | {
@@ -124,8 +124,7 @@ export class ReviewInbox {
 
   private async save(items: ReviewItem[]): Promise<void> {
     if (this.filePath === undefined) return;
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(items, null, 2)}\n`, "utf8");
+    await writeFileAtomic(this.filePath, `${JSON.stringify(items, null, 2)}\n`);
   }
 }
 
@@ -173,14 +172,4 @@ function validateItem(value: unknown, file: string): ReviewItem {
 
 function unorderedPairKey(a: string, b: string): string {
   return [titleKey(a), titleKey(b)].sort().join("<->");
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    ((error as { code: unknown }).code === "ENOENT" ||
-      (error as { code: unknown }).code === "ENOTDIR")
-  );
 }

@@ -590,6 +590,113 @@ describe("Agent end-to-end with mock provider", () => {
     expect(agent.usage()).toEqual({ inputTokens: 7, outputTokens: 3 });
   });
 
+  it("keeps the partial assistant message when the stream fails mid-turn", async () => {
+    const provider: Provider = {
+      name: "flaky",
+      async *stream(): AsyncGenerator<TurnDelta> {
+        yield { type: "text", text: "half an answer" };
+        throw new Error("wire dropped");
+      },
+    };
+    const agent = new Agent({ provider });
+
+    await expect(agent.send("go")).rejects.toThrow("wire dropped");
+
+    expect(agent.history().map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(agent.history().at(-1)).toMatchObject({
+      role: "assistant",
+      parts: [{ type: "text", text: "half an answer" }],
+    });
+    expect(agent.busy()).toBe(false);
+  });
+
+  it("never leaves two consecutive user messages after a stream failure and a retry", async () => {
+    let calls = 0;
+    const provider: Provider = {
+      name: "flaky-then-fine",
+      async *stream(): AsyncGenerator<TurnDelta> {
+        if (calls++ === 0) {
+          yield { type: "text", text: "half" };
+          throw new Error("wire dropped");
+        }
+        yield* textTurn("whole");
+      },
+    };
+    const agent = new Agent({ provider });
+
+    await expect(agent.send("first")).rejects.toThrow("wire dropped");
+    await agent.send("second");
+
+    const roles = agent.history().map((message) => message.role);
+    expect(roles).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(roles.some((role, index) => role === "user" && roles[index - 1] === "user")).toBe(false);
+  });
+
+  it("settles tool calls orphaned by a stream failure the way an interrupt does", async () => {
+    const provider: Provider = {
+      name: "flaky-tools",
+      async *stream(): AsyncGenerator<TurnDelta> {
+        yield {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "call-1", name: "echo", arguments: { text: "x" } },
+        };
+        throw new Error("wire dropped");
+      },
+    };
+    const agent = new Agent({ provider, tools: [echoTool] });
+
+    await expect(agent.send("go")).rejects.toThrow("wire dropped");
+
+    expect(orphanedCallIds(agent.history())).toEqual([]);
+    expect(agent.history().at(-1)?.parts[0]).toMatchObject({
+      type: "tool-result",
+      callId: "call-1",
+      output: "interrupted before execution",
+      isError: true,
+    });
+  });
+
+  it("stays free and resolves when context.injected or turn.started listeners throw", async () => {
+    const provider = new MockProvider([textTurn("one"), textTurn("two")]);
+    const agent = new Agent({
+      provider,
+      standingInjections: [{ source: "project-instructions", id: "AGENTS.md" }],
+    });
+    const failures: string[] = [];
+    agent.bus.on("engine.error", ({ error }) => failures.push(error.message));
+    agent.bus.on("context.injected", () => {
+      throw new Error("bad tap");
+    });
+    agent.bus.on("turn.started", () => {
+      throw new Error("render crashed");
+    });
+
+    expect(messageText(await agent.send("first"))).toBe("one");
+
+    expect(agent.busy()).toBe(false);
+    expect(failures).toEqual(["bad tap", "render crashed"]);
+    expect(messageText(await agent.send("second"))).toBe("two");
+    expect(agent.busy()).toBe(false);
+  });
+
+  it("never rejects a successful turn because a turn.completed listener threw", async () => {
+    const provider = new MockProvider([textTurn("done"), textTurn("again")]);
+    const agent = new Agent({ provider });
+    const failures: string[] = [];
+    agent.bus.on("engine.error", ({ error }) => failures.push(error.message));
+    agent.bus.on("turn.completed", () => {
+      throw new Error("render crashed");
+    });
+
+    const final = await agent.send("go");
+
+    expect(messageText(final)).toBe("done");
+    expect(failures).toEqual(["render crashed"]);
+    expect(agent.busy()).toBe(false);
+    expect(agent.history().map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(messageText(await agent.send("more"))).toBe("again");
+  });
+
   it("accumulates streamed text into one part", async () => {
     const provider = new MockProvider([
       [

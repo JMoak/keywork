@@ -2,7 +2,9 @@
 # keywork installer for Linux and macOS.
 #   curl -fsSL https://raw.githubusercontent.com/JMoak/keywork/main/scripts/install.sh | sh
 # Honors KEYWORK_VERSION (a release tag such as v0.1.0; default: latest) and
-# KEYWORK_INSTALL_DIR (default: ~/.local/bin). Verifies the SHA-256 before installing.
+# KEYWORK_INSTALL_DIR (default: ~/.local/bin). Checks the download's SHA-256 against the
+# published .sha256 from the same release (unsigned, same origin: this catches a corrupt
+# download, not a compromised release).
 set -eu
 
 repo="JMoak/keywork"
@@ -45,7 +47,7 @@ else
   echo "keywork: neither sha256sum nor shasum is available to verify the download" >&2
   exit 1
 fi
-echo "checksum verified"
+echo "checksum matches the published .sha256"
 
 mkdir -p "$install_dir"
 chmod +x "$workdir/$asset"

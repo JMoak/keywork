@@ -118,7 +118,7 @@ export class ArcsPane implements Pane {
       this.tray.openTray();
       return true;
     }
-    return this.model.handleKey(chord, this.lastPageRows);
+    return this.model.handleKey(chord, this.lastPageRows, sequence);
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {

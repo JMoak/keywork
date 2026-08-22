@@ -50,7 +50,7 @@ export type ForkOutcome = { forked: false } | { forked: true; note?: string };
 
 export interface ConversationPorts {
   readFile?: FileReader;
-  forkAtPrompt?: (promptOrdinal: number, draft: string) => Promise<ForkOutcome>;
+  forkAtPrompt?: (promptId: string, draft: string) => Promise<ForkOutcome>;
   idleNotice?: string;
   now?: () => number;
 }
@@ -99,11 +99,17 @@ export interface ToolRun {
 }
 
 export type TranscriptEntry =
-  | { kind: "user"; text: string }
+  | UserEntry
   | { kind: "assistant"; text: string }
   | { kind: "tool"; text: string; failed: boolean; run?: ToolRun }
   | { kind: "error"; text: string }
   | { kind: "info"; text: string };
+
+export interface UserEntry {
+  kind: "user";
+  text: string;
+  entryId?: string;
+}
 
 type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
 
@@ -121,6 +127,7 @@ export class ConversationModel {
   lastFork: Promise<unknown> = Promise.resolve();
   selectedSuggestion = 0;
   private readonly queue: string[] = [];
+  private readonly unidentifiedPrompts: UserEntry[] = [];
   private readonly history: string[] = [];
   private historyIndex: number | undefined;
   private askPageRows = 8;
@@ -177,9 +184,13 @@ export class ConversationModel {
   private subscribe(agent: Agent): void {
     const notify = this.notify;
     this.subscriptions.push(
-      agent.bus.on("turn.started", ({ userText, replay }) => {
+      agent.bus.on("turn.started", ({ userText, replay, entryId }) => {
         if (replay !== true) return;
-        this.entries.push({ kind: "user", text: userText });
+        this.entries.push({
+          kind: "user",
+          text: userText,
+          ...(entryId !== undefined && { entryId }),
+        });
         notify();
       }),
       agent.bus.on("turn.delta", ({ delta }) => {
@@ -226,7 +237,7 @@ export class ConversationModel {
       }),
       agent.bus.on("turn.interrupted", () => {
         this.streaming = undefined;
-        this.entries.push({ kind: "info", text: "— interrupted" });
+        this.entries.push({ kind: "info", text: "· interrupted" });
         notify();
       }),
     );
@@ -240,6 +251,11 @@ export class ConversationModel {
     this.title = title;
     this.titleRequested = true;
     this.notify();
+  }
+
+  adoptPromptId(entryId: string): void {
+    const prompt = this.unidentifiedPrompts.shift();
+    if (prompt !== undefined) prompt.entryId = entryId;
   }
 
   usageSummary(): string {
@@ -584,7 +600,9 @@ export class ConversationModel {
   private deliver(text: string): void {
     if (this.disposed || this.agent === undefined) return;
     const agent = this.agent;
-    this.entries.push({ kind: "user", text });
+    const prompt: UserEntry = { kind: "user", text };
+    this.entries.push(prompt);
+    this.unidentifiedPrompts.push(prompt);
     this.scrollBack = 0;
     this.occupy(() => agent.send(text).then(() => this.afterTurn?.()));
   }
@@ -752,9 +770,8 @@ export class ConversationModel {
   private selectBacktrack(): boolean {
     const at = this.backtrackAt;
     const entry = at === undefined ? undefined : this.entries[at];
-    const ordinal = at === undefined ? -1 : this.promptIndices().indexOf(at);
     this.exitBacktrack();
-    if (entry === undefined || entry.kind !== "user" || ordinal < 0) return true;
+    if (entry === undefined || entry.kind !== "user") return true;
     if (this.busy) {
       this.entries.push({ kind: "info", text: "turn still running · esc to interrupt" });
       this.notify();
@@ -766,11 +783,16 @@ export class ConversationModel {
       this.notify();
       return true;
     }
-    this.lastFork = fork(ordinal, entry.text)
+    if (entry.entryId === undefined) {
+      this.entries.push({ kind: "info", text: noForkPointNotice });
+      this.notify();
+      return true;
+    }
+    this.lastFork = fork(entry.entryId, entry.text)
       .then((outcome) => {
         if (this.disposed) return;
         if (!outcome.forked) {
-          this.entries.push({ kind: "info", text: "no fork point there" });
+          this.entries.push({ kind: "info", text: noForkPointNotice });
         } else if (outcome.note !== undefined) {
           this.entries.push({ kind: "info", text: outcome.note });
         }
@@ -860,9 +882,10 @@ export class ConversationModel {
     const ask = this.pendingAsk;
     if (ask === undefined) return false;
     if (ask.diff !== undefined && this.scrollAskDiff(chord)) return true;
-    if (chord.name === "a") this.alwaysAllow = true;
-    const allowed = ["y", "a", "return", "enter"].includes(chord.name);
-    if (!allowed && chord.name !== "n" && chord.name !== "escape") return true;
+    const verdict = askVerdict(chord);
+    if (verdict === undefined) return true;
+    if (verdict === "always") this.alwaysAllow = true;
+    const allowed = verdict !== "deny";
     this.pendingAsk = undefined;
     this.askScroll = 0;
     ask.resolve(allowed);
@@ -1004,6 +1027,7 @@ export interface TranscriptLine {
 
 export const railWidth = 2;
 const railBlank = "  ";
+const noForkPointNotice = "no fork point there";
 const streamSettleSteps = 4;
 const liveLineLimit = 120;
 const detailLineLimit = 12;
@@ -1089,7 +1113,7 @@ function toolRowSpans(run: ToolRun): MarkdownSpan[] {
     { text: run.outcome, tone: run.outcome === "done" ? "ok" : "bad" },
   ];
   if (run.reason !== undefined && run.reason !== "") {
-    spans.push({ text: ` — ${run.reason}`, tone: "meta" });
+    spans.push({ text: ` · ${run.reason}`, tone: "meta" });
   }
   return spans;
 }
@@ -1203,6 +1227,23 @@ function wrap(line: string, width: number): string[] {
     pieces.push(points.slice(at, at + width).join(""));
   }
   return pieces;
+}
+
+function askVerdict(chord: Chord): "allow" | "always" | "deny" | undefined {
+  if (chord.ctrl || chord.meta) return undefined;
+  switch (chord.name) {
+    case "y":
+    case "return":
+    case "enter":
+      return "allow";
+    case "a":
+      return "always";
+    case "n":
+    case "escape":
+      return "deny";
+    default:
+      return undefined;
+  }
 }
 
 function isPrintable(chord: Chord, sequence: string | undefined): boolean {

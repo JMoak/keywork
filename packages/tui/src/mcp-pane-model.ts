@@ -163,6 +163,7 @@ export class McpPaneModel {
   }
 
   handleKey(chord: Chord, pageRows: number): boolean {
+    if (chord.shift || chord.ctrl || chord.meta) return false;
     const rows = this.rows();
     this.cursor = clampIndex(this.cursor, rows.length);
     switch (chord.name) {

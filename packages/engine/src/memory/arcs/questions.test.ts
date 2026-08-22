@@ -2,11 +2,12 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { MemoryStore, type MemoryStoreOptions } from "../store.ts";
 import {
   ArcOpenQuestions,
-  type ArcOpenQuestionsOptions,
   MissingOpenQuestionError,
   OpenQuestionCapError,
+  questionsDir as questionsDirName,
 } from "./questions.ts";
 
 const cleanups: string[] = [];
@@ -18,20 +19,24 @@ afterEach(async () => {
   }
 });
 
-async function questionsDir(options: Partial<ArcOpenQuestionsOptions> = {}): Promise<{
+async function questionsDir(options: Partial<MemoryStoreOptions> = {}): Promise<{
   questions: ArcOpenQuestions;
   dir: string;
 }> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-questions-"));
-  cleanups.push(dir);
-  const questions = new ArcOpenQuestions({
-    questionsDir: dir,
+  const root = await mkdtemp(join(tmpdir(), "keywork-questions-"));
+  cleanups.push(root);
+  const store = new MemoryStore({
+    vaultRoot: root,
     trusted: true,
-    now: () => new Date("2026-08-16T09:00:00.000Z"),
-    cap: 2,
+    reservedPaths: [`${questionsDirName}/`],
     ...options,
   });
-  return { questions, dir };
+  const questions = new ArcOpenQuestions({
+    store,
+    now: () => new Date("2026-08-16T09:00:00.000Z"),
+    cap: 2,
+  });
+  return { questions, dir: join(root, questionsDirName) };
 }
 
 describe("open questions", () => {

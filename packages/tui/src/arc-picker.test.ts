@@ -45,6 +45,15 @@ describe("ArcPicker", () => {
     expect(picker.handleKey(...key("escape"))).toBe("close");
   });
 
+  it("selects a row directly and pastes into the query", () => {
+    const picker = new ArcPicker(arcs, "dock-v2");
+    picker.select(3);
+    expect(picker.selected()).toEqual({ kind: "archived", slug: "old-login" });
+    picker.paste("inf");
+    expect(picker.rows().map(describeArcRow)).toEqual(["infra · 5 sessions", "new arc inf"]);
+    expect(picker.selected()).toEqual({ kind: "bind", slug: "infra" });
+  });
+
   it("filters by typed text and hides the release row while typing", () => {
     const picker = new ArcPicker(arcs, "dock-v2");
     typed(picker, "doc");

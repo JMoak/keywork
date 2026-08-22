@@ -302,6 +302,7 @@ describe("disposal", () => {
     );
     type(model, "one");
     await submit(model);
+    model.adoptPromptId("p1");
     model.handleKey(parseChord("escape"), undefined);
     model.handleKey(parseChord("escape"), undefined);
     model.handleKey(parseChord("return"), undefined);
@@ -648,6 +649,55 @@ describe("mutation confirmation", () => {
 
     expect(await model.confirmMutation(writeCall)).toBe(true);
     expect(model.pendingAsk).toBeUndefined();
+  });
+
+  it("ignores modified chords at the ask so ctrl+a and meta+y neither approve nor remember", async () => {
+    const model = new ConversationModel(undefined, () => {});
+
+    const verdict = model.confirmMutation(writeCall);
+    expect(model.handleKey({ name: "a", ctrl: true, shift: false, meta: false }, undefined)).toBe(
+      true,
+    );
+    expect(model.handleKey({ name: "y", ctrl: false, shift: false, meta: true }, undefined)).toBe(
+      true,
+    );
+    expect(model.pendingAsk).toBeDefined();
+    model.handleKey(parseChord("n"), "n");
+    expect(await verdict).toBe(false);
+
+    const next = model.confirmMutation(writeCall);
+    expect(model.pendingAsk).toBeDefined();
+    model.handleKey(parseChord("y"), "y");
+    expect(await next).toBe(true);
+  });
+});
+
+describe("prompt identity", () => {
+  it("carries the replayed entry id on user entries and leaves summaries anonymous", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const model = new ConversationModel(agent, () => {});
+    agent.bus.emit("turn.started", { userText: "earlier work", replay: true });
+    agent.bus.emit("turn.started", { userText: "first", replay: true, entryId: "u1" });
+    expect(model.entries).toEqual([
+      { kind: "user", text: "earlier work" },
+      { kind: "user", text: "first", entryId: "u1" },
+    ]);
+  });
+
+  it("assigns adopted ids to live prompts in send order", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("a"), textTurn("b")]) });
+    const model = new ConversationModel(agent, () => {});
+    type(model, "one");
+    await submit(model);
+    type(model, "two");
+    await submit(model);
+    model.adoptPromptId("u1");
+    model.adoptPromptId("u2");
+    model.adoptPromptId("stray");
+    expect(model.entries.filter((entry) => entry.kind === "user")).toEqual([
+      { kind: "user", text: "one", entryId: "u1" },
+      { kind: "user", text: "two", entryId: "u2" },
+    ]);
   });
 });
 
@@ -1075,11 +1125,11 @@ describe("the page grammar in the transcript", () => {
   it("indents prose by the gutter and leaves machine output on the margin", () => {
     const model = blankModel();
     model.entries.push({ kind: "user", text: "go" });
-    model.entries.push({ kind: "tool", text: "✓ bash — ok", failed: false });
+    model.entries.push({ kind: "tool", text: "✓ bash · ok", failed: false });
 
     const lines = model.visibleTranscript(150, 60, resolvePage(156));
     expect(lines.find((line) => line.kind === "user")?.text).toBe(" go");
-    expect(lines.find((line) => line.kind === "tool")?.text).toBe("✓ bash — ok");
+    expect(lines.find((line) => line.kind === "tool")?.text).toBe("✓ bash · ok");
   });
 
   it("re-wraps when a resize crosses a tier threshold", () => {
@@ -1235,7 +1285,7 @@ describe("the voice rail and tool rows", () => {
       (candidate): candidate is TranscriptEntry & { kind: "tool" } => candidate.kind === "tool",
     );
     expect(entry?.failed).toBe(true);
-    expect(entry?.text).toMatch(/ · failed — /);
+    expect(entry?.text).toMatch(/ · failed · /);
     const row = model.visibleTranscript(80, 40).find((line) => line.kind === "tool");
     expect(row?.spans).toContainEqual({ text: "failed", tone: "bad" });
   });

@@ -94,20 +94,30 @@ export async function arcBootstrapLayer(
   slug: string,
   budget: number,
 ): Promise<LayerBootstrap> {
+  const name = `arc:${slug}`;
   const record = await registry.readArc(slug);
-  const notes = record?.status === "active" ? await registry.arcStore(slug).listNotes() : [];
-  return { name: `arc:${slug}`, selection: selectArcNotes(notes, budget) };
+  if (record?.status !== "active") return { name, selection: selectWithinBudget([], budget) };
+  const moc = await registry.readMocNote(slug);
+  const notes = await registry.arcStore(slug).listNotes();
+  return { name, selection: selectArcNotes(moc, notes, budget) };
 }
 
-function selectArcNotes(notes: Note[], budget: number): BootstrapSelection {
+function selectArcNotes(moc: Note | undefined, notes: Note[], budget: number): BootstrapSelection {
   const live = notes.filter((note) => note.supersededBy === undefined);
-  const moc = live.filter((note) => note.name === "MOC");
-  const pinned = live.filter((note) => note.name !== "MOC" && note.pinned);
-  const rest = live.filter((note) => note.name !== "MOC" && !note.pinned);
+  const pinned = live.filter((note) => note.pinned);
+  const rest = live.filter((note) => !note.pinned);
+  const mocFirst = moc === undefined ? [] : [moc];
+  return selectWithinBudget(
+    [...mocFirst, ...mostUsefulFirst(pinned), ...mostUsefulFirst(rest)],
+    budget,
+  );
+}
+
+function selectWithinBudget(ordered: Note[], budget: number): BootstrapSelection {
   const selected: Note[] = [];
   const skipped: string[] = [];
   let tokens = 0;
-  for (const note of [...moc, ...mostUsefulFirst(pinned), ...mostUsefulFirst(rest)]) {
+  for (const note of ordered) {
     if (tokens + note.tokens > budget) {
       skipped.push(note.name);
       continue;

@@ -1,5 +1,5 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readdir, readFile, rm } from "node:fs/promises";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { anchorFrontmatter, type CheckpointAnchor } from "./anchors.ts";
 import {
   type Frontmatter,
@@ -23,6 +23,7 @@ import {
   validateConceptTitle,
 } from "./naming.ts";
 import { type NamedSecret, redactForPersistence } from "./redaction.ts";
+import { isMissingFileError, writeFileAtomic } from "./vault-files.ts";
 
 export type Provenance = "user" | "agent" | "untrusted";
 
@@ -31,6 +32,7 @@ export interface MemoryStoreOptions {
   trusted: boolean;
   now?: () => Date;
   secrets?: Record<string, string>;
+  reservedPaths?: readonly string[];
 }
 
 export interface NoteInput {
@@ -146,6 +148,30 @@ export class LedgerEntryNotFoundError extends Error {
   }
 }
 
+export class PathOutsideVaultError extends Error {
+  constructor(readonly path: string) {
+    super(`refusing to touch ${path}: it resolves outside the vault root`);
+    this.name = "PathOutsideVaultError";
+  }
+}
+
+export class ReservedPathError extends Error {
+  constructor(
+    readonly path: string,
+    detail: string,
+  ) {
+    super(`reserved path ${path}: ${detail}`);
+    this.name = "ReservedPathError";
+  }
+}
+
+export class InvalidDailyDateError extends Error {
+  constructor(readonly date: string) {
+    super(`invalid daily log date ${JSON.stringify(date)}: expected YYYY-MM-DD`);
+    this.name = "InvalidDailyDateError";
+  }
+}
+
 const mocFile = "MEMORY.md";
 const auditFile = "curation.md";
 const stagingDir = ".staging";
@@ -153,19 +179,23 @@ const arcsDir = "arcs";
 const hiddenDirs = new Set([stagingDir, ".obsidian"]);
 const wikilinkPattern = /\[\[([^[\]|#]+)(?:#[^[\]|]*)?(?:\|[^[\]]*)?\]\]/g;
 const dailyMarkerPattern = /^- (\d{2}:\d{2}) \[prov: (user|agent|untrusted)\] (.*)$/;
+const dailyDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 export class MemoryStore {
   readonly trusted: boolean;
   private readonly root: string;
   private readonly now: () => Date;
   private readonly secrets: NamedSecret[];
+  private readonly reserved: Set<string>;
   private readonly log: LedgerEntry[] = [];
+  private turn: Promise<unknown> = Promise.resolve();
 
   constructor(options: MemoryStoreOptions) {
     this.root = options.vaultRoot;
     this.trusted = options.trusted;
     this.now = options.now ?? (() => new Date());
     this.secrets = Object.entries(options.secrets ?? {}).map(([name, value]) => ({ name, value }));
+    this.reserved = new Set(options.reservedPaths ?? []);
   }
 
   async listNotes(): Promise<Note[]> {
@@ -182,7 +212,7 @@ export class MemoryStore {
     if (!this.trusted) return undefined;
     let path: string | undefined;
     try {
-      path = await this.resolveNotePath(name);
+      path = (await this.resolveNotePath(name)) ?? this.reservedNotePath(name);
     } catch (error) {
       if (error instanceof InvalidTitleError) return undefined;
       throw error;
@@ -203,6 +233,21 @@ export class MemoryStore {
     const raw = await this.readIfExists(dailyPath(date ?? isoDate(this.now())));
     if (raw === null) return [];
     return parseDailyEntries(raw);
+  }
+
+  async readReserved(path: string): Promise<string | null> {
+    this.requireReserved(path);
+    if (!this.trusted) return null;
+    return this.readIfExists(path);
+  }
+
+  async listReserved(dir: string): Promise<string[]> {
+    if (!this.reserved.has(`${dir}/`)) throw new ReservedPathError(dir, "not a reserved directory");
+    if (!this.trusted) return [];
+    return (await this.listDirEntries(dir))
+      .filter((entry) => entry.isFile())
+      .map((entry) => `${dir}/${entry.name}`)
+      .sort();
   }
 
   async listStaged(): Promise<StagedItem[]> {
@@ -227,6 +272,7 @@ export class MemoryStore {
     return (await this.listDir("daily"))
       .filter((file) => file.endsWith(".md"))
       .map((file) => file.slice(0, -".md".length))
+      .filter((date) => dailyDatePattern.test(date))
       .sort();
   }
 
@@ -247,96 +293,150 @@ export class MemoryStore {
     return { notes, tokens, budget: tokenBudget, skipped };
   }
 
+  redact(text: string): string {
+    return redactForPersistence(text, this.secrets);
+  }
+
   async writeNote(input: NoteInput): Promise<WriteResult> {
     this.gate();
-    const body = this.redact(input.body);
-    const target = await this.resolveWriteTarget(input);
-    const supersedes = await this.resolveSupersedes(input);
-    const frontmatter = await this.noteFrontmatter(input, target, supersedes);
-    const content = ensureTrailingNewline(serializeDocument(frontmatter, body));
-    if (input.provenance === "untrusted")
-      return this.stage("note", target.path, content, supersedes);
-    const deltas = [await this.delta(target.path, content)];
-    if (supersedes !== undefined) deltas.push(await this.supersededStamp(supersedes, target.name));
-    const op: LedgerOp = deltas[0]?.before === null ? "create" : "edit";
-    return this.commit(op, deltas, target.path, false);
+    return this.serialized(async () => {
+      const body = this.redact(input.body);
+      const target = await this.resolveWriteTarget(input);
+      const supersedes = await this.resolveSupersedes(input);
+      const frontmatter = await this.noteFrontmatter(input, target, supersedes);
+      const content = ensureTrailingNewline(serializeDocument(frontmatter, body));
+      if (input.provenance === "untrusted")
+        return this.stage("note", target.path, content, supersedes);
+      const deltas = [await this.delta(target.path, content)];
+      if (supersedes !== undefined)
+        deltas.push(await this.supersededStamp(supersedes, target.name));
+      const op: LedgerOp = deltas[0]?.before === null ? "create" : "edit";
+      return this.commit(op, deltas, target.path, false);
+    });
   }
 
   async appendDaily(text: string, provenance: Provenance): Promise<WriteResult> {
     this.gate();
-    const path = dailyPath(isoDate(this.now()));
-    const entry = dailyEntryLines(this.redact(text), provenance, isoTime(this.now()));
-    if (provenance === "untrusted") return this.stage("daily", path, entry);
-    const before = await this.readIfExists(path);
-    const delta = fileDelta(path, before, `${before ?? ""}${entry}`);
-    return this.commit(before === null ? "create" : "edit", [delta], path, false);
+    return this.serialized(async () => {
+      const path = dailyPath(isoDate(this.now()));
+      const entry = dailyEntryLines(this.redact(text), provenance, isoTime(this.now()));
+      if (provenance === "untrusted") return this.stage("daily", path, entry);
+      const before = await this.readIfExists(path);
+      const delta = fileDelta(path, before, `${before ?? ""}${entry}`);
+      return this.commit(before === null ? "create" : "edit", [delta], path, false);
+    });
   }
 
   async writeMoc(links: string[], provenance: Provenance): Promise<WriteResult> {
     this.gate();
-    const content = this.redact(mocContent(links));
-    if (provenance === "untrusted") return this.stage("moc", mocFile, content);
-    const delta = await this.delta(mocFile, content);
-    return this.commit(delta.before === null ? "create" : "edit", [delta], mocFile, false);
+    return this.serialized(async () => {
+      const content = this.redact(mocContent(links));
+      if (provenance === "untrusted") return this.stage("moc", mocFile, content);
+      const delta = await this.delta(mocFile, content);
+      return this.commit(delta.before === null ? "create" : "edit", [delta], mocFile, false);
+    });
+  }
+
+  async writeReserved(path: string, content: string): Promise<WriteResult> {
+    this.gate();
+    this.requireReserved(path);
+    return this.serialized(async () => {
+      const delta = await this.delta(path, this.redact(content));
+      return this.commit(delta.before === null ? "create" : "edit", [delta], path, false);
+    });
   }
 
   async recordAudit(event: string): Promise<void> {
     this.gate();
-    await this.audit(this.redact(event));
+    await this.serialized(() => this.audit(this.redact(event)));
   }
 
   async approve(stagedId: string): Promise<WriteResult> {
     this.gate();
-    const item = await this.readStaged(stagedId);
-    const after =
-      item.kind === "daily"
-        ? `${(await this.readIfExists(item.target)) ?? ""}${item.content}`
-        : item.content;
-    const deltas = [
-      fileDelta(item.target, await this.readIfExists(item.target), after),
-      ...(await this.stagedRemovalDeltas(stagedId)),
-    ];
-    if (item.supersedes !== undefined) {
-      const stamp = await this.trySupersededStamp(item.supersedes, noteName(item.target));
-      if (stamp !== undefined) deltas.push(stamp);
-    }
-    const result = await this.commit("approve", deltas, item.target, false);
-    await this.audit(`approved ${item.kind} → ${item.target}`);
-    return result;
+    return this.serialized(async () => {
+      const item = await this.readStaged(stagedId);
+      const after =
+        item.kind === "daily"
+          ? `${(await this.readIfExists(item.target)) ?? ""}${item.content}`
+          : item.content;
+      const deltas = [
+        fileDelta(item.target, await this.readIfExists(item.target), after),
+        ...(await this.stagedRemovalDeltas(stagedId)),
+      ];
+      if (item.supersedes !== undefined) {
+        const stamp = await this.trySupersededStamp(item.supersedes, noteName(item.target));
+        if (stamp !== undefined) deltas.push(stamp);
+      }
+      const result = await this.commit("approve", deltas, item.target, false);
+      await this.audit(`approved ${item.kind} → ${item.target}`);
+      return result;
+    });
   }
 
   async discard(stagedId: string): Promise<void> {
     this.gate();
-    const item = await this.readStaged(stagedId);
-    await this.commit("discard", await this.stagedRemovalDeltas(stagedId), item.target, false);
-    await this.audit(`discarded ${item.kind} → ${item.target}`);
+    await this.serialized(async () => {
+      const item = await this.readStaged(stagedId);
+      await this.commit("discard", await this.stagedRemovalDeltas(stagedId), item.target, false);
+      await this.audit(`discarded ${item.kind} → ${item.target}`);
+    });
   }
 
   async revert(ledgerId: string): Promise<RevertOutcome> {
     this.gate();
-    const entry = this.log.find((candidate) => candidate.id === ledgerId);
-    if (entry === undefined) throw new LedgerEntryNotFoundError(ledgerId);
-    for (const delta of entry.deltas) {
-      const current = await this.readIfExists(delta.path);
-      const currentHash = current === null ? null : contentHash(current);
-      if (currentHash !== delta.afterHash) return "needs-rebase";
-    }
-    const inverted = entry.deltas.map(invertDelta);
-    await this.commit("revert", inverted, entry.deltas[0]?.path ?? "", false);
-    return "reverted";
+    return this.serialized(async () => {
+      const entry = this.log.find((candidate) => candidate.id === ledgerId);
+      if (entry === undefined) throw new LedgerEntryNotFoundError(ledgerId);
+      for (const delta of entry.deltas) {
+        const current = await this.readIfExists(delta.path);
+        const currentHash = current === null ? null : contentHash(current);
+        if (currentHash !== delta.afterHash) return "needs-rebase";
+      }
+      const inverted = entry.deltas.map(invertDelta);
+      await this.commit("revert", inverted, entry.deltas[0]?.path ?? "", false);
+      return "reverted";
+    });
   }
 
   private gate(): void {
     if (!this.trusted) throw new MemoryInertError();
   }
 
-  private redact(text: string): string {
-    return redactForPersistence(text, this.secrets);
+  private serialized<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.turn.then(mutation);
+    this.turn = result.then(noop, noop);
+    return result;
+  }
+
+  private isReserved(path: string): boolean {
+    if (!isVaultRelativePath(path)) return false;
+    if (this.reserved.has(path)) return true;
+    for (const entry of this.reserved) {
+      if (entry.endsWith("/") && path.startsWith(entry)) return true;
+    }
+    return false;
+  }
+
+  private requireReserved(path: string): void {
+    if (!this.isReserved(path)) throw new ReservedPathError(path, "not reserved by this vault");
+  }
+
+  private reservedNotePath(name: string): string | undefined {
+    const path = `${name}.md`;
+    return this.reserved.has(path) ? path : undefined;
   }
 
   private async resolveWriteTarget(input: NoteInput): Promise<{ path: string; name: string }> {
-    if (input.entity !== undefined) return this.resolveEntityTarget(this.redact(input.entity));
-    const title = this.redact(input.title ?? "");
+    const target =
+      input.entity !== undefined
+        ? await this.resolveEntityTarget(this.redact(input.entity))
+        : await this.resolveTitleTarget(this.redact(input.title ?? ""));
+    if (this.isReserved(target.path))
+      throw new InvalidTitleError(target.name, "reserved by the vault layout");
+    return target;
+  }
+
+  private async resolveTitleTarget(title: string): Promise<{ path: string; name: string }> {
     validateConceptTitle(title);
     const key = titleKey(title);
     for (const path of await this.walkNotePaths()) {
@@ -474,13 +574,19 @@ export class MemoryStore {
   }
 
   private async apply(delta: FileDelta): Promise<void> {
-    const abs = join(this.root, delta.path);
+    const abs = this.containedPath(delta.path);
     if (delta.after === null) {
       await rm(abs, { force: true });
       return;
     }
-    await mkdir(dirname(abs), { recursive: true });
-    await writeFile(abs, delta.after, "utf8");
+    await writeFileAtomic(abs, delta.after);
+  }
+
+  private containedPath(path: string): string {
+    const root = resolve(this.root);
+    const abs = resolve(root, path);
+    if (!abs.startsWith(`${root}${sep}`)) throw new PathOutsideVaultError(path);
+    return abs;
   }
 
   private async audit(event: string): Promise<void> {
@@ -567,11 +673,12 @@ export class MemoryStore {
       const rel = dir === "" ? entry.name : `${dir}/${entry.name}`;
       if (entry.isDirectory()) {
         if (hiddenDirs.has(entry.name) || rel === "daily" || rel === arcsDir) continue;
+        if (this.reserved.has(`${rel}/`)) continue;
         await this.walk(rel, paths);
         continue;
       }
       if (!entry.name.endsWith(".md")) continue;
-      if (rel === mocFile || rel === auditFile) continue;
+      if (rel === mocFile || rel === auditFile || this.reserved.has(rel)) continue;
       paths.push(rel);
     }
   }
@@ -612,6 +719,16 @@ export function extractWikilinks(text: string): string[] {
   return links;
 }
 
+function isVaultRelativePath(path: string): boolean {
+  if (path === "" || isAbsolute(path) || /^[A-Za-z]:/.test(path) || /^[\\/]/.test(path))
+    return false;
+  return path
+    .split(/[\\/]/)
+    .every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+function noop(): void {}
+
 function noteName(path: string): string {
   return path.endsWith(".md") ? path.slice(0, -".md".length) : path;
 }
@@ -633,6 +750,7 @@ function entityLookupKeys(name: string): string[] {
 }
 
 function dailyPath(date: string): string {
+  if (!dailyDatePattern.test(date)) throw new InvalidDailyDateError(date);
   return `daily/${date}.md`;
 }
 
@@ -707,6 +825,8 @@ function parseStagedMeta(
     throw new MalformedStagedItemError(file, `unknown kind ${JSON.stringify(kind)}`);
   if (typeof target !== "string" || typeof created !== "string")
     throw new MalformedStagedItemError(file, "missing target or created");
+  if (!isVaultRelativePath(target))
+    throw new MalformedStagedItemError(file, `target ${JSON.stringify(target)} leaves the vault`);
   return {
     kind,
     target,
@@ -750,14 +870,4 @@ function stagedMetaPath(id: string): string {
 
 function ensureTrailingNewline(text: string): string {
   return text.endsWith("\n") ? text : `${text}\n`;
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    ((error as { code: unknown }).code === "ENOENT" ||
-      (error as { code: unknown }).code === "ENOTDIR")
-  );
 }

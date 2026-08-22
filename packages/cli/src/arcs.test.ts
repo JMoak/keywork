@@ -146,6 +146,58 @@ describe("arcService lifecycle", () => {
     expect(inbox?.map((item) => item.kind)).toEqual(["arc-distillation"]);
   });
 
+  async function boundWorld(): Promise<World & { sessionId: string; file: string }> {
+    const world = await worldOf();
+    await world.arcs.port.create("dock-v2");
+    const port = sessionPort(world.sessionDir, world.cwd, {
+      onAttach: (store) => world.arcs.attached(store),
+      onArcBound: (id, arc) => world.arcs.recordBinding(id, arc),
+    });
+    const attached = await port.create();
+    if (attached === undefined) throw new Error("expected a session");
+    await attached.append(textMessage("user", "bound work"));
+    await attached.bindArc?.("dock-v2");
+    const [file] = await readdir(world.sessionDir);
+    return { ...world, sessionId: attached.id, file: join(world.sessionDir, file ?? "") };
+  }
+
+  async function relaunchedBindingOf(world: World, file: string): Promise<string | undefined> {
+    const relaunched = arcService({
+      cwd: world.cwd,
+      trusted: true,
+      memory: () => world.memory,
+      boundSessionCounts: () => boundSessionCounts(world.sessionDir),
+    });
+    const store = await SessionStore.open(file);
+    relaunched.attached(store);
+    return relaunched.bindings.bindingOf(store.header.id);
+  }
+
+  it("persists the release on close so a relaunch sees the session unbound", async () => {
+    const world = await boundWorld();
+    expect(await boundSessionCounts(world.sessionDir)).toEqual(new Map([["dock-v2", 1]]));
+
+    expect(await world.arcs.port.close("dock-v2")).toEqual({
+      kind: "closed",
+      delivered: 0,
+      released: 1,
+    });
+
+    expect(await boundSessionCounts(world.sessionDir)).toEqual(new Map());
+    expect(await relaunchedBindingOf(world, world.file)).toBeUndefined();
+    expect((await world.arcs.port.list())[0]?.sessions).toBe(0);
+  });
+
+  it("persists the release on abandon too", async () => {
+    const world = await boundWorld();
+
+    await world.arcs.port.abandon("dock-v2");
+
+    expect(await boundSessionCounts(world.sessionDir)).toEqual(new Map());
+    expect(await relaunchedBindingOf(world, world.file)).toBeUndefined();
+    expect(world.arcs.bindings.bindingOf(world.sessionId)).toBeUndefined();
+  });
+
   it("abandon archives in place without deleting the arc layer", async () => {
     const { arcs, cwd } = await worldOf();
     await arcs.port.create("dock-v2");

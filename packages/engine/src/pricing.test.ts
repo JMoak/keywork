@@ -1,7 +1,7 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { Agent } from "./agent.ts";
 import type { Usage } from "./messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
@@ -261,8 +261,22 @@ describe("Agent cost accounting", () => {
 });
 
 describe("SessionStore cost stats", () => {
-  it("derives a metered session cost on read", async () => {
+  const scratchDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      scratchDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+  });
+
+  async function scratchDir(): Promise<string> {
     const dir = await mkdtemp(join(tmpdir(), "keywork-pricing-"));
+    scratchDirs.push(dir);
+    return dir;
+  }
+
+  it("derives a metered session cost on read", async () => {
+    const dir = await scratchDir();
     const store = await SessionStore.create(join(dir, "s.jsonl"), dir);
     await store.append(
       { role: "assistant", parts: [{ type: "text", text: "hi" }] },
@@ -273,7 +287,7 @@ describe("SessionStore cost stats", () => {
   });
 
   it("keeps an unmetered session's cost unknown when no model is on record", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "keywork-pricing-"));
+    const dir = await scratchDir();
     const store = await SessionStore.create(join(dir, "s.jsonl"), dir);
     await store.append({ role: "assistant", parts: [] }, tokens(10, 5));
     expect(knownCostNanos(store.stats().cost)).toBeUndefined();

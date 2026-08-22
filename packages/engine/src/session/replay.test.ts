@@ -44,7 +44,7 @@ function record(bus: EventBus<EngineEvents>): RecordedEvent[] {
 function comparable(events: RecordedEvent[]): RecordedEvent[] {
   return events
     .filter((event) => (event.payload.delta as { type?: string } | undefined)?.type !== "done")
-    .map(({ type, payload: { replay: _replay, usage: _usage, ...rest } }) => ({
+    .map(({ type, payload: { replay: _replay, usage: _usage, entryId: _entryId, ...rest } }) => ({
       type,
       payload: rest,
     }));

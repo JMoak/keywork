@@ -3,7 +3,7 @@ import type { TurnDelta } from "./provider.ts";
 import type { ContextInjection, PermissionDecision } from "./session/journal.ts";
 
 interface LiveEvents {
-  "turn.started": { userText: string };
+  "turn.started": { userText: string; entryId?: string };
   "turn.delta": { delta: TurnDelta };
   "turn.completed": { message: Message; usage: Usage };
   "turn.interrupted": { message: Message };
@@ -24,7 +24,13 @@ export type EngineEvents = {
 
 type Listener<T> = (payload: T) => void;
 
-export class EventBus<Events = EngineEvents> {
+const failureEvent = "engine.error";
+
+interface ReportsFailures {
+  [failureEvent]: { error: Error };
+}
+
+export class EventBus<Events extends ReportsFailures = EngineEvents> {
   private readonly listeners = new Map<keyof Events, Set<Listener<never>>>();
 
   on<K extends keyof Events>(type: K, listener: Listener<Events[K]>): () => void {
@@ -36,7 +42,11 @@ export class EventBus<Events = EngineEvents> {
 
   emit<K extends keyof Events>(type: K, payload: Events[K]): void {
     for (const listener of this.listeners.get(type) ?? []) {
-      (listener as Listener<Events[K]>)(payload);
+      try {
+        (listener as Listener<Events[K]>)(payload);
+      } catch (cause) {
+        this.reportListenerFailure(type, cause);
+      }
     }
   }
 
@@ -45,5 +55,11 @@ export class EventBus<Events = EngineEvents> {
     let total = 0;
     for (const listeners of this.listeners.values()) total += listeners.size;
     return total;
+  }
+
+  private reportListenerFailure(type: keyof Events, cause: unknown): void {
+    if (type === failureEvent) return;
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    this.emit(failureEvent, { error });
   }
 }

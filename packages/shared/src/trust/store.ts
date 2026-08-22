@@ -1,19 +1,35 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 export type TrustDecision = "trusted" | "untrusted" | "undecided";
 
+export type TrustDisk = Pick<
+  typeof import("node:fs"),
+  "mkdirSync" | "readFileSync" | "writeFileSync" | "chmodSync" | "renameSync" | "rmSync"
+>;
+
 export interface TrustStoreOptions {
   file?: string;
   home?: string;
   platform?: NodeJS.Platform;
+  disk?: TrustDisk;
 }
+
+const realDisk: TrustDisk = {
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  chmodSync,
+  renameSync,
+  rmSync,
+};
 
 export class BlanketTrustError extends Error {
   constructor(path: string) {
     super(
-      `refusing to record a trust decision for ${path} — it would cover every directory beneath it; grant session-only trust instead`,
+      `refusing to record a trust decision for ${path}; it would cover every directory beneath it. Grant session-only trust instead`,
     );
     this.name = "BlanketTrustError";
   }
@@ -30,12 +46,14 @@ export class TrustStore {
   readonly file: string;
   private readonly home: string;
   private readonly platform: NodeJS.Platform;
+  private readonly disk: TrustDisk;
   private readonly sessionDecisions = new Map<string, boolean>();
 
   constructor(options: TrustStoreOptions = {}) {
     this.platform = options.platform ?? process.platform;
     this.home = canonicalTrustPath(options.home ?? homedir(), this.platform);
     this.file = options.file ?? join(homedir(), ".keywork", "trust.json");
+    this.disk = options.disk ?? realDisk;
   }
 
   resolve(cwd: string): TrustDecision {
@@ -108,7 +126,7 @@ export class TrustStore {
   }
 
   private read(): Record<string, boolean> {
-    const raw = readFileIfExists(this.file);
+    const raw = readFileIfExists(this.disk, this.file);
     if (raw === undefined) return {};
     return parseTrustFile(this.file, raw);
   }
@@ -119,12 +137,20 @@ export class TrustStore {
         .sort()
         .map((key) => [key, data[key] === true]),
     );
-    mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
-    writeFileSync(this.file, `${JSON.stringify(sorted, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    chmodSync(this.file, 0o600);
+    this.disk.mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+    writeFileAtomically(this.disk, this.file, `${JSON.stringify(sorted, null, 2)}\n`);
+  }
+}
+
+function writeFileAtomically(disk: TrustDisk, file: string, content: string): void {
+  const staging = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    disk.writeFileSync(staging, content, { encoding: "utf8", mode: 0o600 });
+    disk.chmodSync(staging, 0o600);
+    disk.renameSync(staging, file);
+  } catch (cause) {
+    disk.rmSync(staging, { force: true });
+    throw cause;
   }
 }
 
@@ -136,9 +162,9 @@ export function canonicalTrustPath(
   return platform === "win32" ? absolute.toLowerCase() : absolute;
 }
 
-function readFileIfExists(file: string): string | undefined {
+function readFileIfExists(disk: TrustDisk, file: string): string | undefined {
   try {
-    return readFileSync(file, "utf8");
+    return disk.readFileSync(file, "utf8");
   } catch (cause) {
     const code = (cause as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") return undefined;

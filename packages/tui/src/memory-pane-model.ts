@@ -194,6 +194,7 @@ export class MemoryPaneModel {
   }
 
   handleKey(chord: Chord, pageRows: number): boolean {
+    if (chord.shift || chord.ctrl || chord.meta) return false;
     const rows = this.rows();
     this.cursor = clampIndex(this.cursor, rows.length);
     switch (chord.name) {
@@ -324,10 +325,11 @@ export class MemoryPaneModel {
 
   private recallRows(recalls: RecallEventView[]): MemoryRow[] {
     if (recalls.length === 0) return [];
+    const firstShown = Math.max(0, recalls.length - recallLimit);
     return [
       header("recalls"),
-      ...recalls.slice(-recallLimit).map((recall, at) => ({
-        id: `recall:${at}:${recall.note}`,
+      ...recalls.slice(firstShown).map((recall, at) => ({
+        id: `recall:${firstShown + at}:${recall.note}`,
         kind: "recall" as const,
         text: recallText(recall),
         tone: "normal" as const,

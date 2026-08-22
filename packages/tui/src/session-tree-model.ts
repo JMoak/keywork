@@ -1,6 +1,7 @@
 import { messageText, type SessionEntry, type SessionTreeNode } from "@keywork/engine";
 import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
+import { isPrintable } from "./picker-keys.ts";
 
 export interface SessionTreeView {
   sessionId: string;
@@ -98,11 +99,12 @@ export class SessionTreeModel {
     return true;
   }
 
-  handleKey(chord: Chord, pageRows: number): boolean {
-    if (this.labelDraft !== undefined) return this.handleLabelKey(chord);
+  handleKey(chord: Chord, pageRows: number, sequence?: string): boolean {
+    if (this.labelDraft !== undefined) return this.handleLabelKey(chord, sequence);
     const rows = this.rows();
     this.cursor = clampIndex(this.cursor, rows.length);
     if (chord.shift && chord.name === "l") return this.beginLabel(rows[this.cursor]);
+    if (chord.shift || chord.ctrl || chord.meta) return false;
     switch (chord.name) {
       case "j":
       case "down":
@@ -131,7 +133,7 @@ export class SessionTreeModel {
     }
   }
 
-  private handleLabelKey(chord: Chord): boolean {
+  private handleLabelKey(chord: Chord, sequence: string | undefined): boolean {
     const draft = this.labelDraft ?? "";
     switch (chord.name) {
       case "escape":
@@ -146,8 +148,8 @@ export class SessionTreeModel {
         this.notify();
         return true;
       default:
-        if (!isPrintable(chord)) return false;
-        this.labelDraft = draft + (chord.name === "space" ? " " : chord.name);
+        if (!isPrintable(chord, sequence)) return false;
+        this.labelDraft = draft + sequence;
         this.notify();
         return true;
     }
@@ -279,8 +281,4 @@ function entryText(entry: SessionEntry): string {
 function excerpt(text: string, limit = 48): string {
   const flat = text.replaceAll("\n", " ").trim();
   return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
-}
-
-function isPrintable(chord: Chord): boolean {
-  return (chord.name.length === 1 || chord.name === "space") && !chord.ctrl && !chord.meta;
 }

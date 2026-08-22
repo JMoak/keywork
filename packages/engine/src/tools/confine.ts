@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export interface ToolScope {
   cwd: string;
@@ -13,13 +14,13 @@ export function toolScope(cwd: string, linkedDirs: readonly string[] = []): Tool
 export function confinedPath(scope: string | ToolScope, path: string): string {
   const { cwd, roots } = normalizeScope(scope);
   const target = resolve(cwd, path);
-  if (roots.some((root) => contains(root, target))) return target;
+  if (scopeHolds(roots, target)) return target;
   throw new Error(escapeMessage(path, roots));
 }
 
 export function scopeContains(scope: string | ToolScope, path: string): boolean {
   const { cwd, roots } = normalizeScope(scope);
-  return roots.some((root) => contains(root, resolve(cwd, path)));
+  return scopeHolds(roots, resolve(cwd, path));
 }
 
 export function scopeCwd(scope: string | ToolScope): string {
@@ -27,7 +28,39 @@ export function scopeCwd(scope: string | ToolScope): string {
 }
 
 function normalizeScope(scope: string | ToolScope): ToolScope {
-  return typeof scope === "string" ? toolScope(scope) : toolScope(scope.cwd, scope.roots);
+  return typeof scope === "string" ? toolScope(scope) : scope;
+}
+
+function scopeHolds(roots: readonly string[], target: string): boolean {
+  const realTarget = realLocation(target);
+  if (realTarget === undefined) return false;
+  return roots.some((root) => contains(realLocation(root) ?? root, realTarget));
+}
+
+function realLocation(path: string): string | undefined {
+  const real = existingRealpath(path);
+  if (real !== undefined) return real;
+  if (isSymbolicLink(path)) return undefined;
+  const parent = dirname(path);
+  if (parent === path) return path;
+  const realParent = realLocation(parent);
+  return realParent === undefined ? undefined : join(realParent, basename(path));
+}
+
+function existingRealpath(path: string): string | undefined {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function isSymbolicLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 function contains(root: string, target: string): boolean {

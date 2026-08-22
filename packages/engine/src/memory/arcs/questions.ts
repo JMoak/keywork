@@ -1,9 +1,6 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { type Frontmatter, parseDocument, serializeDocument } from "../frontmatter.ts";
 import { validateConceptTitle } from "../naming.ts";
-import { type NamedSecret, redactForPersistence } from "../redaction.ts";
-import { MemoryInertError } from "../store.ts";
+import { MemoryInertError, type MemoryStore } from "../store.ts";
 
 export type OpenQuestionStatus = "open" | "resolved" | "dropped" | "carried";
 
@@ -32,14 +29,13 @@ export interface CapEvents {
 }
 
 export interface ArcOpenQuestionsOptions {
-  questionsDir: string;
-  trusted: boolean;
+  store: MemoryStore;
   now?: () => Date;
-  secrets?: Record<string, string>;
   cap?: number;
 }
 
 export const defaultOpenQuestionCap = 7;
+export const questionsDir = "questions";
 
 export class OpenQuestionCapError extends Error {
   constructor(
@@ -62,25 +58,21 @@ export class MissingOpenQuestionError extends Error {
 
 export class ArcOpenQuestions {
   readonly cap: number;
-  private readonly dir: string;
-  private readonly trusted: boolean;
+  private readonly store: MemoryStore;
   private readonly now: () => Date;
-  private readonly secrets: NamedSecret[];
 
   constructor(options: ArcOpenQuestionsOptions) {
-    this.dir = options.questionsDir;
-    this.trusted = options.trusted;
+    this.store = options.store;
     this.now = options.now ?? (() => new Date());
-    this.secrets = Object.entries(options.secrets ?? {}).map(([name, value]) => ({ name, value }));
     this.cap = options.cap ?? defaultOpenQuestionCap;
   }
 
   async list(): Promise<OpenQuestion[]> {
-    if (!this.trusted) return [];
     const questions: OpenQuestion[] = [];
-    for (const file of await this.listFiles()) {
-      const raw = await readFile(join(this.dir, file), "utf8");
-      questions.push(parseQuestion(file, parseDocument(raw, file)));
+    for (const path of await this.store.listReserved(questionsDir)) {
+      if (!path.endsWith(".md")) continue;
+      const raw = await this.store.readReserved(path);
+      if (raw !== null) questions.push(parseQuestion(path, parseDocument(raw, path)));
     }
     return questions.sort((a, b) => a.created.localeCompare(b.created));
   }
@@ -101,9 +93,9 @@ export class ArcOpenQuestions {
 
   async add(input: OpenQuestionInput, overflow?: CapOverflowChoice): Promise<OpenQuestion> {
     this.gate();
-    const title = redactForPersistence(input.title, this.secrets);
+    const title = this.store.redact(input.title);
     validateConceptTitle(title);
-    const body = redactForPersistence(input.body, this.secrets);
+    const body = this.store.redact(input.body);
     const open = await this.open();
     if (open.length < this.cap) return this.write(title, body, input.provenance);
     if (overflow === undefined)
@@ -180,23 +172,17 @@ export class ArcOpenQuestions {
   }
 
   private async persist(question: OpenQuestion): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
     const document = serializeDocument(questionFrontmatter(question), question.body);
-    await writeFile(join(this.dir, `${question.title}.md`), document, "utf8");
+    await this.store.writeReserved(questionPath(question.title), document);
   }
 
   private gate(): void {
-    if (!this.trusted) throw new MemoryInertError();
+    if (!this.store.trusted) throw new MemoryInertError();
   }
+}
 
-  private async listFiles(): Promise<string[]> {
-    try {
-      return (await readdir(this.dir)).filter((file) => file.endsWith(".md"));
-    } catch (error) {
-      if (isMissingFileError(error)) return [];
-      throw error;
-    }
-  }
+function questionPath(title: string): string {
+  return `${questionsDir}/${title}.md`;
 }
 
 function questionFrontmatter(question: OpenQuestion): Frontmatter {
@@ -212,14 +198,14 @@ function questionFrontmatter(question: OpenQuestion): Frontmatter {
 }
 
 function parseQuestion(
-  file: string,
+  path: string,
   document: { frontmatter: Frontmatter; body: string },
 ): OpenQuestion {
   const { frontmatter, body } = document;
   const closedAt = typeof frontmatter.closed === "string" ? frontmatter.closed : undefined;
   const carriedTo = typeof frontmatter.carried_to === "string" ? frontmatter.carried_to : undefined;
   return {
-    title: file.slice(0, -".md".length),
+    title: path.slice(`${questionsDir}/`.length, -".md".length),
     status: parseStatus(frontmatter.status),
     provenance: frontmatter.provenance === "agent" ? "agent" : "user",
     created: typeof frontmatter.created === "string" ? frontmatter.created : "",
@@ -232,14 +218,4 @@ function parseQuestion(
 
 function parseStatus(value: unknown): OpenQuestionStatus {
   return value === "resolved" || value === "dropped" || value === "carried" ? value : "open";
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    ((error as { code: unknown }).code === "ENOENT" ||
-      (error as { code: unknown }).code === "ENOTDIR")
-  );
 }

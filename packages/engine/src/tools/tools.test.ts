@@ -201,10 +201,8 @@ describe("bash", () => {
 
   it("includes the exit code on failure", async () => {
     const cwd = await workspace();
-    const shell = detectShell();
-    const failing = shell.name === "powershell" ? "exit 3" : "exit 3";
 
-    const output = await bashTool(cwd).execute({ command: failing });
+    const output = await bashTool(cwd).execute({ command: "exit 3" });
 
     expect(output).toContain("exit code 3");
   });

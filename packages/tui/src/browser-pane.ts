@@ -35,12 +35,16 @@ export class BrowserPane implements Pane {
     return { kind: "browser", root: this.model.rootPath };
   }
 
-  handleKey(chord: Chord): boolean {
-    return this.model.handleKey(chord, this.lastPageRows);
+  handleKey(chord: Chord, sequence?: string): boolean {
+    return this.model.handleKey(chord, this.lastPageRows, sequence);
   }
 
   settled(): Promise<void> {
     return this.model.settled();
+  }
+
+  dispose(): void {
+    this.model.dispose();
   }
 
   view(context: PaneContext): PaneView {

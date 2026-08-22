@@ -17,7 +17,7 @@ export const workspaceDeclarationSchema = z
       .array(z.string().min(1).max(1024))
       .max(64)
       .describe(
-        "Additional directories, relative to the primary root or absolute, that join the workspace's working set: the tool jail and the memory taint boundary cover them once the workspace is trusted (PD11.4); exists because J-D1 defines a workspace as a declared working set in the VS Code sense — a primary root plus extra directories. Entries that do not exist are skipped with a warning, never a failure, and an untrusted clone's entries stay inert.",
+        "Additional directories, relative to the primary root or absolute, that join the workspace's working set: the tool jail and the memory taint boundary cover them once the workspace is trusted (PD11.4); exists because J-D1 defines a workspace as a declared working set in the VS Code sense: a primary root plus extra directories. Entries that do not exist are skipped with a warning, never a failure, and an untrusted clone's entries stay inert.",
       )
       .optional(),
   })
@@ -49,6 +49,7 @@ export interface WorkspaceSlot {
   declared: boolean;
   declarationFile: string;
   vaultPath: string;
+  problem?: string;
 }
 
 export function openWorkspace(cwd: string, slug?: string): Workspace | undefined {
@@ -80,26 +81,11 @@ export function resolveAnchor(cwd: string): WorkspaceAnchor {
 
 export function listWorkspaces(root: string): WorkspaceSlot[] {
   const base = resolve(root);
-  const defaultFile = declarationFileFor(base);
-  const defaultDeclared = existsSync(defaultFile);
   return [
-    {
-      slug: undefined,
-      name: defaultDeclared ? readDeclaration(defaultFile).name : undefined,
-      declared: defaultDeclared,
-      declarationFile: defaultFile,
-      vaultPath: defaultVaultPath(base),
-    },
-    ...namedWorkspaceSlugs(base).map((slug) => {
-      const file = namedDeclarationFileFor(base, slug);
-      return {
-        slug,
-        name: readDeclaration(file).name,
-        declared: true,
-        declarationFile: file,
-        vaultPath: namedVaultPath(base, slug),
-      };
-    }),
+    slotFor(undefined, declarationFileFor(base), defaultVaultPath(base)),
+    ...namedWorkspaceSlugs(base).map((slug) =>
+      slotFor(slug, namedDeclarationFileFor(base, slug), namedVaultPath(base, slug)),
+    ),
   ];
 }
 
@@ -110,13 +96,8 @@ export function namedWorkspaceDir(root: string, slug: string): string {
 export function writeWorkspaceDeclaration(root: string, declaration: WorkspaceDeclaration): string {
   const base = resolve(root);
   const file = declarationFileFor(base);
-  const enclosing = findDeclarationAbove(dirname(base));
-  if (enclosing !== undefined) {
-    throw new ConfigError(
-      file,
-      `the workspace at ${rootOfDeclaration(enclosing)} already covers this folder; nested workspace anchors aren't supported`,
-    );
-  }
+  rejectEnclosingDeclaration(base, file);
+  rejectEnclosedDeclaration(base, file);
   writeDeclaration(file, declaration);
   return file;
 }
@@ -126,12 +107,10 @@ export function writeNamedWorkspaceDeclaration(
   slug: string,
   declaration: WorkspaceDeclaration,
 ): string {
-  const file = namedDeclarationFileFor(resolve(root), slug);
-  const problem = slugProblem(slug);
-  if (problem !== undefined)
-    throw new ConfigError(file, `invalid workspace slug "${slug}": ${problem}`);
+  const base = resolve(root);
+  const file = namedDeclarationFileFor(base, slug);
   writeDeclaration(file, declaration);
-  mkdirSync(namedVaultPath(resolve(root), slug), { recursive: true });
+  mkdirSync(namedVaultPath(base, slug), { recursive: true });
   return file;
 }
 
@@ -153,6 +132,26 @@ function openNamedWorkspace(root: string, slug: string): Workspace | undefined {
   const file = namedDeclarationFileFor(root, slug);
   if (!existsSync(file)) return undefined;
   return { ...workspaceAt(root, file, readDeclaration(file), namedVaultPath(root, slug)), slug };
+}
+
+function slotFor(
+  slug: string | undefined,
+  declarationFile: string,
+  vaultPath: string,
+): WorkspaceSlot {
+  const slot = {
+    slug,
+    name: undefined,
+    declared: existsSync(declarationFile),
+    declarationFile,
+    vaultPath,
+  };
+  if (!slot.declared) return slot;
+  try {
+    return { ...slot, name: readDeclaration(declarationFile).name };
+  } catch (cause) {
+    return { ...slot, problem: cause instanceof Error ? cause.message : String(cause) };
+  }
 }
 
 function workspaceAt(
@@ -177,7 +176,12 @@ function declarationFileFor(root: string): string {
 }
 
 function namedDeclarationFileFor(root: string, slug: string): string {
-  return join(namedWorkspaceDir(root, slug), "workspace.json");
+  const file = join(namedWorkspaceDir(root, slug), "workspace.json");
+  const problem = slugProblem(slug);
+  if (problem !== undefined) {
+    throw new ConfigError(file, `invalid workspace slug "${slug}": ${problem}`);
+  }
+  return file;
 }
 
 function defaultVaultPath(root: string): string {
@@ -211,11 +215,53 @@ function rejectNestedAnchor(root: string, file: string): void {
   );
 }
 
+function rejectEnclosingDeclaration(root: string, file: string): void {
+  const enclosing = findDeclarationAbove(dirname(root));
+  if (enclosing === undefined) return;
+  throw new ConfigError(
+    file,
+    `the workspace at ${rootOfDeclaration(enclosing)} already covers this folder; nested workspace anchors aren't supported`,
+  );
+}
+
+function rejectEnclosedDeclaration(root: string, file: string): void {
+  const enclosed = findDeclarationBelow(root);
+  if (enclosed === undefined) return;
+  throw new ConfigError(
+    file,
+    `the workspace at ${rootOfDeclaration(enclosed)} already lives inside this folder; nested workspace anchors aren't supported`,
+  );
+}
+
 function findDeclarationAbove(dir: string): string | undefined {
   const candidate = declarationFileFor(dir);
   if (existsSync(candidate)) return candidate;
   const parent = dirname(dir);
   return parent === dir ? undefined : findDeclarationAbove(parent);
+}
+
+const directoriesNeverScannedForDeclarations = new Set([".git", ".keywork", "node_modules"]);
+
+function findDeclarationBelow(dir: string): string | undefined {
+  for (const child of scannableSubdirectoriesOf(dir)) {
+    const candidate = declarationFileFor(child);
+    if (existsSync(candidate)) return candidate;
+    const deeper = findDeclarationBelow(child);
+    if (deeper !== undefined) return deeper;
+  }
+  return undefined;
+}
+
+function scannableSubdirectoriesOf(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter(
+        (entry) => entry.isDirectory() && !directoriesNeverScannedForDeclarations.has(entry.name),
+      )
+      .map((entry) => join(dir, entry.name));
+  } catch {
+    return [];
+  }
 }
 
 function findGitRootAbove(dir: string): string | undefined {

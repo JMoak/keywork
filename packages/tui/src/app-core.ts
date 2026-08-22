@@ -5,7 +5,7 @@ import { CommandRegistry } from "./commands.ts";
 import { ConnectModel } from "./connect-model.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import { Keymap } from "./keymap.ts";
-import { type Chord, formatChord } from "./keys.ts";
+import { type Chord, formatChord, parseChord } from "./keys.ts";
 import {
   type Direction,
   type DockSide,
@@ -271,7 +271,7 @@ export type PaneFactory = (
   resumeSessionId?: string,
   draft?: string,
   origin?: PaneOrigin,
-) => Pane;
+) => Pane | undefined;
 export type FilePaneFactory = (
   id: string,
   path: string,
@@ -358,30 +358,33 @@ export interface OverlayFrame {
   height: number;
 }
 
+export interface OverlayRowFrame extends OverlayFrame {
+  firstRowY: number;
+}
+
 export const paletteRowLimit = 10;
 
 export function paletteModeOf(query: string): "go" | "commands" {
   return query.startsWith(">") ? "commands" : "go";
 }
 
-export function paletteFrame(
-  screen: Screen,
-  rowCount: number,
-): OverlayFrame & { firstRowY: number } {
+export function paletteFrame(screen: Screen, rowCount: number): OverlayRowFrame {
   const width = Math.min(64, screen.width - 4);
   const x = Math.max(2, Math.floor((screen.width - width) / 2));
   const y = 2;
   return { x, y, width, height: Math.max(1, rowCount) + 5, firstRowY: y + 3 };
 }
 
-export function helpFrame(screen: Screen, rowCount: number): OverlayFrame {
+export function helpFrame(screen: Screen, rowCount: number): OverlayRowFrame {
   const width = Math.min(52, screen.width - 4);
   const height = rowCount + 5;
+  const y = Math.max(1, Math.floor((screen.height - height) / 2));
   return {
     x: Math.max(2, Math.floor((screen.width - width) / 2)),
-    y: Math.max(1, Math.floor((screen.height - height) / 2)),
+    y,
     width,
     height,
+    firstRowY: y + 2,
   };
 }
 
@@ -406,6 +409,9 @@ export interface PresetConfirmation {
   from: string;
   to: string;
 }
+
+const presetConfirmRows = 2;
+const escapeChord = parseChord("escape");
 
 type PaletteEntries = ReturnType<CommandRegistry["search"]>;
 type PaletteOverlay = { kind: "palette"; query: string; index: number; entries: PaletteEntries };
@@ -478,6 +484,10 @@ export class AppCore {
 
   get paletteOpen(): boolean {
     return this.overlay?.kind === "palette";
+  }
+
+  get overlayOpen(): boolean {
+    return this.overlay !== undefined;
   }
 
   get paletteQuery(): string {
@@ -587,17 +597,17 @@ export class AppCore {
   }
 
   handlePaste(text: string): void {
-    if (this.overlay !== undefined) return;
+    const overlay = this.overlay;
+    if (overlay !== undefined) {
+      this.pasteIntoOverlay(overlay, pastedLine(text));
+      return;
+    }
     const id = this.layout.focused();
     if (id !== undefined) this.panes.get(id)?.handlePaste?.(text);
   }
 
   handleMouse(event: PointerEvent, _nowMs: number): void {
-    if (this.paletteOpen) this.routePaletteMouse(event);
-    else if (this.helpVisible) this.routeHelpMouse(event);
-    else if (this.overlay !== undefined) {
-      if (event.type === "down") this.overlay = undefined;
-    } else this.routePaneMouse(event);
+    this.routeMouse(event);
     this.persistWorkspace();
   }
 
@@ -605,11 +615,25 @@ export class AppCore {
     this.focusMainArea();
     const id = `session-${this.nextSession}`;
     if (!this.openInLayout(id)) return;
-    this.nextSession += 1;
-    this.panes.set(
+    const pane = this.options.createPane(
       id,
-      this.options.createPane(id, this.paneChanged, this.registry, resumeSessionId, draft, origin),
+      this.paneChanged,
+      this.registry,
+      resumeSessionId,
+      draft,
+      origin,
     );
+    if (pane === undefined) {
+      this.layout.close(id);
+      this.showNotice(
+        resumeSessionId === undefined
+          ? "can't open a session pane · no session could be started"
+          : `can't open session ${resumeSessionId} · its store is missing or unreadable`,
+      );
+      return;
+    }
+    this.nextSession += 1;
+    this.panes.set(id, pane);
     this.persistWorkspace();
     this.notify();
   }
@@ -798,9 +822,12 @@ export class AppCore {
     sequence: string | undefined,
   ): void {
     const outcome = picker.handleKey(chord, sequence);
-    if (outcome === "stay") return;
+    if (outcome === "choose") this.chooseWorkspace(picker);
+    else if (outcome === "close") this.overlay = undefined;
+  }
+
+  private chooseWorkspace(picker: WorkspacePicker): void {
     this.overlay = undefined;
-    if (outcome === "close") return;
     const chosen = picker.selected();
     const workspaces = this.options.workspaces;
     if (chosen === undefined || workspaces === undefined) return;
@@ -865,9 +892,12 @@ export class AppCore {
 
   private handleArcKey(picker: ArcPicker, chord: Chord, sequence: string | undefined): void {
     const outcome = picker.handleKey(chord, sequence);
-    if (outcome === "stay") return;
+    if (outcome === "choose") this.chooseArc(picker);
+    else if (outcome === "close") this.overlay = undefined;
+  }
+
+  private chooseArc(picker: ArcPicker): void {
     this.overlay = undefined;
-    if (outcome === "close") return;
     const chosen = picker.selected();
     if (chosen !== undefined) this.applyArcChoice(chosen);
   }
@@ -974,11 +1004,11 @@ export class AppCore {
 
   private handleModelKey(picker: ModelPicker, chord: Chord, sequence: string | undefined): void {
     const outcome = picker.handleKey(chord, sequence);
-    if (outcome === "stay") return;
-    if (outcome === "close") {
-      this.overlay = undefined;
-      return;
-    }
+    if (outcome === "choose") this.chooseModel(picker);
+    else if (outcome === "close") this.overlay = undefined;
+  }
+
+  private chooseModel(picker: ModelPicker): void {
     const chosen = picker.selected();
     if (chosen === undefined) return;
     this.overlay = undefined;
@@ -1249,30 +1279,146 @@ export class AppCore {
     if (main !== undefined) this.layout.focus(main);
   }
 
-  private routePaletteMouse(event: PointerEvent): void {
-    const palette = this.palette();
-    if (palette === undefined) return;
-    const frame = paletteFrame(this.screen(), palette.entries.length);
-    const inside = containsPoint(frame, event.x, event.y);
-    const row = event.y - frame.firstRowY;
-    const onRow = inside && row >= 0 && row < palette.entries.length;
-    if ((event.type === "move" || event.type === "drag") && onRow) palette.index = row;
-    if (event.type !== "down") return;
-    if (!inside) {
-      this.overlay = undefined;
-      return;
-    }
-    if (onRow) {
-      const chosen = palette.entries[row];
-      this.overlay = undefined;
-      chosen?.run();
+  private pasteIntoOverlay(overlay: Overlay, line: string): void {
+    switch (overlay.kind) {
+      case "palette":
+        this.overlay = this.paletteFor(overlay.query + line);
+        return;
+      case "model":
+      case "arc":
+      case "workspace":
+        overlay.picker.paste(line);
+        return;
+      case "connect":
+        overlay.model.paste(line);
+        return;
+      case "help":
+      case "preset":
+      case "preset-confirm":
+        return;
     }
   }
 
-  private routeHelpMouse(event: PointerEvent): void {
+  private routeMouse(event: PointerEvent): void {
+    const overlay = this.overlay;
+    if (overlay === undefined) {
+      this.routePaneMouse(event);
+      return;
+    }
+    switch (overlay.kind) {
+      case "palette":
+        this.routePaletteMouse(overlay, event);
+        return;
+      case "help":
+        this.routeDismissableMouse(helpFrame(this.screen(), this.keymap.actions().length), event);
+        return;
+      case "preset":
+        this.routePresetMouse(overlay, event);
+        return;
+      case "preset-confirm":
+        this.routeDismissableMouse(helpFrame(this.screen(), presetConfirmRows), event);
+        return;
+      case "model":
+        this.routePickerMouse(overlay.picker, event, () => this.chooseModel(overlay.picker));
+        return;
+      case "arc":
+        this.routePickerMouse(overlay.picker, event, () => this.chooseArc(overlay.picker));
+        return;
+      case "workspace":
+        this.routePickerMouse(overlay.picker, event, () => this.chooseWorkspace(overlay.picker));
+        return;
+      case "connect":
+        this.routeConnectMouse(overlay.model, event);
+        return;
+    }
+  }
+
+  private routePaletteMouse(palette: PaletteOverlay, event: PointerEvent): void {
+    const count = palette.entries.length;
+    this.routeRows(event, paletteFrame(this.screen(), count), count, {
+      hover: (row) => {
+        palette.index = row;
+      },
+      click: (row) => {
+        const chosen = palette.entries[row];
+        this.overlay = undefined;
+        chosen?.run();
+      },
+      outside: () => this.closeOverlay(),
+    });
+  }
+
+  private routeDismissableMouse(frame: OverlayRowFrame, event: PointerEvent): void {
+    this.routeRows(event, frame, 0, { click: () => {}, outside: () => this.closeOverlay() });
+  }
+
+  private routePresetMouse(
+    overlay: { names: readonly string[]; index: number },
+    event: PointerEvent,
+  ): void {
+    const frame = helpFrame(this.screen(), this.presetRowCount(overlay.names));
+    this.routeRows(event, frame, overlay.names.length, {
+      hover: (row) => {
+        overlay.index = row;
+      },
+      click: (row) => {
+        const chosen = overlay.names[row];
+        if (chosen !== undefined) this.choosePreset(chosen);
+      },
+      outside: () => this.closeOverlay(),
+    });
+  }
+
+  private presetRowCount(names: readonly string[]): number {
+    const active = this.options.presets?.active();
+    return names.length + (active === undefined || names.includes(active) ? 0 : 1);
+  }
+
+  private routePickerMouse(
+    picker: ModelPicker | ArcPicker | WorkspacePicker,
+    event: PointerEvent,
+    choose: () => void,
+  ): void {
+    const count = picker.rows().length;
+    this.routeRows(event, paletteFrame(this.screen(), count), count, {
+      hover: (row) => picker.select(row),
+      click: (row) => {
+        picker.select(row);
+        choose();
+      },
+      outside: () => this.closeOverlay(),
+    });
+  }
+
+  private routeConnectMouse(model: ConnectModel, event: PointerEvent): void {
+    const count = model.rowCount();
+    this.routeRows(event, helpFrame(this.screen(), count), count, {
+      click: (row) => {
+        if (model.clickRow(row) === "close") this.closeOverlay();
+      },
+      outside: () => {
+        if (model.handleKey(escapeChord, undefined) === "close") this.closeOverlay();
+      },
+    });
+  }
+
+  private routeRows(
+    event: PointerEvent,
+    frame: OverlayRowFrame,
+    rowCount: number,
+    rows: { hover?(row: number): void; click(row: number): void; outside(): void },
+  ): void {
+    const inside = containsPoint(frame, event.x, event.y);
+    const row = event.y - frame.firstRowY;
+    const onRow = inside && row >= 0 && row < rowCount;
+    if (onRow && (event.type === "move" || event.type === "drag")) rows.hover?.(row);
     if (event.type !== "down") return;
-    const frame = helpFrame(this.screen(), this.keymap.actions().length);
-    if (!containsPoint(frame, event.x, event.y)) this.overlay = undefined;
+    if (!inside) rows.outside();
+    else if (onRow) rows.click(row);
+  }
+
+  private closeOverlay(): void {
+    this.overlay = undefined;
   }
 
   dragPreview(): Rect | undefined {
@@ -1614,6 +1760,10 @@ function nextAfter(id: string, prefix: string, current: number): number {
 
 function containsPoint(frame: OverlayFrame, x: number, y: number): boolean {
   return x >= frame.x && x < frame.x + frame.width && y >= frame.y && y < frame.y + frame.height;
+}
+
+function pastedLine(text: string): string {
+  return text.replace(/\r\n?|\n/g, " ").trim();
 }
 
 function scrollByKeys(pane: Pane | undefined, scroll: PointerScroll): void {

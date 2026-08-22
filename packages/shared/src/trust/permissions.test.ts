@@ -33,8 +33,36 @@ describe("permissionPolicy", () => {
   });
 
   it("breaks specificity ties in declaration order", () => {
-    const policy = permissionPolicy({ bash: { "git*": "allow", "*git": "deny" } });
-    expect(policy("bash", bash("git"))).toBe("allow");
+    expect(
+      permissionPolicy({ bash: { "git*": "allow", "*git": "ask" } })("bash", bash("git")),
+    ).toBe("allow");
+    expect(
+      permissionPolicy({ bash: { "*git": "ask", "git*": "allow" } })("bash", bash("git")),
+    ).toBe("ask");
+  });
+
+  it("lets any matching deny rule beat a more specific allow in either order", () => {
+    const force = bash("git push --force");
+    expect(
+      permissionPolicy({ bash: { "git push*": "allow", "*--force*": "deny" } })("bash", force),
+    ).toBe("deny");
+    expect(
+      permissionPolicy({ bash: { "*--force*": "deny", "git push*": "allow" } })("bash", force),
+    ).toBe("deny");
+    expect(
+      permissionPolicy({ bash: { "git push*": "allow", "*--force*": "deny" } })(
+        "bash",
+        bash("git push origin main"),
+      ),
+    ).toBe("allow");
+  });
+
+  it("never resolves prototype-chain tool names", () => {
+    const policy = permissionPolicy({ tools: {} });
+    expect(policy("constructor", {})).toBeUndefined();
+    expect(policy("toString", {})).toBeUndefined();
+    expect(policy("valueOf", {})).toBeUndefined();
+    expect(policy("hasOwnProperty", {})).toBeUndefined();
   });
 
   it("never lets a chained command ride an allow rule", () => {
