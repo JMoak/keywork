@@ -93,17 +93,27 @@ async function main(argv: string[]): Promise<number> {
       fresh: { type: "boolean", default: false },
       resume: { type: "string" },
       "session-dir": { type: "string" },
+      workspace: { type: "string" },
     },
   });
 
   const cwd = process.cwd();
   const { ensureStateLayout } = await import("./paths.ts");
   ensureStateLayout();
-  const workspace = openWorkspace(cwd);
+  const { fileWorkspaceRecall, selectWorkspace, workspaceCommand } = await import(
+    "./workspaces.ts"
+  );
+  const workspaceRecall = fileWorkspaceRecall();
+  const workspaceSlug = selectWorkspace(cwd, values.workspace, workspaceRecall, console.warn);
+  const workspace = openWorkspace(cwd, workspaceSlug);
   for (const dir of workspace?.missingContextDirs ?? []) {
     console.warn(`keywork: skipping context dir ${dir}, it doesn't exist`);
   }
   const trustStore = new TrustStore();
+  if (command === "workspace") {
+    const { terminalConfirm } = await import("./sessions.ts");
+    return workspaceCommand(positionals, cwd, {}, terminalConfirm(), workspaceRecall);
+  }
   if (command === "doctor") {
     const { doctorCommand } = await import("./doctor.ts");
     return doctorCommand(
@@ -230,7 +240,7 @@ async function main(argv: string[]): Promise<number> {
       const { defaultSessionDir } = await import("./paths.ts");
       return sessionsCommand(
         positionals,
-        values["session-dir"] ?? defaultSessionDir(cwd),
+        values["session-dir"] ?? defaultSessionDir(cwd, workspaceSlug),
         console.log,
         terminalConfirm(),
       );
@@ -252,134 +262,177 @@ async function main(argv: string[]): Promise<number> {
       const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
       const { deferredMaterialization } = await import("./materialize.ts");
       const materializer = deferredMaterialization({ cwd, trusted: projectTrusted });
-      const { sessionChangeFeed, sessionPort, sessionTreePort } = await import("./sessions.ts");
+      const { boundSessionCounts, sessionChangeFeed, sessionPort, sessionTreePort } = await import(
+        "./sessions.ts"
+      );
+      const { arcService } = await import("./arcs.ts");
       const { commandRuntime } = await import("./commands.ts");
       const { mcpPanePort } = await import("./mcp.ts");
       const { memoryPanePort, sweepOnClose } = await import("./memory.ts");
+      const { workspacesPort } = await import("./workspaces.ts");
       const { compactNow, contextBudgetFor, declaredContextWindow, settleTurn } = await import(
         "@keywork/engine"
       );
-      const composition = await composeWorkspace({
-        cwd,
-        projectTrusted,
-        prompts: config.prompts,
-        mcpServers: config.mcpServers,
-        onFileSaved: (path) => materializer.fileSaved(path),
-      });
-      const { checkpoints, extensions, mcp, memory } = composition;
-      const agents = composeAgents(composition, { permissions: toolPermissions });
-      const stateStore = workspaceFile(workspaceStateFile(workspaceIdentity(cwd)));
-      const sessionDir = values["session-dir"] ?? defaultSessionDir(cwd);
-      const extensionsView = {
-        commands: extensions.commands.map((command) => ({
-          name: command.name,
-          ...(command.description !== undefined && { description: command.description }),
-          needsArgs: scanTemplate(command.template).some((segment) => segment.kind === "arguments"),
-          render: (args: string, confirmShell: (shell: string) => Promise<boolean>) =>
-            renderCommand(
-              command.template,
-              args,
-              commandRuntime(cwd, {
-                confirm: (call) => confirmShell((call.arguments as { command: string }).command),
-              }),
+      const launchPanes = (slug: string | undefined): Promise<string | undefined> =>
+        new Promise((switchTo) => {
+          void openPanes(slug, switchTo);
+        });
+      const openPanes = async (
+        slug: string | undefined,
+        switchTo: (next: string | undefined) => void,
+      ): Promise<void> => {
+        const composition = await composeWorkspace({
+          cwd,
+          projectTrusted,
+          workspaceSlug: slug,
+          prompts: config.prompts,
+          mcpServers: config.mcpServers,
+          onFileSaved: (path) => materializer.fileSaved(path),
+        });
+        const { checkpoints, extensions, mcp, memory } = composition;
+        const stateStore = workspaceFile(workspaceStateFile(workspaceIdentity(cwd, slug)));
+        const sessionDir = values["session-dir"] ?? defaultSessionDir(cwd, slug);
+        const arcs = arcService({
+          cwd,
+          trusted: projectTrusted,
+          workspaceSlug: slug,
+          memory: () => memory,
+          boundSessionCounts: () => boundSessionCounts(sessionDir),
+        });
+        const agents = composeAgents(composition, { permissions: toolPermissions, arcs });
+        let pendingSwitch: { slug: string | undefined } | undefined;
+        const extensionsView = {
+          commands: extensions.commands.map((command) => ({
+            name: command.name,
+            ...(command.description !== undefined && { description: command.description }),
+            needsArgs: scanTemplate(command.template).some(
+              (segment) => segment.kind === "arguments",
             ),
-        })),
-        agents: extensions.agents.map((agent) => ({
-          name: agent.name,
-          ...(agent.description !== undefined && { description: agent.description }),
-        })),
-        failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
+            render: (args: string, confirmShell: (shell: string) => Promise<boolean>) =>
+              renderCommand(
+                command.template,
+                args,
+                commandRuntime(cwd, {
+                  confirm: (call) => confirmShell((call.arguments as { command: string }).command),
+                }),
+              ),
+          })),
+          agents: extensions.agents.map((agent) => ({
+            name: agent.name,
+            ...(agent.description !== undefined && { description: agent.description }),
+          })),
+          failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
+        };
+
+        const stores = new Map<string, SessionStore>();
+        const sessionChanges = sessionChangeFeed();
+        const sessions = sessionPort(sessionDir, cwd, {
+          checkpointTag: () => checkpoints?.takeTurnTag(),
+          onAttach: (store) => {
+            stores.set(store.header.id, store);
+            arcs.attached(store);
+          },
+          onRelease: (sessionId) => {
+            stores.delete(sessionId);
+            agents.release(sessionId);
+            arcs.released(sessionId);
+          },
+          onChange: (sessionId) => sessionChanges.emit(sessionId),
+          onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
+        });
+
+        const presetsPort: PresetsPort = {
+          names: () => presetOrder,
+          active: () => presets.active(),
+          requiresConfirmation: (name) =>
+            isPresetName(name) && requiresConfirmation(presets.active(), name),
+          apply: async (name) => {
+            if (isPresetName(name)) await presets.apply(name);
+          },
+        };
+
+        await runApp({
+          workspace: values.fresh ? freshWorkspace(stateStore) : stateStore,
+          sessions,
+          sessionTrees: sessionTreePort(sessionDir, sessionChanges),
+          arcs: arcs.port,
+          workspaces: workspacesPort({
+            cwd,
+            current: slug,
+            recall: workspaceRecall,
+            requestSwitch: (next) => {
+              pendingSwitch = { slug: next };
+            },
+          }),
+          exit: (code) => {
+            if (pendingSwitch === undefined) process.exit(code);
+            switchTo(pendingSwitch.slug);
+          },
+          presets: presetsPort,
+          inference: inferencePort({
+            registry: () => state.runtime.registry,
+            observations: () => state.observations,
+          }),
+          connections,
+          afterTurn: async ({ sessionId, history, agent }) => {
+            const store = stores.get(sessionId);
+            if (store === undefined) return undefined;
+            const settlement = await settleTurn({
+              store,
+              provider: agent.provider,
+              history,
+              budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+              flush: agents.flushFor(sessionId, agent.provider),
+            });
+            if (settlement.history !== undefined) sessionChanges.emit(sessionId);
+            return settlement;
+          },
+          compact: async ({ sessionId, agent }, instructions) => {
+            const store = stores.get(sessionId);
+            if (store === undefined) throw new Error("no session store for this pane");
+            const settlement = await compactNow({
+              store,
+              provider: agent.provider,
+              budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+              instructions,
+              flush: agents.flushFor(sessionId, agent.provider),
+            });
+            if (settlement.history !== undefined) sessionChanges.emit(sessionId);
+            return settlement;
+          },
+          closers: [() => sweepOnClose(memory), ...(mcp === undefined ? [] : [() => mcp.stop()])],
+          extensions: extensionsView,
+          ...(config.theme !== undefined && { themeOverrides: config.theme }),
+          ...(config.page !== undefined && { page: config.page }),
+          ...(checkpoints !== undefined && { checkpoints }),
+          ...(memory !== undefined && { memory: memoryPanePort(memory) }),
+          ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
+          agentFactory: (guard, history, seams, agentName) => {
+            const bound = state.runtime.open({
+              ...defaultSelection,
+              selection: seams?.modelReference,
+            });
+            const agent = agents.build({
+              provider: materializer.wrapProvider(bound.provider),
+              guard,
+              history,
+              bus: seams?.bus,
+              sessionId: () => seams?.sessionId(),
+              onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
+              definition: extensions.agents.find((candidate) => candidate.name === agentName),
+            });
+            tapJournal(agent.bus, () => {
+              const sessionId = seams?.sessionId();
+              return sessionId === undefined ? undefined : stores.get(sessionId);
+            });
+            return agent;
+          },
+          titler: (conversation, agent) => suggestTitle(agent.provider, conversation),
+          statusLabel: () => presets.active(),
+        });
       };
-
-      const stores = new Map<string, SessionStore>();
-      const sessionChanges = sessionChangeFeed();
-      const sessions = sessionPort(sessionDir, cwd, {
-        checkpointTag: () => checkpoints?.takeTurnTag(),
-        onAttach: (store) => stores.set(store.header.id, store),
-        onRelease: (sessionId) => {
-          stores.delete(sessionId);
-          agents.release(sessionId);
-        },
-        onChange: (sessionId) => sessionChanges.emit(sessionId),
-      });
-
-      const presetsPort: PresetsPort = {
-        names: () => presetOrder,
-        active: () => presets.active(),
-        requiresConfirmation: (name) =>
-          isPresetName(name) && requiresConfirmation(presets.active(), name),
-        apply: async (name) => {
-          if (isPresetName(name)) await presets.apply(name);
-        },
-      };
-
-      await runApp({
-        workspace: values.fresh ? freshWorkspace(stateStore) : stateStore,
-        sessions,
-        sessionTrees: sessionTreePort(sessionDir, sessionChanges),
-        presets: presetsPort,
-        inference: inferencePort({
-          registry: () => state.runtime.registry,
-          observations: () => state.observations,
-        }),
-        connections,
-        afterTurn: async ({ sessionId, history, agent }) => {
-          const store = stores.get(sessionId);
-          if (store === undefined) return undefined;
-          const settlement = await settleTurn({
-            store,
-            provider: agent.provider,
-            history,
-            budget: contextBudgetFor(declaredContextWindow(agent.provider)),
-            flush: agents.flushFor(sessionId, agent.provider),
-          });
-          if (settlement.history !== undefined) sessionChanges.emit(sessionId);
-          return settlement;
-        },
-        compact: async ({ sessionId, agent }, instructions) => {
-          const store = stores.get(sessionId);
-          if (store === undefined) throw new Error("no session store for this pane");
-          const settlement = await compactNow({
-            store,
-            provider: agent.provider,
-            budget: contextBudgetFor(declaredContextWindow(agent.provider)),
-            instructions,
-            flush: agents.flushFor(sessionId, agent.provider),
-          });
-          if (settlement.history !== undefined) sessionChanges.emit(sessionId);
-          return settlement;
-        },
-        closers: [() => sweepOnClose(memory), ...(mcp === undefined ? [] : [() => mcp.stop()])],
-        extensions: extensionsView,
-        ...(config.theme !== undefined && { themeOverrides: config.theme }),
-        ...(config.page !== undefined && { page: config.page }),
-        ...(checkpoints !== undefined && { checkpoints }),
-        ...(memory !== undefined && { memory: memoryPanePort(memory) }),
-        ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
-        agentFactory: (guard, history, seams, agentName) => {
-          const bound = state.runtime.open({
-            ...defaultSelection,
-            selection: seams?.modelReference,
-          });
-          const agent = agents.build({
-            provider: materializer.wrapProvider(bound.provider),
-            guard,
-            history,
-            bus: seams?.bus,
-            sessionId: () => seams?.sessionId(),
-            onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
-            definition: extensions.agents.find((candidate) => candidate.name === agentName),
-          });
-          tapJournal(agent.bus, () => {
-            const sessionId = seams?.sessionId();
-            return sessionId === undefined ? undefined : stores.get(sessionId);
-          });
-          return agent;
-        },
-        titler: (conversation, agent) => suggestTitle(agent.provider, conversation),
-        statusLabel: () => presets.active(),
-      });
-      return 0;
+      let selected = workspaceSlug;
+      for (;;) selected = await launchPanes(selected);
     }
     default: {
       console.log(usage);

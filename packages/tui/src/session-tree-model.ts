@@ -269,6 +269,8 @@ function entryText(entry: SessionEntry): string {
       return `thinking → ${entry.thinkingLevel}`;
     case "model_change":
       return `model → ${entry.provider}/${entry.modelId}`;
+    case "arc_binding":
+      return entry.arc === undefined ? "arc released" : `arc → ${entry.arc}`;
     case "custom":
       return entry.customType;
   }

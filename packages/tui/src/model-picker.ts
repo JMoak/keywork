@@ -1,8 +1,9 @@
 import { fuzzyScore } from "./commands.ts";
 import type { ModelChoice } from "./inference-port.ts";
 import type { Chord } from "./keys.ts";
+import { type PickerKeyOutcome, pickerIntentOf } from "./picker-keys.ts";
 
-export type PickerKeyOutcome = "stay" | "close" | "choose";
+export type { PickerKeyOutcome } from "./picker-keys.ts";
 
 export interface PickerRow {
   choice: ModelChoice;
@@ -44,28 +45,26 @@ export class ModelPicker {
   }
 
   handleKey(chord: Chord, sequence: string | undefined): PickerKeyOutcome {
-    if (chord.name === "escape") return "close";
-    if (chord.name === "return" || chord.name === "enter") return "choose";
-    if (chord.name === "up" || chord.name === "down") {
-      this.move(chord.name === "down" ? 1 : -1);
-      return "stay";
+    const intent = pickerIntentOf(chord, sequence);
+    switch (intent.kind) {
+      case "close":
+        return "close";
+      case "choose":
+        return "choose";
+      case "move":
+        this.move(intent.step);
+        return "stay";
+      case "erase":
+        this.query = this.query.slice(0, -1);
+        this.index = 0;
+        return "stay";
+      case "type":
+        this.query += intent.text;
+        this.index = 0;
+        return "stay";
+      case "ignore":
+        return "stay";
     }
-    if (chord.name === "backspace") {
-      this.query = this.query.slice(0, -1);
-      this.index = 0;
-      return "stay";
-    }
-    if (
-      sequence !== undefined &&
-      sequence.length === 1 &&
-      !chord.ctrl &&
-      !chord.meta &&
-      sequence >= " "
-    ) {
-      this.query += sequence;
-      this.index = 0;
-    }
-    return "stay";
   }
 
   private move(step: number): void {

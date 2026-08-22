@@ -15,12 +15,32 @@ import {
   Box,
   type CliRenderer,
   createCliRenderer,
+  fg,
   type KeyEvent,
   type MouseEvent,
   type PasteEvent,
+  StyledText,
   Text,
+  type TextChunk,
 } from "@opentui/core";
-import { AppCore, bindingHelp, helpFrame, type PresetsPort, paletteFrame } from "./app-core.ts";
+import {
+  AppCore,
+  bindingHelp,
+  helpFrame,
+  type PaneOrigin,
+  type PresetsPort,
+  paletteFrame,
+} from "./app-core.ts";
+import { type ArcPicker, describeArcRow } from "./arc-picker.ts";
+import {
+  type ArcOrdinals,
+  type ArcsPort,
+  arcInk,
+  arcOrdinalsOf,
+  arcTag,
+  suggestArcSlug,
+} from "./arcs.ts";
+import { ArcsPane } from "./arcs-pane.ts";
 import { promptAnchor } from "./backtrack.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
@@ -52,6 +72,7 @@ import { type PointerEvent, pointerEventOf } from "./pointer.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import type { Theme, ThemeOverrides } from "./theme.ts";
 import { clipLine, trayRows } from "./tray.ts";
+import { describeWorkspaceRow, type WorkspacesPort } from "./workspace-picker.ts";
 import { parseWorkspaceState, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
 export interface CheckpointsPort {
@@ -65,11 +86,13 @@ export interface SessionAttachment {
   id: string;
   name?: string;
   modelReference?: string;
+  arc?: string;
   history: readonly Message[];
   replay(bus: Agent["bus"]): void;
   append(message: Message): Promise<void>;
   rename?(name: string): Promise<void>;
   recordModel?(reference: string): Promise<void>;
+  bindArc?(slug: string | undefined): Promise<void>;
 }
 
 export interface SessionPort {
@@ -128,6 +151,8 @@ export interface AppOptions {
   workspace?: WorkspacePort;
   sessions?: SessionPort;
   sessionTrees?: SessionTreePort;
+  arcs?: ArcsPort;
+  workspaces?: WorkspacesPort;
   memory?: MemoryPanePort;
   mcp?: McpPanePort;
   extensions?: ExtensionsPort;
@@ -156,7 +181,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const mcpPort = options.mcp;
   const agentSwitchers = new Map<string, (agentName: string | undefined) => boolean>();
   const modelSwitchers = new Map<string, (reference: string) => Promise<string>>();
+  const arcBinders = new Map<string, (slug: string | undefined) => Promise<void>>();
   const paneSessions = paneSessionIndex(options.sessions);
+  const arcsPort = options.arcs;
+  const arcIndex = arcIndexOf(arcsPort, () => render());
   let closed = false;
   let armedExpiry: ReturnType<typeof setTimeout> | undefined;
   let unsubscribeMcp: (() => void) | undefined;
@@ -164,7 +192,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const animator = new Animator({ onFrame: () => render() });
   const core: AppCore = new AppCore({
     screen,
-    createPane: (id, notify, commands, resumeSessionId, draft) => {
+    createPane: (id, notify, commands, resumeSessionId, draft, origin) => {
       let pane: ConversationPane | undefined;
       const guard: ToolGuard = {
         confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true),
@@ -197,7 +225,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         forkAtPrompt: (ordinal, promptDraft) =>
           forkAtPrompt(
             treePort,
-            (sessionId, forkDraft) => core.openPane(sessionId, forkDraft),
+            (sessionId, forkDraft) =>
+              core.openPane(sessionId, forkDraft, { sourcePaneId: id, arc: "inherit" }),
             checkpoints,
             pane?.sessionId,
             ordinal,
@@ -237,6 +266,15 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         created.swapAgent(next);
         return `model → ${modelReferenceOf(next.provider) ?? reference}`;
       });
+      const bindArc = async (slug: string | undefined): Promise<void> => {
+        const session = liveSession;
+        if (session === undefined) throw new Error("this session has no store yet · try again");
+        await session.bindArc?.(slug);
+        created.arc = slug;
+        arcIndex.changed();
+        notify();
+      };
+      arcBinders.set(id, bindArc);
       const wireSession = (adopted: SessionAttachment): void => {
         liveSession = adopted;
         adoptSession(created, initial.agent, adopted);
@@ -251,7 +289,18 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       };
       if (attachment !== undefined) wireSession(attachment);
       else if (resumeSessionId === undefined) {
-        startFreshSession(options.sessions, notify, wireSession, () => !created.disposed());
+        startFreshSession(
+          options.sessions,
+          notify,
+          (fresh) => {
+            wireSession(fresh);
+            void seedArcFromOrigin(origin, core, options.arcs, bindArc).then(
+              (notice) => notice !== undefined && created.postNotice(notice),
+              (cause: unknown) => created.postNotice((cause as Error).message),
+            );
+          },
+          () => !created.disposed(),
+        );
       }
       return created;
     },
@@ -264,7 +313,34 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         new SessionTreePane(id, notify, intents, treePort, targetSession, {
           ...(sessionId !== undefined && { sessionId }),
           presence: paneSessions,
+          arcOrdinal: arcIndex.ordinalOf,
         }),
+    }),
+    ...(treePort !== undefined &&
+      arcsPort !== undefined && {
+        createArcsPane: (id, notify, intents, targetSession, arc) =>
+          new ArcsPane(id, notify, intents, {
+            arcs: arcsPort,
+            sessions: treePort,
+            currentSession: targetSession,
+            presence: paneSessions,
+            arcOrdinal: arcIndex.ordinalOf,
+            ...(arc !== undefined && { drilled: { kind: "arc", slug: arc } }),
+          }),
+      }),
+    ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
+    ...(options.arcs !== undefined && {
+      arcs: options.arcs,
+      focusedArc: {
+        current: () => focusedConversationPane(core)?.pane.arc,
+        titleHint: () => focusedConversationPane(core)?.pane.titled(),
+        bind: (slug: string | undefined) => {
+          const found = focusedConversationPane(core);
+          const binder = found === undefined ? undefined : arcBinders.get(found.id);
+          if (binder === undefined) return Promise.reject(new Error("no conversation pane here"));
+          return binder(slug);
+        },
+      },
     }),
     ...(memoryPort !== undefined && {
       createMemoryPane: (id: string, notify: () => void) => new MemoryPane(id, notify, memoryPort),
@@ -294,7 +370,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     }),
     onPaneClosed: (id) => {
       agentSwitchers.delete(id);
+      modelSwitchers.delete(id);
+      arcBinders.delete(id);
       paneSessions.closed(id);
+      arcIndex.changed();
     },
     onExit: closeOnce(() => {
       closed = true;
@@ -302,6 +381,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       animator.settleAll();
       if (armedExpiry !== undefined) clearTimeout(armedExpiry);
       unsubscribeMcp?.();
+      arcIndex.dispose();
       paneSessions.closeAll();
       renderer.destroy();
       options.workspace?.seal();
@@ -373,8 +453,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
           borderStyle: "rounded",
           borderColor: core.leaderArmed ? theme.accent : theme.border,
         },
-        buildBody(core, theme, screen(), flavors.active.instruments),
-        statusBar(core, theme, options.statusLabel),
+        buildBody(core, theme, screen(), flavors.active.instruments, arcIndex.ordinalOf),
+        statusBar(core, theme, options.statusLabel, arcIndex.ordinalOf),
       ),
     );
     if (core.helpVisible) renderer.root.add(helpOverlay(core.keymap, theme, screen()));
@@ -383,6 +463,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     if (preset !== undefined) renderer.root.add(preset);
     const model = modelOverlay(core, theme, screen());
     if (model !== undefined) renderer.root.add(model);
+    const arc = arcOverlay(core, theme, screen(), arcIndex.ordinalOf);
+    if (arc !== undefined) renderer.root.add(arc);
+    const workspace = workspaceOverlay(core, theme, screen());
+    if (workspace !== undefined) renderer.root.add(workspace);
     const connect = connectOverlay(core, theme, screen());
     if (connect !== undefined) renderer.root.add(connect);
     renderer.requestRender();
@@ -475,7 +559,62 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   renderer.auto();
   core.bindNotify(render);
   core.start();
+  arcIndex.changed();
   render();
+}
+
+interface ArcIndex {
+  readonly ordinalOf: ArcOrdinals;
+  changed(): void;
+  dispose(): void;
+}
+
+function arcIndexOf(arcs: ArcsPort | undefined, onRefreshed: () => void): ArcIndex {
+  let ordinals: ArcOrdinals = () => undefined;
+  let disposed = false;
+  const refresh = (): void => {
+    if (arcs === undefined || disposed) return;
+    void arcs
+      .list()
+      .then((listed) => {
+        if (disposed) return;
+        ordinals = arcOrdinalsOf(listed);
+        onRefreshed();
+      })
+      .catch(() => {});
+  };
+  const unsubscribe = arcs?.subscribe?.(refresh);
+  return {
+    ordinalOf: (slug) => ordinals(slug),
+    changed: refresh,
+    dispose: () => {
+      disposed = true;
+      unsubscribe?.();
+    },
+  };
+}
+
+export async function seedArcFromOrigin(
+  origin: PaneOrigin | undefined,
+  core: AppCore,
+  arcs: ArcsPort | undefined,
+  bind: (slug: string | undefined) => Promise<void>,
+): Promise<string | undefined> {
+  if (origin === undefined) return undefined;
+  const source =
+    origin.sourcePaneId === undefined ? undefined : core.panes.get(origin.sourcePaneId);
+  const sourcePane = source instanceof ConversationPane ? source : undefined;
+  if (origin.arc === "inherit") {
+    if (sourcePane?.arc === undefined) return undefined;
+    await bind(sourcePane.arc);
+    return undefined;
+  }
+  if (arcs === undefined) return "no arcs here · a trusted workspace is needed first";
+  const taken = (await arcs.list()).map((arc) => arc.slug);
+  const slug = suggestArcSlug(sourcePane?.titled(), taken);
+  await arcs.create(slug);
+  await bind(slug);
+  return `arc → ${slug} · new`;
 }
 
 export const crashLogFile = join(homedir(), ".keywork", "tui-crash.log");
@@ -581,6 +720,7 @@ async function restorable(
     case "browser":
       return statKind(pane.root)?.isDirectory() === true;
     case "session-tree":
+    case "arcs":
     case "memory":
     case "mcp":
       return true;
@@ -810,6 +950,7 @@ function adoptSession(
   attachment: SessionAttachment,
 ): void {
   pane.sessionId = attachment.id;
+  pane.arc = attachment.arc;
   reconcileTitle(pane, attachment);
   if (agent === undefined) return;
   attachment.replay(agent.bus);
@@ -893,6 +1034,7 @@ function buildBody(
   theme: Theme,
   screen: Screen,
   instruments: Flavor["instruments"],
+  arcOrdinal: ArcOrdinals,
 ) {
   const rects = core.layout.rects(screen);
   const focused = core.layout.focused();
@@ -904,7 +1046,10 @@ function buildBody(
   }
   const idleMain = core.layout.emptyMainRect(screen);
   const dropPreview = core.dragPreview();
-  const sweep = rampPositions([...core.panes.keys()]);
+  const sweep = rampPositions([...core.panes.keys()], (id) => {
+    const arc = paneArcOf(core, id);
+    return arc === undefined ? undefined : arcOrdinal(arc);
+  });
   return Box(
     { width: screen.width, height: screen.height },
     ...[...rects].map(([id, rect]) =>
@@ -1013,14 +1158,14 @@ function emptyView(theme: Theme) {
   );
 }
 
-function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => string) | undefined) {
+function statusBar(
+  core: AppCore,
+  theme: Theme,
+  labelOption: string | (() => string) | undefined,
+  arcOrdinal: ArcOrdinals,
+) {
   const label = typeof labelOption === "function" ? labelOption() : labelOption;
-  const hint =
-    core.notice !== ""
-      ? core.notice
-      : core.leaderArmed
-        ? "nav · h/j/k/l focus  H/J/K/L move  s split  x close  z zoom  c cycle  ,/. dock width · esc done"
-        : `${label ?? "keywork"} · ${core.layout.panes().length} panes · ctrl+k nav · ctrl+p go · > commands`;
+  const hint = core.notice !== "" ? core.notice : core.leaderArmed ? navHint : undefined;
   return Box(
     {
       height: 1,
@@ -1030,12 +1175,36 @@ function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => str
       paddingRight: 1,
       backgroundColor: theme.panel,
     },
-    Text({
-      content: hint,
-      fg: core.notice !== "" || core.leaderArmed ? theme.accent : theme.textDim,
-    }),
+    hint !== undefined
+      ? Text({ content: hint, fg: theme.accent })
+      : Text({ content: new StyledText(statusChunks(core, theme, label, arcOrdinal)) }),
     Text({ content: core.lastKey, fg: theme.textDim }),
   );
+}
+
+const navHint =
+  "nav · h/j/k/l focus  H/J/K/L move  s split  x close  z zoom  c cycle  ,/. dock width · esc done";
+
+function statusChunks(
+  core: AppCore,
+  theme: Theme,
+  label: string | undefined,
+  arcOrdinal: ArcOrdinals,
+): TextChunk[] {
+  const arc = focusedConversationPane(core)?.pane.arc;
+  const lead = `${label ?? "keywork"} · `;
+  const tail = `${core.layout.panes().length} panes · ctrl+k nav · ctrl+p go · > commands`;
+  if (arc === undefined) return [fg(theme.textDim)(`${lead}${tail}`)];
+  return [
+    fg(theme.textDim)(lead),
+    fg(arcInk(theme, arcOrdinal(arc)))(arcTag(arc)),
+    fg(theme.textDim)(` · ${tail}`),
+  ];
+}
+
+function paneArcOf(core: AppCore, paneId: string): string | undefined {
+  const pane = core.panes.get(paneId);
+  return pane instanceof ConversationPane ? pane.arc : undefined;
 }
 
 function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
@@ -1180,6 +1349,89 @@ function modelRows(picker: ModelPicker, theme: Theme) {
       fg: selected ? theme.accent : choice.available ? theme.text : theme.textDim,
     }),
   );
+}
+
+function arcOverlay(core: AppCore, theme: Theme, screen: Screen, arcOrdinal: ArcOrdinals) {
+  const picker = core.arcPicker();
+  if (picker === undefined) return undefined;
+  const rows = arcRows(picker, theme, arcOrdinal);
+  const frame = paletteFrame(screen, rows.length);
+  const innerWidth = overlayInnerWidth(frame);
+  return Box(
+    {
+      ...overlayPosition(frame),
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " arc ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    Text({ content: clipLine(` › ${picker.query}▌`, innerWidth), fg: theme.text }),
+    ...(rows.length > 0
+      ? rows
+      : [Text({ content: "  type a slug to start an arc · esc closes", fg: theme.textDim })]),
+  );
+}
+
+function workspaceOverlay(core: AppCore, theme: Theme, screen: Screen) {
+  const picker = core.workspacePicker();
+  if (picker === undefined) return undefined;
+  const rows = picker.rows().map((row) =>
+    Text({
+      content: `${row.selected ? "▸" : " "} ${describeWorkspaceRow(row)}`,
+      fg: row.selected ? theme.accent : theme.text,
+    }),
+  );
+  const frame = paletteFrame(screen, rows.length);
+  const innerWidth = overlayInnerWidth(frame);
+  return Box(
+    {
+      ...overlayPosition(frame),
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " workspace ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    Text({ content: clipLine(` › ${picker.query}▌`, innerWidth), fg: theme.text }),
+    ...(rows.length > 0
+      ? rows
+      : [Text({ content: "  type a slug to start a workspace · esc closes", fg: theme.textDim })]),
+  );
+}
+
+function arcRows(picker: ArcPicker, theme: Theme, arcOrdinal: ArcOrdinals) {
+  return picker.rows().map((row) => {
+    const marker = row.selected ? "▸" : " ";
+    const archived = row.kind === "arc" && row.arc.status === "archived";
+    if (row.kind !== "arc" || archived) {
+      return Text({
+        content: `${marker} ${describeArcRow(row)}`,
+        fg: row.selected ? theme.accent : archived ? theme.textDim : theme.text,
+      });
+    }
+    const ink = row.selected ? theme.accent : theme.text;
+    const facts = describeArcRow(row).slice(row.arc.slug.length);
+    return Text({
+      content: new StyledText([
+        fg(ink)(`${marker} `),
+        fg(row.selected ? theme.accent : arcInk(theme, arcOrdinal(row.arc.slug)))(row.arc.slug),
+        fg(ink)(facts),
+      ]),
+    });
+  });
 }
 
 function connectOverlay(core: AppCore, theme: Theme, screen: Screen) {

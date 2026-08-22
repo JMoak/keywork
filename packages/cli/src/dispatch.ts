@@ -1,7 +1,7 @@
 export const usage = `keywork: a coding agent you drive from the keyboard
 
 Usage:
-  keywork [panes] [--fresh]                                 tiled multi-session workspace
+  keywork [panes] [--fresh] [--workspace <slug>]            tiled multi-session workspace
   keywork run "<prompt>" [--model <model>] [--json] [--debug]
               [--preset careful|standard|open]
               [--session-dir <dir>]                         one-shot headless run
@@ -9,6 +9,7 @@ Usage:
   keywork connect [target|url]                              add or verify an inference provider
                                                             (setup is an alias)
   keywork init                                              set up the workspace at its anchor
+  keywork workspace [list|new|use|rm] [slug]                named workspaces over this root
   keywork link <dir>                                        widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust
   keywork doctor                                            show what your terminal supports
@@ -48,6 +49,7 @@ export const withoutTerminal: Readonly<Record<string, WithoutTerminal>> = {
   connect: { behavior: "runs", note: "answers are read line by line from stdin" },
   setup: { behavior: "runs", note: "answers are read line by line from stdin" },
   init: { behavior: "runs", note: "confirmations are skipped, never assumed" },
+  workspace: { behavior: "runs", note: "removal confirmations are skipped, never assumed" },
   link: { behavior: "runs", note: "confirmations are skipped, never assumed" },
   trust: { behavior: "runs" },
   untrust: { behavior: "runs" },

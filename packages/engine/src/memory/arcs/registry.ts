@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { slugProblem } from "@keywork/shared";
 import { type Frontmatter, parseDocument, serializeDocument } from "../frontmatter.ts";
 import { MemoryInertError, MemoryStore } from "../store.ts";
 import { ArcOpenQuestions } from "./questions.ts";
@@ -194,13 +195,9 @@ export class ArcRegistry {
   }
 }
 
-const slugPattern = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
-const reservedDeviceNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
-
 export function validateArcSlug(slug: string): void {
-  if (!slugPattern.test(slug))
-    throw new InvalidArcSlugError(slug, "use lowercase letters, digits, and inner hyphens");
-  if (reservedDeviceNames.test(slug)) throw new InvalidArcSlugError(slug, "reserved device name");
+  const problem = slugProblem(slug);
+  if (problem !== undefined) throw new InvalidArcSlugError(slug, problem);
 }
 
 function isValidArcSlug(slug: string): boolean {

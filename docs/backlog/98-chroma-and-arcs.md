@@ -203,7 +203,9 @@ memory-pane arc layer header (J9), and the status-line arc chip.
 **Accept:** capture fixture with two arcs plus ungrouped panes — members share their
 anchor, ungrouped panes keep the global sweep, tags render; `NO_COLOR` capture keeps
 grouping legible via tags alone; overview rows carry arc hue + tag.
-**Strategy:** `OWN`. Gated on J17 + C44.
+**Strategy:** `OWN`. Gated on J17 + C44. **✅ landed 2026-08-21 (stream 5,
+[`110`](110-arcs-on-screen.md) S5-T4)** — borders, overview tags, status chip, arcs node, picker
+rows all draw the arc's anchor hue; the memory-pane layer header waits on a layer grouping there.
 
 ### C46 (2pt) — Workspace & arc pickers (implements PD10 + PD9 surfaces)
 The TUI browse/select/create/prune surfaces: `/workspace` lists the root's workspaces
@@ -214,7 +216,10 @@ the palette/overlay patterns already landed.
 **Accept:** probe workflows — create → switch → prune round-trips for both; prune of a
 non-empty vault demands the confirmed destructive form; zero-state is a calm invitation;
 picker rows carry the design-language marks (and arc anchor hues once C45 lands).
-**Strategy:** `OWN`. After J19 (workspaces) / J17 (arcs).
+**Strategy:** `OWN`. After J19 (workspaces) / J17 (arcs). **✅ landed 2026-08-21 (stream 5,
+[`110`](110-arcs-on-screen.md) S5-T3 + S5-T6)** — `/arc` (release · active · create-from-query ·
+archived dimmed) and `/workspace` (default · named · create-from-query); prune lives in
+`keywork workspace rm` with the confirmed destructive form.
 
 ### J17 (3pt) — Arc memory layer (implements PD9, store + scope)
 `arcs/<slug>/` sub-vaults (own MOC + daily; lazily created on first write), arc-layer
@@ -276,7 +281,9 @@ regression-tested); named workspaces partition sessions/snapshots/state/trust; M
 round-trips across launches; prune of a non-empty vault requires the confirmed
 destructive form and never runs silently; `contextDirs` scoping stays per-workspace.
 **Strategy:** `OWN` on J1's landed seam. Coordinate with J16 (same files, W5) — J16's
-anchoring answers (97 Q1–Q3, Q5) stand unmodified.
+anchoring answers (97 Q1–Q3, Q5) stand unmodified. **✅ landed 2026-08-21 (stream 5,
+[`110`](110-arcs-on-screen.md) S5-T6)** — compat layout, slug-keyed identity, per-subpath MRU,
+`keywork workspace list|new|use|rm`; focus dirs and `--workspace` for `run`/`chat` remain open.
 
 ## Sequencing
 

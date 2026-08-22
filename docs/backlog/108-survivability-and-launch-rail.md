@@ -128,7 +128,8 @@ nightly and on demand, never on PRs.
 - Neither waits on a decision except the gauge's options round (C40 renders, Jordan's pick,
   the C61 ritual) and the headless `ask` posture above (proceeds under the stated default).
 - Runner-ups held: PD12 modes (wants E7's design session first); arcs/workspaces nodes (FR2,
-  C46, J19; the lane after this one); the bots overlay (106) awaits Q-B1–Q-B7.
+  C46, J19; the lane after this one — **taken as stream 5, landed 2026-08-21, ledger in
+  [`110-arcs-on-screen.md`](110-arcs-on-screen.md)**); the bots overlay (106) awaits Q-B1–Q-B7.
 
 ## Ledger
 

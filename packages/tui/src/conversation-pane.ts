@@ -70,6 +70,7 @@ export interface ConversationPaneOptions {
 
 export class ConversationPane implements Pane {
   sessionId: string | undefined;
+  arc: string | undefined;
   private readonly model: ConversationModel;
   private readonly pageThresholds: PageThresholds;
   private readonly glyphs: GlyphSupport;
@@ -217,6 +218,7 @@ export class ConversationPane implements Pane {
       {
         name: this.model.title ?? this.id,
         stamp: this.stampGlyph(),
+        arc: this.arc,
         telemetry: this.telemetry(context.instruments) || undefined,
         siblings: this.siblingTitles?.(),
       },

@@ -21,6 +21,7 @@ import type {
   MemoryPaneInputs,
   MemoryPanePort,
 } from "@keywork/tui";
+import type { ArcService } from "./arcs.ts";
 
 export interface WorkspaceMemory {
   store: MemoryStore;
@@ -33,8 +34,12 @@ export interface WorkspaceMemory {
 
 export const memoryBootstrapBudget = 4096;
 
-export function openWorkspaceMemory(cwd: string, trusted: boolean): WorkspaceMemory | undefined {
-  const vaultRoot = resolveVaultPath(cwd);
+export function openWorkspaceMemory(
+  cwd: string,
+  trusted: boolean,
+  slug?: string,
+): WorkspaceMemory | undefined {
+  const vaultRoot = resolveVaultPath(cwd, slug);
   if (vaultRoot === undefined) return undefined;
   const store = new MemoryStore({ vaultRoot, trusted });
   const inbox = new ReviewInbox({ filePath: join(vaultRoot, ".staging", "inbox.json") });
@@ -55,11 +60,17 @@ export function memoryRecall(
   memory: WorkspaceMemory | undefined,
   sessionId?: SessionKey,
   onRetrieval?: (disclosure: string) => void,
+  arcs?: ArcService,
 ): MemoryRecall | undefined {
   if (memory === undefined) return undefined;
+  const workspace = recallSearch(memory, onRetrieval);
+  const search =
+    arcs === undefined || sessionId === undefined
+      ? workspace
+      : arcs.searcher(workspace, sessionId, memory.embeddings);
   return {
     store: memory.store,
-    search: recallSearch(memory, onRetrieval),
+    search,
     onRecall: recallTap(memory, sessionId),
   };
 }

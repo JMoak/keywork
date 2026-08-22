@@ -11,7 +11,29 @@ export {
   type SessionTurn,
   type WorkspacePort,
 } from "./app.ts";
-export type { PresetsPort } from "./app-core.ts";
+export type { ArcOrigin, FocusedArcPort, PaneOrigin, PresetsPort } from "./app-core.ts";
+export {
+  ArcPicker,
+  type ArcPickerChoice,
+  type ArcPickerRow,
+  describeArcRow,
+} from "./arc-picker.ts";
+export {
+  type ArcCloseOutcome,
+  type ArcOrdinals,
+  type ArcStatus,
+  type ArcSummary,
+  type ArcsPort,
+  activeFirst,
+  arcInk,
+  arcOrdinalsOf,
+  arcSlugProblem,
+  arcTag,
+  isArcSlug,
+  suggestArcSlug,
+} from "./arcs.ts";
+export { ArcsPane, type ArcsPaneOptions, describeCloseOutcome } from "./arcs-pane.ts";
+export type { ArcGroupKey, ArcGroupRow, ArcsLevel } from "./arcs-pane-model.ts";
 export {
   border,
   type CapabilityProfile,
@@ -154,4 +176,12 @@ export {
 } from "./slug.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
 export { type LifecycleState, type TitleBarState, titleBar } from "./title-bar.ts";
+export {
+  describeWorkspaceRow,
+  type WorkspaceChoice,
+  WorkspacePicker,
+  type WorkspacePickerChoice,
+  type WorkspacePickerRow,
+  type WorkspacesPort,
+} from "./workspace-picker.ts";
 export type { WorkspaceState } from "./workspace-state.ts";

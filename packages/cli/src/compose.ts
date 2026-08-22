@@ -26,6 +26,7 @@ import {
 } from "@keywork/engine";
 import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
 import { openWorkspace, resolveAnchor } from "@keywork/shared";
+import type { ArcService } from "./arcs.ts";
 import { loadWorkspaceExtensions, type WorkspaceExtensions } from "./commands.ts";
 import {
   bootstrapInjection,
@@ -40,6 +41,7 @@ import { snapshotGitDir } from "./paths.ts";
 export interface CompositionOptions {
   cwd: string;
   projectTrusted: boolean;
+  workspaceSlug?: string | undefined;
   prompts?: PromptsConfig | undefined;
   mcpServers?: Record<string, McpServerConfig> | undefined;
   onFileSaved?: ((path: string) => void) | undefined;
@@ -61,9 +63,9 @@ export interface Composition {
 }
 
 export async function composeWorkspace(options: CompositionOptions): Promise<Composition> {
-  const { cwd, projectTrusted } = options;
+  const { cwd, projectTrusted, workspaceSlug } = options;
   const instructions = projectTrusted ? await loadProjectInstructions(cwd) : undefined;
-  const memory = openWorkspaceMemory(cwd, projectTrusted);
+  const memory = openWorkspaceMemory(cwd, projectTrusted, workspaceSlug);
   const bootstrap = await bootstrapInjection(memory);
   const systemPromptFor = (modelId: string | undefined): string =>
     withMemoryPrompt(
@@ -76,7 +78,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     );
   const checkpoints = await Checkpoints.open({
     worktree: cwd,
-    gitDir: options.checkpointsGitDir ?? snapshotGitDir(cwd),
+    gitDir: options.checkpointsGitDir ?? snapshotGitDir(cwd, workspaceSlug),
   }).catch((cause: unknown) => {
     options.reportCheckpointsUnavailable?.((cause as Error).message);
     return undefined;
@@ -89,7 +91,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   const mcp = startMcpRegistry(options.mcpServers);
   return {
     cwd,
-    scope: workspaceToolScope(cwd, projectTrusted),
+    scope: workspaceToolScope(cwd, projectTrusted, workspaceSlug),
     systemPromptFor,
     standingInjections: standingInjectionsFor(instructions, bootstrap),
     memory,
@@ -100,9 +102,13 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   };
 }
 
-export function workspaceToolScope(cwd: string, projectTrusted: boolean): ToolScope {
+export function workspaceToolScope(
+  cwd: string,
+  projectTrusted: boolean,
+  workspaceSlug?: string,
+): ToolScope {
   const anchorRoot = resolveAnchor(cwd).root;
-  const linkedDirs = projectTrusted ? (openWorkspace(cwd)?.contextDirs ?? []) : [];
+  const linkedDirs = projectTrusted ? (openWorkspace(cwd, workspaceSlug)?.contextDirs ?? []) : [];
   return toolScope(cwd, [anchorRoot, ...linkedDirs]);
 }
 
@@ -136,6 +142,7 @@ export function journalingRecall(
 
 export interface AgentCompositionOptions {
   permissions?: PermissionResolver | undefined;
+  arcs?: ArcService | undefined;
 }
 
 export interface AgentBuildSpec {
@@ -167,9 +174,11 @@ export function composeAgents(
       providers.set(sessionId, provider);
       const existing = flushes.get(sessionId);
       if (existing !== undefined) return existing;
+      const workspaceStore = composition.memory.store;
       const flush = new MemoryFlush({
         provider: followingProvider(() => providers.get(sessionId) ?? provider),
-        store: composition.memory.store,
+        store: workspaceStore,
+        dailyStore: () => options.arcs?.layerStoreFor(sessionId) ?? workspaceStore,
         systemPrompt: composition.systemPromptFor(undefined),
       });
       flushes.set(sessionId, flush);
@@ -217,7 +226,7 @@ function buildAgent(
     ...coreTools(
       composition.scope,
       journalingRecall(
-        memoryRecall(composition.memory, spec.sessionId, spec.onRetrieval),
+        memoryRecall(composition.memory, spec.sessionId, spec.onRetrieval, options.arcs),
         () => self,
       ),
       {

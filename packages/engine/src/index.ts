@@ -286,6 +286,7 @@ export type { NoteRelations } from "./memory/search.ts";
 export {
   type EmbeddingsPort,
   MemorySearch,
+  type MemorySearcher,
   type RetrievalSource,
   type SearchHit,
   type SearchLeg,
@@ -412,6 +413,7 @@ export {
   reserveCaps,
 } from "./session/context-budget.ts";
 export {
+  type ArcBindingEntry,
   type BranchSummaryEntry,
   type CompactionEntry,
   type CustomEntry,

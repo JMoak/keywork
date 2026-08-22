@@ -1,4 +1,5 @@
-import { fg, StyledText, Text, type TextChunk } from "@opentui/core";
+import { fg, StyledText, Text } from "@opentui/core";
+import { type ArcOrdinals, arcInk } from "./arcs.ts";
 import { type Chord, parseChord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
@@ -25,6 +26,7 @@ import {
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
 import { slugChunks, slugInk } from "./slug.ts";
+import { clipChunks, dimLine } from "./text-chunks.ts";
 import type { Theme } from "./theme.ts";
 
 export interface SessionTreePort {
@@ -40,6 +42,7 @@ export interface SessionTreePaneSeams {
   sessionId?: string;
   presence?: SessionPresence;
   now?: () => number;
+  arcOrdinal?: ArcOrdinals;
 }
 
 const refreshFrameMs = 16;
@@ -53,6 +56,7 @@ export class SessionTreePane implements Pane {
   private paneLevel: PaneLevel = "overview";
   private sessionId: string | undefined;
   private readonly presence: SessionPresence | undefined;
+  private readonly arcOrdinal: ArcOrdinals | undefined;
   private readonly tasks: PaneTasks;
   private readonly unsubscribe: (() => void) | undefined;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -68,6 +72,7 @@ export class SessionTreePane implements Pane {
   ) {
     this.sessionId = seams.sessionId;
     this.presence = seams.presence;
+    this.arcOrdinal = seams.arcOrdinal;
     this.tasks = new PaneTasks(notify);
     this.model = new SessionTreeModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
@@ -250,9 +255,19 @@ export class SessionTreePane implements Pane {
       return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
     }
     const color = row.current ? theme.accentSoft : theme.text;
-    const { lead, title, tail } = overviewRowParts(row, selected);
-    const chunks = [fg(color)(lead), ...slugChunks(title, slugInk(theme, color)), fg(color)(tail)];
+    const { lead, title, age, arcTag, counts } = overviewRowParts(row, selected);
+    const chunks = [
+      fg(color)(lead),
+      ...slugChunks(title, slugInk(theme, color)),
+      fg(color)(age),
+      ...(arcTag === undefined ? [] : [fg(this.arcInkFor(row.arc, theme))(arcTag)]),
+      fg(color)(counts),
+    ];
     return Text({ content: new StyledText(clipChunks(chunks, width)) });
+  }
+
+  private arcInkFor(slug: string | undefined, theme: Theme): string {
+    return slug === undefined ? theme.textDim : arcInk(theme, this.arcOrdinal?.(slug));
   }
 
   private entryLines(theme: Theme, rows: number, width: number) {
@@ -335,28 +350,10 @@ function sessionCountDetail(count: number): string {
   return count === 1 ? "1 session" : `${count} sessions`;
 }
 
-function dimLine(text: string, theme: Theme, width: number) {
-  return Text({ content: [...text].slice(0, width).join(""), fg: theme.textDim });
-}
-
 function entryRowText(row: SessionTreeRow): string {
   const indent = "  ".repeat(row.depth);
   const affordance = row.collapsed ? "▸ " : row.branchPoint ? "▾ " : "  ";
   const marker = row.onActivePath ? "●" : "○";
   const label = row.label === undefined ? "" : ` [${row.label}]`;
   return `${indent}${affordance}${marker} ${row.text}${label}`;
-}
-
-function clipChunks(chunks: readonly TextChunk[], width: number): TextChunk[] {
-  const clipped: TextChunk[] = [];
-  let used = 0;
-  for (const chunk of chunks) {
-    const points = Array.from(chunk.text);
-    const room = width - used;
-    if (room <= 0) break;
-    const text = points.length <= room ? chunk.text : points.slice(0, room).join("");
-    clipped.push({ ...chunk, text });
-    used += Math.min(points.length, room);
-  }
-  return clipped;
 }

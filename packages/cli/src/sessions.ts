@@ -70,6 +70,7 @@ export interface SessionPortSeams {
   onRelease?(sessionId: string): void;
   onChange?(sessionId: string): void;
   onListen?(sessionId: string, stop: () => void): void;
+  onArcBound?(sessionId: string, arc: string | undefined): void;
 }
 
 export interface SessionChangeFeed {
@@ -238,10 +239,11 @@ async function openById(dir: string, idPrefix: string): Promise<SessionStore | u
 
 export function attachmentOf(
   store: SessionStore,
-  seams: Pick<SessionPortSeams, "checkpointTag" | "onChange" | "onListen"> = {},
+  seams: Pick<SessionPortSeams, "checkpointTag" | "onChange" | "onListen" | "onArcBound"> = {},
 ): SessionAttachment {
   const name = store.name();
   const selection = store.modelSelection();
+  const arc = store.arcBinding();
   const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
@@ -249,6 +251,7 @@ export function attachmentOf(
     ...(selection !== undefined && {
       modelReference: `${selection.provider}/${selection.modelId}`,
     }),
+    ...(arc !== undefined && { arc }),
     history: store.messages(),
     replay: (bus) => {
       replaySession(store, bus);
@@ -275,7 +278,30 @@ export function attachmentOf(
       await store.appendModelChange(parsed.provider, parsed.model);
       seams.onChange?.(store.header.id);
     },
+    bindArc: async (slug) => {
+      if (store.arcBinding() === slug) return;
+      await store.appendArcBinding(slug);
+      seams.onArcBound?.(store.header.id, slug);
+      seams.onChange?.(store.header.id);
+    },
   };
+}
+
+export async function boundSessionCounts(dir: string): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const name of await sessionFileNames(dir)) {
+    const arc = await arcBindingOf(join(dir, name));
+    if (arc !== undefined) counts.set(arc, (counts.get(arc) ?? 0) + 1);
+  }
+  return counts;
+}
+
+async function arcBindingOf(file: string): Promise<string | undefined> {
+  try {
+    return (await SessionStore.open(file)).arcBinding();
+  } catch {
+    return undefined;
+  }
 }
 
 async function resumableFile(dir: string, request: ResumeRequest): Promise<string | undefined> {
@@ -293,6 +319,7 @@ async function overviewItem(file: string): Promise<SessionOverviewItem | undefin
     const stats = store.stats();
     if (stats.entries === 0) return undefined;
     const costNanos = knownCostNanos(stats.cost);
+    const arc = store.arcBinding();
     return {
       id: store.header.id,
       title: store.name() ?? firstUserText(store) ?? "(untitled session)",
@@ -301,6 +328,7 @@ async function overviewItem(file: string): Promise<SessionOverviewItem | undefin
       branchCount: stats.branchPoints,
       labelCount: stats.labels,
       ...(costNanos !== undefined && { costNanos }),
+      ...(arc !== undefined && { arc }),
     };
   } catch {
     return undefined;
@@ -415,6 +443,8 @@ function describeEntry(entry: SessionEntry): string {
       return `label ${entry.label ?? "(cleared)"} → ${entry.targetId.slice(0, 8)}`;
     case "session_info":
       return `named "${entry.name ?? ""}"`;
+    case "arc_binding":
+      return entry.arc === undefined ? "arc released" : `arc → ${entry.arc}`;
     default:
       return entry.type;
   }

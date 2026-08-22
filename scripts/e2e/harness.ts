@@ -2,7 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { arcService } from "../../packages/cli/src/arcs.ts";
+import { openWorkspaceMemory } from "../../packages/cli/src/memory.ts";
 import {
+  boundSessionCounts,
   sessionChangeFeed,
   sessionPort,
   sessionTreePort,
@@ -205,6 +208,12 @@ async function composeMockApp(
       }),
     });
   const sharedScript = scenario.script === "shared" ? freshScript() : undefined;
+  const arcs = arcService({
+    cwd: paths.workspaceDir,
+    trusted: true,
+    memory: () => openWorkspaceMemory(paths.workspaceDir, true),
+    boundSessionCounts: () => boundSessionCounts(paths.sessionDir),
+  });
   await runApp({
     ...seams,
     ...(scenario.provider !== "none" && {
@@ -243,11 +252,19 @@ async function composeMockApp(
     ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
     sessions: sessionPort(paths.sessionDir, paths.workspaceDir, {
       checkpointTag: () => checkpoints?.takeTurnTag(),
-      onAttach: (store) => stores.set(store.header.id, store),
-      onRelease: (sessionId) => stores.delete(sessionId),
+      onAttach: (store) => {
+        stores.set(store.header.id, store);
+        arcs.attached(store);
+      },
+      onRelease: (sessionId) => {
+        stores.delete(sessionId);
+        arcs.released(sessionId);
+      },
       onChange: (sessionId) => changes.emit(sessionId),
+      onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
     }),
     sessionTrees: sessionTreePort(paths.sessionDir, changes),
+    arcs: arcs.port,
     workspace: workspaceFile(join(paths.root, "workspace-state.json"), 0),
     ...(checkpoints !== undefined && { checkpoints }),
     glyphs: assumedGlyphs,

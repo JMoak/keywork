@@ -1,4 +1,5 @@
 import { formatCostNanos } from "@keywork/engine";
+import { arcTag } from "./arcs.ts";
 import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
 
@@ -176,22 +177,24 @@ export const livenessMark: Record<SessionLiveness, string> = {
 export interface OverviewRowParts {
   readonly lead: string;
   readonly title: string;
-  readonly tail: string;
+  readonly age: string;
+  readonly arcTag: string | undefined;
+  readonly counts: string;
 }
 
 export function overviewRowParts(row: SessionOverviewRow, cursored: boolean): OverviewRowParts {
-  const arc = row.arc === undefined ? "" : ` #${row.arc}`;
-  const counts = cursored ? ` · ${countSummary(row)}` : "";
   return {
     lead: `${livenessMark[row.liveness]} `,
     title: row.title,
-    tail: ` · ${row.age}${arc}${counts}`,
+    age: ` · ${row.age}`,
+    arcTag: row.arc === undefined ? undefined : ` ${arcTag(row.arc)}`,
+    counts: cursored ? ` · ${countSummary(row)}` : "",
   };
 }
 
 export function overviewRowLine(row: SessionOverviewRow, cursored: boolean): string {
-  const { lead, title, tail } = overviewRowParts(row, cursored);
-  return `${lead}${title}${tail}`;
+  const { lead, title, age, arcTag: arc, counts } = overviewRowParts(row, cursored);
+  return `${lead}${title}${age}${arc ?? ""}${counts}`;
 }
 
 export function relativeAge(nowMs: number, thenMs: number): string {

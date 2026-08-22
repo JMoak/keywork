@@ -76,6 +76,11 @@ export interface ModelChangeEntry extends EntryBase {
   modelId: string;
 }
 
+export interface ArcBindingEntry extends EntryBase {
+  type: "arc_binding";
+  arc?: string;
+}
+
 export interface FileTrackingDetails {
   readFiles: string[];
   modifiedFiles: string[];
@@ -90,7 +95,8 @@ export type SessionEntry =
   | CustomEntry
   | CustomMessageEntry
   | ThinkingLevelChangeEntry
-  | ModelChangeEntry;
+  | ModelChangeEntry
+  | ArcBindingEntry;
 
 export type FileEntry = SessionHeader | SessionEntry;
 

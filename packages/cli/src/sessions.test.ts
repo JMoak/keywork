@@ -11,6 +11,7 @@ import {
 } from "@keywork/engine";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  boundSessionCounts,
   findSessionFile,
   latestSessionFile,
   listSessions,
@@ -419,6 +420,30 @@ describe("sessionPort", () => {
     const reopened = await port.open(created?.id ?? "");
     expect(reopened?.name).toBe("tidy-title");
     expect((await listSessions(dir))[0]?.title).toBe("tidy-title");
+  });
+
+  it("persists an arc binding as an entry and serves it back on the attachment and the overview", async () => {
+    const dir = await tempDir();
+    const bound: Array<[string, string | undefined]> = [];
+    const port = sessionPort(dir, ".", { onArcBound: (id, arc) => bound.push([id, arc]) });
+    const created = await port.create();
+    await created?.append(textMessage("user", "hello"));
+    expect(created?.arc).toBeUndefined();
+
+    await created?.bindArc?.("dock-v2");
+    await created?.bindArc?.("dock-v2");
+    expect(bound).toEqual([[created?.id, "dock-v2"]]);
+
+    const reopened = await port.open(created?.id ?? "");
+    expect(reopened?.arc).toBe("dock-v2");
+    const items = await sessionTreePort(dir).overview?.();
+    expect(items?.[0]?.arc).toBe("dock-v2");
+    expect(await boundSessionCounts(dir)).toEqual(new Map([["dock-v2", 1]]));
+
+    await reopened?.bindArc?.(undefined);
+    expect(bound.at(-1)).toEqual([created?.id, undefined]);
+    expect((await port.open(created?.id ?? ""))?.arc).toBeUndefined();
+    expect(await boundSessionCounts(dir)).toEqual(new Map());
   });
 
   it("attaches reopened sessions through the same seam", async () => {

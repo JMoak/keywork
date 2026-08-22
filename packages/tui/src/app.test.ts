@@ -10,9 +10,12 @@ import {
   pointerPlaneId,
   type SessionAttachment,
   type SessionPort,
+  seedArcFromOrigin,
   startFreshSession,
 } from "./app.ts";
+import type { ArcsPort } from "./arcs.ts";
 import { ConversationPane } from "./conversation-pane.ts";
+import { AppProbe } from "./probe.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
 
 function attachmentOf(id: string): SessionAttachment {
@@ -251,6 +254,91 @@ describe("doctorCommand", () => {
     command.run();
     expect(opened).toEqual([]);
     expect(notices).toEqual(["no crashes recorded · nothing to show"]);
+  });
+});
+
+describe("seedArcFromOrigin (PD13 splits)", () => {
+  function arcsOver(taken: string[]): { port: ArcsPort; created: string[] } {
+    const created: string[] = [];
+    return {
+      created,
+      port: {
+        list: async () =>
+          taken.map((slug) => ({ slug, status: "active", created: "", sessions: 0 })),
+        create: async (slug) => {
+          created.push(slug);
+          return { slug, status: "active", created: "", sessions: 0 };
+        },
+        close: async () => ({ kind: "closed", delivered: 0, released: 0 }),
+        abandon: async () => {},
+      },
+    };
+  }
+
+  function probeWithSource(arc: string | undefined): AppProbe {
+    const probe = new AppProbe();
+    const source = probe.core.panes.get("session-1");
+    if (source instanceof ConversationPane) source.arc = arc;
+    return probe;
+  }
+
+  it("does nothing without an origin", async () => {
+    const bound: Array<string | undefined> = [];
+    const notice = await seedArcFromOrigin(undefined, new AppProbe().core, undefined, async (s) => {
+      bound.push(s);
+    });
+    expect(notice).toBeUndefined();
+    expect(bound).toEqual([]);
+  });
+
+  it("inherits the source pane's arc on a regular split and stays unbound when the source is", async () => {
+    const bound: Array<string | undefined> = [];
+    const bind = async (slug: string | undefined): Promise<void> => {
+      bound.push(slug);
+    };
+    const boundProbe = probeWithSource("dock-v2");
+    await seedArcFromOrigin(
+      { sourcePaneId: "session-1", arc: "inherit" },
+      boundProbe.core,
+      undefined,
+      bind,
+    );
+    expect(bound).toEqual(["dock-v2"]);
+    const unboundProbe = probeWithSource(undefined);
+    await seedArcFromOrigin(
+      { sourcePaneId: "session-1", arc: "inherit" },
+      unboundProbe.core,
+      undefined,
+      bind,
+    );
+    expect(bound).toEqual(["dock-v2"]);
+  });
+
+  it("mints a fresh arc for split-arc, naming from the source title and skipping taken slugs", async () => {
+    const bound: Array<string | undefined> = [];
+    const { port, created } = arcsOver(["arc-1"]);
+    const probe = probeWithSource("dock-v2");
+    const notice = await seedArcFromOrigin(
+      { sourcePaneId: "session-1", arc: "new" },
+      probe.core,
+      port,
+      async (slug) => {
+        bound.push(slug);
+      },
+    );
+    expect(created).toEqual(["arc-2"]);
+    expect(bound).toEqual(["arc-2"]);
+    expect(notice).toBe("arc → arc-2 · new");
+  });
+
+  it("explains itself when split-arc runs without an arcs port", async () => {
+    const notice = await seedArcFromOrigin(
+      { arc: "new" },
+      new AppProbe().core,
+      undefined,
+      async () => {},
+    );
+    expect(notice).toContain("no arcs here");
   });
 });
 

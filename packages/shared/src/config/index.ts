@@ -21,7 +21,10 @@ export {
   type PromptOverride,
   type PromptsConfig,
 } from "./schema.ts";
+export { isSlug, slugGrammar, slugProblem } from "./slug.ts";
 export {
+  listWorkspaces,
+  namedWorkspaceDir,
   openWorkspace,
   resolveAnchor,
   resolveVaultPath,
@@ -29,6 +32,8 @@ export {
   type Workspace,
   type WorkspaceAnchor,
   type WorkspaceDeclaration,
+  type WorkspaceSlot,
   workspaceDeclarationSchema,
+  writeNamedWorkspaceDeclaration,
   writeWorkspaceDeclaration,
 } from "./workspace.ts";

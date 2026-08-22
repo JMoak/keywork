@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { Message, Usage } from "../messages.ts";
 import { type CostRollup, sessionCost } from "../pricing.ts";
 import {
+  type ArcBindingEntry,
   type BranchSummaryEntry,
   buildTree,
   type CompactionEntry,
@@ -133,6 +134,16 @@ export class SessionStore {
     return this.activePath().findLast(
       (entry): entry is ModelChangeEntry => entry.type === "model_change",
     );
+  }
+
+  async appendArcBinding(arc: string | undefined): Promise<ArcBindingEntry> {
+    return this.appendEntry({ type: "arc_binding", ...(arc !== undefined && { arc }) });
+  }
+
+  arcBinding(): string | undefined {
+    return this.activePath().findLast(
+      (entry): entry is ArcBindingEntry => entry.type === "arc_binding",
+    )?.arc;
   }
 
   branch(fromId: string): void {

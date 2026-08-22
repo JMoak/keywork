@@ -1,3 +1,6 @@
+import { ArcPicker, type ArcPickerChoice } from "./arc-picker.ts";
+import { type ArcsPort, arcSlugProblem, suggestArcSlug } from "./arcs.ts";
+import { describeCloseOutcome } from "./arcs-pane.ts";
 import { CommandRegistry } from "./commands.ts";
 import { ConnectModel } from "./connect-model.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
@@ -15,6 +18,11 @@ import {
 import { ModelPicker } from "./model-picker.ts";
 import type { FileOpenOptions, Pane, PaneIntents } from "./pane.ts";
 import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
+import {
+  WorkspacePicker,
+  type WorkspacePickerChoice,
+  type WorkspacesPort,
+} from "./workspace-picker.ts";
 import { captureWorkspace, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
 type AppAction = {
@@ -33,8 +41,19 @@ const appActions: Record<string, AppAction> = {
     chords: "leader s",
     help: "new session pane",
     sticky: true,
-    invoke: (core) => core.openPane(),
-    command: { name: "split", description: "open a new session pane" },
+    invoke: (core) => core.splitPane("inherit"),
+    command: { name: "split", description: "open a new session pane in this arc" },
+  },
+  "pane.splitArc": {
+    chords: "leader shift+s",
+    help: "new session in a new arc",
+    sticky: true,
+    invoke: (core) => core.splitPane("new"),
+    command: {
+      name: "split-arc",
+      description: "new session pane in a fresh arc",
+      aliases: ["split-new-arc"],
+    },
   },
   "pane.close": {
     chords: "leader x",
@@ -174,6 +193,13 @@ const appActions: Record<string, AppAction> = {
     invoke: (core) => core.summonMemoryPane(),
     coveredBy: "memory",
   },
+  "arcs.summon": {
+    chords: "leader a",
+    help: "arcs node",
+    chainable: true,
+    invoke: (core) => core.summonArcsPane(),
+    coveredBy: "arcs",
+  },
   "help.toggle": {
     chords: ["leader /", "f1"],
     help: "this overlay",
@@ -231,12 +257,20 @@ const chainActions = new Set(
     .map(([name]) => name),
 );
 
+export type ArcOrigin = "inherit" | "new";
+
+export interface PaneOrigin {
+  sourcePaneId?: string;
+  arc: ArcOrigin;
+}
+
 export type PaneFactory = (
   id: string,
   notify: () => void,
   commands: CommandRegistry,
   resumeSessionId?: string,
   draft?: string,
+  origin?: PaneOrigin,
 ) => Pane;
 export type FilePaneFactory = (
   id: string,
@@ -257,8 +291,21 @@ export type SessionTreePaneFactory = (
   targetSession: () => string | undefined,
   sessionId?: string,
 ) => Pane;
+export type ArcsPaneFactory = (
+  id: string,
+  notify: () => void,
+  intents: PaneIntents,
+  targetSession: () => string | undefined,
+  arc?: string,
+) => Pane;
 export type MemoryPaneFactory = (id: string, notify: () => void) => Pane;
 export type McpPaneFactory = (id: string, notify: () => void) => Pane;
+
+export interface FocusedArcPort {
+  current(): string | undefined;
+  titleHint(): string | undefined;
+  bind(slug: string | undefined): Promise<void>;
+}
 
 export interface UndoPort {
   undo(): Promise<boolean>;
@@ -278,6 +325,7 @@ export interface AppCoreOptions {
   createFilePane?: FilePaneFactory;
   createBrowserPane?: BrowserPaneFactory;
   createSessionTreePane?: SessionTreePaneFactory;
+  createArcsPane?: ArcsPaneFactory;
   createMemoryPane?: MemoryPaneFactory;
   createMcpPane?: McpPaneFactory;
   isDirectory?: (path: string) => boolean;
@@ -285,6 +333,9 @@ export interface AppCoreOptions {
   presets?: PresetsPort;
   inference?: InferencePort;
   connections?: ConnectionsPort;
+  arcs?: ArcsPort;
+  focusedArc?: FocusedArcPort;
+  workspaces?: WorkspacesPort;
   currentModel?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;
   restoreWorkspace?: WorkspaceState;
@@ -364,6 +415,8 @@ type Overlay =
   | { kind: "preset"; names: readonly string[]; index: number }
   | { kind: "preset-confirm"; name: string }
   | { kind: "model"; picker: ModelPicker }
+  | { kind: "arc"; picker: ArcPicker }
+  | { kind: "workspace"; picker: WorkspacePicker }
   | { kind: "connect"; model: ConnectModel };
 
 export class AppCore {
@@ -375,6 +428,7 @@ export class AppCore {
     openFile: (path, options) => this.openFilePane(path, options),
     openSession: (sessionId, draft) => this.openPane(sessionId, draft),
     focusPane: (id) => this.layout.focus(id),
+    notice: (text) => this.showNotice(text),
   };
   leaderArmed = false;
   lastKey = "";
@@ -386,6 +440,7 @@ export class AppCore {
   private nextFile = 1;
   private nextBrowser = 1;
   private nextTree = 1;
+  private nextArcs = 1;
   private nextMemory = 1;
   private nextMcp = 1;
   private notify: () => void = () => {};
@@ -503,6 +558,14 @@ export class AppCore {
       this.handleModelKey(this.overlay.picker, chord, sequence);
       return;
     }
+    if (this.overlay?.kind === "arc") {
+      this.handleArcKey(this.overlay.picker, chord, sequence);
+      return;
+    }
+    if (this.overlay?.kind === "workspace") {
+      this.handleWorkspaceKey(this.overlay.picker, chord, sequence);
+      return;
+    }
     if (this.overlay?.kind === "connect") {
       if (this.overlay.model.handleKey(chord, sequence) === "close") this.overlay = undefined;
       return;
@@ -538,17 +601,25 @@ export class AppCore {
     this.persistWorkspace();
   }
 
-  openPane(resumeSessionId?: string, draft?: string): void {
+  openPane(resumeSessionId?: string, draft?: string, origin?: PaneOrigin): void {
     this.focusMainArea();
     const id = `session-${this.nextSession}`;
     if (!this.openInLayout(id)) return;
     this.nextSession += 1;
     this.panes.set(
       id,
-      this.options.createPane(id, this.paneChanged, this.registry, resumeSessionId, draft),
+      this.options.createPane(id, this.paneChanged, this.registry, resumeSessionId, draft, origin),
     );
     this.persistWorkspace();
     this.notify();
+  }
+
+  splitPane(arc: ArcOrigin): void {
+    const source = this.focusedConversationPaneId();
+    this.openPane(undefined, undefined, {
+      ...(source !== undefined && { sourcePaneId: source }),
+      arc,
+    });
   }
 
   closePane(): void {
@@ -611,6 +682,15 @@ export class AppCore {
     this.openMemoryPane();
   }
 
+  summonArcsPane(): void {
+    const existing = [...this.panes.keys()].find((id) => id.startsWith("arcs-"));
+    if (existing !== undefined) {
+      this.layout.focus(existing);
+      return;
+    }
+    this.openArcsPane();
+  }
+
   summonMcpPane(): void {
     const existing = [...this.panes.keys()].find((id) => id.startsWith("mcp-"));
     if (existing !== undefined) {
@@ -671,6 +751,209 @@ export class AppCore {
 
   modelPicker(): ModelPicker | undefined {
     return this.overlay?.kind === "model" ? this.overlay.picker : undefined;
+  }
+
+  openArcCommand(argument = ""): void {
+    const arcs = this.options.arcs;
+    if (arcs === undefined) return;
+    this.runArcCommand(arcs, argument.trim())
+      .catch((cause: unknown) => this.showNotice((cause as Error).message))
+      .finally(() => this.notify());
+  }
+
+  arcPicker(): ArcPicker | undefined {
+    return this.overlay?.kind === "arc" ? this.overlay.picker : undefined;
+  }
+
+  openWorkspaceCommand(argument = ""): void {
+    const workspaces = this.options.workspaces;
+    if (workspaces === undefined) return;
+    this.runWorkspaceCommand(workspaces, argument.trim())
+      .catch((cause: unknown) => this.showNotice((cause as Error).message))
+      .finally(() => this.notify());
+  }
+
+  workspacePicker(): WorkspacePicker | undefined {
+    return this.overlay?.kind === "workspace" ? this.overlay.picker : undefined;
+  }
+
+  private async runWorkspaceCommand(workspaces: WorkspacesPort, argument: string): Promise<void> {
+    const [verb = "", operand] = argument.split(/\s+/).filter((word) => word !== "");
+    switch (verb) {
+      case "":
+        this.overlay = { kind: "workspace", picker: new WorkspacePicker(await workspaces.list()) };
+        return;
+      case "new":
+        return this.createWorkspace(workspaces, operand);
+      case "default":
+        return this.switchWorkspace(workspaces, undefined);
+      default:
+        return this.switchWorkspace(workspaces, verb);
+    }
+  }
+
+  private handleWorkspaceKey(
+    picker: WorkspacePicker,
+    chord: Chord,
+    sequence: string | undefined,
+  ): void {
+    const outcome = picker.handleKey(chord, sequence);
+    if (outcome === "stay") return;
+    this.overlay = undefined;
+    if (outcome === "close") return;
+    const chosen = picker.selected();
+    const workspaces = this.options.workspaces;
+    if (chosen === undefined || workspaces === undefined) return;
+    this.applyWorkspaceChoice(workspaces, chosen)
+      .catch((cause: unknown) => this.showNotice((cause as Error).message))
+      .finally(() => this.notify());
+  }
+
+  private applyWorkspaceChoice(
+    workspaces: WorkspacesPort,
+    choice: WorkspacePickerChoice,
+  ): Promise<void> {
+    return choice.kind === "create"
+      ? this.createWorkspace(workspaces, choice.slug)
+      : this.switchWorkspace(workspaces, choice.slug);
+  }
+
+  private async createWorkspace(
+    workspaces: WorkspacesPort,
+    slug: string | undefined,
+  ): Promise<void> {
+    if (slug === undefined) {
+      this.showNotice("new needs a name · /workspace new <slug>");
+      return;
+    }
+    await workspaces.create(slug);
+    await this.switchWorkspace(workspaces, slug);
+  }
+
+  private async switchWorkspace(
+    workspaces: WorkspacesPort,
+    slug: string | undefined,
+  ): Promise<void> {
+    await workspaces.use(slug);
+    this.showNotice(`workspace → ${slug ?? "default"} · reopening`);
+    this.shutdown();
+  }
+
+  private async runArcCommand(arcs: ArcsPort, argument: string): Promise<void> {
+    const [verb = "", operand] = argument.split(/\s+/).filter((word) => word !== "");
+    switch (verb) {
+      case "":
+        return this.showArcPicker(arcs);
+      case "new":
+        return this.createArc(arcs, operand);
+      case "none":
+      case "release":
+        return this.bindFocusedArc(undefined);
+      case "close":
+        return this.closeArc(arcs, operand);
+      case "abandon":
+        return this.abandonArc(arcs, operand);
+      default:
+        return this.switchArc(arcs, verb);
+    }
+  }
+
+  private async showArcPicker(arcs: ArcsPort): Promise<void> {
+    const picker = new ArcPicker(await arcs.list(), this.options.focusedArc?.current());
+    this.overlay = { kind: "arc", picker };
+  }
+
+  private handleArcKey(picker: ArcPicker, chord: Chord, sequence: string | undefined): void {
+    const outcome = picker.handleKey(chord, sequence);
+    if (outcome === "stay") return;
+    this.overlay = undefined;
+    if (outcome === "close") return;
+    const chosen = picker.selected();
+    if (chosen !== undefined) this.applyArcChoice(chosen);
+  }
+
+  private applyArcChoice(choice: ArcPickerChoice): void {
+    const arcs = this.options.arcs;
+    if (arcs === undefined) return;
+    const act = (): Promise<void> => {
+      switch (choice.kind) {
+        case "release":
+          return this.bindFocusedArc(undefined);
+        case "bind":
+          return this.bindFocusedArc(choice.slug);
+        case "create":
+          return this.createArc(arcs, choice.slug);
+        case "archived":
+          this.showNotice(`arc ${choice.slug} is archived · pick an active arc or /arc new`);
+          return Promise.resolve();
+      }
+    };
+    act()
+      .catch((cause: unknown) => this.showNotice((cause as Error).message))
+      .finally(() => this.notify());
+  }
+
+  private async bindFocusedArc(slug: string | undefined): Promise<void> {
+    const focused = this.options.focusedArc;
+    if (focused === undefined) {
+      this.showNotice("no session pane here · /arc binds the focused session");
+      return;
+    }
+    await focused.bind(slug);
+    this.showNotice(slug === undefined ? "arc released" : `arc → ${slug}`);
+  }
+
+  private async createArc(arcs: ArcsPort, requested: string | undefined): Promise<void> {
+    const taken = (await arcs.list()).map((arc) => arc.slug);
+    const slug = requested ?? suggestArcSlug(this.options.focusedArc?.titleHint(), taken);
+    const problem = arcSlugProblem(slug);
+    if (problem !== undefined) {
+      this.showNotice(problem);
+      return;
+    }
+    if (taken.includes(slug)) {
+      this.showNotice(`an arc named ${slug} already exists · /arc ${slug} switches to it`);
+      return;
+    }
+    await arcs.create(slug);
+    const focused = this.options.focusedArc;
+    if (focused === undefined) {
+      this.showNotice(`arc ${slug} created`);
+      return;
+    }
+    await focused.bind(slug);
+    this.showNotice(`arc → ${slug} · new`);
+  }
+
+  private async switchArc(arcs: ArcsPort, slug: string): Promise<void> {
+    const found = (await arcs.list()).find((arc) => arc.slug === slug);
+    if (found === undefined) {
+      this.showNotice(`no arc named ${slug} · /arc new ${slug} creates it`);
+      return;
+    }
+    if (found.status === "archived") {
+      this.showNotice(`arc ${slug} is archived · /arc new starts another`);
+      return;
+    }
+    await this.bindFocusedArc(slug);
+  }
+
+  private async closeArc(arcs: ArcsPort, requested: string | undefined): Promise<void> {
+    const slug = requested ?? this.options.focusedArc?.current();
+    if (slug === undefined) {
+      this.showNotice("no arc to close · this session is unbound · /arc close <slug> names one");
+      return;
+    }
+    this.showNotice(describeCloseOutcome(slug, await arcs.close(slug)));
+  }
+
+  private async abandonArc(arcs: ArcsPort, slug: string | undefined): Promise<void> {
+    if (slug === undefined) {
+      this.showNotice("abandon needs a name · /arc abandon <slug>");
+      return;
+    }
+    await arcs.abandon(slug);
+    this.showNotice(`arc ${slug} abandoned · archived without distilling, nothing deleted`);
   }
 
   openConnect(argument = ""): void {
@@ -825,6 +1108,14 @@ export class AppCore {
             () => this.conversationSession(),
             entry.sessionId,
           );
+        case "arcs":
+          return this.options.createArcsPane?.(
+            entry.id,
+            this.paneChanged,
+            this.intents,
+            () => this.conversationSession(),
+            entry.arc,
+          );
         case "memory":
           return this.options.createMemoryPane?.(entry.id, this.paneChanged);
         case "mcp":
@@ -841,6 +1132,7 @@ export class AppCore {
       this.nextFile = nextAfter(id, "file", this.nextFile);
       this.nextBrowser = nextAfter(id, "browser", this.nextBrowser);
       this.nextTree = nextAfter(id, "tree", this.nextTree);
+      this.nextArcs = nextAfter(id, "arcs", this.nextArcs);
       this.nextMemory = nextAfter(id, "memory", this.nextMemory);
       this.nextMcp = nextAfter(id, "mcp", this.nextMcp);
     }
@@ -878,6 +1170,19 @@ export class AppCore {
     const id = `tree-${this.nextTree}`;
     if (!this.openInLayout(id)) return;
     this.nextTree += 1;
+    this.panes.set(
+      id,
+      create(id, this.paneChanged, this.intents, () => this.conversationSession()),
+    );
+    this.layout.dockFocused("left", this.screen());
+  }
+
+  private openArcsPane(): void {
+    const create = this.options.createArcsPane;
+    if (create === undefined) return;
+    const id = `arcs-${this.nextArcs}`;
+    if (!this.openInLayout(id)) return;
+    this.nextArcs += 1;
     this.panes.set(
       id,
       create(id, this.paneChanged, this.intents, () => this.conversationSession()),
@@ -923,6 +1228,12 @@ export class AppCore {
       }
     }
     return undefined;
+  }
+
+  private focusedConversationPaneId(): string | undefined {
+    const focused = this.layout.focused();
+    if (focused === undefined) return undefined;
+    return this.panes.get(focused)?.describe?.().kind === "conversation" ? focused : undefined;
   }
 
   private pointsAtDirectory(path: string): boolean {
@@ -1190,6 +1501,31 @@ export class AppCore {
         description: "open the memory pane: /memory",
         ...shortcut("memory.summon"),
         run: () => this.summonMemoryPane(),
+      });
+    }
+    if (this.options.createArcsPane !== undefined) {
+      this.registry.register({
+        name: "arcs",
+        description: "open the arcs node: /arcs",
+        ...shortcut("arcs.summon"),
+        run: () => this.summonArcsPane(),
+      });
+    }
+    if (this.options.workspaces !== undefined) {
+      this.registry.register({
+        name: "workspace",
+        aliases: ["workspaces"],
+        description:
+          "switch or create a workspace over this root: /workspace [slug | new <slug> | default]",
+        run: (args) => this.openWorkspaceCommand(args),
+      });
+    }
+    if (this.options.arcs !== undefined) {
+      this.registry.register({
+        name: "arc",
+        description:
+          "bind this session to an arc: /arc [slug | new [slug] | none | close | abandon <slug>]",
+        run: (args) => this.openArcCommand(args),
       });
     }
     if (this.options.createMcpPane !== undefined) {

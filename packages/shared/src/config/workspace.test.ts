@@ -1,9 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigError } from "./load.ts";
-import { openWorkspace, resolveVaultPath } from "./workspace.ts";
+import {
+  listWorkspaces,
+  namedWorkspaceDir,
+  openWorkspace,
+  resolveVaultPath,
+  writeNamedWorkspaceDeclaration,
+} from "./workspace.ts";
 
 const tempDirs: string[] = [];
 
@@ -175,6 +181,84 @@ describe("openWorkspace", () => {
 
     expect(() => openWorkspace(root)).toThrow(ConfigError);
     expect(() => openWorkspace(root)).toThrow(/unreadable|not valid JSON/);
+  });
+});
+
+describe("named workspaces (PD10)", () => {
+  it("lists only the undeclared default slot for a bare root", async () => {
+    const root = await tempRoot();
+    expect(listWorkspaces(root)).toEqual([
+      {
+        slug: undefined,
+        name: undefined,
+        declared: false,
+        declarationFile: join(root, ".keywork", "workspace.json"),
+        vaultPath: join(root, ".keywork", "memory"),
+      },
+    ]);
+  });
+
+  it("keeps the default workspace byte-stable while named ones live beside it", async () => {
+    const root = await tempRoot();
+    const defaultFile = await declareWorkspace(root, { name: "alpha" });
+    const before = await readFile(defaultFile, "utf8");
+
+    const file = writeNamedWorkspaceDeclaration(root, "frontend", { name: "Frontend revamp" });
+
+    expect(file).toBe(join(namedWorkspaceDir(root, "frontend"), "workspace.json"));
+    expect(await readFile(defaultFile, "utf8")).toBe(before);
+    expect(openWorkspace(root)?.vaultPath).toBe(join(root, ".keywork", "memory"));
+    expect(listWorkspaces(root).map((slot) => [slot.slug, slot.name])).toEqual([
+      [undefined, "alpha"],
+      ["frontend", "Frontend revamp"],
+    ]);
+  });
+
+  it("opens a named workspace from any subdirectory with its own vault and context dirs", async () => {
+    const root = await tempRoot();
+    await declareWorkspace(root, { name: "alpha" });
+    await mkdir(join(root, "web"), { recursive: true });
+    writeNamedWorkspaceDeclaration(root, "frontend", { name: "Frontend", contextDirs: ["web"] });
+    const nested = join(root, "packages", "deep");
+    await mkdir(nested, { recursive: true });
+
+    const workspace = openWorkspace(nested, "frontend");
+
+    expect(workspace).toMatchObject({
+      root,
+      slug: "frontend",
+      name: "Frontend",
+      contextDirs: [join(root, "web")],
+      vaultPath: join(root, ".keywork", "workspaces", "frontend", "memory"),
+    });
+    expect(resolveVaultPath(nested, "frontend")).toBe(workspace?.vaultPath);
+    expect(openWorkspace(nested)?.contextDirs).toEqual([]);
+  });
+
+  it("anchors named workspaces at the git root even before the default is declared", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".git"), { recursive: true });
+    writeNamedWorkspaceDeclaration(root, "infra", { name: "Infra" });
+    const nested = join(root, "ops");
+    await mkdir(nested, { recursive: true });
+
+    expect(openWorkspace(nested, "infra")?.root).toBe(root);
+    expect(openWorkspace(nested)).toBeUndefined();
+    expect(listWorkspaces(root).map((slot) => slot.slug)).toEqual([undefined, "infra"]);
+  });
+
+  it("is undefined for an unknown or malformed slug", async () => {
+    const root = await tempRoot();
+    expect(openWorkspace(root, "ghost")).toBeUndefined();
+    expect(openWorkspace(root, "Not A Slug")).toBeUndefined();
+  });
+
+  it("refuses to create a workspace under an invalid slug", async () => {
+    const root = await tempRoot();
+    expect(() => writeNamedWorkspaceDeclaration(root, "Bad Slug", { name: "x" })).toThrow(
+      ConfigError,
+    );
+    expect(listWorkspaces(root)).toHaveLength(1);
   });
 });
 
