@@ -32,7 +32,7 @@ export function replaySession(store: SessionStore, bus: EventBus<EngineEvents>):
         insideFlushTurn = false;
         continue;
       }
-      replayMessage(bus, message, entry.usage ?? zeroUsage, pendingCalls);
+      replayMessage(bus, message, entry.usage ?? zeroUsage, pendingCalls, entry.id);
     } else if (entry.type === "compaction" || entry.type === "branch_summary")
       replayUserText(bus, entry.summary);
   }
@@ -43,10 +43,11 @@ function replayMessage(
   message: Message,
   usage: Usage,
   pendingCalls: Map<string, ToolCallPart>,
+  entryId: string,
 ): void {
   switch (message.role) {
     case "user":
-      replayUserText(bus, messageText(message));
+      replayUserText(bus, messageText(message), entryId);
       return;
     case "assistant":
       replayAssistantMessage(bus, message, usage, pendingCalls);
@@ -59,8 +60,8 @@ function replayMessage(
   }
 }
 
-function replayUserText(bus: EventBus<EngineEvents>, userText: string): void {
-  bus.emit("turn.started", { userText, replay: true });
+function replayUserText(bus: EventBus<EngineEvents>, userText: string, entryId?: string): void {
+  bus.emit("turn.started", { userText, replay: true, ...(entryId !== undefined && { entryId }) });
 }
 
 function replayAssistantMessage(

@@ -15,6 +15,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { ConversationModel, type TranscriptEntry, transcriptLines } from "./conversation-model.ts";
 import { parseChord } from "./keys.ts";
+import { pageMarks } from "./marks.ts";
 import { resolvePage } from "./page.ts";
 
 const echoTool: Tool = {
@@ -301,6 +302,7 @@ describe("disposal", () => {
     );
     type(model, "one");
     await submit(model);
+    model.adoptPromptId("p1");
     model.handleKey(parseChord("escape"), undefined);
     model.handleKey(parseChord("escape"), undefined);
     model.handleKey(parseChord("return"), undefined);
@@ -648,6 +650,55 @@ describe("mutation confirmation", () => {
     expect(await model.confirmMutation(writeCall)).toBe(true);
     expect(model.pendingAsk).toBeUndefined();
   });
+
+  it("ignores modified chords at the ask so ctrl+a and meta+y neither approve nor remember", async () => {
+    const model = new ConversationModel(undefined, () => {});
+
+    const verdict = model.confirmMutation(writeCall);
+    expect(model.handleKey({ name: "a", ctrl: true, shift: false, meta: false }, undefined)).toBe(
+      true,
+    );
+    expect(model.handleKey({ name: "y", ctrl: false, shift: false, meta: true }, undefined)).toBe(
+      true,
+    );
+    expect(model.pendingAsk).toBeDefined();
+    model.handleKey(parseChord("n"), "n");
+    expect(await verdict).toBe(false);
+
+    const next = model.confirmMutation(writeCall);
+    expect(model.pendingAsk).toBeDefined();
+    model.handleKey(parseChord("y"), "y");
+    expect(await next).toBe(true);
+  });
+});
+
+describe("prompt identity", () => {
+  it("carries the replayed entry id on user entries and leaves summaries anonymous", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const model = new ConversationModel(agent, () => {});
+    agent.bus.emit("turn.started", { userText: "earlier work", replay: true });
+    agent.bus.emit("turn.started", { userText: "first", replay: true, entryId: "u1" });
+    expect(model.entries).toEqual([
+      { kind: "user", text: "earlier work" },
+      { kind: "user", text: "first", entryId: "u1" },
+    ]);
+  });
+
+  it("assigns adopted ids to live prompts in send order", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("a"), textTurn("b")]) });
+    const model = new ConversationModel(agent, () => {});
+    type(model, "one");
+    await submit(model);
+    type(model, "two");
+    await submit(model);
+    model.adoptPromptId("u1");
+    model.adoptPromptId("u2");
+    model.adoptPromptId("stray");
+    expect(model.entries.filter((entry) => entry.kind === "user")).toEqual([
+      { kind: "user", text: "one", entryId: "u1" },
+      { kind: "user", text: "two", entryId: "u2" },
+    ]);
+  });
 });
 
 describe("paste", () => {
@@ -931,6 +982,123 @@ describe("cost accounting", () => {
       text: "tokens 5▸5\ncost $0.002 · metered by the provider",
     });
   });
+
+  it("carries cost and tokens across agent swaps and attributes them per model", async () => {
+    const first = new Agent({
+      provider: new MockProvider([textTurn("a", { inputTokens: 10_000, outputTokens: 1_000 })], {
+        modelId: "gpt-5-mini",
+      }),
+    });
+    const model = new ConversationModel(first, () => {});
+    type(model, "one");
+    await submit(model);
+    expect(model.usageSummary()).toBe("$0.0045");
+
+    const second = new Agent({
+      provider: new MockProvider([textTurn("b", { inputTokens: 2_000, outputTokens: 100 })], {
+        modelId: "gpt-5",
+      }),
+      bus: first.bus,
+      history: first.history(),
+    });
+    model.swapAgent(second);
+    expect(model.usageSummary()).toBe("$0.0045");
+    type(model, "two");
+    await submit(model);
+    expect(model.usageSummary()).toBe("$0.008");
+
+    type(model, "/cost");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: [
+        "tokens 12000▸1100",
+        "cost $0.008 · estimated from gpt-5 rates",
+        "  mock/gpt-5-mini · 1 turn · 10000▸1000 · $0.0045",
+        "  mock/gpt-5 · 1 turn · 2000▸100 · $0.0035",
+      ].join("\n"),
+    });
+  });
+});
+
+describe("context budget in the conversation", () => {
+  it("reads the context off the live agent against its declared window", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("a reply of some length")], {
+        capabilities: { input: ["text"], toolCalls: true, contextWindow: 8_000 },
+      }),
+    });
+    const model = new ConversationModel(agent, () => {});
+    expect(model.contextReading()).toMatchObject({ used: 0, window: 8_000, declared: true });
+    type(model, "hello there");
+    await submit(model);
+    const reading = model.contextReading();
+    expect(reading?.used).toBeGreaterThan(0);
+    expect(reading).toMatchObject({ window: 8_000, flushAt: 7_000, compactAt: 7_334 });
+    expect(model.contextReading()).toBe(reading);
+  });
+
+  it("/context prints the readout, assuming the window when none is declared", async () => {
+    const model = new ConversationModel(
+      new Agent({ provider: new MockProvider([textTurn("hi")]) }),
+      () => {},
+    );
+    type(model, "go");
+    await submit(model);
+    type(model, "/context");
+    model.handleKey(parseChord("return"), undefined);
+    const text = model.entries.at(-1)?.text ?? "";
+    expect(text).toMatch(/^context \d+ of 200000 tokens · estimated from the conversation text\n/);
+    expect(text).toContain("memory flush at 175424 · compaction at 183616");
+    expect(text).toContain("window assumed at 200000");
+  });
+
+  it("suggests /context and /compact by prefix only, never by loose fuzz", () => {
+    const model = new ConversationModel(undefined, () => {});
+    type(model, "/co");
+    expect(model.suggestions().map((suggestion) => suggestion.name)).toEqual([
+      "cost",
+      "context",
+      "compact",
+    ]);
+  });
+
+  it("/compact without a model or a hook says so", async () => {
+    const idle = new ConversationModel(undefined, () => {});
+    type(idle, "/compact");
+    idle.handleKey(parseChord("return"), undefined);
+    expect(idle.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "no model bound · nothing to compact",
+    });
+
+    const unbound = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
+    type(unbound, "/compact");
+    unbound.handleKey(parseChord("return"), undefined);
+    expect(unbound.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "can't compact · no session store",
+    });
+  });
+
+  it("/compact occupies the pane while the hook runs and passes the focus text through", async () => {
+    const model = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
+    const asked: string[] = [];
+    let release = () => {};
+    model.bindCompaction(async (instructions) => {
+      asked.push(instructions);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    type(model, "/compact keep the file names");
+    model.handleKey(parseChord("return"), undefined);
+    expect(asked).toEqual(["keep the file names"]);
+    expect(model.busy).toBe(true);
+    release();
+    await model.lastSend;
+    expect(model.busy).toBe(false);
+  });
 });
 
 describe("the page grammar in the transcript", () => {
@@ -957,11 +1125,11 @@ describe("the page grammar in the transcript", () => {
   it("indents prose by the gutter and leaves machine output on the margin", () => {
     const model = blankModel();
     model.entries.push({ kind: "user", text: "go" });
-    model.entries.push({ kind: "tool", text: "✓ bash — ok", failed: false });
+    model.entries.push({ kind: "tool", text: "✓ bash · ok", failed: false });
 
     const lines = model.visibleTranscript(150, 60, resolvePage(156));
     expect(lines.find((line) => line.kind === "user")?.text).toBe(" go");
-    expect(lines.find((line) => line.kind === "tool")?.text).toBe("✓ bash — ok");
+    expect(lines.find((line) => line.kind === "tool")?.text).toBe("✓ bash · ok");
   });
 
   it("re-wraps when a resize crosses a tier threshold", () => {
@@ -1117,7 +1285,7 @@ describe("the voice rail and tool rows", () => {
       (candidate): candidate is TranscriptEntry & { kind: "tool" } => candidate.kind === "tool",
     );
     expect(entry?.failed).toBe(true);
-    expect(entry?.text).toMatch(/ · failed — /);
+    expect(entry?.text).toMatch(/ · failed · /);
     const row = model.visibleTranscript(80, 40).find((line) => line.kind === "tool");
     expect(row?.spans).toContainEqual({ text: "failed", tone: "bad" });
   });
@@ -1127,5 +1295,118 @@ describe("the voice rail and tool rows", () => {
     const rows = model.visibleTranscript(40, 40).filter((line) => line.kind === "tool");
     expect(rows).toHaveLength(1);
     expect(Array.from(rows[0]?.text ?? "").length).toBeLessThanOrEqual(38);
+  });
+});
+
+describe("keyboard disclosure of older tool rows", () => {
+  const twoTools = (): Agent =>
+    new Agent({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "c1", name: "echo", arguments: { text: "one" } }),
+        toolCallTurn({ type: "tool-call", callId: "c2", name: "echo", arguments: { text: "two" } }),
+        textTurn("done"),
+      ]),
+      tools: [echoTool],
+    });
+
+  async function ranTwoTools(): Promise<ConversationModel> {
+    const model = new ConversationModel(twoTools(), () => {});
+    type(model, "go");
+    await submit(model);
+    return model;
+  }
+
+  const toolLines = (model: ConversationModel) =>
+    model.visibleTranscript(80, 40).filter((line) => line.kind === "tool");
+
+  it("walks the fold cursor to older rows with shift+tab and toggles them with tab", async () => {
+    const model = await ranTwoTools();
+    expect(model.disclosing()).toBe(false);
+
+    expect(model.handleKey(parseChord("shift+tab"), undefined)).toBe(true);
+    expect(model.disclosing()).toBe(true);
+    expect(toolLines(model).at(-1)?.selected).toBe(true);
+
+    expect(model.handleKey(parseChord("shift+tab"), undefined)).toBe(true);
+    const lines = toolLines(model);
+    expect(lines[0]?.selected).toBe(true);
+    expect(lines[1]?.selected).toBeUndefined();
+
+    expect(model.handleKey(parseChord("tab"), undefined)).toBe(true);
+    const open = toolLines(model);
+    expect(open[0]?.selected).toBe(true);
+    expect(open[1]?.spans?.[0]?.tone).toBe("rule");
+    expect(open[1]?.selected).toBeUndefined();
+    expect(open.some((line) => line.text === "echo: one")).toBe(true);
+    expect(open.some((line) => line.text === "echo: two")).toBe(false);
+  });
+
+  it("wraps from the oldest row back to the newest", async () => {
+    const model = await ranTwoTools();
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("shift+tab"), undefined);
+    expect(toolLines(model).at(-1)?.selected).toBe(true);
+  });
+
+  it("leaves disclosure on escape or typing, keeping the rows as they were", async () => {
+    const model = await ranTwoTools();
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("tab"), undefined);
+    expect(model.handleKey(parseChord("escape"), undefined)).toBe(true);
+    expect(model.disclosing()).toBe(false);
+    expect(toolLines(model).some((line) => line.text === "echo: two")).toBe(true);
+    expect(toolLines(model).every((line) => line.selected === undefined)).toBe(true);
+
+    model.handleKey(parseChord("shift+tab"), undefined);
+    type(model, "x");
+    expect(model.disclosing()).toBe(false);
+    expect(model.input).toBe("x");
+  });
+
+  it("does nothing when no row can be disclosed", () => {
+    const model = new ConversationModel(undefined, () => {});
+    expect(model.handleKey(parseChord("shift+tab"), undefined)).toBe(false);
+    expect(model.disclosing()).toBe(false);
+  });
+
+  it("scrolls the cursored row into view and returns to live on escape", async () => {
+    const model = await ranTwoTools();
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("shift+tab"), undefined);
+    const visible = model.visibleTranscript(80, 2);
+    expect(visible.some((line) => line.selected === true)).toBe(true);
+    expect(model.scrollBack).toBeGreaterThan(0);
+    model.handleKey(parseChord("escape"), undefined);
+    expect(model.scrollBack).toBe(0);
+  });
+});
+
+describe("tiered transcript marks", () => {
+  it("stamps voice and rules in ASCII at glyph tier 0", async () => {
+    const model = await (async () => {
+      const agent = new Agent({
+        provider: new MockProvider([
+          toolCallTurn({
+            type: "tool-call",
+            callId: "c1",
+            name: "echo",
+            arguments: { text: "hi" },
+          }),
+          textTurn("# Title\nbody"),
+        ]),
+        tools: [echoTool],
+      });
+      const built = new ConversationModel(agent, () => {});
+      type(built, "go");
+      await submit(built);
+      return built;
+    })();
+    const ascii = pageMarks({ glyphTier: 0, nerdFont: false });
+    model.handleKey(parseChord("tab"), undefined);
+    const lines = model.visibleTranscript(80, 40, resolvePage(80), ascii);
+    expect(lines.map((line) => line.stamp)).toEqual(["# ", ". ", "  ", "  ", "  ", "+ ", "  "]);
+    expect(lines[2]?.text).toBe("-".repeat(78));
+    expect(lines[5]?.text).toBe("= Title");
   });
 });

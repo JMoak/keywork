@@ -11,8 +11,8 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
-import { runHeadless } from "./run.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { conclude, exitCodeOf, runHeadless } from "./run.ts";
 
 const tempDirs: string[] = [];
 
@@ -47,17 +47,24 @@ describe("runHeadless", () => {
       json: true,
       sessionDir,
       provider,
+      permissions: () => "allow",
       print: (line) => lines.push(line),
     });
 
-    expect(outcome.exitCode === 0 && messageText(outcome.message)).toBe("done");
+    expect(outcome.outcome === "completed" && messageText(outcome.message)).toBe("done");
     const events = lines.map((line) => JSON.parse(line));
     const types = events.map((event) => event.type);
+    expect(types[0]).toBe("run.started");
     expect(types).toContain("turn.started");
     expect(types).toContain("tool.started");
     expect(types).toContain("tool.output");
     expect(types).toContain("tool.finished");
-    expect(types.at(-1)).toBe("turn.completed");
+    expect(types.at(-2)).toBe("turn.completed");
+    expect(events.at(-1)).toMatchObject({
+      type: "run.finished",
+      outcome: "completed",
+      exitCode: 0,
+    });
     expect(types.indexOf("tool.output")).toBeLessThan(types.indexOf("tool.finished"));
     const chunks = events
       .filter((event) => event.type === "tool.output")
@@ -78,7 +85,7 @@ describe("runHeadless", () => {
     ]);
   });
 
-  it("refuses to run without a provider: hint on stderr, exit 1, no output, no session", async () => {
+  it("refuses to run without a provider: hint on stderr, exit 3, no output, no session", async () => {
     const cwd = await tempDir();
     const sessionDir = await tempDir();
     const out: string[] = [];
@@ -101,7 +108,7 @@ describe("runHeadless", () => {
       }),
     ).rejects.toThrow("exit requested");
 
-    expect(exits).toEqual([1]);
+    expect(exits).toEqual([3]);
     expect(err.join("\n")).toContain("provider");
     expect(out).toEqual([]);
     expect(await readdir(sessionDir)).toEqual([]);
@@ -233,7 +240,7 @@ describe("runHeadless", () => {
       print: (l) => lines.push(l),
     });
 
-    expect(outcome.exitCode).toBe(0);
+    expect(exitCodeOf(outcome)).toBe(0);
     expect(lines).toEqual(["plain answer"]);
   });
 });
@@ -261,6 +268,7 @@ describe("session journal in headless runs", () => {
       projectTrusted: true,
       sessionDir,
       provider,
+      permissions: () => "allow",
       print: (line) => lines.push(line),
     });
 
@@ -273,7 +281,7 @@ describe("session journal in headless runs", () => {
     const state = extensionState(store.activePath());
     expect(state.injections).toEqual([{ source: "project-instructions", id: "AGENTS.md" }]);
     expect(state.decisions).toEqual([
-      { tool: "bash", callId: "call-1", verdict: "granted", gate: "default" },
+      { tool: "bash", callId: "call-1", verdict: "granted", gate: "policy" },
     ]);
   });
 });
@@ -389,6 +397,7 @@ describe("persistent shell across tool calls", () => {
       cwd,
       json: true,
       provider,
+      permissions: () => "allow",
       print: (line) => lines.push(line),
     });
 
@@ -410,6 +419,53 @@ describe("headless exit contract", () => {
     }),
   };
 
+  function hangingProvider(onStreaming: () => void): Provider {
+    return {
+      name: "hanging",
+      async *stream(request) {
+        yield { type: "text", text: "partial thought" };
+        onStreaming();
+        await new Promise((_, reject) => {
+          const abort = () => reject(new Error("aborted"));
+          if (request.signal?.aborted) abort();
+          else request.signal?.addEventListener("abort", abort, { once: true });
+        });
+      },
+    };
+  }
+
+  const bashCall = toolCallTurn({
+    type: "tool-call",
+    callId: "call-1",
+    name: "bash",
+    arguments: { command: "echo hi" },
+  });
+
+  const goldenDir = fileURLToPath(new URL("./fixtures/headless/", import.meta.url));
+
+  async function expectGolden(name: string, lines: readonly string[], cwd: string): Promise<void> {
+    const events = lines.map((line) => maskVolatile(JSON.parse(line), cwd));
+    const file = join(goldenDir, `${name}.jsonl`);
+    if (process.env.KEYWORK_UPDATE_GOLDENS === "1") {
+      await mkdir(goldenDir, { recursive: true });
+      await writeFile(file, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+    }
+    const golden = (await readFile(file, "utf8"))
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => JSON.parse(line));
+    expect(events).toEqual(golden);
+  }
+
+  function maskVolatile(event: Record<string, unknown>, cwd: string): Record<string, unknown> {
+    if (event.type !== "run.started") return event;
+    return {
+      ...event,
+      cwd: event.cwd === cwd ? "<cwd>" : event.cwd,
+      session: event.session === null ? null : "<session>",
+    };
+  }
+
   it("exits 0 with stdout carrying exactly the final assistant message", async () => {
     const lines: string[] = [];
 
@@ -421,8 +477,25 @@ describe("headless exit contract", () => {
       print: (line) => lines.push(line),
     });
 
-    expect(outcome).toMatchObject({ exitCode: 0 });
+    expect(outcome.outcome).toBe("completed");
+    expect(exitCodeOf(outcome)).toBe(0);
     expect(lines).toEqual(["all done"]);
+  });
+
+  it("completed: golden stream", async () => {
+    const cwd = await tempDir();
+    const lines: string[] = [];
+
+    await runHeadless({
+      prompt: "hi",
+      cwd,
+      json: true,
+      sessionDir: await tempDir(),
+      provider: new MockProvider([textTurn("all done")], "mock-model"),
+      print: (line) => lines.push(line),
+    });
+
+    await expectGolden("completed", lines, cwd);
   });
 
   it("exits 1 on provider failure with the reason on stderr, never stdout", async () => {
@@ -438,28 +511,26 @@ describe("headless exit contract", () => {
       printError: (line) => err.push(line),
     });
 
-    expect(outcome).toEqual({ exitCode: 1, failure: "provider unreachable after retries" });
+    expect(outcome).toEqual({ outcome: "failed", error: "provider unreachable after retries" });
+    expect(exitCodeOf(outcome)).toBe(1);
     expect(out).toEqual([]);
     expect(err).toEqual(["provider unreachable after retries"]);
   });
 
-  it("emits engine.error on the JSON event stream and exits 1", async () => {
+  it("failed: golden stream carries engine.error then run.finished", async () => {
+    const cwd = await tempDir();
     const lines: string[] = [];
 
     const outcome = await runHeadless({
       prompt: "hi",
-      cwd: await tempDir(),
+      cwd,
       json: true,
       provider: brokenProvider,
       print: (line) => lines.push(line),
     });
 
-    expect(outcome.exitCode).toBe(1);
-    const events = lines.map((line) => JSON.parse(line));
-    expect(events.at(-1)).toEqual({
-      type: "engine.error",
-      message: "provider unreachable after retries",
-    });
+    expect(exitCodeOf(outcome)).toBe(1);
+    await expectGolden("failed", lines, cwd);
   });
 
   it("treats a completed turn that reports inability as success", async () => {
@@ -471,30 +542,185 @@ describe("headless exit contract", () => {
       print: () => {},
     });
 
-    expect(outcome.exitCode).toBe(0);
+    expect(exitCodeOf(outcome)).toBe(0);
   });
 
-  it("treats a denied tool call as a refused result, not a terminal failure", async () => {
-    const provider = new MockProvider([
-      toolCallTurn({
-        type: "tool-call",
-        callId: "call-1",
-        name: "bash",
-        arguments: { command: "echo blocked" },
-      }),
-      textTurn("worked around it"),
-    ]);
+  it("treats a policy-denied tool call as a refused result, not a terminal failure", async () => {
+    const outcome = await runHeadless({
+      prompt: "try a command",
+      cwd: await tempDir(),
+      json: false,
+      provider: new MockProvider([bashCall, textTurn("worked around it")]),
+      permissions: () => "deny",
+      print: () => {},
+    });
+
+    expect(outcome.outcome).toBe("completed");
+    expect(exitCodeOf(outcome)).toBe(0);
+  });
+
+  it("denied: an ask nobody can answer is refused, named on stderr, and exits 4", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
 
     const outcome = await runHeadless({
       prompt: "try a command",
       cwd: await tempDir(),
       json: false,
-      provider,
-      permissions: () => "deny",
-      print: () => {},
+      provider: new MockProvider([bashCall, textTurn("I could not run it.")]),
+      print: (line) => out.push(line),
+      printError: (line) => err.push(line),
     });
 
-    expect(outcome.exitCode).toBe(0);
+    expect(outcome).toMatchObject({
+      outcome: "denied",
+      refused: [{ tool: "bash", callId: "call-1", verdict: "denied", gate: "headless" }],
+    });
+    expect(exitCodeOf(outcome)).toBe(4);
+    expect(out).toEqual(["I could not run it."]);
+    expect(err.join("\n")).toContain("bash");
+    expect(err.join("\n")).toContain("--preset open");
+  });
+
+  it("denied: golden stream", async () => {
+    const cwd = await tempDir();
+    const lines: string[] = [];
+
+    await runHeadless({
+      prompt: "try a command",
+      cwd,
+      json: true,
+      provider: new MockProvider([bashCall, textTurn("I could not run it.")], "mock-model"),
+      print: (line) => lines.push(line),
+    });
+
+    await expectGolden("denied", lines, cwd);
+  });
+
+  it("interrupted: the abort signal ends the turn, persists the session, and exits 130", async () => {
+    const cwd = await tempDir();
+    const sessionDir = await tempDir();
+    const lines: string[] = [];
+    const interrupts = new AbortController();
+
+    const outcome = await runHeadless({
+      prompt: "think for a while",
+      cwd,
+      json: true,
+      sessionDir,
+      provider: hangingProvider(() => interrupts.abort()),
+      signal: interrupts.signal,
+      print: (line) => lines.push(line),
+    });
+
+    expect(outcome).toMatchObject({ outcome: "interrupted", saved: true });
+    expect(exitCodeOf(outcome)).toBe(130);
+    await expectGolden("interrupted", lines, cwd);
+    const [file] = await readdir(sessionDir);
+    const store = await SessionStore.open(join(sessionDir, file as string));
+    expect(store.messages().map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("unresolved: the typed failure rides run.finished and exits 3", async () => {
+    const lines: string[] = [];
+    const failure = {
+      code: "unconfigured" as const,
+      message: "no inference provider is configured",
+      nextAction: "run keywork connect",
+    };
+
+    const code = conclude(
+      { outcome: "unresolved", failure },
+      { json: true, print: (line) => lines.push(line), printError: () => {} },
+    );
+
+    expect(code).toBe(3);
+    await expectGolden("unresolved", lines, "");
+  });
+
+  it("unresolved: plain mode explains the failure and the next action on stderr", () => {
+    const err: string[] = [];
+    const failure = {
+      code: "unconfigured" as const,
+      message: "no inference provider is configured",
+      nextAction: "run keywork connect",
+    };
+
+    conclude(
+      { outcome: "unresolved", failure },
+      { json: false, print: () => {}, printError: (line) => err.push(line) },
+    );
+
+    expect(err.join("\n")).toContain("no inference provider is configured · run keywork connect");
+    expect(err.join("\n")).toContain("keywork connect");
+  });
+
+  it("usage: exits 2 with the complaint on the stream", async () => {
+    const lines: string[] = [];
+
+    const code = conclude(
+      { outcome: "usage", error: 'keywork run needs a prompt, like: keywork run "fix the tests"' },
+      { json: true, print: (line) => lines.push(line), printError: () => {} },
+    );
+
+    expect(code).toBe(2);
+    await expectGolden("usage", lines, "");
+  });
+
+  it("still ends with exactly one run.finished when saving the session fails, as a failed run", async () => {
+    const cwd = await tempDir();
+    const lines: string[] = [];
+    const append = vi
+      .spyOn(SessionStore.prototype, "append")
+      .mockRejectedValue(new Error("disk full"));
+    try {
+      const outcome = await runHeadless({
+        prompt: "hi",
+        cwd,
+        json: true,
+        sessionDir: await tempDir(),
+        provider: new MockProvider([textTurn("all done")]),
+        print: (line) => lines.push(line),
+      });
+
+      expect(outcome).toEqual({
+        outcome: "failed",
+        error: "keywork run: the turn ended but saving the session failed: disk full",
+      });
+      expect(exitCodeOf(outcome)).toBe(1);
+      const finished = lines
+        .map((line) => JSON.parse(line))
+        .filter((e) => e.type === "run.finished");
+      expect(finished).toEqual([
+        {
+          type: "run.finished",
+          outcome: "failed",
+          exitCode: 1,
+          error: "keywork run: the turn ended but saving the session failed: disk full",
+        },
+      ]);
+    } finally {
+      append.mockRestore();
+    }
+  });
+
+  it("interrupted without a session dir says so instead of claiming a save", async () => {
+    const err: string[] = [];
+    const interrupts = new AbortController();
+
+    const outcome = await runHeadless({
+      prompt: "think for a while",
+      cwd: await tempDir(),
+      json: false,
+      provider: hangingProvider(() => interrupts.abort()),
+      signal: interrupts.signal,
+      print: () => {},
+      printError: (line) => err.push(line),
+    });
+
+    expect(outcome).toMatchObject({ outcome: "interrupted", saved: false });
+    expect(err.join("\n")).toContain("nothing was saved");
+    expect(err.join("\n")).not.toContain("was saved up to this point");
   });
 
   it("persists the partial session even when the turn fails", async () => {

@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import type { ReviewInbox, ReviewItem } from "./inbox.ts";
 import type { MemoryStore } from "./store.ts";
+import { isMissingFileError, writeFileAtomic } from "./vault-files.ts";
 
 export type AskAnswer = "yes" | "always" | "no";
 
@@ -73,8 +73,7 @@ export class AskGateLedger {
 
   private async save(state: AskGateState): Promise<void> {
     if (this.filePath === undefined) return;
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await writeFileAtomic(this.filePath, `${JSON.stringify(state, null, 2)}\n`);
   }
 }
 
@@ -117,8 +116,9 @@ async function readState(filePath: string): Promise<AskGateState> {
   let raw: string;
   try {
     raw = await readFile(filePath, "utf8");
-  } catch {
-    return emptyState();
+  } catch (error) {
+    if (isMissingFileError(error)) return emptyState();
+    throw error;
   }
   return validState(parseState(raw));
 }

@@ -32,6 +32,14 @@ export class FilePane implements Pane {
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
+  settled(): Promise<void> {
+    return this.model.settled();
+  }
+
+  dispose(): void {
+    this.model.dispose();
+  }
+
   view(context: PaneContext): PaneView {
     const { theme, height, width } = context;
     this.lastPageRows = paneContentHeight(height);

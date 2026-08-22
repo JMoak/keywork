@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -99,6 +99,14 @@ describe("AskGateLedger", () => {
     const proposed = await ledger.proposePreferences(inbox);
     expect(proposed).toHaveLength(1);
     expect(proposed[0]).toMatchObject({ toolShape: "bash git" });
+  });
+
+  it("surfaces a read failure other than a missing file instead of resetting the ledger", async () => {
+    const dir = await scratchDir();
+    const ledger = new AskGateLedger({ filePath: dir });
+    await expect(ledger.events()).rejects.toThrow();
+    await expect(ledger.record("bash git", "yes")).rejects.toThrow();
+    expect((await stat(dir)).isDirectory()).toBe(true);
   });
 
   it("persists events and proposal fingerprints across restarts", async () => {

@@ -47,6 +47,38 @@ describe("redactForPersistence", () => {
     expect(redactForPersistence(text, [])).toBe(text);
   });
 
+  it.each([
+    ["AWS access key", "AKIAIOSFODNN7EXAMPLE", "aws-key"],
+    ["Slack bot token", "xoxb-1234567890-abcdefghijk", "slack"],
+    ["Slack user token", "xoxp-1234567890-0987654321-abcdefghijklmnop", "slack"],
+    ["npm token", "npm_abcdefghijklmnopqrstuvwxyz0123456789", "npm"],
+    ["GitHub token", "ghp_abcdefghijklmnopqrstuvwxyzabcdefghij", "github"],
+    ["GitHub fine-grained token", "github_pat_abcdefghijklmnopqrstuv", "github"],
+    ["GitLab token", "glpat-abcdefghijklmnopqrstuvwxyz", "gitlab"],
+  ])("elides a %s by prefix shape", (_, token, label) => {
+    expect(redactForPersistence(`saw ${token} in a log`, [])).toBe(
+      `saw ‹redacted:${label}› in a log`,
+    );
+  });
+
+  it("elides a PEM private key block as one unit", () => {
+    const pem = [
+      "-----BEGIN RSA PRIVATE KEY-----",
+      "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz01",
+      "zyxwvutsrqponmlkjihgfedcba9876543210==",
+      "-----END RSA PRIVATE KEY-----",
+    ].join("\n");
+    expect(redactForPersistence(`key:\n${pem}\ndone`, [])).toBe(
+      "key:\n‹redacted:private-key›\ndone",
+    );
+  });
+
+  it("elides credentials embedded in a URL and keeps the host", () => {
+    expect(redactForPersistence("db is postgres://user:sup3rsecretpw@host/db", [])).toBe(
+      "db is postgres://‹redacted:url-credentials›@host/db",
+    );
+  });
+
   it("holds against a stacked bypass attempt", () => {
     const secret = "Sup3r-Secret-Value-Alpha99";
     const text = `plain ${secret}, quoted "${secret}", inline\`${secret}\`, sk-${secret}`;

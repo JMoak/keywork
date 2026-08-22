@@ -4,6 +4,7 @@ import { killTree, within } from "../proc.ts";
 export const mcpProtocolVersion = "2025-06-18";
 
 const closeGraceMs = 500;
+const maxLineChars = 4 * 1024 * 1024;
 
 export interface McpTool {
   name: string;
@@ -201,6 +202,7 @@ class StdioChannel implements McpConnection {
   }
 
   private receive(chunk: string): void {
+    if (this.closed) return;
     this.buffer += chunk;
     let newline = this.buffer.indexOf("\n");
     while (newline !== -1) {
@@ -209,6 +211,16 @@ class StdioChannel implements McpConnection {
       if (line.length > 0) this.dispatchLine(line);
       newline = this.buffer.indexOf("\n");
     }
+    if (this.buffer.length > maxLineChars) this.rejectFlood();
+  }
+
+  private rejectFlood(): void {
+    this.buffer = "";
+    this.settleClosed(
+      new McpProtocolError(`server sent over ${maxLineChars} characters without a newline`),
+    );
+    this.teardown ??= killTree(this.child, this.exited);
+    void this.teardown.catch(() => undefined);
   }
 
   private dispatchLine(line: string): void {

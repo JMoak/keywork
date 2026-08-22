@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type AgentDefinition,
+  extensionState,
   MockProvider,
   messageText,
   type Provider,
   type ProviderRequest,
+  SessionStore,
   type TurnDelta,
+  tapJournal,
   textTurn,
 } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
@@ -77,7 +80,7 @@ describe("composeWorkspace", () => {
     expect(composition.memory).toBeUndefined();
     expect(composition.mcp).toBeUndefined();
     expect(composition.extensions).toEqual({ commands: [], agents: [], skills: [], failures: [] });
-    expect(composition.systemPrompt.length).toBeGreaterThan(0);
+    expect(composition.systemPromptFor(undefined).length).toBeGreaterThan(0);
   });
 
   it("opens workspace memory when a trusted declaration exists", async () => {
@@ -102,57 +105,113 @@ describe("composeWorkspace", () => {
 });
 
 describe("composeAgents", () => {
-  it("wires one provider into both chat-style and panes-style agents", async () => {
+  it("builds chat-style and panes-style agents on whichever provider each build names", async () => {
     const composition = await composedIn(await tempDir());
-    const provider = new MockProvider([textTurn("first"), textTurn("second")]);
-    const agents = composeAgents(composition, { provider });
+    const first = new MockProvider([textTurn("first")]);
+    const second = new MockProvider([textTurn("second")]);
+    const agents = composeAgents(composition);
 
-    const chatStyle = agents.build({ guard: {}, history: [], sessionId: "session-a" });
-    const panesStyle = agents.build({ guard: {}, sessionId: () => "session-b" });
+    const chatStyle = agents.build({
+      provider: first,
+      guard: {},
+      history: [],
+      sessionId: "session-a",
+    });
+    const panesStyle = agents.build({ provider: second, guard: {}, sessionId: () => "session-b" });
 
     expect(messageText(await chatStyle.send("hi"))).toBe("first");
     expect(messageText(await panesStyle.send("hi"))).toBe("second");
   });
 
-  it("gives default agents the composed system prompt and definitions their own", async () => {
+  it("gives default agents the composed system prompt for their model and definitions their own", async () => {
     const composition = await composedIn(await tempDir());
     const provider = new RecordingProvider();
-    const agents = composeAgents(composition, { provider });
+    const agents = composeAgents(composition);
 
-    await agents.build({ guard: {} }).send("hello");
-    await agents.build({ guard: {}, definition: briefAgent }).send("hello");
+    await agents.build({ provider, guard: {} }).send("hello");
+    await agents.build({ provider, guard: {}, definition: briefAgent }).send("hello");
 
-    expect(provider.requests[0]?.systemPrompt).toBe(composition.systemPrompt);
+    expect(provider.requests[0]?.systemPrompt).toBe(composition.systemPromptFor(undefined));
     expect(provider.requests[1]?.systemPrompt).toBe("be brief");
+  });
+
+  it("journals what every built agent was handed: instructions and bootstrap, but not a definition's own prompt", async () => {
+    const cwd = await declaredWorkspace();
+    await writeFile(join(cwd, "AGENTS.md"), "be careful");
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "memory", "MEMORY.md"), "- [[Runtime Convention]]\n");
+    await writeFile(
+      join(cwd, ".keywork", "memory", "Runtime Convention.md"),
+      "---\nprovenance: user\npinned: true\n---\nTests run on Node, not Bun.\n",
+    );
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const agents = composeAgents(composition);
+    const store = await SessionStore.create(join(cwd, "session.jsonl"), cwd);
+
+    const composed = agents.build({ provider: new MockProvider([textTurn("ok")]), guard: {} });
+    const tap = tapJournal(composed.bus, store);
+    await composed.send("hello");
+    await tap.flush();
+    tap.stop();
+    const defined = agents.build({
+      provider: new MockProvider([textTurn("ok")]),
+      guard: {},
+      definition: briefAgent,
+    });
+    const announced: string[] = [];
+    defined.bus.on("context.injected", ({ injection }) => announced.push(injection.source));
+    await defined.send("hello");
+
+    expect(extensionState(store.entries()).injections).toEqual([
+      { source: "project-instructions", id: "AGENTS.md" },
+      { source: "memory-bootstrap", scope: "workspace" },
+    ]);
+    expect(announced).toEqual([]);
   });
 
   it("skips memory flushes when the workspace has no memory", async () => {
     const composition = await composedIn(await tempDir());
-    const agents = composeAgents(composition, { provider: new MockProvider([]) });
-    expect(agents.flushFor("session-a")).toBeUndefined();
+    const agents = composeAgents(composition);
+    expect(agents.flushFor("session-a", new MockProvider([]))).toBeUndefined();
   });
 
   it("memoizes one memory flush per session", async () => {
     const cwd = await declaredWorkspace();
     const composition = await composedIn(cwd, { projectTrusted: true });
-    const agents = composeAgents(composition, { provider: new MockProvider([]) });
+    const agents = composeAgents(composition);
+    const provider = new MockProvider([]);
 
-    const flush = agents.flushFor("session-a");
+    const flush = agents.flushFor("session-a", provider);
     expect(flush).toBeDefined();
-    expect(agents.flushFor("session-a")).toBe(flush);
-    expect(agents.flushFor("session-b")).not.toBe(flush);
+    expect(agents.flushFor("session-a", provider)).toBe(flush);
+    expect(agents.flushFor("session-b", provider)).not.toBe(flush);
+  });
+
+  it("lets a memoized flush follow the provider in force for its session", async () => {
+    const cwd = await declaredWorkspace();
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const agents = composeAgents(composition);
+    const before = new MockProvider([], "model-a");
+    const after = new MockProvider([], "model-b");
+
+    agents.flushFor("session-a", before);
+    agents.flushFor("session-a", after);
+
+    const flush = agents.flushFor("session-a", after) as unknown as { provider: Provider };
+    expect(flush.provider.modelId).toBe("model-b");
   });
 
   it("releasing a session drops its memoized flush", async () => {
     const cwd = await declaredWorkspace();
     const composition = await composedIn(cwd, { projectTrusted: true });
-    const agents = composeAgents(composition, { provider: new MockProvider([]) });
+    const agents = composeAgents(composition);
+    const provider = new MockProvider([]);
 
-    const flush = agents.flushFor("session-a");
+    const flush = agents.flushFor("session-a", provider);
     agents.release("session-a");
 
-    expect(agents.flushFor("session-a")).toBeDefined();
-    expect(agents.flushFor("session-a")).not.toBe(flush);
+    expect(agents.flushFor("session-a", provider)).toBeDefined();
+    expect(agents.flushFor("session-a", provider)).not.toBe(flush);
   });
 });
 

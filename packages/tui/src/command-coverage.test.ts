@@ -18,6 +18,7 @@ function fullyEquippedProbe(): AppProbe {
     createFilePane: (id) => stubPane(id),
     createBrowserPane: (id) => stubPane(id),
     createSessionTreePane: (id) => stubPane(id),
+    createArcsPane: (id) => stubPane(id),
     createMemoryPane: (id) => stubPane(id),
     createMcpPane: (id) => stubPane(id),
     isDirectory: () => false,

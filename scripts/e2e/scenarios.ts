@@ -2,9 +2,20 @@ import { strict as assert } from "node:assert";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createPresetSwitch, isPresetName } from "../../packages/cli/src/presets.ts";
-import { type Tool, textTurn, writeTool } from "../../packages/engine/src/index.ts";
-import { presetOrder, requiresConfirmation } from "../../packages/shared/src/index.ts";
-import type { PresetsPort } from "../../packages/tui/src/index.ts";
+import {
+  compactionDue,
+  contextBudgetFor,
+  estimateConversationTokens,
+  type Message,
+  readContext,
+  type Tool,
+  type TurnDelta,
+  textMessage,
+  textTurn,
+  writeTool,
+} from "../../packages/engine/src/index.ts";
+import { parseFlavor, presetOrder, requiresConfirmation } from "../../packages/shared/src/index.ts";
+import { keyworkNightFlavor, type PresetsPort } from "../../packages/tui/src/index.ts";
 import type { Scenario, Stage } from "./scenario.ts";
 
 const notesBefore = "alpha\nbeta\ngamma\n";
@@ -35,6 +46,10 @@ const listTool: Tool = {
   execute: async () => "total 4\ndrwxr-xr-x 2 dev dev 4096 .",
 };
 
+const longSessionWindow = 2_000;
+const firstFold = "## Goal\nKeep the budget honest across every turn.";
+const secondFold = "## Goal\nSecond fold, focused on decisions.";
+
 export const scenarios: readonly Scenario[] = [
   coldStart(),
   firstConversation(),
@@ -42,6 +57,8 @@ export const scenarios: readonly Scenario[] = [
   chromaSweep(),
   pageTiers(),
   sessionLifecycle(),
+  longSession(),
+  arcsOnScreen(),
   discovery(),
   defectRepros(),
   pointerTour(),
@@ -61,11 +78,13 @@ function coldStart(): Scenario {
     name: "cold-start",
     description: "boot with no provider → guidance in the conversation pane → real quit path",
     provider: "none",
+    goldens: ["no-provider-guidance"],
     run: async (stage) => {
       await stage.settle();
-      const boot = await stage.until("no provider · set");
-      assert.ok(boot.includes("set KEYWORK_OPENROUTER_API_KEY"), "guidance names the fix");
-      await stage.capture("no-provider-guidance", { golden: true });
+      const boot = await stage.until("no model bound");
+      assert.ok(boot.includes("/connect adds a provider"), "guidance teaches /connect and waits");
+      assert.ok(boot.includes("/model picks one"), "guidance teaches /model and waits");
+      await stage.capture("no-provider-guidance");
       const code = await stage.quit();
       assert.equal(code, 0, "the real exit path reaches the exit seam cleanly");
     },
@@ -92,7 +111,7 @@ function firstConversation(): Scenario {
         },
         { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
       ],
-      textTurn("All set — beta is BETA now."),
+      textTurn("All set, beta is BETA now."),
     ],
     run: async (stage) => {
       await stage.settle();
@@ -107,11 +126,11 @@ function firstConversation(): Scenario {
       await stage.capture("ask-with-diff");
 
       await stage.press("y");
-      const settled = await stage.until("All set — beta is BETA now.");
+      const settled = await stage.until("All set, beta is BETA now.");
       assert.ok(settled.includes("write notes.txt"), "the tool row names its verb and subject");
       assert.ok(settled.includes("· done"), "the tool row settles to its outcome word");
       assert.equal(workspaceRead(stage, "notes.txt"), notesAfter);
-      await stage.until("─ session-1 ─");
+      await stage.until("─ session-1 · ░");
       await stage.capture("turn-complete");
 
       await stage.type("/undo");
@@ -283,7 +302,7 @@ function pageTiers(): Scenario {
         },
         { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
       ],
-      textTurn("Tier sweep ready — the same turn at four widths."),
+      textTurn("Tier sweep ready: the same turn at four widths."),
     ],
     run: async (stage) => {
       assert.ok(pageProse.length > 100, "the prose fixture must overrun the broadsheet measure");
@@ -320,6 +339,18 @@ function pageTiers(): Scenario {
       assert.ok(!refolded.includes("drwxr-xr-x"), "tab folds the disclosed row back down");
       assert.ok(disclosed.includes("░ list"), "the collapsed row survives disclosure");
 
+      await stage.press("shift+tab");
+      const cursored = await stage.until("disclose · tab toggles");
+      assert.ok(!cursored.includes("drwxr-xr-x"), "shift+tab only places the fold cursor");
+      await stage.press("tab");
+      await stage.until("drwxr-xr-x");
+      await stage.capture("tool-row-keyboard-open");
+      await stage.press("escape", "tab");
+      await stage.settle();
+      const keyboardRefolded = await stage.capture("tool-row-keyboard-refolded");
+      assert.ok(!keyboardRefolded.includes("drwxr-xr-x"), "tab closes the row after esc");
+      assert.ok(!keyboardRefolded.includes("disclose ·"), "esc leaves disclosure");
+
       await stage.resize(84, 36);
       const column = await stage.capture("column-84");
       assert.ok(
@@ -330,8 +361,22 @@ function pageTiers(): Scenario {
       await stage.resize(56, 36);
       await stage.capture("clipping-56");
 
+      await stage.resize(38, 36);
+      const masthead = await stage.capture("masthead-38");
+      assert.ok(!masthead.includes("The width tier"), "the masthead tile replaces the transcript");
+      assert.ok(/[▀▄]/.test(masthead), "the headline is set in the half-block face");
+      assert.ok(masthead.includes("idle"), "one status line sits under the headline");
+
+      await stage.type("x");
+      const typing = await stage.until("The width tier");
+      assert.ok(!/[▀▄]/.test(typing), "typing dismisses the masthead; input outranks ceremony");
+      await stage.press("backspace");
+      await stage.until("idle");
+
       await stage.resize(32, 36);
-      await stage.capture("masthead-32");
+      const caps = await stage.capture("masthead-32");
+      assert.ok(caps.includes("SESSION 1"), "a word too wide for the face falls to caps");
+      assert.ok(!/[▀▄]/.test(caps), "caps fallback sets no half-blocks");
 
       await stage.quit();
     },
@@ -339,7 +384,7 @@ function pageTiers(): Scenario {
 }
 
 function sessionLifecycle(): Scenario {
-  const reply = "Noted — the plan is recorded.";
+  const reply = "Noted. The plan is recorded.";
   const toolProse = "Counting the files now.";
   const toolVerdict = "There are 4 files here.";
   const settledToolMark = "· done";
@@ -366,7 +411,7 @@ function sessionLifecycle(): Scenario {
       await stage.type("plan the fix");
       await stage.press("enter");
       await stage.until(reply);
-      await stage.until("─ session-1 ─");
+      await stage.until("─ session-1 · ░");
       await stage.capture("conversation");
 
       await stage.press("ctrl+k", "t", "escape");
@@ -435,18 +480,206 @@ function sessionLifecycle(): Scenario {
   };
 }
 
+interface LongSessionScript {
+  readonly turns: readonly TurnDelta[][];
+  readonly compactingTurn: number;
+}
+
+function longSessionScript(): LongSessionScript {
+  const budget = contextBudgetFor(longSessionWindow);
+  const reply = (turn: number) =>
+    `reply ${turn}: ${"the budget ticks up with every turn of the conversation and the gauge keeps the count honest. ".repeat(11)}`;
+  const conversation: Message[] = [];
+  const turns: TurnDelta[][] = [];
+  for (let turn = 1; ; turn += 1) {
+    conversation.push(textMessage("user", `step ${turn}`), textMessage("assistant", reply(turn)));
+    turns.push(textTurn(reply(turn)));
+    if (compactionDue(readContext(estimateConversationTokens(conversation), budget))) {
+      return {
+        turns: [...turns, textTurn(firstFold), textTurn(reply(turn + 1)), textTurn(secondFold)],
+        compactingTurn: turn,
+      };
+    }
+  }
+}
+
+function gaugeCount(frame: string): number {
+  const match = / session-1 · [░▒▓█] ([\d.]+)(k?) /.exec(frame);
+  assert.ok(match !== null, "the calm gauge is present in the title");
+  return Number(match[1]) * (match[2] === "k" ? 1000 : 1);
+}
+
+function longSession(): Scenario {
+  const script = longSessionScript();
+  const cockpit = parseFlavor({ ...keyworkNightFlavor, name: "cockpit", instruments: "cockpit" });
+  return {
+    name: "long-session",
+    description:
+      "C55/IR-10 fixture: a 2k-token window filled turn by turn → gauge climbs the ramp → compaction fires and re-arms → /context readout → cockpit bar → manual /compact",
+    size: { width: 120, height: 32 },
+    script: "shared",
+    contextWindow: longSessionWindow,
+    turns: script.turns,
+    flavors: [cockpit],
+    run: async (stage) => {
+      await stage.settle();
+      const step = async (turn: number): Promise<string> => {
+        await stage.type(`step ${turn}`);
+        await stage.press("enter");
+        await stage.until(`reply ${turn}:`);
+        await stage.settle();
+        return stage.capture(`turn-${String(turn).padStart(2, "0")}`);
+      };
+
+      const early = await step(1);
+      assert.match(
+        early,
+        / session-1 · ░ [\d.]+k? /,
+        "the calm gauge is one ramp cell plus the count",
+      );
+
+      let frame = early;
+      for (let turn = 2; turn < script.compactingTurn; turn += 1) frame = await step(turn);
+      assert.match(
+        frame,
+        / session-1 · [▒▓] [\d.]+k? /,
+        "the cell darkens as the flush mark nears",
+      );
+
+      const compacted = await step(script.compactingTurn);
+      assert.ok(compacted.includes("compacted "), "compaction posts its notice in the transcript");
+      assert.ok(
+        compacted.includes("into a summary · context now"),
+        "the notice states the new reading",
+      );
+      assert.match(compacted, / session-1 · ░ [\d.]+k? /, "the gauge drops back to the light cell");
+
+      await stage.type("/context");
+      await stage.press("enter");
+      const readout = await stage.until("memory flush at");
+      assert.ok(readout.includes("window declared"), "the readout names the declared window");
+      await stage.capture("context-readout");
+
+      const grown = await step(script.compactingTurn + 1);
+      await stage.type("/compact focus on decisions");
+      await stage.press("enter");
+      await stage.settle();
+      const folded = await stage.capture("manual-compact");
+      assert.ok(
+        gaugeCount(folded) < gaugeCount(grown),
+        "/compact folds again on request and the gauge drops",
+      );
+      assert.ok(
+        occurrences(folded, "compacted ") >= 1,
+        "the manual fold posts its notice in the transcript",
+      );
+
+      await stage.type("/flavor-cockpit");
+      await stage.press("enter");
+      await stage.until("flavor now cockpit");
+      await stage.settle();
+      const cockpitFrame = await stage.capture("gauge-cockpit-bar");
+      assert.match(
+        cockpitFrame,
+        /[█░]+▒▓ [\d.]+k?\/2k/,
+        "cockpit draws the bar with both marks as cells",
+      );
+
+      await stage.quit();
+    },
+  };
+}
+
+function arcsOnScreen(): Scenario {
+  return {
+    name: "arcs",
+    description:
+      "/arc new binds and tags the pane → split inherits → arcs node groups sessions → split-arc mints a fresh arc → picker → close through the airlock",
+    size: { width: 160, height: 40 },
+    files: { ".keywork/workspace.json": `${JSON.stringify({ name: "arcs-e2e" })}\n` },
+    turns: [textTurn("noted.")],
+    run: async (stage) => {
+      await stage.settle();
+      await stage.type("/arc new dock-v2");
+      await stage.press("enter");
+      const bound = await stage.until("arc → dock-v2 · new");
+      assert.ok(
+        bound.includes("session-1 #dock-v2"),
+        "the title carries the arc tag at broadsheet",
+      );
+      await stage.settle();
+      await stage.capture("arc-bound");
+
+      await stage.press("ctrl+k", "s", "escape");
+      await stage.until("session tree · 2 sessions");
+      await stage.settle();
+      const inherited = await stage.capture("split-inherits-arc");
+      assert.ok(
+        occurrences(inherited, "#dock-v2") >= 3,
+        "both overview rows carry the tag and the status line wears the focused arc chip",
+      );
+      assert.ok(inherited.includes("· #dock-v2 ·"), "the status line wears the focused arc chip");
+
+      await stage.type("/arcs");
+      await stage.press("enter");
+      const node = await stage.until("dock-v2 · 2 sessions");
+      assert.ok(
+        node.includes(" arcs · 1 arc "),
+        "the arcs node titles itself with the active count",
+      );
+      await stage.settle();
+      await stage.capture("arcs-node");
+
+      await stage.press("ctrl+k", "l", "escape");
+      await stage.press("ctrl+k", "shift+s", "escape");
+      await stage.until("arc → arc-2 · new");
+      const minted = await stage.until("arc-2 · 1 session");
+      assert.ok(minted.includes("dock-v2 · 2 sessions"), "split-arc leaves the source arc alone");
+      await stage.settle();
+      await stage.capture("split-new-arc");
+
+      await stage.type("/arc");
+      await stage.press("enter");
+      const picker = await stage.until("no arc · release this session");
+      assert.ok(picker.includes("arc-2 · 1 session · current"), "the picker marks the bound arc");
+      assert.ok(picker.includes("dock-v2 · 2 sessions"), "the picker counts bound sessions");
+      await stage.capture("arc-picker");
+      await stage.press("escape");
+
+      await stage.type("/arc none");
+      await stage.press("enter");
+      await stage.until("arc released");
+      await stage.until("no arc · 1 session");
+      await stage.press("escape");
+      await stage.settle();
+      const released = await stage.capture("arc-released");
+      assert.ok(!released.includes("· #arc-2 ·"), "releasing drops the status chip");
+
+      await stage.type("/arc close dock-v2");
+      await stage.press("enter");
+      await stage.until("arc dock-v2 closed · delivered 0 notes · 2 sessions released");
+      await stage.until("dock-v2 · archived");
+      await stage.settle();
+      await stage.capture("arc-closed");
+
+      await stage.quit();
+    },
+  };
+}
+
 function discovery(): Scenario {
   return {
     name: "discovery",
     description: "palette, slash autocomplete, help overlay, preset picker",
     presets: harnessPresets,
+    goldens: ["quick-open", "palette", "slash-completions", "help-overlay", "preset-picker"],
     run: async (stage) => {
       await stage.settle();
 
       await stage.press("ctrl+p");
       const quickOpen = await stage.until("jump to this pane");
       assert.ok(!quickOpen.includes("▸ split"), "quick open holds no command rows");
-      await stage.capture("quick-open", { golden: true });
+      await stage.capture("quick-open");
 
       await stage.type(">");
       const palette = await stage.until("▸ split");
@@ -454,26 +687,26 @@ function discovery(): Scenario {
       assert.ok(palette.includes("open a new session pane"), "palette rows carry descriptions");
       assert.ok(palette.includes("zoom the focused pane"), "palette lists command rows");
       assert.ok(!palette.includes("jump to this pane"), "command mode hides the jump rows");
-      await stage.capture("palette", { golden: true });
+      await stage.capture("palette");
       await stage.press("escape");
 
       await stage.type("/ex");
       await stage.settle();
       const completions = await stage.until("exit-all");
       assert.ok(completions.includes("exit"), "slash input ranks the exit commands");
-      await stage.capture("slash-completions", { golden: true });
+      await stage.capture("slash-completions");
       await stage.press("backspace", "backspace", "backspace");
 
       await stage.press("ctrl+k", "/");
       await stage.until(" keywork keys ");
-      await stage.capture("help-overlay", { golden: true });
+      await stage.capture("help-overlay");
       await stage.press("escape");
 
       await stage.type("/preset");
       await stage.press("enter");
       const picker = await stage.until("standard · active");
       assert.ok(picker.includes("careful") && picker.includes("open"), "picker lists every preset");
-      await stage.capture("preset-picker", { golden: true });
+      await stage.capture("preset-picker");
       await stage.press("escape");
 
       await stage.quit();
@@ -565,8 +798,8 @@ function sessionDirDelta(before: SessionFileListing, after: SessionFileListing):
   const report = [
     `session files before boot: ${before.size} · after quit: ${after.size}`,
     added.length === 0
-      ? "added: none — restore revived sessions without minting files"
-      : `added: ${added.length} — PRODUCT FINDING: a plain open/quit cycle minted session files`,
+      ? "added: none · restore revived sessions without minting files"
+      : `added: ${added.length} · PRODUCT FINDING: a plain open/quit cycle minted session files`,
     ...added.map((name) => `  + ${name}  ${after.get(name)} bytes`),
     removed.length === 0 ? "removed: none" : `removed: ${removed.length}`,
     ...removed.map((name) => `  - ${name}  ${before.get(name)} bytes`),
@@ -678,7 +911,7 @@ function rowOf(frame: string, marker: string): number {
 }
 
 function paneTitleCount(frame: string): number {
-  return frame.split("session-").length - 1;
+  return [...frame.matchAll(/╭─ (?:[░▒▓█] )?session-\d+\b/g)].length;
 }
 
 function occurrences(frame: string, marker: string): number {

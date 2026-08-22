@@ -5,6 +5,7 @@ import {
   knownCostNanos,
   type Message,
   messageText,
+  parseReference,
   replaySession,
   type SessionEntry,
   SessionStore,
@@ -18,6 +19,7 @@ import type {
   SessionTreePort,
   SessionTreeView,
 } from "@keywork/tui";
+import { exitCodes } from "./dispatch.ts";
 
 export interface OpenedSession {
   store: SessionStore;
@@ -68,6 +70,8 @@ export interface SessionPortSeams {
   onAttach?(store: SessionStore): void;
   onRelease?(sessionId: string): void;
   onChange?(sessionId: string): void;
+  onListen?(sessionId: string, stop: () => void): void;
+  onArcBound?(sessionId: string, arc: string | undefined): void;
 }
 
 export interface SessionChangeFeed {
@@ -94,9 +98,18 @@ export function sessionPort(
   seams: CheckpointTagSource | SessionPortSeams = {},
 ): SessionPort {
   const resolved = typeof seams === "function" ? { checkpointTag: seams } : seams;
+  const listeners = new Map<string, Set<() => void>>();
   const attach = (store: SessionStore): SessionAttachment => {
     resolved.onAttach?.(store);
-    return attachmentOf(store, resolved);
+    return attachmentOf(store, {
+      ...resolved,
+      onListen: (sessionId, stop) => {
+        const stops = listeners.get(sessionId) ?? new Set();
+        stops.add(stop);
+        listeners.set(sessionId, stops);
+        resolved.onListen?.(sessionId, stop);
+      },
+    });
   };
   return {
     async open(id: string): Promise<SessionAttachment | undefined> {
@@ -115,6 +128,8 @@ export function sessionPort(
       }
     },
     release(sessionId: string): void {
+      for (const stop of listeners.get(sessionId) ?? []) stop();
+      listeners.delete(sessionId);
       resolved.onRelease?.(sessionId);
     },
   };
@@ -168,23 +183,33 @@ export async function findSessionFile(dir: string, idPrefix: string): Promise<st
 
 export type CleanupConfirm = (question: string) => Promise<boolean>;
 
+export interface SessionsCommandIo {
+  json?: boolean;
+  print?: (line: string) => void;
+  printError?: (line: string) => void;
+  confirm?: CleanupConfirm | undefined;
+}
+
 export async function sessionsCommand(
   args: readonly string[],
   dir: string,
-  print: (line: string) => void = console.log,
-  confirmCleanup?: CleanupConfirm,
+  io: SessionsCommandIo = {},
 ): Promise<number> {
+  const print = io.print ?? console.log;
+  const printError = io.printError ?? console.error;
   const [subcommand = "list", ...rest] = args;
   switch (subcommand) {
     case "list":
-      return printList(dir, print, rest.includes("--json"), confirmCleanup);
+      return printList(dir, print, io.json === true, io.confirm);
     case "tree":
       return printTree(dir, rest[0], print);
     case "fork":
       return forkSession(dir, rest[0], rest[1], print);
     default:
-      print(`unknown sessions subcommand: ${subcommand} (expected list, tree, or fork)`);
-      return 1;
+      printError(
+        `keywork sessions: unknown subcommand "${subcommand}" (expected list, tree, or fork)`,
+      );
+      return exitCodes.usage;
   }
 }
 
@@ -225,31 +250,70 @@ async function openById(dir: string, idPrefix: string): Promise<SessionStore | u
 
 export function attachmentOf(
   store: SessionStore,
-  seams: Pick<SessionPortSeams, "checkpointTag" | "onChange"> = {},
+  seams: Pick<SessionPortSeams, "checkpointTag" | "onChange" | "onListen" | "onArcBound"> = {},
 ): SessionAttachment {
   const name = store.name();
+  const selection = store.modelSelection();
+  const arc = store.arcBinding();
   const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
     ...(name !== undefined && { name }),
+    ...(selection !== undefined && {
+      modelReference: `${selection.provider}/${selection.modelId}`,
+    }),
+    ...(arc !== undefined && { arc }),
     history: store.messages(),
     replay: (bus) => {
       replaySession(store, bus);
-      bus.on("turn.delta", ({ delta, replay }) => {
+      const stop = bus.on("turn.delta", ({ delta, replay }) => {
         if (replay !== true && delta.type === "done") finishedTurnUsage.push(delta.usage);
       });
+      seams.onListen?.(store.header.id, stop);
     },
     append: async (message) => {
       const checkpoint = message.role === "user" ? seams.checkpointTag?.() : undefined;
       const usage = message.role === "assistant" ? finishedTurnUsage.shift() : undefined;
-      await store.append(message, usage, checkpoint);
+      const entry = await store.append(message, usage, checkpoint);
       seams.onChange?.(store.header.id);
+      return { entryId: entry.id };
     },
     rename: async (title) => {
       await store.setName(title);
       seams.onChange?.(store.header.id);
     },
+    recordModel: async (reference) => {
+      const current = store.modelSelection();
+      const parsed = parseReference(reference);
+      if (parsed === undefined) return;
+      if (current?.provider === parsed.provider && current.modelId === parsed.model) return;
+      await store.appendModelChange(parsed.provider, parsed.model);
+      seams.onChange?.(store.header.id);
+    },
+    bindArc: async (slug) => {
+      if (store.arcBinding() === slug) return;
+      await store.appendArcBinding(slug);
+      seams.onArcBound?.(store.header.id, slug);
+      seams.onChange?.(store.header.id);
+    },
   };
+}
+
+export async function boundSessionCounts(dir: string): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const name of await sessionFileNames(dir)) {
+    const arc = await arcBindingOf(join(dir, name));
+    if (arc !== undefined) counts.set(arc, (counts.get(arc) ?? 0) + 1);
+  }
+  return counts;
+}
+
+async function arcBindingOf(file: string): Promise<string | undefined> {
+  try {
+    return (await SessionStore.open(file)).arcBinding();
+  } catch {
+    return undefined;
+  }
 }
 
 async function resumableFile(dir: string, request: ResumeRequest): Promise<string | undefined> {
@@ -267,6 +331,7 @@ async function overviewItem(file: string): Promise<SessionOverviewItem | undefin
     const stats = store.stats();
     if (stats.entries === 0) return undefined;
     const costNanos = knownCostNanos(stats.cost);
+    const arc = store.arcBinding();
     return {
       id: store.header.id,
       title: store.name() ?? firstUserText(store) ?? "(untitled session)",
@@ -275,6 +340,7 @@ async function overviewItem(file: string): Promise<SessionOverviewItem | undefin
       branchCount: stats.branchPoints,
       labelCount: stats.labels,
       ...(costNanos !== undefined && { costNanos }),
+      ...(arc !== undefined && { arc }),
     };
   } catch {
     return undefined;
@@ -389,6 +455,8 @@ function describeEntry(entry: SessionEntry): string {
       return `label ${entry.label ?? "(cleared)"} → ${entry.targetId.slice(0, 8)}`;
     case "session_info":
       return `named "${entry.name ?? ""}"`;
+    case "arc_binding":
+      return entry.arc === undefined ? "arc released" : `arc → ${entry.arc}`;
     default:
       return entry.type;
   }

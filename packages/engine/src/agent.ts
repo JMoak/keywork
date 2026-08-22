@@ -2,11 +2,14 @@ import { type EngineEvents, EventBus } from "./bus.ts";
 import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
-import type { PermissionDecision } from "./session/journal.ts";
+import type { ContextInjection, PermissionDecision, PermissionGate } from "./session/journal.ts";
 import { findTool, type Tool } from "./tools.ts";
+
+export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
 
 export interface ToolGuard {
   confirm?(call: ToolCallPart): Promise<boolean>;
+  gate?: ConfirmingGate;
   beforeMutation?(): Promise<void>;
 }
 
@@ -21,6 +24,7 @@ export interface AgentOptions {
   history?: readonly Message[];
   guard?: ToolGuard;
   permissions?: PermissionResolver;
+  standingInjections?: readonly ContextInjection[];
 }
 
 export class AgentBusyError extends Error {
@@ -39,12 +43,13 @@ interface AssistantTurn {
 
 export class Agent {
   readonly bus: EventBus<EngineEvents>;
-  private readonly provider: Provider;
+  readonly provider: Provider;
   private readonly systemPrompt: string;
   private readonly tools: readonly Tool[];
   private readonly messages: Message[];
   private readonly guard: ToolGuard | undefined;
   private readonly permissions: PermissionResolver | undefined;
+  private unannouncedInjections: readonly ContextInjection[];
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
   private costTotals: CostRollup = emptyCostRollup();
   private active: AbortController | undefined;
@@ -58,6 +63,7 @@ export class Agent {
     this.messages = [...(options.history ?? [])];
     this.guard = options.guard;
     this.permissions = options.permissions;
+    this.unannouncedInjections = options.standingInjections ?? [];
   }
 
   history(): readonly Message[] {
@@ -91,11 +97,11 @@ export class Agent {
     const forwardAbort = () => controller.abort();
     if (signal?.aborted) controller.abort();
     signal?.addEventListener("abort", forwardAbort, { once: true });
-
-    this.checkpointed = false;
-    this.messages.push(textMessage("user", userText));
-    this.bus.emit("turn.started", { userText });
     try {
+      this.checkpointed = false;
+      this.messages.push(textMessage("user", userText));
+      this.announceStandingInjections();
+      this.bus.emit("turn.started", { userText });
       return await this.runUntilFinalMessage(controller);
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
@@ -113,9 +119,13 @@ export class Agent {
       const turn = await this.streamAssistantTurn(signal);
       this.totals = addUsage(this.totals, turn.usage);
       this.costTotals = withTurnCost(this.costTotals, turn.usage, this.provider.modelId);
-      if (turn.failure !== undefined) throw turn.failure;
+      if (turn.failure !== undefined) {
+        this.keepPartialMessage(turn.message);
+        this.settleOrphanedToolCalls(turn.message);
+        throw turn.failure;
+      }
       if (turn.interrupted) {
-        if (turn.message.parts.length > 0) this.messages.push(turn.message);
+        this.keepPartialMessage(turn.message);
         return this.finishInterrupted(controller, turn.message);
       }
       this.messages.push(turn.message);
@@ -138,6 +148,10 @@ export class Agent {
     this.release(controller);
     this.bus.emit("turn.interrupted", { message });
     return message;
+  }
+
+  private keepPartialMessage(message: Message): void {
+    if (message.parts.length > 0) this.messages.push(message);
   }
 
   private settleOrphanedToolCalls(message: Message): void {
@@ -170,6 +184,12 @@ export class Agent {
 
   private release(controller: AbortController): void {
     if (this.active === controller) this.active = undefined;
+  }
+
+  private announceStandingInjections(): void {
+    const injections = this.unannouncedInjections;
+    this.unannouncedInjections = [];
+    for (const injection of injections) this.bus.emit("context.injected", { injection });
   }
 
   private async streamAssistantTurn(signal: AbortSignal): Promise<AssistantTurn> {
@@ -221,15 +241,15 @@ export class Agent {
         return { callId: call.callId, output: "denied by permission policy", isError: true };
       }
       if (verdict === "ask") {
-        const askedUser = this.guard?.confirm !== undefined;
+        const guardAsked = this.guard?.confirm !== undefined;
         const approved = await this.confirmWithGuard(call);
         this.emitPermissionDecision(
           call,
           approved ? "granted" : "denied",
-          askedUser ? "user" : gate,
+          guardAsked ? (this.guard?.gate ?? "user") : gate,
         );
         if (!approved) {
-          return { callId: call.callId, output: "declined by user", isError: true };
+          return { callId: call.callId, output: declinedOutput(this.guard?.gate), isError: true };
         }
       } else {
         this.emitPermissionDecision(call, "granted", gate);
@@ -268,7 +288,13 @@ function defaultPermission(tool: Tool): ToolPermission {
   return tool.mutates === true ? "ask" : "allow";
 }
 
-function addUsage(left: Usage, right: Usage): Usage {
+function declinedOutput(gate: ConfirmingGate | undefined): string {
+  return gate === "headless"
+    ? "not approved: this run has no one to ask, so the call was refused"
+    : "declined by user";
+}
+
+export function addUsage(left: Usage, right: Usage): Usage {
   const cacheCreation =
     (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0);
   const cacheRead = (left.cacheReadInputTokens ?? 0) + (right.cacheReadInputTokens ?? 0);

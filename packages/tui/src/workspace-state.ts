@@ -59,6 +59,9 @@ function parsePane(value: unknown): WorkspacePane | undefined {
         kind: "session-tree",
         ...(value.sessionId !== undefined && { sessionId: value.sessionId }),
       };
+    case "arcs":
+      if (value.arc !== undefined && typeof value.arc !== "string") return undefined;
+      return { id: value.id, kind: "arcs", ...(value.arc !== undefined && { arc: value.arc }) };
     case "memory":
       return { id: value.id, kind: "memory" };
     case "mcp":

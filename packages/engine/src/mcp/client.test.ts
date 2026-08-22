@@ -8,6 +8,7 @@ import {
   connectStdioServer,
   McpAbortedError,
   type McpConnection,
+  McpProtocolError,
   McpRequestTimeoutError,
   McpServerExitedError,
   type StdioServerSpec,
@@ -80,6 +81,14 @@ describe("stdio MCP client", () => {
       const echoed = await connection.callTool("echo", { text: "still works" });
       expect(echoed.text).toBe("still works");
     });
+  });
+
+  it("rejects a server that floods stdout without a newline instead of buffering it", async () => {
+    const begun = Date.now();
+    await expect(
+      connectStdioServer(fixtureSpec("flood"), { requestTimeoutMs: 20_000 }),
+    ).rejects.toBeInstanceOf(McpProtocolError);
+    expect(Date.now() - begun).toBeLessThan(15_000);
   });
 
   it("times out against a server that never handshakes", async () => {

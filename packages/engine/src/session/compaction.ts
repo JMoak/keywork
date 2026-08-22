@@ -1,6 +1,12 @@
 import { type Message, textMessage, type Usage } from "../messages.ts";
 import type { Provider } from "../provider.ts";
 import {
+  type ContextBudget,
+  type ContextReading,
+  compactionDue,
+  reserveCaps,
+} from "./context-budget.ts";
+import {
   type CompactionEntry,
   contextMessages,
   type FileTrackingDetails,
@@ -15,8 +21,8 @@ export interface CompactionSettings {
 }
 
 export const defaultCompactionSettings: CompactionSettings = {
-  reserveTokens: 16384,
-  keepRecentTokens: 20000,
+  reserveTokens: reserveCaps.compaction,
+  keepRecentTokens: reserveCaps.keepRecent,
 };
 
 export interface CompactionOptions {
@@ -32,16 +38,20 @@ export interface CompactionPlan {
   tokensBefore: number;
 }
 
-export function shouldCompact(
-  contextTokens: number,
-  contextWindow: number,
-  settings: CompactionSettings = defaultCompactionSettings,
-): boolean {
-  return contextTokens > contextWindow - settings.reserveTokens;
+export function shouldCompact(reading: ContextReading): boolean {
+  return compactionDue(reading);
+}
+
+export function compactionSettingsFor(budget: ContextBudget): CompactionSettings {
+  return { reserveTokens: budget.compactionReserve, keepRecentTokens: budget.keepRecent };
 }
 
 export function estimateContextTokens(store: SessionStore): number {
-  return estimateTokens(contextMessages(store.contextEntries()));
+  return estimateConversationTokens(contextMessages(store.contextEntries()));
+}
+
+export function estimateConversationTokens(messages: readonly Message[]): number {
+  return Math.ceil(serializeConversation(messages).length / 4);
 }
 
 export function planCompaction(
@@ -64,7 +74,7 @@ export function planCompaction(
     firstKeptEntryId: (candidates[cut] as SessionEntry).id,
     ...(previous?.summary !== undefined && { previousSummary: previous.summary }),
     ...(previous?.details !== undefined && { previousDetails: previous.details }),
-    tokensBefore: estimateTokens(contextMessages(context)),
+    tokensBefore: estimateConversationTokens(contextMessages(context)),
   };
 }
 
@@ -182,12 +192,8 @@ function pathArgument(args: unknown): string | undefined {
   return typeof path === "string" ? path : undefined;
 }
 
-function estimateTokens(messages: readonly Message[]): number {
-  return Math.ceil(serializeConversation(messages).length / 4);
-}
-
 function estimateEntryTokens(entry: SessionEntry): number {
-  if (entry.type === "message") return estimateTokens([entry.message]);
+  if (entry.type === "message") return estimateConversationTokens([entry.message]);
   if (entry.type === "compaction" || entry.type === "branch_summary")
     return Math.ceil(entry.summary.length / 4);
   return 0;

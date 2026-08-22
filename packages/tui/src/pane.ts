@@ -11,6 +11,7 @@ export interface PaneContext {
   width: number;
   height: number;
   borderColor?: string;
+  instruments?: "calm" | "cockpit";
 }
 
 export interface FileOpenOptions {
@@ -21,6 +22,7 @@ export interface PaneIntents {
   openFile(path: string, options?: FileOpenOptions): void;
   openSession(sessionId: string, draft?: string): void;
   focusPane(id: string): void;
+  notice?(text: string): void;
 }
 
 export type PaneDescriptor =
@@ -28,6 +30,7 @@ export type PaneDescriptor =
   | { kind: "file"; path: string }
   | { kind: "browser"; root: string }
   | { kind: "session-tree"; sessionId?: string }
+  | { kind: "arcs"; arc?: string }
   | { kind: "memory" }
   | { kind: "mcp" };
 

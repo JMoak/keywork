@@ -172,7 +172,7 @@ export class ArcAirlock {
       deliveryTime,
     );
     await this.workspace.appendDaily(
-      `arc ${slug} delivered — distilled ${delivered.length} notes`,
+      `arc ${slug} delivered · distilled ${delivered.length} notes`,
       "agent",
     );
     const arc = await this.registry.archiveArc(slug, { delivered: deliveryTime });
@@ -251,7 +251,7 @@ export class ArcAirlock {
   }
 
   private async gatherCandidates(slug: string): Promise<ArcCloseCandidate[]> {
-    const notes = (await this.registry.arcStore(slug).listNotes()).filter(isCandidateNote);
+    const notes = await this.registry.arcStore(slug).listNotes();
     const cited = new Set(
       [...((await this.citedNotes?.(slug)) ?? [])].map((name) => titleKey(name)),
     );
@@ -418,10 +418,6 @@ export class ArcAirlock {
       item.kind === "daily" ? stripDailyMarkers(item.content) : `arc ${slug} straggler MOC update`;
     await this.workspace.appendDaily(`straggler from arc ${slug}: ${text}`, "untrusted");
   }
-}
-
-function isCandidateNote(note: Note): boolean {
-  return note.name !== "MOC" && !note.path.startsWith("questions/");
 }
 
 function noteTarget(note: Note): { title: string } | { entity: string } {

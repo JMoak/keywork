@@ -2,14 +2,14 @@ import { z } from "zod";
 import { defineTool } from "../tools/define.ts";
 import type { Tool } from "../tools.ts";
 import type { CitationLedger } from "./citations.ts";
-import { type MemorySearch, type SearchHit, tokenize } from "./search.ts";
+import { type MemorySearcher, type SearchHit, tokenize } from "./search.ts";
 import type { DailyEntry, MemoryStore, Note } from "./store.ts";
 
 export type RecallListener = (noteName: string) => void;
 
 export function memoryRecallTools(
   store: MemoryStore,
-  search: MemorySearch,
+  search: MemorySearcher,
   onRecall?: RecallListener,
   ledger?: CitationLedger,
 ): Tool[] {
@@ -21,7 +21,7 @@ export function memoryRecallTools(
 
 export function memorySearchTool(
   store: MemoryStore,
-  search: MemorySearch,
+  search: MemorySearcher,
   onRecall?: RecallListener,
   ledger?: CitationLedger,
 ): Tool {
@@ -135,7 +135,7 @@ function renderHit(hit: SearchHit, index: number): string {
       : [`superseded by [[${hit.relations.supersededBy}]]`]),
     ...hit.relations.contradicts.map((name) => `contradicts [[${name}]]`),
   ];
-  const line = `${index + 1}. [[${hit.note.name}]] — ${snippet(hit.note.body)}`;
+  const line = `${index + 1}. [[${hit.note.name}]] · ${snippet(hit.note.body)}`;
   return currency.length === 0 ? line : `${line}\n   ${currency.join(" · ")}`;
 }
 

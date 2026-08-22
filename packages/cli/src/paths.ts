@@ -12,17 +12,18 @@ export function projectKey(cwd: string): string {
 
 export type WorkspaceIdentity = string;
 
-export function workspaceIdentity(cwd: string): WorkspaceIdentity {
+export function workspaceIdentity(cwd: string, slug?: string): WorkspaceIdentity {
   const anchor = resolveAnchor(cwd);
+  if (slug !== undefined) return anchoredIdentity(anchor.root, slug);
   return anchor.source === "launch" ? projectKey(cwd) : anchoredIdentity(anchor.root);
 }
 
-export function defaultSessionDir(cwd: string): string {
-  return join(keyworkHome(), "sessions", workspaceIdentity(cwd));
+export function defaultSessionDir(cwd: string, slug?: string): string {
+  return join(keyworkHome(), "sessions", workspaceIdentity(cwd, slug));
 }
 
-export function snapshotGitDir(cwd: string): string {
-  return join(keyworkHome(), "snapshots", workspaceIdentity(cwd));
+export function snapshotGitDir(cwd: string, slug?: string): string {
+  return join(keyworkHome(), "snapshots", workspaceIdentity(cwd, slug));
 }
 
 export function workspaceStateFile(identity: WorkspaceIdentity): string {
@@ -73,12 +74,13 @@ function pendingMigrations(
     .sort((a, b) => a.from - b.from);
 }
 
-function keyworkHome(): string {
+export function keyworkHome(): string {
   return join(homedir(), ".keywork");
 }
 
-function anchoredIdentity(root: string): string {
-  return createHash("sha256").update(`workspace:${root}`).digest("hex").slice(0, 12);
+function anchoredIdentity(root: string, slug?: string): string {
+  const subject = slug === undefined ? `workspace:${root}` : `workspace:${root}:${slug}`;
+  return createHash("sha256").update(subject).digest("hex").slice(0, 12);
 }
 
 function layoutFile(stateHome: string): string {

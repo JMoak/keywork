@@ -11,6 +11,7 @@ import {
 } from "@keywork/engine";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  boundSessionCounts,
   findSessionFile,
   latestSessionFile,
   listSessions,
@@ -144,17 +145,33 @@ describe("sessionsCommand", () => {
     const { dir } = await seededDir();
     const lines: string[] = [];
 
-    const code = await sessionsCommand([], dir, (line) => lines.push(line));
+    const code = await sessionsCommand([], dir, { print: (line) => lines.push(line) });
 
     expect(code).toBe(0);
     expect(lines.join("\n")).toContain("start");
+  });
+
+  it("prints the list as JSON when asked", async () => {
+    const { dir, id } = await seededDir();
+    const lines: string[] = [];
+
+    const code = await sessionsCommand(["list"], dir, {
+      json: true,
+      print: (line) => lines.push(line),
+    });
+
+    expect(code).toBe(0);
+    const listed = JSON.parse(lines.join("\n")) as { id: string }[];
+    expect(listed.map((session) => session.id)).toEqual([id]);
   });
 
   it("renders the tree with branch points and labels", async () => {
     const { dir, id } = await seededDir();
     const lines: string[] = [];
 
-    const code = await sessionsCommand(["tree", id.slice(0, 8)], dir, (line) => lines.push(line));
+    const code = await sessionsCommand(["tree", id.slice(0, 8)], dir, {
+      print: (line) => lines.push(line),
+    });
 
     expect(code).toBe(0);
     const output = lines.join("\n");
@@ -167,9 +184,9 @@ describe("sessionsCommand", () => {
     const { dir, id } = await seededDir();
     const lines: string[] = [];
 
-    const code = await sessionsCommand(["fork", id.slice(0, 8), "good-path"], dir, (line) =>
-      lines.push(line),
-    );
+    const code = await sessionsCommand(["fork", id.slice(0, 8), "good-path"], dir, {
+      print: (line) => lines.push(line),
+    });
 
     expect(code).toBe(0);
     const sessions = await listSessions(dir);
@@ -186,12 +203,21 @@ describe("sessionsCommand", () => {
     expect((await openOrResumeSession(dir, ".", { resumeId: id })).seeded).toHaveLength(2);
   });
 
-  it("rejects unknown subcommands and missing ids", async () => {
+  it("rejects unknown subcommands as usage on stderr and missing ids as failures", async () => {
     const dir = await tempDir();
-    const lines: string[] = [];
+    const out: string[] = [];
+    const err: string[] = [];
+    const io = {
+      print: (line: string) => out.push(line),
+      printError: (line: string) => err.push(line),
+    };
 
-    expect(await sessionsCommand(["bogus"], dir, (line) => lines.push(line))).toBe(1);
-    expect(await sessionsCommand(["tree", "nope"], dir, (line) => lines.push(line))).toBe(1);
+    expect(await sessionsCommand(["bogus"], dir, io)).toBe(2);
+    expect(err).toEqual([
+      'keywork sessions: unknown subcommand "bogus" (expected list, tree, or fork)',
+    ]);
+    expect(out).toEqual([]);
+    expect(await sessionsCommand(["tree", "nope"], dir, io)).toBe(1);
   });
 
   async function litteredDir(): Promise<{ dir: string; emptyFile: string; keptFile: string }> {
@@ -212,15 +238,13 @@ describe("sessionsCommand", () => {
     const lines: string[] = [];
     const questions: string[] = [];
 
-    const code = await sessionsCommand(
-      [],
-      dir,
-      (line) => lines.push(line),
-      async (question) => {
+    const code = await sessionsCommand([], dir, {
+      print: (line) => lines.push(line),
+      confirm: async (question) => {
         questions.push(question);
         return true;
       },
-    );
+    });
 
     expect(code).toBe(0);
     expect(questions).toHaveLength(1);
@@ -233,12 +257,7 @@ describe("sessionsCommand", () => {
   it("keeps every file when the cleanup is declined", async () => {
     const { dir, emptyFile, keptFile } = await litteredDir();
 
-    await sessionsCommand(
-      [],
-      dir,
-      () => {},
-      async () => false,
-    );
+    await sessionsCommand([], dir, { print: () => {}, confirm: async () => false });
 
     expect(existsSync(emptyFile)).toBe(true);
     expect(existsSync(keptFile)).toBe(true);
@@ -248,16 +267,15 @@ describe("sessionsCommand", () => {
     const { dir, emptyFile } = await litteredDir();
     const questions: string[] = [];
 
-    await sessionsCommand([], dir, () => {});
-    await sessionsCommand(
-      ["list", "--json"],
-      dir,
-      () => {},
-      async (question) => {
+    await sessionsCommand([], dir, { print: () => {} });
+    await sessionsCommand(["list"], dir, {
+      json: true,
+      print: () => {},
+      confirm: async (question) => {
         questions.push(question);
         return true;
       },
-    );
+    });
 
     expect(questions).toEqual([]);
     expect(existsSync(emptyFile)).toBe(true);
@@ -268,15 +286,13 @@ describe("sessionsCommand", () => {
     const lines: string[] = [];
     const questions: string[] = [];
 
-    await sessionsCommand(
-      [],
-      dir,
-      (line) => lines.push(line),
-      async (question) => {
+    await sessionsCommand([], dir, {
+      print: (line) => lines.push(line),
+      confirm: async (question) => {
         questions.push(question);
         return true;
       },
-    );
+    });
 
     expect(questions).toEqual([]);
     expect(lines.join("\n")).not.toContain("empty session");
@@ -419,6 +435,30 @@ describe("sessionPort", () => {
     const reopened = await port.open(created?.id ?? "");
     expect(reopened?.name).toBe("tidy-title");
     expect((await listSessions(dir))[0]?.title).toBe("tidy-title");
+  });
+
+  it("persists an arc binding as an entry and serves it back on the attachment and the overview", async () => {
+    const dir = await tempDir();
+    const bound: Array<[string, string | undefined]> = [];
+    const port = sessionPort(dir, ".", { onArcBound: (id, arc) => bound.push([id, arc]) });
+    const created = await port.create();
+    await created?.append(textMessage("user", "hello"));
+    expect(created?.arc).toBeUndefined();
+
+    await created?.bindArc?.("dock-v2");
+    await created?.bindArc?.("dock-v2");
+    expect(bound).toEqual([[created?.id, "dock-v2"]]);
+
+    const reopened = await port.open(created?.id ?? "");
+    expect(reopened?.arc).toBe("dock-v2");
+    const items = await sessionTreePort(dir).overview?.();
+    expect(items?.[0]?.arc).toBe("dock-v2");
+    expect(await boundSessionCounts(dir)).toEqual(new Map([["dock-v2", 1]]));
+
+    await reopened?.bindArc?.(undefined);
+    expect(bound.at(-1)).toEqual([created?.id, undefined]);
+    expect((await port.open(created?.id ?? ""))?.arc).toBeUndefined();
+    expect(await boundSessionCounts(dir)).toEqual(new Map());
   });
 
   it("attaches reopened sessions through the same seam", async () => {
@@ -589,6 +629,19 @@ describe("cost capture", () => {
 
     const overview = await sessionTreePort(dir).overview?.();
     expect(overview?.at(0)?.costNanos).toBe(2_100_000);
+  });
+
+  it("stops listening to the bus when the session is released", async () => {
+    const dir = await tempDir();
+    const port = sessionPort(dir, ".");
+    const attachment = await port.create();
+    const bus = new EventBus<EngineEvents>();
+    attachment?.replay(bus);
+    expect(bus.listenerCount("turn.delta")).toBe(1);
+
+    port.release?.(attachment?.id ?? "");
+
+    expect(bus.listenerCount("turn.delta")).toBe(0);
   });
 
   it("never mistakes replayed usage for a fresh turn", async () => {

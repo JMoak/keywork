@@ -2,6 +2,9 @@
 
 > Decision record from vision-shaping (2026-08-09). Resolves the ten open questions in
 > [`comparison.md`](comparison.md) §4. Each decision is binding until explicitly revisited.
+> Inference architecture is extended by the binding `IR-01`–`IR-19` record in
+> [`backlog/105-inference-resolution.md`](backlog/105-inference-resolution.md); where it speaks,
+> it supersedes inference and onboarding implications in this file and earlier overlays.
 >
 > **Standing guardrails (restated everywhere on purpose):** Pi and OpenCode are MIT: lift with
 > attribution. Crush is FSL-1.1-MIT and is never a source — no code ever, and since 2026-08-10 no

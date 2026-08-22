@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { kebabCase } from "./artifacts.ts";
+import { committedGoldenRoot, goldenTree } from "./goldens.ts";
 import { defaultScenarios, scenarioNamed, scenarios } from "./scenarios.ts";
 
 describe("scenario registry", () => {
@@ -11,6 +12,8 @@ describe("scenario registry", () => {
       "chroma-sweep",
       "page-tiers",
       "session-lifecycle",
+      "long-session",
+      "arcs",
       "discovery",
       "defect-repros",
       "pointer-tour",
@@ -27,6 +30,8 @@ describe("scenario registry", () => {
       "chroma-sweep",
       "page-tiers",
       "session-lifecycle",
+      "long-session",
+      "arcs",
       "discovery",
       "defect-repros",
       "pointer-tour",
@@ -48,6 +53,15 @@ describe("scenario registry", () => {
       expect(scenario.description.length).toBeGreaterThan(0);
       expect(typeof scenario.run).toBe("function");
     }
+  });
+
+  it("commits exactly the goldens the scenarios declare, keyed by step name", () => {
+    const declared = Object.fromEntries(
+      scenarios
+        .filter((scenario) => (scenario.goldens ?? []).length > 0)
+        .map((scenario) => [scenario.name, [...(scenario.goldens ?? [])].map(kebabCase).sort()]),
+    );
+    expect(goldenTree(committedGoldenRoot)).toEqual(declared);
   });
 
   it("looks scenarios up by exact name only", () => {

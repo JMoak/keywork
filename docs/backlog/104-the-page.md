@@ -96,6 +96,58 @@
   skips the hold). Live pulse visible in the first-conversation ask capture
   (`▓ session-1`).
 
+## Landed — stream 2, the page finished (2026-08-21)
+
+- **C60 (2pt) — markdown in the transcript** ✅ 2026-08-21 (completes the 08-17 base):
+  every page mark now resolves through one tier seam, `tui/marks.ts` —
+  `pageMarks(GlyphSupport)` → voice stamps, streaming ramp, heading weights, bullet,
+  rule, fence rail (tier-0 ASCII: `# + .` voice · `= - : .` headings · `-` bullet/rule ·
+  `|` rail). `ConversationPane` takes `glyphs`; the default is the deterministic
+  `assumedGlyphs` (tier 2) so captures never depend on the host terminal, and the
+  `runApp` line (`glyphs: options.glyphs ?? detectCapabilities()`) lands after stream 1's
+  `app.ts` entry settles. **Heading marks left the density ramp for a weight ramp**
+  `█ ▌ ▎ ▏` (h1 · h2 · h3 · h4+): the `▓ ▓` heading-beside-agent-stamp nit is gone — the
+  broadsheet capture now reads `▓  ▌ the page`. Accept met: literal `**`/backticks never
+  visible, malformed markdown stays calm plain text, tier-0 render legible.
+- **C52 (2pt) — fence highlighting** ✅ 2026-08-21: `tui/highlighter.ts`, a zero-dep
+  lexical tokenizer written as grammar *data* over one scanner — ts/js/tsx/jsx, json
+  (keys vs values), sh/bash/zsh (`$VAR`, boundary-only `#`), py (triple quotes), go, rust,
+  diff (line marks), md — with per-fence block state so block comments, template
+  literals, and docstrings carry across lines. Classes keyword · type · constant ·
+  string · comment · punctuation · added · removed · hunk, colored **through theme tokens
+  only**: keyword/type/constant = ramp stops 0/1/2 (the ramp does double duty), string =
+  `success`, comment/hunk = `textDim`, punctuation = `textMid`, added/removed =
+  `success`/`error`. Unknown languages render unstyled; hard-wrap preserves spans; a
+  5k-line block tokenizes well inside the frame budget (bounded test). Rhythm rules ride
+  C59/C61; the fixture-capture approval closes C52.
+- **C63 (2pt) — the masthead** ✅ 2026-08-21: `tui/masthead.ts`, an own 3×5 block-letter
+  face (A–Z, 0–9) rasterized as half-blocks at tier 2, full blocks at tier 1, caps at
+  tier 0 — no figlet. The arc prefix is shed (the border hue carries the family), slug
+  separators fall away, and `fitTitle` drops words by sibling rarity when rows run short.
+  The block face is used only when **every** word of the title sets within the line;
+  otherwise the whole headline goes to caps, so a too-wide word never degrades into a
+  lone generic leftover (`session-1` at 26 cells → `SESSION 1`, not a giant `1`). One
+  status line beneath (working · failed · idle, plus telemetry). Never renders while a
+  draft, ask, backtrack, or disclosure is live — input outranks ceremony. Captures:
+  `page-tiers/08-masthead-38` (block face), `09-masthead-32` (caps fallback), plus the
+  typing leg that dismisses and restores the tile.
+- **C61 options round — keyboard reach** ✅ 2026-08-21: `shift+tab` on an empty prompt
+  walks a fold cursor to older disclosable rows (wrapping to newest), `tab` toggles the
+  cursored row, `esc` or typing leaves; the cursored row borrows backtrack's inversion
+  (no new vocabulary) and a hint row names the keys; the reveal scrolls the row into
+  view. Captures `04-tool-row-keyboard-open` / `05-…-refolded`. Still owed from the round:
+  the creative-elevation candidates (arc-hued user stamps, turn-age fading, stamp column
+  as scroll map) as C40 renders for Jordan's pick.
+- **C66 (1pt) — slug display grammar** — partial ✅ 2026-08-21: `tui/slug.ts` is the one
+  renderer (`slugParts` → lit words, `textDim` separators, `accentSoft` colon;
+  `slugWords` → human words), applied to overview rows and the masthead. **Constraint of
+  record:** OpenTUI's border `title` is a single-color string, so the title-bar rung
+  waits on keywork drawing its own top border (or an upstream styled title) — left
+  honest rather than faked.
+- **C55** gauge half ✅ 2026-08-21: the title-bar telemetry zone now carries the context gauge
+  beside cost (`session-1 · ▒ 1.6k · $0.01`), the masthead status line carries it too; see
+  [`109-long-session-survivability.md`](109-long-session-survivability.md) for the ledger and the open options round.
+
 ## Tasks
 
 IDs continue the C-scheme. Same scale and style as the workstream files.
@@ -241,7 +293,69 @@ hand-rolls slug styling.
 **Accept:** captures of the same slug across the ladder approved; monochrome render
 still reads (dim separators survive NO_COLOR as plain hyphens); masthead words carry
 no separators.
-**Strategy:** `OWN`. Rides C64/C63.
+**Strategy:** `OWN`. Rides C64/C63. The title-bar rung's blocker (single-color
+OpenTUI title, see the 2026-08-21 landed note) is lifted by C69's own title row.
+
+## Addendum 3 — needs-you chrome (PD25, Jordan, 2026-08-21)
+
+The lifecycle stamp (PD19 item 2, landed as C64) carries state in one cell. This
+addendum lets the *rest* of the pane chrome answer it, under the rules already written:
+the notification formula (needs-you is the only notifying state), PD8's "hue is
+identity, never state" with its 2026-08-16 clause (saturation/luminance may reinforce a
+density-carried state), and the existing meaning of inversion (the selected/cursored
+row, borrowed by the fold cursor and backtrack). Decided:
+
+1. **Inversion extends to the title label, needs-you only.** A pane with a pending ask
+   renders its title label inverted: ground = the pane's own ramp hue, ink =
+   `background`, one cell of padding each side, stamp `█` inside it. The meaning is the
+   one inversion already has (*the thing your keystroke targets*), applied to a pane
+   instead of a row. No other lifecycle state ever inverts; finished-unseen inverting
+   would make completions notify, which the formula forbids.
+2. **The outline reinforces, never carries.** On needs-you the pane border takes its
+   own identity hue with a **saturation lift only** (luminance untouched, so the focused
+   pane's luminance lift stays unambiguous). Hue acquires no state meaning; the
+   density-carried state (inverted label + `█`) must read alone in monochrome.
+3. **The quiet states get one quiet step each.** Finished-unseen: name ink steps from
+   border ink to `textMid` ("something to read"), draining on focus with the stamp.
+   Failed-unseen: name ink = `error` (outcome ink on the outcome word, the tool-row
+   rule). Neither touches the border or the ground. Idle and working stay byte-identical
+   to C64.
+4. **Motion rides C53.** The inverted ground *arrives* at quick tempo (ground fades up
+   from border ink to the full hue), leaves instantly on the next keystroke (input
+   outranks motion); reduced-motion renders the final frame only.
+5. **The away-state stays G6's.** This addendum is the return-state made visible in the
+   TUI; terminal-unfocused delivery (focus tracking + OpenTUI's native
+   `triggerNotification` / OSC 777 / bell) remains G6 (90-plan-review), decoupled.
+
+Open, decided by C40 captures rather than argument:
+
+- **Q-P1 Pulse vs. steady.** C64's `█⇄▓` pulse was chosen when inversion was not on the
+  table; with the inverted label carrying needs-you the pulse is a second signal on the
+  same cell and an unfocused pane pulsing while you read another is the "nothing flashing
+  while the user reads" case. Recommendation: steady inverted label; the pulse retires to
+  the monochrome / `NO_COLOR` floor where inversion cannot carry the state.
+- **Q-P2 Saturation lift vs. border weight.** Heavy `┃━` is denser ink (monochrome-honest)
+  but OpenTUI's heavy style has square corners and would break corner consistency against
+  `╭╮` neighbors. Recommendation: saturation lift (item 2 as written).
+
+### C69 (2pt) — Own title row & needs-you chrome (implements PD25)
+`paneChrome` stops passing `title` to the OpenTUI Box: a borderless wrapper at the pane
+rect holds the bordered Box plus an absolutely positioned `StyledText` title over the
+border row (`zIndex` above), so `titleBar()` composes spans (stamp · name · telemetry ·
+mode word, each with its own ink) instead of a string; `title()` stays clean for
+jump-commands/snapshots as C64 left it. One resolver beside `paneBorder` in `chroma.ts`,
+`lifecycleChrome(state, focused, hue, theme) → { labelInk, labelGround, borderColor }`,
+fed by the `LifecycleState` the stamp already computes; `paneViewFor` and the
+conversation pane read from it, never hand-pick colors. No new flavor tokens: ground =
+ramp hue, ink = `background`, warmed border = OKLCH chroma step on the identity hue
+(`focusLift`'s shape with a saturation-only target).
+**Accept:** captures across the five stamp states × focused/unfocused × tier ×
+monochrome approved; idle and working goldens byte-identical to C64; inversion appears
+iff a pending ask exists (the ask-stamp exactness test, extended); finished-unseen and
+failed never invert and never touch the border (pinning tests); monochrome capture reads
+every state from density alone; arrival/settle timings match the C53 tables; the C66
+slug rung renders through the same span composer with no second title path.
+**Strategy:** `OWN`. Rides C64/C53; unblocks C66's title-bar rung. G6 separate.
 
 ## Deltas of record
 

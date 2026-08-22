@@ -1,13 +1,9 @@
 import type { Tool, TurnDelta } from "../../packages/engine/src/index.ts";
-import type { PresetsPort } from "../../packages/tui/src/index.ts";
+import type { AgentFactory, Flavor, PresetsPort } from "../../packages/tui/src/index.ts";
 
 export interface FrameSize {
   readonly width: number;
   readonly height: number;
-}
-
-export interface CaptureOptions {
-  readonly golden?: boolean;
 }
 
 export interface Point {
@@ -25,9 +21,10 @@ export interface Stage {
   drag(from: Point, to: Point): Promise<void>;
   settle(): Promise<void>;
   until(marker: string, timeoutMs?: number): Promise<string>;
-  capture(stepName: string, options?: CaptureOptions): Promise<string>;
+  capture(stepName: string): Promise<string>;
   evidence(fileName: string, content: string): string;
   resize(width: number, height: number): Promise<void>;
+  renderOnce(): Promise<number>;
   relaunch(): Promise<void>;
   quit(): Promise<number>;
 }
@@ -46,7 +43,12 @@ export interface Scenario {
   readonly turns?: readonly TurnDelta[][];
   readonly tools?: (workspaceDir: string) => Tool[];
   readonly provider?: "mock" | "none";
+  readonly agentFactory?: AgentFactory;
+  readonly script?: "per-agent" | "shared";
+  readonly contextWindow?: number;
+  readonly flavors?: readonly Flavor[];
   readonly presets?: (stateDir: string) => PresetsPort;
+  readonly goldens?: readonly string[];
   beforeBoot?(world: WorldPaths): void;
   run(stage: Stage): Promise<void>;
 }

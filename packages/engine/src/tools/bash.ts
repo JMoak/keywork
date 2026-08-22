@@ -77,6 +77,7 @@ function execute(
   signal?: AbortSignal,
   onOutput?: (chunk: string) => void,
 ): Promise<string> {
+  signal?.throwIfAborted();
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(shell.file, shell.args(command), {
       cwd,
@@ -157,7 +158,6 @@ function execute(
     const timer = setTimeout(() => terminate("timeout"), timeoutMs);
     const onAbort = () => terminate("abort");
     signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) terminate("abort");
 
     child.on("error", (error) => settle(() => rejectPromise(error)));
     child.on("close", (code) => void finish(code));

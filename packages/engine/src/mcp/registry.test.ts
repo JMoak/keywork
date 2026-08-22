@@ -174,10 +174,38 @@ describe("lazy tool surface", () => {
     expect(view.map((tool) => tool.name)).toEqual(["read", mcpSearchToolName]);
     await findTool(registry, mcpSearchToolName).execute({ tools: ["alpha__echo"] });
     expect(view.map((tool) => tool.name)).toEqual(["read", mcpSearchToolName, "alpha__echo"]);
+    expect(view.length).toBe(3);
+    expect([...view].map((tool) => tool.name)).toContain("alpha__echo");
+    expect(view.find((tool) => tool.name === "alpha__echo")?.execute).toBeTypeOf("function");
+    expect(JSON.parse(JSON.stringify(view.map((tool) => tool.name)))).toHaveLength(3);
 
-    registry.dropSurface(view);
     await registry.disable("alpha");
-    expect(view.map((tool) => tool.name)).toEqual(["read", mcpSearchToolName, "alpha__echo"]);
+    expect(view.map((tool) => tool.name)).toEqual(["read", mcpSearchToolName]);
+  });
+
+  it("holds no reference to composed surfaces, so rebuilds cost the same after 100 agents", async () => {
+    let baseReads = 0;
+    const countingBase = (): readonly Tool[] =>
+      new Proxy<Tool[]>([], {
+        get: (target, property) => {
+          if (property === Symbol.iterator || property === "length") baseReads += 1;
+          return Reflect.get(target, property);
+        },
+      });
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => Promise.resolve(fakeConnection([fakeTool("probe")])),
+    });
+    const views = Array.from({ length: 100 }, () => registry.surface(countingBase()));
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "connected");
+
+    const readsBeforeRebuild = baseReads;
+    await findTool(registry, mcpSearchToolName).execute({ tools: ["alpha__probe"] });
+    expect(baseReads).toBe(readsBeforeRebuild);
+
+    expect(views[99]?.map((tool) => tool.name)).toEqual([mcpSearchToolName, "alpha__probe"]);
+    expect(views[0]?.length).toBe(2);
   });
 
   it("exposes nothing at all with zero configured servers", () => {

@@ -1,47 +1,55 @@
-import type { Usage } from "../messages.ts";
+import type { ProviderStateOwner, Usage } from "../messages.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
 import { ProviderHttpError, ProviderStreamError } from "./errors.ts";
-import type { FetchLike } from "./openai.ts";
+import type { AuthHeaders, FetchLike } from "./openai.ts";
 import { toResponsesRequest } from "./responses-wire.ts";
 import { sseJsonEvents } from "./sse.ts";
 
 export interface OpenAiResponsesOptions {
   name: string;
-  url: string;
+  baseUrl: string;
   model: string;
-  authHeaders: () => Promise<Record<string, string>>;
-  extraHeaders?: Record<string, string>;
-  fetchFn?: FetchLike;
+  authHeaders: AuthHeaders;
+  extraHeaders?: Readonly<Record<string, string>> | undefined;
+  fetchFn?: FetchLike | undefined;
 }
 
 export class OpenAiResponsesProvider implements Provider {
   readonly name: string;
-  private readonly options: Required<Omit<OpenAiResponsesOptions, "extraHeaders">> & {
-    extraHeaders: Record<string, string>;
-  };
+  readonly modelId: string;
+  private readonly owner: ProviderStateOwner;
+  private readonly baseUrl: string;
+  private readonly authHeaders: AuthHeaders;
+  private readonly extraHeaders: Readonly<Record<string, string>>;
+  private readonly fetchFn: FetchLike;
 
   constructor(options: OpenAiResponsesOptions) {
     this.name = options.name;
-    this.options = { extraHeaders: {}, fetchFn: fetch, ...options };
+    this.modelId = options.model;
+    this.owner = { provider: options.name, model: options.model };
+    this.baseUrl = options.baseUrl;
+    this.authHeaders = options.authHeaders;
+    this.extraHeaders = options.extraHeaders ?? {};
+    this.fetchFn = options.fetchFn ?? fetch;
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
-    const response = await this.options.fetchFn(this.options.url, {
+    const response = await this.fetchFn(`${this.baseUrl}/responses`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "text/event-stream",
-        ...(await this.options.authHeaders()),
-        ...this.options.extraHeaders,
+        ...(await this.authHeaders()),
+        ...this.extraHeaders,
       },
-      body: JSON.stringify(toResponsesRequest(request, this.options.model)),
+      body: JSON.stringify(toResponsesRequest(request, this.modelId, this.owner)),
       ...(request.signal !== undefined && { signal: request.signal }),
     });
     if (!response.ok) {
       throw new ProviderHttpError(this.name, response.status, await response.text());
     }
     if (response.body === null) throw new Error(`${this.name} returned an empty response body`);
-    yield* assembleTurn(this.name, sseJsonEvents(this.name, response.body));
+    yield* assembleTurn(this.name, this.owner, sseJsonEvents(this.name, response.body));
   }
 }
 
@@ -72,6 +80,7 @@ interface WireUsage {
 
 async function* assembleTurn(
   provider: string,
+  owner: ProviderStateOwner,
   events: AsyncIterable<unknown>,
 ): AsyncGenerator<TurnDelta> {
   let usage: Usage = { inputTokens: 0, outputTokens: 0 };
@@ -84,7 +93,7 @@ async function* assembleTurn(
         }
         break;
       case "response.output_item.done":
-        yield* completedItem(event.item);
+        yield* completedItem(event.item, owner);
         break;
       case "response.completed":
       case "response.incomplete":
@@ -104,7 +113,10 @@ async function* assembleTurn(
   yield { type: "done", usage };
 }
 
-function* completedItem(item: OutputItem | undefined): Generator<TurnDelta> {
+function* completedItem(
+  item: OutputItem | undefined,
+  owner: ProviderStateOwner,
+): Generator<TurnDelta> {
   if (item === undefined) return;
   if (item.type === "function_call") {
     yield {
@@ -120,7 +132,7 @@ function* completedItem(item: OutputItem | undefined): Generator<TurnDelta> {
   if (item.type === "reasoning" && typeof item.encrypted_content === "string") {
     yield {
       type: "redacted-thinking",
-      part: { type: "redacted-thinking", data: JSON.stringify(item) },
+      part: { type: "redacted-thinking", data: JSON.stringify(item), owner },
     };
   }
 }

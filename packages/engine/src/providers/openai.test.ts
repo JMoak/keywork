@@ -229,24 +229,47 @@ describe("OpenAiCompatibleProvider", () => {
     });
   });
 
-  it("opts into cost accounting only on openrouter.ai, never on other hosts", async () => {
+  it("merges registration body decorations into the request without touching the defaults", async () => {
     const bodies: string[] = [];
     const fetchFn: FetchLike = async (_url, init) => {
       bodies.push(init?.body as string);
       return sseResponse(["[DONE]"]);
     };
     await collect(provider(fetchFn).stream(emptyRequest));
-    const openrouter = new OpenAiCompatibleProvider({
+    const decorated = new OpenAiCompatibleProvider({
       name: "openrouter",
       baseUrl: "https://openrouter.ai/api/v1",
       apiKey: "key",
       model: "some/model",
+      extraBody: { usage: { include: true } },
       fetchFn,
     });
-    await collect(openrouter.stream(emptyRequest));
+    await collect(decorated.stream(emptyRequest));
 
     expect(JSON.parse(bodies[0] as string).usage).toBeUndefined();
-    expect(JSON.parse(bodies[1] as string).usage).toEqual({ include: true });
+    expect(JSON.parse(bodies[1] as string)).toMatchObject({
+      model: "some/model",
+      usage: { include: true },
+    });
+  });
+
+  it("sends a bearer header for an api key and no authorization at all without one", async () => {
+    const headers: Record<string, string>[] = [];
+    const fetchFn: FetchLike = async (_url, init) => {
+      headers.push(init?.headers as Record<string, string>);
+      return sseResponse(["[DONE]"]);
+    };
+    await collect(provider(fetchFn).stream(emptyRequest));
+    const local = new OpenAiCompatibleProvider({
+      name: "ollama",
+      baseUrl: "http://localhost:11434/v1",
+      model: "qwen3",
+      fetchFn,
+    });
+    await collect(local.stream(emptyRequest));
+
+    expect(headers[0]?.authorization).toBe("Bearer key");
+    expect(headers[1]).not.toHaveProperty("authorization");
   });
 
   it("exposes the configured model id for cost accounting", () => {

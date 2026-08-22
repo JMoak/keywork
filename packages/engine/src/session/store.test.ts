@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -69,7 +69,47 @@ describe("SessionStore", () => {
     expect(second.timestamp).not.toBe("");
   });
 
-  it("survives a torn final line", async () => {
+  it("serializes overlapping appends into one linear chain in file order", async () => {
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+    await store.append(textMessage("user", "seed"));
+
+    const [message, custom] = await Promise.all([
+      store.append(textMessage("assistant", "answer")),
+      store.appendCustom("shell_reset", {}),
+    ]);
+
+    expect(store.activePath().map((entry) => entry.id)).toEqual([
+      store.entries()[0]?.id,
+      message.id,
+      custom.id,
+    ]);
+    expect(custom.parentId).toBe(message.id);
+    expect(store.messages().map(messageText)).toEqual(["seed", "answer"]);
+
+    const lines = (await readFile(file, "utf8")).trim().split("\n");
+    const idsInFileOrder = lines.slice(1).map((line) => (JSON.parse(line) as { id: string }).id);
+    expect(idsInFileOrder).toEqual(store.activePath().map((entry) => entry.id));
+    expect((await SessionStore.open(file)).messages().map(messageText)).toEqual(["seed", "answer"]);
+  });
+
+  it("keeps a burst of appends linear while a branch is selected", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    const root = await store.append(textMessage("user", "root"));
+    await store.append(textMessage("assistant", "abandoned"));
+    store.branch(root.id);
+
+    const written = await Promise.all(
+      ["a", "b", "c"].map((text) => store.append(textMessage("assistant", text))),
+    );
+
+    expect(written[0]?.parentId).toBe(root.id);
+    expect(written[1]?.parentId).toBe(written[0]?.id);
+    expect(written[2]?.parentId).toBe(written[1]?.id);
+    expect(store.messages().map(messageText)).toEqual(["root", "a", "b", "c"]);
+  });
+
+  it("survives a torn final line and reports it as dropped", async () => {
     const file = await sessionFile();
     const store = await SessionStore.create(file, ".");
     await store.append(textMessage("user", "kept"));
@@ -78,6 +118,25 @@ describe("SessionStore", () => {
     const reopened = await SessionStore.open(file);
 
     expect(reopened.messages()).toEqual([textMessage("user", "kept")]);
+    expect(reopened.droppedLines).toBe(1);
+    expect(store.droppedLines).toBe(0);
+  });
+
+  it("opens a file with a corrupt mid-file line and reports the drop", async () => {
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+    await store.append(textMessage("user", "first"));
+    await store.append(textMessage("assistant", "second"));
+    await store.append(textMessage("user", "third"));
+    const lines = (await readFile(file, "utf8")).trim().split("\n");
+    lines[2] = '{"type":"message","id":"corrupt';
+    await writeFile(file, `${lines.join("\n")}\n`, "utf8");
+
+    const reopened = await SessionStore.open(file);
+
+    expect(reopened.droppedLines).toBe(1);
+    expect(reopened.entries()).toHaveLength(2);
+    expect(reopened.messages().map(messageText)).toEqual(["third"]);
   });
 
   it("rejects files without a session header", async () => {

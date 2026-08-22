@@ -191,6 +191,14 @@ Two zones on the top border, width-tier resolved by the same grammar as the page
 - **Real-estate priority order** under narrowing: stamp survives last (1 cell), then
   the fitted name, then telemetry, then the mode word — telemetry and mode yield
   first, the stamp never does.
+- **Needs-you chrome** (added 2026-08-21, 104/PD25): the pane answers its stamp.
+  Awaiting approval inverts the title label (ground = the pane's own ramp hue, ink =
+  `background`) — the selection/cursor inversion's existing meaning, *the thing your
+  keystroke targets*, applied to a pane — and the border takes its identity hue with a
+  saturation lift only (PD8's reinforce-never-carry clause; luminance stays focus's).
+  Finished-unseen lifts the name to `textMid`, failed-unseen sets it in `error`; neither
+  inverts or touches the border. No other state changes a cell. Hue still never means
+  state; the stamp alone must read in monochrome.
 
 ## Ledger chips
 

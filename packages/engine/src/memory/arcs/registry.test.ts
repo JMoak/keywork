@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { InvalidTitleError } from "../naming.ts";
 import { MemoryInertError, MemoryStore } from "../store.ts";
 import {
   ArcExistsError,
@@ -107,8 +108,47 @@ describe("the arc sub-vault", () => {
     const names = (await workspace.listNotes()).map((note) => note.name);
     expect(names).toEqual(["Workspace Fact"]);
     const arcNames = (await registry.arcStore("dock-v2").listNotes()).map((note) => note.name);
-    expect(arcNames).toContain("Dock Ratios");
-    expect(arcNames).toContain("MOC");
+    expect(arcNames).toEqual(["Dock Ratios"]);
+  });
+
+  it("never lists the MOC or open questions as notes, yet reads the MOC by name", async () => {
+    const { registry } = await vault();
+    await registry.createArc("dock-v2");
+    const store = registry.arcStore("dock-v2");
+    await store.writeNote({ title: "Finding", body: "found\n", provenance: "agent" });
+    await registry
+      .openQuestions("dock-v2")
+      .add({ title: "Tie order", body: "who wins?\n", provenance: "user" });
+    expect((await store.listNotes()).map((note) => note.path)).toEqual(["Finding.md"]);
+    expect((await store.readNote("MOC"))?.body).toBe("arc dock-v2\n");
+    expect(await store.readNote("Tie order")).toBeUndefined();
+    expect((await registry.readMocNote("dock-v2"))?.name).toBe("MOC");
+  });
+
+  it("refuses a note titled after the MOC instead of overwriting the arc record", async () => {
+    const { registry } = await vault();
+    await registry.createArc("dock-v2");
+    await expect(
+      registry.arcStore("dock-v2").writeNote({ title: "MOC", body: "x\n", provenance: "agent" }),
+    ).rejects.toThrow(InvalidTitleError);
+    expect((await registry.readArc("dock-v2"))?.status).toBe("active");
+  });
+
+  it("hands out one store per slug so arc writes stay revertable through its ledger", async () => {
+    const { registry, root } = await vault();
+    await registry.createArc("dock-v2");
+    const store = registry.arcStore("dock-v2");
+    expect(registry.arcStore("dock-v2")).toBe(store);
+    const mocWrite = store.ledger().at(-1);
+    expect(mocWrite?.deltas[0]?.path).toBe("MOC.md");
+    await registry.openQuestions("dock-v2").add({ title: "Q", body: "q\n", provenance: "user" });
+    const questionWrite = store.ledger().at(-1);
+    expect(questionWrite?.deltas[0]?.path).toBe("questions/Q.md");
+    expect(await store.revert(questionWrite?.id ?? "")).toBe("reverted");
+    expect(await registry.openQuestions("dock-v2").open()).toEqual([]);
+    expect(await store.revert(mocWrite?.id ?? "")).toBe("reverted");
+    expect(await registry.readArc("dock-v2")).toBeUndefined();
+    expect(await readdir(join(root, "arcs", "dock-v2"))).not.toContain("MOC.md");
   });
 });
 

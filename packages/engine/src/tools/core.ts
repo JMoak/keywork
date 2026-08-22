@@ -1,5 +1,5 @@
 import { memoryRecallTools } from "../memory/recall-tools.ts";
-import type { MemorySearch } from "../memory/search.ts";
+import type { MemorySearcher } from "../memory/search.ts";
 import type { MemoryStore } from "../memory/store.ts";
 import type { Tool } from "../tools.ts";
 import { bashTool, detectShell } from "./bash.ts";
@@ -11,7 +11,7 @@ import { writeTool } from "./write.ts";
 
 export interface MemoryRecall {
   store: MemoryStore;
-  search: MemorySearch;
+  search: MemorySearcher;
   onRecall?: (noteName: string) => void;
 }
 

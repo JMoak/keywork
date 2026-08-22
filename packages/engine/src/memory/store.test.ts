@@ -3,14 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MalformedFrontmatterError } from "./frontmatter.ts";
+import { contentHash } from "./ledger.ts";
 import { InvalidTitleError } from "./naming.ts";
 import {
   DuplicateTitleError,
+  InvalidDailyDateError,
+  MalformedStagedItemError,
   MemoryInertError,
   MemoryStore,
   type MemoryStoreOptions,
   MissingNoteError,
   type Provenance,
+  ReservedPathError,
 } from "./store.ts";
 
 const cleanups: string[] = [];
@@ -384,6 +388,131 @@ describe("staging (untrusted provenance)", () => {
     );
     expect(await store.readNote("Sneaky")).toBeUndefined();
     expect(await store.listNotes()).toEqual([]);
+  });
+
+  const escapingTargets = [
+    "../outside.md",
+    "notes/../../outside.md",
+    "/outside.md",
+    "C:/outside.md",
+    "C:outside.md",
+    "\\\\server\\share\\outside.md",
+    "",
+  ];
+
+  it.each(escapingTargets)(
+    "refuses to approve a planted sidecar whose target %j leaves the vault",
+    async (target) => {
+      const { store, root } = await vault();
+      const id = "00000000-0000-4000-8000-000000000001";
+      await mkdir(join(root, ".staging"), { recursive: true });
+      await writeFile(join(root, ".staging", `${id}.md`), "pwned\n", "utf8");
+      await writeFile(
+        join(root, ".staging", `${id}.json`),
+        JSON.stringify({ kind: "note", target, created: "2026-08-10T14:30:00.000Z" }),
+        "utf8",
+      );
+      await expect(store.approve(id)).rejects.toBeInstanceOf(MalformedStagedItemError);
+      expect(await readdir(join(root, ".."))).not.toContain("outside.md");
+      expect(await readdir(root)).toEqual([".staging"]);
+    },
+  );
+});
+
+describe("write serialization", () => {
+  it("lands every concurrent daily append and keeps the ledger honest", async () => {
+    const { store, root } = await vault();
+    await Promise.all([
+      store.appendDaily("first", "user"),
+      store.appendDaily("second", "user"),
+      store.appendDaily("third", "user"),
+    ]);
+    const entries = (await store.readDaily()).map((entry) => entry.text);
+    expect(entries).toEqual(["first", "second", "third"]);
+    const ledger = store.ledger();
+    expect(ledger).toHaveLength(3);
+    const raw = await readFile(join(root, "daily/2026-08-10.md"), "utf8");
+    expect(ledger.at(-1)?.deltas[0]?.afterHash).toBe(contentHash(raw));
+    for (let i = 1; i < ledger.length; i += 1) {
+      expect(ledger[i]?.deltas[0]?.beforeHash).toBe(ledger[i - 1]?.deltas[0]?.afterHash);
+    }
+    expect(await store.revert(ledger[2]?.id ?? "")).toBe("reverted");
+    expect((await store.readDaily()).map((entry) => entry.text)).toEqual(["first", "second"]);
+  });
+
+  it("serializes mixed note writes and audits without interleaving", async () => {
+    const { store } = await vault();
+    await Promise.all([
+      store.writeNote({ title: "Fact", body: "v1\n", provenance: "user" }),
+      store.writeNote({ title: "Fact", body: "v2\n", provenance: "agent" }),
+      store.recordAudit("one"),
+      store.recordAudit("two"),
+    ]);
+    const [create, edit] = store.ledger();
+    expect(create?.op).toBe("create");
+    expect(edit?.op).toBe("edit");
+    expect(edit?.deltas[0]?.beforeHash).toBe(create?.deltas[0]?.afterHash);
+    expect((await store.readNote("Fact"))?.body).toBe("v2\n");
+  });
+});
+
+describe("daily log addressing", () => {
+  it("rejects a daily date that is not YYYY-MM-DD", async () => {
+    const { store } = await vault();
+    await expect(store.readDaily("../../etc/passwd")).rejects.toBeInstanceOf(InvalidDailyDateError);
+    await expect(store.readDaily("2026-8-10")).rejects.toBeInstanceOf(InvalidDailyDateError);
+  });
+
+  it("lists only date-shaped daily files", async () => {
+    const { store, root } = await vault();
+    await store.appendDaily("entry", "user");
+    await writeFile(join(root, "daily", "scratch.md"), "not a log\n", "utf8");
+    expect(await store.listDailyDates()).toEqual(["2026-08-10"]);
+  });
+});
+
+describe("reserved paths", () => {
+  const reserved = { reservedPaths: ["MOC.md", "questions/"] };
+
+  it("keeps reserved files out of every note surface while reading them by name", async () => {
+    const { store, root } = await vault(reserved);
+    await writeFile(join(root, "MOC.md"), "arc body\n", "utf8");
+    await mkdir(join(root, "questions"), { recursive: true });
+    await writeFile(join(root, "questions", "Open.md"), "question\n", "utf8");
+    await store.writeNote({ title: "Note", body: "x\n", provenance: "user" });
+    expect((await store.listNotes()).map((note) => note.path)).toEqual(["Note.md"]);
+    expect((await store.readNote("MOC"))?.body).toBe("arc body\n");
+    expect(await store.readNote("Open")).toBeUndefined();
+    expect(await store.listReserved("questions")).toEqual(["questions/Open.md"]);
+    expect(await store.readReserved("questions/Open.md")).toBe("question\n");
+  });
+
+  it("refuses note writes that would land on a reserved path", async () => {
+    const { store } = await vault(reserved);
+    await expect(
+      store.writeNote({ title: "MOC", body: "x\n", provenance: "user" }),
+    ).rejects.toBeInstanceOf(InvalidTitleError);
+    await store.writeNote({ title: "Real", body: "x\n", provenance: "user" });
+    await expect(
+      store.writeNote({ title: "New", body: "x\n", provenance: "user", supersedes: "MOC" }),
+    ).rejects.toBeInstanceOf(MissingNoteError);
+  });
+
+  it("writes reserved files through the ledger, redacted and revertable", async () => {
+    const { store, root } = await vault({ ...reserved, secrets: { TOKEN: "hunter2secret" } });
+    const write = await store.writeReserved("MOC.md", "key hunter2secret\n");
+    expect(await readFile(join(root, "MOC.md"), "utf8")).toBe("key ‹redacted:TOKEN›\n");
+    expect(await store.revert(write.ledgerId)).toBe("reverted");
+    expect(await store.readReserved("MOC.md")).toBeNull();
+  });
+
+  it("rejects reserved access to anything not reserved or not inside the vault", async () => {
+    const { store } = await vault(reserved);
+    await expect(store.writeReserved("Note.md", "x\n")).rejects.toBeInstanceOf(ReservedPathError);
+    await expect(store.readReserved("questions/../../x.md")).rejects.toBeInstanceOf(
+      ReservedPathError,
+    );
+    await expect(store.listReserved("entities")).rejects.toBeInstanceOf(ReservedPathError);
   });
 });
 

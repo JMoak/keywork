@@ -50,7 +50,20 @@ a config file. What the agent is allowed to do is always on screen.
 
 ## Quickstart
 
-You'll need [Bun](https://bun.sh) 1.3+.
+One line, nothing else to install:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/JMoak/keywork/main/scripts/install.sh | sh    # Linux · macOS
+irm https://raw.githubusercontent.com/JMoak/keywork/main/scripts/install.ps1 | iex       # Windows
+keywork
+```
+
+Every release ships a single-file binary per platform (Linux x64/arm64, Windows x64, macOS
+arm64/x64) with SHA-256 checksums, and the installer verifies before it moves anything. Grab
+one from the [releases page](https://github.com/JMoak/keywork/releases) by hand if you'd
+rather; `keywork --version` tells you what you've got.
+
+From source instead (needs [Bun](https://bun.sh) 1.3+):
 
 ```sh
 git clone https://github.com/JMoak/keywork
@@ -59,9 +72,6 @@ bun install
 bun link --cwd packages/cli
 keywork
 ```
-
-That `bun link` puts `keywork` on your PATH. A packaged installer lands with the public
-release; until then, this is the way in.
 
 The first run walks you through hooking up a model provider, and `keywork setup` reruns it
 whenever. It's plain API keys, nothing fancier:

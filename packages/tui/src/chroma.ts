@@ -1,4 +1,4 @@
-import { keyworkNight, type Theme } from "./theme.ts";
+import type { Theme } from "./theme.ts";
 
 export interface Oklch {
   readonly l: number;
@@ -6,11 +6,11 @@ export interface Oklch {
   readonly h: number;
 }
 
-export type PaneBorderTheme = Pick<Theme, "border" | "ramp">;
+export type PaneBorderTheme = Pick<Theme, "border" | "borderFocus" | "ramp">;
 
 export function paneBorder(theme: PaneBorderTheme, position: number, focused: boolean): string {
   const hue = rampColor(theme.ramp, position);
-  return focused ? focusLift(hue) : borderCarryingHue(theme, hue);
+  return focused ? focusLift(hue, theme.borderFocus) : borderCarryingHue(theme, hue);
 }
 
 export function rampPositions(
@@ -46,11 +46,12 @@ export function spawnRankPositions(paneCount: number): number[] {
   return Array.from({ length: paneCount }, (_, rank) => rank / (paneCount - 1));
 }
 
-export function focusLift(hex: string): string {
+export function focusLift(hex: string, focusHex: string): string {
   const { l, c, h } = hexToOklch(hex);
+  const target = hexToOklch(focusHex);
   return oklchToHex({
-    l: Math.max(l, focusTarget.l),
-    c: c < neutralChroma ? c : Math.max(c, focusTarget.c),
+    l: Math.max(l, target.l),
+    c: c < neutralChroma ? c : Math.max(c, target.c),
     h,
   });
 }
@@ -91,7 +92,6 @@ const microGradientSpan = 0.08;
 const neutralChroma = 1e-4;
 const gamutSlack = 1e-6;
 const rrggbb = /^#[0-9a-fA-F]{6}$/;
-const focusTarget = hexToOklch(keyworkNight.borderFocus);
 
 type Triple = readonly [number, number, number];
 

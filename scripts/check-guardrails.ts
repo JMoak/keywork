@@ -1,62 +1,66 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import patternTable from "./guardrail-patterns.json" with { type: "json" };
+import { type PathPredicate, repoRoot, reportViolations, walkRepo } from "./lib/repo-files.ts";
 
-// ToS guardrail (vision.md): Anthropic access is API-key/Agent-SDK only. This scan
-// fails CI on any code path resembling subscription-OAuth or Claude-Code client
-// impersonation, so the rule is enforced by machinery before any provider lifting.
+// ToS guardrail (docs/vision.md): Anthropic access is API-key / Agent-SDK only.
 
-const forbiddenPatterns: ReadonlyArray<{ name: string; pattern: RegExp }> = [
-  { name: "anthropic-oauth", pattern: /anthropic[\s\S]{0,120}oauth|oauth[\s\S]{0,120}anthropic/i },
-  { name: "oauth-token-prefix", pattern: /sk-ant-oat|sk-ant-ort/i },
-  { name: "claude-ai-auth-endpoint", pattern: /claude\.ai\/(oauth|login|v1\/oauth)/i },
-  { name: "console-oauth-endpoint", pattern: /console\.anthropic\.com\/[\w/]*oauth/i },
-  {
-    name: "client-spoof-header",
-    pattern:
-      /["'`]x-app["'`]\s*[:,]\s*["'`]cli["'`]|user[-_]?agent[\s\S]{0,40}claude[- ]?(code|cli)/i,
-  },
-  { name: "crush-source-reference", pattern: /charmbracelet\/crush/i },
-];
+export type ScanKind = "code" | "prose";
 
-const scannedExtensions = /\.(ts|tsx|js|json)$/;
-const excludedDirectories = new Set(["node_modules", ".git", ".claude", "dist", "docs"]);
-const patternDefinitionFiles = new Set([
-  join("scripts", "check-guardrails.ts"),
-  join("scripts", "checks.test.ts"),
-]);
+export const patternFile = "scripts/guardrail-patterns.json";
 
-export function findGuardrailViolations(content: string): string[] {
-  return forbiddenPatterns.filter(({ pattern }) => pattern.test(content)).map(({ name }) => name);
+export { patternTable };
+
+export function findGuardrailViolations(content: string, kind: ScanKind = "code"): string[] {
+  return patternsFor(kind)
+    .filter(({ pattern }) => pattern.test(content))
+    .map(({ name }) => name);
 }
 
-async function sourceFiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const nested = await Promise.all(
-    entries.map((entry) => {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        return excludedDirectories.has(entry.name) ? [] : sourceFiles(path);
-      }
-      return scannedExtensions.test(entry.name) && !patternDefinitionFiles.has(path) ? [path] : [];
-    }),
-  );
-  return nested.flat();
+export const scannedPath: PathPredicate = (path) =>
+  scannedExtensions.test(path) && path !== patternFile;
+
+export function scanKind(path: string): ScanKind {
+  return path.endsWith(".md") ? "prose" : "code";
 }
 
-if (import.meta.main) {
+export async function scanGuardrails(root = repoRoot): Promise<string[]> {
   const violations: string[] = [];
-  for (const path of await sourceFiles(".")) {
-    const content = await readFile(path, "utf8");
-    for (const name of findGuardrailViolations(content)) {
+  for (const path of await walkRepo(scannedPath, root)) {
+    const content = await readFile(join(root, path), "utf8");
+    for (const name of findGuardrailViolations(content, scanKind(path))) {
       violations.push(`${path}: ${name}`);
     }
   }
-  if (violations.length > 0) {
-    console.error(
-      "Guardrail violation — Anthropic is API-key/Agent-SDK only (see docs/vision.md):",
-    );
-    for (const violation of violations) console.error(`  ${violation}`);
-    process.exit(1);
-  }
-  console.log("check:guardrails ok");
+  return violations;
+}
+
+interface CompiledPattern {
+  readonly name: string;
+  readonly pattern: RegExp;
+}
+
+const scannedExtensions = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|json|ya?ml|sh|ps1|md)$/;
+
+const everywherePatterns = compile(patternTable.everywhere);
+const codePatterns = [...everywherePatterns, ...compile(patternTable.codeOnly)];
+
+function compile(
+  entries: ReadonlyArray<{ name: string; pattern: string; flags: string }>,
+): CompiledPattern[] {
+  return entries.map(({ name, pattern, flags }) => ({ name, pattern: new RegExp(pattern, flags) }));
+}
+
+function patternsFor(kind: ScanKind): readonly CompiledPattern[] {
+  return kind === "prose" ? everywherePatterns : codePatterns;
+}
+
+if (import.meta.main) {
+  process.exitCode = reportViolations(
+    {
+      check: "check:guardrails",
+      heading: "Guardrail violation: Anthropic is API-key / Agent-SDK only (see docs/vision.md):",
+    },
+    await scanGuardrails(),
+  );
 }

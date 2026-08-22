@@ -3,26 +3,48 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   type Agent,
-  checkpointForPrompt,
   type Message,
-  type SessionTreeNode,
+  modelReferenceOf,
   type ToolCallPart,
   type ToolGuard,
+  type TurnSettlement,
 } from "@keywork/engine";
 import {
   Box,
   type CliRenderer,
   createCliRenderer,
+  fg,
   type KeyEvent,
   type MouseEvent,
   type PasteEvent,
+  StyledText,
   Text,
+  type TextChunk,
 } from "@opentui/core";
-import { AppCore, bindingHelp, helpFrame, type PresetsPort, paletteFrame } from "./app-core.ts";
-import { promptAnchor } from "./backtrack.ts";
+import {
+  AppCore,
+  bindingHelp,
+  helpFrame,
+  type PaneOrigin,
+  type PresetsPort,
+  paletteFrame,
+} from "./app-core.ts";
+import { type ArcPicker, describeArcRow } from "./arc-picker.ts";
+import {
+  type ArcOrdinals,
+  type ArcsPort,
+  arcInk,
+  arcOrdinalsOf,
+  arcTag,
+  suggestArcSlug,
+} from "./arcs.ts";
+import { ArcsPane } from "./arcs-pane.ts";
+import { type PromptAnchor, promptAnchor } from "./backtrack.ts";
 import { BrowserPane } from "./browser-pane.ts";
+import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import { paneBorder, rampPositions } from "./chroma.ts";
 import type { CommandSpec } from "./commands.ts";
+import type { ConnectModel, EditorField } from "./connect-model.ts";
 import type { ConversationPorts, ForkOutcome, Titler } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import {
@@ -32,13 +54,15 @@ import {
   registerExtensions,
 } from "./extension-commands.ts";
 import { FilePane } from "./file-pane.ts";
-import { FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
+import { type Flavor, FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
+import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import type { Keymap } from "./keymap.ts";
 import { chordOf } from "./keys.ts";
 import { minPaneSize, type Rect, type Screen } from "./layout.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+import { describeChoice, type ModelPicker } from "./model-picker.ts";
 import { Animator } from "./motion.ts";
 import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
 import type { FileOpenOptions, PaneView } from "./pane.ts";
@@ -46,6 +70,7 @@ import { type PointerEvent, pointerEventOf } from "./pointer.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import type { Theme, ThemeOverrides } from "./theme.ts";
 import { clipLine, trayRows } from "./tray.ts";
+import { describeWorkspaceRow, type WorkspacesPort } from "./workspace-picker.ts";
 import { parseWorkspaceState, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
 export interface CheckpointsPort {
@@ -55,13 +80,21 @@ export interface CheckpointsPort {
   restoreTo(tree: string): Promise<void>;
 }
 
+export interface AppendReceipt {
+  entryId: string;
+}
+
 export interface SessionAttachment {
   id: string;
   name?: string;
+  modelReference?: string;
+  arc?: string;
   history: readonly Message[];
   replay(bus: Agent["bus"]): void;
-  append(message: Message): Promise<void>;
+  append(message: Message): Promise<AppendReceipt | undefined>;
   rename?(name: string): Promise<void>;
+  recordModel?(reference: string): Promise<void>;
+  bindArc?(slug: string | undefined): Promise<void>;
 }
 
 export interface SessionPort {
@@ -80,6 +113,7 @@ export interface AgentSeams {
   sessionId(): string | undefined;
   discloseRetrieval(text: string): void;
   bus?: Agent["bus"];
+  modelReference?: string;
 }
 
 export type AgentFactory = (
@@ -92,33 +126,49 @@ export type AgentFactory = (
 export interface SessionTurn {
   sessionId: string;
   history: readonly Message[];
+  agent: Agent;
 }
+
+export type AfterTurn = (turn: SessionTurn) => Promise<TurnSettlement | undefined>;
+export type Compactor = (turn: SessionTurn, instructions: string) => Promise<TurnSettlement>;
 
 export interface AppOptions {
   themeOverrides?: ThemeOverrides;
+  flavors?: readonly Flavor[];
   page?: PageThresholdOverrides;
+  glyphs?: GlyphSupport;
   agentFactory?: AgentFactory;
-  afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
+  afterTurn?: AfterTurn;
+  compact?: Compactor;
   closers?: readonly Closer[];
   closeTimeoutMs?: number;
   createRenderer?: () => Promise<CliRenderer>;
   exit?: (code: number) => void;
   presets?: PresetsPort;
+  inference?: InferencePort;
+  connections?: ConnectionsPort;
   titler?: Titler;
   statusLabel?: string | (() => string);
   checkpoints?: CheckpointsPort;
   workspace?: WorkspacePort;
   sessions?: SessionPort;
   sessionTrees?: SessionTreePort;
+  arcs?: ArcsPort;
+  workspaces?: WorkspacesPort;
   memory?: MemoryPanePort;
   mcp?: McpPanePort;
   extensions?: ExtensionsPort;
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
-  const flavors = new FlavorSwitch(startupFlavors(options.themeOverrides));
+  const flavors = new FlavorSwitch([
+    ...startupFlavors(options.themeOverrides),
+    ...(options.flavors ?? []),
+  ]);
   const pageThresholds = resolvePageThresholds(options.page);
-  const restored = await loadRestorePlan(options);
+  const glyphs: GlyphSupport = options.glyphs ?? detectCapabilities();
+  const escrow = sessionEscrow(options.sessions);
+  const restored = await loadRestorePlan(options, escrow);
   const renderer = await (options.createRenderer ?? defaultRenderer)();
   const exit = options.exit ?? ((code: number) => process.exit(code));
   const screen = (): Screen => ({
@@ -126,14 +176,16 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     height: Math.max(0, renderer.height - 2 * frameChrome.border - frameChrome.statusRows),
   });
   const checkpoints = options.checkpoints;
-  const attachments = restored?.attachments ?? new Map<string, SessionAttachment>();
   const trees = options.sessionTrees;
-  const treePort =
-    trees === undefined ? undefined : attachOnFork(trees, options.sessions, attachments);
+  const treePort = trees === undefined ? undefined : attachOnFork(trees, options.sessions, escrow);
   const memoryPort = options.memory;
   const mcpPort = options.mcp;
   const agentSwitchers = new Map<string, (agentName: string | undefined) => boolean>();
+  const modelSwitchers = new Map<string, (reference: string) => Promise<string>>();
+  const arcBinders = new Map<string, (slug: string | undefined) => Promise<void>>();
   const paneSessions = paneSessionIndex(options.sessions);
+  const arcsPort = options.arcs;
+  const arcIndex = arcIndexOf(arcsPort, () => render());
   let closed = false;
   let armedExpiry: ReturnType<typeof setTimeout> | undefined;
   let unsubscribeMcp: (() => void) | undefined;
@@ -141,37 +193,51 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const animator = new Animator({ onFrame: () => render() });
   const core: AppCore = new AppCore({
     screen,
-    createPane: (id, notify, commands, resumeSessionId, draft) => {
+    createPane: (id, notify, commands, resumeSessionId, draft, origin) => {
       let pane: ConversationPane | undefined;
       const guard: ToolGuard = {
         confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true),
         ...(checkpoints !== undefined && { beforeMutation: () => checkpoints.capture() }),
       };
-      const attachment =
-        resumeSessionId === undefined ? undefined : attachments.get(resumeSessionId);
-      if (resumeSessionId !== undefined) attachments.delete(resumeSessionId);
+      const attachment = resumeSessionId === undefined ? undefined : escrow.claim(resumeSessionId);
+      if (resumeSessionId !== undefined && attachment === undefined) return undefined;
+      let selectedModel = attachment?.modelReference;
+      const modelInForce = (): string | undefined => {
+        const current = pane?.currentAgent();
+        return (
+          (current === undefined ? undefined : modelReferenceOf(current.provider)) ?? selectedModel
+        );
+      };
       const seams: AgentSeams = {
         sessionId: () => pane?.sessionId,
         discloseRetrieval: (text) => pane?.discloseRetrieval(text),
       };
-      const agent = options.agentFactory?.(guard, attachment?.history, seams);
+      const seamsFor = (bus?: Agent["bus"], modelReference = modelInForce()): AgentSeams => ({
+        ...seams,
+        ...(bus !== undefined && { bus }),
+        ...(modelReference !== undefined && { modelReference }),
+      });
+      const initial = buildAgent(options.agentFactory, guard, attachment?.history, seamsFor());
       let liveSession: SessionAttachment | undefined;
       const titler = persistingTitler(options.titler, () => liveSession);
       const ports: ConversationPorts = {
         readFile: readWorkspaceFile,
-        forkAtPrompt: (ordinal, promptDraft) =>
+        forkAtPrompt: (promptId, promptDraft) =>
           forkAtPrompt(
             treePort,
-            (sessionId, forkDraft) => core.openPane(sessionId, forkDraft),
+            (sessionId, forkDraft) =>
+              core.openPane(sessionId, forkDraft, { sourcePaneId: id, arc: "inherit" }),
             checkpoints,
             pane?.sessionId,
-            ordinal,
+            promptId,
             promptDraft,
           ),
+        ...(initial.failure !== undefined && { idleNotice: initial.failure }),
       };
-      const created = new ConversationPane(id, agent, notify, titler, commands, {
+      const created = new ConversationPane(id, initial.agent, notify, titler, commands, {
         ports,
         page: pageThresholds,
+        glyphs,
         animator,
         siblingTitles: () => paneSiblingTitles(core, id),
         ...(draft !== undefined && { initialDraft: draft }),
@@ -186,27 +252,55 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         const factory = options.agentFactory;
         const current = created.currentAgent();
         if (factory === undefined || current === undefined || current.busy()) return false;
-        created.swapAgent(
-          factory(guard, current.history(), { ...seams, bus: current.bus }, agentName),
-        );
+        created.swapAgent(factory(guard, current.history(), seamsFor(current.bus), agentName));
         return true;
       });
+      modelSwitchers.set(id, async (reference) => {
+        const factory = options.agentFactory;
+        if (factory === undefined) throw new Error("no inference runtime in this session");
+        const current = created.currentAgent();
+        if (current?.busy() === true) throw new Error("agent busy · finish the turn first");
+        const next = factory(guard, current?.history(), seamsFor(current?.bus, reference));
+        await liveSession?.recordModel?.(reference);
+        selectedModel = reference;
+        created.swapAgent(next);
+        return `model → ${modelReferenceOf(next.provider) ?? reference}`;
+      });
+      const bindArc = async (slug: string | undefined): Promise<void> => {
+        const session = liveSession;
+        if (session === undefined) throw new Error("this session has no store yet · try again");
+        await session.bindArc?.(slug);
+        created.arc = slug;
+        arcIndex.changed();
+        notify();
+      };
+      arcBinders.set(id, bindArc);
       const wireSession = (adopted: SessionAttachment): void => {
         liveSession = adopted;
-        adoptSession(created, agent, adopted);
-        if (agent === undefined) return;
+        adoptSession(created, initial.agent, adopted);
         bindSessionLifecycle({
           pane: created,
-          agent,
           attachment: adopted,
+          modelInForce,
           ...(options.afterTurn !== undefined && { afterTurn: options.afterTurn }),
-          rebuild: (history) =>
-            options.agentFactory?.(guard, history, { ...seams, bus: agent.bus }),
+          ...(options.compact !== undefined && { compact: options.compact }),
+          rebuild: (history, agent) => options.agentFactory?.(guard, history, seamsFor(agent.bus)),
         });
       };
       if (attachment !== undefined) wireSession(attachment);
-      else if (resumeSessionId === undefined && agent !== undefined) {
-        startFreshSession(options.sessions, notify, wireSession, () => !created.disposed());
+      else {
+        startFreshSession(
+          options.sessions,
+          notify,
+          (fresh) => {
+            wireSession(fresh);
+            void seedArcFromOrigin(origin, core, options.arcs, bindArc).then(
+              (notice) => notice !== undefined && created.postNotice(notice),
+              (cause: unknown) => created.postNotice((cause as Error).message),
+            );
+          },
+          () => !created.disposed(),
+        );
       }
       return created;
     },
@@ -219,7 +313,34 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         new SessionTreePane(id, notify, intents, treePort, targetSession, {
           ...(sessionId !== undefined && { sessionId }),
           presence: paneSessions,
+          arcOrdinal: arcIndex.ordinalOf,
         }),
+    }),
+    ...(treePort !== undefined &&
+      arcsPort !== undefined && {
+        createArcsPane: (id, notify, intents, targetSession, arc) =>
+          new ArcsPane(id, notify, intents, {
+            arcs: arcsPort,
+            sessions: treePort,
+            currentSession: targetSession,
+            presence: paneSessions,
+            arcOrdinal: arcIndex.ordinalOf,
+            ...(arc !== undefined && { drilled: { kind: "arc", slug: arc } }),
+          }),
+      }),
+    ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
+    ...(options.arcs !== undefined && {
+      arcs: options.arcs,
+      focusedArc: {
+        current: () => focusedConversationPane(core)?.pane.arc,
+        titleHint: () => focusedConversationPane(core)?.pane.titled(),
+        bind: (slug: string | undefined) => {
+          const found = focusedConversationPane(core);
+          const binder = found === undefined ? undefined : arcBinders.get(found.id);
+          if (binder === undefined) return Promise.reject(new Error("no conversation pane here"));
+          return binder(slug);
+        },
+      },
     }),
     ...(memoryPort !== undefined && {
       createMemoryPane: (id: string, notify: () => void) => new MemoryPane(id, notify, memoryPort),
@@ -231,13 +352,28 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       statSync(resolve(process.cwd(), path), { throwIfNoEntry: false })?.isDirectory() === true,
     ...(checkpoints !== undefined && { undo: checkpoints }),
     ...(options.presets !== undefined && { presets: options.presets }),
-    ...(restored !== undefined && { restoreWorkspace: restored.state }),
+    ...(options.inference !== undefined && { inference: options.inference }),
+    ...(options.connections !== undefined && { connections: options.connections }),
+    currentModel: () => {
+      const agent = focusedConversationPane(core)?.pane.currentAgent();
+      return agent === undefined ? undefined : modelReferenceOf(agent.provider);
+    },
+    switchModel: (reference) => {
+      const found = focusedConversationPane(core);
+      const switcher = found === undefined ? undefined : modelSwitchers.get(found.id);
+      if (switcher === undefined) return Promise.reject(new Error("no conversation pane here"));
+      return switcher(reference);
+    },
+    ...(restored !== undefined && { restoreWorkspace: restored }),
     ...(options.workspace !== undefined && {
       saveWorkspace: (state: WorkspaceState) => options.workspace?.save(state),
     }),
     onPaneClosed: (id) => {
       agentSwitchers.delete(id);
+      modelSwitchers.delete(id);
+      arcBinders.delete(id);
       paneSessions.closed(id);
+      arcIndex.changed();
     },
     onExit: closeOnce(() => {
       closed = true;
@@ -245,6 +381,9 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       animator.settleAll();
       if (armedExpiry !== undefined) clearTimeout(armedExpiry);
       unsubscribeMcp?.();
+      arcIndex.dispose();
+      paneSessions.closeAll();
+      escrow.releaseAll();
       renderer.destroy();
       options.workspace?.seal();
       void runClosers(
@@ -315,14 +454,22 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
           borderStyle: "rounded",
           borderColor: core.leaderArmed ? theme.accent : theme.border,
         },
-        buildBody(core, theme, screen()),
-        statusBar(core, theme, options.statusLabel),
+        buildBody(core, theme, screen(), flavors.active.instruments, arcIndex.ordinalOf),
+        statusBar(core, theme, options.statusLabel, arcIndex.ordinalOf),
       ),
     );
     if (core.helpVisible) renderer.root.add(helpOverlay(core.keymap, theme, screen()));
     if (core.paletteOpen) renderer.root.add(paletteOverlay(core, theme, screen()));
     const preset = presetOverlay(core, theme, screen());
     if (preset !== undefined) renderer.root.add(preset);
+    const model = modelOverlay(core, theme, screen());
+    if (model !== undefined) renderer.root.add(model);
+    const arc = arcOverlay(core, theme, screen(), arcIndex.ordinalOf);
+    if (arc !== undefined) renderer.root.add(arc);
+    const workspace = workspaceOverlay(core, theme, screen());
+    if (workspace !== undefined) renderer.root.add(workspace);
+    const connect = connectOverlay(core, theme, screen());
+    if (connect !== undefined) renderer.root.add(connect);
     renderer.requestRender();
   };
 
@@ -413,7 +560,62 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   renderer.auto();
   core.bindNotify(render);
   core.start();
+  arcIndex.changed();
   render();
+}
+
+interface ArcIndex {
+  readonly ordinalOf: ArcOrdinals;
+  changed(): void;
+  dispose(): void;
+}
+
+function arcIndexOf(arcs: ArcsPort | undefined, onRefreshed: () => void): ArcIndex {
+  let ordinals: ArcOrdinals = () => undefined;
+  let disposed = false;
+  const refresh = (): void => {
+    if (arcs === undefined || disposed) return;
+    void arcs
+      .list()
+      .then((listed) => {
+        if (disposed) return;
+        ordinals = arcOrdinalsOf(listed);
+        onRefreshed();
+      })
+      .catch(() => {});
+  };
+  const unsubscribe = arcs?.subscribe?.(refresh);
+  return {
+    ordinalOf: (slug) => ordinals(slug),
+    changed: refresh,
+    dispose: () => {
+      disposed = true;
+      unsubscribe?.();
+    },
+  };
+}
+
+export async function seedArcFromOrigin(
+  origin: PaneOrigin | undefined,
+  core: AppCore,
+  arcs: ArcsPort | undefined,
+  bind: (slug: string | undefined) => Promise<void>,
+): Promise<string | undefined> {
+  if (origin === undefined) return undefined;
+  const source =
+    origin.sourcePaneId === undefined ? undefined : core.panes.get(origin.sourcePaneId);
+  const sourcePane = source instanceof ConversationPane ? source : undefined;
+  if (origin.arc === "inherit") {
+    if (sourcePane?.arc === undefined) return undefined;
+    await bind(sourcePane.arc);
+    return undefined;
+  }
+  if (arcs === undefined) return "no arcs here · a trusted workspace is needed first";
+  const taken = (await arcs.list()).map((arc) => arc.slug);
+  const slug = suggestArcSlug(sourcePane?.titled(), taken);
+  await arcs.create(slug);
+  await bind(slug);
+  return `arc → ${slug} · new`;
 }
 
 export const crashLogFile = join(homedir(), ".keywork", "tui-crash.log");
@@ -476,42 +678,39 @@ export function discardFrame(root: DiscardableFrame): void {
 
 function mouseRepaints(core: AppCore, pointer: PointerEvent): boolean {
   if (pointer.type !== "move") return true;
-  return core.paletteOpen || core.helpVisible || core.draggingPane() !== undefined;
+  return core.overlayOpen || core.draggingPane() !== undefined;
 }
 
 function defaultRenderer(): Promise<CliRenderer> {
   return createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
 }
 
-interface RestorePlan {
-  state: WorkspaceState;
-  attachments: Map<string, SessionAttachment>;
-}
-
-async function loadRestorePlan(options: AppOptions): Promise<RestorePlan | undefined> {
+async function loadRestorePlan(
+  options: AppOptions,
+  escrow: SessionEscrow,
+): Promise<WorkspaceState | undefined> {
   if (options.workspace === undefined) return undefined;
   const state = parseWorkspaceState(await options.workspace.load());
   if (state === undefined) return undefined;
-  const attachments = new Map<string, SessionAttachment>();
   const panes: WorkspacePane[] = [];
   for (const pane of state.panes) {
-    if (await restorable(pane, options.sessions, attachments)) panes.push(pane);
+    if (await restorable(pane, options.sessions, escrow)) panes.push(pane);
   }
   if (panes.length === 0) return undefined;
-  return { state: { ...state, panes }, attachments };
+  return { ...state, panes };
 }
 
 async function restorable(
   pane: WorkspacePane,
   sessions: SessionPort | undefined,
-  attachments: Map<string, SessionAttachment>,
+  escrow: SessionEscrow,
 ): Promise<boolean> {
   switch (pane.kind) {
     case "conversation": {
       if (pane.sessionId === undefined) return true;
       const attachment = await sessions?.open(pane.sessionId);
       if (attachment === undefined) return false;
-      attachments.set(pane.sessionId, attachment);
+      escrow.hold(pane.sessionId, attachment);
       return true;
     }
     case "file":
@@ -519,6 +718,7 @@ async function restorable(
     case "browser":
       return statKind(pane.root)?.isDirectory() === true;
     case "session-tree":
+    case "arcs":
     case "memory":
     case "mcp":
       return true;
@@ -542,36 +742,33 @@ export async function forkAtPrompt(
   open: (sessionId: string | undefined, draft: string) => void,
   checkpoints: CheckpointsPort | undefined,
   sessionId: string | undefined,
-  ordinal: number,
+  promptId: string,
   draft: string,
 ): Promise<ForkOutcome> {
   if (trees === undefined || sessionId === undefined) return { forked: false };
   const view = await trees.load(sessionId);
   if (view === undefined) return { forked: false };
-  const anchor = promptAnchor(view.roots, ordinal);
+  const anchor = promptAnchor(view.roots, promptId);
   if (anchor === undefined) return { forked: false };
   if (anchor.parentId === null) {
     open(undefined, draft);
-    return { forked: true, note: await restoreForkedFiles(checkpoints, view.roots, ordinal) };
+    return { forked: true, note: await restoreForkedFiles(checkpoints, anchor) };
   }
   const forked = await trees.fork(sessionId, anchor.parentId);
   if (forked === undefined) return { forked: false };
   open(forked, draft);
-  return { forked: true, note: await restoreForkedFiles(checkpoints, view.roots, ordinal) };
+  return { forked: true, note: await restoreForkedFiles(checkpoints, anchor) };
 }
 
 const unchangedFilesNote = "forked · files untouched";
 
 async function restoreForkedFiles(
   checkpoints: CheckpointsPort | undefined,
-  roots: readonly SessionTreeNode[],
-  ordinal: number,
+  anchor: PromptAnchor,
 ): Promise<string> {
-  if (checkpoints === undefined) return unchangedFilesNote;
-  const checkpoint = checkpointForPrompt(roots, ordinal);
-  if (!checkpoint.restorable) return unchangedFilesNote;
+  if (checkpoints === undefined || anchor.checkpoint === undefined) return unchangedFilesNote;
   try {
-    await checkpoints.restoreTo(checkpoint.tree);
+    await checkpoints.restoreTo(anchor.checkpoint);
     return "files put back to that point";
   } catch (cause) {
     return `forked · file restore failed: ${(cause as Error).message}`;
@@ -594,60 +791,95 @@ function conversationTarget(
   core: AppCore,
   switchers: ReadonlyMap<string, (agentName: string | undefined) => boolean>,
 ): ConversationTarget | undefined {
+  const found = focusedConversationPane(core);
+  if (found === undefined) return undefined;
+  const { id, pane } = found;
+  return {
+    confirmShell: (command) => pane.confirmMutation(shellConfirmCall(command)),
+    submitPrompt: (text) => pane.submitPrompt(text),
+    switchAgent: (agentName) => switchers.get(id)?.(agentName) ?? false,
+  };
+}
+
+function focusedConversationPane(
+  core: AppCore,
+): { id: string; pane: ConversationPane } | undefined {
   const focused = core.layout.focused();
   const ids = core.layout.panes();
   const ordered = focused === undefined ? ids : [focused, ...ids.filter((id) => id !== focused)];
   for (const id of ordered) {
     const pane = core.panes.get(id);
-    if (!(pane instanceof ConversationPane)) continue;
-    return {
-      confirmShell: (command) => pane.confirmMutation(shellConfirmCall(command)),
-      submitPrompt: (text) => pane.submitPrompt(text),
-      switchAgent: (agentName) => switchers.get(id)?.(agentName) ?? false,
-    };
+    if (pane instanceof ConversationPane) return { id, pane };
   }
   return undefined;
+}
+
+function buildAgent(
+  factory: AgentFactory | undefined,
+  guard: ToolGuard,
+  history: readonly Message[] | undefined,
+  seams: AgentSeams,
+): { agent?: Agent; failure?: string } {
+  if (factory === undefined) return {};
+  try {
+    return { agent: factory(guard, history, seams) };
+  } catch (cause) {
+    return { failure: (cause as Error).message };
+  }
+}
+
+export interface SessionEscrow {
+  hold(sessionId: string, attachment: SessionAttachment): void;
+  claim(sessionId: string): SessionAttachment | undefined;
+  releaseAll(): void;
+}
+
+export function sessionEscrow(sessions: SessionPort | undefined): SessionEscrow {
+  const held = new Map<string, SessionAttachment>();
+  return {
+    hold: (sessionId, attachment) => {
+      if (held.has(sessionId)) sessions?.release?.(sessionId);
+      held.set(sessionId, attachment);
+    },
+    claim: (sessionId) => {
+      const attachment = held.get(sessionId);
+      held.delete(sessionId);
+      return attachment;
+    },
+    releaseAll: () => {
+      for (const sessionId of held.keys()) sessions?.release?.(sessionId);
+      held.clear();
+    },
+  };
 }
 
 export function attachOnFork(
   trees: SessionTreePort,
   sessions: SessionPort | undefined,
-  attachments: Map<string, SessionAttachment>,
+  escrow: SessionEscrow,
 ): SessionTreePort {
-  const escrow = async (sessionId: string): Promise<boolean> => {
+  const attach = async (sessionId: string): Promise<boolean> => {
     if (sessions === undefined) return false;
     const attachment = await sessions.open(sessionId);
     if (attachment === undefined) return false;
-    escrowUntilClaimed(attachments, sessions, sessionId, attachment);
+    escrow.hold(sessionId, attachment);
     return true;
   };
   return {
     ...trees,
     fork: async (sessionId, entryId) => {
       const forkedId = await trees.fork(sessionId, entryId);
-      if (forkedId !== undefined) await escrow(forkedId);
+      if (forkedId !== undefined) await attach(forkedId);
       return forkedId;
     },
-    attach: escrow,
+    attach,
   };
-}
-
-function escrowUntilClaimed(
-  attachments: Map<string, SessionAttachment>,
-  sessions: SessionPort,
-  sessionId: string,
-  attachment: SessionAttachment,
-): void {
-  attachments.set(sessionId, attachment);
-  const claimWindow = setTimeout(() => {
-    if (attachments.delete(sessionId)) sessions.release?.(sessionId);
-  }, 0);
-  claimWindow.unref?.();
 }
 
 export interface PaneSessionIndex {
   bind(paneId: string, sessionId: () => string | undefined, busy?: () => boolean): void;
   closed(paneId: string): void;
+  closeAll(): void;
   size(): number;
   paneFor(sessionId: string): string | undefined;
   busy(sessionId: string): boolean;
@@ -674,6 +906,13 @@ export function paneSessionIndex(sessions: SessionPort | undefined): PaneSession
       const sessionId = bindings.get(paneId)?.sessionId();
       bindings.delete(paneId);
       if (sessionId !== undefined) sessions?.release?.(sessionId);
+    },
+    closeAll: () => {
+      for (const binding of bindings.values()) {
+        const sessionId = binding.sessionId();
+        if (sessionId !== undefined) sessions?.release?.(sessionId);
+      }
+      bindings.clear();
     },
     size: () => bindings.size,
     paneFor,
@@ -718,6 +957,7 @@ function adoptSession(
   attachment: SessionAttachment,
 ): void {
   pane.sessionId = attachment.id;
+  pane.arc = attachment.arc;
   reconcileTitle(pane, attachment);
   if (agent === undefined) return;
   attachment.replay(agent.bus);
@@ -737,8 +977,8 @@ function persistingTitler(
   session: () => SessionAttachment | undefined,
 ): Titler | undefined {
   if (titler === undefined) return undefined;
-  return async (conversation) => {
-    const title = await titler(conversation);
+  return async (conversation, agent) => {
+    const title = await titler(conversation, agent);
     if (title !== undefined)
       void session()
         ?.rename?.(title)
@@ -749,31 +989,63 @@ function persistingTitler(
 
 export interface SessionLifecycleOptions {
   pane: ConversationPane;
-  agent: Agent;
   attachment: SessionAttachment;
-  afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
-  rebuild?: (history: readonly Message[]) => Agent | undefined;
+  modelInForce?: () => string | undefined;
+  afterTurn?: AfterTurn;
+  compact?: Compactor;
+  rebuild?: (history: readonly Message[], agent: Agent) => Agent | undefined;
 }
 
 export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
   const { pane, attachment } = options;
   let persisted = attachment.history.length;
-  pane.bindAfterTurn(async () => {
-    const agent = pane.currentAgent() ?? options.agent;
-    const fresh = agent.history().slice(persisted);
-    persisted += fresh.length;
-    for (const message of fresh) await attachment.append(message);
-    const joined =
-      (await options.afterTurn?.({ sessionId: attachment.id, history: agent.history() })) ?? [];
-    if (joined.length === 0 || pane.disposed()) return;
-    const next = options.rebuild?.([...agent.history(), ...joined]);
+  let modelRecorded = attachment.modelReference !== undefined;
+  const turnOf = (agent: Agent): SessionTurn => ({
+    sessionId: attachment.id,
+    history: agent.history(),
+    agent,
+  });
+  const apply = (settlement: TurnSettlement | undefined, agent: Agent): void => {
+    if (settlement === undefined || pane.disposed()) return;
+    for (const notice of settlement.notices) pane.postNotice(notice);
+    if (settlement.history === undefined) return;
+    const next = options.rebuild?.(settlement.history, agent);
     if (next === undefined) return;
     persisted = next.history().length;
     pane.swapAgent(next);
+  };
+  pane.bindAfterTurn(async () => {
+    const agent = pane.currentAgent();
+    if (agent === undefined) return;
+    const fresh = agent.history().slice(persisted);
+    persisted += fresh.length;
+    if (!modelRecorded && fresh.length > 0) {
+      modelRecorded = true;
+      const reference = modelReferenceOf(agent.provider) ?? options.modelInForce?.();
+      if (reference !== undefined) await attachment.recordModel?.(reference);
+    }
+    for (const message of fresh) {
+      const receipt = await attachment.append(message);
+      if (message.role === "user" && receipt !== undefined) pane.adoptPromptId(receipt.entryId);
+    }
+    apply(await options.afterTurn?.(turnOf(agent)), agent);
+  });
+  const compact = options.compact;
+  if (compact === undefined) return;
+  pane.bindCompaction(async (instructions) => {
+    const agent = pane.currentAgent();
+    if (agent === undefined) return;
+    apply(await compact(turnOf(agent), instructions), agent);
   });
 }
 
-function buildBody(core: AppCore, theme: Theme, screen: Screen) {
+function buildBody(
+  core: AppCore,
+  theme: Theme,
+  screen: Screen,
+  instruments: Flavor["instruments"],
+  arcOrdinal: ArcOrdinals,
+) {
   const rects = core.layout.rects(screen);
   const focused = core.layout.focused();
   if (rects.size === 0) {
@@ -784,11 +1056,17 @@ function buildBody(core: AppCore, theme: Theme, screen: Screen) {
   }
   const idleMain = core.layout.emptyMainRect(screen);
   const dropPreview = core.dragPreview();
-  const sweep = rampPositions([...core.panes.keys()]);
+  const sweep = rampPositions([...core.panes.keys()], (id) => {
+    const arc = paneArcOf(core, id);
+    return arc === undefined ? undefined : arcOrdinal(arc);
+  });
   return Box(
     { width: screen.width, height: screen.height },
     ...[...rects].map(([id, rect]) =>
-      placedBox(rect, paneViewFor(core, theme, id, rect, id === focused, sweep.get(id) ?? 0)),
+      placedBox(
+        rect,
+        paneViewFor(core, theme, id, rect, id === focused, sweep.get(id) ?? 0, instruments),
+      ),
     ),
     ...(idleMain === undefined ? [] : [placedBox(idleMain, idleMainView(theme))]),
     ...(dropPreview === undefined ? [] : [dropPreviewBox(dropPreview, theme)]),
@@ -850,6 +1128,7 @@ function paneViewFor(
   rect: Rect,
   focused: boolean,
   rampPosition: number,
+  instruments: Flavor["instruments"],
 ): PaneView {
   if (rect.width < minPaneSize.width || rect.height < minPaneSize.height) {
     return overflowedView(theme);
@@ -860,6 +1139,7 @@ function paneViewFor(
     width: rect.width,
     height: rect.height,
     borderColor: paneBorder(theme, rampPosition, focused),
+    instruments,
   });
   return view ?? emptyView(theme);
 }
@@ -888,14 +1168,14 @@ function emptyView(theme: Theme) {
   );
 }
 
-function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => string) | undefined) {
+function statusBar(
+  core: AppCore,
+  theme: Theme,
+  labelOption: string | (() => string) | undefined,
+  arcOrdinal: ArcOrdinals,
+) {
   const label = typeof labelOption === "function" ? labelOption() : labelOption;
-  const hint =
-    core.notice !== ""
-      ? core.notice
-      : core.leaderArmed
-        ? "nav · h/j/k/l focus  H/J/K/L move  s split  x close  z zoom  c cycle  ,/. dock width · esc done"
-        : `${label ?? "keywork"} · ${core.layout.panes().length} panes · ctrl+k nav · ctrl+p go · > commands`;
+  const hint = core.notice !== "" ? core.notice : core.leaderArmed ? navHint : undefined;
   return Box(
     {
       height: 1,
@@ -905,12 +1185,36 @@ function statusBar(core: AppCore, theme: Theme, labelOption: string | (() => str
       paddingRight: 1,
       backgroundColor: theme.panel,
     },
-    Text({
-      content: hint,
-      fg: core.notice !== "" || core.leaderArmed ? theme.accent : theme.textDim,
-    }),
+    hint !== undefined
+      ? Text({ content: hint, fg: theme.accent })
+      : Text({ content: new StyledText(statusChunks(core, theme, label, arcOrdinal)) }),
     Text({ content: core.lastKey, fg: theme.textDim }),
   );
+}
+
+const navHint =
+  "nav · h/j/k/l focus  H/J/K/L move  s split  x close  z zoom  c cycle  ,/. dock width · esc done";
+
+function statusChunks(
+  core: AppCore,
+  theme: Theme,
+  label: string | undefined,
+  arcOrdinal: ArcOrdinals,
+): TextChunk[] {
+  const arc = focusedConversationPane(core)?.pane.arc;
+  const lead = `${label ?? "keywork"} · `;
+  const tail = `${core.layout.panes().length} panes · ctrl+k nav · ctrl+p go · > commands`;
+  if (arc === undefined) return [fg(theme.textDim)(`${lead}${tail}`)];
+  return [
+    fg(theme.textDim)(lead),
+    fg(arcInk(theme, arcOrdinal(arc)))(arcTag(arc)),
+    fg(theme.textDim)(` · ${tail}`),
+  ];
+}
+
+function paneArcOf(core: AppCore, paneId: string): string | undefined {
+  const pane = core.panes.get(paneId);
+  return pane instanceof ConversationPane ? pane.arc : undefined;
 }
 
 function paletteOverlay(core: AppCore, theme: Theme, screen: Screen) {
@@ -1018,6 +1322,230 @@ function presetRows(core: AppCore, theme: Theme) {
     rows.push(Text({ content: `  ${picker.active} · active (edited config)`, fg: theme.textDim }));
   }
   return rows;
+}
+
+function modelOverlay(core: AppCore, theme: Theme, screen: Screen) {
+  const picker = core.modelPicker();
+  if (picker === undefined) return undefined;
+  const rows = modelRows(picker, theme);
+  const frame = paletteFrame(screen, rows.length);
+  const innerWidth = overlayInnerWidth(frame);
+  return Box(
+    {
+      ...overlayPosition(frame),
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " model ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    Text({ content: clipLine(` › ${picker.query}▌`, innerWidth), fg: theme.text }),
+    ...(rows.length > 0
+      ? rows
+      : [Text({ content: "  nothing matches · /connect adds a provider", fg: theme.textDim })]),
+  );
+}
+
+function modelRows(picker: ModelPicker, theme: Theme) {
+  return picker.rows().map(({ choice, selected, current }) =>
+    Text({
+      content: `${selected ? "▸" : " "} ${describeChoice(choice)}${current ? " · current" : ""}`,
+      fg: selected ? theme.accent : choice.available ? theme.text : theme.textDim,
+    }),
+  );
+}
+
+function arcOverlay(core: AppCore, theme: Theme, screen: Screen, arcOrdinal: ArcOrdinals) {
+  const picker = core.arcPicker();
+  if (picker === undefined) return undefined;
+  const rows = arcRows(picker, theme, arcOrdinal);
+  const frame = paletteFrame(screen, rows.length);
+  const innerWidth = overlayInnerWidth(frame);
+  return Box(
+    {
+      ...overlayPosition(frame),
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " arc ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    Text({ content: clipLine(` › ${picker.query}▌`, innerWidth), fg: theme.text }),
+    ...(rows.length > 0
+      ? rows
+      : [Text({ content: "  type a slug to start an arc · esc closes", fg: theme.textDim })]),
+  );
+}
+
+function workspaceOverlay(core: AppCore, theme: Theme, screen: Screen) {
+  const picker = core.workspacePicker();
+  if (picker === undefined) return undefined;
+  const rows = picker.rows().map((row) =>
+    Text({
+      content: `${row.selected ? "▸" : " "} ${describeWorkspaceRow(row)}`,
+      fg: row.selected ? theme.accent : theme.text,
+    }),
+  );
+  const frame = paletteFrame(screen, rows.length);
+  const innerWidth = overlayInnerWidth(frame);
+  return Box(
+    {
+      ...overlayPosition(frame),
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " workspace ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    Text({ content: clipLine(` › ${picker.query}▌`, innerWidth), fg: theme.text }),
+    ...(rows.length > 0
+      ? rows
+      : [Text({ content: "  type a slug to start a workspace · esc closes", fg: theme.textDim })]),
+  );
+}
+
+function arcRows(picker: ArcPicker, theme: Theme, arcOrdinal: ArcOrdinals) {
+  return picker.rows().map((row) => {
+    const marker = row.selected ? "▸" : " ";
+    const archived = row.kind === "arc" && row.arc.status === "archived";
+    if (row.kind !== "arc" || archived) {
+      return Text({
+        content: `${marker} ${describeArcRow(row)}`,
+        fg: row.selected ? theme.accent : archived ? theme.textDim : theme.text,
+      });
+    }
+    const ink = row.selected ? theme.accent : theme.text;
+    const facts = describeArcRow(row).slice(row.arc.slug.length);
+    return Text({
+      content: new StyledText([
+        fg(ink)(`${marker} `),
+        fg(row.selected ? theme.accent : arcInk(theme, arcOrdinal(row.arc.slug)))(row.arc.slug),
+        fg(ink)(facts),
+      ]),
+    });
+  });
+}
+
+function connectOverlay(core: AppCore, theme: Theme, screen: Screen) {
+  const model = core.connectModel();
+  if (model === undefined) return undefined;
+  const rows = connectRows(model, theme);
+  const frame = helpFrame(screen, model.rowCount());
+  return Box(
+    {
+      ...overlayPosition(frame),
+      zIndex: 20,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.accent,
+      backgroundColor: theme.panel,
+      title: " connect ",
+      titleAlignment: "center",
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingTop: 1,
+      paddingBottom: 1,
+    },
+    ...rows,
+  );
+}
+
+function connectRows(model: ConnectModel, theme: Theme) {
+  const { stage } = model;
+  switch (stage.kind) {
+    case "targets":
+      return model.targetRows().map((row, index) =>
+        Text({
+          content: `${index === stage.index ? "▸" : " "} ${row.label} · ${row.detail}`,
+          fg: index === stage.index ? theme.accent : theme.text,
+        }),
+      );
+    case "editor":
+      return [
+        ...model.fields().map((field, index) => editorRow(field, index === stage.field, theme)),
+        Text({
+          content: " ↑↓ field · type to edit · ←→ toggle · enter acts · esc discards",
+          fg: theme.textDim,
+        }),
+      ];
+    case "verifying":
+      return [Text({ content: ` verifying ${stage.draft.endpoint}/models …`, fg: theme.text })];
+    case "failed":
+      return [
+        Text({ content: ` not saved · ${stage.reason}`, fg: theme.accent }),
+        Text({
+          content: ` observed ${stage.at} · any key returns to the editor`,
+          fg: theme.textDim,
+        }),
+      ];
+    case "receipt":
+      return [
+        Text({ content: ` saved ${stage.draft.name} · ${stage.draft.endpoint}`, fg: theme.text }),
+        Text({ content: ` verified ${stage.at} · ${modelsFact(stage.models)}`, fg: theme.textDim }),
+        Text({ content: " enter choose a model · esc done", fg: theme.accent }),
+      ];
+    case "remove-confirm":
+      return [
+        Text({
+          content: ` remove connection ${stage.name} and its ${stage.credential}?`,
+          fg: theme.text,
+        }),
+        Text({ content: " y remove · n keep", fg: theme.accent }),
+      ];
+    case "removed":
+      return [
+        Text({
+          content: ` removed ${stage.receipt.removed.join(", ") || "nothing"}`,
+          fg: theme.text,
+        }),
+        ...stage.receipt.retained.map((fact) =>
+          Text({ content: ` kept ${fact}`, fg: theme.textDim }),
+        ),
+        Text({ content: " any key closes", fg: theme.accent }),
+      ];
+  }
+}
+
+function editorRow(field: EditorField, selected: boolean, theme: Theme) {
+  const value =
+    field.kind === "secret"
+      ? field.value === ""
+        ? "(saved or none)"
+        : "•".repeat(field.value.length)
+      : field.value;
+  const shown =
+    field.kind === "toggle"
+      ? `‹ ${value} ›`
+      : field.kind === "action" || field.kind === "danger"
+        ? value
+        : `${value}${selected ? "▌" : ""}`;
+  const fg = selected ? theme.accent : field.kind === "danger" ? theme.textDim : theme.text;
+  return Text({ content: `${selected ? "▸" : " "} ${field.label.padEnd(12)} ${shown}`, fg });
+}
+
+function modelsFact(models: readonly string[]): string {
+  if (models.length === 0) return "no models reported";
+  return models.length === 1
+    ? `1 model reported: ${models[0]}`
+    : `${models.length} models reported`;
 }
 
 function helpOverlay(keymap: Keymap, theme: Theme, screen: Screen) {

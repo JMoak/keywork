@@ -1,25 +1,33 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   Agent,
   type Message,
   MockProvider,
+  memoryFlushPrompt,
   messageText,
+  replaySession,
+  SessionStore,
   type SessionTreeNode,
   type Tool,
   type TurnDelta,
+  type TurnSettlement,
   textMessage,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import {
+  type AfterTurn,
   bindSessionLifecycle,
   type CheckpointsPort,
+  type Compactor,
   forkAtPrompt,
   paneSessionIndex,
   type SessionAttachment,
-  type SessionTurn,
 } from "./app.ts";
-import { type PresetsPort, paletteFrame, paletteRowLimit } from "./app-core.ts";
+import { helpFrame, type PresetsPort, paletteFrame, paletteRowLimit } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { FileModel } from "./file-model.ts";
@@ -515,9 +523,16 @@ describe("paste", () => {
     expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([]);
   });
 
-  it("drops pastes while an overlay is open", () => {
-    const probe = new AppProbe().keys("ctrl+p").paste("split");
-    expect(probe.snapshot().paletteQuery).toBe("");
+  it("extends the palette query with a paste instead of reaching the pane", () => {
+    const probe = new AppProbe().keys("ctrl+p").paste("spl\nit\n");
+    expect(probe.snapshot().paletteQuery).toBe("spl it");
+    probe.keys("escape");
+    expect(probe.model()?.input).toBe("");
+  });
+
+  it("ignores pastes while the help overlay is open", () => {
+    const probe = new AppProbe().keys("ctrl+k", "/").paste("split");
+    expect(probe.snapshot().overlay).toBe("help");
     probe.keys("escape");
     expect(probe.model()?.input).toBe("");
   });
@@ -1331,7 +1346,7 @@ describe("safety net", () => {
     const declined = probe.model()?.entries.find((entry) => entry.kind === "tool");
     expect(declined).toMatchObject({ kind: "tool", failed: true });
     expect(declined?.text).toContain("scribble");
-    expect(declined?.text).toContain("failed — declined by user");
+    expect(declined?.text).toContain("failed · declined by user");
   });
 });
 
@@ -1516,24 +1531,42 @@ describe("diff preview in the ask", () => {
 });
 
 describe("esc-backtrack prompt stepping", () => {
+  interface ForkRequest {
+    promptId: string;
+    draft: string;
+  }
+
+  function identifyingAttachment(): SessionAttachment {
+    return {
+      id: "sess-1",
+      history: [],
+      replay: () => {},
+      append: async (message) =>
+        message.role === "user" ? { entryId: `entry:${messageText(message)}` } : undefined,
+    };
+  }
+
   function backtrackProbe(
-    forks: { ordinal: number; draft: string }[],
+    forks: ForkRequest[],
     outcome: boolean | (() => Promise<boolean>) = true,
+    identified = true,
   ) {
     return new AppProbe({
       createPane: (id, notify, commands) => {
         const agent = new Agent({
           provider: new MockProvider([textTurn("re: one"), textTurn("re: two")]),
         });
-        return new ConversationPane(id, agent, notify, undefined, commands, {
+        const pane = new ConversationPane(id, agent, notify, undefined, commands, {
           ports: {
-            forkAtPrompt: async (ordinal, draft) => {
-              forks.push({ ordinal, draft });
+            forkAtPrompt: async (promptId, draft) => {
+              forks.push({ promptId, draft });
               const forked = typeof outcome === "boolean" ? outcome : await outcome();
               return { forked };
             },
           },
         });
+        if (identified) bindSessionLifecycle({ pane, attachment: identifyingAttachment() });
+        return pane;
       },
     });
   }
@@ -1582,24 +1615,37 @@ describe("esc-backtrack prompt stepping", () => {
     expect(probe.model()?.backtracking()).toBe(false);
   });
 
-  it("enter forks at the selected prompt, including the very first one", async () => {
-    const forks: { ordinal: number; draft: string }[] = [];
+  it("enter forks at the selected prompt's own entry, including the very first one", async () => {
+    const forks: ForkRequest[] = [];
     const probe = await conversed(backtrackProbe(forks), "one", "two");
     probe.keys("escape", "escape", "up", "enter");
     await probe.settled();
 
-    expect(forks).toEqual([{ ordinal: 0, draft: "one" }]);
+    expect(forks).toEqual([{ promptId: "entry:one", draft: "one" }]);
     expect(probe.model()?.backtracking()).toBe(false);
     expect(probe.model()?.entries.filter((entry) => entry.kind === "info")).toEqual([]);
   });
 
   it("reports truthfully when the fork cannot happen", async () => {
-    const forks: { ordinal: number; draft: string }[] = [];
+    const forks: ForkRequest[] = [];
     const probe = await conversed(backtrackProbe(forks, false), "one");
     probe.keys("escape", "escape", "enter");
     await probe.settled();
 
-    expect(forks).toEqual([{ ordinal: 0, draft: "one" }]);
+    expect(forks).toEqual([{ promptId: "entry:one", draft: "one" }]);
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "no fork point there",
+    });
+  });
+
+  it("refuses to fork at a prompt the store never acknowledged instead of guessing", async () => {
+    const forks: ForkRequest[] = [];
+    const probe = await conversed(backtrackProbe(forks, true, false), "one");
+    probe.keys("escape", "escape", "enter");
+    await probe.settled();
+
+    expect(forks).toEqual([]);
     expect(probe.model()?.entries.at(-1)).toEqual({
       kind: "info",
       text: "no fork point there",
@@ -1657,8 +1703,8 @@ describe("esc-backtrack prompt stepping", () => {
     expect(probe.model()?.busy).toBe(false);
   });
 
-  it("counts replayed prompts so fork ordinals match the session", async () => {
-    const forks: { ordinal: number; draft: string }[] = [];
+  it("forks a replayed prompt by the entry id replay carried", async () => {
+    const forks: ForkRequest[] = [];
     const agents: Agent[] = [];
     const probe = new AppProbe({
       createPane: (id, notify, commands) => {
@@ -1666,21 +1712,21 @@ describe("esc-backtrack prompt stepping", () => {
         agents.push(agent);
         return new ConversationPane(id, agent, notify, undefined, commands, {
           ports: {
-            forkAtPrompt: async (ordinal, draft) => {
-              forks.push({ ordinal, draft });
+            forkAtPrompt: async (promptId, draft) => {
+              forks.push({ promptId, draft });
               return { forked: true };
             },
           },
         });
       },
     });
-    agents[0]?.bus.emit("turn.started", { userText: "old prompt", replay: true });
+    agents[0]?.bus.emit("turn.started", { userText: "old prompt", replay: true, entryId: "u-old" });
     probe.type("new prompt").keys("enter");
     await probe.settled();
 
     probe.keys("escape", "escape", "up", "enter");
     await probe.settled();
-    expect(forks).toEqual([{ ordinal: 0, draft: "old prompt" }]);
+    expect(forks).toEqual([{ promptId: "u-old", draft: "old prompt" }]);
   });
 
   it("opens a forked pane with the chosen prompt preloaded for editing", () => {
@@ -1775,7 +1821,7 @@ describe("workspace persistence", () => {
     expect(paneIds(second)).toContain("session-3");
   });
 
-  it("persists browser panes as root only — expansion state absent by design", () => {
+  it("persists browser panes as root only; expansion state is absent by design", () => {
     const probe = new AppProbe(describableFactories());
     probe.command("browse src");
     const browser = probe.workspaceState().panes.find((pane) => pane.kind === "browser");
@@ -1985,13 +2031,15 @@ describe("session after-turn lifecycle", () => {
       replay: () => {},
       append: async (message) => {
         appended.push(message);
+        return undefined;
       },
     };
   }
 
   function lifecycleProbe(options: {
     turns: TurnDelta[][];
-    afterTurn?: (turn: SessionTurn) => Promise<readonly Message[]>;
+    afterTurn?: AfterTurn;
+    compact?: Compactor;
   }) {
     const attachment = recordedAttachment("sess-1");
     const rebuilt: Agent[] = [];
@@ -2002,9 +2050,9 @@ describe("session after-turn lifecycle", () => {
         const pane = new ConversationPane(id, agent, notify, undefined, commands);
         bindSessionLifecycle({
           pane,
-          agent,
           attachment,
           ...(options.afterTurn !== undefined && { afterTurn: options.afterTurn }),
+          ...(options.compact !== undefined && { compact: options.compact }),
           rebuild: (history) => {
             const next = new Agent({ provider, bus: agent.bus, history });
             rebuilt.push(next);
@@ -2028,9 +2076,9 @@ describe("session after-turn lifecycle", () => {
       turns: [textTurn("first reply"), textTurn("second reply")],
       afterTurn: async ({ sessionId, history }) => {
         seen.push(`${sessionId}:${history.length}`);
-        if (seen.length > 1) return [];
+        if (seen.length > 1) return undefined;
         for (const message of flushMessages) await attachment.append(message);
-        return flushMessages;
+        return settlement([...history, ...flushMessages]);
       },
     });
     probe.type("hi").keys("enter");
@@ -2066,7 +2114,7 @@ describe("session after-turn lifecycle", () => {
       turns: [textTurn("reply")],
       afterTurn: async () => {
         await gate;
-        return [];
+        return undefined;
       },
     });
     probe.type("hi").keys("enter");
@@ -2095,6 +2143,89 @@ describe("session after-turn lifecycle", () => {
     await probe.settled();
     expect(probe.model()?.entries).toContainEqual({ kind: "assistant", text: "second" });
   });
+
+  it("posts settlement notices and rebuilds on the compacted history", async () => {
+    const summary = textMessage("user", "## Goal\nfolded");
+    const { probe, rebuilt } = lifecycleProbe({
+      turns: [textTurn("first reply"), textTurn("second reply")],
+      afterTurn: async ({ history }) =>
+        history.length >= 4
+          ? {
+              history: [summary, ...history.slice(-2)],
+              notices: ["compacted 1k tokens into a summary · context now 200 of 2k"],
+              flushed: [],
+              compacted: undefined,
+            }
+          : undefined,
+    });
+    probe.type("one").keys("enter");
+    await probe.settled();
+    expect(rebuilt).toHaveLength(0);
+
+    probe.type("two").keys("enter");
+    await probe.settled();
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0]?.history().map((message) => messageText(message))).toEqual([
+      "## Goal\nfolded",
+      "two",
+      "second reply",
+    ]);
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "compacted 1k tokens into a summary · context now 200 of 2k",
+    });
+  });
+
+  it("/compact runs the compactor while the pane is busy, then applies its settlement", async () => {
+    const requests: string[] = [];
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { probe, rebuilt } = lifecycleProbe({
+      turns: [textTurn("reply")],
+      compact: async ({ history }, instructions) => {
+        requests.push(instructions);
+        await gate;
+        return settlement(
+          [textMessage("user", "summary"), ...history.slice(-1)],
+          ["compacted 3 tokens into a summary · context now 1 of 2k"],
+        );
+      },
+    });
+    probe.type("hello").keys("enter");
+    await probe.settled();
+
+    probe.type("/compact keep the file names").keys("enter");
+    await waitFor(() => expect(requests).toEqual(["keep the file names"]));
+    expect(probe.model()?.busy).toBe(true);
+    release();
+    await probe.settled();
+    expect(probe.model()?.busy).toBe(false);
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0]?.history().map((message) => messageText(message))).toEqual([
+      "summary",
+      "reply",
+    ]);
+    expect(probe.model()?.entries.at(-1)?.text).toContain("compacted 3 tokens");
+  });
+
+  it("/compact without a compactor says so instead of hanging", async () => {
+    const { probe } = lifecycleProbe({ turns: [] });
+    probe.type("/compact").keys("enter");
+    await probe.settled();
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "can't compact · no session store",
+    });
+  });
+
+  function settlement(
+    history: readonly Message[],
+    notices: readonly string[] = [],
+  ): TurnSettlement {
+    return { history, notices, flushed: [], compacted: undefined };
+  }
 });
 
 describe("preset overlay", () => {
@@ -2161,6 +2292,34 @@ describe("preset overlay", () => {
     probe.keys("down", "enter", "y");
     await waitFor(() => expect(probe.snapshot().notice).toBe("permissions preset → open"));
     expect(applied).toEqual(["open"]);
+  });
+
+  it("chooses the preset under a click, follows hover, and closes on a click outside", async () => {
+    const { probe, applied } = presetProbe();
+    probe.command("preset");
+    const frame = helpFrame(probe.screen, 3);
+    probe.hover(frame.x + 2, frame.firstRowY + 2);
+    expect(probe.core.presetPicker()?.index).toBe(2);
+    probe.click(frame.x + 2, frame.firstRowY);
+    await waitFor(() => expect(probe.snapshot().notice).toBe("permissions preset → careful"));
+    expect(applied).toEqual(["careful"]);
+
+    probe.command("preset");
+    probe.click(0, 0);
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(applied).toEqual(["careful"]);
+  });
+
+  it("keeps the confirmation up on a click inside it and cancels on a click outside", () => {
+    const { probe, applied } = presetProbe();
+    probe.command("preset");
+    probe.keys("down", "enter");
+    const frame = helpFrame(probe.screen, 2);
+    probe.click(frame.x + 1, frame.y + 1);
+    expect(probe.snapshot().overlay).toBe("preset-confirm");
+    probe.click(0, 0);
+    expect(probe.snapshot().overlay).toBeUndefined();
+    expect(applied).toEqual([]);
   });
 
   it("derives the active preset live instead of caching it", () => {
@@ -2316,13 +2475,13 @@ describe("checkpoint-paired backtrack fork", () => {
     return {
       restored,
       opened,
-      fork: (ordinal: number, draft: string) =>
+      fork: (promptId: string, draft: string) =>
         forkAtPrompt(
           trees,
           (sessionId) => opened.push(sessionId),
           checkpoints,
           "s1",
-          ordinal,
+          promptId,
           draft,
         ),
     };
@@ -2330,7 +2489,7 @@ describe("checkpoint-paired backtrack fork", () => {
 
   it("restores files to the prompt's checkpoint and says so", async () => {
     const world = forkWorld({ checkpoint: treeHash });
-    const outcome = await world.fork(1, "two");
+    const outcome = await world.fork("u2", "two");
     expect(outcome).toEqual({ forked: true, note: "files put back to that point" });
     expect(world.restored).toEqual([treeHash]);
     expect(world.opened).toEqual(["forked-1"]);
@@ -2338,7 +2497,7 @@ describe("checkpoint-paired backtrack fork", () => {
 
   it("forks truthfully without touching files when the prompt was never checkpointed", async () => {
     const world = forkWorld();
-    const outcome = await world.fork(1, "two");
+    const outcome = await world.fork("u2", "two");
     expect(outcome).toEqual({ forked: true, note: "forked · files untouched" });
     expect(world.restored).toEqual([]);
     expect(world.opened).toEqual(["forked-1"]);
@@ -2346,7 +2505,7 @@ describe("checkpoint-paired backtrack fork", () => {
 
   it("keeps the conversation fork alive when the file restore fails, and says why", async () => {
     const world = forkWorld({ checkpoint: treeHash, restoreError: new Error("disk detached") });
-    const outcome = await world.fork(1, "two");
+    const outcome = await world.fork("u2", "two");
     expect(world.opened).toEqual(["forked-1"]);
     expect(outcome).toEqual({
       forked: true,
@@ -2366,22 +2525,102 @@ describe("checkpoint-paired backtrack fork", () => {
       (sessionId) => opened.push(sessionId),
       undefined,
       "s1",
-      1,
+      "u2",
       "two",
     );
     expect(outcome).toEqual({ forked: true, note: "forked · files untouched" });
     expect(opened).toEqual(["forked-1"]);
   });
 
+  it("forks at the chosen prompt's own entry after a flush and a compaction were replayed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "keywork-backtrack-"));
+    try {
+      const store = await SessionStore.create(join(dir, "session.jsonl"), ".");
+      await store.append(textMessage("user", "first"), undefined, "tree-first");
+      await store.append(textMessage("assistant", "re: first"));
+      await store.append(textMessage("user", memoryFlushPrompt));
+      const flushReply = await store.append(textMessage("assistant", "nothing to keep"));
+      const second = await store.append(textMessage("user", "second"), undefined, "tree-second");
+      await store.append(textMessage("assistant", "re: second"));
+      await store.appendCompaction({
+        summary: "earlier work",
+        firstKeptEntryId: second.id,
+        tokensBefore: 9,
+      });
+      await store.append(textMessage("user", "third"), undefined, "tree-third");
+      await store.append(textMessage("assistant", "re: third"));
+
+      const forkedFrom: string[] = [];
+      const restored: string[] = [];
+      const trees: SessionTreePort = {
+        load: async () => ({ sessionId: store.header.id, roots: store.tree() }),
+        setLabel: async () => {},
+        fork: async (_sessionId, entryId) => {
+          forkedFrom.push(entryId);
+          return "forked-1";
+        },
+      };
+      const checkpoints: CheckpointsPort = {
+        capture: async () => {},
+        undo: async () => false,
+        redo: async () => false,
+        restoreTo: async (tree) => {
+          restored.push(tree);
+        },
+      };
+      const probe = new AppProbe({
+        createPane: (id, notify, commands) => {
+          const agent = new Agent({ provider: new MockProvider([]), history: store.messages() });
+          const pane = new ConversationPane(id, agent, notify, undefined, commands, {
+            ports: {
+              forkAtPrompt: (promptId, draft) =>
+                forkAtPrompt(trees, () => {}, checkpoints, store.header.id, promptId, draft),
+            },
+          });
+          replaySession(store, agent.bus);
+          return pane;
+        },
+      });
+      expect(
+        probe
+          .model()
+          ?.entries.filter((entry) => entry.kind === "user")
+          .map((entry) => entry.text),
+      ).toEqual(["earlier work", "second", "third"]);
+
+      probe.keys("escape", "escape", "up", "enter");
+      await probe.settled();
+
+      expect(forkedFrom).toEqual([flushReply.id]);
+      expect(restored).toEqual(["tree-second"]);
+      expect(probe.model()?.entries.at(-1)).toEqual({
+        kind: "info",
+        text: "files put back to that point",
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("surfaces the restore note quietly in the transcript after enter-fork", async () => {
     const probe = new AppProbe({
       createPane: (id, notify, commands) => {
         const agent = new Agent({ provider: new MockProvider([textTurn("re: one")]) });
-        return new ConversationPane(id, agent, notify, undefined, commands, {
+        const pane = new ConversationPane(id, agent, notify, undefined, commands, {
           ports: {
             forkAtPrompt: async () => ({ forked: true, note: "files put back to that point" }),
           },
         });
+        bindSessionLifecycle({
+          pane,
+          attachment: {
+            id: "s1",
+            history: [],
+            replay: () => {},
+            append: async () => ({ entryId: "u1" }),
+          },
+        });
+        return pane;
       },
     });
     probe.type("one").keys("enter");

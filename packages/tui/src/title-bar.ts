@@ -1,4 +1,5 @@
 import { fitTitle } from "@keywork/engine";
+import { arcTag } from "./arcs.ts";
 import { resolvePage } from "./page.ts";
 
 export type LifecycleState = "idle" | "working" | "needs-you" | "finished-unseen" | "failed";
@@ -6,6 +7,7 @@ export type LifecycleState = "idle" | "working" | "needs-you" | "finished-unseen
 export interface TitleBarState {
   readonly name: string;
   readonly stamp?: string | undefined;
+  readonly arc?: string | undefined;
   readonly telemetry?: string | undefined;
   readonly modeWord?: string | undefined;
   readonly siblings?: readonly string[] | undefined;
@@ -23,6 +25,7 @@ const frameCells = 4;
 interface Zones {
   stamp: string | undefined;
   name: string;
+  arc: string | undefined;
   telemetry: string | undefined;
   modeWord: string | undefined;
 }
@@ -34,6 +37,7 @@ function zonesAt(tier: string, focused: boolean, state: TitleBarState): Zones {
   return {
     stamp: emptyToUndefined(state.stamp),
     name: state.name,
+    arc: tier === "broadsheet" ? emptyToUndefined(state.arc) : undefined,
     telemetry: compact ? undefined : emptyToUndefined(telemetryShown),
     modeWord: tier === "broadsheet" ? emptyToUndefined(state.modeWord) : undefined,
   };
@@ -43,14 +47,16 @@ function fitZones(zones: Zones, room: number, siblings: readonly string[]): stri
   const stamp = zones.stamp;
   const stampCells = stamp === undefined ? 0 : cells(stamp) + 1;
   for (const attempt of trims(zones)) {
+    const arc = attempt.arc === undefined ? "" : ` ${arcTag(attempt.arc)}`;
     const tail = [attempt.telemetry, attempt.modeWord]
       .filter((part) => part !== undefined)
       .map((part) => ` · ${part}`)
       .join("");
-    const nameRoom = room - stampCells - cells(tail);
+    const nameRoom = room - stampCells - cells(arc) - cells(tail);
     if (nameRoom < 1) continue;
+    if (arc !== "" && cells(attempt.name) > nameRoom) continue;
     const name = fitTitle(attempt.name, nameRoom, siblings);
-    const composed = `${stamp === undefined ? "" : `${stamp} `}${name}${tail}`;
+    const composed = `${stamp === undefined ? "" : `${stamp} `}${name}${arc}${tail}`;
     if (cells(composed) <= room) return composed;
   }
   const floor = fitTitle(zones.name, Math.max(1, room - stampCells), siblings);
@@ -59,10 +65,13 @@ function fitZones(zones: Zones, room: number, siblings: readonly string[]): stri
 
 function trims(zones: Zones): Zones[] {
   const attempts = [zones];
-  if (zones.modeWord !== undefined) attempts.push({ ...zones, modeWord: undefined });
-  if (zones.telemetry !== undefined) {
-    attempts.push({ ...(attempts.at(-1) as Zones), telemetry: undefined });
-  }
+  const shed = (zone: keyof Zones): void => {
+    const last = attempts.at(-1) as Zones;
+    if (last[zone] !== undefined) attempts.push({ ...last, [zone]: undefined });
+  };
+  shed("arc");
+  shed("modeWord");
+  shed("telemetry");
   return attempts;
 }
 

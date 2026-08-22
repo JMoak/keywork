@@ -1,6 +1,7 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { writePrivateFile } from "./user-config.ts";
 
 export type Credential = { type: "api_key"; key: string } | OauthCredential;
 
@@ -37,12 +38,17 @@ export async function saveCredential(
   dir: string = defaultAuthDir(),
 ): Promise<string> {
   const existing = await readCredentials(dir);
-  const file = join(dir, "auth.json");
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const merged = { ...existing, [provider]: credential };
-  await writeFile(file, `${JSON.stringify(merged, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await chmod(file, 0o600);
-  return file;
+  return writeCredentials({ ...existing, [provider]: credential }, dir);
+}
+
+export async function deleteCredential(
+  provider: string,
+  dir: string = defaultAuthDir(),
+): Promise<boolean> {
+  const { [provider]: removed, ...rest } = await readCredentials(dir);
+  if (removed === undefined) return false;
+  await writeCredentials(rest, dir);
+  return true;
 }
 
 export function legacyCredentials(apiKeys: Record<string, string> | undefined): CredentialMap {
@@ -51,6 +57,12 @@ export function legacyCredentials(apiKeys: Record<string, string> | undefined): 
       .filter(([, key]) => key !== "")
       .map(([provider, key]) => [provider, { type: "api_key", key } as const]),
   );
+}
+
+async function writeCredentials(credentials: CredentialMap, dir: string): Promise<string> {
+  const file = join(dir, "auth.json");
+  await writePrivateFile(file, `${JSON.stringify(credentials, null, 2)}\n`);
+  return file;
 }
 
 function asCredential(value: unknown): Credential | undefined {

@@ -15,11 +15,19 @@ export interface AppProbeOptions
       | "createFilePane"
       | "createBrowserPane"
       | "createSessionTreePane"
+      | "createArcsPane"
       | "createMemoryPane"
       | "createMcpPane"
       | "isDirectory"
       | "undo"
       | "presets"
+      | "inference"
+      | "connections"
+      | "arcs"
+      | "focusedArc"
+      | "workspaces"
+      | "currentModel"
+      | "switchModel"
       | "restoreWorkspace"
       | "saveWorkspace"
       | "onPaneClosed"
@@ -48,6 +56,7 @@ export class AppProbe {
       ...(options.createSessionTreePane !== undefined && {
         createSessionTreePane: options.createSessionTreePane,
       }),
+      ...(options.createArcsPane !== undefined && { createArcsPane: options.createArcsPane }),
       ...(options.createMemoryPane !== undefined && {
         createMemoryPane: options.createMemoryPane,
       }),
@@ -57,6 +66,13 @@ export class AppProbe {
       ...(options.isDirectory !== undefined && { isDirectory: options.isDirectory }),
       ...(options.undo !== undefined && { undo: options.undo }),
       ...(options.presets !== undefined && { presets: options.presets }),
+      ...(options.inference !== undefined && { inference: options.inference }),
+      ...(options.connections !== undefined && { connections: options.connections }),
+      ...(options.arcs !== undefined && { arcs: options.arcs }),
+      ...(options.focusedArc !== undefined && { focusedArc: options.focusedArc }),
+      ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
+      ...(options.currentModel !== undefined && { currentModel: options.currentModel }),
+      ...(options.switchModel !== undefined && { switchModel: options.switchModel }),
       ...(options.restoreWorkspace !== undefined && {
         restoreWorkspace: options.restoreWorkspace,
       }),

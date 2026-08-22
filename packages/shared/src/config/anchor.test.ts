@@ -1,12 +1,13 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigError } from "./load.ts";
 import {
   openWorkspace,
   resolveAnchor,
   updateWorkspaceDeclaration,
+  type WorkspaceDeclaration,
   writeWorkspaceDeclaration,
 } from "./workspace.ts";
 
@@ -90,6 +91,29 @@ describe("writeWorkspaceDeclaration", () => {
 
     expect(() => writeWorkspaceDeclaration(root, { name: "" })).toThrow(ConfigError);
   });
+
+  it("refuses to declare a workspace above an existing inner declaration", async () => {
+    const root = await tempRoot();
+    const inner = join(root, "packages", "deep");
+    await mkdir(inner, { recursive: true });
+    await declareWorkspace(inner, { name: "inner" });
+
+    expect(() => writeWorkspaceDeclaration(root, { name: "outer" })).toThrow(ConfigError);
+    expect(() => writeWorkspaceDeclaration(root, { name: "outer" })).toThrow(inner);
+    expect(openWorkspace(root)).toBeUndefined();
+    expect(openWorkspace(inner)?.name).toBe("inner");
+  });
+
+  it("ignores node_modules and .git when scanning below for inner declarations", async () => {
+    const root = await tempRoot();
+    const vendored = join(root, "node_modules", "dep");
+    await mkdir(vendored, { recursive: true });
+    await declareWorkspace(vendored, { name: "vendored" });
+
+    writeWorkspaceDeclaration(root, { name: "outer" });
+
+    expect(openWorkspace(root)?.name).toBe("outer");
+  });
 });
 
 describe("updateWorkspaceDeclaration", () => {
@@ -104,5 +128,19 @@ describe("updateWorkspaceDeclaration", () => {
     }));
 
     expect(openWorkspace(root)?.missingContextDirs).toEqual([join(root, "..", "elsewhere")]);
+  });
+
+  it("rejects a traversal slug before reading anything from disk", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "victim"), { recursive: true });
+    await writeFile(join(root, "victim", "workspace.json"), JSON.stringify({ name: "victim" }));
+    const traversal = "../../victim/.keywork/..";
+    const revise = vi.fn((declaration: WorkspaceDeclaration) => declaration);
+
+    expect(() => updateWorkspaceDeclaration(root, revise, traversal)).toThrow(ConfigError);
+    expect(() => updateWorkspaceDeclaration(root, revise, traversal)).toThrow(
+      /invalid workspace slug/,
+    );
+    expect(revise).not.toHaveBeenCalled();
   });
 });

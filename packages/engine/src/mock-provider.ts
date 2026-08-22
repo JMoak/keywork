@@ -1,16 +1,29 @@
+import type { ModelCapabilities } from "./capabilities.ts";
 import type { ToolCallPart, Usage } from "./messages.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "./provider.ts";
 
 const zeroUsage: Usage = { inputTokens: 0, outputTokens: 0 };
 
+export interface MockProviderOptions {
+  modelId?: string | undefined;
+  capabilities?: ModelCapabilities | undefined;
+}
+
 export class MockProvider implements Provider {
   readonly name = "mock";
   readonly modelId: string | undefined;
+  readonly capabilities: ModelCapabilities | undefined;
   private readonly script: TurnDelta[][];
 
-  constructor(turns: TurnDelta[][], modelId?: string) {
+  constructor(turns: TurnDelta[][], options: string | MockProviderOptions = {}) {
     this.script = [...turns];
-    this.modelId = modelId;
+    const resolved = typeof options === "string" ? { modelId: options } : options;
+    this.modelId = resolved.modelId;
+    this.capabilities = resolved.capabilities;
+  }
+
+  remaining(): number {
+    return this.script.length;
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {

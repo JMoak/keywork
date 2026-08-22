@@ -173,10 +173,14 @@ unblocked), FR6 LSP/subagent transparency/security scoping.
 5. **(3pt, OWN)** **Arcs node.** Same two-level shape as the sessions node but grouped
    by arc, with the arc's chroma as the group rule and an ASCII treatment that earns the
    "world-class" bar (arc glyph rail, member sessions indented under a colored edge).
-   Chroma tokens come from [`98`](98-chroma-and-arcs.md).
+   Chroma tokens come from [`98`](98-chroma-and-arcs.md). **✅ landed 2026-08-21 (stream 5,
+   [`110`](110-arcs-on-screen.md) S5-T5)** — `/arcs` · `ctrl+k a`, grouped rows with the
+   arc's hue on the label, drill to member sessions, inline `n` naming, close/abandon, tray.
 6. **(2pt, OWN)** **Workspaces node.** Third sibling: workspaces with focus dirs, MRU,
    and open-session counts per [`99`](99-workspace-and-modes.md)/PD11. Activate = switch
-   workspace (confirm when it would retire live panes).
+   workspace (confirm when it would retire live panes). **Partly landed 2026-08-21 (110
+   S5-T6):** the `/workspace` picker covers browse/select/create and switches by in-process
+   relaunch, `keywork workspace` covers prune; the dock-native node and focus dirs stay open.
 7. **(1pt, OWN)** **Node color pass.** Sessions/arcs/workspaces/MCP share one restrained
    accent grammar: liveness marks colored, titles neutral, arc tags in arc chroma; the
    selected row keeps the inverted-accent bar. One place (`theme.ts`) defines it.

@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { messageText, textMessage } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
-import { defaultCompactionSettings, shouldCompact } from "../session/compaction.ts";
+import { shouldCompact } from "../session/compaction.ts";
+import { contextBudgetFor, readContext, reserveCaps } from "../session/context-budget.ts";
 import {
   backtrackFlushClause,
-  defaultFlushSettings,
   flushPrompt,
   isMemoryFlushPrompt,
   isNoReply,
@@ -30,7 +30,9 @@ afterEach(async () => {
 });
 
 const contextWindow = 200_000;
-const overThreshold = contextWindow - defaultFlushSettings.reserveTokens + 1;
+const budget = contextBudgetFor(contextWindow);
+const overThreshold = contextWindow - budget.flushReserve + 1;
+const readingAt = (used: number) => readContext(used, budget);
 
 async function openVault(trusted = true): Promise<{ store: MemoryStore; root: string }> {
   const root = await mkdtemp(join(tmpdir(), "keywork-flush-"));
@@ -49,14 +51,11 @@ const longConversation = Array.from({ length: 40 }, (_, index) =>
 
 describe("shouldFlush", () => {
   it("fires at the reserve threshold, before compaction would", () => {
-    expect(defaultFlushSettings.reserveTokens).toBeGreaterThan(
-      defaultCompactionSettings.reserveTokens,
-    );
-    expect(shouldFlush(overThreshold, contextWindow)).toBe(true);
-    expect(shouldCompact(overThreshold, contextWindow)).toBe(false);
-    expect(shouldFlush(contextWindow - defaultFlushSettings.reserveTokens, contextWindow)).toBe(
-      false,
-    );
+    expect(reserveCaps.flush).toBeGreaterThan(reserveCaps.compaction);
+    expect(budget.flushReserve).toBe(reserveCaps.flush);
+    expect(shouldFlush(readingAt(overThreshold))).toBe(true);
+    expect(shouldCompact(readingAt(overThreshold))).toBe(false);
+    expect(shouldFlush(readingAt(contextWindow - budget.flushReserve))).toBe(false);
   });
 });
 
@@ -69,7 +68,7 @@ describe("MemoryFlush", () => {
       ]),
       store,
     });
-    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     expect(outcome).toMatchObject({ flushed: true, persisted: true });
     const daily = await readFile(join(root, "daily", "2026-08-10.md"), "utf8");
     expect(daily).toContain(
@@ -97,7 +96,7 @@ describe("MemoryFlush", () => {
       provider: new MockProvider([textTurn(`  ${noReplyToken}\n`)]),
       store,
     });
-    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     expect(outcome.flushed).toBe(true);
     expect(outcome.persisted).toBe(false);
     expect(outcome.messages).toHaveLength(2);
@@ -115,12 +114,12 @@ describe("MemoryFlush", () => {
       provider: new MockProvider([textTurn("first fact"), textTurn("second fact")]),
       store,
     });
-    const first = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const first = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     expect(first.flushed).toBe(true);
-    const latched = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const latched = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     expect(latched).toEqual({ flushed: false, persisted: false, messages: [] });
     flush.compactionCompleted();
-    const second = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const second = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     expect(second.flushed).toBe(true);
     expect((await store.readDaily("2026-08-10")).map((entry) => entry.text)).toEqual([
       "first fact",
@@ -131,21 +130,21 @@ describe("MemoryFlush", () => {
   it("stays quiet below the threshold without touching the provider", async () => {
     const { store } = await openVault();
     const flush = new MemoryFlush({ provider: new MockProvider([]), store });
-    const outcome = await flush.maybeFlush(longConversation, 1000, contextWindow);
+    const outcome = await flush.maybeFlush(longConversation, readingAt(1000));
     expect(outcome).toEqual({ flushed: false, persisted: false, messages: [] });
   });
 
   it("is inert over an untrusted vault: no turn, no writes", async () => {
     const { store } = await openVault(false);
     const flush = new MemoryFlush({ provider: new MockProvider([]), store });
-    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     expect(outcome).toEqual({ flushed: false, persisted: false, messages: [] });
   });
 
   it("treats an empty reply like NO_REPLY", async () => {
     const { store } = await openVault();
     const flush = new MemoryFlush({ provider: new MockProvider([textTurn("   \n")]), store });
-    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     expect(outcome.persisted).toBe(false);
     expect(await store.readDaily("2026-08-10")).toEqual([]);
   });
@@ -164,7 +163,7 @@ describe("backtrack capture", () => {
     });
     flush.noteBacktrack();
 
-    const outcome = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
 
     expect(outcome.persisted).toBe(true);
     expect(messageText(outcome.messages[0] ?? textMessage("user", ""))).toContain(
@@ -185,7 +184,7 @@ describe("backtrack capture", () => {
     });
     flush.noteBacktrack();
 
-    await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    await flush.maybeFlush(longConversation, readingAt(overThreshold));
 
     const daily = await readFile(join(root, "daily", "2026-08-10.md"), "utf8");
     expect(daily).toContain("[prov: agent] Abandoned the sed approach");
@@ -198,9 +197,9 @@ describe("backtrack capture", () => {
       store,
     });
     flush.noteBacktrack();
-    const first = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const first = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     flush.compactionCompleted();
-    const second = await flush.maybeFlush(longConversation, overThreshold, contextWindow);
+    const second = await flush.maybeFlush(longConversation, readingAt(overThreshold));
 
     expect(messageText(first.messages[0] ?? textMessage("user", ""))).toContain(
       backtrackFlushClause,

@@ -2,8 +2,14 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  ConnectionDraft,
+  ConnectionsPort,
+  ConnectionTarget,
+  VerificationOutcome,
+} from "@keywork/tui";
 import { afterEach, describe, expect, it } from "vitest";
-import { readMaskedLine, saveApiKey } from "./setup.ts";
+import { type ConnectIo, connectCommand, readMaskedLine, saveApiKey } from "./setup.ts";
 
 const tempDirs: string[] = [];
 
@@ -135,5 +141,106 @@ describe("saveApiKey", () => {
     await saveApiKey("openai", "sk-fresh", dir);
 
     expect(await savedAuth(dir)).toEqual({ openai: { type: "api_key", key: "sk-fresh" } });
+  });
+});
+
+describe("connectCommand", () => {
+  const ollama: ConnectionTarget = {
+    id: "ollama",
+    label: "Ollama",
+    kind: "local",
+    name: "ollama",
+    endpoint: "http://localhost:11434/v1",
+    protocol: "chat-completions",
+    credential: "none",
+    endpointEditable: true,
+    nameEditable: true,
+  };
+
+  const custom: ConnectionTarget = {
+    ...ollama,
+    id: "custom",
+    label: "Custom",
+    kind: "custom",
+    name: "",
+    endpoint: "",
+    credential: "api-key",
+  };
+
+  function fakePort(verification: VerificationOutcome) {
+    const saves: ConnectionDraft[] = [];
+    const port: ConnectionsPort = {
+      targets: () => [ollama, custom],
+      saved: () => [],
+      draftFor: () => ({
+        name: "ollama",
+        endpoint: ollama.endpoint,
+        protocol: "chat-completions",
+        credential: "none",
+        apiKey: "",
+        insecureTransport: false,
+      }),
+      verify: async () => verification,
+      save: async (draft) => {
+        saves.push(draft);
+      },
+      remove: async () => ({ removed: [], retained: [] }),
+    };
+    return { port, saves };
+  }
+
+  function scriptedIo(
+    answers: string[],
+    secrets: string[] = [],
+  ): ConnectIo & { printed: string[] } {
+    const printed: string[] = [];
+    return {
+      printed,
+      ask: async () => answers.shift() ?? "",
+      askSecret: async () => secrets.shift() ?? "",
+      print: (line) => printed.push(line),
+    };
+  }
+
+  it("walks target → draft → verify → save and reports the receipt", async () => {
+    const { port, saves } = fakePort({
+      ok: true,
+      at: "2026-08-21T12:00:00.000Z",
+      models: ["qwen3"],
+    });
+    const io = scriptedIo(["1", "", ""]);
+
+    const code = await connectCommand(port, { io });
+
+    expect(code).toBe(0);
+    expect(saves).toEqual([
+      {
+        name: "ollama",
+        endpoint: "http://localhost:11434/v1",
+        protocol: "chat-completions",
+        credential: "none",
+        apiKey: "",
+        insecureTransport: false,
+      },
+    ]);
+    expect(io.printed.join("\n")).toContain("Saved ollama · models reported: qwen3");
+  });
+
+  it("prefills from an argument URL and saves nothing when verification fails", async () => {
+    const { port, saves } = fakePort({ ok: false, at: "t", reason: "HTTP 401" });
+    const io = scriptedIo(["lab", "http://localhost:9/v1"]);
+
+    const code = await connectCommand(port, { io, argument: "http://localhost:9/v1" });
+
+    expect(code).toBe(1);
+    expect(saves).toEqual([]);
+    expect(io.printed.at(-1)).toBe("not saved: HTTP 401");
+  });
+
+  it("refuses an unknown argument without touching the network", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: [] });
+    const io = scriptedIo([]);
+    expect(await connectCommand(port, { io, argument: "mystery" })).toBe(1);
+    expect(saves).toEqual([]);
   });
 });

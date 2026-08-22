@@ -169,6 +169,9 @@ frame budget on a 5k-line block (A18 bar); unknown languages render calmly unsty
 diffs colored via the existing diff-render path, one system.
 **Strategy:** `OWN` (tokenizer scope deliberately minimal — highlight well, never
 parse).
+**Landed** 2026-08-21 — the highlighter half (`tui/highlighter.ts`, fence interiors via
+C60's renderer, theme-token palette only); details in `104-the-page.md` "Landed — stream 2".
+Rhythm rules ride C59/C61's page grammar; the fixture-capture approval closes the task.
 
 ### C53 (2pt) — Motion grammar implementation (implements PD16)
 One shared animator honoring the grammar (tempo tables, step-shapes, one-mover
@@ -202,6 +205,12 @@ survives the delete-test); gauge thresholds equal the resolved flush/compaction
 reserves and fire visibly in a long-session fixture; calm flavor shows the minimal
 set, cockpit flavor the full set; Jordan picked the gauge from real captures.
 **Strategy:** `OWN`. After C49 (flavors carry instrumentation density).
+**Landed (gauge half)** 2026-08-21 — `tui/context-gauge.ts` on the engine's context budget:
+calm = one ramp cell + count, cockpit = ten-cell bar with the flush/compaction marks as
+cells, tier-0 ASCII; thresholds are the resolved reserves and the `long-session` e2e fixture
+shows them fire. Ledger and the open options round (ramp cell · bar · tile-fill) in
+[`109-long-session-survivability.md`](109-long-session-survivability.md). Sparklines and the dock instruments pane
+remain open under this task.
 
 ### C56 (2pt) — Capture as product (item 11; absorbs item 10 softly)
 `/screenshot` (SVG/PNG via C40's writer) as a user command **and an agent-facing

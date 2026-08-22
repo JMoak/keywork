@@ -1,0 +1,5 @@
+{"type":"run.started","cwd":"<cwd>","provider":"hanging","model":null,"session":"<session>"}
+{"type":"turn.started","userText":"think for a while"}
+{"type":"turn.delta","delta":{"type":"text","text":"partial thought"}}
+{"type":"turn.interrupted","message":{"role":"assistant","parts":[{"type":"text","text":"partial thought"}]}}
+{"type":"run.finished","outcome":"interrupted","exitCode":130,"message":"partial thought"}

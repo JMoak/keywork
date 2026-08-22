@@ -39,6 +39,10 @@ export interface SearchOptions {
 
 export type SearchObserver = (outcome: SearchOutcome) => void;
 
+export interface MemorySearcher {
+  search(query: string, options?: SearchOptions): Promise<SearchOutcome>;
+}
+
 const defaultLimit = 8;
 const legDepth = 50;
 const rrfK = 60;

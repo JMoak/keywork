@@ -16,7 +16,10 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "e2e": "bun scripts/e2e-capture.ts"
+    "e2e": "bun scripts/e2e-capture.ts",
+    "soak": "bun scripts/soak.ts",
+    "build:binary": "bun scripts/release/build.ts",
+    "build:npm": "bun scripts/release/build-npm.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.7",

@@ -3,7 +3,7 @@ import type { CustomEntry, SessionEntry } from "./entries.ts";
 import type { SessionStore } from "./store.ts";
 
 export type PermissionVerdict = "granted" | "denied";
-export type PermissionGate = "policy" | "default" | "user";
+export type PermissionGate = "policy" | "default" | "user" | "headless";
 
 export interface PermissionDecision {
   tool: string;

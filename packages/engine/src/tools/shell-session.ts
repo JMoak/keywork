@@ -80,10 +80,18 @@ export class ShellSession {
     await killTree(live.child, live.closed).catch(() => undefined);
   }
 
+  private spawnLive(): LiveShell {
+    const live = spawnShell(this.cwd, this.shell);
+    this.live = live;
+    void live.closed.then(() => {
+      if (this.live === live) this.live = undefined;
+    });
+    return live;
+  }
+
   private execute(command: string, options: ShellRunOptions): Promise<string> {
     options.signal?.throwIfAborted();
-    this.live ??= spawnShell(this.cwd, this.shell);
-    const live = this.live;
+    const live = this.live ?? this.spawnLive();
     return new Promise((resolvePromise, rejectPromise) => {
       const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
       const sentinel = `__keywork_${crypto.randomUUID()}__`;
@@ -107,6 +115,7 @@ export class ShellSession {
         live.child.stdout?.off("data", onStdout);
         live.child.stderr?.off("data", onStderr);
         live.child.off("close", onShellExit);
+        live.failureListeners.delete(onShellFailure);
         outcome();
       };
 
@@ -129,21 +138,23 @@ export class ShellSession {
         );
       };
 
-      const abandon = (reason: string) => {
+      const abandon = (failure: Error) => {
         void this.terminate();
-        settle(() => rejectPromise(new Error(reason)));
+        settle(() => rejectPromise(failure));
       };
 
       const timer = setTimeout(
-        () => abandon(`Command timed out after ${timeoutMs}ms:\n${output.rendered()}`),
+        () => abandon(new Error(`Command timed out after ${timeoutMs}ms:\n${output.rendered()}`)),
         timeoutMs,
       );
-      const onAbort = () => abandon("Command aborted");
+      const onAbort = () => abandon(new Error("Command aborted"));
+      const onShellFailure = (failure: Error) => abandon(failure);
       options.signal?.addEventListener("abort", onAbort, { once: true });
 
       live.child.stdout?.on("data", onStdout);
       live.child.stderr?.on("data", onStderr);
       live.child.on("close", onShellExit);
+      live.failureListeners.add(onShellFailure);
       live.child.stdin?.write(framedCommand(this.shell, command, sentinel));
     });
   }
@@ -152,6 +163,7 @@ export class ShellSession {
 interface LiveShell {
   child: ChildProcess;
   closed: Promise<void>;
+  failureListeners: Set<(failure: Error) => void>;
 }
 
 function spawnShell(cwd: string, shell: Shell): LiveShell {
@@ -162,7 +174,13 @@ function spawnShell(cwd: string, shell: Shell): LiveShell {
     env: scrubbedEnv(process.env),
   });
   const closed = new Promise<void>((resolvePromise) => child.once("close", () => resolvePromise()));
-  return { child, closed };
+  const failureListeners = new Set<(failure: Error) => void>();
+  const broadcastFailure = (failure: Error) => {
+    for (const listener of failureListeners) listener(failure);
+  };
+  child.on("error", broadcastFailure);
+  child.stdin?.on("error", broadcastFailure);
+  return { child, closed, failureListeners };
 }
 
 function persistentArgs(shell: Shell): string[] {
@@ -214,6 +232,7 @@ class BoundedOutput {
 class SentinelScanner {
   sawSentinel = false;
   private buffer = "";
+  private midLine = false;
 
   constructor(
     private readonly sentinel: string,
@@ -224,18 +243,35 @@ class SentinelScanner {
   push(chunk: string): void {
     if (this.sawSentinel) return;
     this.buffer += chunk;
+    this.drainCompleteLines();
+    this.flushOverlongLine();
+  }
+
+  private drainCompleteLines(): void {
     let newline = this.buffer.indexOf("\n");
-    while (newline !== -1) {
+    while (newline !== -1 && !this.sawSentinel) {
       const line = this.buffer.slice(0, newline + 1);
       this.buffer = this.buffer.slice(newline + 1);
-      if (line.startsWith(this.sentinel)) {
-        this.sawSentinel = true;
-        this.onSentinel(exitCodeIn(line, this.sentinel));
-        return;
-      }
-      this.output.append(line);
+      this.consumeLine(line);
       newline = this.buffer.indexOf("\n");
     }
+  }
+
+  private consumeLine(line: string): void {
+    if (!this.midLine && line.startsWith(this.sentinel)) {
+      this.sawSentinel = true;
+      this.onSentinel(exitCodeIn(line, this.sentinel));
+      return;
+    }
+    this.midLine = false;
+    this.output.append(line);
+  }
+
+  private flushOverlongLine(): void {
+    if (this.sawSentinel || this.buffer.length <= maxOutputChars) return;
+    this.output.append(this.buffer);
+    this.buffer = "";
+    this.midLine = true;
   }
 }
 

@@ -78,6 +78,37 @@ describe("workspaceIdentity", () => {
   });
 });
 
+describe("workspaceIdentity for named workspaces (PD10)", () => {
+  it("partitions a named workspace from the default over the same root", async () => {
+    const root = await tempRoot();
+    await declareWorkspace(root, { name: "alpha" });
+    const nested = join(root, "packages", "deep");
+    await mkdir(nested, { recursive: true });
+
+    const named = workspaceIdentity(root, "frontend");
+    expect(named).not.toBe(workspaceIdentity(root));
+    expect(named).toBe(workspaceIdentity(nested, "frontend"));
+    expect(named).not.toBe(workspaceIdentity(root, "infra"));
+    expect(named).toBe(
+      createHash("sha256").update(`workspace:${root}:frontend`).digest("hex").slice(0, 12),
+    );
+  });
+
+  it("keeps the default identity byte-identical when named workspaces exist", async () => {
+    const root = await tempRoot();
+    await declareWorkspace(root, { name: "alpha" });
+    const before = workspaceIdentity(root);
+    await mkdir(join(root, ".keywork", "workspaces", "frontend"), { recursive: true });
+    expect(workspaceIdentity(root)).toBe(before);
+    expect(defaultSessionDir(root, "frontend")).toBe(
+      join(homedir(), ".keywork", "sessions", workspaceIdentity(root, "frontend")),
+    );
+    expect(snapshotGitDir(root, "frontend")).toBe(
+      join(homedir(), ".keywork", "snapshots", workspaceIdentity(root, "frontend")),
+    );
+  });
+});
+
 describe("workspaceStateFile", () => {
   it("keeps the state file location keyed by identity", () => {
     expect(workspaceStateFile("abc123")).toBe(

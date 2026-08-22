@@ -67,14 +67,13 @@ export const mcpSearchToolName = "mcp_tool_search";
 
 export class McpRegistry {
   private readonly runtimes = new Map<string, ServerRuntime>();
-  private readonly live: Tool[] = [];
   private readonly listeners = new Set<McpStatusListener>();
   private readonly connect: (spec: StdioServerSpec, signal: AbortSignal) => Promise<McpConnection>;
   private readonly restartDelays: readonly number[];
   private readonly maxResultChars: number;
   private readonly onToolResult: ((report: McpToolCallReport) => void) | undefined;
   private readonly searchTool: Tool;
-  private readonly surfaces = new Map<Tool[], readonly Tool[]>();
+  private live: readonly Tool[] = [];
   private closing = false;
 
   constructor(options: McpRegistryOptions) {
@@ -127,13 +126,7 @@ export class McpRegistry {
   }
 
   surface(base: readonly Tool[]): readonly Tool[] {
-    const view: Tool[] = [...base, ...this.live];
-    this.surfaces.set(view, base);
-    return view;
-  }
-
-  dropSurface(view: readonly Tool[]): void {
-    this.surfaces.delete(view as Tool[]);
+    return liveToolList(base, () => this.live);
   }
 
   status(): McpServerStatus[] {
@@ -325,7 +318,7 @@ export class McpRegistry {
 
   private markRetriesExhausted(runtime: ServerRuntime, version: number): void {
     runtime.retriesExhausted = true;
-    runtime.lastError = `${runtime.lastError ?? "down"} — retry limit reached, restart manually`;
+    runtime.lastError = `${runtime.lastError ?? "down"} · retry limit reached, restart manually`;
     this.notify();
     this.settle(runtime, version);
   }
@@ -351,19 +344,13 @@ export class McpRegistry {
   }
 
   private rebuildTools(): void {
-    this.live.length = 0;
-    if (this.runtimes.size > 0) {
-      this.live.push(this.searchTool);
-      for (const entry of this.catalogEntries()) {
-        if (entry.runtime.activated.has(entry.tool.name)) {
-          this.live.push(this.backedTool(entry.runtime, entry.tool));
-        }
-      }
-    }
-    for (const [view, base] of this.surfaces) {
-      view.length = 0;
-      view.push(...base, ...this.live);
-    }
+    this.live = this.runtimes.size === 0 ? [] : [this.searchTool, ...this.activatedTools()];
+  }
+
+  private activatedTools(): McpBackedTool[] {
+    return this.catalogEntries()
+      .filter((entry) => entry.runtime.activated.has(entry.tool.name))
+      .map((entry) => this.backedTool(entry.runtime, entry.tool));
   }
 
   private catalogEntries(): CatalogEntry[] {
@@ -395,7 +382,7 @@ export class McpRegistry {
 
   private searchDescription(): string {
     const lines = this.catalogEntries().map(
-      (entry) => `${entry.qualified} — ${oneLiner(entry.tool.description)}`,
+      (entry) => `${entry.qualified}: ${oneLiner(entry.tool.description)}`,
     );
     const roster = lines.length > 0 ? lines.join("\n") : "(no connected servers)";
     return `Fetches full schemas for MCP tools so they become directly callable. Pass exact tool names or a search query.\nAvailable:\n${roster}`;
@@ -608,6 +595,26 @@ function matchesQuery(entry: CatalogEntry, query: string): boolean {
 function availableSummary(entries: CatalogEntry[]): string {
   if (entries.length === 0) return "No MCP tools are available.";
   return `Available: ${entries.map((entry) => entry.qualified).join(", ")}`;
+}
+
+function liveToolList(base: readonly Tool[], live: () => readonly Tool[]): readonly Tool[] {
+  let composedFrom: readonly Tool[] | undefined;
+  let composed: readonly Tool[] = [];
+  const current = (): readonly Tool[] => {
+    const snapshot = live();
+    if (snapshot !== composedFrom) {
+      composed = [...base, ...snapshot];
+      composedFrom = snapshot;
+    }
+    return composed;
+  };
+  return new Proxy<readonly Tool[]>([], {
+    get: (_target, property) => Reflect.get(current(), property),
+    has: (_target, property) => Reflect.has(current(), property),
+    ownKeys: () => Reflect.ownKeys(current()),
+    getOwnPropertyDescriptor: (_target, property) =>
+      Reflect.getOwnPropertyDescriptor(current(), property),
+  });
 }
 
 function truncate(text: string, maxChars: number): string {

@@ -2,18 +2,37 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { arcService } from "../../packages/cli/src/arcs.ts";
+import { openWorkspaceMemory } from "../../packages/cli/src/memory.ts";
 import {
+  boundSessionCounts,
   sessionChangeFeed,
   sessionPort,
   sessionTreePort,
 } from "../../packages/cli/src/sessions.ts";
 import { workspaceFile } from "../../packages/cli/src/workspace.ts";
-import { Agent, Checkpoints, MockProvider } from "../../packages/engine/src/index.ts";
-import { type AppOptions, runApp } from "../../packages/tui/src/index.ts";
+import {
+  Agent,
+  Checkpoints,
+  type CheckpointsOptions,
+  compactNow,
+  contextBudgetFor,
+  declaredContextWindow,
+  MockProvider,
+  type SessionStore,
+  settleTurn,
+} from "../../packages/engine/src/index.ts";
+import { type AppOptions, assumedGlyphs, runApp } from "../../packages/tui/src/index.ts";
 import { scenarioArtifactDir, stepFileBase } from "./artifacts.ts";
 import type { CapturedFrame } from "./frame.ts";
-import { goldenPath, verifyGolden, writeGolden } from "./goldens.ts";
-import type { CaptureOptions, FrameSize, Scenario, Stage } from "./scenario.ts";
+import {
+  committedGoldenRoot,
+  goldenPath,
+  pruneGoldens,
+  verifyGolden,
+  writeGolden,
+} from "./goldens.ts";
+import type { FrameSize, Scenario, Stage } from "./scenario.ts";
 import { frameToSvg } from "./svg.ts";
 
 export interface HarnessOptions {
@@ -21,6 +40,7 @@ export interface HarnessOptions {
   readonly size: FrameSize;
   readonly updateGoldens?: boolean;
   readonly world?: ComposedWorld;
+  readonly goldenRoot?: string;
 }
 
 export type AppSeams = Pick<AppOptions, "createRenderer" | "exit">;
@@ -49,11 +69,11 @@ export async function runScenario(
   const artifactDir = freshArtifactDir(options.outRoot, scenario.name);
   const world = options.world ?? temporaryWorld(scenario);
   const size = scenario.size ?? options.size;
-  const testing = await loadTesting();
+  const goldenRoot = options.goldenRoot ?? committedGoldenRoot;
+  const updateGoldens = options.updateGoldens === true;
   const previousCwd = process.cwd();
-  process.chdir(world.workspaceDir);
-  scenario.beforeBoot?.(world);
   const boot = async (): Promise<RunningApp> => {
+    const testing = await loadTesting();
     const setup = await testing.createTestRenderer({ width: size.width, height: size.height });
     const exit: ExitLatch = { code: undefined };
     await world.compose({
@@ -69,6 +89,8 @@ export async function runScenario(
   let app: RunningApp | undefined;
   let error: string | undefined;
   try {
+    process.chdir(world.workspaceDir);
+    scenario.beforeBoot?.(world);
     app = await boot();
     await scenario.run(
       buildStage({
@@ -76,12 +98,15 @@ export async function runScenario(
         app,
         reboot: boot,
         scenarioName: scenario.name,
+        goldenSteps: new Set(scenario.goldens ?? []),
+        goldenRoot,
         artifactDir,
         captures,
         goldens,
-        updateGoldens: options.updateGoldens === true,
+        updateGoldens,
       }),
     );
+    settleGoldens(scenario, goldens, goldenRoot, updateGoldens);
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
     const running = app;
@@ -109,6 +134,18 @@ export async function runScenario(
   };
 }
 
+export async function openCheckpoints(
+  options: CheckpointsOptions,
+): Promise<Checkpoints | undefined> {
+  try {
+    return await Checkpoints.open(options);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    console.warn(`checkpoints unavailable for ${options.worktree}: ${reason}`);
+    return undefined;
+  }
+}
+
 type TestingModule = typeof import("@opentui/core/testing");
 type TestSetup = Awaited<ReturnType<TestingModule["createTestRenderer"]>>;
 type KeyInput = Parameters<TestSetup["mockInput"]["pressKey"]>[0];
@@ -133,6 +170,8 @@ interface StageContext {
   readonly app: RunningApp;
   readonly reboot: () => Promise<RunningApp>;
   readonly scenarioName: string;
+  readonly goldenSteps: ReadonlySet<string>;
+  readonly goldenRoot: string;
   readonly artifactDir: string;
   readonly captures: string[];
   readonly goldens: string[];
@@ -143,7 +182,6 @@ const untilTimeoutMs = 10_000;
 const quitTimeoutMs = 5_000;
 const pollMs = 15;
 const escapeParserWindowMs = 50;
-const goldenRoot = fileURLToPath(new URL("goldens", import.meta.url));
 
 function loadTesting(): Promise<TestingModule> {
   const anchor = fileURLToPath(new URL("../../packages/tui/src/index.ts", import.meta.url));
@@ -156,6 +194,19 @@ function freshArtifactDir(outRoot: string, scenarioName: string): string {
   rmSync(artifactDir, { recursive: true, force: true, maxRetries: 3 });
   mkdirSync(artifactDir, { recursive: true });
   return artifactDir;
+}
+
+function settleGoldens(
+  scenario: Scenario,
+  captured: readonly string[],
+  goldenRoot: string,
+  updateGoldens: boolean,
+): void {
+  const missing = (scenario.goldens ?? []).filter((step) => !captured.includes(step));
+  if (missing.length > 0) {
+    throw new Error(`declared goldens never captured: ${missing.join(", ")}`);
+  }
+  if (updateGoldens) pruneGoldens(goldenRoot, scenario.name, captured);
 }
 
 function temporaryWorld(scenario: Scenario): ComposedWorld {
@@ -182,31 +233,80 @@ async function composeMockApp(
   paths: TemporaryPaths,
   seams: AppSeams,
 ): Promise<void> {
-  const checkpoints = await Checkpoints.open({
+  const checkpoints = await openCheckpoints({
     worktree: paths.workspaceDir,
     gitDir: join(paths.root, "snapshots-git"),
-  }).catch(() => undefined);
+  });
   const tools = scenario.tools?.(paths.workspaceDir) ?? [];
   const changes = sessionChangeFeed();
+  const stores = new Map<string, SessionStore>();
+  const freshScript = () =>
+    new MockProvider([...(scenario.turns ?? [])], {
+      ...(scenario.contextWindow !== undefined && {
+        capabilities: { input: ["text"], toolCalls: true, contextWindow: scenario.contextWindow },
+      }),
+    });
+  const sharedScript = scenario.script === "shared" ? freshScript() : undefined;
+  const arcs = arcService({
+    cwd: paths.workspaceDir,
+    trusted: true,
+    memory: () => openWorkspaceMemory(paths.workspaceDir, true),
+    boundSessionCounts: () => boundSessionCounts(paths.sessionDir),
+  });
   await runApp({
     ...seams,
     ...(scenario.provider !== "none" && {
-      agentFactory: (guard, history) =>
-        new Agent({
-          provider: new MockProvider([...(scenario.turns ?? [])]),
-          tools,
-          guard,
-          ...(history !== undefined && { history }),
-        }),
+      agentFactory:
+        scenario.agentFactory ??
+        ((guard, history, seams) =>
+          new Agent({
+            provider: sharedScript ?? freshScript(),
+            tools,
+            guard,
+            ...(history !== undefined && { history }),
+            ...(seams?.bus !== undefined && { bus: seams.bus }),
+          })),
+      afterTurn: async ({ sessionId, history, agent }) => {
+        const store = stores.get(sessionId);
+        if (store === undefined) return undefined;
+        return settleTurn({
+          store,
+          provider: agent.provider,
+          history,
+          budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+        });
+      },
+      compact: async ({ sessionId, agent }, instructions) => {
+        const store = stores.get(sessionId);
+        if (store === undefined) throw new Error("no session store for this pane");
+        return compactNow({
+          store,
+          provider: agent.provider,
+          budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+          instructions,
+        });
+      },
     }),
     ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
+    ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
     sessions: sessionPort(paths.sessionDir, paths.workspaceDir, {
       checkpointTag: () => checkpoints?.takeTurnTag(),
+      onAttach: (store) => {
+        stores.set(store.header.id, store);
+        arcs.attached(store);
+      },
+      onRelease: (sessionId) => {
+        stores.delete(sessionId);
+        arcs.released(sessionId);
+      },
       onChange: (sessionId) => changes.emit(sessionId),
+      onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
     }),
     sessionTrees: sessionTreePort(paths.sessionDir, changes),
+    arcs: arcs.port,
     workspace: workspaceFile(join(paths.root, "workspace-state.json"), 0),
     ...(checkpoints !== undefined && { checkpoints }),
+    glyphs: assumedGlyphs,
     statusLabel: "keywork e2e",
   });
 }
@@ -251,7 +351,7 @@ function buildStage(context: StageContext): Stage {
     },
     settle: () => settle(app.setup),
     until: (marker, timeoutMs = untilTimeoutMs) => frameContaining(app.setup, marker, timeoutMs),
-    capture: async (stepName, options?: CaptureOptions) => {
+    capture: async (stepName) => {
       ordinal += 1;
       const base = stepFileBase(ordinal, stepName);
       const frame = app.setup.captureCharFrame();
@@ -261,11 +361,11 @@ function buildStage(context: StageContext): Stage {
         frameToSvg(app.setup.captureSpans() as CapturedFrame),
       );
       captures.push(base);
-      if (options?.golden === true) {
-        const golden = goldenPath(goldenRoot, context.scenarioName, base);
+      if (context.goldenSteps.has(stepName)) {
+        const golden = goldenPath(context.goldenRoot, context.scenarioName, stepName);
         if (context.updateGoldens) writeGolden(golden, frame);
         else verifyGolden(golden, frame);
-        goldens.push(base);
+        goldens.push(stepName);
       }
       return frame;
     },
@@ -277,6 +377,11 @@ function buildStage(context: StageContext): Stage {
     resize: async (width, height) => {
       app.setup.resize(width, height);
       await settle(app.setup);
+    },
+    renderOnce: async () => {
+      const startedAt = performance.now();
+      await app.setup.renderOnce();
+      return performance.now() - startedAt;
     },
     relaunch: async () => {
       await quit();

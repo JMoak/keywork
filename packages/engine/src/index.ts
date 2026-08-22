@@ -2,6 +2,8 @@ export {
   Agent,
   AgentBusyError,
   type AgentOptions,
+  addUsage,
+  type ConfirmingGate,
   type PermissionResolver,
   type ToolGuard,
   type ToolPermission,
@@ -54,6 +56,40 @@ export {
   skillConventionDirs,
   skillTool,
 } from "./extensions/skills.ts";
+export {
+  type AdapterOptions,
+  type CredentialMaterial,
+  CredentialMaterialError,
+  type CredentialVault,
+  modelReferenceOf,
+  providerFor,
+} from "./inference/adapters.ts";
+export {
+  endpointScheme,
+  formatReference,
+  isLoopbackEndpoint,
+  parseReference,
+  sameReference,
+} from "./inference/references.ts";
+export { type CatalogEntry, InferenceRegistry } from "./inference/registry.ts";
+export {
+  type CredentialHandle,
+  type CredentialState,
+  type InferenceBinding,
+  InvalidRegistrationError,
+  type ModelOrigin,
+  type ModelReference,
+  type ModelSpec,
+  type Protocol,
+  type ProviderRegistration,
+  protocols,
+  type RequestDecorations,
+  type Resolution,
+  ResolutionError,
+  type ResolutionFailure,
+  type ResolutionFailureCode,
+  type ResolutionRequest,
+} from "./inference/types.ts";
 export {
   connectStdioServer,
   McpAbortedError,
@@ -177,9 +213,7 @@ export {
 } from "./memory/citations.ts";
 export {
   backtrackFlushClause,
-  defaultFlushSettings,
   type FlushOutcome,
-  type FlushSettings,
   flushPrompt,
   isMemoryFlushPrompt,
   isNoReply,
@@ -252,6 +286,7 @@ export type { NoteRelations } from "./memory/search.ts";
 export {
   type EmbeddingsPort,
   MemorySearch,
+  type MemorySearcher,
   type RetrievalSource,
   type SearchHit,
   type SearchLeg,
@@ -282,7 +317,9 @@ export {
   type ImagePart,
   type Message,
   messageText,
+  ownedBy,
   type Part,
+  type ProviderStateOwner,
   type RedactedThinkingPart,
   type Role,
   type TextPart,
@@ -293,7 +330,12 @@ export {
   toolCalls,
   type Usage,
 } from "./messages.ts";
-export { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
+export {
+  MockProvider,
+  type MockProviderOptions,
+  textTurn,
+  toolCallTurn,
+} from "./mock-provider.ts";
 export {
   type CostRollup,
   carriesUsage,
@@ -314,11 +356,12 @@ export {
   loadProjectInstructions,
   type SystemPromptOptions,
 } from "./prompt.ts";
-export type {
-  Provider,
-  ProviderRequest,
-  ToolDefinition,
-  TurnDelta,
+export {
+  declaredContextWindow,
+  type Provider,
+  type ProviderRequest,
+  type ToolDefinition,
+  type TurnDelta,
 } from "./provider.ts";
 export {
   BedrockExceptionError,
@@ -331,6 +374,8 @@ export {
   regionFromEnv,
 } from "./providers/bedrock/sigv4.ts";
 export {
+  type AuthHeaders,
+  bearerHeaders,
   type FetchLike,
   type OpenAiCompatibleOptions,
   OpenAiCompatibleProvider,
@@ -346,14 +391,29 @@ export {
   type CompactionOptions,
   type CompactionPlan,
   type CompactionSettings,
+  compactionSettingsFor,
   compactSession,
   defaultCompactionSettings,
   estimateContextTokens,
+  estimateConversationTokens,
   planCompaction,
   serializeConversation,
   shouldCompact,
 } from "./session/compaction.ts";
 export {
+  assumedContextWindow,
+  type ContextBudget,
+  type ContextReading,
+  compactionDue,
+  contextBudgetFor,
+  contextFullness,
+  flushDue,
+  formatTokenCount,
+  readContext,
+  reserveCaps,
+} from "./session/context-budget.ts";
+export {
+  type ArcBindingEntry,
   type BranchSummaryEntry,
   type CompactionEntry,
   type CustomEntry,
@@ -388,6 +448,14 @@ export {
   tapJournal,
 } from "./session/journal.ts";
 export { replaySession } from "./session/replay.ts";
+export {
+  type CompactNowOptions,
+  compactNow,
+  readStore,
+  type SettleOptions,
+  settleTurn,
+  type TurnSettlement,
+} from "./session/settle.ts";
 export {
   type BranchSummaryInput,
   type CompactionInput,

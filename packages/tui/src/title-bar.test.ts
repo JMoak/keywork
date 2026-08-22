@@ -31,6 +31,24 @@ describe("the title-bar grammar", () => {
     expect(titleBar({ name: "session-1" }, 132, true)).toBe(" session-1 ");
   });
 
+  it("tags the arc after the name at broadsheet only, where the border hue already carries it", () => {
+    const bound = { ...full, arc: "dock-v2" };
+    expect(titleBar(bound, 132, true)).toBe(" █ auth-retry-fix #dock-v2 · $0.012 · plan ");
+    expect(titleBar(bound, 84, true)).toBe(" █ auth-retry-fix · $0.012 ");
+  });
+
+  it("sheds the arc tag before the mode word under pressure", () => {
+    const bound = {
+      ...full,
+      arc: "a-rather-long-arc-name-that-goes-on",
+      name: "a-long-descriptive-session-title-about-retry-logic",
+    };
+    const title = titleBar(bound, 100, true);
+    expect(title).not.toContain("#a-rather-long-arc-name");
+    expect(title).toContain("plan");
+    expect(title).toContain("$0.012");
+  });
+
   it("sheds mode word then telemetry then name words under pressure", () => {
     const wide = { ...full, name: "a-very-long-descriptive-session-title" };
     const roomy = titleBar(wide, 132, true);

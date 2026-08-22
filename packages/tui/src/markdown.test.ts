@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { markdownRowText, renderMarkdown } from "./markdown.ts";
+import { pageMarks } from "./marks.ts";
+
+const tier0 = pageMarks({ glyphTier: 0, nerdFont: false });
 
 const texts = (source: string, prose = 60, bleed = 60) =>
   renderMarkdown(source, prose, bleed).map(markdownRowText);
@@ -48,11 +51,18 @@ describe("inline markdown", () => {
 });
 
 describe("block markdown", () => {
-  it("marks headings with a density mark per depth", () => {
-    const rows = renderMarkdown("# One\n## Two\n### Three\n#### Four", 60, 60);
-    expect(rows.map(markdownRowText)).toEqual(["█ One", "▓ Two", "▒ Three", "░ Four"]);
+  it("marks headings with a weight mark per depth, never the voice ramp", () => {
+    const rows = renderMarkdown("# One\n## Two\n### Three\n#### Four\n###### Six", 60, 60);
+    expect(rows.map(markdownRowText)).toEqual(["█ One", "▌ Two", "▎ Three", "▏ Four", "▏ Six"]);
     expect(rows[0]?.spans?.[0]).toEqual({ text: "█ ", tone: "headingMark" });
     expect(rows[0]?.spans?.[1]).toEqual({ text: "One", tone: "heading", bold: true });
+    expect(rows.some((row) => markdownRowText(row).startsWith("▓"))).toBe(false);
+  });
+
+  it("falls back to ASCII marks at glyph tier 0", () => {
+    const source = "# One\n## Two\n- item\n---\n```\ncode\n```";
+    const rows = renderMarkdown(source, 8, 8, tier0).map(markdownRowText);
+    expect(rows).toEqual(["= One", "- Two", "- item", "--------", "| ", "| code"]);
   });
 
   it("hangs wrapped list items under their own text", () => {
@@ -95,7 +105,33 @@ describe("fences", () => {
     expect(rows.map(markdownRowText)).toEqual(["▎ ts", "▎ const a = 1;"]);
     expect(rows.every((row) => row.panel)).toBe(true);
     expect(rows[0]?.spans?.[1]).toEqual({ text: "ts", tone: "fenceTag" });
-    expect(rows[1]?.spans?.[1]).toEqual({ text: "const a = 1;", tone: "fence" });
+    expect(rows[1]?.spans?.slice(1)).toEqual([
+      { text: "const", tone: "keyword" },
+      { text: " a ", tone: "fence" },
+      { text: "=", tone: "punctuation" },
+      { text: " ", tone: "fence" },
+      { text: "1", tone: "constant" },
+      { text: ";", tone: "punctuation" },
+    ]);
+  });
+
+  it("leaves fences in unknown languages on the plain fence tone", () => {
+    const rows = renderMarkdown("```brainfuck\n+++[>+<-]\n```", 60, 60);
+    expect(rows[1]?.spans?.slice(1)).toEqual([{ text: "+++[>+<-]", tone: "fence" }]);
+  });
+
+  it("hard-wraps highlighted fence lines without losing a span", () => {
+    const rows = renderMarkdown('```ts\nconst abc = "xyz";\n```', 60, 10);
+    expect(rows.map(markdownRowText)).toEqual(["▎ ts", "▎ const ab", '▎ c = "xyz', '▎ ";']);
+    expect(rows[1]?.spans?.[1]).toEqual({ text: "const", tone: "keyword" });
+    expect(rows[2]?.spans?.at(-1)).toEqual({ text: '"xyz', tone: "string" });
+    expect(rows[3]?.spans?.[1]).toEqual({ text: '"', tone: "string" });
+  });
+
+  it("carries a block comment across fence lines", () => {
+    const rows = renderMarkdown("```ts\n/* open\nstill */ x\n```", 60, 60);
+    expect(rows[2]?.spans?.[1]).toEqual({ text: "still */", tone: "comment" });
+    expect(rows[2]?.spans?.[2]).toEqual({ text: " x", tone: "fence" });
   });
 
   it("runs fence content at bleed width, not the prose measure", () => {
