@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { headline } from "./masthead.ts";
+import { width as cells } from "./width.ts";
 
 const tier = (glyphTier: 0 | 1 | 2) => ({ glyphTier, nerdFont: false });
-const cells = (line: string) => Array.from(line).length;
 
 describe("the masthead headline", () => {
   it("sets every word of a short slug in the half-block face", () => {

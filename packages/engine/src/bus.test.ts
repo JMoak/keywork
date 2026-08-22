@@ -19,6 +19,26 @@ describe("EventBus", () => {
     expect(bus.listenerCount()).toBe(1);
   });
 
+  it("treats each on() as its own registration, so one unsubscribe removes only that one", () => {
+    const bus = new EventBus();
+    let deliveries = 0;
+    const listener = () => {
+      deliveries += 1;
+    };
+    const offFirst = bus.on("turn.started", listener);
+    bus.on("turn.started", listener);
+
+    bus.emit("turn.started", { userText: "hi" });
+    expect(deliveries).toBe(2);
+    expect(bus.listenerCount("turn.started")).toBe(2);
+
+    offFirst();
+    offFirst();
+    bus.emit("turn.started", { userText: "again" });
+    expect(deliveries).toBe(3);
+    expect(bus.listenerCount("turn.started")).toBe(1);
+  });
+
   it("delivers to every listener in subscription order", () => {
     const bus = new EventBus();
     const seen: string[] = [];

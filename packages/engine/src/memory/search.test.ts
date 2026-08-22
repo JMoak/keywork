@@ -189,6 +189,24 @@ describe("MemorySearch", () => {
     expect(port.calls[3]).toEqual([expect.stringContaining("hardened now")]);
   });
 
+  it("forgets vectors for notes that disappear from the vault", async () => {
+    const store = await vault();
+    const note = {
+      title: "Curing garden",
+      body: "staged entries harden",
+      provenance: "user",
+    } as const;
+    const created = await store.writeNote(note);
+    const port = countingPort();
+    const search = new MemorySearch(store, port);
+    await search.search("plant");
+    await store.revert(created.ledgerId);
+    await search.search("plant");
+    await store.writeNote(note);
+    await search.search("plant");
+    expect(port.calls.filter((call) => call[0]?.includes("Curing garden"))).toHaveLength(2);
+  });
+
   it("returns nothing for a blank query", async () => {
     const store = await vault();
     await seeded(store, [{ title: "Dock ratio", body: "0.3" }]);

@@ -1,9 +1,10 @@
 import type { ProviderStateOwner, Usage } from "../messages.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
-import { ProviderHttpError, ProviderStreamError } from "./errors.ts";
-import type { AuthHeaders, FetchLike } from "./openai.ts";
+import { ProviderStreamError } from "./errors.ts";
 import { toResponsesRequest } from "./responses-wire.ts";
 import { sseJsonEvents } from "./sse.ts";
+import { type AuthHeaders, type FetchLike, postForStream } from "./transport.ts";
+import { parseToolArguments } from "./wire-parts.ts";
 
 export interface OpenAiResponsesOptions {
   name: string;
@@ -34,8 +35,8 @@ export class OpenAiResponsesProvider implements Provider {
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
-    const response = await this.fetchFn(`${this.baseUrl}/responses`, {
-      method: "POST",
+    const body = await postForStream(this.name, this.fetchFn, {
+      url: `${this.baseUrl}/responses`,
       headers: {
         "content-type": "application/json",
         accept: "text/event-stream",
@@ -43,13 +44,9 @@ export class OpenAiResponsesProvider implements Provider {
         ...this.extraHeaders,
       },
       body: JSON.stringify(toResponsesRequest(request, this.modelId, this.owner)),
-      ...(request.signal !== undefined && { signal: request.signal }),
+      signal: request.signal,
     });
-    if (!response.ok) {
-      throw new ProviderHttpError(this.name, response.status, await response.text());
-    }
-    if (response.body === null) throw new Error(`${this.name} returned an empty response body`);
-    yield* assembleTurn(this.name, this.owner, sseJsonEvents(this.name, response.body));
+    yield* assembleTurn(this.name, this.owner, sseJsonEvents(this.name, body));
   }
 }
 
@@ -61,6 +58,7 @@ interface StreamEvent {
   response?: {
     usage?: WireUsage;
     error?: { message?: string } | null;
+    incomplete_details?: { reason?: string } | null;
   };
 }
 
@@ -88,6 +86,7 @@ async function* assembleTurn(
     const event = raw as StreamEvent;
     switch (event.type) {
       case "response.output_text.delta":
+      case "response.refusal.delta":
         if (typeof event.delta === "string" && event.delta !== "") {
           yield { type: "text", text: event.delta };
         }
@@ -96,9 +95,13 @@ async function* assembleTurn(
         yield* completedItem(event.item, owner);
         break;
       case "response.completed":
-      case "response.incomplete":
         usage = toUsage(event.response?.usage);
         break;
+      case "response.incomplete":
+        throw new ProviderStreamError(
+          provider,
+          `response cut off (${event.response?.incomplete_details?.reason ?? "unknown reason"})`,
+        );
       case "response.failed":
         throw new ProviderStreamError(
           provider,
@@ -125,7 +128,7 @@ function* completedItem(
         type: "tool-call",
         callId: item.call_id ?? "",
         name: item.name ?? "",
-        arguments: parseArguments(item.arguments ?? ""),
+        arguments: parseToolArguments(item.arguments ?? ""),
       },
     };
   }
@@ -134,15 +137,6 @@ function* completedItem(
       type: "redacted-thinking",
       part: { type: "redacted-thinking", data: JSON.stringify(item), owner },
     };
-  }
-}
-
-function parseArguments(raw: string): unknown {
-  if (raw.trim() === "") return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
   }
 }
 

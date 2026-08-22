@@ -4,6 +4,8 @@ export type Protocol = "chat-completions" | "responses" | "bedrock-converse";
 
 export const protocols: readonly Protocol[] = ["chat-completions", "responses", "bedrock-converse"];
 
+export const httpProtocols: ReadonlySet<Protocol> = new Set(["chat-completions", "responses"]);
+
 export interface ModelReference {
   provider: string;
   model: string;
@@ -50,12 +52,12 @@ export interface ProviderRegistration {
 }
 
 export interface InferenceBinding {
-  reference: ModelReference;
-  registration: ProviderRegistration;
-  spec: ModelSpec;
-  protocol: Protocol;
-  capabilities: ModelCapabilities;
-  credential: CredentialHandle | undefined;
+  readonly reference: ModelReference;
+  readonly registration: ProviderRegistration;
+  readonly spec: ModelSpec;
+  readonly protocol: Protocol;
+  readonly capabilities: ModelCapabilities;
+  readonly credential: CredentialHandle | undefined;
 }
 
 export interface ResolutionRequest {
@@ -64,28 +66,22 @@ export interface ResolutionRequest {
   default?: string | undefined;
 }
 
-interface FailureBase {
-  message: string;
-  nextAction: string;
-}
-
-export type ResolutionFailure = FailureBase &
-  (
-    | { code: "unconfigured" }
-    | { code: "ambiguous"; reference: string; candidates: readonly string[] }
-    | { code: "unknown-provider"; reference: string; provider: string; known: readonly string[] }
-    | {
-        code: "unknown-model";
-        reference: string;
-        provider: string | undefined;
-        known: readonly string[];
-      }
-    | { code: "disabled-provider"; reference: string; provider: string }
-    | { code: "unavailable-credential"; reference: string; provider: string; expected: string }
-    | { code: "unsupported-protocol"; reference: string; protocol: string }
-    | { code: "missing-capability"; reference: string; capability: string }
-    | { code: "insecure-endpoint"; reference: string; endpoint: string }
-  );
+export type ResolutionFailure = { message: string } & (
+  | { code: "unconfigured"; available: readonly string[] }
+  | { code: "ambiguous"; reference: string; candidates: readonly string[] }
+  | { code: "unknown-provider"; reference: string; provider: string; known: readonly string[] }
+  | {
+      code: "unknown-model";
+      reference: string;
+      provider: string | undefined;
+      known: readonly string[];
+    }
+  | { code: "disabled-provider"; reference: string; provider: string }
+  | { code: "unavailable-credential"; reference: string; provider: string; expected: string }
+  | { code: "unsupported-protocol"; reference: string; protocol: string }
+  | { code: "missing-capability"; reference: string; model: string; capability: string }
+  | { code: "insecure-endpoint"; reference: string; provider: string; endpoint: string }
+);
 
 export type ResolutionFailureCode = ResolutionFailure["code"];
 
@@ -95,7 +91,7 @@ export type Resolution =
 
 export class ResolutionError extends Error {
   constructor(readonly failure: ResolutionFailure) {
-    super(`${failure.message} · ${failure.nextAction}`);
+    super(failure.message);
     this.name = "ResolutionError";
   }
 }

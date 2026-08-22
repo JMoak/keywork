@@ -1,9 +1,9 @@
-# keywork — Agent Instructions
+# keywork: Agent Instructions
 
 keywork is a keyboard-first coding-agent harness: Bun + TypeScript + Vitest + OpenTUI.
 `docs/README.md` indexes the research, `docs/vision.md` holds the binding decisions (D1–D10),
-and `docs/backlog/` is the canonical task list (`90-plan-review.md` is an authoritative
-overlay).
+and `docs/backlog/` is the canonical task list (`docs/backlog/README.md` indexes the overlays
+and says which one owns each topic; superseded overlays live in `docs/backlog/archive/`).
 
 ## Hard guardrails (never violate)
 
@@ -11,7 +11,7 @@ overlay).
    Claude-Code client impersonation, no ported login flows from OpenCode/Pi or anywhere else.
    `scripts/check-guardrails.ts` enforces this in CI; never weaken it to make code pass.
    No Anthropic provider wiring at all before backlog task G1.
-2. **Licensing:** Pi (`earendil-works/pi`) and OpenCode (`sst/opencode`) are MIT — code may be
+2. **Licensing:** Pi (`earendil-works/pi`) and OpenCode (`sst/opencode`) are MIT; code may be
    adapted **with attribution recorded in `NOTICE`**. Crush (`charmbracelet/crush`) is
    FSL-1.1-MIT and is **not a source for keywork at all**: never copy, port, or closely
    paraphrase its source, and (2026-08-10 decision) its formerly-credited ideas are retired:
@@ -20,7 +20,7 @@ overlay).
 3. **Git:** the user commits; agents never run `git commit` or `git push` unless explicitly
    asked in the current conversation.
 
-## Code style — the perspective
+## Code style: the perspective
 
 Write with recent-MIT-grad hunger and craft: the cleanest, most elegant code you can produce,
 organized top-down so it reads naturally **without comments**. If code seems to need a

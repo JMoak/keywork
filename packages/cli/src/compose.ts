@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   Agent,
   type AgentDefinition,
@@ -18,6 +17,7 @@ import {
   type PermissionResolver,
   type Provider,
   restrictTools,
+  type ShellSession,
   skillTool,
   type Tool,
   type ToolGuard,
@@ -45,9 +45,10 @@ export interface CompositionOptions {
   prompts?: PromptsConfig | undefined;
   mcpServers?: Record<string, McpServerConfig> | undefined;
   onFileSaved?: ((path: string) => void) | undefined;
-  reportCheckpointsUnavailable?: (message: string) => void;
-  userRoot?: string;
-  checkpointsGitDir?: string;
+  checkpoints?: "on" | "off";
+  reportCheckpointsUnavailable?: ((message: string) => void) | undefined;
+  userRoot?: string | undefined;
+  checkpointsGitDir?: string | undefined;
 }
 
 export interface Composition {
@@ -76,17 +77,11 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
       }),
       bootstrap,
     );
-  const checkpoints = await Checkpoints.open({
-    worktree: cwd,
-    gitDir: options.checkpointsGitDir ?? snapshotGitDir(cwd, workspaceSlug),
-  }).catch((cause: unknown) => {
-    options.reportCheckpointsUnavailable?.((cause as Error).message);
-    return undefined;
-  });
+  const checkpoints = options.checkpoints === "off" ? undefined : await openCheckpoints(options);
   const extensions = await loadWorkspaceExtensions(
     cwd,
     projectTrusted,
-    options.userRoot ?? join(homedir(), ".keywork"),
+    options.userRoot ?? homedir(),
   );
   const mcp = startMcpRegistry(options.mcpServers);
   return {
@@ -112,34 +107,6 @@ export function workspaceToolScope(
   return toolScope(cwd, [anchorRoot, ...linkedDirs]);
 }
 
-export function standingInjectionsFor(
-  projectInstructions: string | undefined,
-  bootstrap: string,
-): ContextInjection[] {
-  return [
-    ...(projectInstructions === undefined
-      ? []
-      : [{ source: "project-instructions" as const, id: "AGENTS.md" }]),
-    ...(bootstrap === "" ? [] : [{ source: "memory-bootstrap" as const, scope: "workspace" }]),
-  ];
-}
-
-export function journalingRecall(
-  recall: MemoryRecall | undefined,
-  agent: () => Agent | undefined,
-): MemoryRecall | undefined {
-  if (recall === undefined) return undefined;
-  return {
-    ...recall,
-    onRecall: (noteName) => {
-      recall.onRecall?.(noteName);
-      agent()?.bus.emit("context.injected", {
-        injection: { source: "memory-recall", id: noteName, scope: "workspace" },
-      });
-    },
-  };
-}
-
 export interface AgentCompositionOptions {
   permissions?: PermissionResolver | undefined;
   arcs?: ArcService | undefined;
@@ -153,6 +120,7 @@ export interface AgentBuildSpec {
   bus?: EventBus<EngineEvents> | undefined;
   sessionId?: SessionKey | undefined;
   onRetrieval?: ((disclosure: string) => void) | undefined;
+  shell?: ShellSession | undefined;
 }
 
 export interface AgentComposition {
@@ -191,6 +159,37 @@ export function composeAgents(
   };
 }
 
+export function startMcpRegistry(
+  servers: Record<string, McpServerConfig> | undefined,
+): McpRegistry | undefined {
+  if (servers === undefined || Object.keys(servers).length === 0) return undefined;
+  const registry = new McpRegistry({ servers });
+  registry.start();
+  return registry;
+}
+
+function openCheckpoints(options: CompositionOptions): Promise<Checkpoints | undefined> {
+  return Checkpoints.open({
+    worktree: options.cwd,
+    gitDir: options.checkpointsGitDir ?? snapshotGitDir(options.cwd, options.workspaceSlug),
+  }).catch((cause: unknown) => {
+    options.reportCheckpointsUnavailable?.((cause as Error).message);
+    return undefined;
+  });
+}
+
+function standingInjectionsFor(
+  projectInstructions: string | undefined,
+  bootstrap: string,
+): ContextInjection[] {
+  return [
+    ...(projectInstructions === undefined
+      ? []
+      : [{ source: "project-instructions" as const, id: "AGENTS.md" }]),
+    ...(bootstrap === "" ? [] : [{ source: "memory-bootstrap" as const, scope: "workspace" }]),
+  ];
+}
+
 function followingProvider(current: () => Provider): Provider {
   return {
     get name() {
@@ -206,37 +205,26 @@ function followingProvider(current: () => Provider): Provider {
   };
 }
 
-export function startMcpRegistry(
-  servers: Record<string, McpServerConfig> | undefined,
-): McpRegistry | undefined {
-  if (servers === undefined || Object.keys(servers).length === 0) return undefined;
-  const registry = new McpRegistry({ servers });
-  registry.start();
-  return registry;
-}
-
 function buildAgent(
   composition: Composition,
   options: AgentCompositionOptions,
   spec: AgentBuildSpec,
 ): Agent {
   let self: Agent | undefined;
-  const skillTools = skillToolsFor(composition, () => self);
   const baseTools = [
-    ...coreTools(
-      composition.scope,
-      journalingRecall(
+    ...coreTools(composition.scope, {
+      memory: journalingRecall(
         memoryRecall(composition.memory, spec.sessionId, spec.onRetrieval, options.arcs),
         () => self,
       ),
-      {
-        onToolOutput: (chunk) => self?.bus.emit("tool.output", { chunk }),
-        onFileSaved: composition.onFileSaved,
-      },
-    ),
-    ...skillTools,
+      shell: spec.shell,
+      onToolOutput: (chunk) => self?.bus.emit("tool.output", { chunk }),
+      onFileSaved: composition.onFileSaved,
+    }),
+    ...skillToolsFor(composition, () => self),
   ];
-  const tools = composition.mcp === undefined ? baseTools : composition.mcp.surface(baseTools);
+  const tools =
+    composition.mcp === undefined ? () => baseTools : composition.mcp.surface(baseTools);
   const definition = spec.definition;
   const permissions =
     definition === undefined
@@ -245,7 +233,7 @@ function buildAgent(
   const composedPrompt = definition === undefined || definition.prompt === "";
   const agent = new Agent({
     provider: spec.provider,
-    tools: definition === undefined ? tools : restrictTools(tools, definition),
+    tools: definition === undefined ? tools : () => restrictTools(tools(), definition),
     systemPrompt: composedPrompt
       ? composition.systemPromptFor(spec.provider.modelId)
       : definition.prompt,
@@ -257,6 +245,22 @@ function buildAgent(
   });
   self = agent;
   return agent;
+}
+
+function journalingRecall(
+  recall: MemoryRecall | undefined,
+  agent: () => Agent | undefined,
+): MemoryRecall | undefined {
+  if (recall === undefined) return undefined;
+  return {
+    ...recall,
+    onRecall: (noteName) => {
+      recall.onRecall?.(noteName);
+      agent()?.bus.emit("context.injected", {
+        injection: { source: "memory-recall", id: noteName, scope: "workspace" },
+      });
+    },
+  };
 }
 
 function skillToolsFor(composition: Composition, agent: () => Agent | undefined): Tool[] {

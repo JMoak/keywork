@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { titleKey } from "./naming.ts";
-import type { Note } from "./store.ts";
+import { isEntityPath, type Note, wikilinkTarget } from "./notes.ts";
 
 export const entityTypes = [
   "file",
@@ -307,12 +307,5 @@ function declaredType(note: Note): EntityType | undefined {
 }
 
 function impliedType(note: Note): EntityType | undefined {
-  return note.path.startsWith("entities/") ? "file" : undefined;
-}
-
-function wikilinkTarget(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const match = value.match(/^\[\[([^[\]|#]+)\]\]$/);
-  const target = match?.[1]?.trim();
-  return target === "" ? undefined : target;
+  return isEntityPath(note.path) ? "file" : undefined;
 }

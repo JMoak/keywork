@@ -9,8 +9,8 @@ import {
   type PairVerdict,
   type PromotionProposal,
 } from "./gardener.ts";
-import { ReviewInbox } from "./inbox.ts";
-import { MemoryStore, type Note } from "./store.ts";
+import type { Note } from "./notes.ts";
+import { MemoryStore } from "./store.ts";
 
 const cleanups: string[] = [];
 
@@ -59,15 +59,10 @@ function scriptedPort(script: PortScript): CurationJudgmentPort & {
 function gardener(
   store: MemoryStore,
   port?: CurationJudgmentPort,
-  inbox = new ReviewInbox({ now: clock }),
-): { gardener: Gardener; inbox: ReviewInbox } {
+): { gardener: Gardener; inbox: { list: () => ReturnType<MemoryStore["listStaged"]> } } {
   return {
-    gardener: new Gardener({
-      store,
-      inbox,
-      ...(port !== undefined && { judgment: port }),
-    }),
-    inbox,
+    gardener: new Gardener({ store, ...(port !== undefined && { judgment: port }) }),
+    inbox: { list: () => store.listStaged() },
   };
 }
 

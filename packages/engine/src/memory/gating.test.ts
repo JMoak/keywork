@@ -2,7 +2,9 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MemoryInertError, MemoryStore, type Provenance } from "./store.ts";
+import type { Provenance } from "./notes.ts";
+import { isStagedWrite } from "./staging.ts";
+import { MemoryInertError, MemoryStore } from "./store.ts";
 
 const cleanups: string[] = [];
 
@@ -68,7 +70,8 @@ describe("write-gating property", () => {
 
     const trackNewStaged = async (sentinel: string): Promise<void> => {
       for (const item of await store.listStaged()) {
-        if (item.content.includes(sentinel)) sentinelByStagedId.set(item.id, sentinel);
+        if (isStagedWrite(item) && item.content.includes(sentinel))
+          sentinelByStagedId.set(item.id, sentinel);
       }
     };
 

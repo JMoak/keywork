@@ -1,11 +1,31 @@
 export {
+  type Workspace,
+  type WorkspaceDeclaration,
+  workspaceDeclarationSchema,
+} from "./declaration.ts";
+export {
   contrastFailures,
   type Flavor,
+  type FlavorTokenOverrides,
   type FlavorTokens,
   flavorSchema,
+  flavorTokenOverridesSchema,
+  flavorTokensSchema,
   parseFlavor,
 } from "./flavor.ts";
-export { ConfigError, type ConfigSource, loadConfig, mergeConfigs } from "./load.ts";
+export {
+  ConfigError,
+  type ConfigSource,
+  keyworkConfigStore,
+  loadConfig,
+  mergeConfigs,
+} from "./load.ts";
+export {
+  listWorkspaces,
+  namedWorkspaceDir,
+  type WorkspaceSlot,
+  writeNamedWorkspaceDeclaration,
+} from "./named-workspaces.ts";
 export {
   type ConnectionConfig,
   type ConnectionCredentialSource,
@@ -23,17 +43,10 @@ export {
 } from "./schema.ts";
 export { isSlug, slugGrammar, slugProblem } from "./slug.ts";
 export {
-  listWorkspaces,
-  namedWorkspaceDir,
   openWorkspace,
   resolveAnchor,
   resolveVaultPath,
   updateWorkspaceDeclaration,
-  type Workspace,
   type WorkspaceAnchor,
-  type WorkspaceDeclaration,
-  type WorkspaceSlot,
-  workspaceDeclarationSchema,
-  writeNamedWorkspaceDeclaration,
   writeWorkspaceDeclaration,
 } from "./workspace.ts";

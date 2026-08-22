@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bashTool, detectShell } from "./bash.ts";
+import { toolScope } from "./confine.ts";
 import { editTool } from "./edit.ts";
 import { readTool } from "./read.ts";
 import { writeTool } from "./write.ts";
@@ -24,7 +25,7 @@ describe("read", () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "sample.txt"), "alpha\nbeta\ngamma");
 
-    const output = await readTool(cwd).execute({ path: "sample.txt" });
+    const output = await readTool(toolScope(cwd)).execute({ path: "sample.txt" });
 
     expect(output).toBe("    1\talpha\n    2\tbeta\n    3\tgamma");
   });
@@ -33,7 +34,11 @@ describe("read", () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "sample.txt"), "one\ntwo\nthree\nfour");
 
-    const output = await readTool(cwd).execute({ path: "sample.txt", offset: 2, limit: 2 });
+    const output = await readTool(toolScope(cwd)).execute({
+      path: "sample.txt",
+      offset: 2,
+      limit: 2,
+    });
 
     expect(output).toBe("    2\ttwo\n    3\tthree\n... (1 more lines)");
   });
@@ -42,7 +47,7 @@ describe("read", () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "blob.bin"), Buffer.from([104, 105, 0, 106]));
 
-    const output = await readTool(cwd).execute({ path: "blob.bin" });
+    const output = await readTool(toolScope(cwd)).execute({ path: "blob.bin" });
 
     expect(output).toContain("binary");
   });
@@ -52,7 +57,7 @@ describe("write", () => {
   it("creates parent directories and writes content", async () => {
     const cwd = await workspace();
 
-    await writeTool(cwd).execute({ path: "nested/dir/out.txt", content: "hello" });
+    await writeTool(toolScope(cwd)).execute({ path: "nested/dir/out.txt", content: "hello" });
 
     expect(await readFile(join(cwd, "nested/dir/out.txt"), "utf8")).toBe("hello");
   });
@@ -63,7 +68,7 @@ describe("edit", () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "code.ts"), "const answer = 41;");
 
-    await editTool(cwd).execute({ path: "code.ts", oldText: "41", newText: "42" });
+    await editTool(toolScope(cwd)).execute({ path: "code.ts", oldText: "41", newText: "42" });
 
     expect(await readFile(join(cwd, "code.ts"), "utf8")).toBe("const answer = 42;");
   });
@@ -73,7 +78,7 @@ describe("edit", () => {
     await writeFile(join(cwd, "code.ts"), "aaa bbb aaa");
 
     await expect(
-      editTool(cwd).execute({ path: "code.ts", oldText: "aaa", newText: "ccc" }),
+      editTool(toolScope(cwd)).execute({ path: "code.ts", oldText: "aaa", newText: "ccc" }),
     ).rejects.toThrow(/matches 2 places/);
   });
 
@@ -81,7 +86,7 @@ describe("edit", () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "code.ts"), "aaa bbb aaa");
 
-    await editTool(cwd).execute({
+    await editTool(toolScope(cwd)).execute({
       path: "code.ts",
       oldText: "aaa",
       newText: "c",
@@ -96,7 +101,7 @@ describe("edit", () => {
     await writeFile(join(cwd, "code.ts"), "nothing here");
 
     await expect(
-      editTool(cwd).execute({ path: "code.ts", oldText: "absent", newText: "x" }),
+      editTool(toolScope(cwd)).execute({ path: "code.ts", oldText: "absent", newText: "x" }),
     ).rejects.toThrow(/not found/);
   });
 });
@@ -105,28 +110,30 @@ describe("root confinement", () => {
   it("rejects relative escapes from every file tool", async () => {
     const cwd = await workspace();
 
-    await expect(readTool(cwd).execute({ path: "../outside.txt" })).rejects.toThrow(/escapes/);
-    await expect(writeTool(cwd).execute({ path: "../outside.txt", content: "x" })).rejects.toThrow(
+    await expect(readTool(toolScope(cwd)).execute({ path: "../outside.txt" })).rejects.toThrow(
       /escapes/,
     );
     await expect(
-      editTool(cwd).execute({ path: "../outside.txt", oldText: "a", newText: "b" }),
+      writeTool(toolScope(cwd)).execute({ path: "../outside.txt", content: "x" }),
+    ).rejects.toThrow(/escapes/);
+    await expect(
+      editTool(toolScope(cwd)).execute({ path: "../outside.txt", oldText: "a", newText: "b" }),
     ).rejects.toThrow(/escapes/);
   });
 
   it("rejects absolute paths outside the root", async () => {
     const cwd = await workspace();
 
-    await expect(readTool(cwd).execute({ path: join(tmpdir(), "elsewhere.txt") })).rejects.toThrow(
-      /escapes/,
-    );
+    await expect(
+      readTool(toolScope(cwd)).execute({ path: join(tmpdir(), "elsewhere.txt") }),
+    ).rejects.toThrow(/escapes/);
   });
 
   it("rejects nested traversal that resolves outside the root", async () => {
     const cwd = await workspace();
 
     await expect(
-      writeTool(cwd).execute({ path: "nested/../../evil.txt", content: "x" }),
+      writeTool(toolScope(cwd)).execute({ path: "nested/../../evil.txt", content: "x" }),
     ).rejects.toThrow(/escapes/);
   });
 
@@ -134,7 +141,7 @@ describe("root confinement", () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "inside.txt"), "ok");
 
-    const output = await readTool(cwd).execute({ path: join(cwd, "inside.txt") });
+    const output = await readTool(toolScope(cwd)).execute({ path: join(cwd, "inside.txt") });
 
     expect(output).toContain("ok");
   });
@@ -145,7 +152,7 @@ describe("edit line endings", () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "win.txt"), "alpha\r\nbeta\r\ngamma");
 
-    await editTool(cwd).execute({
+    await editTool(toolScope(cwd)).execute({
       path: "win.txt",
       oldText: "alpha\nbeta",
       newText: "alpha\nBETA",
@@ -158,7 +165,7 @@ describe("edit line endings", () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "unix.txt"), "alpha\nbeta");
 
-    await editTool(cwd).execute({ path: "unix.txt", oldText: "beta", newText: "BETA" });
+    await editTool(toolScope(cwd)).execute({ path: "unix.txt", oldText: "beta", newText: "BETA" });
 
     expect(await readFile(join(cwd, "unix.txt"), "utf8")).toBe("alpha\nBETA");
   });
@@ -170,10 +177,15 @@ describe("edit occurrence counting", () => {
     await writeFile(join(cwd, "code.ts"), "aaaa");
 
     await expect(
-      editTool(cwd).execute({ path: "code.ts", oldText: "aa", newText: "b" }),
+      editTool(toolScope(cwd)).execute({ path: "code.ts", oldText: "aa", newText: "b" }),
     ).rejects.toThrow(/matches 2 places/);
 
-    await editTool(cwd).execute({ path: "code.ts", oldText: "aa", newText: "b", replaceAll: true });
+    await editTool(toolScope(cwd)).execute({
+      path: "code.ts",
+      oldText: "aa",
+      newText: "b",
+      replaceAll: true,
+    });
     expect(await readFile(join(cwd, "code.ts"), "utf8")).toBe("bb");
   });
 });
@@ -227,7 +239,7 @@ describe("bash", () => {
     );
   }, 10_000);
 
-  it("settles when a backgrounded child keeps the pipes open", async () => {
+  it("settles when a backgrounded child keeps the pipes open, leaving that child running", async () => {
     const cwd = await workspace();
     const shell = detectShell();
     const backgrounding =

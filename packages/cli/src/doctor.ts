@@ -16,37 +16,56 @@ import {
 } from "@keywork/tui";
 import { declaredWindowOf } from "./inference/port.ts";
 
+export interface DoctorRow {
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface DoctorReport {
+  readonly rows: readonly DoctorRow[];
+}
+
 export async function doctorCommand(
   context: TerminalEnvironment,
   log: (line: string) => void,
   inference?: () => Promise<InferenceRegistry | undefined>,
 ): Promise<number> {
   const registry = await inference?.().catch(() => undefined);
-  log(doctorReport(detectCapabilities(context), registry));
+  log(renderDoctorReport(doctorReport(detectCapabilities(context), registry)));
   return 0;
 }
 
-export function doctorReport(profile: CapabilityProfile, registry?: InferenceRegistry): string {
-  const rows: [string, string][] = [
-    ["terminal", terminalLine(profile)],
-    ["color", colorLine(profile.colorDepth)],
-    ["sync frames", syncLine(profile)],
-    ["glyph tier", tierLine(profile)],
-    ["nerd font", nerdFontLine(profile.nerdFont)],
-    ["sample", sampleLine(profile)],
-    ...(registry === undefined ? [] : contextWindowRows(registry)),
-  ];
-  const body = rows.map(([label, value]) => `${label.padEnd(13)}${value}`).join("\n");
+export function doctorReport(
+  profile: CapabilityProfile,
+  registry?: InferenceRegistry,
+): DoctorReport {
+  return {
+    rows: [
+      { label: "terminal", value: terminalLine(profile) },
+      { label: "color", value: colorLine(profile.colorDepth) },
+      { label: "sync frames", value: syncLine(profile) },
+      { label: "glyph tier", value: tierLine(profile) },
+      { label: "nerd font", value: nerdFontLine(profile.nerdFont) },
+      { label: "sample", value: sampleLine(profile) },
+      ...(registry === undefined ? [] : contextWindowRows(registry)),
+    ],
+  };
+}
+
+export function renderDoctorReport(report: DoctorReport): string {
+  const body = report.rows.map(({ label, value }) => `${label.padEnd(13)}${value}`).join("\n");
   return `keywork doctor\n\n${body}`;
 }
 
-export function contextWindowRows(registry: InferenceRegistry): [string, string][] {
+function contextWindowRows(registry: InferenceRegistry): DoctorRow[] {
   const lines = [...registry.available()]
     .sort((left, right) => left.name.localeCompare(right.name))
     .map(contextWindowLine)
     .filter((line): line is string => line !== undefined);
-  if (lines.length === 0) return [["context", "no provider connected yet · keywork connect"]];
-  return lines.map((line, index) => [index === 0 ? "context" : "", line]);
+  if (lines.length === 0) {
+    return [{ label: "context", value: "no provider connected yet · keywork connect" }];
+  }
+  return lines.map((value, index) => ({ label: index === 0 ? "context" : "", value }));
 }
 
 function contextWindowLine(registration: ProviderRegistration): string | undefined {

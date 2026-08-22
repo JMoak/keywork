@@ -1,4 +1,4 @@
-# keywork — Research Reference Set
+# keywork: Research Reference Set
 
 This directory is the research foundation for **keywork**, a keyboard-first TypeScript
 coding-agent harness (Bun + TypeScript + Vitest + OpenTUI) being designed by remixing what
@@ -13,35 +13,35 @@ order given; later docs assume the earlier ones.
 
 ## Reading order
 
-### Influencers — the primary studies
+### Influencers: the primary studies
 
 | # | Doc | What it covers |
 |---|-----|----------------|
-| 1 | [`influencers/pi.md`](influencers/pi.md) | Pi (earendil-works/pi, MIT): the minimal, self-extending harness — four built-in tools, ~30-hook TypeScript extension API, JSONL tree sessions, the anti-MCP argument, and a prioritized "what keywork should take" list. |
-| 2 | [`influencers/opencode.md`](influencers/opencode.md) | OpenCode (sst/opencode, MIT): the most structurally relevant influence — same Bun/TS/OpenTUI stack. Headless-server "everything is a client" architecture, Plan/Build modes, permissions, and lift candidates. |
-| 3 | [`influencers/crush.md`](influencers/crush.md) | Crush (charmbracelet/crush, FSL-1.1-MIT — **retired as a design source 2026-08-10**): research history only; formerly Crush-credited features are now original keywork designs. |
+| 1 | [`influencers/pi.md`](influencers/pi.md) | Pi (earendil-works/pi, MIT): the minimal, self-extending harness. Four built-in tools, ~30-hook TypeScript extension API, JSONL tree sessions, the anti-MCP argument, and a prioritized "what keywork should take" list. |
+| 2 | [`influencers/opencode.md`](influencers/opencode.md) | OpenCode (sst/opencode, MIT): the most structurally relevant influence (same Bun/TS/OpenTUI stack). Headless-server "everything is a client" architecture, Plan/Build modes, permissions, and lift candidates. |
+| 3 | [`influencers/crush.md`](influencers/crush.md) | Crush (charmbracelet/crush, FSL-1.1-MIT; **retired as a design source 2026-08-10**): research history only; formerly Crush-credited features are now original keywork designs. |
 | 4 | [`influencers/omarchy-ux.md`](influencers/omarchy-ux.md) | Omarchy (DHH's Arch/Hyprland distro) as a pure *feel* reference: 12 attention-to-detail heuristics with TUI translations, anti-patterns to avoid, and a "keywork feel" manifesto. |
-| 5 | [`influencers/openclaw.md`](influencers/openclaw.md) | OpenClaw (openclaw/openclaw, MIT — verified): the field's most-praised agent memory — files-as-truth/index-as-cache, budgeted bootstrap, pre-compaction silent flush, taint-gated dreaming. Added 2026-08-10 for workstream J. |
-| 6 | [`influencers/hermes.md`](influencers/hermes.md) | Hermes Agent (NousResearch/hermes-agent, MIT — verified): self-healing skills "versioned by reality" — execution-time self-patching, Curator with agent-created-only blast radius, progressive disclosure. Added 2026-08-10 for workstream J. |
-| 7 | [`influencers/rosavera.md`](influencers/rosavera.md) | rosavera (Jordan's private workspace — no license question): fail-closed scope federation, RRF hybrid retrieval, Gardener v2 curation, usefulness feedback; plus its two known gaps keywork fixes (recall metrics, proactive recall). |
-| 8 | [`influencers/knowledge-graphs.md`](influencers/knowledge-graphs.md) | KG-memory systems survey (GraphRAG, Zep/Graphiti, HippoRAG, LightRAG, Mem0, AriGraph, Letta — all MIT/Apache-2.0, verified): what a graph layer buys a coding agent (temporal supersession, multi-hop PPR, contradiction invariants) and the local SQLite design verdicts. Added 2026-08-10 for J12. |
-| 9 | [`influencers/obsidian.md`](influencers/obsidian.md) | Obsidian design DNA (app proprietary — conventions open; Dataview/Datacore/Breadcrumbs MIT, Juggl GPL ⚠): wikilinks, backlinks/unlinked mentions, frontmatter properties, evergreen atomic notes, local-graph-over-global; the vault-citizenship spec making keywork's memory a first-class vault. Added 2026-08-10 for J3/J9. |
-| 10 | [`influencers/lore.md`](influencers/lore.md) | Lore (dmbch/lore, MIT — a colleague's team knowledge archive as MCP service): Subjective Logic opinions, per-oracle earned trust, attestation ledgers, temporal decay. Convergent on epistemics, inverted on architecture; keywork takes ledger-derived state (R6), hallucinated-ID rejection, and the team-scope-via-MCP federation seam. |
+| 5 | [`influencers/openclaw.md`](influencers/openclaw.md) | OpenClaw (openclaw/openclaw, MIT, verified): the field's most-praised agent memory. Files-as-truth/index-as-cache, budgeted bootstrap, pre-compaction silent flush, taint-gated dreaming. Added 2026-08-10 for workstream J. |
+| 6 | [`influencers/hermes.md`](influencers/hermes.md) | Hermes Agent (NousResearch/hermes-agent, MIT, verified): self-healing skills "versioned by reality". Execution-time self-patching, Curator with agent-created-only blast radius, progressive disclosure. Added 2026-08-10 for workstream J. |
+| 7 | [`influencers/rosavera.md`](influencers/rosavera.md) | rosavera (Jordan's private workspace, no license question): fail-closed scope federation, RRF hybrid retrieval, Gardener v2 curation, usefulness feedback; plus its two known gaps keywork fixes (recall metrics, proactive recall). |
+| 8 | [`influencers/knowledge-graphs.md`](influencers/knowledge-graphs.md) | KG-memory systems survey (GraphRAG, Zep/Graphiti, HippoRAG, LightRAG, Mem0, AriGraph, Letta; all MIT/Apache-2.0, verified): what a graph layer buys a coding agent (temporal supersession, multi-hop PPR, contradiction invariants) and the local SQLite design verdicts. Added 2026-08-10 for J12. |
+| 9 | [`influencers/obsidian.md`](influencers/obsidian.md) | Obsidian design DNA (app proprietary, conventions open; Dataview/Datacore/Breadcrumbs MIT, Juggl GPL ⚠): wikilinks, backlinks/unlinked mentions, frontmatter properties, evergreen atomic notes, local-graph-over-global; the vault-citizenship spec making keywork's memory a first-class vault. Added 2026-08-10 for J3/J9. |
+| 10 | [`influencers/lore.md`](influencers/lore.md) | Lore (dmbch/lore, MIT; a colleague's team knowledge archive as MCP service): Subjective Logic opinions, per-oracle earned trust, attestation ledgers, temporal decay. Convergent on epistemics, inverted on architecture; keywork takes ledger-derived state (R6), hallucinated-ID rejection, and the team-scope-via-MCP federation seam. |
 
-### Feature candidates — the wider ecosystem
+### Feature candidates: the wider ecosystem
 
 | # | Doc | What it covers |
 |---|-----|----------------|
-| 11 | [`mit-feature-candidates.md`](mit-feature-candidates.md) | Survey beyond the big three — Aider, Codex CLI, Gemini CLI, Goose, Cline, Roo Code, Zed, OpenHands, Amp — as a 26-row table rated LIFT / REIMPLEMENT / WATCH with per-source license verification. |
+| 11 | [`mit-feature-candidates.md`](mit-feature-candidates.md) | Survey beyond the big three (Aider, Codex CLI, Gemini CLI, Goose, Cline, Roo Code, Zed, OpenHands, Amp) as a 26-row table rated LIFT / REIMPLEMENT / WATCH with per-source license verification. |
 
-### Synthesis — where the research points
+### Synthesis: where the research points
 
 | # | Doc | What it covers |
 |---|-----|----------------|
 | 12 | [`comparison.md`](comparison.md) | Pi vs OpenCode vs Crush head-to-head: philosophy comparison, an 18-row shared-features matrix (keywork's table-stakes baseline), per-tool adoption verdicts, and ten open questions (Q1–Q10) for vision-shaping. |
 | 13 | [`ux-principles.md`](ux-principles.md) | keywork's UX & interaction principles: 13 named design principles, a *proposed* leader-key + palette keyboard model, a *proposed* five-pane window model, and a 14-item simplicity budget of refusals. Sections 2–3 are proposals awaiting a decision. |
 
-### Deep dives — implementation research
+### Deep dives: implementation research
 
 | # | Doc | What it covers |
 |---|-----|----------------|
@@ -52,11 +52,11 @@ order given; later docs assume the earlier ones.
 
 ## Ground rules
 
-> **Licensing map — applies to every recommendation in this set.**
+> **Licensing map (applies to every recommendation in this set).**
 >
-> - **Pi** ([earendil-works/pi](https://github.com/earendil-works/pi)) — **MIT**: code may be lifted with attribution.
-> - **OpenCode** ([sst/opencode](https://github.com/sst/opencode)) — **MIT**: code may be lifted with attribution.
-> - **Crush** ([charmbracelet/crush](https://github.com/charmbracelet/crush)) — **FSL-1.1-MIT**: **never a source — never copy, port, or closely paraphrase its source, and (since 2026-08-10) not a design source either.** Where a mechanic exists in an MIT tool, lift the MIT implementation; otherwise design from first principles.
+> - **Pi** ([earendil-works/pi](https://github.com/earendil-works/pi)): **MIT**; code may be lifted with attribution.
+> - **OpenCode** ([sst/opencode](https://github.com/sst/opencode)): **MIT**; code may be lifted with attribution.
+> - **Crush** ([charmbracelet/crush](https://github.com/charmbracelet/crush)): **FSL-1.1-MIT**; **never a source: never copy, port, or closely paraphrase its source, and (since 2026-08-10) not a design source either.** Where a mechanic exists in an MIT tool, lift the MIT implementation; otherwise design from first principles.
 > - **Anthropic access is API-key / Agent-SDK only.** Never integrate Anthropic subscription-OAuth, and never port any tool's Pro/Max login code paths. This is a hard ToS guardrail for the project.
 
 ---
@@ -68,10 +68,10 @@ The open questions have been resolved and the plan written:
 | Doc | What it covers |
 |-----|----------------|
 | [`design-language.md`](design-language.md) | **Visual vocabulary of record** (Jordan, 2026-08-10): the density ramp (`░▒▓█`) as the one system across curing/provenance/staging/MCP/loading, the tile-fill progress mark (dwindle in miniature, never a spinner), the needs-you-only notification formula, status-line grammar. Supersedes placeholder glyphs in planning docs. |
-| [`textures.md`](textures.md) | **Textures of record** (2026-08-16): the perceived-quality bar — eight correctness textures (T1–T8: grapheme-correct editing, paste-flood survival, Windows parity proven, remote-terminal correctness, degraded-terminal grace, first-class light, empty states that teach, latency honesty), each carrying an acceptance bar and a CI ratchet per the `check-pins.ts` precedent; a texture without a ratchet is an aspiration, not a texture of record. |
+| [`textures.md`](textures.md) | **Textures of record** (2026-08-16): the perceived-quality bar, eight correctness textures (T1–T8: grapheme-correct editing, paste-flood survival, Windows parity proven, remote-terminal correctness, degraded-terminal grace, first-class light, empty states that teach, latency honesty), each carrying an acceptance bar and a CI ratchet per the `check-pins.ts` precedent; a texture without a ratchet is an aspiration, not a texture of record. |
 | [`vision.md`](vision.md) | Decision record D1–D10 resolving Q1–Q10: MCP in core (lazy schemas), minimal core + blessed default-on extensions, trust-ladder gate, three session layers, full code-intel stack phased, **native tiling with panes as bus clients** (the differentiator), in-process server-shaped bus, Pi JSONL persistence, one typed config, terminal-only v1. |
 | [`backlog/105-inference-resolution.md`](backlog/105-inference-resolution.md) | **Inference-resolution decisions of record** (2026-08-20): stable `IR-01`–`IR-19` engine references and `CD-01`–`CD-10` connection-surface references defining runtime-wide provider registration, session-local selection, explicit Chat/Responses protocols, transactional switching, neutral `/connect`, independent `/model`, verified saves, owned-credential removal, and side-effect-free onboarding. |
-| [`tasks.md`](tasks.md) | The parallelized implementation breakdown: milestones M0–M3 + P2, six concurrent workstreams (engine, sessions, TUI/keyboard, extensions, trust, code-intel) with dependency gates and a per-task lift strategy (LIFT:pi / LIFT:opencode / LIFT:aider / OWN; the former REIMPL:crush tag is retired). |
+| [`tasks.md`](tasks.md) | Historical: the original parallelized implementation breakdown (milestones M0–M3 + P2, six concurrent workstreams, per-task lift strategy), now a pointer; [`backlog/`](backlog/README.md) superseded it. |
 | [`backlog/`](backlog/README.md) | The full 75-task backlog (153pt): every workstream broken into 1–3pt tasks with descriptions, acceptance criteria, and lift strategy, in execution order. |
 
 The research docs above remain the evidentiary base; where a decision in `vision.md`

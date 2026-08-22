@@ -77,4 +77,21 @@ describe("CommandRegistry", () => {
     expect(registry.run("open")).toBe(true);
     expect(received).toBeUndefined();
   });
+
+  it("refuses a second command whose name or alias is already claimed", () => {
+    const registry = registryWith("exit");
+    registry.register({ name: "quit", aliases: ["leave"], description: "", run: () => {} });
+    expect(registry.register({ name: "Exit", description: "", run: () => {} })).toEqual({
+      kind: "collision",
+      name: "Exit",
+      claimedBy: "exit",
+    });
+    expect(
+      registry.register({ name: "bye", aliases: ["leave"], description: "", run: () => {} }),
+    ).toEqual({ kind: "collision", name: "leave", claimedBy: "quit" });
+    expect(registry.register({ name: "bye", description: "", run: () => {} })).toEqual({
+      kind: "registered",
+    });
+    expect(registry.all().map((command) => command.name)).toEqual(["exit", "quit", "bye"]);
+  });
 });

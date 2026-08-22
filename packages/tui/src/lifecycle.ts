@@ -1,3 +1,5 @@
+import { toError } from "@keywork/shared";
+
 export type Closer = () => Promise<void>;
 
 export const defaultCloseTimeoutMs = 5000;
@@ -33,8 +35,4 @@ export async function runClosers(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-function toError(reason: unknown): Error {
-  return reason instanceof Error ? reason : new Error(String(reason));
 }

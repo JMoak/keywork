@@ -1,23 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../messages.ts";
 import type { ProviderRequest, TurnDelta } from "../provider.ts";
-import { ProviderHttpError, ProviderStreamError } from "./errors.ts";
-import type { FetchLike } from "./openai.ts";
+import { ProviderEmptyResponseError, ProviderHttpError, ProviderStreamError } from "./errors.ts";
 import { OpenAiResponsesProvider } from "./openai-responses.ts";
-
-function sseResponse(lines: string[], chunkSize = 7): Response {
-  const raw = lines.map((line) => `data: ${line}\n\n`).join("");
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (let at = 0; at < raw.length; at += chunkSize) {
-        controller.enqueue(encoder.encode(raw.slice(at, at + chunkSize)));
-      }
-      controller.close();
-    },
-  });
-  return new Response(stream, { status: 200 });
-}
+import { sseResponse } from "./stream-fixtures.ts";
+import type { FetchLike } from "./transport.ts";
 
 function provider(fetchFn: FetchLike, headers?: () => Promise<Record<string, string>>) {
   return new OpenAiResponsesProvider({
@@ -83,6 +70,42 @@ describe("OpenAiResponsesProvider", () => {
     expect(deltas).toEqual([{ type: "done", usage: { inputTokens: 1, outputTokens: 1 } }]);
   });
 
+  it("streams a refusal as the model's text so the turn shows what it said", async () => {
+    const lines = [
+      '{"type":"response.refusal.delta","delta":"I can"}',
+      '{"type":"response.refusal.delta","delta":"not help with that."}',
+      '{"type":"response.refusal.done","refusal":"I cannot help with that."}',
+      '{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}',
+    ];
+    const deltas = await collect(provider(async () => sseResponse(lines)).stream(simpleRequest));
+    expect(deltas).toEqual([
+      { type: "text", text: "I can" },
+      { type: "text", text: "not help with that." },
+      { type: "done", usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+  });
+
+  it("fails the turn with the cut-off reason when the response is incomplete", async () => {
+    const lines = [
+      '{"type":"response.output_text.delta","delta":"partial"}',
+      '{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":9}}}',
+    ];
+    const seen: TurnDelta[] = [];
+    const failure = await (async () => {
+      try {
+        for await (const delta of provider(async () => sseResponse(lines)).stream(simpleRequest)) {
+          seen.push(delta);
+        }
+        return undefined;
+      } catch (cause) {
+        return cause;
+      }
+    })();
+    expect(seen).toEqual([{ type: "text", text: "partial" }]);
+    expect(failure).toBeInstanceOf(ProviderStreamError);
+    expect((failure as Error).message).toMatch(/cut off \(max_output_tokens\)/);
+  });
+
   it("sends the request through the wire mapping with fresh auth headers", async () => {
     let sentUrl: string | undefined;
     let sentHeaders: Record<string, string> | undefined;
@@ -117,6 +140,13 @@ describe("OpenAiResponsesProvider", () => {
   it("throws ProviderHttpError on a non-200 response", async () => {
     const failing = provider(async () => new Response("denied", { status: 401 }));
     await expect(collect(failing.stream(simpleRequest))).rejects.toThrow(ProviderHttpError);
+  });
+
+  it("fails with a typed transient error when the response has no body", async () => {
+    const bodiless = provider(async () => new Response(null, { status: 200 }));
+    await expect(collect(bodiless.stream(simpleRequest))).rejects.toThrow(
+      ProviderEmptyResponseError,
+    );
   });
 
   it("surfaces failed responses and error events as stream errors", async () => {

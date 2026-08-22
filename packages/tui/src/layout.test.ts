@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  type DropTarget,
-  Layout,
-  type LayoutState,
-  minPaneSize,
-  type Rect,
-  type Screen,
-} from "./layout.ts";
+import { encloses, fullRect } from "./geometry.ts";
+import { type DropTarget, Layout, minPaneSize, type Rect, type Screen } from "./layout.ts";
 import { paneChromeCost } from "./pane-chrome.ts";
 
 const screen: Screen = { width: 120, height: 40 };
@@ -17,16 +11,20 @@ function layoutWith(...ids: string[]): Layout {
   return layout;
 }
 
-function assertExactTiling(layout: Layout): void {
-  const paneRects = [...layout.rects(screen).values()];
+function assertExactTiling(layout: Layout, on: Screen = screen): void {
+  const paneRects = [...layout.rects(on).values()];
+  const full = fullRect(on);
   for (const rect of paneRects) {
+    expect(encloses(full, rect)).toBe(true);
+    if (paneRects.length === 1 && rect.width === full.width && rect.height === full.height)
+      continue;
     expect(rect.width).toBeGreaterThanOrEqual(minPaneSize.width);
     expect(rect.height).toBeGreaterThanOrEqual(minPaneSize.height);
   }
-  const idleMain = layout.emptyMainRect(screen);
+  const idleMain = layout.emptyMainRect(on);
   const rects = idleMain === undefined ? paneRects : [...paneRects, idleMain];
   const area = rects.reduce((sum, rect) => sum + rect.width * rect.height, 0);
-  expect(area).toBe(screen.width * screen.height);
+  expect(area).toBe(on.width * on.height);
   for (let i = 0; i < rects.length; i += 1) {
     for (let j = i + 1; j < rects.length; j += 1) {
       expect(overlaps(rects[i] as Rect, rects[j] as Rect)).toBe(false);
@@ -52,7 +50,7 @@ describe("Layout dwindle tiling", () => {
     expect(rects.get("c")).toEqual({ x: 60, y: 20, width: 60, height: 20 });
   });
 
-  it("tiles exactly for any sequence of opens, closes, docks, cycles, and resizes", () => {
+  it("tiles exactly for any sequence of opens, closes, docks, cycles, resizes, and screen changes", () => {
     const layout = new Layout();
     const alive: string[] = [];
     const steps = 300;
@@ -63,26 +61,36 @@ describe("Layout dwindle tiling", () => {
     };
     const sides = ["left", "right"] as const;
     const directions = ["left", "right", "up", "down"] as const;
+    const screens: Screen[] = [
+      screen,
+      { width: 80, height: 24 },
+      { width: 40, height: 12 },
+      { width: 20, height: 8 },
+      { width: 9, height: 5 },
+      screen,
+    ];
+    let on = screen;
     const paneBudget = 10;
     for (let step = 0; step < steps; step += 1) {
+      if (random() < 0.1) on = screens[Math.floor(random() * screens.length)] ?? screen;
       const roll = alive.length === 0 ? 0 : alive.length >= paneBudget ? 0.98 : random();
       if (roll < 0.35) {
         const id = `p${step}`;
-        if (layout.open(id, screen)) alive.push(id);
+        if (layout.open(id, on)) alive.push(id);
         const focusTarget = alive[Math.floor(random() * alive.length)] as string;
         layout.focus(focusTarget);
       } else if (roll < 0.45) {
-        layout.dockFocused(sides[Math.floor(random() * sides.length)] ?? "left", screen);
+        layout.dockFocused(sides[Math.floor(random() * sides.length)] ?? "left", on);
       } else if (roll < 0.53) {
-        layout.cycleFocused(screen);
+        layout.cycleFocused(on);
       } else if (roll < 0.6) {
-        layout.undockFocused(screen);
+        layout.undockFocused(on);
       } else if (roll < 0.66) {
         layout.zoomToggle();
       } else if (roll < 0.73) {
-        layout.moveFocus(directions[Math.floor(random() * directions.length)] ?? "left", screen);
+        layout.moveFocus(directions[Math.floor(random() * directions.length)] ?? "left", on);
       } else if (roll < 0.79) {
-        layout.move(directions[Math.floor(random() * directions.length)] ?? "left", screen);
+        layout.move(directions[Math.floor(random() * directions.length)] ?? "left", on);
       } else if (roll < 0.85) {
         layout.growDock(
           sides[Math.floor(random() * sides.length)] ?? "left",
@@ -94,23 +102,25 @@ describe("Layout dwindle tiling", () => {
         const dragged = layout.focused() as string;
         const target = layout.dropTargetAt(
           dragged,
-          Math.floor(random() * screen.width),
-          Math.floor(random() * screen.height),
-          screen,
+          Math.floor(random() * on.width),
+          Math.floor(random() * on.height),
+          on,
         );
-        if (target !== undefined) expect(layout.applyDrop(dragged, target, screen)).toBe(true);
+        if (target !== undefined) expect(layout.applyDrop(dragged, target, on)).toBe(true);
       } else {
         const victim = alive.splice(Math.floor(random() * alive.length), 1)[0] as string;
         layout.close(victim);
       }
       if (alive.length === 0) {
-        expect(layout.rects(screen).size).toBe(0);
+        expect(layout.rects(on).size).toBe(0);
         expect(layout.focused()).toBeUndefined();
         continue;
       }
-      assertExactTiling(layout);
+      assertExactTiling(layout, on);
       expect(alive).toContain(layout.focused());
-      expect(layout.rects(screen).has(layout.focused() as string)).toBe(true);
+      expect(layout.rects(on).has(layout.focused() as string)).toBe(true);
+      expect([...layout.rects(on).keys()].every((id) => alive.includes(id))).toBe(true);
+      if (layout.zoomed() === undefined) expect(layout.rects(screen).size).toBe(alive.length);
       expect([...layout.panes()].sort()).toEqual([...alive].sort());
     }
   });
@@ -590,7 +600,7 @@ describe("Layout zoom", () => {
 });
 
 describe("degenerate screens", () => {
-  it("never produces negative extents at tiny sizes", () => {
+  it("keeps every rect inside the screen at tiny sizes", () => {
     const wide: Screen = { width: 200, height: 40 };
     const layout = new Layout();
     layout.open("a", wide);
@@ -602,22 +612,21 @@ describe("degenerate screens", () => {
       { width: 0, height: 0 },
     ];
     for (const size of tiny) {
-      for (const rect of layout.rects(size).values()) {
-        expect(rect.width).toBeGreaterThanOrEqual(0);
-        expect(rect.height).toBeGreaterThanOrEqual(0);
-      }
+      const rects = layout.rects(size);
+      expect(rects.has("c")).toBe(true);
+      for (const rect of rects.values()) expect(encloses(fullRect(size), rect)).toBe(true);
     }
   });
 
-  it("keeps docks and main non-negative at width one", () => {
+  it("keeps docks and main inside the screen at width one", () => {
     const layout = layoutWith("a", "b", "c");
     layout.focus("b");
     layout.dockFocused("left", screen);
     layout.focus("c");
     layout.dockFocused("right", screen);
-    for (const rect of layout.rects({ width: 1, height: 10 }).values()) {
-      expect(rect.width).toBeGreaterThanOrEqual(0);
-      expect(rect.height).toBeGreaterThanOrEqual(0);
+    const slim: Screen = { width: 1, height: 10 };
+    for (const rect of layout.rects(slim).values()) {
+      expect(encloses(fullRect(slim), rect)).toBe(true);
     }
   });
 
@@ -814,100 +823,58 @@ describe("Layout drag & drop", () => {
   });
 });
 
-describe("serialization", () => {
-  it("round-trips tree shape, ratios, both docks, and focus through JSON", () => {
+describe("screens too small for the arrangement", () => {
+  const small: Screen = { width: 14, height: 6 };
+
+  it("hides the panes that cannot keep their minimum size and keeps the focused one", () => {
     const layout = layoutWith("a", "b", "c", "d");
-    layout.resizeFocused(0.15);
-    layout.focus("d");
-    layout.dockFocused("right", screen);
-    layout.growDock("right", 0.1);
+    expect([...layout.rects(small).keys()].sort()).toEqual(["a", "b", "d"]);
+    assertExactTiling(layout, small);
+    expect(layout.panes()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("shows the whole arrangement again, untouched, once the screen grows back", () => {
+    const layout = layoutWith("a", "b", "c", "d");
+    const before = layout.rects(screen);
+    const tree = layout.root();
+    expect(layout.rects(small).size).toBe(3);
+    expect(layout.root()).toEqual(tree);
+    expect(layout.rects(screen)).toEqual(before);
+  });
+
+  it("gives the focused pane the whole screen when not even one pane can be tiled", () => {
+    const layout = layoutWith("a", "b", "c", "d");
+    const tiny: Screen = { width: 4, height: 2 };
+    expect(layout.rects(tiny)).toEqual(new Map([["d", { x: 0, y: 0, width: 4, height: 2 }]]));
+    expect(layout.emptyMainRect(tiny)).toBeUndefined();
+  });
+
+  it("brings a hidden pane back on screen when it takes focus", () => {
+    const layout = layoutWith("a", "b", "c", "d");
     layout.focus("c");
+    expect([...layout.rects(small).keys()].sort()).toEqual(["a", "b", "c"]);
+    assertExactTiling(layout, small);
+  });
+
+  it("keeps the main stage and yields the dock when both cannot fit", () => {
+    const layout = layoutWith("a", "b", "c");
     layout.dockFocused("left", screen);
+    layout.focus("a");
+    const narrow: Screen = { width: 14, height: 10 };
+    expect([...layout.rects(narrow).keys()].sort()).toEqual(["a", "b"]);
+    assertExactTiling(layout, narrow);
+  });
+
+  it("navigates only among the panes on screen", () => {
+    const layout = layoutWith("a", "b", "c", "d");
     layout.focus("b");
-
-    const state = Layout.parse(JSON.parse(JSON.stringify(layout.toJSON())));
-    expect(state).toBeDefined();
-    const revived = new Layout();
-    revived.load(state as NonNullable<typeof state>);
-
-    expect(revived.toJSON()).toEqual(layout.toJSON());
-    expect(revived.focused()).toBe("b");
-    expect(revived.dock("left")).toEqual(layout.dock("left"));
-    expect(revived.dock("right")).toEqual(layout.dock("right"));
-    expect([...revived.rects(screen)]).toEqual([...layout.rects(screen)]);
+    expect(layout.moveFocus("down", small)).toBe("c");
+    expect(layout.rects(small).has("d")).toBe(false);
   });
 
-  it("never serializes zoom", () => {
-    const layout = layoutWith("a", "b");
-    layout.zoomToggle();
-    const revived = new Layout();
-    revived.load(layout.toJSON());
-    expect(revived.zoomed()).toBeUndefined();
-  });
-
-  it("migrates a v1 single-dock state into that side's dock, other side empty", () => {
-    const state = Layout.parse({
-      tree: { kind: "leaf", id: "a" },
-      focused: "b",
-      dock: { side: "right", panes: ["b"], ratio: 0.25 },
-    });
-    expect(state?.docks).toEqual({ right: { panes: ["b"], ratio: 0.25 } });
-    const revived = new Layout();
-    revived.load(state as LayoutState);
-    expect(revived.dock("right")).toEqual({ panes: ["b"], ratio: 0.25 });
-    expect(revived.dock("left")).toBeUndefined();
-    expect(revived.focused()).toBe("b");
-  });
-
-  it("clamps out-of-bounds ratios on parse", () => {
-    const state = Layout.parse({
-      tree: {
-        kind: "split",
-        orientation: "row",
-        ratio: 0.99,
-        first: { kind: "leaf", id: "a" },
-        second: { kind: "leaf", id: "b" },
-      },
-      docks: { left: { panes: ["c"], ratio: 0.9 }, right: { panes: ["d"], ratio: 0.01 } },
-    });
-    expect(state?.tree).toMatchObject({ ratio: 0.9 });
-    expect(state?.docks?.left?.ratio).toBe(0.6);
-    expect(state?.docks?.right?.ratio).toBe(0.05);
-  });
-
-  it("rejects corrupt shapes wholesale", () => {
-    const leaf = { kind: "leaf", id: "a" };
-    const corrupt: unknown[] = [
-      null,
-      "layout",
-      {},
-      { tree: { kind: "widget", id: "a" } },
-      { tree: { kind: "leaf", id: "" } },
-      { tree: { kind: "split", orientation: "diagonal", ratio: 0.5, first: leaf, second: leaf } },
-      { tree: { kind: "split", orientation: "row", ratio: "half", first: leaf, second: leaf } },
-      {
-        tree: {
-          kind: "split",
-          orientation: "row",
-          ratio: 0.5,
-          first: leaf,
-          second: { kind: "leaf", id: "a" },
-        },
-      },
-      { tree: leaf, dock: { side: "top", panes: ["b"], ratio: 0.3 } },
-      { tree: leaf, dock: { side: "left", panes: [], ratio: 0.3 } },
-      { tree: leaf, docks: {} },
-      { tree: leaf, docks: { top: { panes: ["b"], ratio: 0.3 } } },
-      { tree: leaf, docks: { left: { panes: [], ratio: 0.3 } } },
-      { tree: leaf, docks: { left: { panes: ["b"], ratio: "wide" } } },
-      { tree: leaf, docks: { left: { panes: ["a"], ratio: 0.3 } } },
-      {
-        tree: leaf,
-        docks: { left: { panes: ["b"], ratio: 0.3 }, right: { panes: ["b"], ratio: 0.3 } },
-      },
-      { tree: leaf, focused: "ghost" },
-      { tree: leaf, focused: 7 },
-    ];
-    for (const value of corrupt) expect(Layout.parse(value)).toBeUndefined();
+  it("refuses to open another pane into a screen that is already too small", () => {
+    const layout = layoutWith("a", "b", "c", "d");
+    expect(layout.open("e", small)).toBe(false);
+    expect(layout.panes()).toEqual(["a", "b", "c", "d"]);
   });
 });

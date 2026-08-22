@@ -1,21 +1,11 @@
+export { type AppOptions, runApp } from "./app.ts";
+export type { FocusedArcPort } from "./arc-commands.ts";
 export {
-  type AfterTurn,
-  type AgentFactory,
-  type AgentSeams,
-  type AppOptions,
-  type CheckpointsPort,
-  type Compactor,
-  runApp,
-  type SessionAttachment,
-  type SessionPort,
-  type SessionTurn,
-  type WorkspacePort,
-} from "./app.ts";
-export type { ArcOrigin, FocusedArcPort, PaneOrigin, PresetsPort } from "./app-core.ts";
-export {
-  ArcPicker,
+  type ArcPicker,
   type ArcPickerChoice,
   type ArcPickerRow,
+  arcChoiceOf,
+  arcPickerOver,
   describeArcRow,
 } from "./arc-picker.ts";
 export {
@@ -29,10 +19,11 @@ export {
   arcOrdinalsOf,
   arcSlugProblem,
   arcTag,
+  describeCloseOutcome,
   isArcSlug,
   suggestArcSlug,
 } from "./arcs.ts";
-export { ArcsPane, type ArcsPaneOptions, describeCloseOutcome } from "./arcs-pane.ts";
+export { ArcsPane, type ArcsPaneOptions } from "./arcs-pane.ts";
 export type { ArcGroupKey, ArcGroupRow, ArcsLevel } from "./arcs-pane-model.ts";
 export {
   border,
@@ -40,7 +31,6 @@ export {
   type ColorDepth,
   density,
   detectCapabilities,
-  frameWrap,
   type GlyphSupport,
   type GlyphTier,
   resolveMark,
@@ -76,6 +66,7 @@ export {
   startupFlavors,
   themeOf,
 } from "./flavor.ts";
+export type { CheckpointsPort } from "./fork.ts";
 export {
   type Highlighter,
   highlightedLanguages,
@@ -147,6 +138,7 @@ export {
   type TempoSpec,
   tempos,
 } from "./motion.ts";
+export type { PresetsPort } from "./overlays/index.ts";
 export {
   type PageGrammar,
   type PageThresholdOverrides,
@@ -157,6 +149,17 @@ export {
   resolvePage,
   resolvePageThresholds,
 } from "./page.ts";
+export type { ArcOrigin, PaneOrigin } from "./pane-kinds.ts";
+export type { WorkspacePort } from "./restore-plan.ts";
+export type {
+  AfterTurn,
+  AgentFactory,
+  AgentSeams,
+  Compactor,
+  SessionAttachment,
+  SessionPort,
+  SessionTurn,
+} from "./session-attachment.ts";
 export type { SessionTreeView } from "./session-tree-model.ts";
 export type { SessionTreePaneSeams, SessionTreePort } from "./session-tree-pane.ts";
 export type {
@@ -179,9 +182,11 @@ export { type LifecycleState, type TitleBarState, titleBar } from "./title-bar.t
 export {
   describeWorkspaceRow,
   type WorkspaceChoice,
-  WorkspacePicker,
+  type WorkspacePicker,
   type WorkspacePickerChoice,
   type WorkspacePickerRow,
   type WorkspacesPort,
+  workspaceChoiceOf,
+  workspacePickerOver,
 } from "./workspace-picker.ts";
 export type { WorkspaceState } from "./workspace-state.ts";

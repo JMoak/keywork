@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigError } from "@keywork/shared";
 import { afterEach, describe, expect, it } from "vitest";
-import { readUserConfig, updateUserConfig, writePrivateFile } from "./user-config.ts";
+import { readUserConfig, updateUserConfig } from "./user-config.ts";
 
 const tempDirs: string[] = [];
 
@@ -74,16 +74,5 @@ describe("updateUserConfig", () => {
     const dir = await tempDir();
     await writeFile(join(dir, "keywork.json"), oneBadField, "utf8");
     await expect(readUserConfig(dir)).rejects.toThrow(ConfigError);
-  });
-});
-
-describe("writePrivateFile", () => {
-  it("replaces the file in one step and leaves no staging file behind", async () => {
-    const dir = await tempDir();
-    const file = join(dir, "nested", "secret.json");
-    await writePrivateFile(file, "one\n");
-    await writePrivateFile(file, "two\n");
-    expect(await readFile(file, "utf8")).toBe("two\n");
-    expect(await readdir(join(dir, "nested"))).toEqual(["secret.json"]);
   });
 });

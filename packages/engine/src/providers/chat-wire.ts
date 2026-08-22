@@ -1,12 +1,6 @@
-import {
-  type ImagePart,
-  type Message,
-  messageText,
-  type Part,
-  type ToolCallPart,
-  toolCalls,
-} from "../messages.ts";
-import type { ProviderRequest } from "../provider.ts";
+import { type Message, messageText, type Part, type ToolCallPart, toolCalls } from "../messages.ts";
+import type { ProviderRequest, ToolDefinition } from "../provider.ts";
+import { imageDataUrl } from "./wire-parts.ts";
 
 export function toChatRequest(request: ProviderRequest, model: string): object {
   return {
@@ -57,10 +51,6 @@ function userContentPart(part: Part): object[] {
   }
 }
 
-function imageDataUrl(part: ImagePart): string {
-  return `data:${part.mediaType};base64,${part.data}`;
-}
-
 function assistantWire(message: Message): object {
   const text = messageText(message);
   const calls = toolCalls(message);
@@ -79,7 +69,7 @@ function wireToolCall(call: ToolCallPart): object {
   };
 }
 
-function toWireTool(tool: { name: string; description: string; parameters: unknown }): object {
+function toWireTool(tool: ToolDefinition): object {
   return {
     type: "function",
     function: { name: tool.name, description: tool.description, parameters: tool.parameters },

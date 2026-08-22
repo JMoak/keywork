@@ -1,7 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { writePrivateFile } from "./user-config.ts";
+import { type JsonFileStore, jsonFileStore } from "@keywork/shared";
 
 export type Credential = { type: "api_key"; key: string } | OauthCredential;
 
@@ -20,16 +19,7 @@ export function defaultAuthDir(): string {
 }
 
 export async function readCredentials(dir: string = defaultAuthDir()): Promise<CredentialMap> {
-  const raw = await readFile(join(dir, "auth.json"), "utf8")
-    .then((text) => JSON.parse(text) as unknown)
-    .catch(() => undefined);
-  if (typeof raw !== "object" || raw === null) return {};
-  return Object.fromEntries(
-    Object.entries(raw as Record<string, unknown>).flatMap(([provider, value]) => {
-      const credential = asCredential(value);
-      return credential === undefined ? [] : [[provider, credential] as const];
-    }),
-  );
+  return credentialStore(dir).read() ?? {};
 }
 
 export async function saveCredential(
@@ -37,17 +27,19 @@ export async function saveCredential(
   credential: Credential,
   dir: string = defaultAuthDir(),
 ): Promise<string> {
-  const existing = await readCredentials(dir);
-  return writeCredentials({ ...existing, [provider]: credential }, dir);
+  const store = credentialStore(dir);
+  store.write({ ...store.read(), [provider]: credential });
+  return store.file;
 }
 
 export async function deleteCredential(
   provider: string,
   dir: string = defaultAuthDir(),
 ): Promise<boolean> {
-  const { [provider]: removed, ...rest } = await readCredentials(dir);
+  const store = credentialStore(dir);
+  const { [provider]: removed, ...rest } = store.read() ?? {};
   if (removed === undefined) return false;
-  await writeCredentials(rest, dir);
+  store.write(rest);
   return true;
 }
 
@@ -59,10 +51,23 @@ export function legacyCredentials(apiKeys: Record<string, string> | undefined): 
   );
 }
 
-async function writeCredentials(credentials: CredentialMap, dir: string): Promise<string> {
-  const file = join(dir, "auth.json");
-  await writePrivateFile(file, `${JSON.stringify(credentials, null, 2)}\n`);
-  return file;
+function credentialStore(dir: string): JsonFileStore<CredentialMap> {
+  return jsonFileStore<CredentialMap>({
+    file: join(dir, "auth.json"),
+    mode: "lenient",
+    private: true,
+    validate: onlyCredentialEntries,
+  });
+}
+
+function onlyCredentialEntries(data: unknown): CredentialMap {
+  if (typeof data !== "object" || data === null) return {};
+  return Object.fromEntries(
+    Object.entries(data as Record<string, unknown>).flatMap(([provider, value]) => {
+      const credential = asCredential(value);
+      return credential === undefined ? [] : [[provider, credential] as const];
+    }),
+  );
 }
 
 function asCredential(value: unknown): Credential | undefined {

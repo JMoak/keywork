@@ -36,13 +36,29 @@ export const exitCodes = {
 
 export type ExitClass = keyof typeof exitCodes;
 
+export const commandNames = [
+  "panes",
+  "chat",
+  "run",
+  "sessions",
+  "connect",
+  "setup",
+  "init",
+  "workspace",
+  "link",
+  "trust",
+  "untrust",
+  "doctor",
+] as const;
+
+export type CommandName = (typeof commandNames)[number];
+
 export type WithoutTerminal =
   | { behavior: "runs" }
   | { behavior: "runs"; note: string }
   | { behavior: "refused"; reason: string };
 
-export const withoutTerminal: Readonly<Record<string, WithoutTerminal>> = {
-  "": { behavior: "refused", reason: "no command given and no terminal attached" },
+export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   panes: { behavior: "refused", reason: "panes needs a terminal" },
   chat: { behavior: "refused", reason: "chat needs a terminal" },
   run: { behavior: "runs", note: "--json streams one event per line for scripts" },
@@ -58,7 +74,7 @@ export const withoutTerminal: Readonly<Record<string, WithoutTerminal>> = {
 };
 
 export type Dispatch =
-  | { kind: "command"; command: string; rest: string[] }
+  | { kind: "command"; command: CommandName; rest: string[] }
   | { kind: "version" }
   | { kind: "help" }
   | { kind: "usage"; exitCode: typeof exitCodes.usage; reason: string };
@@ -70,19 +86,21 @@ export function dispatchCommand(argv: readonly string[], interactive: boolean): 
   const [first] = argv;
   if (first !== undefined && versionFlags.has(first)) return { kind: "version" };
   if (first !== undefined && helpWords.has(first)) return { kind: "help" };
-  const command = first !== undefined && !first.startsWith("-") ? first : undefined;
-  const rest = command === undefined ? [...argv] : argv.slice(1);
-  if (command === undefined && interactive) return { kind: "command", command: "panes", rest };
-  const posture = postureOf(command ?? "");
-  if (posture === undefined) {
-    return usageRefusal(`unknown command "${command}" · keywork --help lists the commands`);
+  const word = first !== undefined && !first.startsWith("-") ? first : undefined;
+  if (word === undefined) {
+    if (interactive) return { kind: "command", command: "panes", rest: [...argv] };
+    return usageRefusal("no command given and no terminal attached");
   }
+  if (!isCommandName(word)) {
+    return usageRefusal(`unknown command "${word}" · keywork --help lists the commands`);
+  }
+  const posture = withoutTerminal[word];
   if (!interactive && posture.behavior === "refused") return usageRefusal(posture.reason);
-  return { kind: "command", command: command ?? "panes", rest };
+  return { kind: "command", command: word, rest: argv.slice(1) };
 }
 
-function postureOf(command: string): WithoutTerminal | undefined {
-  return Object.hasOwn(withoutTerminal, command) ? withoutTerminal[command] : undefined;
+export function isCommandName(word: string): word is CommandName {
+  return (commandNames as readonly string[]).includes(word);
 }
 
 function usageRefusal(reason: string): Dispatch {

@@ -1,16 +1,23 @@
 import { fg, StyledText, Text } from "@opentui/core";
 import { type ArcOrdinals, arcInk } from "./arcs.ts";
-import { type Chord, parseChord } from "./keys.ts";
+import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
+import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
+  type KeyedTrayCommand,
+  type PaneChild,
   paneChrome,
   paneContentHeight,
   paneContentWidth,
   paneFailureLine,
+  paneLine,
   paneTitle,
+  rowsView,
+  trayCommandsPressing,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import {
   SessionTreeModel,
@@ -26,8 +33,8 @@ import {
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
 import { slugChunks, slugInk } from "./slug.ts";
-import { clipChunks, dimLine } from "./text-chunks.ts";
 import type { Theme } from "./theme.ts";
+import { clipSpans } from "./width.ts";
 
 export interface SessionTreePort {
   load(sessionId: string): Promise<SessionTreeView | undefined>;
@@ -38,8 +45,6 @@ export interface SessionTreePort {
   subscribe?(listener: (sessionId: string) => void): () => void;
 }
 
-export type FrameScheduler = (run: () => void) => () => void;
-
 export interface SessionTreePaneSeams {
   sessionId?: string;
   presence?: SessionPresence;
@@ -47,14 +52,6 @@ export interface SessionTreePaneSeams {
   arcOrdinal?: ArcOrdinals;
   scheduleFrame?: FrameScheduler;
 }
-
-const refreshFrameMs = 16;
-
-const nextFrame: FrameScheduler = (run) => {
-  const timer = setTimeout(run, refreshFrameMs);
-  timer.unref?.();
-  return () => clearTimeout(timer);
-};
 
 type PaneLevel = "overview" | "entries";
 
@@ -68,8 +65,7 @@ export class SessionTreePane implements Pane {
   private readonly arcOrdinal: ArcOrdinals | undefined;
   private readonly tasks: PaneTasks;
   private readonly unsubscribe: (() => void) | undefined;
-  private readonly scheduleFrame: FrameScheduler;
-  private cancelPendingRefresh: (() => void) | undefined;
+  private readonly pendingRefresh: FrameCoalescer;
   private lastPageRows = 20;
 
   constructor(
@@ -83,8 +79,10 @@ export class SessionTreePane implements Pane {
     this.sessionId = seams.sessionId;
     this.presence = seams.presence;
     this.arcOrdinal = seams.arcOrdinal;
-    this.scheduleFrame = seams.scheduleFrame ?? nextFrame;
     this.tasks = new PaneTasks(notify);
+    this.pendingRefresh = new FrameCoalescer(seams.scheduleFrame ?? nextFrame, () =>
+      this.refresh(),
+    );
     this.model = new SessionTreeModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
       fork: (entryId) => this.tasks.track(() => this.fork(entryId, intents)),
@@ -107,15 +105,14 @@ export class SessionTreePane implements Pane {
       () => this.tasks.emit(),
       () => this.trayCommands(),
     );
-    this.unsubscribe = port.subscribe?.(() => this.scheduleRefresh());
+    this.unsubscribe = port.subscribe?.(() => this.pendingRefresh.request());
     this.refresh();
   }
 
   dispose(): void {
     this.tasks.dispose();
     this.unsubscribe?.();
-    this.cancelPendingRefresh?.();
-    this.cancelPendingRefresh = undefined;
+    this.pendingRefresh.dispose();
   }
 
   level(): PaneLevel {
@@ -125,7 +122,7 @@ export class SessionTreePane implements Pane {
   title(): string {
     if (this.paneLevel === "overview") {
       const count = this.overview.sessionCount();
-      return paneTitle("session tree", count === 0 ? undefined : sessionCountDetail(count));
+      return paneTitle("session tree", count === 0 ? undefined : pluralize(count, "session"));
     }
     const count = this.model.entryCount();
     const name = this.model.sessionName() ?? "session tree";
@@ -199,14 +196,6 @@ export class SessionTreePane implements Pane {
     this.tasks.track(() => this.port.load(sessionId).then((view) => this.model.setView(view)));
   }
 
-  private scheduleRefresh(): void {
-    if (this.cancelPendingRefresh !== undefined || !this.tasks.live()) return;
-    this.cancelPendingRefresh = this.scheduleFrame(() => {
-      this.cancelPendingRefresh = undefined;
-      this.refresh();
-    });
-  }
-
   private drillInto(sessionId: string): void {
     this.sessionId = sessionId;
     this.paneLevel = "entries";
@@ -227,8 +216,8 @@ export class SessionTreePane implements Pane {
       intents.focusPane(paneId);
       return;
     }
-    await this.port.attach?.(sessionId);
-    if (this.tasks.live()) intents.openSession(sessionId);
+    const attached = (await this.port.attach?.(sessionId)) ?? true;
+    if (attached && this.tasks.live()) intents.openSession(sessionId);
   }
 
   private async fork(entryId: string, intents: PaneIntents): Promise<void> {
@@ -244,109 +233,34 @@ export class SessionTreePane implements Pane {
     this.model.setView(await this.port.load(this.sessionId));
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number) {
+  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
-    if (this.paneLevel === "overview") return this.overviewLines(theme, rows, width);
-    return this.entryLines(theme, rows, width);
-  }
-
-  private overviewLines(theme: Theme, rows: number, width: number) {
-    const visible = this.overview.visibleRows(rows);
-    if (visible.length === 0) return [dimLine("░ no sessions yet", theme, width)];
-    return visible.map(({ index, row }) =>
-      this.overviewLine(row, index === this.overview.cursor, theme, width),
-    );
-  }
-
-  private overviewLine(row: SessionOverviewRow, selected: boolean, theme: Theme, width: number) {
-    if (selected) {
-      const content = overviewRowLine(row, selected).slice(0, width);
-      return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
+    if (this.paneLevel === "overview") {
+      return rowsView(this.overview, rows, theme, width, {
+        empty: "░ no sessions yet",
+        text: (row) => overviewRowLine(row, true),
+        line: (row) => overviewRowView(row, theme, width, this.arcInkOf(theme)),
+      });
     }
-    const color = row.current ? theme.accentSoft : theme.text;
-    const { lead, title, age, arcTag, counts } = overviewRowParts(row, selected);
-    const chunks = [
-      fg(color)(lead),
-      ...slugChunks(title, slugInk(theme, color)),
-      fg(color)(age),
-      ...(arcTag === undefined ? [] : [fg(this.arcInkFor(row.arc, theme))(arcTag)]),
-      fg(color)(counts),
-    ];
-    return Text({ content: new StyledText(clipChunks(chunks, width)) });
-  }
-
-  private arcInkFor(slug: string | undefined, theme: Theme): string {
-    return slug === undefined ? theme.textDim : arcInk(theme, this.arcOrdinal?.(slug));
-  }
-
-  private entryLines(theme: Theme, rows: number, width: number) {
     if (this.model.sessionId() === undefined) {
-      return [dimLine("loading session…", theme, width)];
+      return [paneLine("loading session…", theme.textDim, width)];
     }
-    const visible = this.model.visibleRows(rows);
-    if (visible.length === 0) return [dimLine("empty session", theme, width)];
-    return visible.map(({ index, row }) =>
-      this.entryLine(row, index === this.model.cursor, theme, width),
-    );
+    return rowsView(this.model, rows, theme, width, {
+      empty: "empty session",
+      text: entryRowText,
+      line: (row) =>
+        paneLine(entryRowText(row), row.onActivePath ? theme.accentSoft : theme.text, width),
+    });
   }
 
-  private entryLine(row: SessionTreeRow, selected: boolean, theme: Theme, width: number) {
-    const content = entryRowText(row).slice(0, width);
-    if (selected) {
-      return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
-    }
-    return Text({ content, fg: row.onActivePath ? theme.accentSoft : theme.text });
+  private arcInkOf(theme: Theme): (slug: string) => string {
+    return (slug) => arcInk(theme, this.arcOrdinal?.(slug));
   }
 
   private trayCommands(): TrayCommand[] {
-    const press = (spec: string): TrayCommand["run"] => {
-      return () => this.handleKey(parseChord(spec));
-    };
-    if (this.paneLevel === "overview") {
-      return [
-        {
-          name: "open",
-          description: "open the selected session",
-          shortcut: "⏎",
-          run: press("enter"),
-        },
-        {
-          name: "entries",
-          description: "browse the selected session's entries",
-          shortcut: "l",
-          run: press("l"),
-        },
-        {
-          name: "refresh",
-          description: "reload the sessions list",
-          shortcut: "r",
-          run: press("r"),
-        },
-      ];
-    }
-    return [
-      { name: "fork", description: "fork at the selected entry", shortcut: "f", run: press("f") },
-      {
-        name: "label",
-        description: "label the selected entry",
-        shortcut: "L",
-        run: press("shift+l"),
-      },
-      {
-        name: "toggle",
-        description: "collapse or expand the selected entry",
-        shortcut: "⏎",
-        run: press("enter"),
-      },
-      {
-        name: "back",
-        description: "return to the sessions overview",
-        shortcut: "esc",
-        run: press("escape"),
-      },
-      { name: "refresh", description: "reload this session", shortcut: "r", run: press("r") },
-    ];
+    const table = this.paneLevel === "overview" ? overviewTray : entriesTray;
+    return trayCommandsPressing((chord) => this.handleKey(chord), table);
   }
 
   private labelLine(theme: Theme, focused: boolean) {
@@ -356,9 +270,37 @@ export class SessionTreePane implements Pane {
   }
 }
 
-function sessionCountDetail(count: number): string {
-  return count === 1 ? "1 session" : `${count} sessions`;
+export function overviewRowView(
+  row: SessionOverviewRow,
+  theme: Theme,
+  width: number,
+  arcInkOf: (slug: string) => string,
+): PaneChild {
+  const color = row.current ? theme.accentSoft : theme.text;
+  const { lead, title, age, arcTag, counts } = overviewRowParts(row, false);
+  const chunks = [
+    fg(color)(lead),
+    ...slugChunks(title, slugInk(theme, color)),
+    fg(color)(age),
+    ...(arcTag === undefined || row.arc === undefined ? [] : [fg(arcInkOf(row.arc))(arcTag)]),
+    fg(color)(counts),
+  ];
+  return Text({ content: new StyledText(clipSpans(chunks, width)) });
 }
+
+const overviewTray: readonly KeyedTrayCommand[] = [
+  { name: "open", description: "open the selected session", key: "enter" },
+  { name: "entries", description: "browse the selected session's entries", key: "l" },
+  { name: "refresh", description: "reload the sessions list", key: "r" },
+];
+
+const entriesTray: readonly KeyedTrayCommand[] = [
+  { name: "fork", description: "fork at the selected entry", key: "f" },
+  { name: "label", description: "label the selected entry", key: "shift+l" },
+  { name: "toggle", description: "collapse or expand the selected entry", key: "enter" },
+  { name: "back", description: "return to the sessions overview", key: "escape" },
+  { name: "refresh", description: "reload this session", key: "r" },
+];
 
 function entryRowText(row: SessionTreeRow): string {
   const indent = "  ".repeat(row.depth);

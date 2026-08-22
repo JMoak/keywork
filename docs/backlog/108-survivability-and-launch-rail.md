@@ -1,18 +1,18 @@
-# Survivability & the Launch Rail — Work Plan (2026-08-21)
+# Survivability & the Launch Rail: Work Plan (2026-08-21)
 
 > **Planning overlay + ledger** (2026-08-21, wins over 107 and below where it speaks). Two
-> file-disjoint lanes, both unblocked by the inference-resolution stream (107) and both
-> pointed at the M2 bar: public repo at the demo, "zero-to-working in 60 seconds", exit gate =
-> one keywork feature built *using* keywork. Stream 3 is the dogfooding lane (long sessions
-> in panes on small-context local models); stream 4 is the launch rail (install, headless
-> contract, endurance). Task ids reuse their originating overlays (C55 from 100, A19/A20 from
-> 103, G3 from 90, FR1.2 from 101, IR-10/IR-14 from 105); acceptance bars below are the bar.
+> file-disjoint lanes at the M2 bar, both unblocked by 107: stream 3, long-session
+> survivability in panes (the dogfooding lane; ledger in
+> [`109`](109-long-session-survivability.md)), and stream 4, the launch rail (install, headless
+> contract, endurance; ledger below). Task ids reuse their originating overlays (C55 from 100,
+> A19/A20 from 103, G3 from 90, FR1.2 from 101, IR-10/IR-14 from 105); the acceptance bars
+> below are the bar.
 >
 > **Standing guardrails unchanged:** Anthropic is API-key / Agent-SDK only and has no provider
 > wiring before G1; Pi/OpenCode lifts carry `NOTICE` attribution; Crush is not a source; the
 > user commits.
 
-## Stream 3 — Long-session survivability in panes (the dogfooding lane)
+## Stream 3: Long-session survivability in panes (the dogfooding lane)
 
 **Why now.** Dogfooding is about to happen in panes on local models, and local models have
 small context windows. The TUI turn loop has no compaction trigger (the flush latch never
@@ -22,10 +22,10 @@ This lane also turns IR-T1's declared `contextWindow` into something real.
 
 | Task | Pts | Scope | Cites |
 |---|---:|---|---|
-| **S3.1 — Compaction in the pane turn loop** | 3 | After-turn check on real thresholds (`binding.capabilities.contextWindow` ?? provider default table ?? assumed); Pi's B7 algorithm already in engine; compaction appends its entry, the flush latch re-arms, the agent rebuilds on the compacted history through the existing rebuild seam; `/compact` in panes; interrupted/busy panes defer, never compact mid-stream. | IR-04, IR-10, IR-14, A22 |
-| **S3.2 — Context gauge C55 on real numbers** | 3 | PD17 cockpit: options-first (2–3 C40-rendered candidates for Jordan's pick), density-carried, thresholds = the actual flush reserve and compaction reserve, lives in the title-bar telemetry zone C64 left open; reduced-motion/monochrome fixtures. | PD17, C64 |
-| **S3.3 — Declared context windows flow end to end** | 2 | `/connect` receipt and `/model` rows show `ctx: declared N \| undeclared`; `models` glob declarations reach the binding and the gauge; `keywork doctor` lists models with undeclared windows. Closes the IR-10 deviation honestly: undeclared still binds, but it is visible. | IR-10 |
-| **S3.4 — `model_change`-aware cost rollups** | 2 | Per-turn cost attributed to the model in force via `model_change` entries; sessions-node row and `/cost` correct across switches; `session_cost` tests with a mid-session switch. | FR4.12 |
+| **S3.1: Compaction in the pane turn loop** | 3 | After-turn check on real thresholds (`binding.capabilities.contextWindow` ?? provider default table ?? assumed); Pi's B7 algorithm already in engine; compaction appends its entry, the flush latch re-arms, the agent rebuilds on the compacted history through the existing rebuild seam; `/compact` in panes; interrupted/busy panes defer, never compact mid-stream. | IR-04, IR-10, IR-14, A22 |
+| **S3.2: Context gauge C55 on real numbers** | 3 | PD17 cockpit: options-first (2–3 C40-rendered candidates for Jordan's pick), density-carried, thresholds = the actual flush reserve and compaction reserve, lives in the title-bar telemetry zone C64 left open; reduced-motion/monochrome fixtures. | PD17, C64 |
+| **S3.3: Declared context windows flow end to end** | 2 | `/connect` receipt and `/model` rows show `ctx: declared N \| undeclared`; `models` glob declarations reach the binding and the gauge; `keywork doctor` lists models with undeclared windows. Closes the IR-10 deviation honestly: undeclared still binds, but it is visible. | IR-10 |
+| **S3.4: `model_change`-aware cost rollups** | 2 | Per-turn cost attributed to the model in force via `model_change` entries; sessions-node row and `/cost` correct across switches; `session_cost` tests with a mid-session switch. | FR4.12 |
 
 **Acceptance.** A 4k-context local model runs a 30-turn session in panes without a provider
 error; the gauge crosses flush → compaction visibly; `/cost` after two model switches matches
@@ -35,7 +35,7 @@ a hand computation; captures approved.
 (telemetry), `cli/src/memory.ts`, `engine/src/session/compaction.ts`, `engine/src/pricing.ts`,
 `cli/src/inference/port.ts` (row facts), new `tui/src/context-gauge.ts`.
 
-## Stream 4 — The launch rail: packaging, headless contract, endurance
+## Stream 4: The launch rail (packaging, headless contract, endurance)
 
 **Why now.** The release posture says the repo goes public at the M2 demo with the 60-second
 screencast (install → onboarding → first turn → first undo). Onboarding is honest after 107;
@@ -44,10 +44,10 @@ until IR-18's typed failures existed; they do now.
 
 | Task | Pts | Scope | Cites |
 |---|---:|---|---|
-| **G3 — Packaging & release pipeline** | 3 | `bun build --compile` per-platform binaries (Linux primary, Windows, macOS) + npm bin fallback; tagged release workflow with SHA-pinned actions (WP-8 discipline), checksums, `keywork --version`; the G3 desktop entries from 80 (Windows Terminal profile fragment / `.desktop` / macOS shim); install instructions measured against the 60-second clock. | G3, 80, WP-8 |
-| **A20 — Headless exit contract** | 2 | Stable exit codes and a JSON event schema for `keywork run`: resolution failures (IR-18 codes), interrupted, tool denied, provider error, success; `--json` schema documented and fixture-tested; non-TTY behavior table in `dispatch.ts`. | A20, IR-18, Q-DSH2 |
-| **A19 — Every gate and injection as session entries** | 2 | Permission decisions and context injections already ride the bus; persist them as entries so replay, the sessions tree, and the headless stream agree; Pi-fixture compat stays byte-stable. | A19, D8 |
-| **FR1.2 — Endurance soak** | 2 | `scripts/soak.ts` drives the e2e harness for N hundred turns/splits/closes on the mock provider, asserting bounded memory, no listener leaks, a frame-budget ceiling; runs in CI nightly, not on PRs. | FR1.2, C39–C43 |
+| **G3: Packaging & release pipeline** | 3 | `bun build --compile` per-platform binaries (Linux primary, Windows, macOS) + npm bin fallback; tagged release workflow with SHA-pinned actions (WP-8 discipline), checksums, `keywork --version`; the G3 desktop entries from 80 (Windows Terminal profile fragment / `.desktop` / macOS shim); install instructions measured against the 60-second clock. | G3, 80, WP-8 |
+| **A20: Headless exit contract** | 2 | Stable exit codes and a JSON event schema for `keywork run`: resolution failures (IR-18 codes), interrupted, tool denied, provider error, success; `--json` schema documented and fixture-tested; non-TTY behavior table in `dispatch.ts`. | A20, IR-18, Q-DSH2 |
+| **A19: Every gate and injection as session entries** | 2 | Permission decisions and context injections already ride the bus; persist them as entries so replay, the sessions tree, and the headless stream agree; Pi-fixture compat stays byte-stable. | A19, D8 |
+| **FR1.2: Endurance soak** | 2 | `scripts/soak.ts` drives the e2e harness for N hundred turns/splits/closes on the mock provider, asserting bounded memory, no listener leaks, a frame-budget ceiling; runs in CI nightly, not on PRs. | FR1.2, C39–C43 |
 
 **Acceptance.** A clean Linux box reaches first undo from the release artifact in under 60s
 (timed, recorded); `keywork run --json` has a golden fixture per exit class; a soak of 500
@@ -58,7 +58,7 @@ turns holds RSS flat and leaves zero dangling bus subscriptions.
 
 ### Stream 4 design of record
 
-**A19 — where the gap actually was.** `journal.ts` already persists `permission_decision` ·
+**A19, where the gap actually was.** `journal.ts` already persists `permission_decision` ·
 `preset_change` · `mode_change` · `context_injection` · `shell_reset` as Pi `custom` entries and
 `extensionState()` reconstructs them. The disagreement was upstream: only `keywork run`
 announced `project-instructions`, `memory-bootstrap`, and `memory-recall` injections on the
@@ -69,7 +69,7 @@ every subscriber has attached; `composeAgents` and `run.ts` both pass the same l
 journal recalls through one helper. Entry vocabulary, format version, and the Pi fixture are
 untouched. A headless-answered `ask` records `gate: "headless"` (new `PermissionGate` value).
 
-**A20 — the contract.**
+**A20, the contract.**
 
 | exit | class | when |
 |---:|---|---|
@@ -96,7 +96,7 @@ reads the same events a pane does. `resolution.failed` (107, IR-T5) folds into
 `run.finished { outcome: "unresolved", failure }`. Golden fixtures live beside `run.test.ts`,
 one per exit class; the full contract is `docs/headless.md`.
 
-**G3 — how the binaries are built.** OpenTUI 0.5.1 resolves its native library and tree-sitter
+**G3, how the binaries are built.** OpenTUI 0.5.1 resolves its native library and tree-sitter
 assets with `import(…, { with: { type: "file" } })`, exactly what `bun build --compile` embeds,
 so a single-file binary is real (spike: Windows `keywork.exe`, 125 MB, `doctor` · `run --json`
 · `help` all run from the binary). Each target is built **on its own runner** (the platform
@@ -111,7 +111,7 @@ generated `dist/npm/` package (`keywork` bin = bundled `main.ts` with `@opentui/
 needs Bun at runtime); publishing it is gated on a repository variable so it stays Jordan's
 call. Desktop entries ship under `packaging/`.
 
-**FR1.2 — what the soak proves.** `scripts/soak.ts` is a standalone supervisor (not under
+**FR1.2, what the soak proves.** `scripts/soak.ts` is a standalone supervisor (not under
 vitest, per the forensic-harness principle that a wedged suite must not hide a wedged app):
 it composes the TUI through the e2e harness with a self-scripting mock provider, runs N turns,
 cycles panes (split, move, `/exit`) every K turns so transcript growth can't masquerade as a
@@ -128,7 +128,7 @@ nightly and on demand, never on PRs.
 - Neither waits on a decision except the gauge's options round (C40 renders, Jordan's pick,
   the C61 ritual) and the headless `ask` posture above (proceeds under the stated default).
 - Runner-ups held: PD12 modes (wants E7's design session first); arcs/workspaces nodes (FR2,
-  C46, J19; the lane after this one — **taken as stream 5, landed 2026-08-21, ledger in
+  C46, J19; the lane after this one, **taken as stream 5, landed 2026-08-21, ledger in
   [`110-arcs-on-screen.md`](110-arcs-on-screen.md)**); the bots overlay (106) awaits Q-B1–Q-B7.
 
 ## Ledger

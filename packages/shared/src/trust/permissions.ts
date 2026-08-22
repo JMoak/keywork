@@ -1,10 +1,11 @@
 import type { PermissionAction, PermissionsConfig } from "../config/schema.ts";
+import { type GlobRule, globRules, mostSpecificRule } from "../glob.ts";
 
 export type PermissionPolicy = (toolName: string, args: unknown) => PermissionAction | undefined;
 
 export function permissionPolicy(config: PermissionsConfig | undefined): PermissionPolicy {
   const toolRules = new Map(Object.entries(config?.tools ?? {}));
-  const bashRules = Object.entries(config?.bash ?? {}).map(compileBashRule);
+  const bashRules = globRules(config?.bash ?? {});
   return (toolName, args) => {
     if (toolName === "bash") {
       const ruled = bashRuleAction(bashRules, commandFrom(args));
@@ -14,47 +15,17 @@ export function permissionPolicy(config: PermissionsConfig | undefined): Permiss
   };
 }
 
-interface BashRule {
-  matches: RegExp;
-  action: PermissionAction;
-  specificity: number;
-}
-
 const commandChainingCharacters = /[;&|<>`$()\n\r]/;
 
 function bashRuleAction(
-  rules: BashRule[],
+  rules: readonly GlobRule<PermissionAction>[],
   command: string | undefined,
 ): PermissionAction | undefined {
   if (command === undefined) return undefined;
-  const matching = rules.filter((rule) => rule.matches.test(command));
-  if (matching.some((rule) => rule.action === "deny")) return "deny";
+  const matching = rules.filter((rule) => rule.glob.test(command));
+  if (matching.some((rule) => rule.value === "deny")) return "deny";
   if (commandChainingCharacters.test(command)) return undefined;
-  return mostSpecific(matching)?.action;
-}
-
-function mostSpecific(rules: BashRule[]): BashRule | undefined {
-  return rules.reduce<BashRule | undefined>(
-    (winner, rule) =>
-      winner === undefined || rule.specificity > winner.specificity ? rule : winner,
-    undefined,
-  );
-}
-
-function compileBashRule([pattern, action]: [string, PermissionAction]): BashRule {
-  return { matches: globRegExp(pattern), action, specificity: literalLength(pattern) };
-}
-
-function literalLength(pattern: string): number {
-  return pattern.replaceAll("*", "").length;
-}
-
-function globRegExp(pattern: string): RegExp {
-  const source = pattern
-    .split("*")
-    .map((literal) => literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("[\\s\\S]*");
-  return new RegExp(`^${source}$`);
+  return mostSpecificRule(matching)?.value;
 }
 
 function commandFrom(args: unknown): string | undefined {

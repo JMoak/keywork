@@ -1,20 +1,19 @@
-import { Text } from "@opentui/core";
 import type { Chord } from "./keys.ts";
-import {
-  type MemoryPaneInputs,
-  MemoryPaneModel,
-  type MemoryRow,
-  toneToken,
-} from "./memory-pane-model.ts";
+import { type MemoryPaneInputs, MemoryPaneModel } from "./memory-pane-model.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import {
+  type PaneChild,
   paneChrome,
   paneContentHeight,
   paneContentWidth,
   paneFailureLine,
+  paneLine,
   paneTitle,
+  rowsView,
+  toneInk,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
+import { pluralize } from "./pluralize.ts";
 import type { Theme } from "./theme.ts";
 
 export interface MemoryPanePort {
@@ -50,7 +49,7 @@ export class MemoryPane implements Pane {
     const notes = this.model.noteCount();
     const staged = this.model.stagedCount();
     const parts = [
-      ...(notes === 0 ? [] : [`${notes} ${notes === 1 ? "note" : "notes"}`]),
+      ...(notes === 0 ? [] : [pluralize(notes, "note")]),
       ...(staged === 0 ? [] : [`░${staged}`]),
     ];
     return paneTitle("memory", parts.length === 0 ? undefined : parts.join(" · "));
@@ -88,19 +87,12 @@ export class MemoryPane implements Pane {
     this.model.setInputs(await this.port.load());
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number) {
+  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
-    return this.model
-      .visibleRows(rows)
-      .map(({ index, row }) => this.rowLine(row, index === this.model.cursor, theme, width));
-  }
-
-  private rowLine(row: MemoryRow, selected: boolean, theme: Theme, width: number) {
-    const content = row.text.slice(0, width);
-    if (selected && row.selectable) {
-      return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
-    }
-    return Text({ content, fg: theme[toneToken(row.tone)] });
+    return rowsView(this.model, rows, theme, width, {
+      text: (row) => row.text,
+      line: (row) => paneLine(row.text, toneInk(theme, row.tone), width),
+    });
   }
 }

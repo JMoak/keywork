@@ -3,7 +3,7 @@ import type { MemorySearcher } from "../memory/search.ts";
 import type { MemoryStore } from "../memory/store.ts";
 import type { Tool } from "../tools.ts";
 import { bashTool, detectShell } from "./bash.ts";
-import { scopeCwd, type ToolScope } from "./confine.ts";
+import type { ToolScope } from "./confine.ts";
 import { editTool } from "./edit.ts";
 import { readTool } from "./read.ts";
 import { persistentBashTool, type ShellSession } from "./shell-session.ts";
@@ -15,24 +15,21 @@ export interface MemoryRecall {
   onRecall?: (noteName: string) => void;
 }
 
-export interface CoreToolTaps {
+export interface CoreToolOptions {
+  memory?: MemoryRecall | undefined;
+  shell?: ShellSession | undefined;
   onToolOutput?: ((chunk: string) => void) | undefined;
   onFileSaved?: ((path: string) => void) | undefined;
 }
 
-export function coreTools(
-  scope: string | ToolScope,
-  memory?: MemoryRecall,
-  taps: CoreToolTaps | ((chunk: string) => void) = {},
-  shell?: ShellSession,
-): Tool[] {
-  const { onToolOutput, onFileSaved } = typeof taps === "function" ? { onToolOutput: taps } : taps;
+export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool[] {
+  const { memory, shell, onToolOutput, onFileSaved } = options;
   const base = [
     readTool(scope),
     writeTool(scope, onFileSaved),
     editTool(scope, onFileSaved),
     shell === undefined
-      ? bashTool(scopeCwd(scope), detectShell(), onToolOutput)
+      ? bashTool(scope.cwd, detectShell(), onToolOutput)
       : persistentBashTool(shell, onToolOutput),
   ];
   if (memory === undefined) return base;

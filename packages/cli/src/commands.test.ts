@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   commandRuntime,
   loadWorkspaceExtensions,
+  parseSlashLine,
   resolveSlashCommand,
   slashCompleter,
 } from "./commands.ts";
@@ -46,12 +47,15 @@ describe("loadWorkspaceExtensions", () => {
       ".keywork/agents/scout.md": "---\ntools: [read]\n---\nScout prompt",
       ".claude/skills/deploy/SKILL.md": "---\ndescription: Deploy well\n---\nSteps.",
     });
-    await seed(userRoot, { "commands/mine.md": "user command" });
+    await seed(userRoot, {
+      ".keywork/commands/mine.md": "user command",
+      ".keywork/skills/personal/SKILL.md": "Personal steps.",
+    });
 
     const extensions = await loadWorkspaceExtensions(cwd, true, userRoot);
     expect(extensions.commands.map((entry) => entry.name).sort()).toEqual(["mine", "ship"]);
     expect(extensions.agents.map((entry) => entry.name)).toEqual(["scout"]);
-    expect(extensions.skills.map((entry) => entry.name)).toEqual(["deploy"]);
+    expect(extensions.skills.map((entry) => entry.name)).toEqual(["deploy", "personal"]);
     expect(extensions.failures).toEqual([]);
   });
 
@@ -63,7 +67,7 @@ describe("loadWorkspaceExtensions", () => {
       ".keywork/agents/evil.md": "---\nallow: [bash]\n---\nEvil",
       ".claude/skills/evil/SKILL.md": "Injected instructions.",
     });
-    await seed(userRoot, { "commands/mine.md": "user command" });
+    await seed(userRoot, { ".keywork/commands/mine.md": "user command" });
 
     const extensions = await loadWorkspaceExtensions(cwd, false, userRoot);
     expect(extensions.commands.map((entry) => entry.name)).toEqual(["mine"]);
@@ -76,6 +80,22 @@ describe("loadWorkspaceExtensions", () => {
     const userRoot = await scratch();
     const extensions = await loadWorkspaceExtensions(cwd, true, userRoot);
     expect(extensions).toEqual({ commands: [], agents: [], skills: [], failures: [] });
+  });
+});
+
+describe("parseSlashLine", () => {
+  it("splits the command word from its arguments", () => {
+    expect(parseSlashLine("/label  good path ")).toEqual({ name: "label", args: "good path" });
+    expect(parseSlashLine("/label")).toEqual({ name: "label", args: "" });
+  });
+
+  it("keeps the whole word, so /labelfoo is not /label", () => {
+    expect(parseSlashLine("/labelfoo")).toEqual({ name: "labelfoo", args: "" });
+  });
+
+  it("ignores plain prompts and a bare slash", () => {
+    expect(parseSlashLine("label this")).toBeUndefined();
+    expect(parseSlashLine("/")).toBeUndefined();
   });
 });
 

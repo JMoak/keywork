@@ -1,15 +1,11 @@
-import { kebabTitle, validateArcSlug } from "@keywork/engine";
+import { type ArcRecord, type ArcStatus, kebabTitle, validateArcSlug } from "@keywork/engine";
 import { arcAnchor } from "./chroma.ts";
+import { pluralize } from "./pluralize.ts";
 import type { Theme } from "./theme.ts";
 
-export type ArcStatus = "active" | "archived";
+export type { ArcStatus };
 
-export interface ArcSummary {
-  slug: string;
-  status: ArcStatus;
-  created: string;
-  sessions: number;
-}
+export type ArcSummary = Pick<ArcRecord, "slug" | "status" | "created"> & { sessions: number };
 
 export type ArcCloseOutcome =
   | { kind: "closed"; delivered: number; released: number }
@@ -40,12 +36,7 @@ export function arcTag(slug: string): string {
 }
 
 export function isArcSlug(candidate: string): boolean {
-  try {
-    validateArcSlug(candidate);
-    return true;
-  } catch {
-    return false;
-  }
+  return arcSlugProblem(candidate) === undefined;
 }
 
 export function arcSlugProblem(candidate: string): string | undefined {
@@ -73,6 +64,23 @@ export function activeFirst(arcs: readonly ArcSummary[]): ArcSummary[] {
     if (left.status !== right.status) return left.status === "active" ? -1 : 1;
     return byCreation(right, left);
   });
+}
+
+export function describeCloseOutcome(slug: string, outcome: ArcCloseOutcome): string {
+  if (outcome.kind === "closed") {
+    const released =
+      outcome.released === 0 ? "" : ` · ${pluralize(outcome.released, "session")} released`;
+    return `arc ${slug} closed · delivered ${pluralize(outcome.delivered, "note")}${released}`;
+  }
+  const pending = [
+    pluralize(outcome.candidates, "note"),
+    pluralize(outcome.questions, "question"),
+  ].join(" and ");
+  const wedged =
+    outcome.wedged === 0
+      ? ""
+      : ` · ${outcome.wedged} live ${outcome.wedged === 1 ? "session" : "sessions"} didn't flush`;
+  return `arc ${slug} is waiting at the airlock · ${pending} to triage in the memory pane${wedged} · /arc abandon ${slug} archives without distilling`;
 }
 
 function byCreation(left: ArcSummary, right: ArcSummary): number {

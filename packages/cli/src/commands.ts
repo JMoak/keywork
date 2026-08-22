@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   type AgentDefinition,
   bashTool,
@@ -8,6 +7,7 @@ import {
   discoverSkills,
   type ExtensionLoadFailure,
   fileEmbedder,
+  type LayerRoots,
   loadAgents,
   loadCommands,
   type SkillDefinition,
@@ -30,31 +30,41 @@ export interface CommandInvocation {
 export async function loadWorkspaceExtensions(
   cwd: string,
   projectTrusted: boolean,
-  userRoot = join(homedir(), ".keywork"),
+  userRoot = homedir(),
 ): Promise<WorkspaceExtensions> {
-  const projectDir = (kind: string) =>
-    projectTrusted ? { projectDir: join(cwd, ".keywork", kind) } : {};
-  const [commands, agents, skillLoad] = await Promise.all([
-    loadCommands({ userDir: join(userRoot, "commands"), ...projectDir("commands") }),
-    loadAgents({ userDir: join(userRoot, "agents"), ...projectDir("agents") }),
-    projectTrusted ? discoverSkills(cwd) : Promise.resolve({ skills: [], failures: [] }),
+  const roots: LayerRoots = { userRoot, ...(projectTrusted && { projectRoot: cwd }) };
+  const [commands, agents, skills] = await Promise.all([
+    loadCommands(roots),
+    loadAgents(roots),
+    discoverSkills(roots),
   ]);
   return {
     commands: commands.commands,
     agents: agents.agents,
-    skills: skillLoad.skills,
-    failures: [...commands.failures, ...agents.failures, ...skillLoad.failures],
+    skills: skills.skills,
+    failures: [...commands.failures, ...agents.failures, ...skills.failures],
   };
+}
+
+export interface SlashLine {
+  name: string;
+  args: string;
+}
+
+export function parseSlashLine(line: string): SlashLine | undefined {
+  if (!line.startsWith("/")) return undefined;
+  const [name = "", ...rest] = line.slice(1).split(/\s+/);
+  return name === "" ? undefined : { name, args: rest.join(" ").trim() };
 }
 
 export function resolveSlashCommand(
   commands: readonly CommandDefinition[],
   line: string,
 ): CommandInvocation | undefined {
-  if (!line.startsWith("/")) return undefined;
-  const [head = "", ...rest] = line.slice(1).split(/\s+/);
-  const command = commands.find((candidate) => candidate.name === head);
-  return command === undefined ? undefined : { command, args: rest.join(" ").trim() };
+  const slash = parseSlashLine(line);
+  if (slash === undefined) return undefined;
+  const command = commands.find((candidate) => candidate.name === slash.name);
+  return command === undefined ? undefined : { command, args: slash.args };
 }
 
 export function commandRuntime(cwd: string, guard: ToolGuard): CommandRuntime {

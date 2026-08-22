@@ -1,4 +1,6 @@
-export type ConnectionProtocol = "chat-completions" | "responses";
+import type { ConnectionProtocol } from "@keywork/shared";
+
+export type { ConnectionProtocol };
 
 export interface ModelChoice {
   reference: string;

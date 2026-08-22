@@ -1,4 +1,4 @@
-keywork — third-party attributions
+keywork: third-party attributions
 
 keywork independently implements ideas from, and may adapt code from, the projects
 below. "Adaptations" lists code actually copied or closely derived, recorded by the
@@ -14,24 +14,24 @@ Licensed under the MIT License (full text below).
 Adaptations:
 - B1/B4-B6/B8 (packages/engine/src/session/entries.ts, store.ts): session entry
   vocabulary and JSONL tree semantics adapted from Pi's session-manager, format
-  version 3 — the entry union (message / compaction / branch_summary / label /
+  version 3: the entry union (message / compaction / branch_summary / label /
   session_info / custom / custom_message / thinking_level_change / model_change,
   each with id/parentId/timestamp), leaf-pointer branching, compaction-aware
   context assembly, tree read API, and branched-session cloning with a
   parentSession header reference. Message payloads inside entries are keywork's
   own message shape, not Pi's.
 - B7 (packages/engine/src/session/compaction.ts): compaction algorithm adapted
-  from Pi's documented design (docs/compaction.md in the published package) —
+  from Pi's documented design (docs/compaction.md in the published package):
   reserve-token trigger, keep-recent backward cut walk with message-boundary cut
   points (never at tool results), iterative structured summaries that fold the
   previous summary, cumulative read/modified file tracking in compaction details,
   and serialized-conversation summarization input with tool-result truncation.
 - E6 (packages/shared/src/trust/store.ts): workspace trust store adapted from Pi's
-  trust-manager — per-path persisted trust decisions in a JSON map, canonicalized
+  trust-manager: per-path persisted trust decisions in a JSON map, canonicalized
   paths, nearest-ancestor resolution via dirname walking, session-only grants, and
   the never-blanket-trust-$HOME edge case.
 - 101/provider-onboarding (packages/cli/src/codex-login.ts, auth-store.ts): OpenAI
-  ChatGPT Plus/Pro sign-in adapted from Pi's openai-codex OAuth module — the PKCE
+  ChatGPT Plus/Pro sign-in adapted from Pi's openai-codex OAuth module: the PKCE
   authorization-code flow against auth.openai.com (shared Codex client id,
   localhost:1455 callback, codex_cli_simplified_flow/originator parameters), the
   device-code variant (usercode/token polling endpoints, pending/slow_down handling,
@@ -51,18 +51,18 @@ Licensed under the MIT License (full text below).
 
 Adaptations:
 - E3/E4 (packages/engine/src/checkpoints.ts): file-checkpoint mechanism adapted from
-  OpenCode's snapshot module — a shadow git repository (separate GIT_DIR under the keywork
+  OpenCode's snapshot module: a shadow git repository (separate GIT_DIR under the keywork
   data dir, work tree at the project root) captured via `git add -A` + `git write-tree` and
   restored via `git read-tree --reset -u`, so the user's own git state is never touched.
 - E1 (packages/shared/src/trust/permissions.ts): declarative tool-permission model
-  adapted from OpenCode's permission config — allow/ask/deny actions per tool plus
+  adapted from OpenCode's permission config: allow/ask/deny actions per tool plus
   glob-pattern rules over the bash command string, with keywork's own
   most-specific-match precedence and chaining-character containment.
 - D5/D6 (packages/engine/src/extensions/markdown-commands.ts, markdown-agents.ts):
   markdown command format (description/agent/model frontmatter + $ARGUMENTS,
   !`cmd` shell interpolation, @file embedding template semantics) and markdown
   agent format (frontmatter-configured agents with tool/permission restriction and
-  a system-prompt body) adapted from OpenCode's conventions — no code copied;
+  a system-prompt body) adapted from OpenCode's conventions. No code copied;
   frontmatter expressed as flat lists to fit keywork's parser.
 
 ---
@@ -73,7 +73,7 @@ Licensed under the MIT License (full text below).
 
 Adaptations:
 - J3 (packages/engine/src/memory/store.ts): vault layout and lifecycle adapted from
-  OpenClaw's documented memory design — MEMORY.md as the budgeted bootstrap index,
+  OpenClaw's documented memory design: MEMORY.md as the budgeted bootstrap index,
   append-only daily/YYYY-MM-DD.md episodic logs, markdown files as the canonical
   record with any index treated as disposable cache, and whole-file (never truncated)
   budget selection. Reimplemented in TypeScript from the documented design.
@@ -95,7 +95,7 @@ Licensed under the MIT License (full text below).
 
 Adaptations:
 - J12 (packages/engine/src/memory/graph.ts): entity-seeded Personalized PageRank
-  retrieval adapted from HippoRAG's published method — query entities seed a
+  retrieval adapted from HippoRAG's published method: query entities seed a
   personalized PageRank power iteration over the note graph, and the ranked scores
   join retrieval fusion as their own list. Reimplemented in TypeScript from the
   documented design; no code copied.
@@ -104,7 +104,7 @@ Adaptations:
 
 Crush (https://github.com/charmbracelet/crush) is FSL-1.1-MIT licensed and is
 deliberately NOT a source for keywork: no code has ever been adapted from it, and as of
-2026-08-10 it is not a design source either — features once discussed alongside it in
+2026-08-10 it is not a design source either; features once discussed alongside it in
 research docs are original keywork designs, implemented without consulting its source.
 
 ---

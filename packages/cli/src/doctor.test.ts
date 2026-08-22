@@ -1,13 +1,38 @@
 import { detectCapabilities } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
-import { doctorCommand, doctorReport } from "./doctor.ts";
+import { doctorCommand, doctorReport, renderDoctorReport } from "./doctor.ts";
 import { composeInference } from "./inference/runtime.ts";
 
 function report(env: Record<string, string | undefined>, platform = "linux"): string {
-  return doctorReport(detectCapabilities({ env, platform }));
+  return renderDoctorReport(doctorReport(detectCapabilities({ env, platform })));
 }
 
 describe("doctorReport", () => {
+  it("exposes the report as labeled rows before any rendering", () => {
+    const { rows } = doctorReport(
+      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
+    );
+    expect(rows.map((row) => row.label)).toEqual([
+      "terminal",
+      "color",
+      "sync frames",
+      "glyph tier",
+      "nerd font",
+      "sample",
+    ]);
+    expect(rows[0]?.value).toBe("Windows Terminal");
+  });
+
+  it("adds one context row per provider, continuation rows unlabeled", () => {
+    const { registry } = composeInference({
+      env: { OPENAI_API_KEY: "k" },
+      config: { connections: { ollama: { endpoint: "http://localhost:11434/v1", models: ["q"] } } },
+      credentials: {},
+    });
+    const rows = doctorReport(detectCapabilities({ env: {}, platform: "linux" }), registry).rows;
+    expect(rows.slice(-2).map((row) => row.label)).toEqual(["context", ""]);
+  });
+
   it("prints the full profile for a major terminal", () => {
     expect(report({ WT_SESSION: "guid" }, "win32")).toBe(
       [

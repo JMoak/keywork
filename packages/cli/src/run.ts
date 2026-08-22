@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import {
-  Agent,
-  buildSystemPrompt,
-  coreTools,
+  type Agent,
   DiagnosticsLog,
   debugLogFile,
-  loadProjectInstructions,
+  type EngineEvents,
+  type EventBus,
+  type JournalTap,
+  type McpRegistry,
   type Message,
   messageText,
   type PermissionDecision,
@@ -14,20 +15,17 @@ import {
   type ResolutionFailure,
   SessionStore,
   ShellSession,
+  type ToolGuard,
   tapJournal,
 } from "@keywork/engine";
 import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
-import { journalingRecall, standingInjectionsFor, startMcpRegistry } from "./compose.ts";
+import type { WorkspaceExtensions } from "./commands.ts";
+import { composeAgents, composeWorkspace } from "./compose.ts";
 import { type ExitClass, exitCodes } from "./dispatch.ts";
+import { nextActionFor, shellCommands } from "./inference/port.ts";
 import { connectHint } from "./inference/runtime.ts";
-import {
-  bootstrapInjection,
-  memoryRecall,
-  openWorkspaceMemory,
-  withMemoryPrompt,
-} from "./memory.ts";
 import { defaultSessionDir } from "./paths.ts";
-import { newSessionFileName } from "./sessions.ts";
+import { newSessionFileName } from "./sessions/store.ts";
 
 export interface RunOptions {
   prompt: string;
@@ -37,9 +35,9 @@ export interface RunOptions {
   projectTrusted?: boolean;
   debug?: boolean;
   sessionDir?: string;
+  userRoot?: string;
   provider?: Provider;
   prompts?: PromptsConfig;
-  modelId?: string;
   permissions?: PermissionResolver;
   mcpServers?: Record<string, McpServerConfig>;
   signal?: AbortSignal;
@@ -74,125 +72,149 @@ export function conclude(outcome: HeadlessOutcome, io: HeadlessIo): number {
 
 export async function runHeadless(options: RunOptions): Promise<HeadlessOutcome> {
   const provider = options.provider ?? refuseWithoutProvider(options);
-  const io: HeadlessIo = {
-    json: options.json,
-    print: options.print ?? console.log,
-    printError: options.printError ?? console.error,
-  };
-  const emit = (type: string, payload: unknown) => {
-    if (io.json) io.print(JSON.stringify({ type, ...(payload as object) }));
-  };
-
-  const instructions =
-    options.projectTrusted === true ? await loadProjectInstructions(options.cwd) : undefined;
-  const memory = openWorkspaceMemory(
-    options.cwd,
-    options.projectTrusted === true,
-    options.workspaceSlug,
-  );
-  const bootstrap = await bootstrapInjection(memory);
-  const mcp = startMcpRegistry(options.mcpServers);
-  const shell = new ShellSession(options.cwd);
-  let self: Agent | undefined;
-  const baseTools = coreTools(
-    options.cwd,
-    journalingRecall(memoryRecall(memory), () => self),
-    (chunk) => self?.bus.emit("tool.output", { chunk }),
-    shell,
-  );
-  const agent = new Agent({
-    provider,
-    tools: mcp === undefined ? baseTools : mcp.surface(baseTools),
-    guard: { confirm: async () => false, gate: "headless" },
-    ...(options.permissions !== undefined && { permissions: options.permissions }),
-    systemPrompt: withMemoryPrompt(
-      buildSystemPrompt({
-        ...(instructions !== undefined && { projectInstructions: instructions }),
-        ...(options.prompts !== undefined && { prompts: options.prompts }),
-        ...(options.modelId !== undefined && { modelId: options.modelId }),
-      }),
-      bootstrap,
-    ),
-    standingInjections: standingInjectionsFor(instructions, bootstrap),
-  });
-  self = agent;
-
-  const store = await openSessionStore(options);
-  const journal = store === undefined ? undefined : tapJournal(agent.bus, store);
-  const diagnostics = options.debug === true ? await openDiagnostics(options) : undefined;
-  diagnostics?.tap(agent.bus);
-  diagnostics?.log("info", "run.started", { cwd: options.cwd, provider: provider.name });
-
-  const refused: PermissionDecision[] = [];
-  let interrupted = false;
-  agent.bus.on("turn.started", (payload) => emit("turn.started", payload));
-  agent.bus.on("turn.delta", (payload) => emit("turn.delta", payload));
-  agent.bus.on("tool.started", (payload) => emit("tool.started", payload));
-  agent.bus.on("tool.output", (payload) => emit("tool.output", payload));
-  agent.bus.on("tool.finished", (payload) => emit("tool.finished", payload));
-  agent.bus.on("gate.permission", (payload) => {
-    if (payload.decision.gate === "headless" && payload.decision.verdict === "denied") {
-      refused.push(payload.decision);
-    }
-    emit("gate.permission", payload);
-  });
-  agent.bus.on("context.injected", (payload) => emit("context.injected", payload));
-  agent.bus.on("turn.completed", (payload) => emit("turn.completed", payload));
-  agent.bus.on("turn.interrupted", (payload) => {
-    interrupted = true;
-    emit("turn.interrupted", payload);
-  });
-  agent.bus.on("engine.error", ({ error }) => emit("engine.error", { message: error.message }));
-
-  emit("run.started", {
+  const io = headlessIo(options);
+  const run = await openRun(options, provider, io);
+  const trace = traceTurn(run.agent.bus, io);
+  trace.emit("run.started", {
     cwd: options.cwd,
     provider: provider.name,
-    model: provider.modelId ?? options.modelId ?? null,
-    session: store?.header.id ?? null,
+    model: provider.modelId ?? null,
+    session: run.store?.header.id ?? null,
   });
 
-  let outcome: HeadlessOutcome;
-  try {
-    const message = await agent.send(options.prompt, options.signal);
-    outcome = interrupted
-      ? { outcome: "interrupted", message, saved: store !== undefined }
-      : refused.length > 0
-        ? { outcome: "denied", message, refused }
-        : { outcome: "completed", message };
-  } catch (cause) {
-    outcome = { outcome: "failed", error: messageOf(cause) };
-  }
-  const teardownFailures = await tearDown([
-    ["closing the shell", () => shell.close()],
-    [
-      "flushing the session journal",
-      async () => {
-        journal?.stop();
-        await journal?.flush();
-      },
-    ],
-    [
-      "saving the session",
-      async () => {
-        if (store === undefined) return;
-        for (const message of agent.history()) await store.append(message);
-      },
-    ],
-    ["flushing the debug log", async () => diagnostics?.flush()],
-    ["stopping MCP servers", async () => mcp?.stop()],
-  ]);
+  const outcome = await sendPrompt(run, options, trace);
+  const teardownFailures = await tearDown(run);
   const settled = teardownFailures.length === 0 ? outcome : failedTeardown(teardownFailures);
   conclude(settled, io);
   return settled;
 }
 
-type TeardownStep = [name: string, run: () => Promise<unknown>];
+const headlessGuard: ToolGuard = { confirm: async () => false, gate: "headless" };
 
-async function tearDown(steps: readonly TeardownStep[]): Promise<string[]> {
+interface HeadlessRun {
+  agent: Agent;
+  shell: ShellSession;
+  store: SessionStore | undefined;
+  journal: JournalTap | undefined;
+  diagnostics: DiagnosticsLog | undefined;
+  mcp: McpRegistry | undefined;
+}
+
+async function openRun(
+  options: RunOptions,
+  provider: Provider,
+  io: HeadlessIo,
+): Promise<HeadlessRun> {
+  const composition = await composeWorkspace({
+    cwd: options.cwd,
+    projectTrusted: options.projectTrusted === true,
+    workspaceSlug: options.workspaceSlug,
+    prompts: options.prompts,
+    mcpServers: options.mcpServers,
+    checkpoints: "off",
+    ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
+  });
+  reportExtensionFailures(composition.extensions, io);
+  const store = await openSessionStore(options);
+  const shell = new ShellSession(options.cwd);
+  const agent = composeAgents(composition, { permissions: options.permissions }).build({
+    provider,
+    guard: headlessGuard,
+    shell,
+    sessionId: store?.header.id,
+  });
+  const journal = store === undefined ? undefined : tapJournal(agent.bus, store);
+  const diagnostics = options.debug === true ? await openDiagnostics(options) : undefined;
+  diagnostics?.tap(agent.bus);
+  diagnostics?.log("info", "run.started", { cwd: options.cwd, provider: provider.name });
+  return { agent, shell, store, journal, diagnostics, mcp: composition.mcp };
+}
+
+interface TurnTrace {
+  emit(type: string, payload: unknown): void;
+  readonly refused: readonly PermissionDecision[];
+  interrupted(): boolean;
+}
+
+const forwardedEvents = [
+  "turn.started",
+  "turn.delta",
+  "tool.started",
+  "tool.output",
+  "tool.finished",
+  "context.injected",
+  "turn.completed",
+] as const;
+
+function traceTurn(bus: EventBus<EngineEvents>, io: HeadlessIo): TurnTrace {
+  const emit = (type: string, payload: unknown): void => {
+    if (io.json) io.print(JSON.stringify({ type, ...(payload as object) }));
+  };
+  const refused: PermissionDecision[] = [];
+  let interrupted = false;
+  for (const type of forwardedEvents) bus.on(type, (payload) => emit(type, payload));
+  bus.on("gate.permission", (payload) => {
+    if (payload.decision.gate === "headless" && payload.decision.verdict === "denied") {
+      refused.push(payload.decision);
+    }
+    emit("gate.permission", payload);
+  });
+  bus.on("turn.interrupted", (payload) => {
+    interrupted = true;
+    emit("turn.interrupted", payload);
+  });
+  bus.on("engine.error", ({ error }) => emit("engine.error", { message: error.message }));
+  return { emit, refused, interrupted: () => interrupted };
+}
+
+async function sendPrompt(
+  run: HeadlessRun,
+  options: RunOptions,
+  trace: TurnTrace,
+): Promise<HeadlessOutcome> {
+  try {
+    const message = await run.agent.send(options.prompt, {
+      ...(options.signal !== undefined && { signal: options.signal }),
+    });
+    if (trace.interrupted()) {
+      return { outcome: "interrupted", message, saved: run.store !== undefined };
+    }
+    if (trace.refused.length > 0) return { outcome: "denied", message, refused: trace.refused };
+    return { outcome: "completed", message };
+  } catch (cause) {
+    return { outcome: "failed", error: messageOf(cause) };
+  }
+}
+
+type TeardownStep = [name: string, step: () => Promise<unknown>];
+
+function tearDown(run: HeadlessRun): Promise<string[]> {
+  return settleEach([
+    ["closing the shell", () => run.shell.close()],
+    [
+      "flushing the session journal",
+      async () => {
+        run.journal?.stop();
+        await run.journal?.flush();
+      },
+    ],
+    [
+      "saving the session",
+      async () => {
+        if (run.store === undefined) return;
+        for (const message of run.agent.history()) await run.store.append(message);
+      },
+    ],
+    ["flushing the debug log", async () => run.diagnostics?.flush()],
+    ["stopping MCP servers", async () => run.mcp?.stop()],
+  ]);
+}
+
+async function settleEach(steps: readonly TeardownStep[]): Promise<string[]> {
   const failures: string[] = [];
-  for (const [name, run] of steps) {
+  for (const [name, step] of steps) {
     try {
-      await run();
+      await step();
     } catch (cause) {
       failures.push(`${name} failed: ${messageOf(cause)}`);
     }
@@ -224,7 +246,10 @@ function finishedPayload(outcome: HeadlessOutcome): Record<string, unknown> {
     case "usage":
       return { ...base, error: outcome.error };
     case "unresolved":
-      return { ...base, failure: outcome.failure };
+      return {
+        ...base,
+        failure: { ...outcome.failure, nextAction: nextActionFor(outcome.failure, shellCommands) },
+      };
   }
 }
 
@@ -251,7 +276,9 @@ function narrate(outcome: HeadlessOutcome, io: HeadlessIo): void {
       io.printError(outcome.error);
       return;
     case "unresolved":
-      io.printError(`${outcome.failure.message} · ${outcome.failure.nextAction}\n\n${connectHint}`);
+      io.printError(
+        `${outcome.failure.message} · ${nextActionFor(outcome.failure, shellCommands)}\n\n${connectHint}`,
+      );
       return;
     case "usage":
       io.printError(outcome.error);
@@ -263,6 +290,20 @@ function refusalNotice(refused: readonly PermissionDecision[]): string {
   const tools = [...new Set(refused.map((decision) => decision.tool))].join(", ");
   const calls = refused.length === 1 ? "1 tool call" : `${refused.length} tool calls`;
   return `keywork run: ${calls} needed an approval no one could give (${tools}) · rerun with --preset open to allow them`;
+}
+
+function reportExtensionFailures(extensions: WorkspaceExtensions, io: HeadlessIo): void {
+  for (const failure of extensions.failures) {
+    io.printError(`keywork run: skipped extension ${failure.file} · ${failure.reason}`);
+  }
+}
+
+function headlessIo(options: RunOptions): HeadlessIo {
+  return {
+    json: options.json,
+    print: options.print ?? console.log,
+    printError: options.printError ?? console.error,
+  };
 }
 
 function openSessionStore(options: RunOptions): Promise<SessionStore> | undefined {

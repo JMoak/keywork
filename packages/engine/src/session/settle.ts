@@ -1,15 +1,11 @@
 import type { MemoryFlush } from "../memory/flush.ts";
 import type { Message } from "../messages.ts";
 import type { Provider } from "../provider.ts";
-import {
-  compactionSettingsFor,
-  compactSession,
-  estimateContextTokens,
-  shouldCompact,
-} from "./compaction.ts";
+import { compactSession, estimateContextTokens } from "./compaction.ts";
 import {
   type ContextBudget,
   type ContextReading,
+  compactionDue,
   formatTokenCount,
   readContext,
 } from "./context-budget.ts";
@@ -43,7 +39,7 @@ export async function settleTurn(options: SettleOptions): Promise<TurnSettlement
   const { store, provider, budget } = options;
   const flush = await flushIfDue(options, readStore(store, budget));
   const reading = readStore(store, budget);
-  if (!shouldCompact(reading)) return settled(flush, options.history, undefined, []);
+  if (!compactionDue(reading)) return settled(flush, options.history, undefined, []);
   return compact({ store, provider, budget, flush: options.flush }, flush, options.history);
 }
 
@@ -81,7 +77,7 @@ async function compact(
   const { store, provider, budget } = options;
   try {
     const entry = await compactSession(store, provider, {
-      settings: compactionSettingsFor(budget),
+      budget,
       ...(options.instructions !== undefined &&
         options.instructions !== "" && { instructions: options.instructions }),
     });

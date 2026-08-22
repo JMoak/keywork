@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FocusedArcPort } from "./app-core.ts";
+import type { FocusedArcPort } from "./arc-commands.ts";
 import type { ArcCloseOutcome, ArcSummary, ArcsPort } from "./arcs.ts";
 import { AppProbe } from "./probe.ts";
 

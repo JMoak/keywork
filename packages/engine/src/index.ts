@@ -1,14 +1,16 @@
 export {
   Agent,
-  AgentBusyError,
   type AgentOptions,
   addUsage,
   type ConfirmingGate,
   type PermissionResolver,
+  QueuedPromptCancelledError,
+  type SendOptions,
   type ToolGuard,
   type ToolPermission,
+  type ToolSource,
 } from "./agent.ts";
-export { type EngineEvents, EventBus } from "./bus.ts";
+export { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
 export {
   declaredCapabilitiesFor,
   type InputModality,
@@ -29,7 +31,7 @@ export {
 } from "./diagnostics.ts";
 export type {
   ExtensionLoadFailure,
-  LayeredDirs,
+  LayerRoots,
   LayerSource,
 } from "./extensions/layers.ts";
 export {
@@ -71,7 +73,8 @@ export {
   parseReference,
   sameReference,
 } from "./inference/references.ts";
-export { type CatalogEntry, InferenceRegistry } from "./inference/registry.ts";
+export { InferenceRegistry } from "./inference/registry.ts";
+export type { CatalogEntry } from "./inference/resolution.ts";
 export {
   type CredentialHandle,
   type CredentialState,
@@ -103,6 +106,7 @@ export {
   type StdioConnectOptions,
   type StdioServerSpec,
 } from "./mcp/client.ts";
+export type { ConnectServer, McpServerState, McpServerStatus } from "./mcp/reconciler.ts";
 export {
   defaultRestartDelaysMs,
   isMcpBackedTool,
@@ -111,13 +115,11 @@ export {
   McpRegistryClosedError,
   type McpRegistryOptions,
   McpServerNotFoundError,
-  type McpServerState,
-  type McpServerStatus,
   type McpStatusListener,
   type McpToolCallReport,
   type McpToolProvenance,
-  mcpSearchToolName,
 } from "./mcp/registry.ts";
+export { mcpSearchToolName } from "./mcp/tool-search.ts";
 export {
   anchorFrontmatter,
   type CheckpointAnchor,
@@ -193,8 +195,12 @@ export {
 export {
   type BootstrapInjection,
   type BootstrapLayer,
+  type BootstrapSelection,
+  type BootstrapSource,
   bootstrapMemory,
   type LayerBootstrap,
+  mostUsefulFirst,
+  selectWithinBudget,
 } from "./memory/bootstrap.ts";
 export {
   type CitationChain,
@@ -259,15 +265,6 @@ export {
   type SkippedRelation,
 } from "./memory/graph.ts";
 export {
-  MalformedInboxError,
-  ReviewInbox,
-  type ReviewInboxOptions,
-  type ReviewItem,
-  type ReviewItemDetail,
-  ReviewItemNotFoundError,
-  reviewKey,
-} from "./memory/inbox.ts";
-export {
   contentHash,
   type FileDelta,
   type LedgerEntry,
@@ -275,6 +272,20 @@ export {
   type RevertOutcome,
 } from "./memory/ledger.ts";
 export { canonicalEntityPath, InvalidTitleError, titleKey } from "./memory/naming.ts";
+export {
+  type DailyEntry,
+  extractWikilinks,
+  InvalidDailyDateError,
+  isEntityPath,
+  type Note,
+  type NoteWriteTarget,
+  noteName,
+  noteWriteTarget,
+  type Provenance,
+  parseDailyEntries,
+  provenances,
+  wikilinkTarget,
+} from "./memory/notes.ts";
 export {
   memoryGetTool,
   memoryRecallTools,
@@ -295,24 +306,37 @@ export {
   type SearchOutcome,
 } from "./memory/search.ts";
 export {
-  type BootstrapSelection,
-  type DailyEntry,
-  DuplicateTitleError,
-  extractWikilinks,
-  LedgerEntryNotFoundError,
+  describeStaged,
+  isStagedWrite,
   MalformedStagedItemError,
+  type ReviewProposal,
+  reviewKey,
+  reviewProposalSchema,
+  type StagedItem,
+  StagedItemNotFoundError,
+  type StagedKind,
+  type StagedReview,
+  type StagedWrite,
+  type StagedWriteKind,
+} from "./memory/staging.ts";
+export {
+  DuplicateTitleError,
+  defaultLedgerCapacity,
+  LedgerEntryNotFoundError,
   MemoryInertError,
   MemoryStore,
   type MemoryStoreOptions,
   MissingNoteError,
-  type Note,
   type NoteInput,
-  type Provenance,
-  type StagedItem,
-  StagedItemNotFoundError,
-  type StagedKind,
   type WriteResult,
 } from "./memory/store.ts";
+export {
+  isMissingFileError,
+  PathOutsideVaultError,
+  ReservedPathError,
+  VaultFiles,
+  writeFileAtomic,
+} from "./memory/vault-files.ts";
 export {
   type ImagePart,
   type Message,
@@ -374,31 +398,34 @@ export {
   regionFromEnv,
 } from "./providers/bedrock/sigv4.ts";
 export {
-  type AuthHeaders,
-  bearerHeaders,
-  type FetchLike,
-  type OpenAiCompatibleOptions,
-  OpenAiCompatibleProvider,
+  ProviderEmptyResponseError,
   ProviderHttpError,
   ProviderStreamError,
+} from "./providers/errors.ts";
+export {
+  type OpenAiCompatibleOptions,
+  OpenAiCompatibleProvider,
 } from "./providers/openai.ts";
 export {
   type OpenAiResponsesOptions,
   OpenAiResponsesProvider,
 } from "./providers/openai-responses.ts";
-export { RetryingProvider, type RetryOptions } from "./providers/retry.ts";
+export { RetryingProvider, type RetryOptions, type Sleep } from "./providers/retry.ts";
+export {
+  type AuthHeaders,
+  bearerHeaders,
+  type FetchLike,
+  postForStream,
+  type StreamingPost,
+} from "./providers/transport.ts";
 export {
   type CompactionOptions,
   type CompactionPlan,
-  type CompactionSettings,
-  compactionSettingsFor,
   compactSession,
-  defaultCompactionSettings,
   estimateContextTokens,
   estimateConversationTokens,
   planCompaction,
   serializeConversation,
-  shouldCompact,
 } from "./session/compaction.ts";
 export {
   assumedContextWindow,
@@ -464,14 +491,8 @@ export {
 } from "./session/store.ts";
 export { fitTitle, kebabTitle, suggestTitle, type TitleContext } from "./titles.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
-export {
-  confinedPath,
-  scopeContains,
-  scopeCwd,
-  type ToolScope,
-  toolScope,
-} from "./tools/confine.ts";
-export { type CoreToolTaps, coreTools, type MemoryRecall } from "./tools/core.ts";
+export { confinedPath, scopeContains, type ToolScope, toolScope } from "./tools/confine.ts";
+export { type CoreToolOptions, coreTools, type MemoryRecall } from "./tools/core.ts";
 export { defineTool } from "./tools/define.ts";
 export { editTool } from "./tools/edit.ts";
 export { readTool } from "./tools/read.ts";
@@ -483,4 +504,4 @@ export {
 export { writeTool } from "./tools/write.ts";
 export { findTool, type Tool, ToolNotFoundError } from "./tools.ts";
 
-export const engineVersion = "0.0.1";
+export { engineVersion } from "./version.ts";

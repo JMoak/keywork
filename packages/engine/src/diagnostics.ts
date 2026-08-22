@@ -84,25 +84,36 @@ export class DiagnosticsLog {
 }
 
 export function redactSecrets(value: unknown): unknown {
-  if (typeof value === "string") return redactKeyShapes(value);
-  if (Array.isArray(value)) return value.map(redactSecrets);
-  if (value instanceof Error) return { name: value.name, message: redactKeyShapes(value.message) };
-  if (value !== null && typeof value === "object") return redactObject(value);
-  return value;
+  return redactValue(value, new WeakSet());
 }
 
 const secretFieldName = /key|token|secret|password|credential|authorization/i;
 const keyShapes = [/\bsk-[\w-]{8,}/g, /\bBearer\s+[\w.~+/=-]+/gi];
 
-function redactObject(value: object): Record<string, unknown> {
+function redactValue(value: unknown, ancestors: WeakSet<object>): unknown {
+  if (typeof value === "string") return redactKeyShapes(value);
+  if (value instanceof Error) return { name: value.name, message: redactKeyShapes(value.message) };
+  if (value === null || typeof value !== "object") return value;
+  if (ancestors.has(value)) return "[circular]";
+  ancestors.add(value);
+  try {
+    return Array.isArray(value)
+      ? value.map((entry) => redactValue(entry, ancestors))
+      : redactObject(value, ancestors);
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function redactObject(value: object, ancestors: WeakSet<object>): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(value).map(([name, entry]) => [name, redactField(name, entry)]),
+    Object.entries(value).map(([name, entry]) => [name, redactField(name, entry, ancestors)]),
   );
 }
 
-function redactField(name: string, entry: unknown): unknown {
+function redactField(name: string, entry: unknown, ancestors: WeakSet<object>): unknown {
   const hidesWholeValue = secretFieldName.test(name) && typeof entry !== "number";
-  return hidesWholeValue ? "[redacted]" : redactSecrets(entry);
+  return hidesWholeValue ? "[redacted]" : redactValue(entry, ancestors);
 }
 
 function redactKeyShapes(text: string): string {

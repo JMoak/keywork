@@ -1,27 +1,25 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { jsonFileStore } from "@keywork/shared";
 import type { WorkspacePort, WorkspaceState } from "@keywork/tui";
 
 const saveDelayMs = 500;
 
 export function workspaceFile(file: string, delayMs = saveDelayMs): WorkspacePort {
+  const store = jsonFileStore<WorkspaceState>({
+    file,
+    mode: "lenient",
+    validate: (data) => data as WorkspaceState,
+  });
   let pending: WorkspaceState | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sealed = false;
   const write = (): void => {
     if (pending === undefined) return;
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(pending, null, 2));
+    store.write(pending);
     pending = undefined;
   };
   return {
     async load(): Promise<unknown> {
-      try {
-        return JSON.parse(await readFile(file, "utf8"));
-      } catch {
-        return undefined;
-      }
+      return store.read();
     },
     save(state: WorkspaceState): void {
       if (sealed) return;

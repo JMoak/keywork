@@ -1,29 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../messages.ts";
 import type { ProviderRequest, TurnDelta } from "../provider.ts";
-import {
-  type FetchLike,
-  OpenAiCompatibleProvider,
-  ProviderHttpError,
-  ProviderStreamError,
-} from "./openai.ts";
-
-function sseResponse(lines: string[], chunkSize = 7): Response {
-  return rawSseResponse(lines.map((line) => `data: ${line}\n\n`).join(""), chunkSize);
-}
-
-function rawSseResponse(raw: string, chunkSize = 7): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (let at = 0; at < raw.length; at += chunkSize) {
-        controller.enqueue(encoder.encode(raw.slice(at, at + chunkSize)));
-      }
-      controller.close();
-    },
-  });
-  return new Response(stream, { status: 200 });
-}
+import { ProviderEmptyResponseError, ProviderHttpError, ProviderStreamError } from "./errors.ts";
+import { OpenAiCompatibleProvider } from "./openai.ts";
+import { sseResponse } from "./stream-fixtures.ts";
+import type { FetchLike } from "./transport.ts";
 
 function provider(fetchFn: FetchLike): OpenAiCompatibleProvider {
   return new OpenAiCompatibleProvider({
@@ -128,6 +109,14 @@ describe("OpenAiCompatibleProvider", () => {
     await expect(collect(failing.stream(emptyRequest))).rejects.toThrow(/429.*quota exceeded/s);
   });
 
+  it("fails with a typed transient error when the response has no body", async () => {
+    const bodiless = provider(async () => new Response(null, { status: 200 }));
+
+    await expect(collect(bodiless.stream(emptyRequest))).rejects.toThrow(
+      ProviderEmptyResponseError,
+    );
+  });
+
   it("keeps unparseable tool arguments as raw text for the model to see", async () => {
     const lines = [
       '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"bash","arguments":"{broken"}}]}}]}',
@@ -147,36 +136,6 @@ describe("OpenAiCompatibleProvider", () => {
 
     await expect(collect(streaming.stream(emptyRequest))).rejects.toThrow(ProviderStreamError);
     await expect(collect(streaming.stream(emptyRequest))).rejects.toThrow(/model overloaded/);
-  });
-
-  it("skips keepalives, comments, and malformed lines without dropping real events", async () => {
-    const raw = [
-      ": keep-alive",
-      "data:",
-      "data: {broken json",
-      'data: {"choices":[{"delta":{"content":"hi"}}]}',
-      "data: [DONE]",
-    ]
-      .map((line) => `${line}\n\n`)
-      .join("");
-    const deltas = await collect(provider(async () => rawSseResponse(raw)).stream(emptyRequest));
-
-    expect(deltas).toEqual([
-      { type: "text", text: "hi" },
-      { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
-    ]);
-  });
-
-  it("keeps a final event that arrives without a trailing newline", async () => {
-    const raw =
-      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n' +
-      'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":9}}';
-    const deltas = await collect(provider(async () => rawSseResponse(raw)).stream(emptyRequest));
-
-    expect(deltas).toEqual([
-      { type: "text", text: "hi" },
-      { type: "done", usage: { inputTokens: 7, outputTokens: 9 } },
-    ]);
   });
 
   it("synthesizes a stable callId when the stream never provides one", async () => {
@@ -200,14 +159,6 @@ describe("OpenAiCompatibleProvider", () => {
     expect(deltas[0]).toMatchObject({
       call: { callId: "c1", name: "bash", arguments: { a: 1 } },
     });
-  });
-
-  it("fails the turn when the stream buffer exceeds the size ceiling", async () => {
-    const endless = `data: {"choices":[${"x".repeat(1_100_000)}`;
-    const streaming = provider(async () => rawSseResponse(endless, 65_536));
-
-    await expect(collect(streaming.stream(emptyRequest))).rejects.toThrow(ProviderStreamError);
-    await expect(collect(streaming.stream(emptyRequest))).rejects.toThrow(/size ceiling/);
   });
 
   it("splits cached prompt tokens out and captures a metered cost when reported", async () => {

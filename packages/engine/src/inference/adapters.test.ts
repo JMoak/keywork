@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../messages.ts";
-import type { FetchLike } from "../providers/openai.ts";
+import type { FetchLike } from "../providers/transport.ts";
 import {
   CredentialMaterialError,
   type CredentialVault,

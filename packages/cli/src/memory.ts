@@ -8,12 +8,12 @@ import {
   MemorySearch,
   MemoryStore,
   type Note,
+  type Provenance,
   type RetrievalSource,
-  ReviewInbox,
-  type ReviewItem,
   type StagedItem,
+  type StagedWrite,
 } from "@keywork/engine";
-import { resolveVaultPath } from "@keywork/shared";
+import { resolveVaultPath, toError } from "@keywork/shared";
 import type {
   CuringStage,
   InboxItemView,
@@ -26,7 +26,6 @@ import type { ArcService } from "./arcs.ts";
 export interface WorkspaceMemory {
   store: MemoryStore;
   search: MemorySearch;
-  inbox: ReviewInbox;
   gardener: Gardener;
   askGate: AskGateLedger;
   embeddings?: EmbeddingsPort;
@@ -42,12 +41,10 @@ export function openWorkspaceMemory(
   const vaultRoot = resolveVaultPath(cwd, slug);
   if (vaultRoot === undefined) return undefined;
   const store = new MemoryStore({ vaultRoot, trusted });
-  const inbox = new ReviewInbox({ filePath: join(vaultRoot, ".staging", "inbox.json") });
   return {
     store,
     search: new MemorySearch(store),
-    inbox,
-    gardener: new Gardener({ store, inbox }),
+    gardener: new Gardener({ store }),
     askGate: trusted
       ? new AskGateLedger({ filePath: join(vaultRoot, ".staging", "ask-gate.json") })
       : new AskGateLedger(),
@@ -119,48 +116,40 @@ export function withMemoryPrompt(systemPrompt: string, injection: string): strin
 
 export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise<void> {
   if (memory === undefined) return;
-  try {
-    await memory.gardener.sweep();
-  } catch {}
-  if (!memory.store.trusted) return;
-  try {
-    await memory.askGate.proposePreferences(memory.inbox, memory.store);
-  } catch {}
+  const failures: Error[] = [];
+  const attempt = (work: () => Promise<unknown>): Promise<void> =>
+    work().then(
+      () => undefined,
+      (cause: unknown) => {
+        failures.push(toError(cause));
+      },
+    );
+  await attempt(() => memory.gardener.sweep());
+  if (memory.store.trusted) await attempt(() => memory.askGate.proposePreferences(memory.store));
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `memory close: ${failures.map((failure) => failure.message).join(" · ")}`,
+    );
+  }
 }
 
 export function memoryPanePort(memory: WorkspaceMemory): MemoryPanePort {
-  const { store, inbox } = memory;
+  const { store } = memory;
   return {
-    load: () => loadInputs(store, inbox),
-    approve: (id) => actOn(store, inbox, id, "approve"),
-    discard: (id) => actOn(store, inbox, id, "discard"),
+    load: () => loadInputs(store),
+    approve: async (id) => {
+      await store.approve(id);
+    },
+    discard: (id) => store.discard(id),
   };
 }
 
-const stagedIdPrefix = "staged:";
-const reviewIdPrefix = "review:";
-
-async function loadInputs(store: MemoryStore, inbox: ReviewInbox): Promise<MemoryPaneInputs> {
+async function loadInputs(store: MemoryStore): Promise<MemoryPaneInputs> {
   if (!store.trusted) return { scopes: [], notes: [], inbox: [], recalls: [] };
   const notes = (await store.listNotes()).map(noteView);
-  const staged = (await store.listStaged()).map(stagedView);
-  const reviews = (await inbox.list()).map(reviewView);
-  return { scopes: ["workspace"], notes, inbox: [...staged, ...reviews], recalls: [] };
-}
-
-async function actOn(
-  store: MemoryStore,
-  inbox: ReviewInbox,
-  id: string,
-  action: "approve" | "discard",
-): Promise<void> {
-  if (id.startsWith(stagedIdPrefix)) {
-    const stagedId = id.slice(stagedIdPrefix.length);
-    if (action === "approve") await store.approve(stagedId);
-    else await store.discard(stagedId);
-    return;
-  }
-  await inbox.resolve(id.startsWith(reviewIdPrefix) ? id.slice(reviewIdPrefix.length) : id);
+  const inbox = (await store.listStaged()).map(inboxView);
+  return { scopes: ["workspace"], notes, inbox, recalls: [] };
 }
 
 function noteView(note: Note): MemoryNoteView {
@@ -181,20 +170,13 @@ function curingStage(note: Note): CuringStage {
   return note.usefulness === undefined ? 1 : 3;
 }
 
-function stagedView(item: StagedItem): InboxItemView {
-  return {
-    id: `${stagedIdPrefix}${item.id}`,
-    kind: "staged",
-    title: item.target,
-    provenance: "untrusted",
-    created: item.created,
-    detail: item.kind,
-  };
-}
-
-function reviewView(item: ReviewItem): InboxItemView {
-  const base = { id: `${reviewIdPrefix}${item.id}`, created: item.created } as const;
+function inboxView(item: StagedItem): InboxItemView {
+  const base = { id: item.id, created: item.created } as const;
   switch (item.kind) {
+    case "note":
+    case "daily":
+    case "moc":
+      return stagedWriteView(item, base);
     case "borderline-promotion":
       return {
         ...base,
@@ -257,7 +239,20 @@ function reviewView(item: ReviewItem): InboxItemView {
   }
 }
 
-function worseProvenance(a: Note["provenance"], b: Note["provenance"]): Note["provenance"] {
-  const order: Note["provenance"][] = ["user", "agent", "untrusted"];
+function stagedWriteView(
+  item: StagedWrite,
+  base: Pick<InboxItemView, "id" | "created">,
+): InboxItemView {
+  return {
+    ...base,
+    kind: "staged",
+    title: item.target,
+    provenance: "untrusted",
+    detail: item.kind,
+  };
+}
+
+function worseProvenance(a: Provenance, b: Provenance): Provenance {
+  const order: Provenance[] = ["user", "agent", "untrusted"];
   return order.indexOf(a) >= order.indexOf(b) ? a : b;
 }

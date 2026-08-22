@@ -10,7 +10,7 @@ import {
   type SessionStore,
 } from "@keywork/engine";
 import { resolveVaultPath } from "@keywork/shared";
-import type { ArcCloseOutcome, ArcSummary, ArcsPort } from "@keywork/tui";
+import type { ArcCloseOutcome, ArcsPort } from "@keywork/tui";
 import type { SessionKey, WorkspaceMemory } from "./memory.ts";
 
 export interface ArcServiceOptions {
@@ -75,7 +75,6 @@ export function arcService(options: ArcServiceOptions): ArcService {
       registry: requireRegistry(),
       bindings,
       workspace: memory.store,
-      inbox: memory.inbox,
       ...(options.now !== undefined && { now: options.now }),
     });
   };
@@ -146,7 +145,8 @@ export function arcService(options: ArcServiceOptions): ArcService {
     searcher: (workspace, session, embeddings) => ({
       search: async (query, searchOptions) => {
         const found = registry();
-        const activeArc = bindings.bindingOf(resolveSession(session) ?? "");
+        const sessionId = resolveSession(session);
+        const activeArc = sessionId === undefined ? undefined : bindings.bindingOf(sessionId);
         if (found === undefined || activeArc === undefined) {
           return workspace.search(query, searchOptions);
         }
@@ -203,5 +203,3 @@ function recallOver(
 function resolveSession(session: SessionKey): string | undefined {
   return typeof session === "function" ? session() : session;
 }
-
-export type { ArcSummary };

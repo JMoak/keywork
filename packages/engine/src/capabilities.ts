@@ -1,3 +1,4 @@
+import { mostSpecificMatch } from "@keywork/shared";
 import type { Provider, ProviderRequest } from "./provider.ts";
 
 export type InputModality = "text" | "image";
@@ -30,7 +31,7 @@ export function declaredCapabilitiesFor(
   declarations: Readonly<Record<string, ModelCapabilityDeclaration>> | undefined,
   modelId: string | undefined,
 ): ModelCapabilities {
-  const declared = mostSpecificDeclaration(declarations, modelId);
+  const declared = mostSpecificMatch(declarations, modelId);
   return declared === undefined
     ? undeclaredCapabilities
     : {
@@ -76,23 +77,4 @@ function assertRequestWithinDeclarations(
 
 function requestCarriesImages(request: ProviderRequest): boolean {
   return request.messages.some((message) => message.parts.some((part) => part.type === "image"));
-}
-
-function mostSpecificDeclaration(
-  declarations: Readonly<Record<string, ModelCapabilityDeclaration>> | undefined,
-  modelId: string | undefined,
-): ModelCapabilityDeclaration | undefined {
-  if (declarations === undefined || modelId === undefined) return undefined;
-  return Object.entries(declarations)
-    .filter(([pattern]) => globMatches(pattern, modelId))
-    .sort(([a], [b]) => literalLength(b) - literalLength(a))[0]?.[1];
-}
-
-function globMatches(pattern: string, value: string): boolean {
-  const escaped = pattern.replace(/[/\\^$+?.()|[\]{}]/g, "\\$&").replaceAll("*", ".*");
-  return new RegExp(`^${escaped}$`).test(value);
-}
-
-function literalLength(pattern: string): number {
-  return pattern.replaceAll("*", "").length;
 }

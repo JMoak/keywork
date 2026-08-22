@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { entityTypeSchema, MemoryGraph, predicateSchema, predicates } from "./graph.ts";
-import { MemoryStore, type Note } from "./store.ts";
+import type { Note } from "./notes.ts";
+import { MemoryStore } from "./store.ts";
 
 const cleanups: string[] = [];
 

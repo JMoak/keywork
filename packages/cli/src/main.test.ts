@@ -99,6 +99,78 @@ describe("main(argv) usage contract", () => {
   });
 });
 
+describe("main(argv) dispatches one call per command", () => {
+  const table: [argv: string[], code: number, stream: "out" | "err", needle: string][] = [
+    [["trust"], 0, "out", "is now trusted"],
+    [["untrust"], 0, "out", "is now untrusted"],
+    [["workspace", "list"], 0, "out", "* opens next"],
+    [["workspace", "bogus"], 2, "err", 'keywork workspace: unknown subcommand "bogus"'],
+    [["link"], 1, "err", "usage: keywork link <dir>"],
+    [["doctor"], 0, "out", "keywork doctor"],
+    [["sessions"], 0, "out", "no sessions yet"],
+    [["panes"], 2, "err", "panes needs a terminal"],
+    [["chat"], 2, "err", "chat needs a terminal"],
+  ];
+
+  it.each(table)("%j exits %i", async (argv, code, stream, needle) => {
+    const result = await invoke(argv);
+    expect(result.code).toBe(code);
+    expect(result[stream].join("\n")).toContain(needle);
+  });
+
+  it("init reports a workspace that is already declared", async () => {
+    const cwd = await tempDir();
+    await mkdir(join(cwd, ".keywork"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "here" }));
+    const { code, out } = await invoke(["init"], { cwd });
+    expect(code).toBe(0);
+    expect(out.join("\n")).toContain("already set up");
+  });
+
+  it("chat in a terminal refuses without a provider and points at connect", async () => {
+    const { code, err } = await invoke(["chat"], { interactive: true });
+    expect(code).toBe(1);
+    expect(err.join("\n")).toContain("keywork connect");
+  });
+});
+
+describe("main(argv) composes inference only for the commands that need it", () => {
+  async function withPoisonedUserConfig<T>(body: () => Promise<T>): Promise<T> {
+    const configFile = join(home, ".keywork", "keywork.json");
+    await mkdir(join(home, ".keywork"), { recursive: true });
+    await writeFile(configFile, JSON.stringify({ permissions: { tools: { bash: "maybe" } } }));
+    try {
+      return await body();
+    } finally {
+      await rm(configFile, { force: true });
+    }
+  }
+
+  it("help, version, sessions, workspace, trust and doctor never load config or inference", async () => {
+    let composed = 0;
+    const seams: MainSeams = {
+      composeInference: (inputs) => {
+        composed += 1;
+        return composeInference(inputs);
+      },
+    };
+    await withPoisonedUserConfig(async () => {
+      for (const argv of [
+        ["--help"],
+        ["--version"],
+        ["sessions", "list"],
+        ["workspace"],
+        ["trust"],
+      ]) {
+        expect((await invoke(argv, seams)).code).toBe(0);
+      }
+      expect((await invoke(["doctor"], seams)).code).toBe(0);
+      expect(composed).toBe(0);
+      await expect(invoke(["run", "hi"], seams)).rejects.toThrow(/permissions/);
+    });
+  });
+});
+
 describe("main(argv) threads global flags to the subcommands", () => {
   it("sessions list --json prints JSON", async () => {
     const { code, out } = await invoke(["sessions", "list", "--json"]);

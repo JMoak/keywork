@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { markdownRowText, renderMarkdown } from "./markdown.ts";
+import { markdownBlocks, markdownRowText, renderMarkdown } from "./markdown.ts";
 import { pageMarks } from "./marks.ts";
+import { width } from "./width.ts";
 
 const tier0 = pageMarks({ glyphTier: 0, nerdFont: false });
 
@@ -92,6 +93,44 @@ describe("block markdown", () => {
 
   it("hard-splits words wider than the measure", () => {
     expect(texts("abcdefghij", 4, 60)).toEqual(["abcd", "efgh", "ij"]);
+  });
+
+  it("never overflows the measure when a long token abuts a preceding span", () => {
+    const cases: [string, string[]][] = [
+      ["`abcd`efghijkl", ["abcd", "efgh", "ijkl"]],
+      ["`abc`defghijkl", ["abcd", "efgh", "ijkl"]],
+      ["`ab`cd", ["abcd"]],
+      ["`abcd`ef", ["abcd", "ef"]],
+      ["**abcd**efghi", ["abcd", "efgh", "i"]],
+    ];
+    for (const [source, expected] of cases) {
+      const rows = texts(source, 4, 60);
+      expect(rows).toEqual(expected);
+      for (const row of rows) expect(width(row)).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it("measures CJK prose in display cells, two per character", () => {
+    expect(texts("我们在这里写字", 4, 40)).toEqual(["我们", "在这", "里写", "字"]);
+    expect(texts("ab 我们在", 5, 40)).toEqual(["ab 我", "们在"]);
+  });
+
+  it("hard-wraps fence rows by cells and places a glyph wider than the room alone", () => {
+    const rows = renderMarkdown("```\n我们在这\n```", 60, 6);
+    expect(rows.map(markdownRowText)).toEqual(["▎ ", "▎ 我们", "▎ 在这"]);
+    expect(texts("我", 1, 60)).toEqual(["我"]);
+  });
+
+  it("splits a source into independently renderable blocks, fences kept whole", () => {
+    expect(markdownBlocks("a\n\n```ts\nx\ny\n```\nb")).toEqual(["a", "", "```ts\nx\ny\n```", "b"]);
+    expect(markdownBlocks("```\nopen")).toEqual(["```\nopen"]);
+    expect(markdownBlocks("")).toEqual([""]);
+    const source = "# T\n- a\n```js\n1\n2\n```\ntail\n";
+    const whole = renderMarkdown(source, 20, 40).map(markdownRowText);
+    const blocks = markdownBlocks(source).flatMap((block) =>
+      renderMarkdown(block, 20, 40).map(markdownRowText),
+    );
+    expect(blocks).toEqual(whole);
   });
 
   it("keeps blank lines as breathing room", () => {

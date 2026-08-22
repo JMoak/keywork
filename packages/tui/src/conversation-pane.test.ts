@@ -91,10 +91,17 @@ describe("the lifecycle stamp", () => {
     });
     expect(titleOf(pane, true)).toContain("█ session-1");
 
-    modelOf(pane).pendingAsk?.resolve(false);
-    await decision;
-    modelOf(pane).pendingAsk = undefined;
+    pane.handleKey(parseChord("n"), undefined);
+    expect(await decision).toBe(false);
     expect(titleOf(pane, true)).not.toContain("█");
+  });
+
+  it("latches an unseen finish even when no frame was built while the turn ran", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
+    const pane = new ConversationPane("session-1", agent, () => {});
+    modelOf(pane).submitText("go");
+    await pane.settled();
+    expect(titleOf(pane, false)).toMatch(settledTitle("█ "));
   });
 
   it("holds finished-unseen until focus, then drains", async () => {
@@ -181,8 +188,7 @@ describe("the lifecycle stamp", () => {
     }
     expect(seen).toEqual(new Set(["█", "▓"]));
 
-    modelOf(pane).pendingAsk?.resolve(false);
-    modelOf(pane).pendingAsk = undefined;
+    pane.handleKey(parseChord("n"), undefined);
     expect(titleOf(pane, true)).toBe(" session-1 ");
   });
 });
@@ -229,7 +235,7 @@ describe("the masthead tile", () => {
       arguments: { path: "a.txt" },
     });
     expect(frame(pane, true, 36).join("\n")).toContain("[y] allow");
-    modelOf(pane).pendingAsk?.resolve(false);
+    pane.handleKey(parseChord("n"), undefined);
     return decision;
   });
 
@@ -269,6 +275,30 @@ describe("the masthead tile", () => {
     expect(titleOf(pane, true)).toMatch(/^ [.:+#] auth-retry-fix | auth-retry-fix · \. \d+ $/);
     const rows = frame(pane, true, 132);
     for (const row of rows) expect(row).toMatch(/^[\x20-\x7e▌›]*$/);
+  });
+});
+
+describe("viewport-aware keys", () => {
+  it("pages the transcript by the rows the last frame showed, not a stored guess", () => {
+    const pane = new ConversationPane("session-1", undefined, () => {});
+    const model = modelOf(pane);
+    model.feed.entries.length = 0;
+    for (let at = 1; at <= 60; at += 1) model.feed.entries.push({ kind: "info", text: `n ${at}` });
+    const rows = frameRows(
+      pane.view({ theme: keyworkNight, focused: true, width: 132, height: 12 }),
+    );
+    const shown = rows.filter((row) => /^\s*n \d+$/.test(row)).length;
+    expect(shown).toBeGreaterThan(0);
+    pane.handleKey(parseChord("pageup"), undefined);
+    expect(model.scrollBack).toBe(shown);
+  });
+
+  it("keeps the session identity on the model, reachable through the pane", () => {
+    const pane = new ConversationPane("session-1", undefined, () => {});
+    pane.sessionId = "s-42";
+    pane.arc = "auth";
+    expect(pane.describe()).toEqual({ kind: "conversation", sessionId: "s-42" });
+    expect(modelOf(pane).ledger.arc).toBe("auth");
   });
 });
 

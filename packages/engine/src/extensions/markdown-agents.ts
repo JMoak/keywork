@@ -3,11 +3,13 @@ import type { Tool } from "../tools.ts";
 import {
   definitionList,
   definitionString,
+  type ExtensionConventions,
   type ExtensionLoadFailure,
-  type LayeredDirs,
+  type LayerRoots,
   type LayerSource,
-  loadLayeredMarkdown,
+  loadLayered,
   type MarkdownDefinition,
+  markdownFilesIn,
 } from "./layers.ts";
 
 export interface AgentDefinition {
@@ -26,8 +28,8 @@ export interface AgentLoad {
   failures: ExtensionLoadFailure[];
 }
 
-export async function loadAgents(dirs: LayeredDirs): Promise<AgentLoad> {
-  const { items, failures } = await loadLayeredMarkdown(dirs, buildAgent);
+export async function loadAgents(roots: LayerRoots): Promise<AgentLoad> {
+  const { items, failures } = await loadLayered(roots, agentConventions, buildAgent);
   return { agents: items, failures };
 }
 
@@ -50,6 +52,11 @@ export function narrowedPermissions(
     return stricter(baseVerdict, override);
   };
 }
+
+const agentConventions: ExtensionConventions = {
+  dirs: [".keywork/agents"],
+  discover: markdownFilesIn,
+};
 
 const strictness: Record<ToolPermission, number> = { allow: 0, ask: 1, deny: 2 };
 

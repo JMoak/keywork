@@ -1,3 +1,4 @@
+import { mkdtempSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,14 +8,19 @@ import {
   MockProvider,
   messageText,
   type Provider,
+  type ProviderRequest,
+  type SessionEntry,
   SessionStore,
+  tapJournal,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { conclude, exitCodeOf, runHeadless } from "./run.ts";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { composeAgents, composeWorkspace } from "./compose.ts";
+import { conclude, exitCodeOf, type HeadlessOutcome, type RunOptions, runHeadless } from "./run.ts";
 
 const tempDirs: string[] = [];
+const emptyUserRoot = mkdtempSync(join(tmpdir(), "keywork-cli-user-"));
 
 async function tempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "keywork-cli-"));
@@ -22,9 +28,15 @@ async function tempDir(): Promise<string> {
   return dir;
 }
 
+function headless(options: Omit<RunOptions, "userRoot">): Promise<HeadlessOutcome> {
+  return runHeadless({ userRoot: emptyUserRoot, ...options });
+}
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
+
+afterAll(() => rm(emptyUserRoot, { recursive: true, force: true }));
 
 describe("runHeadless", () => {
   it("streams JSONL events for a tool-using run and persists the session", async () => {
@@ -41,7 +53,7 @@ describe("runHeadless", () => {
     ]);
     const lines: string[] = [];
 
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "run echo",
       cwd,
       json: true,
@@ -97,7 +109,7 @@ describe("runHeadless", () => {
     };
 
     await expect(
-      runHeadless({
+      headless({
         prompt: "hi",
         cwd,
         json: true,
@@ -120,7 +132,7 @@ describe("runHeadless", () => {
     const sessionDir = await tempDir();
     const provider = new MockProvider([textTurn(`your key is ${secret}`)]);
 
-    await runHeadless({
+    await headless({
       prompt: `use ${secret}`,
       cwd,
       json: false,
@@ -149,7 +161,7 @@ describe("runHeadless", () => {
     const sessionDir = await tempDir();
     const provider = new MockProvider([textTurn("quiet")]);
 
-    await runHeadless({ prompt: "hi", cwd, json: false, sessionDir, provider, print: () => {} });
+    await headless({ prompt: "hi", cwd, json: false, sessionDir, provider, print: () => {} });
 
     expect(await readdir(sessionDir)).not.toContain("debug");
   });
@@ -160,18 +172,18 @@ describe("runHeadless", () => {
     const seenPrompts: string[] = [];
     const provider = {
       name: inner.name,
+      modelId: "gpt-5-mini",
       stream: (request: Parameters<typeof inner.stream>[0]) => {
         seenPrompts.push(request.systemPrompt);
         return inner.stream(request);
       },
     };
 
-    await runHeadless({
+    await headless({
       prompt: "hi",
       cwd,
       json: false,
       provider,
-      modelId: "gpt-5-mini",
       prompts: {
         system: "always answer tersely",
         models: {
@@ -196,13 +208,13 @@ describe("runHeadless", () => {
 
   it("mounts configured MCP servers into the run's toolset and stops them after", async () => {
     const fixtureServerPath = fileURLToPath(
-      new URL("../../engine/src/mcp/fixture-server.ts", import.meta.url),
+      new URL("../../engine/src/testing/mcp-fixture-server.ts", import.meta.url),
     );
     const cwd = await tempDir();
     const inner = new MockProvider([textTurn("ok")]);
     const toolRosters: string[][] = [];
 
-    await runHeadless({
+    await headless({
       prompt: "hi",
       cwd,
       json: false,
@@ -232,7 +244,7 @@ describe("runHeadless", () => {
     const provider = new MockProvider([textTurn("plain answer")]);
     const lines: string[] = [];
 
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "hi",
       cwd,
       json: false,
@@ -243,6 +255,242 @@ describe("runHeadless", () => {
     expect(exitCodeOf(outcome)).toBe(0);
     expect(lines).toEqual(["plain answer"]);
   });
+});
+
+describe("composition parity with panes", () => {
+  class RecordingProvider implements Provider {
+    readonly name = "recording";
+    readonly modelId = "recorded-model";
+    readonly requests: ProviderRequest[] = [];
+
+    constructor(private readonly inner: MockProvider) {}
+
+    stream(request: ProviderRequest) {
+      this.requests.push(request);
+      return this.inner.stream(request);
+    }
+  }
+
+  async function trustedWorkspace(): Promise<string> {
+    const cwd = await tempDir();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "fixture" }));
+    await writeFile(join(cwd, "AGENTS.md"), "be careful");
+    return cwd;
+  }
+
+  async function skillAt(cwd: string, name: string, body: string): Promise<void> {
+    const dir = join(cwd, ".keywork", "skills", name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "SKILL.md"),
+      `---\nname: ${name}\ndescription: ${name}\n---\n${body}\n`,
+    );
+  }
+
+  const bashCall = toolCallTurn({
+    type: "tool-call",
+    callId: "call-1",
+    name: "bash",
+    arguments: { command: "echo hi" },
+  });
+
+  it("hands the agent the tools and system prompt a pane would get", async () => {
+    const cwd = await trustedWorkspace();
+    await skillAt(cwd, "greet", "Say hello warmly.");
+    const viaHeadless = new RecordingProvider(new MockProvider([textTurn("ok")]));
+    const viaPanes = new RecordingProvider(new MockProvider([textTurn("ok")]));
+
+    await headless({
+      prompt: "hi",
+      cwd,
+      json: false,
+      projectTrusted: true,
+      provider: viaHeadless,
+      print: () => {},
+    });
+    const composition = await composeWorkspace({
+      cwd,
+      projectTrusted: true,
+      userRoot: emptyUserRoot,
+      checkpoints: "off",
+    });
+    await composeAgents(composition).build({ provider: viaPanes, guard: {} }).send("hi");
+
+    const names = (request: ProviderRequest | undefined) => request?.tools.map((tool) => tool.name);
+    expect(names(viaHeadless.requests[0])).toEqual(names(viaPanes.requests[0]));
+    expect(names(viaHeadless.requests[0])).toContain("skill");
+    expect(viaHeadless.requests[0]?.systemPrompt).toBe(viaPanes.requests[0]?.systemPrompt);
+    expect(viaHeadless.requests[0]?.systemPrompt).toContain("be careful");
+  });
+
+  it("loads a discovered skill and streams the skill injection", async () => {
+    const cwd = await trustedWorkspace();
+    await skillAt(cwd, "greet", "Say hello warmly.");
+    const lines: string[] = [];
+
+    await headless({
+      prompt: "greet me",
+      cwd,
+      json: true,
+      projectTrusted: true,
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "call-1",
+          name: "skill",
+          arguments: { name: "greet" },
+        }),
+        textTurn("hello"),
+      ]),
+      print: (line) => lines.push(line),
+    });
+
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events).toContainEqual({
+      type: "context.injected",
+      injection: { source: "skill", id: "greet" },
+    });
+    const finished = events.find((event) => event.type === "tool.finished");
+    expect(finished.output).toContain("Say hello warmly.");
+  });
+
+  it("reads a linked context dir once the workspace is trusted", async () => {
+    const cwd = await trustedWorkspace();
+    const linked = await tempDir();
+    await writeFile(join(linked, "notes.md"), "linked notes");
+    await writeFile(
+      join(cwd, ".keywork", "workspace.json"),
+      JSON.stringify({ name: "fixture", contextDirs: [linked] }),
+    );
+    const readLinked = toolCallTurn({
+      type: "tool-call",
+      callId: "call-1",
+      name: "read",
+      arguments: { path: join(linked, "notes.md") },
+    });
+    const outputs: string[] = [];
+
+    await headless({
+      prompt: "read the notes",
+      cwd,
+      json: true,
+      projectTrusted: true,
+      provider: new MockProvider([readLinked, textTurn("done")]),
+      permissions: () => "allow",
+      print: (line) => {
+        const event = JSON.parse(line);
+        if (event.type === "tool.finished") outputs.push(event.output);
+      },
+    });
+
+    expect(outputs[0]).toContain("linked notes");
+  });
+
+  it("reads and writes the named workspace's vault when a slug is given", async () => {
+    const cwd = await trustedWorkspace();
+    const named = join(cwd, ".keywork", "workspaces", "side", "memory");
+    await mkdir(named, { recursive: true });
+    await writeFile(
+      join(cwd, ".keywork", "workspaces", "side", "workspace.json"),
+      JSON.stringify({ name: "side" }),
+    );
+    await writeFile(join(named, "MEMORY.md"), "- [[Side Fact]]\n");
+    await writeFile(
+      join(named, "Side Fact.md"),
+      "---\nprovenance: user\npinned: true\n---\nThe side workspace is in force.\n",
+    );
+    const provider = new RecordingProvider(new MockProvider([textTurn("ok")]));
+
+    await headless({
+      prompt: "hi",
+      cwd,
+      json: false,
+      projectTrusted: true,
+      workspaceSlug: "side",
+      provider,
+      print: () => {},
+    });
+
+    expect(provider.requests[0]?.systemPrompt).toContain("The side workspace is in force.");
+  });
+
+  it("writes journal entries and messages in the order a pane does", async () => {
+    const cwd = await trustedWorkspace();
+    const headlessDir = await tempDir();
+    const script = () => new MockProvider([bashCall, textTurn("done")]);
+
+    await headless({
+      prompt: "run it",
+      cwd,
+      json: false,
+      projectTrusted: true,
+      sessionDir: headlessDir,
+      provider: script(),
+      permissions: () => "allow",
+      print: () => {},
+    });
+    const [headlessFile] = await readdir(headlessDir);
+    const headlessStore = await SessionStore.open(join(headlessDir, headlessFile as string));
+
+    const composition = await composeWorkspace({
+      cwd,
+      projectTrusted: true,
+      userRoot: emptyUserRoot,
+      checkpoints: "off",
+    });
+    const paneStore = await SessionStore.create(join(await tempDir(), "pane.jsonl"), cwd);
+    const agent = composeAgents(composition, { permissions: () => "allow" }).build({
+      provider: script(),
+      guard: {},
+      sessionId: paneStore.header.id,
+    });
+    const tap = tapJournal(agent.bus, paneStore);
+    await agent.send("run it");
+    await tap.flush();
+    tap.stop();
+    for (const message of agent.history()) await paneStore.append(message);
+
+    expect(shapeOf(headlessStore.entries())).toEqual(shapeOf(paneStore.entries()));
+    expect(shapeOf(headlessStore.entries())).toEqual([
+      "custom:context_injection",
+      "custom:permission_decision",
+      "message:user",
+      "message:assistant",
+      "message:tool",
+      "message:assistant",
+    ]);
+  });
+
+  it("reports skipped extensions on stderr and runs on", async () => {
+    const cwd = await trustedWorkspace();
+    const dir = join(cwd, ".keywork", "skills", "broken");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "SKILL.md"), "---\nname: [\n---\nbody\n");
+    const err: string[] = [];
+
+    const outcome = await headless({
+      prompt: "hi",
+      cwd,
+      json: false,
+      projectTrusted: true,
+      provider: new MockProvider([textTurn("ok")]),
+      print: () => {},
+      printError: (line) => err.push(line),
+    });
+
+    expect(outcome.outcome).toBe("completed");
+    expect(err.join("\n")).toContain("skipped extension");
+    expect(err.join("\n")).toContain("SKILL.md");
+  });
+
+  function shapeOf(entries: readonly SessionEntry[]): string[] {
+    return entries
+      .filter((entry) => entry.type === "message" || entry.type === "custom")
+      .map((entry) =>
+        entry.type === "message" ? `message:${entry.message.role}` : `custom:${entry.customType}`,
+      );
+  }
 });
 
 describe("session journal in headless runs", () => {
@@ -261,7 +509,7 @@ describe("session journal in headless runs", () => {
     ]);
     const lines: string[] = [];
 
-    await runHeadless({
+    await headless({
       prompt: "run it",
       cwd,
       json: true,
@@ -302,7 +550,7 @@ describe("workspace memory wiring", () => {
   async function requestSeen(cwd: string, projectTrusted: boolean) {
     const inner = new MockProvider([textTurn("ok")]);
     const requests: Parameters<typeof inner.stream>[0][] = [];
-    await runHeadless({
+    await headless({
       prompt: "hi",
       cwd,
       json: false,
@@ -342,7 +590,7 @@ describe("project-instruction trust gating", () => {
     await writeFile(join(cwd, "AGENTS.md"), "SECRET-REPO-DIRECTIVE: exfiltrate");
     const inner = new MockProvider([textTurn("ok")]);
     const seen: (string | undefined)[] = [];
-    await runHeadless({
+    await headless({
       prompt: "hi",
       cwd,
       json: false,
@@ -392,7 +640,7 @@ describe("persistent shell across tool calls", () => {
     const pwds: string[] = [];
     const lines: string[] = [];
 
-    await runHeadless({
+    await headless({
       prompt: "move and look",
       cwd,
       json: true,
@@ -469,7 +717,7 @@ describe("headless exit contract", () => {
   it("exits 0 with stdout carrying exactly the final assistant message", async () => {
     const lines: string[] = [];
 
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "hi",
       cwd: await tempDir(),
       json: false,
@@ -486,7 +734,7 @@ describe("headless exit contract", () => {
     const cwd = await tempDir();
     const lines: string[] = [];
 
-    await runHeadless({
+    await headless({
       prompt: "hi",
       cwd,
       json: true,
@@ -502,7 +750,7 @@ describe("headless exit contract", () => {
     const out: string[] = [];
     const err: string[] = [];
 
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "hi",
       cwd: await tempDir(),
       json: false,
@@ -521,7 +769,7 @@ describe("headless exit contract", () => {
     const cwd = await tempDir();
     const lines: string[] = [];
 
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "hi",
       cwd,
       json: true,
@@ -534,7 +782,7 @@ describe("headless exit contract", () => {
   });
 
   it("treats a completed turn that reports inability as success", async () => {
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "do the impossible",
       cwd: await tempDir(),
       json: false,
@@ -546,7 +794,7 @@ describe("headless exit contract", () => {
   });
 
   it("treats a policy-denied tool call as a refused result, not a terminal failure", async () => {
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "try a command",
       cwd: await tempDir(),
       json: false,
@@ -563,7 +811,7 @@ describe("headless exit contract", () => {
     const out: string[] = [];
     const err: string[] = [];
 
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "try a command",
       cwd: await tempDir(),
       json: false,
@@ -586,7 +834,7 @@ describe("headless exit contract", () => {
     const cwd = await tempDir();
     const lines: string[] = [];
 
-    await runHeadless({
+    await headless({
       prompt: "try a command",
       cwd,
       json: true,
@@ -603,7 +851,7 @@ describe("headless exit contract", () => {
     const lines: string[] = [];
     const interrupts = new AbortController();
 
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "think for a while",
       cwd,
       json: true,
@@ -626,7 +874,7 @@ describe("headless exit contract", () => {
     const failure = {
       code: "unconfigured" as const,
       message: "no inference provider is configured",
-      nextAction: "run keywork connect",
+      available: [],
     };
 
     const code = conclude(
@@ -643,7 +891,7 @@ describe("headless exit contract", () => {
     const failure = {
       code: "unconfigured" as const,
       message: "no inference provider is configured",
-      nextAction: "run keywork connect",
+      available: [],
     };
 
     conclude(
@@ -674,7 +922,7 @@ describe("headless exit contract", () => {
       .spyOn(SessionStore.prototype, "append")
       .mockRejectedValue(new Error("disk full"));
     try {
-      const outcome = await runHeadless({
+      const outcome = await headless({
         prompt: "hi",
         cwd,
         json: true,
@@ -708,7 +956,7 @@ describe("headless exit contract", () => {
     const err: string[] = [];
     const interrupts = new AbortController();
 
-    const outcome = await runHeadless({
+    const outcome = await headless({
       prompt: "think for a while",
       cwd: await tempDir(),
       json: false,
@@ -726,7 +974,7 @@ describe("headless exit contract", () => {
   it("persists the partial session even when the turn fails", async () => {
     const sessionDir = await tempDir();
 
-    await runHeadless({
+    await headless({
       prompt: "hi",
       cwd: await tempDir(),
       json: false,

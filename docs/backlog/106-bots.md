@@ -1,22 +1,22 @@
-# Bots — Proposal Overlay (2026-08-21, awaiting Jordan's decisions)
+# Bots: Proposal Overlay (2026-08-21, awaiting Jordan's decisions)
 
-> **Discussion capture + proposed overlay.** Partly decided: Jordan's first-round answers
-> (2026-08-21, recorded inline as **⟨J⟩**) settle the entity merge and the scope layout;
-> the rest stays recommendation (PD21–PD24, written in the binding voice so they can be
-> adopted by striking one word) with open questions for Jordan, now including the
-> process-discipline discussion (Q-B8). Once adopted this file wins over
-> [`105`](105-inference-resolution.md) and below where it speaks; until then it builds
-> nothing. Every claim about landed code cites the tree as of 2026-08-21.
+> **Status: proposal, not adopted; it builds nothing until Jordan adopts it.** Decided so far
+> (2026-08-21, recorded inline as **⟨J⟩**): the entity merge (Q-B1, PD21.1) and the scope
+> layout (PD21.2). The rest (PD21.3–5, PD22–PD24) is recommendation written in the binding
+> voice so it can be adopted by striking one word; Q-B2–Q-B8 are open, and Q-B8 (process
+> discipline) gates PD22/PD23. Once adopted this file wins over
+> [`105`](105-inference-resolution.md) and below where it speaks. Claims about landed code
+> cite the tree as of 2026-08-21.
 >
 > **Standing guardrails (unchanged):** Anthropic is API-key / Agent-SDK only, nothing before
-> workstream G; Pi/OpenCode are MIT — adapt with attribution in `NOTICE`; Crush is FSL —
+> workstream G; Pi/OpenCode are MIT, adapt with attribution in `NOTICE`; Crush is FSL,
 > never a source. The user commits; agents never `git commit`/`git push`.
 
 ## The idea (Jordan, 2026-08-21)
 
 A **bot** is a named persona the user creates (`/new-bot`): a tiny optional system prompt
 and a name (given, or self-chosen). Sessions can be started *as* a bot
-(`/new-bot-session [name]`, picker when no name), so bots group session history — and,
+(`/new-bot-session [name]`, picker when no name), so bots group session history; and,
 the real point, each bot is an inner-project entity with its own learning arc and its own
 distillation methodology fitted to what it does. Grok Bot (xAI, beta 2026-08-11) is the
 named influence: persistent "teammates" that remember conversations, learn how you like
@@ -35,12 +35,12 @@ keywork already has four organizing axes, each with a landed kernel:
 
 Nothing answers **who**. The closest thing is D6 "agents as markdown"
 (`engine/src/extensions/markdown-agents.ts`): a name, an optional `model:`, a tool
-allowlist, narrow-never-widen permission overrides, and a prompt body — switched per pane
+allowlist, narrow-never-widen permission overrides, and a prompt body, switched per pane
 with `/agent-<name>` (`tui/src/extension-commands.ts:63`). It is a *role*, stateless by
 construction: no memory, no history, no identity on screen, and it is overloaded on the
 word "agent" (the `Agent` class, Agent mode, sub-agents). A bot is exactly that role made
 persistent: **bot = identity + definition + durable memory layer + session grouping +
-learning policy.** That is one new axis, not a new system — it composes the arc kernel's
+learning policy.** That is one new axis, not a new system: it composes the arc kernel's
 shapes (registry, bindings, boosted recall stratum, airlock door) and D6's composition
 seam (`cli/src/compose.ts` `buildAgent`: `spec.definition` → `restrictTools` +
 `narrowedPermissions` + prompt swap).
@@ -57,9 +57,9 @@ The clean mental model, one line each:
 **Strong, and it fits.** The memory ladder has a hole shaped exactly like this: session →
 arc → workspace → user global is all *place and time*; "how Jordan likes reviews done" or
 "this persona's routines" has nowhere to live except user-global (too flat, rare/explicit
-by J-D1) or the workspace garden (wrong scope — it's about the craft, not the repo). A bot
+by J-D1) or the workspace garden (wrong scope; it's about the craft, not the repo). A bot
 layer is the *who* rung. It also gives Grok-style "learns how you like things done" a
-home that is provenance-gated, readable, and one-key revertable — which Grok's opaque
+home that is provenance-gated, readable, and one-key revertable, which Grok's opaque
 cloud state is not.
 
 **Three places the concept could go wrong, and the recommended guard for each:**
@@ -68,11 +68,11 @@ cloud state is not.
    and have to learn the difference. Recommend **bots absorb agents** (PD21): the D6 file
    format stays (OpenCode lift, `NOTICE` unchanged), the *name* and the *directory* change,
    and a bot with `learning: off` is byte-identical to today's agent. Pre-release, zero
-   migration — the arc/task-group precedent.
+   migration, the arc/task-group precedent.
 2. **A fifth door on the inbox.** The bot's distillation must not become a new ritual.
    Recommend it rides the existing session-end door (P3's door 1/2) with bot-layer items
-   tagged by the bot's mark, plus a bot-scoped Gardener micro-sweep — J7 kernel, budget
-   capped, proposals only. The arc airlock stays the only extra door.
+   tagged by the bot's mark, plus a bot-scoped Gardener micro-sweep (J7 kernel, budget
+   capped, proposals only). The arc airlock stays the only extra door.
 3. **Scope bleed.** A user-scope bot used across workspaces could ferry workspace facts
    between repos through its own layer. Recommend the **content rule** (PD22): bot memory
    is about the bot's craft and the user's preferences, never about the code; workspace
@@ -99,8 +99,8 @@ landed or specced:
   (project-scope bots ride the trusted-clone rules, D6 precedent: untrusted repo
   contributes zero).
 - **Learning you can audit.** Every bot-layer line carries provenance (J-D4), untrusted
-  origins are staged by construction, and the bot's self-improvement proposals — to its
-  own instructions, to its skills — are inbox proposals against a protected-core file,
+  origins are staged by construction, and the bot's self-improvement proposals (to its
+  own instructions, to its skills) are inbox proposals against a protected-core file,
   never silent edits. "Routines" are J10 self-healing skills, versioned by reality.
 - **Bots × arcs × panes.** Two bots on one arc in two tiles; the arc's delivery record
   credits contributing bots; `groupCosts` (landed for arcs, FR4.12) answers "what does my
@@ -114,7 +114,7 @@ daemon (95 non-goals); a bot is a persistent *identity*, not a persistent *compu
 Headless `keywork run --bot <slug>` is the CI/scripting door today; P2's server shape is
 where a hosted bot run would live later.
 
-## PD21 — The entity (items 1–2 decided by Jordan 2026-08-21; 3–5 proposed)
+## PD21: The entity (items 1–2 decided by Jordan 2026-08-21; 3–5 proposed)
 
 1. **Bots absorb D6 agents.** ⟨J⟩ *"join/merge the persona concepts with bots as the
    lead."* One user-facing persona concept, named **bot**. The
@@ -122,7 +122,7 @@ where a hosted bot run would live later.
    renames `AgentDefinition` → `BotDefinition`; `/agent-<name>` / `agent-none` become
    `/bot …`. "Agent" keeps meaning the loop (`Agent` class), Agent mode, and sub-agents.
 2. **Layout: two spaces, project is the default.** ⟨J⟩ *"like mcp configurations:
-   a global space for definition, and a project space — project/workspace is the default,
+   a global space for definition, and a project space; project/workspace is the default,
    global is there for users who are interested."* Project scope
    `.keywork/bots/<slug>/bot.md` (+ `skills/` beside it, per J-D5.4 skills stay outside
    the vault) is where `/bot new` writes unless the user picks global; user scope
@@ -130,7 +130,7 @@ where a hosted bot run would live later.
    in the creation flow). Layered load through the landed `LayeredDirs` walk (built-in >
    project > user, the commands/agents/skills precedent), untrusted repo contributes zero
    bots. The bot's **memory** lives inside the vault of the scope it is declared in:
-   `<vault>/bots/<slug>/` with its own `MOC.md` and daily logs — mirrors `arcs/<slug>/`
+   `<vault>/bots/<slug>/` with its own `MOC.md` and daily logs, mirroring `arcs/<slug>/`
    exactly (R1: the MOC note is the bot's graph entity; bot-authored notes anywhere carry
    `learned_by: "[[bots/<slug>/MOC]]"`). A project bot is therefore git-able and
    team-shared with its memory; a global bot follows the user with its memory (Q-B3's
@@ -141,15 +141,15 @@ where a hosted bot run would live later.
    narrow surfaces.
 4. **Binding.** A session binds to at most one bot; binding and changes are session
    entries (E5's rule); forks and regular splits inherit (PD13 mirror); mid-session
-   switch keeps today's `/agent` behavior — agent rebuild, refused mid-turn, recorded.
+   switch keeps today's `/agent` behavior: agent rebuild, refused mid-turn, recorded.
    Sessions bound to no bot run the default persona exactly as today.
 5. **Definition frontmatter** (schema-validated, every key `.describe()`-justified):
    `description`, `model` (a **session selection seed** applied at bind as an ordinary
-   `model_change` — IR-07 rank 2, never an override that fights `/model`; CD-04 stands),
+   `model_change`, IR-07 rank 2, never an override that fights `/model`; CD-04 stands),
    `tools` allowlist, `allow/ask/deny` narrowings (never widen, D6 rule), `sigil`,
    `learning` (PD23). No other keys.
 
-## PD22 — The bot layer on the ladder (proposed)
+## PD22: The bot layer on the ladder (proposed)
 
 The funding ladder gains a *who* stratum beside the arc rung, not above it:
 
@@ -158,19 +158,19 @@ session ledger ─► { arc layer · bot layer } ─► workspace vault ─► u
 ```
 
 1. **Content rule.** Arc and workspace layers hold knowledge about the work; the bot layer
-   holds knowledge about the craft — how this persona does its job, preferences it has
+   holds knowledge about the craft: how this persona does its job, preferences it has
    learned about the user, its routines, what it tried and abandoned. The flush prompt
    gains a bot clause ("what did you learn about doing this job / how the user likes it
    done"); a bot learning a workspace fact writes it to the workspace or active arc layer
    through the same write path with the same provenance, taint, staging, and redaction
-   rules — per line, exactly as at workspace scope.
+   rules, per line, exactly as at workspace scope.
 2. **Recall: adds, never hides.** The active bot's layer is a boosted stratum atop
    workspace + arc + user scope (the arc rule, `ArcRecall` composition reused); other
    bots' layers are excluded from ambient recall but explicitly searchable. J13 citation
    events carry the layer, so "is the bot's memory actually used" is measured, not hoped.
 3. **Bootstrap.** The bot MOC transcludes in its own adaptive slice after the arc slice
    (J-D8 tunables; absolute readout in `/policy`). Unbound sessions: zero cost.
-4. **Not a funnel stage.** Bot-layer notes do not distill upward by default — they are
+4. **Not a funnel stage.** Bot-layer notes do not distill upward by default; they are
    about the bot. The Gardener's bot-scoped micro-sweep (J7 kernel; session end; budget
    capped) merges/supersedes within the layer and proposes to the one inbox. Cross-bot
    meta-distillation is explicitly out of scope until real bot layers exist (J24's
@@ -178,7 +178,7 @@ session ledger ─► { arc layer · bot layer } ─► workspace vault ─► u
 5. **The digest is the existing door.** Bot-layer staged items surface in the session-end
    digest (P3 door 1/2) tagged with the bot's sigil. No new door, no new counter.
 
-## PD23 — The learning policy (proposed)
+## PD23: The learning policy (proposed)
 
 One frontmatter key, named cumulative levels, omakase default:
 
@@ -189,28 +189,28 @@ One frontmatter key, named cumulative levels, omakase default:
 | `skills` | J10 self-healing + skill genesis scoped to `bots/<slug>/skills/` | "routines", versioned by reality; genesis gates from 98's idea 11 hold (≥2 recurrences, one proposal per pattern ever) |
 | `self` | proposals against the bot's own `bot.md` | protected core: the bot may only ever *propose* a change to its instructions, inbox-only, one-key apply/decline; never a direct write |
 
-Rules beneath every level: J-D6 — a bot can never widen permissions (D6's
-narrow-never-widen holds at every level); J-D7 — none of this touches tool trust; the
-simplicity escape hatch — if `self` proves noisy in daily use, drop the level rather than
+Rules beneath every level: J-D6, a bot can never widen permissions (D6's
+narrow-never-widen holds at every level); J-D7, none of this touches tool trust; the
+simplicity escape hatch: if `self` proves noisy in daily use, drop the level rather than
 tune it. Per-bot model roles (J-D8 `flush`/`gardener` per bot) are deliberately **not**
 offered; IR-14's shared resolver handles auxiliary inference and a future named-role
 extension would cover bots without a bot-specific knob.
 
-## PD24 — Surfaces & grammar (proposed)
+## PD24: Surfaces & grammar (proposed)
 
 1. **Commands** (replacing the sketch's `/new-bot` + `/new-bot-session` with keywork's
    existing verb grammar):
-   - `/bot` — picker overlay (preset-picker precedent): existing bots (MRU, sigil, name,
+   - `/bot`: picker overlay (preset-picker precedent): existing bots (MRU, sigil, name,
      description, last used, session count) + **new bot**. Enter opens a new session pane
      bound to the chosen bot.
-   - `/bot <slug>` — open a new bound session pane directly (the `/new-bot-session`
+   - `/bot <slug>`: open a new bound session pane directly (the `/new-bot-session`
      verb).
-   - `/bot new [name]` — the creation flow: one prompt for purpose (optional), one for
+   - `/bot new [name]`: the creation flow, one prompt for purpose (optional), one for
      name (optional). No name ⇒ the titler role proposes a slug from the purpose line
      (PD20 cheap-call path; `kebabTitle` normalization; untrusted-text handling); the user
      accepts or edits. Writes `bot.md`; memory materializes lazily on first write (PD11
      precedent).
-   - `/bot none` — unbind the focused session (mid-session rebuild rules apply).
+   - `/bot none`: unbind the focused session (mid-session rebuild rules apply).
    - CLI: `keywork bot list|new|rm`, `keywork run --bot <slug>` (headless persona).
    - Palette rows and the FR3 tray render from the same primitives; `jump: true` rows for
      bots join the `ctrl+p` go overlay alongside sessions/arcs.
@@ -221,14 +221,14 @@ extension would cover bots without a bot-specific knob.
    on bot-layer items in the memory pane and digest. One clarification line lands in
    `design-language.md`: *bot identity is carried by sigil and name; hue stays arc's.*
 3. **Grouping.** The sessions overview gains **group by: none · arc · bot** (one pane,
-   one toggle) — recommended over a separate bots node so FR2's node family does not grow
+   one toggle), recommended over a separate bots node so FR2's node family does not grow
    a fourth sibling for a view that is a grouping of the first (Q-B2).
 4. **Cost and return.** `groupCosts` (landed for arcs) keyed by bot: per-bot cost on the
    picker row and `/cost`. On `/bot <slug>`, the bot's briefing opens with a "since you
-   last used me" delta over its layer (J23 pattern) — the payoff moment, spec-first like
+   last used me" delta over its layer (J23 pattern): the payoff moment, spec-first like
    J21 (Q-B6).
 
-## Process discipline (open — Jordan, 2026-08-21)
+## Process discipline (open; Jordan, 2026-08-21)
 
 ⟨J⟩ *"We need to ensure these processes are next level cleanly defined and effective and
 not fluffy if we have this many. There's a better path we may need to discuss."* Then,
@@ -236,7 +236,7 @@ on the first cut of this section: *"lets simplify, 5 is like a lot."*
 
 Memory does two things: it takes knowledge in and gives it back. Two verbs; everything
 with a name today is a stage of one of them. ⟨J⟩ *"can we alias them for intuitiveness?"*
-— proposed user-facing pair: **learn** (in) and **recall** (out). You teach, it learns
+Proposed user-facing pair: **learn** (in) and **recall** (out). You teach, it learns
 (95's empty-state line "keywork remembers what you teach it" already says so); it recalls
 (PD12's Recall mode already owns the word, so no second concept). "remember" stays the
 umbrella in prose, never a process label. On surfaces: `/learn` stages something now,
@@ -254,9 +254,9 @@ That is the drift Jordan is pointing at: layers growing their own *processes* wh
 should only own *policy*.
 
 **Candidate (for discussion, not adopted):** every layer (session · arc · bot · workspace ·
-user) learns and recalls the same way; the only per-layer thing is a small policy row —
-what it remembers, when it cures, where it promotes, which inbox door; what it recalls
-and how big its bootstrap slice is — schema-validated per D9, readable in `/policy`. A
+user) learns and recalls the same way; the only per-layer thing is a small policy row
+(what it remembers, when it cures, where it promotes, which inbox door; what it recalls
+and how big its bootstrap slice is), schema-validated per D9, readable in `/policy`. A
 bot's "distillation methodology" is then its policy row, `learning:` is a preset over
 that row, and no bot-specific process names exist. The landed arc code already has the
 shape in miniature (arc store = `MemoryStore` over a sub-vault, arc recall = composition
@@ -280,7 +280,7 @@ paragraph; PD22/PD23 wait on the outcome (Q-B8).
   FR2's family?
 - **Q-B3** (narrowed 2026-08-21) Scope layout is decided (PD21.2: project default,
   global opt-in). Remaining: does a *global* bot's memory live once in the user vault and
-  follow the user (recommended — that is what "interested users" want from a global bot),
+  follow the user (recommended; that is what "interested users" want from a global bot),
   or partition per workspace? The content rule applies either way.
 - **Q-B4** Mid-session bot switch: keep D6's rebuild-and-record behavior (recommended), or
   forbid and require a new session so grouping stays unambiguous?
@@ -295,7 +295,7 @@ paragraph; PD22/PD23 wait on the outcome (Q-B8).
 
 ## Tasks (sized; IDs continue existing schemes)
 
-### D16 (2pt) — Bot definitions absorb agents (implements PD21.1/.2/.5)
+### D16 (2pt): Bot definitions absorb agents (implements PD21.1/.2/.5)
 `bots/<slug>/bot.md` layered load (`LayeredDirs`, built-in > project > user, untrusted
 zero); `BotDefinition` (rename + `sigil` + `learning` + `model`-as-seed), schema with
 `.describe()` per key; `buildAgent` composes from a bot; `/agent-*` → `/bot` command
@@ -308,7 +308,7 @@ zero bots; `model:` binds as an ordinary `model_change` at session bind and a la
 registry (command-coverage test updated).
 **Strategy:** `OWN` over the D6 lift (format unchanged; `NOTICE` untouched).
 
-### B9 (1pt) — Binding entries (closes J17's deferred persistence; serves arcs and bots)
+### B9 (1pt): Binding entries (closes J17's deferred persistence; serves arcs and bots)
 One replayable `custom` entry (`customType: "keywork.binding"`, `{arc?, bot?}`) appended
 on bind/unbind/switch; replay restores `ArcBindings`/`BotBindings`; forks and clones
 inherit; Pi-format fixture stays green (custom entries are Pi vocabulary).
@@ -316,7 +316,7 @@ inherit; Pi-format fixture stays green (custom entries are Pi vocabulary).
 unchanged; unbound sessions write no binding entry.
 **Strategy:** `LIFT:pi` custom-entry contract (already in `NOTICE`).
 
-### J26 (3pt) — Bot memory layer (implements PD22)
+### J26 (3pt): Bot memory layer (implements PD22)
 `BotRegistry` (mirror of `ArcRegistry`: slug, MOC-as-entity, lazy materialization, status),
 `botStore`, `BotRecall` boosted stratum composed over the search API (adds-never-hides;
 other bots excluded ambient, explicit search allowed), bootstrap slice, flush bot clause,
@@ -327,30 +327,30 @@ searchable; bootstrap respects the split budget; a workspace fact written by a b
 the workspace/arc layer, not the bot layer (flush fixture); untrusted vault inert.
 **Strategy:** `OWN` over the J17 shapes; rides landed J3/J4/J6/J13 seams.
 
-### J27 (2pt) — Learning policy (implements PD23)
+### J27 (2pt): Learning policy (implements PD23)
 The `learning` levels: `notes` (session-end digest tagging + bot-scoped Gardener
 micro-sweep, budget capped, proposals only), `skills` (J10 hooks scoped to the bot's
 `skills/` dir; genesis gates from 98 idea 11), `self` (instruction-change proposals against
 `bot.md` through the one inbox; protected-core: direct write provably impossible at every
 level). Policy readout in `/policy`.
-**Accept:** per-level fixture — `off` writes nothing anywhere; `notes` digest lists the
+**Accept:** per-level fixture: `off` writes nothing anywhere; `notes` digest lists the
 bot's staged items with its sigil and no new door appears; `skills` self-patches a stale
 bot skill and never touches a human-authored skill; `self` yields exactly one inbox
 proposal per distinct change and `bot.md` is byte-identical until the user applies; sweep
 cost stays under cap.
 **Strategy:** `OWN`; composes J7/J8/J10/J11/P3 machinery. After J26 (+ J10 for `skills`).
 
-### C67 (2pt) — `/bot` surfaces (implements PD24.1)
+### C67 (2pt): `/bot` surfaces (implements PD24.1)
 Picker overlay, `/bot <slug>` / `new` / `none`, the creation flow (purpose · name · scope
 row defaulting to project, `--global` opt-in) with self-naming via the titler role, split/fork inheritance, mid-session switch notices, `keywork bot` CLI, palette
 + tray rows, `jump: true` rows in the go overlay.
-**Accept:** probe workflows — create (named and self-named; project default, global
+**Accept:** probe workflows: create (named and self-named; project default, global
 opt-in writes `~/.keywork/bots/`) → open → split inherits →
 switch refused mid-turn → `none` unbinds; zero-state picker is a calm invitation; hostile
 self-name renders inert; e2e capture of the picker in both themes + `NO_COLOR`.
 **Strategy:** `OWN`. After D16 + B9.
 
-### C68 (2pt) — Bot identity across surfaces (implements PD24.2–.4)
+### C68 (2pt): Bot identity across surfaces (implements PD24.2–.4)
 Sigil + name in the PD19 title bar detail zone with the width-pressure shedding order,
 sessions-overview group-by toggle (none · arc · bot), bot tag on bot-layer items in the
 memory pane and digest, per-bot `groupCosts` on picker rows and `/cost`, the
@@ -373,10 +373,10 @@ needs only landed machinery; C67 is the first user-visible moment and can ship w
 
 ## The experience
 
-`/bot new`. "what's this bot for?" — *reviews my PRs the way I would, terse, hunts for
-missing tests.* "name?" — enter. It proposes `test-hawk`; enter again. A new pane opens,
+`/bot new`. "what's this bot for?" *Reviews my PRs the way I would, terse, hunts for
+missing tests.* "name?" Enter. It proposes `test-hawk`; enter again. A new pane opens,
 title bar reads `ᴛ test-hawk`, the sessions node shows a new group. You work. At the end
-the digest says "test-hawk wants to remember 2 things" — both about how you review, not
+the digest says "test-hawk wants to remember 2 things", both about how you review, not
 about the repo. Next week `/bot test-hawk` opens with "since you last used me: 2 notes,
 1 skill patched" and gets to work already knowing you hate snapshot tests. Open
 `.keywork/memory/bots/test-hawk/` in Obsidian: it's a vault. Delete it in anger: the bot
@@ -384,11 +384,11 @@ forgets, nothing else moves.
 
 ## Supersession record (to apply on adoption)
 
-- 40/D6 "Agents as markdown" — **absorbed by PD21**; the format lift stands, the name and
+- 40/D6 "Agents as markdown": **absorbed by PD21**; the format lift stands, the name and
   directory change; `/agent-*` commands retired for `/bot`.
-- 98/J17's deferred "session-entry binding persistence" — **delivered by B9** for arcs and
+- 98/J17's deferred "session-entry binding persistence": **delivered by B9** for arcs and
   bots together.
-- `design-language.md` chroma rules — **one clarification added on adoption**: bot
+- `design-language.md` chroma rules: **one clarification added on adoption**: bot
   identity is typographic (sigil + name); hue remains arc/pane identity only.
-- `docs/modes.md` ⟨PR-1⟩ ("mode is orthogonal to D6 agents") — **reads unchanged with
+- `docs/modes.md` ⟨PR-1⟩ ("mode is orthogonal to D6 agents"): **reads unchanged with
   "bot" for "agent"**; the composition law (preset ∘ bot narrowing ∘ mode narrowing) holds.

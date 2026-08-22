@@ -1,3 +1,5 @@
+import { ellipsis, segments, take, width } from "./width.ts";
+
 export const tailRowLimit = 3;
 
 const densityRamp = ["░", "▒", "▓", "█"] as const;
@@ -50,14 +52,23 @@ export class TailFollow {
   }
 }
 
-export function elideMiddle(line: string, width: number): string {
-  const points = Array.from(line);
-  if (points.length <= width) return line;
-  if (width <= 1) return "…";
-  const kept = width - 1;
-  const head = Math.ceil(kept / 2);
-  const tail = kept - head;
-  return `${points.slice(0, head).join("")}…${tail === 0 ? "" : points.slice(-tail).join("")}`;
+export function elideMiddle(line: string, cells: number): string {
+  if (width(line) <= cells) return line;
+  if (cells <= 1) return ellipsis;
+  const kept = cells - 1;
+  const headCells = Math.ceil(kept / 2);
+  return `${take(line, headCells)}${ellipsis}${takeEnd(line, kept - headCells)}`;
+}
+
+function takeEnd(line: string, cells: number): string {
+  let used = 0;
+  let taken = "";
+  for (const segment of segments(line).reverse()) {
+    if (used + segment.width > cells) break;
+    taken = segment.text + taken;
+    used += segment.width;
+  }
+  return taken;
 }
 
 function isControl(character: string): boolean {

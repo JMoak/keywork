@@ -11,24 +11,14 @@ export function toolScope(cwd: string, linkedDirs: readonly string[] = []): Tool
   return { cwd: base, roots: dedupe([base, ...linkedDirs.map((dir) => resolve(dir))]) };
 }
 
-export function confinedPath(scope: string | ToolScope, path: string): string {
-  const { cwd, roots } = normalizeScope(scope);
-  const target = resolve(cwd, path);
-  if (scopeHolds(roots, target)) return target;
-  throw new Error(escapeMessage(path, roots));
+export function confinedPath(scope: ToolScope, path: string): string {
+  const target = resolve(scope.cwd, path);
+  if (scopeHolds(scope.roots, target)) return target;
+  throw new Error(escapeMessage(path, scope.roots));
 }
 
-export function scopeContains(scope: string | ToolScope, path: string): boolean {
-  const { cwd, roots } = normalizeScope(scope);
-  return scopeHolds(roots, resolve(cwd, path));
-}
-
-export function scopeCwd(scope: string | ToolScope): string {
-  return normalizeScope(scope).cwd;
-}
-
-function normalizeScope(scope: string | ToolScope): ToolScope {
-  return typeof scope === "string" ? toolScope(scope) : scope;
+export function scopeContains(scope: ToolScope, path: string): boolean {
+  return scopeHolds(scope.roots, resolve(scope.cwd, path));
 }
 
 function scopeHolds(roots: readonly string[], target: string): boolean {

@@ -2,28 +2,28 @@
 
 > Research dossier for **keywork**, added 2026-08-10 during workstream-J planning. Lore is
 > a shared knowledge archive for teams working with AI ("centaurs"), by a colleague of
-> Jordan's — a dockerized MCP service where humans and models jointly build collective
+> Jordan's: a dockerized MCP service where humans and models jointly build collective
 > memory. Python, hexagonal (5 layers), Postgres/pgvector in production, SQLite/sqlite-vec
 > in dev, LiteLLM inference, OIDC identity.
 
 > **LICENSING**
-> **MIT** — adaptable with attribution in `NOTICE`. (Project accepts issues, not PRs.)
+> **MIT**, adaptable with attribution in `NOTICE`. (Project accepts issues, not PRs.)
 
 ## The epistemic model (its distinctive contribution)
 
 - **Claims/hypotheses + attestations**: knowledge is hypotheses; every judgment about one
   is an **append-only attestation** by an **oracle** (a human or model identity). All
-  credibility state is *derived* from the attestation ledger on read — window functions
-  over history, nothing mutated.
-- **Subjective Logic opinions**: credibility is a triple — belief, disbelief,
-  **uncertainty** — not a scalar; fused across oracles via trust-discounted ECBF.
+  credibility state is *derived* from the attestation ledger on read (window functions
+  over history, nothing mutated).
+- **Subjective Logic opinions**: credibility is a triple (belief, disbelief,
+  **uncertainty**), not a scalar; fused across oracles via trust-discounted ECBF.
 - **Trust is earned per oracle**: `t_oracle` accrues by "aligning with where the herd
   lands over time"; contributions are discounted by it. Being early-and-right outweighs
   agreeing with a settled answer.
 - **Temporal decay**: attestations fade past a half-life (default 90d) unless
   re-attested; oracle track records decay on their own half-life. Stale claims fade
   rather than persisting as false confidence.
-- **Maturity**: `M = N_O / (N_O + K)` — confidence discount lifts only after multiple
+- **Maturity**: `M = N_O / (N_O + K)`; the confidence discount lifts only after multiple
   *distinct* oracles attest.
 - **Provenance-first**: every consult is stored before processing; "orphan request rows
   are evidence, not garbage."
@@ -37,16 +37,16 @@
 stored before anything else; trust made visible; time as a first-class epistemic
 dimension; contradiction as a tracked relation, not an overwrite.
 
-**Inverted (deliberately not our shape):** Lore is a *service* — daemon, OIDC, the
+**Inverted (deliberately not our shape):** Lore is a *service*: daemon, OIDC, the
 database **is** the record, store is opaque to humans. keywork is local-first, no-daemon,
 markdown-files-as-truth with a disposable index (J-D5/R1). Lore puts LLM calls in the
 synchronous write path (Interpreter+Archivist per consult); keywork's write path is
 deterministic and the LLM pass lives in the Gardener. Lore has no graph/supersession
-semantics — decay makes stale claims *fade*, keywork's `supersedes` edge says *what
+semantics: decay makes stale claims *fade*, keywork's `supersedes` edge says *what
 replaced them*; complementary, not equivalent. Lore's problem is multi-user consensus;
 J v1 is single-user workspace memory. **Trust model (J-D6, Jordan 2026-08-10): the
-deepest divergence.** Lore's trust is *earned* — per-oracle reputation accrued by
-aligning with the herd. keywork's trust is *granted* — declarative, schema-validated
+deepest divergence.** Lore's trust is *earned*: per-oracle reputation accrued by
+aligning with the herd. keywork's trust is *granted*: declarative, schema-validated
 policy (provenance classes → allowed outcomes, scope grants, protected core) that
 secops/infra teams can read, diff, and enforce; trust state is always reproducible from
 config + provenance, never from accumulated history. No reputation system, deliberately.
@@ -55,16 +55,16 @@ config + provenance, never from accumulated history. No reputation system, delib
 
 1. **Ledger-derived state (adopted as refinement R6)**: curing/usefulness state in note
    frontmatter is a *materialization* of the append-only audit/event ledger (recalls,
-   corrections, re-attestations), recomputable — never independently mutated counters.
+   corrections, re-attestations), recomputable, never independently mutated counters.
 2. **Uncertainty as its own axis (consider, not committed)**: Gardener promotion gates
-   could carry (belief, uncertainty) rather than one confidence scalar — "confidently
+   could carry (belief, uncertainty) rather than one confidence scalar, so "confidently
    wrong" and "unknown" stop looking alike. Adopt only if the math earns its keep in J7.
 3. **Hallucinated-ID rejection**: Gardener structured outputs validate every referenced
    note/entity against the candidate set (Lore's `ArchivistResolutionError` pattern).
-4. **The federation seam (the real prize)**: Lore is an MCP server — keywork's D8 MCP
+4. **The federation seam (the real prize)**: Lore is an MCP server, so keywork's D8 MCP
    host can mount it as an additional **team scope** under J6's fail-closed policy:
    searchable, never bootstrap-injected, provenance-tagged as external, its access a
-   **scope-level grant in config** (per J-D6 — keywork never adopts Lore's per-oracle
+   **scope-level grant in config** (per J-D6, keywork never adopts Lore's per-oracle
    earned trust; the herd's consensus math stays Lore's business, keywork just reads the
    results under policy). Team memory without keywork building multi-user consensus.
 

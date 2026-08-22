@@ -5,6 +5,7 @@ export const mcpProtocolVersion = "2025-06-18";
 
 const closeGraceMs = 500;
 const maxLineChars = 4 * 1024 * 1024;
+const toolsChangedNotification = "notifications/tools/list_changed";
 
 export interface McpTool {
   name: string;
@@ -22,6 +23,7 @@ export interface McpConnection {
   listTools(): Promise<McpTool[]>;
   callTool(name: string, args: unknown): Promise<McpToolResult>;
   onClose(handler: (error?: Error) => void): void;
+  onToolsChanged(handler: () => void): void;
   close(): Promise<void>;
 }
 
@@ -92,6 +94,7 @@ class StdioChannel implements McpConnection {
   private readonly exited: Promise<void>;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly closeHandlers: Array<(error?: Error) => void> = [];
+  private readonly toolsChangedHandlers: Array<() => void> = [];
   private buffer = "";
   private stderrTail = "";
   private nextId = 1;
@@ -160,6 +163,10 @@ class StdioChannel implements McpConnection {
 
   onClose(handler: (error?: Error) => void): void {
     this.closeHandlers.push(handler);
+  }
+
+  onToolsChanged(handler: () => void): void {
+    this.toolsChangedHandlers.push(handler);
   }
 
   close(): Promise<void> {
@@ -242,6 +249,10 @@ class StdioChannel implements McpConnection {
           id: message.id as number | string,
           error: { code: -32601, message: "method not supported" },
         });
+        return;
+      }
+      if (message.method === toolsChangedNotification) {
+        for (const handler of this.toolsChangedHandlers) handler();
       }
       return;
     }

@@ -17,27 +17,27 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
+import type { ActivePreset } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
-import {
-  type AfterTurn,
-  bindSessionLifecycle,
-  type CheckpointsPort,
-  type Compactor,
-  forkAtPrompt,
-  paneSessionIndex,
-  type SessionAttachment,
-} from "./app.ts";
-import { helpFrame, type PresetsPort, paletteFrame, paletteRowLimit } from "./app-core.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { FileModel } from "./file-model.ts";
+import { type CheckpointsPort, forkAtPrompt } from "./fork.ts";
 import type { Chord } from "./keys.ts";
 import { McpPane, type McpPanePort } from "./mcp-pane.ts";
 import type { McpServerView } from "./mcp-pane-model.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { InboxItemView, MemoryPaneInputs } from "./memory-pane-model.ts";
+import { helpFrame, type PresetsPort, paletteFrame, paletteRowLimit } from "./overlays/index.ts";
 import type { Pane } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
+import {
+  type AfterTurn,
+  bindSessionLifecycle,
+  type Compactor,
+  paneSessionIndex,
+  type SessionAttachment,
+} from "./session-attachment.ts";
 import type { SessionTreeModel } from "./session-tree-model.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import type { SessionOverviewItem } from "./sessions-overview-model.ts";
@@ -1186,11 +1186,11 @@ describe("mouse", () => {
     probe.command("split");
     const first = probe.rect("session-1");
     const second = probe.rect("session-2");
-    probe.core.handleMouse({ type: "down", x: first.x + 2, y: first.y, button: 0 }, 1);
-    probe.core.handleMouse({ type: "drag", x: second.x + 5, y: second.y + 5, button: 0 }, 2);
+    probe.core.handleMouse({ type: "down", x: first.x + 2, y: first.y, button: 0 });
+    probe.core.handleMouse({ type: "drag", x: second.x + 5, y: second.y + 5, button: 0 });
     expect(probe.core.draggingPane()).toBe("session-1");
     expect(probe.core.dragPreview()).toEqual(second);
-    probe.core.handleMouse({ type: "up", x: second.x + 5, y: second.y + 5, button: 0 }, 3);
+    probe.core.handleMouse({ type: "up", x: second.x + 5, y: second.y + 5, button: 0 });
     expect(probe.core.dragPreview()).toBeUndefined();
     expect(probe.rect("session-1")).toEqual(second);
     expect(probe.rect("session-2")).toEqual(first);
@@ -1204,16 +1204,10 @@ describe("mouse", () => {
     probe.command("dock-left");
     const dock = probe.rect("session-3");
     const source = probe.rect("session-1");
-    probe.core.handleMouse({ type: "down", x: source.x + 2, y: source.y, button: 0 }, 1);
-    probe.core.handleMouse(
-      { type: "drag", x: dock.x + 1, y: dock.y + dock.height - 1, button: 0 },
-      2,
-    );
+    probe.core.handleMouse({ type: "down", x: source.x + 2, y: source.y, button: 0 });
+    probe.core.handleMouse({ type: "drag", x: dock.x + 1, y: dock.y + dock.height - 1, button: 0 });
     expect(probe.core.dragPreview()).toMatchObject({ x: dock.x, width: dock.width });
-    probe.core.handleMouse(
-      { type: "up", x: dock.x + 1, y: dock.y + dock.height - 1, button: 0 },
-      3,
-    );
+    probe.core.handleMouse({ type: "up", x: dock.x + 1, y: dock.y + dock.height - 1, button: 0 });
     expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
     expect(probe.snapshot().focused).toBe("session-1");
   });
@@ -2231,7 +2225,7 @@ describe("session after-turn lifecycle", () => {
 describe("preset overlay", () => {
   function presetProbe(overrides?: Partial<PresetsPort>) {
     const applied: string[] = [];
-    let active = "standard";
+    let active: ActivePreset = "standard";
     const port: PresetsPort = {
       names: () => ["careful", "standard", "open"],
       active: () => active,
@@ -2243,7 +2237,7 @@ describe("preset overlay", () => {
       ...overrides,
     };
     const probe = new AppProbe({ presets: port });
-    return { probe, applied, setActive: (name: string) => (active = name) };
+    return { probe, applied, setActive: (name: ActivePreset) => (active = name) };
   }
 
   it("/preset opens the picker with the active preset marked", () => {

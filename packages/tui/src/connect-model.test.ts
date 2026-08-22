@@ -208,9 +208,58 @@ describe("ConnectModel editing", () => {
     m.handleKey(chord("down"), undefined);
     type(m, "http://10.0.0.9:8080/v1");
     expect(m.fields().map((field) => field.id)).toContain("insecureTransport");
-    expect(
-      verifyActionText(m.stage.kind === "editor" ? m.stage.draft : (undefined as never)),
-    ).toContain("http://10.0.0.9:8080/v1/models");
+    expect(m.stage.kind === "editor" ? verifyActionText(m.stage.draft) : "").toContain(
+      "http://10.0.0.9:8080/v1/models",
+    );
+  });
+
+  it("edits at the cursor and reports the cursor to the view for text fields only", () => {
+    const { model: m } = model(fakePort());
+    m.open("ollama");
+    const name = () => (m.stage.kind === "editor" ? m.stage.draft.name : undefined);
+    const cursor = () => {
+      const field = m.fields()[0];
+      return field?.kind === "text" ? field.cursor : undefined;
+    };
+    expect(cursor()).toBe("ollama".length);
+    m.handleKey(chord("left"), undefined);
+    m.handleKey(chord("left"), undefined);
+    type(m, "X");
+    expect(name()).toBe("ollaXma");
+    expect(cursor()).toBe(5);
+    m.handleKey(chord("backspace"), undefined);
+    expect(name()).toBe("ollama");
+    m.handleKey(chord("home"), undefined);
+    type(m, "my-");
+    expect(name()).toBe("my-ollama");
+    m.handleKey(chord("end"), undefined);
+    type(m, "!");
+    expect(name()).toBe("my-ollama!");
+    const toggle = m.fields().find((field) => field.kind === "toggle");
+    expect(toggle !== undefined && "cursor" in toggle).toBe(false);
+  });
+
+  it("pastes at the cursor of the focused field", () => {
+    const { model: m } = model(fakePort());
+    m.open("ollama");
+    m.handleKey(chord("left"), undefined);
+    m.paste("-dev");
+    expect(m.stage.kind === "editor" && m.stage.draft.name).toBe("ollam-deva");
+  });
+
+  it("remembers the environment variable name across credential cycles", () => {
+    const { model: m } = model(fakePort());
+    m.open("openai");
+    m.handleKey(chord("down"), undefined);
+    m.handleKey(chord("right"), undefined);
+    expect(m.stage.kind === "editor" && m.stage.draft.credential).toBe("env:");
+    m.handleKey(chord("down"), undefined);
+    type(m, "MY_KEY");
+    m.handleKey(chord("up"), undefined);
+    m.handleKey(chord("left"), undefined);
+    expect(m.stage.kind === "editor" && m.stage.draft.credential).toBe("api-key");
+    m.handleKey(chord("right"), undefined);
+    expect(m.stage.kind === "editor" && m.stage.draft.credential).toBe("env:MY_KEY");
   });
 
   it("pastes into the selected text or secret field and nowhere else", () => {
@@ -290,6 +339,28 @@ describe("ConnectModel verify and save (CD-01, CD-09)", () => {
     m.stage = { kind: "removed", receipt: { removed: ["connection lab"], retained: ["the key"] } };
     expect(m.rowCount()).toBe(3);
     expect(m.clickRow(0)).toBe("close");
+  });
+
+  it("lets escape abandon a verification in flight and ignores the late result", async () => {
+    let release: (outcome: VerificationOutcome) => void = () => {};
+    const port = fakePort();
+    port.verify = async (draft) => {
+      port.verifications.push(draft);
+      return new Promise<VerificationOutcome>((resolve) => {
+        release = resolve;
+      });
+    };
+    const { model: m, notices } = model(port);
+    m.open("ollama");
+    m.handleKey(chord("return"), undefined);
+    expect(m.stage.kind).toBe("verifying");
+    expect(m.handleKey(chord("escape"), undefined)).toBe("stay");
+    expect(m.stage.kind).toBe("editor");
+    expect(notices).toEqual(["verify cancelled · nothing saved"]);
+    release({ ok: true, at: "t", models: ["qwen3"] });
+    await settled();
+    expect(port.saves).toEqual([]);
+    expect(m.stage.kind).toBe("editor");
   });
 
   it("refuses an incomplete draft with a notice instead of a network call", async () => {

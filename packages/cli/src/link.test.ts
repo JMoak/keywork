@@ -83,6 +83,22 @@ describe("linkCommand", () => {
     expect(lines.join("\n")).toContain("already linked");
   });
 
+  it.skipIf(process.platform !== "win32")(
+    "treats a differently cased spelling of a linked dir as already linked on win32",
+    async () => {
+      store.trust(repo);
+      materializeWorkspace(repo);
+      await linkCommand(linked, repo, store, io, answering(true), memory);
+      questions = [];
+
+      const shouted = linked.toUpperCase();
+      expect(await linkCommand(shouted, repo, store, io, answering(true), memory)).toBe(0);
+      expect(questions).toHaveLength(0);
+      expect(lines.join("\n")).toContain("already linked");
+      expect(openWorkspace(repo)?.contextDirs).toEqual([linked]);
+    },
+  );
+
   it("never widens an untrusted workspace", async () => {
     store.untrust(repo);
 

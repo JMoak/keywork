@@ -7,37 +7,41 @@ import type {
   RemovalReceipt,
   SavedConnection,
 } from "./inference-port.ts";
+import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
+import { isPrintable } from "./picker-keys.ts";
 
 export type ConnectStage =
   | { kind: "targets"; index: number }
-  | {
-      kind: "editor";
-      draft: ConnectionDraft;
-      field: number;
-      fixed: FixedFields;
-      existing: boolean;
-      envVariable: string;
-    }
+  | EditorStage
   | { kind: "verifying"; draft: ConnectionDraft }
   | { kind: "failed"; draft: ConnectionDraft; reason: string; at: string }
   | { kind: "receipt"; draft: ConnectionDraft; models: readonly string[]; at: string }
   | { kind: "remove-confirm"; name: string; credential: string }
   | { kind: "removed"; receipt: RemovalReceipt };
 
+export interface EditorStage {
+  kind: "editor";
+  draft: ConnectionDraft;
+  field: number;
+  fixed: FixedFields;
+  existing: boolean;
+  buffers: Readonly<Record<TextFieldId, InputBuffer>>;
+}
+
 export interface FixedFields {
   name: boolean;
   endpoint: boolean;
 }
 
-export type FieldKind = "text" | "secret" | "toggle" | "action" | "danger";
+export type TextFieldId = "name" | "endpoint" | "apiKey" | "envVariable";
+export type ToggleFieldId = "protocol" | "credential" | "insecureTransport";
 
-export interface EditorField {
-  id: string;
-  label: string;
-  value: string;
-  kind: FieldKind;
-}
+export type EditorField =
+  | { id: TextFieldId; label: string; value: string; kind: "text" | "secret"; cursor: number }
+  | { id: ToggleFieldId; label: string; value: string; kind: "toggle" }
+  | { id: "verify"; label: string; value: string; kind: "action" }
+  | { id: "remove"; label: string; value: string; kind: "danger" };
 
 export interface TargetRow {
   label: string;
@@ -100,52 +104,16 @@ export class ConnectModel {
   }
 
   fields(): EditorField[] {
-    if (this.stage.kind !== "editor") return [];
-    const { draft, fixed, existing, envVariable } = this.stage;
-    const fields: EditorField[] = [];
-    if (!fixed.name) fields.push({ id: "name", label: "name", value: draft.name, kind: "text" });
-    if (!fixed.endpoint)
-      fields.push({ id: "endpoint", label: "endpoint", value: draft.endpoint, kind: "text" });
-    fields.push({ id: "protocol", label: "protocol", value: draft.protocol, kind: "toggle" });
-    fields.push({
-      id: "credential",
-      label: "credential",
-      value: credentialLabel(draft.credential),
-      kind: "toggle",
-    });
-    if (draft.credential === "api-key") {
-      fields.push({ id: "apiKey", label: "api key", value: draft.apiKey, kind: "secret" });
-    }
-    if (draft.credential.startsWith("env:")) {
-      fields.push({ id: "envVariable", label: "env variable", value: envVariable, kind: "text" });
-    }
-    if (needsInsecureChoice(draft.endpoint)) {
-      fields.push({
-        id: "insecureTransport",
-        label: "plain http off loopback",
-        value: draft.insecureTransport
-          ? "allowed (credentials and prompts travel unencrypted)"
-          : "refused",
-        kind: "toggle",
-      });
-    }
-    fields.push({ id: "verify", label: "enter", value: verifyActionText(draft), kind: "action" });
-    if (existing)
-      fields.push({
-        id: "remove",
-        label: "remove",
-        value: `forget ${draft.name} and its saved key`,
-        kind: "danger",
-      });
-    return fields;
+    return this.stage.kind === "editor" ? editorFields(this.stage) : [];
   }
 
   rowCount(): number {
-    switch (this.stage.kind) {
+    const { stage } = this;
+    switch (stage.kind) {
       case "targets":
         return this.targetRows().length;
       case "editor":
-        return this.fields().length + editorHintRows;
+        return editorFields(stage).length + editorHintRows;
       case "verifying":
         return 1;
       case "failed":
@@ -154,22 +122,23 @@ export class ConnectModel {
       case "receipt":
         return 3;
       case "removed":
-        return 2 + this.stage.receipt.retained.length;
+        return 2 + stage.receipt.retained.length;
     }
   }
 
   clickRow(row: number): ConnectKeyOutcome {
-    switch (this.stage.kind) {
+    const { stage } = this;
+    switch (stage.kind) {
       case "targets": {
         const picked = this.targetRows()[row];
         if (picked !== undefined) this.edit(picked.pick);
         return "stay";
       }
       case "editor":
-        if (row < this.fields().length) this.stage = { ...this.stage, field: row };
+        if (row < editorFields(stage).length) this.stage = { ...stage, field: row };
         return "stay";
       case "failed":
-        this.returnToEditor(this.stage.draft);
+        this.returnToEditor(stage.draft);
         return "stay";
       case "removed":
         return "close";
@@ -180,21 +149,27 @@ export class ConnectModel {
 
   paste(text: string): void {
     if (this.stage.kind !== "editor") return;
-    const field = this.fields()[this.stage.field];
+    const field = editorFields(this.stage)[this.stage.field];
     if (field === undefined || (field.kind !== "text" && field.kind !== "secret")) return;
-    this.setText(field.id, this.textValue(field.id) + text);
+    this.stage.buffers[field.id].insert(text);
+    this.syncText(this.stage, field.id);
   }
 
   handleKey(chord: Chord, sequence: string | undefined): ConnectKeyOutcome {
-    switch (this.stage.kind) {
+    const { stage } = this;
+    switch (stage.kind) {
       case "targets":
-        return this.handleTargetsKey(chord);
+        return this.handleTargetsKey(stage.index, chord);
       case "editor":
-        return this.handleEditorKey(chord, sequence);
+        return this.handleEditorKey(stage, chord, sequence);
       case "verifying":
+        if (chord.name === "escape") {
+          this.returnToEditor(stage.draft);
+          this.hooks.notice("verify cancelled · nothing saved");
+        }
         return "stay";
       case "failed":
-        this.returnToEditor(this.stage.draft);
+        this.returnToEditor(stage.draft);
         return "stay";
       case "receipt":
         if (chord.name === "return" || chord.name === "enter") {
@@ -203,69 +178,69 @@ export class ConnectModel {
         }
         return chord.name === "escape" ? "close" : "stay";
       case "remove-confirm":
-        return this.handleRemoveConfirmKey(chord);
+        return this.handleRemoveConfirmKey(stage.name, chord);
       case "removed":
         return "close";
     }
   }
 
-  private handleTargetsKey(chord: Chord): ConnectKeyOutcome {
-    if (this.stage.kind !== "targets") return "stay";
+  private handleTargetsKey(index: number, chord: Chord): ConnectKeyOutcome {
     if (chord.name === "escape") return "close";
     const rows = this.targetRows();
     if (chord.name === "up" || chord.name === "down") {
       const count = Math.max(1, rows.length);
       this.stage = {
         kind: "targets",
-        index: (this.stage.index + (chord.name === "down" ? 1 : -1) + count) % count,
+        index: (index + (chord.name === "down" ? 1 : -1) + count) % count,
       };
       return "stay";
     }
     if (chord.name === "return" || chord.name === "enter") {
-      const row = rows[this.stage.index];
+      const row = rows[index];
       if (row !== undefined) this.edit(row.pick);
     }
     return "stay";
   }
 
-  private handleEditorKey(chord: Chord, sequence: string | undefined): ConnectKeyOutcome {
-    if (this.stage.kind !== "editor") return "stay";
+  private handleEditorKey(
+    stage: EditorStage,
+    chord: Chord,
+    sequence: string | undefined,
+  ): ConnectKeyOutcome {
     if (chord.name === "escape") return "close";
-    const fields = this.fields();
-    const field = fields[this.stage.field];
+    const fields = editorFields(stage);
+    const count = Math.max(1, fields.length);
     if (chord.name === "up" || chord.name === "down") {
-      const count = Math.max(1, fields.length);
       this.stage = {
-        ...this.stage,
-        field: (this.stage.field + (chord.name === "down" ? 1 : -1) + count) % count,
+        ...stage,
+        field: (stage.field + (chord.name === "down" ? 1 : -1) + count) % count,
       };
       return "stay";
     }
     if (chord.name === "tab") {
-      this.stage = { ...this.stage, field: (this.stage.field + 1) % Math.max(1, fields.length) };
+      this.stage = { ...stage, field: (stage.field + 1) % count };
       return "stay";
     }
+    const field = fields[stage.field];
     if (field === undefined) return "stay";
     if (chord.name === "return" || chord.name === "enter") {
-      if (field.kind === "danger") this.confirmRemoval();
-      else if (field.kind === "toggle") this.cycle(field.id, 1);
-      else void this.verifyAndSave();
+      if (field.kind === "danger") this.confirmRemoval(stage);
+      else if (field.kind === "toggle") this.cycle(stage, field.id, 1);
+      else void this.verifyAndSave(stage);
       return "stay";
     }
-    if (
-      field.kind === "toggle" &&
-      (chord.name === "left" || chord.name === "right" || sequence === " ")
-    ) {
-      this.cycle(field.id, chord.name === "left" ? -1 : 1);
+    if (field.kind === "toggle") {
+      if (chord.name === "left" || chord.name === "right" || sequence === " ") {
+        this.cycle(stage, field.id, chord.name === "left" ? -1 : 1);
+      }
       return "stay";
     }
-    if (field.kind === "text" || field.kind === "secret") this.editText(field.id, chord, sequence);
+    if (field.kind === "text" || field.kind === "secret")
+      this.editText(stage, field.id, chord, sequence);
     return "stay";
   }
 
-  private handleRemoveConfirmKey(chord: Chord): ConnectKeyOutcome {
-    if (this.stage.kind !== "remove-confirm") return "stay";
-    const { name } = this.stage;
+  private handleRemoveConfirmKey(name: string, chord: Chord): ConnectKeyOutcome {
     if (chord.name === "y" || chord.name === "return" || chord.name === "enter") {
       void this.port
         .remove(name)
@@ -309,119 +284,104 @@ export class ConnectModel {
     return this.port.saved().some((row) => row.name === name);
   }
 
-  private confirmRemoval(): void {
-    if (this.stage.kind !== "editor") return;
-    const saved = this.port
-      .saved()
-      .find((row) => row.name === (this.stage as { draft: ConnectionDraft }).draft.name);
+  private confirmRemoval(stage: EditorStage): void {
+    const saved = this.port.saved().find((row) => row.name === stage.draft.name);
     this.stage = {
       kind: "remove-confirm",
-      name: this.stage.draft.name,
+      name: stage.draft.name,
       credential: saved?.credential ?? "no credential",
     };
   }
 
-  private cycle(id: string, step: number): void {
-    if (this.stage.kind !== "editor") return;
-    const { draft } = this.stage;
-    if (id === "protocol") {
-      this.stage = {
-        ...this.stage,
-        draft: {
-          ...draft,
-          protocol: draft.protocol === "chat-completions" ? "responses" : "chat-completions",
-        },
-      };
-    } else if (id === "credential") {
-      const order: readonly CredentialChoice[] = [
-        "none",
-        "api-key",
-        `env:${this.stage.envVariable}`,
-      ];
-      const at = order.findIndex(
-        (choice) => credentialKind(choice) === credentialKind(draft.credential),
-      );
-      const next = order[(at + step + order.length) % order.length] as CredentialChoice;
-      this.stage = { ...this.stage, draft: { ...draft, credential: next } };
-    } else if (id === "insecureTransport") {
-      this.stage = {
-        ...this.stage,
-        draft: { ...draft, insecureTransport: !draft.insecureTransport },
-      };
+  private cycle(stage: EditorStage, id: ToggleFieldId, step: number): void {
+    const { draft } = stage;
+    switch (id) {
+      case "protocol":
+        this.stage = {
+          ...stage,
+          draft: {
+            ...draft,
+            protocol: draft.protocol === "chat-completions" ? "responses" : "chat-completions",
+          },
+        };
+        return;
+      case "credential": {
+        const order: readonly CredentialChoice[] = [
+          "none",
+          "api-key",
+          `env:${stage.buffers.envVariable.value}`,
+        ];
+        const at = order.findIndex(
+          (choice) => credentialKind(choice) === credentialKind(draft.credential),
+        );
+        const next = order[(at + step + order.length) % order.length] ?? draft.credential;
+        this.stage = { ...stage, draft: { ...draft, credential: next } };
+        return;
+      }
+      case "insecureTransport":
+        this.stage = {
+          ...stage,
+          draft: { ...draft, insecureTransport: !draft.insecureTransport },
+        };
+        return;
     }
   }
 
-  private editText(id: string, chord: Chord, sequence: string | undefined): void {
-    if (this.stage.kind !== "editor") return;
-    const current = this.textValue(id);
-    const typed =
-      sequence !== undefined &&
-      sequence.length === 1 &&
-      !chord.ctrl &&
-      !chord.meta &&
-      sequence >= " ";
-    const next =
-      chord.name === "backspace" ? current.slice(0, -1) : typed ? current + sequence : undefined;
-    if (next === undefined) return;
-    this.setText(id, next);
+  private editText(
+    stage: EditorStage,
+    id: TextFieldId,
+    chord: Chord,
+    sequence: string | undefined,
+  ): void {
+    const buffer = stage.buffers[id];
+    if (chord.name === "left") buffer.left();
+    else if (chord.name === "right") buffer.right();
+    else if (chord.name === "home") buffer.home();
+    else if (chord.name === "end") buffer.end();
+    else if (chord.name === "backspace") this.edited(stage, id, () => buffer.backspace());
+    else if (isPrintable(chord, sequence)) this.edited(stage, id, () => buffer.insert(sequence));
   }
 
-  private textValue(id: string): string {
-    if (this.stage.kind !== "editor") return "";
-    if (id === "envVariable") return this.stage.envVariable;
-    const value = this.stage.draft[id as "name" | "endpoint" | "apiKey"];
-    return typeof value === "string" ? value : "";
+  private edited(stage: EditorStage, id: TextFieldId, change: () => void): void {
+    change();
+    this.syncText(stage, id);
   }
 
-  private setText(id: string, value: string): void {
-    if (this.stage.kind !== "editor") return;
-    if (id === "envVariable") {
-      this.stage = {
-        ...this.stage,
-        envVariable: value,
-        draft: { ...this.stage.draft, credential: `env:${value}` },
-      };
-      return;
-    }
-    this.stage = { ...this.stage, draft: { ...this.stage.draft, [id]: value } };
+  private syncText(stage: EditorStage, id: TextFieldId): void {
+    const value = stage.buffers[id].value;
+    const draft: ConnectionDraft =
+      id === "envVariable"
+        ? { ...stage.draft, credential: `env:${value}` }
+        : { ...stage.draft, [id]: value };
+    this.stage = { ...stage, draft };
   }
 
-  private async verifyAndSave(): Promise<void> {
-    if (this.stage.kind !== "editor") return;
-    const { draft, fixed } = this.stage;
-    const existing = this.stage.existing;
-    const problem = draftProblem(draft);
+  private async verifyAndSave(stage: EditorStage): Promise<void> {
+    const problem = draftProblem(stage.draft);
     if (problem !== undefined) {
       this.hooks.notice(problem);
       return;
     }
-    const trimmed = {
-      ...draft,
-      name: draft.name.trim(),
-      endpoint: draft.endpoint.trim().replace(/\/+$/, ""),
-    };
-    this.stage = { kind: "verifying", draft: trimmed };
+    const draft = trimmedDraft(stage.draft);
+    const verifying: ConnectStage = { kind: "verifying", draft };
+    const abandoned = (): boolean => this.stage !== verifying;
+    this.stage = verifying;
     this.hooks.notify();
     try {
-      const verification = await this.port.verify(trimmed);
+      const verification = await this.port.verify(draft);
+      if (abandoned()) return;
       if (!verification.ok) {
-        this.stage = {
-          kind: "failed",
-          draft: trimmed,
-          reason: verification.reason,
-          at: verification.at,
-        };
+        this.stage = { kind: "failed", draft, reason: verification.reason, at: verification.at };
         return;
       }
-      await this.port.save(trimmed, verification);
-      this.stage = {
-        kind: "receipt",
-        draft: trimmed,
-        models: verification.models,
-        at: verification.at,
-      };
+      await this.port.save(draft, verification);
+      if (abandoned()) {
+        this.hooks.notice(`saved ${draft.name} before the cancel landed`);
+        return;
+      }
+      this.stage = { kind: "receipt", draft, models: verification.models, at: verification.at };
     } catch (cause) {
-      this.stage = editorStage(trimmed, fixed, existing);
+      if (!abandoned()) this.stage = editorStage(draft, stage.fixed, stage.existing);
       this.hooks.notice((cause as Error).message);
     } finally {
       this.hooks.notify();
@@ -431,15 +391,74 @@ export class ConnectModel {
 
 const editorHintRows = 1;
 
-function editorStage(draft: ConnectionDraft, fixed: FixedFields, existing: boolean): ConnectStage {
+function editorStage(draft: ConnectionDraft, fixed: FixedFields, existing: boolean): EditorStage {
+  return { kind: "editor", draft, field: 0, fixed, existing, buffers: buffersFor(draft) };
+}
+
+function buffersFor(draft: ConnectionDraft): Record<TextFieldId, InputBuffer> {
   return {
-    kind: "editor",
-    draft,
-    field: 0,
-    fixed,
-    existing,
-    envVariable: draft.credential.startsWith("env:") ? draft.credential.slice("env:".length) : "",
+    name: loaded(draft.name),
+    endpoint: loaded(draft.endpoint),
+    apiKey: loaded(draft.apiKey),
+    envVariable: loaded(envVariableOf(draft.credential)),
   };
+}
+
+function loaded(text: string): InputBuffer {
+  const buffer = new InputBuffer();
+  buffer.load(text);
+  return buffer;
+}
+
+function editorFields(stage: EditorStage): EditorField[] {
+  const { draft, fixed, existing, buffers } = stage;
+  const text = (id: TextFieldId, label: string, kind: "text" | "secret"): EditorField => ({
+    id,
+    label,
+    value: buffers[id].value,
+    kind,
+    cursor: buffers[id].cursorAt().column,
+  });
+  return [
+    ...(fixed.name ? [] : [text("name", "name", "text")]),
+    ...(fixed.endpoint ? [] : [text("endpoint", "endpoint", "text")]),
+    { id: "protocol", label: "protocol", value: draft.protocol, kind: "toggle" },
+    {
+      id: "credential",
+      label: "credential",
+      value: credentialLabel(draft.credential),
+      kind: "toggle",
+    },
+    ...(draft.credential === "api-key" ? [text("apiKey", "api key", "secret")] : []),
+    ...(draft.credential.startsWith("env:") ? [text("envVariable", "env variable", "text")] : []),
+    ...(needsInsecureChoice(draft.endpoint)
+      ? [
+          {
+            id: "insecureTransport" as const,
+            label: "plain http off loopback",
+            value: draft.insecureTransport
+              ? "allowed (credentials and prompts travel unencrypted)"
+              : "refused",
+            kind: "toggle" as const,
+          },
+        ]
+      : []),
+    { id: "verify", label: "enter", value: verifyActionText(draft), kind: "action" },
+    ...(existing
+      ? [
+          {
+            id: "remove" as const,
+            label: "remove",
+            value: `forget ${draft.name} and its saved key`,
+            kind: "danger" as const,
+          },
+        ]
+      : []),
+  ];
+}
+
+function trimmedDraft(draft: ConnectionDraft): ConnectionDraft {
+  return { ...draft, name: draft.name.trim(), endpoint: draft.endpoint.trim().replace(/\/+$/, "") };
 }
 
 function rowId(pick: ConnectionTarget | SavedConnection): string {
@@ -461,6 +480,10 @@ function credentialLabel(choice: CredentialChoice): string {
 
 function credentialKind(choice: CredentialChoice): string {
   return choice.startsWith("env:") ? "env" : choice;
+}
+
+function envVariableOf(choice: CredentialChoice): string {
+  return choice.startsWith("env:") ? choice.slice("env:".length) : "";
 }
 
 function needsInsecureChoice(endpoint: string): boolean {

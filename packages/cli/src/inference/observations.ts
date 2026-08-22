@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { userConfigDir, writePrivateFile } from "../user-config.ts";
+import { type JsonFileStore, jsonFileStore } from "@keywork/shared";
+import { userConfigDir } from "../user-config.ts";
 
 export interface ConnectionObservation {
   verifiedAt?: string;
@@ -20,19 +20,8 @@ export type ObservationPatch = {
 
 export type ObservationMap = Readonly<Record<string, ConnectionObservation>>;
 
-const fileName = "connections.json";
-
 export async function readObservations(dir: string = userConfigDir()): Promise<ObservationMap> {
-  const raw = await readFile(join(dir, fileName), "utf8")
-    .then((text) => JSON.parse(text) as unknown)
-    .catch(() => undefined);
-  if (typeof raw !== "object" || raw === null) return {};
-  return Object.fromEntries(
-    Object.entries(raw as Record<string, unknown>).flatMap(([name, value]) => {
-      const observation = asObservation(value);
-      return observation === undefined ? [] : [[name, observation] as const];
-    }),
-  );
+  return observationStore(dir).read() ?? {};
 }
 
 export async function recordObservation(
@@ -40,9 +29,10 @@ export async function recordObservation(
   patch: ObservationPatch,
   dir: string = userConfigDir(),
 ): Promise<ObservationMap> {
-  const existing = await readObservations(dir);
+  const store = observationStore(dir);
+  const existing = store.read() ?? {};
   const merged = { ...existing, [name]: observationOf({ ...existing[name], ...patch }) };
-  await writeObservations(merged, dir);
+  store.write(merged);
   return merged;
 }
 
@@ -50,13 +40,29 @@ export async function forgetObservation(
   name: string,
   dir: string = userConfigDir(),
 ): Promise<ObservationMap> {
-  const { [name]: _forgotten, ...rest } = await readObservations(dir);
-  await writeObservations(rest, dir);
+  const store = observationStore(dir);
+  const { [name]: _forgotten, ...rest } = store.read() ?? {};
+  store.write(rest);
   return rest;
 }
 
-async function writeObservations(observations: ObservationMap, dir: string): Promise<void> {
-  await writePrivateFile(join(dir, fileName), `${JSON.stringify(observations, null, 2)}\n`);
+function observationStore(dir: string): JsonFileStore<ObservationMap> {
+  return jsonFileStore<ObservationMap>({
+    file: join(dir, "connections.json"),
+    mode: "lenient",
+    private: true,
+    validate: onlyObservationEntries,
+  });
+}
+
+function onlyObservationEntries(data: unknown): ObservationMap {
+  if (typeof data !== "object" || data === null) return {};
+  return Object.fromEntries(
+    Object.entries(data as Record<string, unknown>).flatMap(([name, value]) => {
+      const observation = asObservation(value);
+      return observation === undefined ? [] : [[name, observation] as const];
+    }),
+  );
 }
 
 function observationOf(fields: ObservationPatch): ConnectionObservation {

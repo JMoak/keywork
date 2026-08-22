@@ -1,23 +1,18 @@
-import type { TrustStore } from "@keywork/shared";
-
-export interface TrustCommandIo {
-  print?: (line: string) => void;
-  printError?: (line: string) => void;
-}
+import { type TrustStore, toError } from "@keywork/shared";
+import { type CommandIo, resolveCommandIo } from "./command-io.ts";
 
 export function trustCommand(
   action: "trust" | "untrust",
   cwd: string,
   store: TrustStore,
-  io: TrustCommandIo = {},
+  io: CommandIo = {},
 ): number {
-  const print = io.print ?? console.log;
-  const printError = io.printError ?? console.error;
+  const { print, printError } = resolveCommandIo(io);
   try {
     if (action === "trust") store.trust(cwd);
     else store.untrust(cwd);
   } catch (cause) {
-    printError((cause as Error).message);
+    printError(toError(cause).message);
     return 1;
   }
   print(`${cwd} is now ${action === "trust" ? "trusted" : "untrusted"}`);

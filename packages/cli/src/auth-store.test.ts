@@ -1,14 +1,14 @@
-import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type Credential,
+  deleteCredential,
   legacyCredentials,
   readCredentials,
   saveCredential,
 } from "./auth-store.ts";
-import { type PrivateFileDisk, writePrivateFile } from "./user-config.ts";
 
 const tempDirs: string[] = [];
 
@@ -16,19 +16,6 @@ async function tempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "keywork-auth-"));
   tempDirs.push(dir);
   return dir;
-}
-
-function diskFailingMidWrite(): PrivateFileDisk {
-  return {
-    mkdir,
-    chmod,
-    rename,
-    rm,
-    writeFile: async (path, data, options) => {
-      await writeFile(path, String(data).slice(0, 8), options);
-      throw new Error("disk full");
-    },
-  };
 }
 
 afterEach(async () => {
@@ -107,20 +94,17 @@ describe("credential store", () => {
       "cannot serialize",
     );
     expect(await readFile(file, "utf8")).toBe(before);
+    expect(await readdir(dir)).toEqual(["auth.json"]);
   });
 
-  it("keeps the existing auth.json intact when the disk fails mid-write", async () => {
+  it("deletes one provider and reports whether anything was there", async () => {
     const dir = await tempDir();
-    const file = await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir);
-    const before = await readFile(file, "utf8");
-    const replacement = `${JSON.stringify({ openrouter: { type: "api_key", key: "sk-2" } })}\n`;
+    await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir);
+    await saveCredential("openrouter", { type: "api_key", key: "sk-2" }, dir);
 
-    await expect(writePrivateFile(file, replacement, diskFailingMidWrite())).rejects.toThrow(
-      "disk full",
-    );
-    expect(await readFile(file, "utf8")).toBe(before);
-    expect(await readCredentials(dir)).toEqual({ openai: { type: "api_key", key: "sk-1" } });
-    expect(await readdir(dir)).toEqual(["auth.json"]);
+    expect(await deleteCredential("openai", dir)).toBe(true);
+    expect(await deleteCredential("openai", dir)).toBe(false);
+    expect(await readCredentials(dir)).toEqual({ openrouter: { type: "api_key", key: "sk-2" } });
   });
 });
 

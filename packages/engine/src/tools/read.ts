@@ -11,7 +11,7 @@ const schema = z.object({
   limit: z.number().int().min(1).optional().describe("Maximum number of lines to return."),
 });
 
-export function readTool(scope: string | ToolScope) {
+export function readTool(scope: ToolScope) {
   return defineTool({
     name: "read",
     description: "Read a text file, returning numbered lines.",

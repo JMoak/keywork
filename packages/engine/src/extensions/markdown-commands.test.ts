@@ -40,11 +40,11 @@ const inertRuntime: CommandRuntime = {
 describe("loadCommands", () => {
   it("loads name, frontmatter, and template from a command file", async () => {
     const root = await scratch();
-    await seed(join(root, "commands"), {
+    await seed(join(root, ".keywork", "commands"), {
       "review.md":
         "---\ndescription: Review the diff\nagent: reviewer\nmodel: some-model\n---\nReview $ARGUMENTS carefully.\n",
     });
-    const { commands, failures } = await loadCommands({ projectDir: join(root, "commands") });
+    const { commands, failures } = await loadCommands({ projectRoot: root });
     expect(failures).toEqual([]);
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({
@@ -59,14 +59,14 @@ describe("loadCommands", () => {
 
   it("prefers project commands over user commands with the same name", async () => {
     const root = await scratch();
-    await seed(join(root, "project"), { "deploy.md": "project body" });
-    await seed(join(root, "user"), {
+    await seed(join(root, "project", ".keywork", "commands"), { "deploy.md": "project body" });
+    await seed(join(root, "user", ".keywork", "commands"), {
       "deploy.md": "user body",
       "only-user.md": "user only",
     });
     const { commands } = await loadCommands({
-      projectDir: join(root, "project"),
-      userDir: join(root, "user"),
+      projectRoot: join(root, "project"),
+      userRoot: join(root, "user"),
     });
     const byName = new Map(commands.map((command) => [command.name, command]));
     expect(byName.get("deploy")?.template).toBe("project body");
@@ -76,12 +76,12 @@ describe("loadCommands", () => {
 
   it("quarantines malformed frontmatter and bad names without failing the load", async () => {
     const root = await scratch();
-    await seed(join(root, "commands"), {
+    await seed(join(root, ".keywork", "commands"), {
       "broken.md": "---\ndescription: never closed\n",
       "bad name!.md": "body",
       "fine.md": "still loads",
     });
-    const { commands, failures } = await loadCommands({ projectDir: join(root, "commands") });
+    const { commands, failures } = await loadCommands({ projectRoot: root });
     expect(commands.map((command) => command.name)).toEqual(["fine"]);
     expect(failures).toHaveLength(2);
     expect(failures.map((failure) => failure.reason).join(" ")).toContain("frontmatter");
@@ -90,8 +90,8 @@ describe("loadCommands", () => {
   it("returns nothing when no command directories exist", async () => {
     const root = await scratch();
     const { commands, failures } = await loadCommands({
-      projectDir: join(root, "missing"),
-      userDir: join(root, "also-missing"),
+      projectRoot: join(root, "missing"),
+      userRoot: join(root, "also-missing"),
     });
     expect(commands).toEqual([]);
     expect(failures).toEqual([]);

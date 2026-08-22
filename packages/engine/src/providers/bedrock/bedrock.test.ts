@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../../messages.ts";
 import type { ProviderRequest, TurnDelta } from "../../provider.ts";
-import { type FetchLike, ProviderHttpError, ProviderStreamError } from "../openai.ts";
+import { ProviderEmptyResponseError, ProviderHttpError, ProviderStreamError } from "../errors.ts";
+import { chunkedStream, concatBytes } from "../stream-fixtures.ts";
+import type { FetchLike } from "../transport.ts";
 import { BedrockExceptionError, BedrockProvider } from "./bedrock.ts";
-import { chunkedStream, concatBytes, eventFrame, exceptionFrame } from "./frame-fixtures.ts";
+import { eventFrame, exceptionFrame } from "./frame-fixtures.ts";
 
 const fixedNow = new Date("2025-01-02T03:04:05Z");
 
@@ -171,6 +173,14 @@ describe("BedrockProvider", () => {
     await expect(collect(failing.stream(emptyRequest))).rejects.toThrow(/403.*denied/s);
   });
 
+  it("fails with a typed transient error when the response has no body", async () => {
+    const bodiless = provider(async () => new Response(null, { status: 200 }));
+
+    await expect(collect(bodiless.stream(emptyRequest))).rejects.toThrow(
+      ProviderEmptyResponseError,
+    );
+  });
+
   it("classifies a mid-stream throttlingException as transient", async () => {
     const frames = [
       eventFrame("contentBlockDelta", { contentBlockIndex: 0, delta: { text: "partial" } }),
@@ -222,22 +232,6 @@ describe("BedrockProvider", () => {
     const deltas = await collect(provider(async () => frameResponse(frames)).stream(emptyRequest));
 
     expect(deltas).toEqual([{ type: "done", usage: { inputTokens: 0, outputTokens: 0 } }]);
-  });
-
-  it("keeps unparseable tool-use input as raw text for the model to see", async () => {
-    const frames = [
-      eventFrame("contentBlockStart", {
-        contentBlockIndex: 0,
-        start: { toolUse: { toolUseId: "t1", name: "bash" } },
-      }),
-      eventFrame("contentBlockDelta", {
-        contentBlockIndex: 0,
-        delta: { toolUse: { input: "{broken" } },
-      }),
-    ];
-    const deltas = await collect(provider(async () => frameResponse(frames)).stream(emptyRequest));
-
-    expect(deltas[0]).toMatchObject({ call: { arguments: "{broken" } });
   });
 
   it("synthesizes a stable callId when the stream never provides one", async () => {

@@ -2,11 +2,20 @@ import type { Message, ToolCallPart, Usage } from "./messages.ts";
 import type { TurnDelta } from "./provider.ts";
 import type { ContextInjection, PermissionDecision } from "./session/journal.ts";
 
+export type SendBehavior = "steer" | "queue";
+
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  behavior: SendBehavior;
+}
+
 interface LiveEvents {
   "turn.started": { userText: string; entryId?: string };
   "turn.delta": { delta: TurnDelta };
   "turn.completed": { message: Message; usage: Usage };
   "turn.interrupted": { message: Message };
+  "queue.changed": { queued: readonly QueuedPrompt[] };
   "tool.started": { call: ToolCallPart };
   "tool.output": { chunk: string; callId?: string };
   "tool.finished": { callId: string; output: string; isError: boolean };
@@ -30,18 +39,23 @@ interface ReportsFailures {
   [failureEvent]: { error: Error };
 }
 
+interface Registration {
+  listener: Listener<never>;
+}
+
 export class EventBus<Events extends ReportsFailures = EngineEvents> {
-  private readonly listeners = new Map<keyof Events, Set<Listener<never>>>();
+  private readonly registrations = new Map<keyof Events, Registration[]>();
 
   on<K extends keyof Events>(type: K, listener: Listener<Events[K]>): () => void {
-    const existing = this.listeners.get(type) ?? new Set();
-    existing.add(listener as Listener<never>);
-    this.listeners.set(type, existing);
-    return () => existing.delete(listener as Listener<never>);
+    const registration: Registration = { listener: listener as Listener<never> };
+    const existing = this.registrations.get(type) ?? [];
+    existing.push(registration);
+    this.registrations.set(type, existing);
+    return () => this.forget(type, registration);
   }
 
   emit<K extends keyof Events>(type: K, payload: Events[K]): void {
-    for (const listener of this.listeners.get(type) ?? []) {
+    for (const { listener } of [...(this.registrations.get(type) ?? [])]) {
       try {
         (listener as Listener<Events[K]>)(payload);
       } catch (cause) {
@@ -51,10 +65,17 @@ export class EventBus<Events extends ReportsFailures = EngineEvents> {
   }
 
   listenerCount(type?: keyof Events): number {
-    if (type !== undefined) return this.listeners.get(type)?.size ?? 0;
+    if (type !== undefined) return this.registrations.get(type)?.length ?? 0;
     let total = 0;
-    for (const listeners of this.listeners.values()) total += listeners.size;
+    for (const registrations of this.registrations.values()) total += registrations.length;
     return total;
+  }
+
+  private forget(type: keyof Events, registration: Registration): void {
+    const existing = this.registrations.get(type);
+    const index = existing?.indexOf(registration) ?? -1;
+    if (existing === undefined || index === -1) return;
+    existing.splice(index, 1);
   }
 
   private reportListenerFailure(type: keyof Events, cause: unknown): void {

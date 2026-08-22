@@ -1,30 +1,16 @@
-import { randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
+import { canonicalPath } from "../canonical-path.ts";
+import { type Disk, type JsonFileStore, jsonFileStore } from "../json-file-store.ts";
 
 export type TrustDecision = "trusted" | "untrusted" | "undecided";
-
-export type TrustDisk = Pick<
-  typeof import("node:fs"),
-  "mkdirSync" | "readFileSync" | "writeFileSync" | "chmodSync" | "renameSync" | "rmSync"
->;
 
 export interface TrustStoreOptions {
   file?: string;
   home?: string;
   platform?: NodeJS.Platform;
-  disk?: TrustDisk;
+  disk?: Disk;
 }
-
-const realDisk: TrustDisk = {
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  chmodSync,
-  renameSync,
-  rmSync,
-};
 
 export class BlanketTrustError extends Error {
   constructor(path: string) {
@@ -46,18 +32,25 @@ export class TrustStore {
   readonly file: string;
   private readonly home: string;
   private readonly platform: NodeJS.Platform;
-  private readonly disk: TrustDisk;
+  private readonly store: JsonFileStore<Record<string, boolean>>;
   private readonly sessionDecisions = new Map<string, boolean>();
 
   constructor(options: TrustStoreOptions = {}) {
     this.platform = options.platform ?? process.platform;
-    this.home = canonicalTrustPath(options.home ?? homedir(), this.platform);
-    this.file = options.file ?? join(homedir(), ".keywork", "trust.json");
-    this.disk = options.disk ?? realDisk;
+    this.home = canonicalPath(options.home ?? homedir(), this.platform);
+    this.file = options.file ?? join(options.home ?? homedir(), ".keywork", "trust.json");
+    this.store = jsonFileStore<Record<string, boolean>>({
+      file: this.file,
+      mode: "strict",
+      private: true,
+      disk: options.disk,
+      error: (file, detail) => new TrustStoreError(file, detail),
+      validate: (data) => parseTrustFile(this.file, data),
+    });
   }
 
   resolve(cwd: string): TrustDecision {
-    const persisted = this.read();
+    const persisted = this.persisted();
     const decision = this.nearestDecision(cwd, (path) =>
       this.sessionDecisions.has(path) ? this.sessionDecisions.get(path) : persisted[path],
     );
@@ -76,7 +69,7 @@ export class TrustStore {
   forget(cwd: string): void {
     const path = this.canonical(cwd);
     this.sessionDecisions.delete(path);
-    const data = this.read();
+    const data = this.persisted();
     if (path in data) {
       delete data[path];
       this.write(data);
@@ -95,7 +88,7 @@ export class TrustStore {
     const path = this.canonical(cwd);
     if (!this.mayBlanket(path)) throw new BlanketTrustError(path);
     this.sessionDecisions.delete(path);
-    const data = this.read();
+    const data = this.persisted();
     data[path] = decision;
     this.write(data);
   }
@@ -122,13 +115,11 @@ export class TrustStore {
   }
 
   private canonical(path: string): string {
-    return canonicalTrustPath(path, this.platform);
+    return canonicalPath(path, this.platform);
   }
 
-  private read(): Record<string, boolean> {
-    const raw = readFileIfExists(this.disk, this.file);
-    if (raw === undefined) return {};
-    return parseTrustFile(this.file, raw);
+  private persisted(): Record<string, boolean> {
+    return this.store.read() ?? {};
   }
 
   private write(data: Record<string, boolean>): void {
@@ -137,43 +128,11 @@ export class TrustStore {
         .sort()
         .map((key) => [key, data[key] === true]),
     );
-    this.disk.mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
-    writeFileAtomically(this.disk, this.file, `${JSON.stringify(sorted, null, 2)}\n`);
+    this.store.write(sorted);
   }
 }
 
-function writeFileAtomically(disk: TrustDisk, file: string, content: string): void {
-  const staging = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  try {
-    disk.writeFileSync(staging, content, { encoding: "utf8", mode: 0o600 });
-    disk.chmodSync(staging, 0o600);
-    disk.renameSync(staging, file);
-  } catch (cause) {
-    disk.rmSync(staging, { force: true });
-    throw cause;
-  }
-}
-
-export function canonicalTrustPath(
-  path: string,
-  platform: NodeJS.Platform = process.platform,
-): string {
-  const absolute = resolve(path);
-  return platform === "win32" ? absolute.toLowerCase() : absolute;
-}
-
-function readFileIfExists(disk: TrustDisk, file: string): string | undefined {
-  try {
-    return disk.readFileSync(file, "utf8");
-  } catch (cause) {
-    const code = (cause as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
-    throw new TrustStoreError(file, `unreadable (${code ?? "unknown"})`);
-  }
-}
-
-function parseTrustFile(file: string, raw: string): Record<string, boolean> {
-  const parsed = parseJson(file, raw);
+function parseTrustFile(file: string, parsed: unknown): Record<string, boolean> {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new TrustStoreError(file, "expected an object of path to boolean");
   }
@@ -185,12 +144,4 @@ function parseTrustFile(file: string, raw: string): Record<string, boolean> {
     data[key] = value;
   }
   return data;
-}
-
-function parseJson(file: string, raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch (cause) {
-    throw new TrustStoreError(file, `not valid JSON: ${(cause as Error).message}`);
-  }
 }

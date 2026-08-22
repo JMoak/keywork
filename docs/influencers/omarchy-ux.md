@@ -1,10 +1,10 @@
 # Omarchy as a UX-Heuristics Reference
 
-> **Scope note.** This document studies Omarchy purely as a *feel* reference — its interaction
-> heuristics and attention-to-detail principles — not its implementation. keywork is a
+> **Scope note.** This document studies Omarchy purely as a *feel* reference (its interaction
+> heuristics and attention-to-detail principles), not its implementation. keywork is a
 > Bun/TypeScript/OpenTUI coding-agent harness; nothing here implies copying Omarchy code or
 > shipping a Linux distro. (Omarchy itself is MIT-licensed, but it is a Hyprland/Arch config,
-> so there is nothing to lift anyway — only lessons.)
+> so there is nothing to lift anyway, only lessons.)
 
 ---
 
@@ -14,11 +14,11 @@ Omarchy is DHH's (David Heinemeier Hansson / 37signals) "beautiful, modern & opi
 Arch Linux + Hyprland distribution: a pre-configured, keyboard-driven tiling desktop for
 developers, shipped as an ISO with sensible defaults, ~19 coordinated themes, and a curated
 toolset (Neovim, tmux, fzf, ripgrep, lazygit/lazydocker, Alacritty). Its manual states the
-core ethos plainly: *"Everything in Omarchy happens via the keyboard — EVERYTHING!"* and
+core ethos plainly: *"Everything in Omarchy happens via the keyboard: EVERYTHING!"* and
 *"a beautiful system is a motivating system, and productivity has always been downstream
 from motivation."*
 
-The guiding philosophy is **omakase** — "I'll leave it up to you," trusting the chef.
+The guiding philosophy is **omakase**: "I'll leave it up to you," trusting the chef.
 Omarchy makes the package, configuration, and workflow choices so the user doesn't have to,
 eliminating the choice overload that plagues traditional Linux ricing. The Super key is the
 single command center; `Super + K` shows every hotkey; `Super + Space` is a type-to-find
@@ -28,7 +28,7 @@ curation and presentation rather than new technology.
 
 **Sources:**
 - https://omarchy.org/ (official site)
-- https://learn.omacom.io/2/the-omarchy-manual (the Omarchy Manual — philosophy, hotkeys, themes)
+- https://learn.omacom.io/2/the-omarchy-manual (the Omarchy Manual: philosophy, hotkeys, themes)
 - https://github.com/basecamp/omarchy (repo; MIT license)
 - https://one2n.io/blog/daily-driving-omarchy-linux-and-hyprland-as-a-cto (daily-driver review)
 - https://www.thinklet.blog/omarchy-linux-review-arch-hyprland (review)
@@ -61,27 +61,27 @@ a binding from the grammar and be right, the grammar is working.
 close window, `Super + F` fullscreen, `Super + J` toggle split orientation, `Super + T`
 toggle tiling/floating. No menus on the hot path.
 
-**keywork:** Identify the ten operations an agent-harness user does constantly — new session,
+**keywork:** Identify the ten operations an agent-harness user does constantly (new session,
 interrupt agent, approve/deny a tool call, jump between agent panes, toggle diff view, send
-message — and give each a single chord with no intermediate menu. Everything else can live
+message) and give each a single chord with no intermediate menu. Everything else can live
 one layer deeper. Measure the hot path in keystrokes and defend it in review.
 
 ### 2.3 Discoverability via a Live Overlay, Not Documentation
 
 **Omarchy:** `Super + K` displays the complete hotkey reference in an overlay. The one2n
-daily-driver review calls this menu the author's *favorite feature* — it "eliminates config
+daily-driver review calls this menu the author's *favorite feature*; it "eliminates config
 file edits and memorization needs." You never leave the environment to learn the environment.
 
 **keywork:** Ship a `?`/leader-`k` overlay that lists every binding *for the current focus
 context*, generated from the actual keymap (never a hand-maintained doc that drifts). Bonus
-Omarchy-grade detail: make each overlay row executable — press the key while the overlay is
+Omarchy-grade detail: make each overlay row executable. Press the key while the overlay is
 open and it runs, turning the cheat sheet into a command palette.
 
 ### 2.4 Omakase: Opinionated Defaults Over Configuration
 
 **Omarchy:** The distribution's entire value proposition is that DHH already made the choices:
-terminal, editor, fonts, themes, keymap, window rules. Reviewers credit this curation — "carefully
-curated, not bloated" — for the out-of-box polish. Configuration is *possible* (user config in
+terminal, editor, fonts, themes, keymap, window rules. Reviewers credit this curation ("carefully
+curated, not bloated") for the out-of-box polish. Configuration is *possible* (user config in
 `~/.config`, system files kept separately in `~/.local/share/omarchy`) but never *required*.
 
 **keywork:** Zero-config first run must be the best experience, not a degraded one. Pick one
@@ -98,31 +98,31 @@ motivation. The one2n review credits the "deliberately considered visual design"
 
 **keywork:** Treat the TUI's resting state as a design artifact: quiet borders, one accent
 color for focus, restrained status line, no flashing or scrolling noise while the user reads.
-Agent output streams should be typographically calm — clear speaker separation, muted
-metadata, syntax-highlighted diffs — so a 10-hour session doesn't grind. If a UI element
+Agent output streams should be typographically calm (clear speaker separation, muted
+metadata, syntax-highlighted diffs) so a 10-hour session doesn't grind. If a UI element
 isn't earning attention, dim it.
 
 ### 2.6 System-Wide Theme Coherence, Hot-Swappable
 
 **Omarchy:** One theme choice restyles desktop, terminal, Neovim, notifications, topbar, and
-lock screen together — ~19 themes (Tokyo Night, Catppuccin, …) defined in a simple
+lock screen together: ~19 themes (Tokyo Night, Catppuccin, …) defined in a simple
 `colors.toml`, swapped live with `Super + Ctrl + Shift + Space`. No app is left off-palette.
 
-**keywork:** One theme token set drives *every* pane and widget — chat, diff viewer, file
-tree, status bar, dialogs — from a single palette definition; no widget hard-codes a color.
+**keywork:** One theme token set drives *every* pane and widget (chat, diff viewer, file
+tree, status bar, dialogs) from a single palette definition; no widget hard-codes a color.
 Theme switching is a live keybinding, not a restart. Support the popular terminal palettes
 (Tokyo Night, Catppuccin) so keywork lands on-palette inside users' existing terminals.
 
 ### 2.7 Tiling Discipline: The Layout Manages Itself
 
-**Omarchy:** Hyprland auto-tiles — windows organize into a non-overlapping grid with no manual
+**Omarchy:** Hyprland auto-tiles: windows organize into a non-overlapping grid with no manual
 placement; the user only toggles orientation (`Super + J`), fullscreen (`Super + F`), full
 width (`Super + Alt + F`), or floating (`Super + T`). Reviewers cite real daily time savings
 from never mousing windows around.
 
 **keywork:** Panes tile automatically by a predictable algorithm; users never drag borders as
-a primary interaction. Provide a tiny set of layout verbs — split, rotate/toggle orientation,
-zoom pane to full screen (and back), close — all single chords. A "zoom" (temporary
+a primary interaction. Provide a tiny set of layout verbs, all single chords: split,
+rotate/toggle orientation, zoom pane to full screen (and back), close. A "zoom" (temporary
 fullscreen of one pane, one key to restore the layout) is the TUI equivalent of `Super + F`
 and is essential for reading long agent output.
 
@@ -132,7 +132,7 @@ and is essential for reading long agent output.
 does the rest. Menus exist (`Super + Alt + Space` control menu) but even they are typeahead.
 No arrow-key spelunking through nested menus.
 
-**keywork:** Every list in the harness — sessions, files, commands, panes, history — is
+**keywork:** Every list in the harness (sessions, files, commands, panes, history) is
 fuzzy-filterable the moment it opens, with typing as the default interaction and arrows as
 the fallback. A single command palette (leader + `p` or similar) reaches every operation by
 name, so nothing is ever more than "open palette, type three letters, Enter" away.
@@ -142,35 +142,35 @@ name, so nothing is ever more than "open palette, type three letters, Enter" awa
 **Omarchy:** `Super + Escape` is the system menu (suspend/restart/lock); `Super + W` closes
 anything; `Super + Ctrl + L` locks instantly. Getting *out* of a state is as fast as getting in.
 
-**keywork:** `Esc` must always do the obvious safe thing — close overlay, cancel input,
-interrupt streaming — and interrupting a running agent must be a single, always-available
+**keywork:** `Esc` must always do the obvious safe thing (close overlay, cancel input,
+interrupt streaming), and interrupting a running agent must be a single, always-available
 keystroke that never queues behind output. A user who feels trapped in a mode for even a
 second loses trust in the whole tool. Test every state for "can I leave in one key?"
 
 ### 2.10 Cross-App Consistency: One Muscle Memory
 
-**Omarchy:** A unified clipboard grammar works across all apps — `Super + C/X/V` copy/cut/paste
-everywhere, plus `Super + Ctrl + V` for clipboard history — papering over the terminal-vs-GUI
+**Omarchy:** A unified clipboard grammar works across all apps (`Super + C/X/V` copy/cut/paste
+everywhere, plus `Super + Ctrl + V` for clipboard history), papering over the terminal-vs-GUI
 clipboard mess so one muscle memory serves the whole system.
 
 **keywork:** Copy, search, scroll, select, and yank must behave identically in every pane
-type — chat transcript, diff, file preview, logs. Selection-and-copy from streaming agent
+type: chat transcript, diff, file preview, logs. Selection-and-copy from streaming agent
 output should be first-class (copy last code block, copy last message, yank a diff hunk) with
 one consistent set of keys, plus a history picker for previously copied items.
 
 ### 2.11 Curated Toolbelt, Zero Bloat
 
 **Omarchy:** The manual is explicit: only actively-used software ships. What does ship is the
-best-in-class TUI tooling (lazygit, lazydocker each get their own hotkey — `Super + Shift + D`).
+best-in-class TUI tooling (lazygit, lazydocker each get their own hotkey, `Super + Shift + D`).
 Reviewers note the flip side: closed-source tools are included when they're simply the best
-choice (Obsidian, Typora) — pragmatism over purity.
+choice (Obsidian, Typora); pragmatism over purity.
 
 **keywork:** Ship few features and make each excellent. Every pane type, command, and
 integration must justify its existence with daily use; cut speculative features ruthlessly.
 Prefer integrating one great tool per job (one diff view, one file picker) over offering
 three mediocre alternatives. Pragmatism over purity in dependency choices, provided licenses
-allow it (Pi and OpenCode are MIT — code may be lifted with attribution; Crush is
-FSL-1.1-MIT — ideas only, never copy its source; Anthropic access is API-key/Agent-SDK only,
+allow it (Pi and OpenCode are MIT, so code may be lifted with attribution; Crush is
+FSL-1.1-MIT, ideas only, never copy its source; Anthropic access is API-key/Agent-SDK only,
 never subscription-OAuth).
 
 ### 2.12 Small Delights in the Corners
@@ -201,37 +201,37 @@ single well-written manual. Delight lives in the tenth-percentile interactions.
 | **Update-clobbered customization** | User config (`~/.config`) separated from system files | Shipped defaults and user overrides in separate files |
 | **Enterprise everything-for-everyone scope** | Explicitly a single-user developer workstation; doesn't chase mission-critical/enterprise use cases | keywork targets the individual keyboard-first developer, not every workflow |
 
-Known honest limitations reviewers flag — multi-monitor rough edges, screen-share polish,
-single-user only — are themselves a lesson: Omarchy would rather be superb for its target
+Known honest limitations reviewers flag (multi-monitor rough edges, screen-share polish,
+single-user only) are themselves a lesson: Omarchy would rather be superb for its target
 user than mediocre for everyone.
 
 ---
 
-## 4. The keywork Feel — a Manifesto
+## 4. The keywork Feel: a Manifesto
 
 1. Everything happens via the keyboard. Everything.
 2. One leader, one grammar; a binding you can guess is a binding done right.
 3. The hot path is one keystroke deep. Always. No menu ever stands between you and the agent.
-4. `?` shows every key that works right now — the cheat sheet is alive, generated, and runnable.
+4. `?` shows every key that works right now; the cheat sheet is alive, generated, and runnable.
 5. Zero config is the best config; opinions are a feature we take responsibility for.
-6. Panes tile themselves; you split, rotate, zoom, close — four verbs, four keys, no dragging.
+6. Panes tile themselves; you split, rotate, zoom, close: four verbs, four keys, no dragging.
 7. One key zooms any pane to fullscreen; the same key puts the world back exactly as it was.
 8. Escape always works. Interrupt always works. You are never trapped.
 9. Type to find, never navigate: every list filters as you type.
 10. One palette paints every pixel; no widget is off-theme, and themes swap live.
 11. Calm by default: quiet borders, one accent for focus, nothing flashes while you read.
-12. Copy, search, and scroll feel identical in every pane — one muscle memory.
+12. Copy, search, and scroll feel identical in every pane: one muscle memory.
 13. Few features, each excellent; anything not used daily gets cut.
-14. Polish the corners nobody demanded — that's where trust is built.
+14. Polish the corners nobody demanded; that's where trust is built.
 15. Beauty is not decoration; a beautiful session is a session you want to stay in.
 
 ---
 
 ## Sources
 
-- Omarchy official site — https://omarchy.org/
-- The Omarchy Manual (philosophy, hotkeys, themes, window management) — https://learn.omacom.io/2/the-omarchy-manual
-- Omarchy GitHub repository (basecamp/omarchy, MIT) — https://github.com/basecamp/omarchy
-- "Daily driving Omarchy and Hyprland as a CTO," One2N Engineering Blog — https://one2n.io/blog/daily-driving-omarchy-linux-and-hyprland-as-a-cto
-- "Omarchy Linux Review: Opinionated Arch + Hyprland for Developers," Thinklet — https://www.thinklet.blog/omarchy-linux-review-arch-hyprland
-- "Omarchy: A New Arch Linux Distro from 37signals," OpenReplay Blog — https://blog.openreplay.com/omarchy-new-arch-linux-distro-37signals/
+- Omarchy official site: https://omarchy.org/
+- The Omarchy Manual (philosophy, hotkeys, themes, window management): https://learn.omacom.io/2/the-omarchy-manual
+- Omarchy GitHub repository (basecamp/omarchy, MIT): https://github.com/basecamp/omarchy
+- "Daily driving Omarchy and Hyprland as a CTO," One2N Engineering Blog: https://one2n.io/blog/daily-driving-omarchy-linux-and-hyprland-as-a-cto
+- "Omarchy Linux Review: Opinionated Arch + Hyprland for Developers," Thinklet: https://www.thinklet.blog/omarchy-linux-review-arch-hyprland
+- "Omarchy: A New Arch Linux Distro from 37signals," OpenReplay Blog: https://blog.openreplay.com/omarchy-new-arch-linux-distro-37signals/

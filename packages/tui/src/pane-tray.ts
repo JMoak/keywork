@@ -1,6 +1,7 @@
 import { Text } from "@opentui/core";
-import { fuzzyScore } from "./commands.ts";
+import { FilterPicker } from "./filter-picker.ts";
 import type { Chord } from "./keys.ts";
+import { rankByFuzzy } from "./picker-keys.ts";
 import type { Theme } from "./theme.ts";
 import { clipLine, type TrayChild, type TrayItem, trayBox, trayRows } from "./tray.ts";
 
@@ -14,21 +15,24 @@ export interface PaneTrayView {
 }
 
 export class PaneTrayModel {
-  private query = "";
-  private index = 0;
+  private readonly picker: FilterPicker<TrayCommand>;
   private openState = false;
 
   constructor(
     private readonly notify: () => void,
-    private readonly source: () => TrayCommand[],
-  ) {}
+    source: () => TrayCommand[],
+  ) {
+    this.picker = new FilterPicker((needle) =>
+      rankByFuzzy(source(), needle, (command) => command.name),
+    );
+  }
 
   get open(): boolean {
     return this.openState;
   }
 
   promptText(): string {
-    return this.query;
+    return this.picker.query;
   }
 
   opensOn(chord: Chord): boolean {
@@ -37,8 +41,7 @@ export class PaneTrayModel {
 
   openTray(): void {
     this.openState = true;
-    this.query = "";
-    this.index = 0;
+    this.picker.retype("");
     this.notify();
   }
 
@@ -47,65 +50,31 @@ export class PaneTrayModel {
     this.notify();
   }
 
-  matches(): TrayCommand[] {
-    const commands = this.source();
-    const query = this.query.trim().toLowerCase();
-    if (query === "") return commands;
-    return commands
-      .map((command) => ({ command, score: fuzzyScore(query, command.name) }))
-      .filter(
-        (entry): entry is { command: TrayCommand; score: number } => entry.score !== undefined,
-      )
-      .sort((left, right) => right.score - left.score)
-      .map((entry) => entry.command);
+  matches(): readonly TrayCommand[] {
+    return this.picker.rows();
   }
 
   selected(): number {
-    return Math.max(0, Math.min(this.index, this.matches().length - 1));
+    return this.picker.cursor();
   }
 
   handleKey(chord: Chord, sequence: string | undefined): boolean {
     if (!this.openState) return false;
-    switch (chord.name) {
-      case "escape":
+    switch (this.picker.handleKey(chord, sequence)) {
+      case "close":
         this.close();
         return true;
-      case "up":
-        return this.step(-1);
-      case "down":
-        return this.step(1);
-      case "tab":
-        return this.step(chord.shift ? -1 : 1);
-      case "enter":
-      case "return":
+      case "choose":
         this.runSelected();
         return true;
-      case "backspace":
-        return this.retype(this.query.slice(0, -1));
-      default:
-        if (sequence !== undefined && sequence.length === 1 && !chord.ctrl && !chord.meta) {
-          return this.retype(this.query + sequence);
-        }
+      case "stay":
+        this.notify();
         return true;
     }
   }
 
-  private step(delta: number): boolean {
-    const count = this.matches().length;
-    if (count > 0) this.index = (this.selected() + delta + count) % count;
-    this.notify();
-    return true;
-  }
-
-  private retype(query: string): boolean {
-    this.query = query;
-    this.index = 0;
-    this.notify();
-    return true;
-  }
-
   private runSelected(): void {
-    const chosen = this.matches()[this.selected()];
+    const chosen = this.picker.selected();
     this.close();
     chosen?.run();
   }

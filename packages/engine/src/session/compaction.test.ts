@@ -5,14 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type Message, messageText, textMessage } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
-import {
-  compactionSettingsFor,
-  compactSession,
-  planCompaction,
-  serializeConversation,
-  shouldCompact,
-} from "./compaction.ts";
-import { contextBudgetFor, readContext } from "./context-budget.ts";
+import { compactSession, planCompaction, serializeConversation } from "./compaction.ts";
+import { contextBudgetFor } from "./context-budget.ts";
 import { SessionStore } from "./store.ts";
 
 const tempDirs: string[] = [];
@@ -54,25 +48,17 @@ async function longSession(): Promise<SessionStore> {
   return store;
 }
 
-const tinyBudget = { reserveTokens: 10, keepRecentTokens: 60 };
-
-describe("shouldCompact", () => {
-  it("triggers once the reading passes the compaction mark", () => {
-    const budget = contextBudgetFor(100_000);
-    expect(budget.compactionReserve).toBe(8_333);
-    expect(shouldCompact(readContext(100_000 - 8_333 + 1, budget))).toBe(true);
-    expect(shouldCompact(readContext(100_000 - 8_333, budget))).toBe(false);
-  });
-
-  it("derives the plan settings from the budget", () => {
-    expect(compactionSettingsFor(contextBudgetFor(8_000))).toEqual({
-      reserveTokens: 666,
-      keepRecentTokens: 800,
-    });
-  });
-});
+const tinyBudget = contextBudgetFor(600);
 
 describe("planCompaction", () => {
+  it("keeps as much recent tail as the budget allows", async () => {
+    const store = await longSession();
+    const tiny = planCompaction(store, tinyBudget);
+    const roomy = planCompaction(store, contextBudgetFor(200_000));
+    expect(tinyBudget.keepRecent).toBe(60);
+    expect(roomy?.entriesToSummarize.length).toBeLessThan(tiny?.entriesToSummarize.length ?? 0);
+  });
+
   it("cuts at a message boundary, never at a tool result", async () => {
     const store = await longSession();
 
@@ -102,7 +88,7 @@ describe("compactSession", () => {
       textTurn("## Goal\ncompacted", { inputTokens: 50, outputTokens: 9 }),
     ]);
 
-    const entry = await compactSession(store, provider, { settings: tinyBudget });
+    const entry = await compactSession(store, provider, { budget: tinyBudget });
 
     expect(entry?.summary).toBe("## Goal\ncompacted");
     expect(entry?.usage).toEqual({ inputTokens: 50, outputTokens: 9 });
@@ -123,7 +109,7 @@ describe("compactSession", () => {
     const provider = capturingProvider(requests, ["first summary", "second summary"]);
 
     await compactSession(store, provider, {
-      settings: tinyBudget,
+      budget: tinyBudget,
       instructions: "focus on file names",
     });
     expect(messageText(requests[0]?.messages[0] as Message)).toContain("focus on file names");
@@ -132,7 +118,7 @@ describe("compactSession", () => {
       await store.append(textMessage("user", `question ${turn} ${"x".repeat(200)}`));
       await store.append(textMessage("assistant", `answer ${turn} ${"y".repeat(200)}`));
     }
-    const second = await compactSession(store, provider, { settings: tinyBudget });
+    const second = await compactSession(store, provider, { budget: tinyBudget });
 
     expect(messageText(requests[1]?.messages[0] as Message)).toContain("first summary");
     expect(second?.summary).toBe("second summary");
@@ -142,12 +128,12 @@ describe("compactSession", () => {
     const store = await longSession();
     const provider = new MockProvider([textTurn("one"), textTurn("two")]);
 
-    const first = await compactSession(store, provider, { settings: tinyBudget });
+    const first = await compactSession(store, provider, { budget: tinyBudget });
     for (let turn = 5; turn <= 8; turn++) {
       await store.append(textMessage("user", `question ${turn} ${"x".repeat(200)}`));
       await store.append(textMessage("assistant", `answer ${turn} ${"y".repeat(200)}`));
     }
-    const second = await compactSession(store, provider, { settings: tinyBudget });
+    const second = await compactSession(store, provider, { budget: tinyBudget });
 
     expect(second?.details?.readFiles).toEqual(
       expect.arrayContaining(first?.details?.readFiles ?? []),
@@ -164,7 +150,7 @@ describe("compactSession", () => {
     await store.append(textMessage("user", `question 5 ${"x".repeat(200)}`));
     await store.append(textMessage("assistant", `answer 5 ${"y".repeat(200)}`));
     await compactSession(store, new MockProvider([textTurn("summary")]), {
-      settings: tinyBudget,
+      budget: tinyBudget,
     });
 
     store.branch(otherTip.id);

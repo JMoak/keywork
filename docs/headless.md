@@ -9,8 +9,13 @@
 ## `keywork run "<prompt>" [--json] [--preset <name>] [--model <ref>] [--session-dir <dir>] [--debug]`
 
 Runs one session to completion and mounts nothing else: no server, no TUI, no panes.
-Plain mode prints the final assistant message to stdout and everything else to stderr.
-`--json` prints one JSON object per line to stdout and nothing else.
+The session is composed exactly as a pane's would be (`compose.ts`): project instructions and
+workspace memory once the project is trusted, the anchor root and linked folders in the tool
+scope, discovered skills, configured MCP servers, and `--workspace <slug>` selecting the named
+workspace's vault and session dir. What it leaves out is the interactive machinery: no undo
+checkpoints, and no one to answer an ask (below). Extensions that fail to load are reported on
+stderr and skipped. Plain mode prints the final assistant message to stdout and everything else
+to stderr. `--json` prints one JSON object per line to stdout and nothing else.
 
 ### Exit codes
 
@@ -54,7 +59,7 @@ invocation ends with exactly one `run.finished` carrying `outcome` and `exitCode
 | `turn.completed` | `message`, `usage` |
 | `turn.interrupted` | `message` |
 | `engine.error` | `message` |
-| `run.finished` | `outcome`, `exitCode`, plus `message` (completed · denied · interrupted), `refused` (denied: `[{tool, callId}]`), `error` (failed · usage), or `failure` (unresolved: the typed IR-18 object) |
+| `run.finished` | `outcome`, `exitCode`, plus `message` (completed · denied · interrupted), `refused` (denied: `[{tool, callId}]`), `error` (failed · usage), or `failure` (unresolved: the typed IR-18 object plus the `nextAction` a person would be told) |
 
 Bus events ride under their bus names with their bus payloads, so a CI script reads the
 same events a pane does. The same events land in the session JSONL as Pi-compatible

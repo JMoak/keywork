@@ -2,12 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceDeclaration } from "./declaration.ts";
 import { ConfigError } from "./load.ts";
 import {
   openWorkspace,
   resolveAnchor,
   updateWorkspaceDeclaration,
-  type WorkspaceDeclaration,
   writeWorkspaceDeclaration,
 } from "./workspace.ts";
 

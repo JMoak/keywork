@@ -4,8 +4,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { messageText, textMessage } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
-import { shouldCompact } from "../session/compaction.ts";
-import { contextBudgetFor, readContext, reserveCaps } from "../session/context-budget.ts";
+import {
+  compactionDue,
+  contextBudgetFor,
+  readContext,
+  reserveCaps,
+} from "../session/context-budget.ts";
 import {
   backtrackFlushClause,
   flushPrompt,
@@ -54,7 +58,7 @@ describe("shouldFlush", () => {
     expect(reserveCaps.flush).toBeGreaterThan(reserveCaps.compaction);
     expect(budget.flushReserve).toBe(reserveCaps.flush);
     expect(shouldFlush(readingAt(overThreshold))).toBe(true);
-    expect(shouldCompact(readingAt(overThreshold))).toBe(false);
+    expect(compactionDue(readingAt(overThreshold))).toBe(false);
     expect(shouldFlush(readingAt(contextWindow - budget.flushReserve))).toBe(false);
   });
 });

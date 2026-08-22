@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CurationJudgmentPort } from "../gardener.ts";
-import { ReviewInbox } from "../inbox.ts";
+import { isStagedWrite, type StagedItem } from "../staging.ts";
 import { MemoryInertError, MemoryStore } from "../store.ts";
 import {
   ArcAirlock,
@@ -31,9 +31,12 @@ interface Fixture {
   workspace: MemoryStore;
   registry: ArcRegistry;
   bindings: ArcBindings;
-  inbox: ReviewInbox;
   airlock: ArcAirlock;
   cited: Set<string>;
+}
+
+function reviewKeys(items: StagedItem[]): string[] {
+  return items.flatMap((item) => (isStagedWrite(item) ? [] : [item.key])).sort();
 }
 
 async function fixture(
@@ -47,18 +50,16 @@ async function fixture(
   const workspace = new MemoryStore({ vaultRoot: root, trusted, now, secrets });
   const registry = new ArcRegistry({ vaultRoot: root, trusted, now, secrets });
   const bindings = new ArcBindings();
-  const inbox = new ReviewInbox({ filePath: join(root, ".staging", "inbox.json"), now });
   const cited = new Set<string>();
   const airlock = new ArcAirlock({
     registry,
     bindings,
     workspace,
-    inbox,
     citedNotes: async () => [...cited],
     now,
     ...(options.judgment !== undefined && { judgment: options.judgment }),
   });
-  return { root, workspace, registry, bindings, inbox, airlock, cited };
+  return { root, workspace, registry, bindings, airlock, cited };
 }
 
 async function seededArc(f: Fixture, slug = "dock-v2"): Promise<void> {
@@ -111,7 +112,7 @@ describe("the acknowledgement sweep", () => {
 });
 
 describe("the digest", () => {
-  it("lists every candidate with its rubric verdict and opens the fourth inbox door", async () => {
+  it("lists every candidate with its rubric verdict and stages the arc reviews in the workspace", async () => {
     const f = await fixture();
     await seededArc(f);
     await f.registry.arcStore("dock-v2").writeNote({
@@ -128,9 +129,8 @@ describe("the digest", () => {
     expect(byName.get("Uncited Hunch")?.shortfalls).toEqual(["uncited"]);
     expect(digest.candidates.map((c) => c.note.name)).not.toContain("MOC");
     expect(digest.questions.map((q) => q.title)).toEqual(["Tie order"]);
-    const reloaded = new ReviewInbox({ filePath: join(f.root, ".staging", "inbox.json") });
-    const keys = (await reloaded.list()).map((item) => item.key).sort();
-    expect(keys).toEqual([
+    const reloaded = new MemoryStore({ vaultRoot: f.root, trusted: true });
+    expect(reviewKeys(await reloaded.listStaged())).toEqual([
       "arc-distillation:dock-v2:dock ratio finding",
       "arc-distillation:dock-v2:uncited hunch",
       "arc-question:dock-v2:tie order",
@@ -148,7 +148,7 @@ describe("the digest", () => {
       provenance: "agent",
       supersedes: "Old Rule",
     });
-    await f.inbox.add([
+    await f.workspace.propose([
       {
         kind: "contradiction",
         a: "Dock Ratio Finding",
@@ -202,7 +202,7 @@ describe("completing the close", () => {
     expect(daily.map((entry) => entry.text)).toContain("arc dock-v2 delivered · distilled 1 notes");
     expect((await f.registry.readArc("dock-v2"))?.status).toBe("archived");
     expect(f.bindings.bindingOf("s1")).toBeUndefined();
-    expect(await f.inbox.list()).toEqual([]);
+    expect(await f.workspace.listStaged()).toEqual([]);
     const audit = await readFile(join(f.root, "curation.md"), "utf8");
     expect(audit).toContain("arc dock-v2 closed: delivered 1");
   });
@@ -340,7 +340,7 @@ describe("stragglers and abandonment", () => {
     expect(routed).toHaveLength(2);
     expect(await arcStore.listStaged()).toEqual([]);
     const staged = await f.workspace.listStaged();
-    expect(staged.map((item) => item.target).sort()).toEqual([
+    expect(staged.flatMap((item) => (isStagedWrite(item) ? [item.target] : [])).sort()).toEqual([
       "Late Find.md",
       "daily/2026-08-16.md",
     ]);

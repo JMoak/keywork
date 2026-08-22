@@ -1,16 +1,7 @@
 import { z } from "zod";
+import { flavorTokenOverridesSchema } from "./flavor.ts";
 
 const keybinding = z.union([z.string(), z.array(z.string()), z.literal("none")]);
-
-const themeColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "theme colors must be #rrggbb");
-
-const themeRamp = z
-  .array(themeColor)
-  .min(1)
-  .max(6)
-  .describe(
-    "Ordered #rrggbb accent stops (1-6) that gradient chrome sweeps perceptually (98/PD8: spawn-rank pane hues, derived focus lift, arc anchors); exists because chromatic depth must be theme-driven rather than hardcoded, and a single stop reproduces today's flat single-accent look exactly.",
-  );
 
 const mcpTrusted = z
   .boolean()
@@ -187,7 +178,7 @@ const permissions = z
     bash: z
       .record(z.string(), permissionAction)
       .describe(
-        'Glob patterns (`*` wildcard) over the full bash command string to allow | ask | deny, e.g. "git status*": "allow"; exists because asking on every trivially safe command makes the gate unusable. Any matching deny pattern wins outright; otherwise the most specific matching pattern wins (most literal characters; first declared breaks ties). A matched rule overrides tools.bash. A command containing shell chaining characters (; & | < > ` $ ( ) or a newline) can only match deny rules: "git status; rm -rf /" falls through to tools.bash instead of riding an allow rule.',
+        'Glob patterns (`*` wildcard) over the full bash command string to allow | ask | deny, e.g. "git status*": "allow"; exists because asking on every trivially safe command makes the gate unusable. `*` spans newlines too, so a line break inside a command cannot dodge a pattern. Any matching deny pattern wins outright; otherwise the most specific matching pattern wins (most literal characters; first declared breaks ties). A matched rule overrides tools.bash. A command containing shell chaining characters (; & | < > ` $ ( ) or a newline) can only match deny rules: "git status; rm -rf /" falls through to tools.bash instead of riding an allow rule.',
       ),
   })
   .partial()
@@ -210,12 +201,9 @@ export const configSchema = z
       .describe(
         'Action-name to chord overrides: a single chord, an array of alternative chords, or the literal "none" to unbind the action; exists because fully rebindable keys are a core product value.',
       ),
-    theme: z
-      .object({ ramp: themeRamp.optional() })
-      .catchall(themeColor)
-      .describe(
-        "Theme-token to #rrggbb overrides (plus the ramp stop list) on the keywork-night palette; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
-      ),
+    theme: flavorTokenOverridesSchema.describe(
+      "Token-by-token #rrggbb overrides (plus the 1-6 stop ramp) laid over the keywork-night palette and checked against the flavor token schema, so a misspelled token or malformed color fails at config load; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
+    ),
     page: z
       .object({
         broadsheetAt: pageThresholdColumns

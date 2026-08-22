@@ -1,11 +1,6 @@
 import { type Message, textMessage, type Usage } from "../messages.ts";
 import type { Provider } from "../provider.ts";
-import {
-  type ContextBudget,
-  type ContextReading,
-  compactionDue,
-  reserveCaps,
-} from "./context-budget.ts";
+import type { ContextBudget } from "./context-budget.ts";
 import {
   type CompactionEntry,
   contextMessages,
@@ -15,19 +10,9 @@ import {
 } from "./entries.ts";
 import type { SessionStore } from "./store.ts";
 
-export interface CompactionSettings {
-  reserveTokens: number;
-  keepRecentTokens: number;
-}
-
-export const defaultCompactionSettings: CompactionSettings = {
-  reserveTokens: reserveCaps.compaction,
-  keepRecentTokens: reserveCaps.keepRecent,
-};
-
 export interface CompactionOptions {
-  settings?: Partial<CompactionSettings>;
-  instructions?: string;
+  budget: ContextBudget;
+  instructions?: string | undefined;
 }
 
 export interface CompactionPlan {
@@ -36,14 +21,6 @@ export interface CompactionPlan {
   previousSummary?: string;
   previousDetails?: FileTrackingDetails;
   tokensBefore: number;
-}
-
-export function shouldCompact(reading: ContextReading): boolean {
-  return compactionDue(reading);
-}
-
-export function compactionSettingsFor(budget: ContextBudget): CompactionSettings {
-  return { reserveTokens: budget.compactionReserve, keepRecentTokens: budget.keepRecent };
 }
 
 export function estimateContextTokens(store: SessionStore): number {
@@ -56,12 +33,12 @@ export function estimateConversationTokens(messages: readonly Message[]): number
 
 export function planCompaction(
   store: SessionStore,
-  settings: CompactionSettings = defaultCompactionSettings,
+  budget: ContextBudget,
 ): CompactionPlan | undefined {
   const context = store.contextEntries();
   const previous = context[0]?.type === "compaction" ? context[0] : undefined;
   const candidates = previous === undefined ? context : context.slice(1);
-  const cut = findCutIndex(candidates, settings.keepRecentTokens);
+  const cut = findCutIndex(candidates, budget.keepRecent);
   if (cut === undefined) return undefined;
 
   const entriesToSummarize = candidates
@@ -81,10 +58,9 @@ export function planCompaction(
 export async function compactSession(
   store: SessionStore,
   provider: Provider,
-  options: CompactionOptions = {},
+  options: CompactionOptions,
 ): Promise<CompactionEntry | undefined> {
-  const settings = { ...defaultCompactionSettings, ...options.settings };
-  const plan = planCompaction(store, settings);
+  const plan = planCompaction(store, options.budget);
   if (plan === undefined) return undefined;
 
   const { text, usage } = await generateSummary(provider, plan, options.instructions);

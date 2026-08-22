@@ -1,7 +1,9 @@
-import type { ImagePart, Message, Part, ToolCallPart, Usage } from "../../messages.ts";
+import type { ImagePart, Message, Part, Usage } from "../../messages.ts";
 import { messageText } from "../../messages.ts";
 import type { Provider, ProviderRequest, ToolDefinition, TurnDelta } from "../../provider.ts";
-import { type FetchLike, ProviderHttpError, ProviderStreamError } from "../openai.ts";
+import { ProviderStreamError } from "../errors.ts";
+import { type FetchLike, postForStream } from "../transport.ts";
+import { ToolCallAssembler } from "../wire-parts.ts";
 import { type EventStreamMessage, eventStreamMessages } from "./eventstream.ts";
 import { type AwsCredentials, rfc3986Encode, signRequest } from "./sigv4.ts";
 
@@ -58,17 +60,13 @@ export class BedrockProvider implements Provider {
       credentials: this.options.credentials,
       now: this.options.clock(),
     });
-    const response = await this.options.fetchFn(url.toString(), {
-      method: "POST",
+    const stream = await postForStream(this.name, this.options.fetchFn, {
+      url: url.toString(),
       headers,
       body,
-      ...(request.signal !== undefined && { signal: request.signal }),
+      signal: request.signal,
     });
-    if (!response.ok) {
-      throw new ProviderHttpError(this.name, response.status, await response.text());
-    }
-    if (response.body === null) throw new Error(`${this.name} returned an empty response body`);
-    yield* assembleTurn(this.name, eventStreamMessages(this.name, response.body));
+    yield* assembleTurn(this.name, eventStreamMessages(this.name, stream));
   }
 }
 
@@ -78,8 +76,6 @@ const transientExceptionTypes = new Set([
   "modelStreamErrorException",
   "internalServerException",
 ]);
-
-const maxToolInputBytes = 1_048_576;
 
 function toConverseRequest(request: ProviderRequest): object {
   const system = [
@@ -149,17 +145,11 @@ interface ConverseStreamEvent {
   usage?: { inputTokens?: number; outputTokens?: number };
 }
 
-interface PendingToolUse {
-  id: string;
-  name: string;
-  inputJson: string;
-}
-
 async function* assembleTurn(
   provider: string,
   frames: AsyncIterable<EventStreamMessage>,
 ): AsyncGenerator<TurnDelta> {
-  const pending = new Map<number, PendingToolUse>();
+  const calls = new ToolCallAssembler(provider);
   let usage: Usage = { inputTokens: 0, outputTokens: 0 };
   for await (const frame of frames) {
     const event = decodeEvent(provider, frame);
@@ -175,18 +165,12 @@ async function* assembleTurn(
     const index = event.contentBlockIndex ?? 0;
     const startedToolUse = event.start?.toolUse;
     if (startedToolUse !== undefined) {
-      pending.set(index, {
-        id: startedToolUse.toolUseId ?? "",
-        name: startedToolUse.name ?? "",
-        inputJson: "",
-      });
+      calls.add(index, { id: startedToolUse.toolUseId, name: startedToolUse.name });
     }
     const inputFragment = event.delta?.toolUse?.input;
-    if (typeof inputFragment === "string") accumulate(provider, pending, index, inputFragment);
+    if (typeof inputFragment === "string") calls.add(index, { argumentsJson: inputFragment });
   }
-  for (const [index, toolUse] of [...pending].sort(([a], [b]) => a - b)) {
-    yield { type: "tool-call", call: completedCall(index, toolUse) };
-  }
+  for (const call of calls.completed()) yield { type: "tool-call", call };
   yield { type: "done", usage };
 }
 
@@ -217,37 +201,5 @@ function parsePayload(frame: EventStreamMessage): unknown {
     return JSON.parse(new TextDecoder().decode(frame.payload));
   } catch {
     return null;
-  }
-}
-
-function accumulate(
-  provider: string,
-  pending: Map<number, PendingToolUse>,
-  index: number,
-  fragment: string,
-): void {
-  const existing = pending.get(index) ?? { id: "", name: "", inputJson: "" };
-  const inputJson = existing.inputJson + fragment;
-  if (inputJson.length > maxToolInputBytes) {
-    throw new ProviderStreamError(provider, "tool-use input exceeded the size ceiling");
-  }
-  pending.set(index, { ...existing, inputJson });
-}
-
-function completedCall(index: number, toolUse: PendingToolUse): ToolCallPart {
-  return {
-    type: "tool-call",
-    callId: toolUse.id !== "" ? toolUse.id : `call_${index}`,
-    name: toolUse.name,
-    arguments: parseInput(toolUse.inputJson),
-  };
-}
-
-function parseInput(inputJson: string): unknown {
-  if (inputJson.trim() === "") return {};
-  try {
-    return JSON.parse(inputJson);
-  } catch {
-    return inputJson;
   }
 }

@@ -50,6 +50,75 @@
 > `focusOrOpen` in the session-tree and arcs panes still calls `openSession` after a false
 > `attach` (the core now refuses with a notice, so only the notice is redundant).
 
+> **Status (2026-08-22, later): Wave C phase 1 and Wave D LANDED; gate green (`bun run check`
+> clean including the new `check:prose`, `bun run test` 182 files / 2573 tests + 1 skipped, native
+> `bun test` 2573 / 0, `bun run e2e` 11/11 with goldens byte-identical).** Thirteen Fable agents on
+> disjoint territories; the lead gated and reconciled. Landed: C1 (`row-cursor.ts`, `rowsView` /
+> `selectedLine` / `pluralize.ts`, `frame-scheduler.ts`, `arcs-pane.test.ts`, `file-pane.test.ts`,
+> `memory-rows.ts`), C2 (`filter-picker.ts`, `view/filter-overlay.ts`, `runPickerKey` /
+> `rankByFuzzy`, connect fields on `InputBuffer` with a caret), C3 (`run.ts` through compose with
+> the headless guard; `coreTools(scope, options)`, `confinedPath(ToolScope)`, unions gone), C4
+> (`shared/json-file-store.ts`, `canonical-path.ts`, `config/declaration.ts` +
+> `named-workspaces.ts`, every `~/.keywork` JSON store migrated), C5 hoist only (`tools/command-run.ts`,
+> decision 5 still open), C6 (`ReviewInbox` deleted; reviews are staged items with a one-time
+> `inbox.json` import; `memory/notes.ts`, `staging.ts`, `VaultFiles`; store 873 -> 556 lines), C7
+> (`Theme = FlavorTokens`, `config.theme` a strict partial override validated by zod,
+> `shared/color.ts`), C8 (`shared/glob.ts` with `*` spanning newlines, `ContextBudget` absorbs
+> compaction settings, `layers.ts` conventions axis + user-level skills, `mcp/tool-search.ts` +
+> `mcp/reconciler.ts`, fixture at `engine/src/testing/mcp-fixture-server.ts`), C11 (`layout.ts` 956
+> -> 434 over `layout-tree.ts` / `layout-arrangement.ts` / `layout-scene.ts` / `layout-state.ts` +
+> `geometry.ts`; geometry is a pure function of arrangement + screen so resize needs no `reflow`;
+> `width.ts` display cells; `KeymapError` on duplicate or modified-leader chords; `frameWrap`
+> deleted, OpenTUI already emits synchronized output; Animator re-entrancy fixed plus a real ghost-timer
+> bug), C12 minus the deferred parts (`providers/transport.ts` + `wire-parts.ts`, SSE drains before
+> its ceiling with a chunk-boundary table, retry jitter / ceiling / `Retry-After`,
+> `response.incomplete` and refusals surfaced, `inference/resolution.ts` pure with `nextActionFor`
+> in the CLI port, `engineVersion` derived), C17 engine half (`Agent.send(text, { behavior })`
+> queues while busy, `queued()` / `cancelQueued` / `queue.changed`, `AgentBusyError` deleted; MCP
+> surface is a `ToolSource` function, no Proxy). Wave D: zero U+2014 in the tracked tree, enforced
+> by `scripts/check-prose.ts` in `bun run check`; `90`..`93` archived under `docs/backlog/archive/`
+> with banners; `96` stays with a landed / open banner; topic index and trimmed cells in
+> `backlog/README.md`; `tasks.md` is a pointer; banners on `comparison.md` /
+> `mit-feature-candidates.md`; 98 / 106 / 108 preambles trimmed. Behavior changes to know: on win32
+> session / workspace identity now case-folds (existing Windows state dirs rehash, acceptable
+> pre-first-tag); the model picker is case-insensitive like the others; `loadConfig` is synchronous
+> inside. Two audit claims corrected: CLI P2-4 (headless JSONL order) was false, panes also append
+> after the turn; `gardenerSweepView` had no caller and was deleted rather than fixed. Phase 2 in
+> flight at the time of that block; see the next block.
+
+> **Status (2026-08-22, evening): Wave C phase 2 LANDED; gate green (`bun run check` clean,
+> `bun run test` 203 files / 2748 tests + 1 skipped, native `bun test` 2748 / 0, `bun run e2e`
+> 11/11 with goldens byte-identical).** Four Fable agents, lead gated. Landed: C9 / S-01 / S-02
+> (`app-core.ts` 1776 -> 664 over `pane-kinds.ts`, `overlays/` (one `RowOverlay` contract replaces
+> the 8-way union and three switches), `core-commands.ts`, `pointer-routing.ts`, `app-actions.ts`,
+> `arc-commands.ts` / `workspace-commands.ts` / `inference-commands.ts`, `session-attachment.ts`,
+> `session-panes.ts`, `crash-log.ts` (the `/doctor` seam), `restore-plan.ts`, `fork.ts`,
+> `arc-index.ts`; `app.ts` 1498 -> 391 with `view/frame.ts` / `view/overlays.ts` /
+> `view/status-bar.ts` and `runApp` at ~110 lines; all eight TUI-shell P2s; R-13 types imported
+> from engine / shared), C10 / S-03 (`conversation-model.ts` 1313 -> 478 orchestrator over
+> `transcript-feed.ts`, `transcript-view.ts`, `session-ledger.ts`, `prompt-editor.ts`,
+> `mutation-ask.ts`, `transcript-navigation.ts`; streaming render O(N) with a pinned test;
+> `windowFromEnd` bounds scrolled-back work to the viewport; every clipper on `width.ts` cells;
+> CJK test asserts cells; `wrapSpans` boundary fixed; `text-chunks.ts` deleted), C17 TUI half (the
+> model rides the engine queue; `steer` plumbed but unbound), C13 / C14 / S-09 / S-11 / R-11
+> (`compose-panes.ts` + `launchPanes(options, seams)` in `main.ts`, `live.ts` is 14 lines of seams,
+> harness is overrides on the same launch, `scripts/e2e/scenarios/` one file per scenario with
+> `fixtures.ts` and an `index.ts` registry, `presetsPortFor` in `presets.ts`, `doctorReport` as
+> data), S-10 / S-18 / R-15 CLI (`sessions/{store,ports,command}.ts` with the seven silent catches
+> made explicit, `chat.ts` handler table with a `ChatIo` seam and asks refused without a TTY,
+> `command-io.ts`, `terminal-input.ts`, `cli/text.ts`, `shared/errors.ts` `toError`, `workspace.ts`
+> atomic, `ChatOptions.modelId` removed). Open design notes from the wave: (1) the engine drains its
+> queue in `runTurn`'s `finally`, before the TUI's after-turn settlement runs, so the model holds
+> prompts submitted while settling; an engine seam letting the drain await settlement would remove
+> the last model-side list. (2) `steer` needs a keybinding decision (docs name `Enter` steer /
+> `Alt+Enter` queue per Pi; today `Enter` queues); 96 / V2.6. (3) held-but-unclaimed restore
+> attachments are released only at exit (minor). Small leftovers for phase 3: `presetsPortFor`'s
+> now-redundant `isPresetName` guards, `cli/src/mcp.ts` five-field copy can become a spread of
+> `McpServerStatus`, `mcp-pane-model.ts:364` still uses its own `clip`, `probe.ts` reaches
+> `ConversationPane.model` via a cast. Phase 3 (not started): C15 `src/testing/` modules per
+> package + `workflows.test.ts` split, C16 R-15 sweep + `tui/slug.ts` -> `slug-ink.ts` + `/doctor`
+> unification through `crash-log.ts` and `doctorReport`, decision 5 (shell drivers) if taken.
+
 ## The short version
 
 Statement-level quality is genuinely high and consistent across every package: 175 non-test
@@ -383,34 +452,55 @@ S under two hours, M a half-day, L a day.
 | C2 `runPickerKey`/`rankByFuzzy` in `picker-keys.ts`; `FilterPicker<Seed>`; one `filterOverlay`; `arcRowParts`; `ConnectModel` backed by `InputBuffer` per field with an escape out of `verifying` | R-02, conversation P2s | M |
 | C3 `runHeadless` through `composeWorkspace`/`composeAgents`; narrow `coreTools`; headless gets skills, linked dirs, arc recall, workspace slug, interleaved journal order | R-03, CLI P2-1/2/4 | M |
 | C4 `jsonFileStore` primitive in shared (strict/lenient, mode, tmp+rename); `pathKeyedStringStore` for anchors/MRU; `canonicalTrustPath` in `paths.ts`/`link.ts` | R-04, CLI P2-5/6 | L (S for the verbatim pair first) |
-| C5 `shell-session.ts` absorbs `bash.ts` (or at minimum shared constants, `BoundedOutput`, settle machine); `SentinelScanner` bound; abort-before-spawn | R-05, engine P2s | L |
+| C5 hoist the shared shell machinery (constants, `BoundedOutput`, settle machine) out of `bash.ts` and `shell-session.ts`; full absorption waits on decision 5 (`SentinelScanner` bound and abort-before-spawn landed in Wave A) | R-05, engine P2s | M (L if merged) |
 | C6 inbox becomes a staged-item kind in the store kernel; "fourth door" renamed; `vault-files.ts` extraction and the seven helper dedupes; `graph.ts` NUL bytes written as `\0`; `readDaily` validates its argument | R-06, S-08, memory P2s | M |
 | C7 `Theme = FlavorTokens`; `config.theme` as a partial override on a flavor through the shared schema (replaces the `catchall`); one `#rrggbb`; `"calm" \| "cockpit"` from `Flavor["instruments"]` | R-07, layout P2 | M |
-| C8 `globMatches`/`mostSpecificMatch` in shared; `ContextBudget` absorbs the compaction adapter; `layers.ts` grows conventions and skills get a user layer; `tool-search.ts` out of the MCP registry; `fixture-server.ts` out of `src/`; decide `branch_summary` | R-08, R-09, R-10, S-07, S-17 | M |
+| C8 `globMatches`/`mostSpecificMatch` in shared; `ContextBudget` absorbs the compaction adapter; `layers.ts` grows conventions and skills get a user layer; `tool-search.ts` out of the MCP registry; `fixture-server.ts` out of `src/` (`branch_summary` stays, decision 7) | R-08, R-09, R-10, S-07, S-17 | M |
 | C9 `app-core.ts` decomposition (S-01) and `app.ts` view extraction (S-02); `geometry.ts` shared `Rect`; `toError` exported and used; extension-command collisions detected at registration; `bindSessionLifecycle` persists one message at a time; animator regions settled on dispose; workspace capture dirty-flagged | S-01, S-02, TUI-shell P2s | L |
 | C10 `conversation-model.ts` decomposition (S-03) with the test split; incremental streaming render; `width.ts` with display-cell `width`/`clip`/`wrap` replacing the five clippers and the `.slice(0, width)` calls; rewrite the CJK test to assert cells; `wrapSpans` off-by-one | S-03, A-35, conversation P2s | L |
 | C11 `layout.ts` three-way split; `Layout.reflow(screen)` on resize with the fuzz test resizing mid-sequence; `Keymap` rejects duplicate chords and modified leader keys; `titleBar` takes page thresholds; decide `frameWrap` | S-04, layout P2s | M |
-| C12 engine and tui barrel trims with a CI check for consumer-less exports; `engineVersion` derived; delete `packages/extensions`; providers `wire-parts.ts`/`transport.ts`; `nextAction` copy moved to the CLI; cross-boundary types imported (R-13); `sse.test.ts` with a chunk-boundary table | S-05, S-06, S-16, S-13, R-12, R-13 | L |
+| C12 `engineVersion` derived; providers `wire-parts.ts`/`transport.ts`; `nextAction` copy moved to the CLI; cross-boundary types imported (R-13); `sse.test.ts` with a chunk-boundary table (barrel trims deferred by decision 6; `packages/extensions` kept by decision 9) | S-06, S-13, R-12, R-13 | M |
 | C13 `composePanes` out of `main.ts`; `sessions.ts` three-way split; `chat.ts` handler table with an IO seam; CLI `CommandIo`/`Confirm` unified; one terminal-input module; `presetResolver` absorbs `runScopedPermissions` | S-09, S-10, S-18, R-15 (cli part) | L |
 | C14 three app compositions collapsed (main exports a seam-injectable launch; `live.ts` shrinks; mock becomes overrides); `scenarios.ts` one-per-file; `presetsPortFor` | R-11, S-11 | L |
 | C15 `testing/` module per package (`useTempDir`, `openVault`, `press`, `waitFor`, `recordingProvider`, `steppingClock`); migrate the 52 files; `workflows.test.ts` split; real-timer sleeps converted where a settle promise exists | test-helper duplication, S-12 | M |
-| C16 the R-15 small sweep (one pass) and `tui/slug.ts` -> `slug-ink.ts`; `/doctor` naming | R-15 | S |
-| C17 decide R-14 (engine-owned turn queue vs drop `Agent.busy()`) | R-14 | M |
+| C16 the R-15 small sweep (one pass) and `tui/slug.ts` -> `slug-ink.ts`; TUI `/doctor` unified with `keywork doctor` (same report, crash log as a section; decision 10) | R-15 | S |
+| C17 engine-owned turn queue per A8 (`send(message, { behavior: "steer" \| "queue" })`, Pi `streamingBehavior` semantics); `conversation-model.ts` and the CLI rebased on it; `Agent.busy()` stops being a second source of truth (decision 4) | R-14 | M |
 
 ### Wave D: em dashes and docs
 
-E-01 through E-04 as listed, D-01 through D-05 if Jordan adopts them. E-01 can ride with Wave A
-(it touches user-facing strings in files Wave A already edits); E-02/E-03 are their own lane.
+E-01 landed with Wave A. E-02 (docs sweep, NOTICE included per decision 2, `--` stand-ins too),
+E-04 (CI check for U+2014) and the adopted consolidation items (D-01, D-02, D-04, D-05 on
+finished docs only; D-03 deferred, decision 3) are the lane.
 
-## Questions for Jordan
+## Decisions (Jordan, 2026-08-22)
 
-1. **A-21 / A11:** deny-wins in the bash matcher (the plan assumes yes, schema text follows)?
-2. **E-05:** NOTICE em dashes too, reversing the 2026-08-16 attribution-consistency call?
-3. **D-01..D-05:** appetite for the docs consolidation, given overlays are deliberately standalone?
-4. **R-14 / C17:** should the engine own the turn queue, or should `Agent.busy()` leave the public surface?
-5. **R-05 / C5:** merge the two shell drivers fully, or only hoist the shared machinery?
-6. **S-05 / C12:** barrel trim via named subpath exports (`@keywork/engine/memory`) or a flat cut?
-7. **S-17:** `branch_summary`: land a producer or delete the type and its eight handlers?
-8. **defaultModel naming:** rename the built-ins' `defaultModel` (it only matters while the catalog is empty under IR-07) or add a rung to IR-07?
-9. **S-16:** delete `packages/extensions` (nothing imports it)?
-10. **`/doctor`:** rename the TUI crash-log command or unify it with `keywork doctor`?
+The ten questions, answered. Where an answer keeps a door open for future development, the
+item stays in the tree and the plan rows above are marked accordingly.
+
+1. **A-21 / A11, deny wins:** confirmed. Wave A's matcher and schema text stand.
+2. **E-05, NOTICE:** ordinary dashes and hyphens stay; U+2014 em dashes (and `--` stand-ins
+   used as em dashes) are cleaned up in NOTICE like everywhere else. Attribution wording is
+   otherwise untouched.
+3. **D-01..D-05, docs consolidation:** consolidate only docs that are done and finished;
+   the goal is efficient storage with the data still informative and effective when needed.
+   So: D-02 (archive 90..93) yes; D-04 yes for the finished parts (96 close-out, status banners
+   on `mit-feature-candidates.md` / `comparison.md`, `tasks.md` shrink); D-01 (topic to
+   owning-overlay index) yes, it is what keeps archived material findable; D-05 only on
+   finished docs; D-03 (guardrails blockquote dedupe) deferred, it touches live docs.
+4. **R-14 / C17, turn queue:** the engine owns it, following the influencer contract already
+   on file: `10-engine.md` A8 (`send(message, { behavior: "steer" | "queue" })`, mirroring Pi's
+   `streamingBehavior` steer / followUp / nextTurn). 91 marks A8 done for the steer half only;
+   C17 lands the queue half in the engine and rebases `conversation-model.ts` and the CLI on it.
+5. **R-05 / C5, shell drivers:** open for discussion. Until decided, C5 does the reversible
+   half only: hoist constants, `BoundedOutput`, and the settle machine; `bash.ts` stays.
+6. **S-05 / C12, barrel trims:** left alone for now; the wide surface may be future
+   development (extensions, SDK consumers). Revisit once workstream D's host lands. The rest
+   of C12 proceeds.
+7. **S-17, `branch_summary`:** keep the type and handlers. It is part of the Pi entry
+   vocabulary pinned as the B1 compatibility contract (92/I1) and the producer is Pi's
+   branch-summarization algorithm (92/I2), already scoped as future work. No action.
+8. **`defaultModel` naming:** dropped, not worth the churn.
+9. **S-16, `packages/extensions`:** keep; it is the `40-extensions.md` workstream D target.
+   Removed from C12.
+10. **`/doctor`:** unify. The TUI `/doctor` runs the same diagnostics as `keywork doctor`
+    with the crash log as one section, so both surfaces read the same report. C16 carries it.

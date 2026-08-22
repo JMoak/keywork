@@ -7,6 +7,7 @@ import {
   type ExtensionsPort,
   extensionFailureNotice,
   registerExtensions,
+  shadowedExtensionNotice,
 } from "./extension-commands.ts";
 import { AppProbe } from "./probe.ts";
 
@@ -208,5 +209,40 @@ describe("pane agent swap keeps the transcript wired", () => {
       kind: "assistant",
       text: "second, as scout",
     });
+  });
+});
+
+describe("extension names that collide with built-ins", () => {
+  it("reports the shadowed command and keeps the built-in for both the palette and /name", () => {
+    const probe = new AppProbe();
+    const shadowed = registerExtensions(
+      probe.core.registry,
+      { commands: [shellCommand("exit", "never runs")], agents: [], failures: [] },
+      { conversation: () => undefined, notice: () => {} },
+    );
+    expect(shadowed).toEqual([{ name: "exit", claimedBy: "exit" }]);
+    expect(shadowedExtensionNotice(shadowed)).toBe(
+      "/exit is taken by /exit · the extension command is skipped",
+    );
+    const byPalette = probe.core.registry.search("exit").filter((c) => c.name === "exit");
+    expect(byPalette).toHaveLength(1);
+    expect(byPalette[0]?.description).toContain("close this pane");
+    probe.command("split");
+    expect(probe.command("exit")).toBe(true);
+    expect(probe.snapshot().panes.map((pane) => pane.id)).toEqual(["session-1"]);
+  });
+
+  it("an agent literally named none loses to the built-in agent-none and is reported", () => {
+    const probe = new AppProbe();
+    const shadowed = registerExtensions(
+      probe.core.registry,
+      { commands: [], agents: [{ name: "none" }, { name: "scout" }], failures: [] },
+      { conversation: () => undefined, notice: () => {} },
+    );
+    expect(shadowed).toEqual([{ name: "agent-none", claimedBy: "agent-none" }]);
+    expect(probe.core.registry.search("agent-").map((c) => c.name)).toEqual([
+      "agent-none",
+      "agent-scout",
+    ]);
   });
 });

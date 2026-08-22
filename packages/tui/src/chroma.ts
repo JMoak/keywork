@@ -1,3 +1,4 @@
+import { canonicalHex, hexChannels } from "@keywork/shared";
 import type { Theme } from "./theme.ts";
 
 export interface Oklch {
@@ -34,9 +35,9 @@ export function rampColor(ramp: readonly string[], t: number): string {
   const segment = Math.min(Math.floor(position), Math.max(ramp.length - 2, 0));
   const blend = position - segment;
   const from = stopAt(ramp, segment);
-  if (blend === 0) return normalizeHex(from);
+  if (blend === 0) return canonicalHex(from);
   const to = stopAt(ramp, segment + 1);
-  if (blend === 1) return normalizeHex(to);
+  if (blend === 1) return canonicalHex(to);
   return oklchToHex(mixOklch(hexToOklch(from), hexToOklch(to), blend));
 }
 
@@ -91,7 +92,6 @@ const goldenRatioConjugate = 0.618033988749895;
 const microGradientSpan = 0.08;
 const neutralChroma = 1e-4;
 const gamutSlack = 1e-6;
-const rrggbb = /^#[0-9a-fA-F]{6}$/;
 
 type Triple = readonly [number, number, number];
 
@@ -206,16 +206,6 @@ function channelByte(linear: number): string {
   return Math.round(srgbFromLinear(clamp(linear, 0, 1)) * 255)
     .toString(16)
     .padStart(2, "0");
-}
-
-function hexChannels(hex: string): Triple {
-  const value = Number.parseInt(normalizeHex(hex).slice(1), 16);
-  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
-}
-
-function normalizeHex(hex: string): string {
-  if (!rrggbb.test(hex)) throw new Error(`Expected a #rrggbb color, got "${hex}"`);
-  return hex.toLowerCase();
 }
 
 function stopAt(ramp: readonly string[], index: number): string {

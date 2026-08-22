@@ -1,17 +1,17 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
+import { toError } from "@keywork/shared";
 import type { ConnectionDraft, ConnectionsPort, ConnectionTarget } from "@keywork/tui";
 import { saveCredential } from "./auth-store.ts";
 import { loginWithBrowser, loginWithDeviceCode } from "./codex-login.ts";
 import { codexProviderName } from "./inference/builtins.ts";
-
-export { updateUserConfig } from "./user-config.ts";
+import { processStreams, type TerminalStreams, terminalInput } from "./terminal-input.ts";
 
 export interface ConnectIo {
   ask(prompt: string): Promise<string>;
   askSecret(prompt: string): Promise<string>;
   print(line: string): void;
+  close?(): void;
 }
 
 export interface ConnectOptions {
@@ -26,7 +26,37 @@ export async function connectCommand(
   port: ConnectionsPort,
   options: ConnectOptions = {},
 ): Promise<number> {
-  const io = options.io ?? terminalIo();
+  const io = options.io ?? terminalConnectIo();
+  try {
+    return await connect(port, options, io);
+  } finally {
+    io.close?.();
+  }
+}
+
+export function terminalConnectIo(streams: TerminalStreams = processStreams()): ConnectIo {
+  const terminal = terminalInput(streams);
+  return {
+    ask: async (prompt) => (await terminal.readLine(prompt)) ?? "",
+    askSecret: (prompt) => terminal.readSecret(prompt),
+    print: (line) => console.log(line),
+    close: () => terminal.close(),
+  };
+}
+
+export function saveApiKey(
+  provider: string,
+  key: string,
+  dir: string = join(homedir(), ".keywork"),
+): Promise<string> {
+  return saveCredential(provider, { type: "api_key", key }, dir);
+}
+
+async function connect(
+  port: ConnectionsPort,
+  options: ConnectOptions,
+  io: ConnectIo,
+): Promise<number> {
   const chosen = await chooseTarget(port, options.argument, io);
   if (chosen === undefined) return 1;
   if (chosen === codexChoiceId) return signInToCodex(io, options.signIn);
@@ -44,14 +74,6 @@ export async function connectCommand(
   );
   io.print(`Try it:  keywork panes   then /model to pick ${draft.name}/<model>`);
   return 0;
-}
-
-export function saveApiKey(
-  provider: string,
-  key: string,
-  dir: string = join(homedir(), ".keywork"),
-): Promise<string> {
-  return saveCredential(provider, { type: "api_key", key }, dir);
 }
 
 async function chooseTarget(
@@ -142,7 +164,7 @@ async function signInToCodex(
     io.print("Try it:  keywork panes");
     return 0;
   } catch (cause) {
-    io.print(`sign-in failed: ${(cause as Error).message}`);
+    io.print(`sign-in failed: ${toError(cause).message}`);
     return 1;
   }
 }
@@ -184,75 +206,4 @@ function describeModels(models: readonly string[]): string {
   return models.length > 4
     ? `${models.length} models reported (${shown}, …)`
     : `models reported: ${shown}`;
-}
-
-export interface KeyInput {
-  isTTY?: boolean | undefined;
-  isRaw?: boolean | undefined;
-  setRawMode?: (raw: boolean) => unknown;
-  resume: () => unknown;
-  pause: () => unknown;
-  on: (event: "data", listener: (chunk: Buffer | string) => void) => unknown;
-  off: (event: "data", listener: (chunk: Buffer | string) => void) => unknown;
-}
-
-export interface KeyOutput {
-  write: (text: string) => unknown;
-}
-
-const enter = new Set(["\r", "\n"]);
-const erase = new Set([String.fromCharCode(127), "\b"]);
-const interrupt = String.fromCharCode(3);
-
-export function readMaskedLine(
-  prompt: string,
-  input: KeyInput = process.stdin,
-  output: KeyOutput = process.stdout,
-): Promise<string> {
-  output.write(prompt);
-  const wasRaw = input.isRaw ?? false;
-  if (input.isTTY) input.setRawMode?.(true);
-  input.resume();
-
-  return new Promise((resolve) => {
-    let entered = "";
-    const finish = () => {
-      input.off("data", onData);
-      if (input.isTTY) input.setRawMode?.(wasRaw);
-      input.pause();
-      output.write("\n");
-      resolve(entered);
-    };
-    const onData = (chunk: Buffer | string) => {
-      for (const char of chunk.toString()) {
-        if (enter.has(char)) return finish();
-        if (char === interrupt) {
-          entered = "";
-          return finish();
-        }
-        if (erase.has(char)) {
-          if (entered.length > 0) {
-            entered = entered.slice(0, -1);
-            output.write("\b \b");
-          }
-          continue;
-        }
-        if (char < " ") continue;
-        entered += char;
-        output.write("*");
-      }
-    };
-    input.on("data", onData);
-  });
-}
-
-function terminalIo(): ConnectIo {
-  return {
-    ask: (prompt) => {
-      const readline = createInterface({ input: process.stdin, output: process.stdout });
-      return readline.question(prompt).finally(() => readline.close());
-    },
-    askSecret: (prompt) => readMaskedLine(prompt),
-    print: (line) => console.log(line),
-  };
 }

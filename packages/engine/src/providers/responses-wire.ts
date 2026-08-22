@@ -1,5 +1,4 @@
 import {
-  type ImagePart,
   type Message,
   messageText,
   ownedBy,
@@ -7,7 +6,8 @@ import {
   type ProviderStateOwner,
   type ToolCallPart,
 } from "../messages.ts";
-import type { ProviderRequest } from "../provider.ts";
+import type { ProviderRequest, ToolDefinition } from "../provider.ts";
+import { imageDataUrl } from "./wire-parts.ts";
 
 // The Responses surface rejects an empty instructions field, so a neutral
 // fallback stands in when no system prompt was assembled.
@@ -61,10 +61,6 @@ function userContentPart(part: Part): object[] {
   }
 }
 
-function imageDataUrl(part: ImagePart): string {
-  return `data:${part.mediaType};base64,${part.data}`;
-}
-
 function assistantItem(part: Part, owner: ProviderStateOwner | undefined): object[] {
   switch (part.type) {
     case "text":
@@ -98,7 +94,7 @@ function reasoningItem(data: string): object[] {
   }
 }
 
-function toWireTool(tool: { name: string; description: string; parameters: unknown }): object {
+function toWireTool(tool: ToolDefinition): object {
   return {
     type: "function",
     name: tool.name,

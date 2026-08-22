@@ -1,4 +1,10 @@
-import type { LayerBootstrap } from "../bootstrap.ts";
+import {
+  type BootstrapSelection,
+  type LayerBootstrap,
+  mostUsefulFirst,
+  selectWithinBudget,
+} from "../bootstrap.ts";
+import type { Note } from "../notes.ts";
 import {
   type EmbeddingsPort,
   MemorySearch,
@@ -6,7 +12,6 @@ import {
   type SearchHit,
   type SearchOptions,
 } from "../search.ts";
-import type { BootstrapSelection, Note } from "../store.ts";
 import { type ArcRegistry, MissingArcError } from "./registry.ts";
 
 export type MemoryLayerRef = { layer: "workspace" } | { layer: "arc"; arc: string };
@@ -111,26 +116,6 @@ function selectArcNotes(moc: Note | undefined, notes: Note[], budget: number): B
     [...mocFirst, ...mostUsefulFirst(pinned), ...mostUsefulFirst(rest)],
     budget,
   );
-}
-
-function selectWithinBudget(ordered: Note[], budget: number): BootstrapSelection {
-  const selected: Note[] = [];
-  const skipped: string[] = [];
-  let tokens = 0;
-  for (const note of ordered) {
-    if (tokens + note.tokens > budget) {
-      skipped.push(note.name);
-      continue;
-    }
-    selected.push(note);
-    tokens += note.tokens;
-  }
-  return { notes: selected, tokens, budget, skipped };
-}
-
-function mostUsefulFirst(notes: Note[]): Note[] {
-  const priorOf = (note: Note) => note.usefulness ?? note.confidence ?? 0;
-  return [...notes].sort((a, b) => priorOf(b) - priorOf(a));
 }
 
 function taggedWorkspace(hit: SearchHit): ArcSearchHit {

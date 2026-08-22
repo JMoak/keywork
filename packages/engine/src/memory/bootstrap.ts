@@ -1,8 +1,19 @@
-import type { BootstrapSelection, MemoryStore, Note } from "./store.ts";
+import type { Note } from "./notes.ts";
+
+export interface BootstrapSelection {
+  notes: Note[];
+  tokens: number;
+  budget: number;
+  skipped: string[];
+}
+
+export interface BootstrapSource {
+  bootstrap(tokenBudget: number): Promise<BootstrapSelection>;
+}
 
 export interface BootstrapLayer {
   name: string;
-  store: MemoryStore;
+  store: BootstrapSource;
   budget: number;
 }
 
@@ -29,6 +40,26 @@ export async function bootstrapMemory(
     tokens: resolved.reduce((sum, layer) => sum + layer.selection.tokens, 0),
     layers: resolved,
   };
+}
+
+export function selectWithinBudget(ordered: readonly Note[], budget: number): BootstrapSelection {
+  const notes: Note[] = [];
+  const skipped: string[] = [];
+  let tokens = 0;
+  for (const note of ordered) {
+    if (tokens + note.tokens > budget) {
+      skipped.push(note.name);
+      continue;
+    }
+    notes.push(note);
+    tokens += note.tokens;
+  }
+  return { notes, tokens, budget, skipped };
+}
+
+export function mostUsefulFirst(notes: readonly Note[]): Note[] {
+  const priorOf = (note: Note) => note.usefulness ?? note.confidence ?? 0;
+  return [...notes].sort((a, b) => priorOf(b) - priorOf(a));
 }
 
 function renderInjection(layers: readonly LayerBootstrap[]): string {

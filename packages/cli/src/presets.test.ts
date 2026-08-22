@@ -3,11 +3,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolCallPart } from "@keywork/engine";
 import { type PermissionsConfig, permissionPresets } from "@keywork/shared";
-import { afterEach, describe, expect, it } from "vitest";
-import { createPresetSwitch, presetCommand, presetListing } from "./presets.ts";
-import { updateUserConfig } from "./setup.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  createPresetSwitch,
+  presetCommand,
+  presetListing,
+  presetResolver,
+  presetsPortFor,
+  userPresetSwitch,
+} from "./presets.ts";
+import { updateUserConfig } from "./user-config.ts";
 
 const tempDirs: string[] = [];
+const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+let home = "";
+
+beforeAll(async () => {
+  home = await mkdtemp(join(tmpdir(), "keywork-presets-home-"));
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+});
+
+afterAll(async () => {
+  process.env.HOME = savedHome.HOME;
+  process.env.USERPROFILE = savedHome.USERPROFILE;
+  await rm(home, { recursive: true, force: true });
+});
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -69,6 +90,42 @@ describe("createPresetSwitch", () => {
     await presets.apply("standard");
     const standardConfig = JSON.parse(await readFile(join(dir, "keywork.json"), "utf8"));
     expect(standardConfig.permissions).toEqual({});
+  });
+});
+
+describe("userPresetSwitch", () => {
+  it("persists an applied preset into the user's keywork.json", async () => {
+    const presets = userPresetSwitch(undefined);
+    await presets.apply("open");
+    const saved = JSON.parse(await readFile(join(home, ".keywork", "keywork.json"), "utf8"));
+    expect(saved.permissions).toEqual(permissionPresets.open);
+    expect(presets.active()).toBe("open");
+  });
+});
+
+describe("presetResolver", () => {
+  it("resolves tool calls under one named preset without touching any config", () => {
+    expect(presetResolver("open")(bashCall("rm -rf /"))).toBe("allow");
+    expect(presetResolver("careful")(bashCall("ls"))).toBe("ask");
+    expect(presetResolver("standard")(bashCall("rm -rf /"))).toBeUndefined();
+  });
+});
+
+describe("presetsPortFor", () => {
+  it("adapts a preset switch to the TUI port", async () => {
+    const applied: string[] = [];
+    const port = presetsPortFor({
+      active: () => "standard",
+      apply: async (name) => {
+        applied.push(name);
+      },
+    });
+    expect(port.names()).toEqual(["careful", "standard", "open"]);
+    expect(port.active()).toBe("standard");
+    expect(port.requiresConfirmation("open")).toBe(true);
+    expect(port.requiresConfirmation("careful")).toBe(false);
+    await port.apply("careful");
+    expect(applied).toEqual(["careful"]);
   });
 });
 

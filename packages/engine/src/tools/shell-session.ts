@@ -2,11 +2,18 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { z } from "zod";
 import { killTree } from "../proc.ts";
 import type { Tool } from "../tools.ts";
-import { detectShell, type Shell, scrubbedEnv } from "./bash.ts";
+import { detectShell, type Shell } from "./bash.ts";
+import {
+  BoundedOutput,
+  CommandRun,
+  commandAborted,
+  commandResult,
+  commandTimedOut,
+  defaultTimeoutMs,
+  maxOutputChars,
+  shellSpawnOptions,
+} from "./command-run.ts";
 import { defineTool } from "./define.ts";
-
-const defaultTimeoutMs = 120_000;
-const maxOutputChars = 30_000;
 
 export interface ShellRunOptions {
   timeoutMs?: number;
@@ -97,7 +104,6 @@ export class ShellSession {
       const sentinel = `__keywork_${crypto.randomUUID()}__`;
       const output = new BoundedOutput(options.onOutput);
       let exitCode: number | undefined;
-      let settled = false;
 
       const stdout = new SentinelScanner(sentinel, output, (code) => {
         exitCode = code ?? 0;
@@ -107,25 +113,25 @@ export class ShellSession {
       const onStdout = (chunk: Buffer) => stdout.push(chunk.toString());
       const onStderr = (chunk: Buffer) => stderr.push(chunk.toString());
 
-      const settle = (outcome: () => void) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        options.signal?.removeEventListener("abort", onAbort);
-        live.child.stdout?.off("data", onStdout);
-        live.child.stderr?.off("data", onStderr);
-        live.child.off("close", onShellExit);
-        live.failureListeners.delete(onShellFailure);
-        outcome();
-      };
+      const run = new CommandRun({
+        timeoutMs,
+        signal: options.signal,
+        onTimeout: () => abandon(commandTimedOut(timeoutMs, output.rendered())),
+        onAbort: () => abandon(commandAborted()),
+      });
+
+      const settle = (outcome: () => void) =>
+        run.settle(() => {
+          live.child.stdout?.off("data", onStdout);
+          live.child.stderr?.off("data", onStderr);
+          live.child.off("close", onShellExit);
+          live.failureListeners.delete(onShellFailure);
+          outcome();
+        });
 
       const maybeFinish = () => {
         if (!stdout.sawSentinel || !stderr.sawSentinel) return;
-        const body = output.rendered().trimEnd();
-        const code = exitCode ?? 0;
-        settle(() =>
-          resolvePromise(code === 0 ? body : `${body}\n(exit code ${code})`.trimStart()),
-        );
+        settle(() => resolvePromise(commandResult(output.rendered(), exitCode ?? 0)));
       };
 
       const onShellExit = () => {
@@ -143,13 +149,7 @@ export class ShellSession {
         settle(() => rejectPromise(failure));
       };
 
-      const timer = setTimeout(
-        () => abandon(new Error(`Command timed out after ${timeoutMs}ms:\n${output.rendered()}`)),
-        timeoutMs,
-      );
-      const onAbort = () => abandon(new Error("Command aborted"));
       const onShellFailure = (failure: Error) => abandon(failure);
-      options.signal?.addEventListener("abort", onAbort, { once: true });
 
       live.child.stdout?.on("data", onStdout);
       live.child.stderr?.on("data", onStderr);
@@ -167,12 +167,7 @@ interface LiveShell {
 }
 
 function spawnShell(cwd: string, shell: Shell): LiveShell {
-  const child = spawn(shell.file, persistentArgs(shell), {
-    cwd,
-    windowsHide: true,
-    detached: process.platform !== "win32",
-    env: scrubbedEnv(process.env),
-  });
+  const child = spawn(shell.file, persistentArgs(shell), shellSpawnOptions(cwd));
   const closed = new Promise<void>((resolvePromise) => child.once("close", () => resolvePromise()));
   const failureListeners = new Set<(failure: Error) => void>();
   const broadcastFailure = (failure: Error) => {
@@ -206,27 +201,6 @@ function framedCommand(shell: Shell, command: string, sentinel: string): string 
     `printf '\\n%s\\n' '${sentinel}' >&2`,
     "",
   ].join("\n");
-}
-
-class BoundedOutput {
-  private text = "";
-  private truncated = false;
-
-  constructor(private readonly forward?: (chunk: string) => void) {}
-
-  append(chunk: string): void {
-    this.forward?.(chunk);
-    if (this.truncated) return;
-    this.text += chunk;
-    if (this.text.length > maxOutputChars) {
-      this.text = this.text.slice(0, maxOutputChars);
-      this.truncated = true;
-    }
-  }
-
-  rendered(): string {
-    return this.truncated ? `${this.text}\n... (output truncated)` : this.text;
-  }
 }
 
 class SentinelScanner {

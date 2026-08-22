@@ -48,6 +48,8 @@ export class Animator {
   private readonly schedule: Scheduler;
   private readonly onFrame: (() => void) | undefined;
   private readonly active = new Map<string, ActiveMotion>();
+  private painting = false;
+  private repaintDue: CancelTimer | undefined;
 
   constructor(options: AnimatorOptions = {}) {
     this.reducedMotion = options.reducedMotion ?? false;
@@ -79,6 +81,10 @@ export class Animator {
 
   settleAll(): void {
     for (const region of [...this.active.keys()]) this.settleRegion(region);
+    if (this.repaintDue === undefined) return;
+    this.repaintDue();
+    this.repaintDue = undefined;
+    this.paint();
   }
 
   get moving(): boolean {
@@ -95,6 +101,7 @@ export class Animator {
     motion.step += 1;
     const { steps, durationMs } = tempos[motion.spec.tempo];
     this.emit(motion.spec, stepProgress(motion.spec.shape, motion.step, steps));
+    if (this.active.get(motion.spec.region) !== motion) return;
     if (motion.step >= steps) {
       this.active.delete(motion.spec.region);
       motion.spec.onSettled?.();
@@ -105,7 +112,28 @@ export class Animator {
 
   private emit(spec: MotionSpec, progress: number): void {
     spec.apply(progress);
-    this.onFrame?.();
+    this.requestFrame();
+  }
+
+  private requestFrame(): void {
+    if (this.onFrame === undefined) return;
+    if (!this.painting) {
+      this.paint();
+      return;
+    }
+    this.repaintDue ??= this.schedule(() => {
+      this.repaintDue = undefined;
+      this.paint();
+    }, 0);
+  }
+
+  private paint(): void {
+    this.painting = true;
+    try {
+      this.onFrame?.();
+    } finally {
+      this.painting = false;
+    }
   }
 }
 

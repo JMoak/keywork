@@ -1,16 +1,17 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import {
-  canonicalTrustPath,
   listWorkspaces,
   namedWorkspaceDir,
   openWorkspace,
+  pathKeyedStringStore,
   resolveAnchor,
   slugProblem,
   type WorkspaceSlot,
   writeNamedWorkspaceDeclaration,
 } from "@keywork/shared";
 import type { WorkspaceChoice, WorkspacesPort } from "@keywork/tui";
+import { type CommandIo, type Confirm, resolveCommandIo } from "./command-io.ts";
 import { exitCodes } from "./dispatch.ts";
 import { keyworkHome } from "./paths.ts";
 
@@ -23,15 +24,13 @@ export function workspaceRecallFile(home: string = keyworkHome()): string {
   return join(home, "workspace-mru.json");
 }
 
+const defaultWorkspaceEntry = "";
+
 export function fileWorkspaceRecall(file: string = workspaceRecallFile()): WorkspaceRecall {
+  const recalled = pathKeyedStringStore(file);
   return {
-    recall: (cwd) => emptyToUndefined(readRecall(file)[canonicalTrustPath(cwd)]),
-    remember: (cwd, slug) => {
-      const recalled = readRecall(file);
-      recalled[canonicalTrustPath(cwd)] = slug ?? "";
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, `${JSON.stringify(recalled, null, 2)}\n`, "utf8");
-    },
+    recall: (cwd) => emptyToUndefined(recalled.get(cwd)),
+    remember: (cwd, slug) => recalled.set(cwd, slug ?? defaultWorkspaceEntry),
   };
 }
 
@@ -51,22 +50,14 @@ export function selectWorkspace(
   return undefined;
 }
 
-export interface WorkspaceCommandIo {
-  print?: (line: string) => void;
-  printError?: (line: string) => void;
-}
-
-export type WorkspaceConfirm = (question: string) => Promise<boolean>;
-
 export async function workspaceCommand(
   args: readonly string[],
   cwd: string,
-  io: WorkspaceCommandIo = {},
-  confirm?: WorkspaceConfirm,
+  io: CommandIo = {},
+  confirm?: Confirm,
   recall: WorkspaceRecall = fileWorkspaceRecall(),
 ): Promise<number> {
-  const print = io.print ?? console.log;
-  const printError = io.printError ?? console.error;
+  const { print, printError } = resolveCommandIo(io);
   const root = resolveAnchor(cwd).root;
   const [subcommand = "list", slug] = args;
   switch (subcommand) {
@@ -200,7 +191,7 @@ async function removeWorkspace(
   recall: WorkspaceRecall,
   print: (line: string) => void,
   printError: (line: string) => void,
-  confirm: WorkspaceConfirm | undefined,
+  confirm: Confirm | undefined,
 ): Promise<number> {
   if (slug === undefined || slug === "default") {
     printError("usage: keywork workspace rm <slug> · the default workspace is never removed");
@@ -241,33 +232,6 @@ function noteCount(dir: string): number {
   }
 }
 
-function readRecall(file: string): Record<string, string> {
-  let raw: string;
-  try {
-    raw = readFileSync(file, "utf8");
-  } catch {
-    return {};
-  }
-  return onlyStringEntries(parseJsonOrEmpty(raw));
-}
-
-function parseJsonOrEmpty(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-function onlyStringEntries(parsed: unknown): Record<string, string> {
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
-  const entries: Record<string, string> = {};
-  for (const [key, value] of Object.entries(parsed)) {
-    if (typeof value === "string") entries[key] = value;
-  }
-  return entries;
-}
-
 function emptyToUndefined(value: string | undefined): string | undefined {
-  return value === undefined || value === "" ? undefined : value;
+  return value === undefined || value === defaultWorkspaceEntry ? undefined : value;
 }

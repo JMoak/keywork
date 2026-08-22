@@ -147,7 +147,6 @@ describe("ArcsPaneModel rows", () => {
   it("counts only active arcs", () => {
     const { model } = modelOver();
     expect(model.arcCount()).toBe(2);
-    expect(model.activeSlugs()).toEqual(["dock-v2", "infra"]);
   });
 });
 

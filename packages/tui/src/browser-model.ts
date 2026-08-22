@@ -1,10 +1,10 @@
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { clampIndex, clampScroll } from "./clamp.ts";
 import { fuzzyScore } from "./commands.ts";
 import type { Chord } from "./keys.ts";
 import { failureMessage, PaneTasks } from "./pane-tasks.ts";
 import { isPrintable } from "./picker-keys.ts";
+import { RowCursor } from "./row-cursor.ts";
 
 export interface Entry {
   name: string;
@@ -32,10 +32,8 @@ export interface BrowserRow {
   failure: string | undefined;
 }
 
-export class BrowserModel {
+export class BrowserModel extends RowCursor<BrowserRow> {
   readonly name: string;
-  cursor = 0;
-  scrollTop = 0;
   showHidden = false;
   filterQuery = "";
   filtering = false;
@@ -43,9 +41,6 @@ export class BrowserModel {
   private readonly directories = new Map<string, DirectoryState>();
   private readonly expandedDirs = new Set<string>();
   private readonly tasks: PaneTasks;
-  private anchorPath: string | undefined;
-  private revision = 0;
-  private cachedRows: { revision: number; rows: BrowserRow[] } | undefined;
 
   constructor(
     readonly rootPath: string,
@@ -53,28 +48,12 @@ export class BrowserModel {
     notify: () => void,
     private readonly openFile: (path: string) => void,
   ) {
+    const tasks = new PaneTasks(notify);
+    super(() => tasks.emit());
+    this.tasks = tasks;
     this.name = basename(rootPath) || rootPath;
-    this.tasks = new PaneTasks(notify);
     this.expandedDirs.add(rootPath);
-    this.ensureLoaded(rootPath);
-  }
-
-  rows(): BrowserRow[] {
-    if (this.cachedRows?.revision === this.revision) return this.cachedRows.rows;
-    const rows = this.buildRows();
-    this.cachedRows = { revision: this.revision, rows };
-    return rows;
-  }
-
-  visibleRows(rowCount: number): { index: number; row: BrowserRow }[] {
-    const all = this.rows();
-    this.cursor = clampIndex(this.cursor, all.length);
-    this.scrollTop = clampScroll(this.scrollTop, all.length, rowCount);
-    if (this.cursor < this.scrollTop) this.scrollTop = this.cursor;
-    if (this.cursor >= this.scrollTop + rowCount) this.scrollTop = this.cursor - rowCount + 1;
-    return all
-      .slice(this.scrollTop, this.scrollTop + rowCount)
-      .map((row, offset) => ({ index: this.scrollTop + offset, row }));
+    this.load(rootPath);
   }
 
   entryCount(): number {
@@ -93,40 +72,27 @@ export class BrowserModel {
   handleKey(chord: Chord, pageRows: number, sequence?: string): boolean {
     if (this.filtering) return this.handleFilterKey(chord, pageRows, sequence);
     if (chord.shift || chord.ctrl || chord.meta) return false;
-    const rows = this.rows();
-    this.cursor = clampIndex(this.cursor, rows.length);
+    if (this.navigate(chord, pageRows)) return true;
     switch (chord.name) {
-      case "j":
-      case "down":
-        return this.moveCursor(1, rows);
-      case "k":
-      case "up":
-        return this.moveCursor(-1, rows);
-      case "pagedown":
-        return this.moveCursor(pageRows, rows);
-      case "pageup":
-        return this.moveCursor(-pageRows, rows);
       case "h":
-        return this.collapseOrJumpToParent(rows);
+        return this.collapseOrJumpToParent();
       case "l":
       case "enter":
       case "return":
-        return this.expandOrOpen(rows[this.cursor]);
+        return this.expandOrOpen();
       case ".":
         return this.mutate(() => {
           this.showHidden = !this.showHidden;
         });
       case "r":
-        return this.mutate(() => this.dropCaches());
+        return this.mutate(() => this.reload());
       case "/":
         this.filtering = true;
         this.notify();
         return true;
       case "escape":
         if (this.filterQuery === "") return false;
-        return this.mutate(() => {
-          this.filterQuery = "";
-        });
+        return this.clearFilter();
       default:
         return false;
     }
@@ -140,13 +106,23 @@ export class BrowserModel {
     this.tasks.dispose();
   }
 
+  protected buildRows(): BrowserRow[] {
+    const rows: BrowserRow[] = [];
+    this.collect(this.rootPath, 0, rows);
+    if (this.filterQuery === "") return rows;
+    const query = this.filterQuery.toLowerCase();
+    return rows.filter((row) => fuzzyScore(query, row.name.toLowerCase()) !== undefined);
+  }
+
+  protected keyOf(row: BrowserRow): string {
+    return row.path;
+  }
+
   private handleFilterKey(chord: Chord, pageRows: number, sequence: string | undefined): boolean {
     switch (chord.name) {
       case "escape":
         this.filtering = false;
-        return this.mutate(() => {
-          this.filterQuery = "";
-        });
+        return this.clearFilter();
       case "enter":
       case "return":
         this.filtering = false;
@@ -157,13 +133,13 @@ export class BrowserModel {
           this.filterQuery = this.filterQuery.slice(0, -1);
         });
       case "up":
-        return this.moveCursor(-1, this.rows());
+        return this.moveCursor(-1);
       case "down":
-        return this.moveCursor(1, this.rows());
+        return this.moveCursor(1);
       case "pageup":
-        return this.moveCursor(-pageRows, this.rows());
+        return this.moveCursor(-pageRows);
       case "pagedown":
-        return this.moveCursor(pageRows, this.rows());
+        return this.moveCursor(pageRows);
       default:
         if (!isPrintable(chord, sequence)) return false;
         return this.mutate(() => {
@@ -172,80 +148,40 @@ export class BrowserModel {
     }
   }
 
-  private notify(): void {
-    this.tasks.emit();
+  private clearFilter(): true {
+    return this.mutate(() => {
+      this.filterQuery = "";
+    });
   }
 
-  private moveCursor(delta: number, rows: BrowserRow[]): boolean {
-    this.cursor = clampIndex(this.cursor + delta, rows.length);
-    this.anchorPath = rows[this.cursor]?.path;
-    this.notify();
-    return true;
-  }
-
-  private collapseOrJumpToParent(rows: BrowserRow[]): boolean {
-    const row = rows[this.cursor];
+  private collapseOrJumpToParent(): boolean {
+    const row = this.cursorRow();
     if (row === undefined) return true;
     if (row.kind === "dir" && this.expandedDirs.has(row.path)) {
       return this.mutate(() => this.expandedDirs.delete(row.path));
     }
-    const parentAt = rows.findIndex((candidate) => candidate.path === dirname(row.path));
-    if (parentAt >= 0) {
-      this.cursor = parentAt;
-      this.anchorPath = rows[parentAt]?.path;
-      this.notify();
-    }
+    const parentAt = this.rows().findIndex((candidate) => candidate.path === dirname(row.path));
+    if (parentAt >= 0) this.moveTo(parentAt);
     return true;
   }
 
-  private expandOrOpen(row: BrowserRow | undefined): boolean {
+  private expandOrOpen(): boolean {
+    const row = this.cursorRow();
     if (row === undefined) return true;
     if (row.kind === "file") {
       this.openFile(row.path);
       return true;
     }
-    if (!this.expandedDirs.has(row.path)) {
+    if (this.expandedDirs.has(row.path)) return true;
+    return this.mutate(() => {
       this.expandedDirs.add(row.path);
-      this.touch();
-      this.ensureLoaded(row.path);
-      this.notify();
-    }
-    return true;
+      this.load(row.path);
+    });
   }
 
-  private buildRows(): BrowserRow[] {
-    const rows: BrowserRow[] = [];
-    this.collect(this.rootPath, 0, rows);
-    if (this.filterQuery === "") return rows;
-    const query = this.filterQuery.toLowerCase();
-    return rows.filter((row) => fuzzyScore(query, row.name.toLowerCase()) !== undefined);
-  }
-
-  private touch(): void {
-    this.revision += 1;
-    this.cachedRows = undefined;
-  }
-
-  private mutate(action: () => void): boolean {
-    this.anchorPath = this.rows()[this.cursor]?.path ?? this.anchorPath;
-    action();
-    this.touch();
-    this.reanchor();
-    this.notify();
-    return true;
-  }
-
-  private reanchor(): void {
-    const rows = this.rows();
-    if (rows.length === 0) return;
-    const found = rows.findIndex((row) => row.path === this.anchorPath);
-    this.cursor = found >= 0 ? found : clampIndex(this.cursor, rows.length);
-    this.anchorPath = rows[this.cursor]?.path ?? this.anchorPath;
-  }
-
-  private dropCaches(): void {
+  private reload(): void {
     this.directories.clear();
-    this.ensureLoaded(this.rootPath);
+    this.load(this.rootPath);
   }
 
   private collect(directoryPath: string, depth: number, out: BrowserRow[]): void {
@@ -256,7 +192,6 @@ export class BrowserModel {
       if (hidden && !this.showHidden) continue;
       const path = join(directoryPath, entry.name);
       const expanded = entry.kind === "dir" && this.expandedDirs.has(path);
-      if (expanded) this.ensureLoaded(path);
       out.push({
         path,
         name: entry.name,
@@ -270,27 +205,34 @@ export class BrowserModel {
     }
   }
 
-  private ensureLoaded(path: string): void {
+  private load(path: string): void {
     if (this.directories.has(path)) return;
     const claim: DirectoryState = { kind: "loading" };
     this.directories.set(path, claim);
-    this.touch();
     this.tasks.track(() =>
       this.readDirectory(path)
-        .then((entries) => {
-          this.settle(path, claim, { kind: "loaded", entries: sortEntries(entries) });
-        })
+        .then((entries) =>
+          this.settle(path, claim, { kind: "loaded", entries: sortEntries(entries) }),
+        )
         .catch((cause: unknown) => {
           this.settle(path, claim, { kind: "failed", reason: failureMessage(cause) });
-        })
-        .then(() => this.reanchor()),
+        }),
     );
   }
 
   private settle(path: string, claim: DirectoryState, state: DirectoryState): void {
     if (this.directories.get(path) !== claim) return;
-    this.directories.set(path, state);
-    this.touch();
+    this.rebuild(() => {
+      this.directories.set(path, state);
+      if (state.kind === "loaded") this.loadExpandedChildren(path, state.entries);
+    });
+  }
+
+  private loadExpandedChildren(directoryPath: string, entries: readonly Entry[]): void {
+    for (const entry of entries) {
+      const path = join(directoryPath, entry.name);
+      if (entry.kind === "dir" && this.expandedDirs.has(path)) this.load(path);
+    }
   }
 }
 

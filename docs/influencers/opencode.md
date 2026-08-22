@@ -1,9 +1,9 @@
-# OpenCode (sst/opencode) — Deep Dive
+# OpenCode (sst/opencode): Deep Dive
 
 > Research dossier for **keywork**. OpenCode is the single most structurally relevant influence:
-> it shares keywork's exact stack (Bun + TypeScript + OpenTUI) and is **MIT-licensed — code may
+> it shares keywork's exact stack (Bun + TypeScript + OpenTUI) and is **MIT-licensed, so code may
 > be lifted with attribution**. (For contrast within this series: Pi, `earendil-works/pi`, is
-> also MIT and liftable with attribution; Crush, `charmbracelet/crush`, is FSL-1.1-MIT —
+> also MIT and liftable with attribution; Crush, `charmbracelet/crush`, is FSL-1.1-MIT:
 > **ideas only, never copy its source**.)
 >
 > **Hard guardrail:** OpenCode's Anthropic subscription-OAuth login code paths must **NOT** be
@@ -20,7 +20,7 @@ OpenCode brands itself simply as **"the open source AI coding agent."** Its posi
 as verified in the README and docs:
 
 - **Open source and provider-neutral.** Works with "any LLM provider by configuring their API
-  keys" — 75+ providers — rather than being tied to one vendor. A curated model list
+  keys" (75+ providers) rather than being tied to one vendor. A curated model list
   ("OpenCode Zen") lowers the choice burden.
 - **Terminal-first, but not terminal-only.** The TUI is the flagship surface, with a beta
   desktop app (macOS/Windows/Linux), a web interface, and IDE extensions all speaking to the
@@ -68,8 +68,8 @@ Sources: [server docs](https://opencode.ai/docs/server/), [CLI docs](https://ope
 
 OpenCode's TUI was originally written in **Go with Bubble Tea**; older third-party reviews
 still describe that split (Go TUI + Bun/Hono server). The team then drove the creation of
-**OpenTUI** — a Zig-core terminal rendering library with TypeScript bindings for React/SolidJS,
-run on Bun — specifically because Go TUI libraries (and Ink) hit performance walls at the scale
+**OpenTUI** (a Zig-core terminal rendering library with TypeScript bindings for React/SolidJS,
+run on Bun) specifically because Go TUI libraries (and Ink) hit performance walls at the scale
 of an AI coding interface. **OpenTUI now powers OpenCode's TUI in production.** This is the
 strongest possible validation of keywork's stack choice: the highest-starred coding agent
 converged on Bun + TypeScript + OpenTUI after trying the alternatives.
@@ -92,7 +92,7 @@ in beta for macOS/Windows/Linux. It is another client of the same HTTP server.
 - Auth methods vary by provider: API keys (most), OAuth (GitHub Copilot, GitLab Duo, Snowflake
   Cortex), env credential chains (Bedrock, Vertex). **Note:** the docs themselves now state
   that Anthropic prohibits using Claude Pro/Max subscriptions with third-party developer tools;
-  OpenCode "previously included workarounds." See §7 — keywork must not carry any of that code.
+  OpenCode "previously included workarounds." See §7; keywork must not carry any of that code.
 
 Source: [providers docs](https://opencode.ai/docs/providers/).
 
@@ -123,9 +123,9 @@ Sources: [TUI](https://opencode.ai/docs/tui/), [agents](https://opencode.ai/docs
 - **Leader-key pattern (the headline idea).** Default leader is `ctrl+x`; most non-trivial
   actions are `<leader>` + key (new session `<leader>n`, models `<leader>m`, agents
   `<leader>a`, quit `<leader>q`). A configurable `leader_timeout` (2000 ms default) bounds the
-  chord window. This deliberately sidesteps terminal keybinding conflicts — a vim/tmux idiom
+  chord window. This deliberately sidesteps terminal keybinding conflicts, a vim/tmux idiom
   applied to an agent harness.
-- **Command palette** on `ctrl+p` lists every command with its binding — discoverability layer
+- **Command palette** on `ctrl+p` lists every command with its binding, a discoverability layer
   over the chords; palette customizations persist across sessions.
 - **One-key mode switch:** Tab cycles primary agents (Build ⇄ Plan). Mode switching is a
   reflex, not a menu dive.
@@ -143,29 +143,29 @@ Sources: [keybinds docs](https://opencode.ai/docs/keybinds/), [TUI docs](https:/
 
 ## 5. Unique features
 
-1. **OpenTUI itself** — they funded/co-created the Zig-accelerated TS terminal renderer rather
+1. **OpenTUI itself**: they funded/co-created the Zig-accelerated TS terminal renderer rather
    than accept Ink or stay on Bubble Tea. The library keywork builds on exists because of this
    project.
-2. **OpenAPI-first headless server** — a self-documenting HTTP API (`/doc`) + SSE events makes
+2. **OpenAPI-first headless server**: a self-documenting HTTP API (`/doc`) + SSE events makes
    every surface (TUI, Electron, web, IDE, GitHub Actions, Slack) a thin client; SDKs are
    generated from the spec.
-3. **Git-backed undo/redo of agent work** — `/undo`/`/redo` restore file state, not just chat
+3. **Git-backed undo/redo of agent work**: `/undo`/`/redo` restore file state, not just chat
    state.
-4. **`system` theme** — computes a grayscale ramp from the terminal's background color and
+4. **`system` theme**: computes a grayscale ramp from the terminal's background color and
    leans on ANSI colors, so the app inherits the user's terminal aesthetic by default.
-5. **Session trees** — subagent invocations are navigable child sessions with dedicated
+5. **Session trees**: subagent invocations are navigable child sessions with dedicated
    keybinds (`session_child_first`, `session_child_cycle`, `session_parent`).
-6. **LSP diagnostics as agent feedback** — with the honest engineering note that it's off by
+6. **LSP diagnostics as agent feedback**, with the honest engineering note that it's off by
    default and plain CLI tools are often better.
-7. **Markdown-as-config everywhere** — agents and commands are markdown files with frontmatter;
+7. **Markdown-as-config everywhere**: agents and commands are markdown files with frontmatter;
    prompt templates support arg substitution, shell injection, and file inclusion.
-8. **Share links with a kill switch** — team-wide disablement via a committed config file.
-9. **Models.dev-driven provider metadata** — model capabilities/context limits come from a
+8. **Share links with a kill switch**: team-wide disablement via a committed config file.
+9. **Models.dev-driven provider metadata**: model capabilities/context limits come from a
    community dataset instead of hand-maintained tables.
 
 ## 6. What keywork should take
 
-Ordered by priority. Reminder: **OpenCode is MIT — code is liftable with attribution**, and
+Ordered by priority. Reminder: **OpenCode is MIT, so code is liftable with attribution**, and
 because keywork shares the exact Bun + TypeScript + OpenTUI stack, structural reuse (not just
 inspiration) is on the table. Study their OpenTUI usage in `packages/tui` before writing a line
 of keywork's renderer.
@@ -179,17 +179,17 @@ of keywork's renderer.
 | 5 | **Plan/Build primary agents with Tab switch + allow/ask/deny permissions** | Small config surface (`mode`, `permission` with glob-scoped bash rules) delivering the whole safety UX. Markdown-with-frontmatter agent definitions are worth copying verbatim as a format. |
 | 6 | **Markdown custom commands** | `$ARGUMENTS`/`$1`, `` !`cmd` `` shell injection, `@file` inclusion, frontmatter routing to an agent/model. Cheap, composable, user-loved. |
 | 7 | **`system` theme + JSON theme format** | Terminal-background-derived grayscale + ANSI reuse + `"none"` inheritance is Omarchy-grade default behavior: it looks native everywhere with zero user effort. Theme `defs`/dark-light variants are a good schema to lift. |
-| 8 | **Vercel AI SDK + Models.dev provider layer** | Don't hand-roll provider abstraction; their `packages/llm` wiring over `@ai-sdk/*` with Models.dev metadata is directly reusable — **excluding all subscription-OAuth auth flows** (see §7). |
+| 8 | **Vercel AI SDK + Models.dev provider layer** | Don't hand-roll provider abstraction; their `packages/llm` wiring over `@ai-sdk/*` with Models.dev metadata is directly reusable, **excluding all subscription-OAuth auth flows** (see §7). |
 | 9 | **Plugin hook taxonomy** | The event list (`tool.execute.before/after`, `session.*`, `permission.asked`, …) is a well-shaped extension surface; adopt the taxonomy even if keywork's plugin runtime differs. |
-| 10 | **Session trees for subagents** | Modeling subagent runs as navigable child sessions (instead of buried logs) fits keywork's multi-pane ambitions — a pane per child session is a natural keywork extension OpenCode itself doesn't have. |
-| — | **Skip:** Electron desktop app, share-link cloud service, enterprise/Slack packages — out of scope for a keyboard-first harness; revisit only if the server split (item 3) lands first. |
+| 10 | **Session trees for subagents** | Modeling subagent runs as navigable child sessions (instead of buried logs) fits keywork's multi-pane ambitions; a pane per child session is a natural keywork extension OpenCode itself doesn't have. |
+| · | **Skip:** Electron desktop app, share-link cloud service, enterprise/Slack packages are out of scope for a keyboard-first harness; revisit only if the server split (item 3) lands first. |
 
 ## 7. Licensing & compliance notes (must-read)
 
 - **OpenCode (sst/opencode): MIT.** Code may be lifted into keywork **with attribution**
   (preserve copyright/license notice; note provenance in the file or a NOTICE).
-- **Pi (earendil-works/pi): MIT** — same rule, liftable with attribution.
-- **Crush (charmbracelet/crush): FSL-1.1-MIT** — **ideas only; never copy its source.**
+- **Pi (earendil-works/pi): MIT**; same rule, liftable with attribution.
+- **Crush (charmbracelet/crush): FSL-1.1-MIT**: **ideas only; never copy its source.**
 - **Anthropic guardrail:** OpenCode has historically contained login flows using Anthropic
   **Claude Pro/Max subscription OAuth**; its own docs now acknowledge Anthropic prohibits
   subscription use in third-party dev tools. **Do not port, adapt, or reference those code
@@ -199,10 +199,10 @@ of keywork's renderer.
 
 ## Sources
 
-- <https://github.com/sst/opencode> — README, license, packages layout, root `package.json`
-- <https://opencode.ai/docs/> — intro
+- <https://github.com/sst/opencode>: README, license, packages layout, root `package.json`
+- <https://opencode.ai/docs/>: intro
 - <https://opencode.ai/docs/tui/> · <https://opencode.ai/docs/keybinds/> · <https://opencode.ai/docs/agents/> · <https://opencode.ai/docs/lsp/> · <https://opencode.ai/docs/themes/> · <https://opencode.ai/docs/share/> · <https://opencode.ai/docs/server/> · <https://opencode.ai/docs/cli/> · <https://opencode.ai/docs/providers/> · <https://opencode.ai/docs/commands/> · <https://opencode.ai/docs/plugins/>
-- <https://www.stork.ai/blog/the-tui-library-thats-killing-ink> — OpenTUI origin story
-- <https://grokipedia.com/page/OpenTUI> — Go/Bubble Tea → OpenTUI migration
-- <https://codexpedite.com/opencode-review-the-open-source-ai-agent-that-challenges-claude-code-and-cursor/> — third-party architecture review
-- <https://aiwiki.ai/wiki/opencode> — project history/stats
+- <https://www.stork.ai/blog/the-tui-library-thats-killing-ink>: OpenTUI origin story
+- <https://grokipedia.com/page/OpenTUI>: Go/Bubble Tea → OpenTUI migration
+- <https://codexpedite.com/opencode-review-the-open-source-ai-agent-that-challenges-claude-code-and-cursor/>: third-party architecture review
+- <https://aiwiki.ai/wiki/opencode>: project history/stats

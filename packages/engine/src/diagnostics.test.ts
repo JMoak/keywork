@@ -188,6 +188,20 @@ describe("redactSecrets", () => {
     });
   });
 
+  it("marks cycles as circular while still visiting shared, acyclic branches", () => {
+    const shared = { note: "seen twice" };
+    const payload: Record<string, unknown> = { first: shared, second: shared };
+    payload.self = payload;
+    payload.list = [payload];
+
+    expect(redactSecrets(payload)).toEqual({
+      first: { note: "seen twice" },
+      second: { note: "seen twice" },
+      self: "[circular]",
+      list: ["[circular]"],
+    });
+  });
+
   it("serializes errors to name and message with the message scrubbed", () => {
     expect(redactSecrets(new RangeError("denied for sk-abcdef123456789"))).toEqual({
       name: "RangeError",

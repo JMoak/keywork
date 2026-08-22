@@ -1,5 +1,6 @@
 import { type Highlighter, highlighterFor, type SyntaxClass } from "./highlighter.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
+import { segments, take, width } from "./width.ts";
 
 export type MarkdownTone =
   | "body"
@@ -58,6 +59,25 @@ export function renderMarkdown(
 
 export function markdownRowText(row: MarkdownRow): string {
   return row.spans.map((span) => span.text).join("");
+}
+
+export function markdownBlocks(source: string): string[] {
+  const blocks: string[] = [];
+  let fence: string[] | undefined;
+  for (const line of source.split("\n")) {
+    if (fence !== undefined) {
+      fence.push(line);
+      if (fenceLine.test(line)) {
+        blocks.push(fence.join("\n"));
+        fence = undefined;
+      }
+      continue;
+    }
+    if (fenceLine.test(line)) fence = [line];
+    else blocks.push(line);
+  }
+  if (fence !== undefined) blocks.push(fence.join("\n"));
+  return blocks;
 }
 
 const fenceLine = /^ {0,3}`{3,} *([^`\s]*).*$/;
@@ -124,38 +144,37 @@ function fenceRows(
   line: string,
   bleed: number,
 ): MarkdownRow[] {
-  const room = Math.max(1, bleed - count(rail.text));
+  const room = Math.max(1, bleed - width(rail.text));
   const highlighted = code
     .line(line)
     .map((span): MarkdownSpan => ({ text: span.text, tone: span.syntax ?? "fence" }));
   return hardWrapSpans(highlighted, room).map((spans) => ({
-    spans: [rail, ...spans],
+    spans: [{ ...rail }, ...spans],
     panel: true,
   }));
 }
 
-function hardWrapSpans(spans: readonly MarkdownSpan[], width: number): MarkdownSpan[][] {
-  const rows: MarkdownSpan[][] = [[]];
+function hardWrapSpans(spans: readonly MarkdownSpan[], cells: number): MarkdownSpan[][] {
+  let row: MarkdownSpan[] = [];
+  const rows = [row];
   let used = 0;
   for (const span of spans) {
-    let points = Array.from(span.text);
-    while (points.length > 0) {
-      if (used === width) {
-        rows.push([]);
+    for (const segment of segments(span.text)) {
+      if (used > 0 && used + segment.width > cells) {
+        row = [];
+        rows.push(row);
         used = 0;
       }
-      const take = points.slice(0, width - used);
-      appendSpan(rows[rows.length - 1] as MarkdownSpan[], { ...span, text: take.join("") });
-      used += take.length;
-      points = points.slice(take.length);
+      appendSpan(row, { ...span, text: segment.text });
+      used += segment.width;
     }
   }
   return rows;
 }
 
-function proseRows(content: MarkdownSpan[], width: number, lead: MarkdownSpan[]): MarkdownRow[] {
-  const hang = lead.reduce((total, span) => total + count(span.text), 0);
-  return wrapSpans(content, width, hang).map((spans, index) => ({
+function proseRows(content: MarkdownSpan[], measure: number, lead: MarkdownSpan[]): MarkdownRow[] {
+  const hang = lead.reduce((total, span) => total + width(span.text), 0);
+  return wrapSpans(content, measure, hang).map((spans, index) => ({
     spans: index === 0 ? [...lead, ...spans] : hanging(hang, spans),
     panel: false,
   }));
@@ -166,8 +185,8 @@ function hanging(hang: number, spans: MarkdownSpan[]): MarkdownSpan[] {
   return [{ text: " ".repeat(hang), tone: "body" }, ...spans];
 }
 
-function wrapSpans(content: MarkdownSpan[], width: number, hang: number): MarkdownSpan[][] {
-  const room = Math.max(1, width - hang);
+function wrapSpans(content: MarkdownSpan[], measure: number, hang: number): MarkdownSpan[][] {
+  const room = Math.max(1, measure - hang);
   const lines: MarkdownSpan[][] = [];
   let line: MarkdownSpan[] = [];
   let used = 0;
@@ -178,33 +197,33 @@ function wrapSpans(content: MarkdownSpan[], width: number, hang: number): Markdo
     used = 0;
   };
   for (const token of tokensOf(content)) {
+    const cells = width(token.text);
     if (/^\s+$/.test(token.text)) {
       if (used === 0 && lines.length > 0) continue;
-      if (used + count(token.text) > room) {
+      if (used + cells > room) {
         breakLine();
         continue;
       }
       appendSpan(line, { ...token });
-      used += count(token.text);
+      used += cells;
       continue;
     }
     let piece = token.text;
     while (piece !== "") {
-      const length = count(piece);
       const remaining = room - used;
-      if (length <= remaining) {
+      const head = take(piece, remaining);
+      if (width(piece) <= remaining) {
         appendSpan(line, { ...token, text: piece });
-        used += length;
+        used += width(piece);
         break;
       }
-      if (used > 0 && length <= room) {
+      if (used > 0 && (width(piece) <= room || head === "")) {
         breakLine();
         continue;
       }
-      const points = Array.from(piece);
-      const take = Math.max(1, remaining);
-      appendSpan(line, { ...token, text: points.slice(0, take).join("") });
-      piece = points.slice(take).join("");
+      const placed = head === "" ? leadingGlyph(piece) : head;
+      appendSpan(line, { ...token, text: placed });
+      piece = piece.slice(placed.length);
       breakLine();
     }
   }
@@ -213,6 +232,10 @@ function wrapSpans(content: MarkdownSpan[], width: number, hang: number): Markdo
     lines.push(line);
   }
   return lines;
+}
+
+function leadingGlyph(text: string): string {
+  return segments(text)[0]?.text ?? text;
 }
 
 function trimLineEnd(line: MarkdownSpan[]): void {
@@ -350,8 +373,4 @@ function enclosedBy(text: string, from: number, marker: string): string | undefi
 function atWordEdge(text: string, index: number): boolean {
   const character = text[index];
   return character === undefined || !/\w/.test(character);
-}
-
-function count(text: string): number {
-  return Array.from(text).length;
 }

@@ -9,10 +9,11 @@
   ],
   "scripts": {
     "keywork": "bun packages/cli/src/main.ts",
-    "check": "bun run check:types && bun run check:pins && bun run check:guardrails && bun run lint",
+    "check": "bun run check:types && bun run check:pins && bun run check:guardrails && bun run check:prose && bun run lint",
     "check:types": "tsc --build",
     "check:pins": "bun scripts/check-pins.ts",
     "check:guardrails": "bun scripts/check-guardrails.ts",
+    "check:prose": "bun scripts/check-prose.ts",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",

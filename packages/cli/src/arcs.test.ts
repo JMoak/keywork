@@ -5,7 +5,7 @@ import { MemorySearch, type MemoryStore, SessionStore, textMessage } from "@keyw
 import { afterEach, describe, expect, it } from "vitest";
 import { type ArcService, arcService, arcsUnavailable } from "./arcs.ts";
 import { openWorkspaceMemory, type WorkspaceMemory } from "./memory.ts";
-import { boundSessionCounts, sessionPort } from "./sessions.ts";
+import { boundSessionCounts, sessionPort } from "./sessions/ports.ts";
 
 const tempDirs: string[] = [];
 
@@ -142,7 +142,7 @@ describe("arcService lifecycle", () => {
 
     expect(outcome).toEqual({ kind: "pending", candidates: 1, questions: 0, wedged: 1 });
     expect((await arcs.port.list())[0]?.status).toBe("active");
-    const inbox = await memory?.inbox.list();
+    const inbox = await memory?.store.listStaged();
     expect(inbox?.map((item) => item.kind)).toEqual(["arc-distillation"]);
   });
 

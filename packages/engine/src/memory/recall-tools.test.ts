@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Agent } from "../agent.ts";
 import type { ToolResultPart } from "../messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "../mock-provider.ts";
+import { toolScope } from "../tools/confine.ts";
 import { coreTools } from "../tools/core.ts";
 import { CitationLedger } from "./citations.ts";
 import { memoryGetTool, memoryRecallTools, memorySearchTool } from "./recall-tools.ts";
@@ -54,7 +55,7 @@ describe("memory_search", () => {
         }),
         textTurn("Noted."),
       ]),
-      tools: coreTools(root),
+      tools: coreTools(toolScope(root)),
     });
     await writer.send("remember that tests run on Node");
 
@@ -70,7 +71,7 @@ describe("memory_search", () => {
         }),
         textTurn("Tests run on Node."),
       ]),
-      tools: coreTools(root, { store, search }),
+      tools: coreTools(toolScope(root), { memory: { store, search } }),
     });
     await recaller.send("what runtime do tests use?");
     const results = recaller
@@ -224,10 +225,12 @@ describe("tool registration", () => {
   });
 
   it("stays out of coreTools unless memory is supplied", async () => {
-    const names = coreTools(".").map((tool) => tool.name);
+    const names = coreTools(toolScope(".")).map((tool) => tool.name);
     expect(names).not.toContain("memory_search");
     const store = openStore(await vaultRoot());
-    const withMemory = coreTools(".", { store, search: new MemorySearch(store) });
+    const withMemory = coreTools(toolScope("."), {
+      memory: { store, search: new MemorySearch(store) },
+    });
     expect(withMemory.map((tool) => tool.name)).toContain("memory_get");
   });
 });

@@ -1,3 +1,5 @@
+import { hexChannels } from "./color.ts";
+
 export function apcaLc(inkHex: string, groundHex: string): number {
   const ink = softenNearBlack(screenLuminance(inkHex));
   const ground = softenNearBlack(screenLuminance(groundHex));
@@ -18,10 +20,9 @@ const lowContrastClip = 0.1;
 const lowContrastOffset = 0.027;
 const nearBlackThreshold = 0.022;
 const nearBlackExponent = Math.SQRT2;
-const rrggbb = /^#[0-9a-fA-F]{6}$/;
 
 function screenLuminance(hex: string): number {
-  const [r, g, b] = channels(hex);
+  const [r, g, b] = hexChannels(hex);
   return 0.2126729 * gamma(r) + 0.7151522 * gamma(g) + 0.072175 * gamma(b);
 }
 
@@ -32,10 +33,4 @@ function gamma(channel: number): number {
 function softenNearBlack(luminance: number): number {
   if (luminance >= nearBlackThreshold) return luminance;
   return luminance + (nearBlackThreshold - luminance) ** nearBlackExponent;
-}
-
-function channels(hex: string): [number, number, number] {
-  if (!rrggbb.test(hex)) throw new Error(`Expected a #rrggbb color, got "${hex}"`);
-  const value = Number.parseInt(hex.slice(1), 16);
-  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
 }

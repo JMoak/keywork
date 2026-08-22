@@ -1,9 +1,9 @@
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { slugProblem } from "@keywork/shared";
 import { type Frontmatter, parseDocument, serializeDocument } from "../frontmatter.ts";
-import { MemoryInertError, MemoryStore, type Note } from "../store.ts";
-import { isMissingFileError } from "../vault-files.ts";
+import type { Note } from "../notes.ts";
+import { MemoryInertError, MemoryStore } from "../store.ts";
+import { arcsDir, VaultFiles } from "../vault-files.ts";
 import { ArcOpenQuestions, questionsDir } from "./questions.ts";
 
 export type ArcStatus = "active" | "archived";
@@ -70,6 +70,7 @@ export function arcMocLink(slug: string): string {
 export class ArcRegistry {
   readonly trusted: boolean;
   private readonly root: string;
+  private readonly vault: VaultFiles;
   private readonly now: () => Date;
   private readonly secrets: Record<string, string>;
   private readonly openQuestionCap: number | undefined;
@@ -77,6 +78,7 @@ export class ArcRegistry {
 
   constructor(options: ArcRegistryOptions) {
     this.root = options.vaultRoot;
+    this.vault = new VaultFiles(options.vaultRoot);
     this.trusted = options.trusted;
     this.now = options.now ?? (() => new Date());
     this.secrets = options.secrets ?? {};
@@ -149,7 +151,7 @@ export class ArcRegistry {
     const cached = this.stores.get(slug);
     if (cached !== undefined) return cached;
     const store = new MemoryStore({
-      vaultRoot: join(this.root, "arcs", slug),
+      vaultRoot: join(this.root, arcsDir, slug),
       trusted: this.trusted,
       now: this.now,
       secrets: this.secrets,
@@ -176,15 +178,7 @@ export class ArcRegistry {
   }
 
   private async listArcDirs(): Promise<string[]> {
-    try {
-      return (await readdir(join(this.root, "arcs"), { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .filter(isValidArcSlug);
-    } catch (error) {
-      if (isMissingFileError(error)) return [];
-      throw error;
-    }
+    return (await this.vault.dirNames(arcsDir)).filter(isValidArcSlug);
   }
 }
 

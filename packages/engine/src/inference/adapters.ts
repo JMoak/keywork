@@ -2,15 +2,16 @@ import { withDeclaredCapabilities } from "../capabilities.ts";
 import type { Provider } from "../provider.ts";
 import { BedrockProvider } from "../providers/bedrock/bedrock.ts";
 import type { AwsCredentials } from "../providers/bedrock/sigv4.ts";
-import { type FetchLike, OpenAiCompatibleProvider } from "../providers/openai.ts";
+import { OpenAiCompatibleProvider } from "../providers/openai.ts";
 import { OpenAiResponsesProvider } from "../providers/openai-responses.ts";
 import { RetryingProvider } from "../providers/retry.ts";
+import { type AuthHeaders, bearerHeaders, type FetchLike } from "../providers/transport.ts";
 import { formatReference } from "./references.ts";
 import type { CredentialHandle, InferenceBinding, ModelReference } from "./types.ts";
 
 export type CredentialMaterial =
   | { kind: "api-key"; key: string }
-  | { kind: "bearer"; headers: () => Promise<Record<string, string>> }
+  | { kind: "bearer"; headers: AuthHeaders }
   | { kind: "aws-sigv4"; credentials: AwsCredentials };
 
 export interface CredentialVault {
@@ -39,7 +40,8 @@ export function providerFor(binding: InferenceBinding, options: AdapterOptions):
 }
 
 export function modelReferenceOf(provider: Provider): string | undefined {
-  return provider.modelId === undefined ? undefined : `${provider.name}/${provider.modelId}`;
+  if (provider.modelId === undefined) return undefined;
+  return formatReference({ provider: provider.name, model: provider.modelId });
 }
 
 function materialFor(
@@ -98,11 +100,11 @@ function transportFor(
 function httpAuthHeaders(
   binding: InferenceBinding,
   material: CredentialMaterial | undefined,
-): () => Promise<Record<string, string>> {
-  if (material === undefined) return async () => ({});
+): AuthHeaders {
+  if (material === undefined) return bearerHeaders(undefined);
   switch (material.kind) {
     case "api-key":
-      return async () => ({ authorization: `Bearer ${material.key}` });
+      return bearerHeaders(material.key);
     case "bearer":
       return material.headers;
     case "aws-sigv4":

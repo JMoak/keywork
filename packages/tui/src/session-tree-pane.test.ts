@@ -1,9 +1,10 @@
 import { type SessionTreeNode, textMessage } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
+import type { FrameScheduler } from "./frame-scheduler.ts";
 import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { SessionTreeView } from "./session-tree-model.ts";
-import { type FrameScheduler, SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
+import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
 
 interface TreeWorld {

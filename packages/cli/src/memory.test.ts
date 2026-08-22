@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ReviewItemNotFoundError } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { StagedItemNotFoundError } from "@keywork/engine";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   memoryPanePort,
   memoryRecall,
@@ -64,7 +64,7 @@ describe("memoryPanePort", () => {
       body: "from a fetched page\n",
       provenance: "untrusted",
     });
-    const [review] = await seed.inbox.add([
+    const [review] = await seed.store.propose([
       {
         kind: "contradiction",
         a: "User Fact",
@@ -91,7 +91,7 @@ describe("memoryPanePort", () => {
     const [stagedItem] = await seed.store.listStaged();
     expect(staged).toEqual([
       {
-        id: `staged:${stagedItem?.id}`,
+        id: stagedItem?.id,
         kind: "staged",
         title: "Web Claim.md",
         provenance: "untrusted",
@@ -104,31 +104,29 @@ describe("memoryPanePort", () => {
     expect(contradiction?.provenance).toBe("agent");
   });
 
-  it("routes approve to the store for staged items and to the inbox for reviews", async () => {
+  it("routes approve to the store for staged writes and reviews alike", async () => {
     const { memory, seed, reviewId } = await populatedMemory();
     const port = memoryPanePort(memory);
     const [stagedItem] = await seed.store.listStaged();
-    await port.approve(`staged:${stagedItem?.id}`);
+    await port.approve(stagedItem?.id ?? "");
     expect((await seed.store.listNotes()).map((note) => note.title)).toContain("Web Claim");
-    await port.approve(`review:${reviewId}`);
-    expect(await seed.inbox.list()).toEqual([]);
+    await port.approve(reviewId);
+    expect(await seed.store.listStaged()).toEqual([]);
   });
 
   it("discard drops a staged item without landing it", async () => {
     const { memory, seed } = await populatedMemory();
     const [stagedItem] = await seed.store.listStaged();
-    await memoryPanePort(memory).discard(`staged:${stagedItem?.id}`);
-    expect(await seed.store.listStaged()).toEqual([]);
+    await memoryPanePort(memory).discard(stagedItem?.id ?? "");
+    expect((await seed.store.listStaged()).map((item) => item.kind)).toEqual(["contradiction"]);
     expect((await seed.store.listNotes()).map((note) => note.title)).not.toContain("Web Claim");
   });
 
   it("approving an already-resolved review item raises the calm typed error", async () => {
     const { memory, reviewId } = await populatedMemory();
     const port = memoryPanePort(memory);
-    await port.approve(`review:${reviewId}`);
-    await expect(port.approve(`review:${reviewId}`)).rejects.toBeInstanceOf(
-      ReviewItemNotFoundError,
-    );
+    await port.approve(reviewId);
+    await expect(port.approve(reviewId)).rejects.toBeInstanceOf(StagedItemNotFoundError);
   });
 
   it("an untrusted vault loads as calm emptiness, never content", async () => {
@@ -251,6 +249,29 @@ describe("sweepOnClose", () => {
     await expect(sweepOnClose(memory)).resolves.toBeUndefined();
     await expect(sweepOnClose(undefined)).resolves.toBeUndefined();
   });
+
+  it("still proposes preferences when the sweep fails, then surfaces the failure", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, true);
+    if (memory === undefined) throw new Error("memory expected");
+    for (const _ of [1, 2, 3]) await memory.askGate.record("bash git", "yes");
+    vi.spyOn(memory.gardener, "sweep").mockRejectedValue(new Error("disk full"));
+
+    await expect(sweepOnClose(memory)).rejects.toThrow("memory close: disk full");
+
+    const items = await memory.store.listStaged();
+    expect(items.filter((item) => item.kind === "preference-proposal")).toHaveLength(1);
+  });
+
+  it("names every failure when both close steps fail", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, true);
+    if (memory === undefined) throw new Error("memory expected");
+    vi.spyOn(memory.gardener, "sweep").mockRejectedValue(new Error("disk full"));
+    vi.spyOn(memory.askGate, "proposePreferences").mockRejectedValue(new Error("ledger locked"));
+
+    await expect(sweepOnClose(memory)).rejects.toThrow("disk full · ledger locked");
+  });
 });
 
 describe("ask-gate preferences at close", () => {
@@ -262,7 +283,7 @@ describe("ask-gate preferences at close", () => {
 
     await sweepOnClose(memory);
 
-    const items = await memory.inbox.list();
+    const items = await memory.store.listStaged();
     expect(items.filter((item) => item.kind === "preference-proposal")).toHaveLength(1);
   });
 
@@ -274,7 +295,7 @@ describe("ask-gate preferences at close", () => {
 
     await sweepOnClose(memory);
 
-    expect(await memory.inbox.list()).toHaveLength(0);
+    expect(await memory.store.listStaged()).toHaveLength(0);
   });
 });
 

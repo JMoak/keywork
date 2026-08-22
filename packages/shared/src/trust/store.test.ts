@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BlanketTrustError, canonicalTrustPath, TrustStore, TrustStoreError } from "./store.ts";
+import { canonicalPath } from "../canonical-path.ts";
+import { BlanketTrustError, TrustStore, TrustStoreError } from "./store.ts";
 
 let scratch: string;
 let home: string;
@@ -97,7 +98,7 @@ describe("TrustStore", () => {
     openStore().trust(repo);
     const edited = {
       ...JSON.parse(readFileSync(file, "utf8")),
-      [canonicalTrustPath(home)]: true,
+      [canonicalPath(home)]: true,
     };
     writeFileSync(file, JSON.stringify(edited));
     expect(openStore().resolve(join(home, "some-project"))).toBe("undecided");
@@ -143,7 +144,7 @@ describe("TrustStore", () => {
 
   it("rejects non-boolean trust values", () => {
     openStore().trust(repo);
-    writeFileSync(file, JSON.stringify({ [canonicalTrustPath(repo)]: "yes" }));
+    writeFileSync(file, JSON.stringify({ [canonicalPath(repo)]: "yes" }));
     expect(() => openStore().resolve(repo)).toThrow(TrustStoreError);
   });
 
@@ -153,6 +154,13 @@ describe("TrustStore", () => {
     store.trust(join(scratch, "a"));
     const keys = Object.keys(JSON.parse(readFileSync(file, "utf8")) as object);
     expect(keys).toEqual([...keys].sort());
-    expect(keys).toEqual(keys.map((key) => canonicalTrustPath(key)));
+    expect(keys).toEqual(keys.map((key) => canonicalPath(key)));
+  });
+
+  it("keeps the trust file under an overridden home", () => {
+    const store = new TrustStore({ home });
+    expect(store.file).toBe(file);
+    store.trust(repo);
+    expect(new TrustStore({ home }).resolve(repo)).toBe("trusted");
   });
 });

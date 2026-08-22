@@ -4,7 +4,6 @@ import {
   type CapabilityProfile,
   density,
   detectCapabilities,
-  frameWrap,
   type GlyphSupport,
   resolveMark,
   resolveRamp,
@@ -171,18 +170,6 @@ describe("the sanctioned glyph inventory", () => {
       ...ramps.flatMap((ramp) => resolveRamp(ramp, support(0))),
     ].join("");
     expect([...glyphs].every((glyph) => glyph.charCodeAt(0) <= 0x7e)).toBe(true);
-  });
-});
-
-describe("frameWrap", () => {
-  it("wraps frames in DEC 2026 markers when synchronized output is supported", () => {
-    const wrap = frameWrap({ synchronizedOutput: true });
-    expect(wrap("frame")).toBe("\x1b[?2026hframe\x1b[?2026l");
-  });
-
-  it("passes frames through untouched when it is not", () => {
-    const wrap = frameWrap({ synchronizedOutput: false });
-    expect(wrap("frame")).toBe("frame");
   });
 });
 

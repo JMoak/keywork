@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { PromptOverride, PromptsConfig } from "@keywork/shared";
+import { mostSpecificMatch, type PromptsConfig } from "@keywork/shared";
 
 const corePrompt = `You are keywork, a coding agent working in the user's repository.
 
@@ -40,30 +40,11 @@ function projectSection({ projectInstructions }: SystemPromptOptions): string[] 
 function userSections({ prompts, modelId }: SystemPromptOptions): string[] {
   if (prompts === undefined) return [];
   const global = presence(prompts.system);
-  const override = mostSpecificOverride(prompts.models, modelId);
+  const override = mostSpecificMatch(prompts.models, modelId);
   if (override === undefined) return compact([global]);
   const overrideText = presence(override.prompt);
   if (override.mode === "replace") return compact([overrideText]);
   return compact([global, overrideText]);
-}
-
-function mostSpecificOverride(
-  models: PromptsConfig["models"],
-  modelId: string | undefined,
-): PromptOverride | undefined {
-  if (models === undefined || modelId === undefined) return undefined;
-  return Object.entries(models)
-    .filter(([pattern]) => globMatches(pattern, modelId))
-    .sort(([a], [b]) => literalLength(b) - literalLength(a))[0]?.[1];
-}
-
-function globMatches(pattern: string, value: string): boolean {
-  const escaped = pattern.replace(/[/\\^$+?.()|[\]{}]/g, "\\$&").replaceAll("*", ".*");
-  return new RegExp(`^${escaped}$`).test(value);
-}
-
-function literalLength(pattern: string): number {
-  return pattern.replaceAll("*", "").length;
 }
 
 function presence(text: string | undefined): string | undefined {

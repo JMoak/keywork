@@ -10,7 +10,6 @@ export {
 } from "./presets.ts";
 export {
   BlanketTrustError,
-  canonicalTrustPath,
   type TrustDecision,
   TrustStore,
   TrustStoreError,

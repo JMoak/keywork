@@ -1,3 +1,4 @@
+import type { Flavor } from "@keywork/shared";
 import type { Box } from "@opentui/core";
 import type { Chord } from "./keys.ts";
 import type { PointerEvent } from "./pointer.ts";
@@ -11,7 +12,7 @@ export interface PaneContext {
   width: number;
   height: number;
   borderColor?: string;
-  instruments?: "calm" | "cockpit";
+  instruments?: Flavor["instruments"];
 }
 
 export interface FileOpenOptions {

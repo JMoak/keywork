@@ -1,22 +1,21 @@
-import { clampIndex, clampScroll } from "./clamp.ts";
+import type { McpServerState, McpServerStatus } from "@keywork/engine";
+import { clampIndex } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
-import type { ThemeColorToken } from "./theme.ts";
+import type { RowTone } from "./pane-chrome.ts";
+import { pluralize } from "./pluralize.ts";
+import { RowCursor } from "./row-cursor.ts";
 
-export type McpServerState = "connected" | "connecting" | "down";
+export type { McpServerState };
 
 export interface McpProgress {
   stagesDone: number;
   stageCount: number;
 }
 
-export interface McpServerView {
-  name: string;
-  state: McpServerState;
-  toolCount: number;
+export type McpServerView = Omit<McpServerStatus, "enabled"> & {
   enabled?: boolean;
-  lastError?: string;
   progress?: McpProgress;
-}
+};
 
 export interface McpPaneEffects {
   refresh(): void;
@@ -25,7 +24,6 @@ export interface McpPaneEffects {
   listTools(name: string): void;
 }
 
-export type McpRowTone = "dim" | "normal" | "alert";
 export type McpRowKind = "server" | "error" | "action" | "tool" | "tools-status" | "empty";
 export type McpAction = "restart" | "toggle" | "tools" | "retry-tools";
 
@@ -33,7 +31,7 @@ export interface McpRow {
   id: string;
   kind: McpRowKind;
   text: string;
-  tone: McpRowTone;
+  tone: RowTone;
   selectable: boolean;
   server?: string;
   action?: McpAction;
@@ -57,97 +55,51 @@ export function tileMark(progress?: McpProgress): string {
   return tileFill[clampIndex(step, tileFill.length)] ?? tileFill[0];
 }
 
-export function mcpToneToken(tone: McpRowTone): ThemeColorToken {
-  return toneTokens[tone];
-}
-
-export class McpPaneModel {
-  cursor = 0;
-  scrollTop = 0;
-
+export class McpPaneModel extends RowCursor<McpRow> {
   private servers: McpServerView[] = [];
   private busyServers = new Set<string>();
   private openMenus = new Set<string>();
   private openTools = new Set<string>();
   private toolsByServer = new Map<string, ToolsState>();
-  private anchorId: string | undefined;
-  private revision = 0;
-  private cachedRows: { revision: number; rows: McpRow[] } | undefined;
 
   constructor(
-    private readonly notify: () => void,
+    notify: () => void,
     private readonly effects: McpPaneEffects,
-  ) {}
+  ) {
+    super(notify);
+  }
 
-  setServers(servers: McpServerView[]): void {
-    this.anchorId = this.rows()[this.cursor]?.id ?? this.anchorId;
-    this.servers = servers;
-    this.pruneVanished(new Set(servers.map((server) => server.name)));
-    this.touch();
-    this.reanchor();
-    this.notify();
+  setServers(servers: readonly McpServerView[]): void {
+    this.mutate(() => {
+      this.servers = [...servers];
+      this.pruneVanished(new Set(servers.map((server) => server.name)));
+    });
   }
 
   setBusy(name: string, busy: boolean): void {
     if (busy === this.busyServers.has(name)) return;
-    if (busy) this.busyServers.add(name);
-    else this.busyServers.delete(name);
-    this.touch();
-    this.reanchor();
-    this.notify();
-  }
-
-  isBusy(name: string): boolean {
-    return this.busyServers.has(name);
+    this.mutate(() => {
+      if (busy) this.busyServers.add(name);
+      else this.busyServers.delete(name);
+    });
   }
 
   setTools(name: string, result: McpToolsResult): void {
     if (this.findServer(name) === undefined) return;
-    this.anchorId = this.rows()[this.cursor]?.id ?? this.anchorId;
-    this.toolsByServer.set(
-      name,
-      "tools" in result
-        ? { kind: "loaded", tools: result.tools }
-        : { kind: "failed", error: result.error },
-    );
-    this.touch();
-    this.reanchor();
-    this.notify();
-  }
-
-  serverCount(): number {
-    return this.servers.length;
+    this.mutate(() => {
+      this.toolsByServer.set(
+        name,
+        "tools" in result
+          ? { kind: "loaded", tools: result.tools }
+          : { kind: "failed", error: result.error },
+      );
+    });
   }
 
   counts(): McpStateCounts {
     const counts: McpStateCounts = { connected: 0, connecting: 0, down: 0 };
     for (const server of this.servers) counts[server.state] += 1;
     return counts;
-  }
-
-  rows(): McpRow[] {
-    if (this.cachedRows?.revision === this.revision) return this.cachedRows.rows;
-    const rows =
-      this.servers.length === 0
-        ? [calmRow()]
-        : this.servers.flatMap((server) => this.serverRows(server));
-    this.cachedRows = { revision: this.revision, rows };
-    return rows;
-  }
-
-  visibleRows(rowCount: number): { index: number; row: McpRow }[] {
-    const all = this.rows();
-    this.cursor = clampIndex(this.cursor, all.length);
-    this.scrollTop = clampScroll(this.scrollTop, all.length, rowCount);
-    if (this.cursor < this.scrollTop) this.scrollTop = this.cursor;
-    if (this.cursor >= this.scrollTop + rowCount) this.scrollTop = this.cursor - rowCount + 1;
-    return all
-      .slice(this.scrollTop, this.scrollTop + rowCount)
-      .map((row, offset) => ({ index: this.scrollTop + offset, row }));
-  }
-
-  cursorRow(): McpRow | undefined {
-    return this.rows()[clampIndex(this.cursor, this.rows().length)];
   }
 
   cursorServer(): McpServerView | undefined {
@@ -164,31 +116,33 @@ export class McpPaneModel {
 
   handleKey(chord: Chord, pageRows: number): boolean {
     if (chord.shift || chord.ctrl || chord.meta) return false;
-    const rows = this.rows();
-    this.cursor = clampIndex(this.cursor, rows.length);
+    if (this.navigate(chord, pageRows)) return true;
     switch (chord.name) {
-      case "j":
-      case "down":
-        return this.moveSelection(1, rows);
-      case "k":
-      case "up":
-        return this.moveSelection(-1, rows);
-      case "pagedown":
-        return this.moveSelection(pageRows, rows);
-      case "pageup":
-        return this.moveSelection(-pageRows, rows);
       case "enter":
       case "return":
-        return this.activate(rows[this.cursor]);
+        return this.activate();
       case "h":
       case "escape":
-        return this.collapse(rows);
+        return this.collapse();
       case "r":
         this.effects.refresh();
         return true;
       default:
         return false;
     }
+  }
+
+  protected buildRows(): McpRow[] {
+    if (this.servers.length === 0) return [calmRow()];
+    return this.servers.flatMap((server) => this.serverRows(server));
+  }
+
+  protected keyOf(row: McpRow): string {
+    return row.id;
+  }
+
+  protected override selectable(row: McpRow): boolean {
+    return row.selectable;
   }
 
   private serverRows(server: McpServerView): McpRow[] {
@@ -273,7 +227,8 @@ export class McpPaneModel {
     }));
   }
 
-  private activate(row: McpRow | undefined): boolean {
+  private activate(): boolean {
+    const row = this.cursorRow();
     if (row?.server === undefined) return true;
     const server = this.findServer(row.server);
     if (server === undefined) return true;
@@ -299,69 +254,38 @@ export class McpPaneModel {
   }
 
   private toggleMenu(name: string): boolean {
-    if (this.openMenus.has(name)) {
-      this.openMenus.delete(name);
-      this.openTools.delete(name);
-    } else {
-      this.openMenus.add(name);
-    }
-    this.anchorId = `server:${name}`;
-    this.touch();
-    this.reanchor();
-    this.notify();
-    return true;
+    return this.mutate(() => {
+      if (this.openMenus.has(name)) {
+        this.openMenus.delete(name);
+        this.openTools.delete(name);
+      } else {
+        this.openMenus.add(name);
+      }
+    }, `server:${name}`);
   }
 
   private toggleTools(name: string): boolean {
-    if (this.openTools.has(name)) {
-      this.openTools.delete(name);
-      this.touch();
-      this.reanchor();
-      this.notify();
-      return true;
+    if (this.openTools.has(name)) return this.mutate(() => this.openTools.delete(name));
+    if (this.toolsByServer.get(name)?.kind === "loaded") {
+      return this.mutate(() => this.openTools.add(name));
     }
     this.openTools.add(name);
-    const state = this.toolsByServer.get(name);
-    if (state === undefined || state.kind === "failed") return this.startToolListing(name);
-    this.touch();
-    this.reanchor();
-    this.notify();
-    return true;
+    return this.startToolListing(name);
   }
 
   private startToolListing(name: string): boolean {
-    this.toolsByServer.set(name, { kind: "loading" });
-    this.touch();
-    this.reanchor();
-    this.notify();
+    this.mutate(() => this.toolsByServer.set(name, { kind: "loading" }));
     this.effects.listTools(name);
     return true;
   }
 
-  private collapse(rows: McpRow[]): boolean {
-    const owner = rows[this.cursor]?.server;
+  private collapse(): boolean {
+    const owner = this.cursorRow()?.server;
     if (owner === undefined || !this.openMenus.has(owner)) return true;
-    this.openMenus.delete(owner);
-    this.openTools.delete(owner);
-    this.anchorId = `server:${owner}`;
-    this.touch();
-    this.reanchor();
-    this.notify();
-    return true;
-  }
-
-  private moveSelection(delta: number, rows: McpRow[]): boolean {
-    const selectable = rows
-      .map((row, index) => ({ row, index }))
-      .filter(({ row }) => row.selectable);
-    if (selectable.length === 0) return true;
-    const at = selectable.findIndex(({ index }) => index >= this.cursor);
-    const current = at === -1 ? selectable.length - 1 : at;
-    const next = clampIndex(current + delta, selectable.length);
-    this.cursor = selectable[next]?.index ?? this.cursor;
-    this.anchorId = rows[this.cursor]?.id;
-    this.notify();
-    return true;
+    return this.mutate(() => {
+      this.openMenus.delete(owner);
+      this.openTools.delete(owner);
+    }, `server:${owner}`);
   }
 
   private findServer(name: string): McpServerView | undefined {
@@ -375,29 +299,6 @@ export class McpPaneModel {
     for (const name of this.toolsByServer.keys())
       if (!names.has(name)) this.toolsByServer.delete(name);
   }
-
-  private settleOnSelectable(): void {
-    const rows = this.rows();
-    const at = rows.findIndex((row) => row.selectable);
-    this.cursor = at === -1 ? 0 : at;
-  }
-
-  private touch(): void {
-    this.revision += 1;
-    this.cachedRows = undefined;
-  }
-
-  private reanchor(): void {
-    const rows = this.rows();
-    if (rows.length === 0) {
-      this.cursor = 0;
-      return;
-    }
-    const found = rows.findIndex((row) => row.id === this.anchorId);
-    this.cursor = found >= 0 ? found : clampIndex(this.cursor, rows.length);
-    if (!(rows[this.cursor]?.selectable ?? false)) this.settleOnSelectable();
-    this.anchorId = rows[this.cursor]?.id ?? this.anchorId;
-  }
 }
 
 type ToolsState =
@@ -409,11 +310,6 @@ const stateGlyphs: Record<McpServerState, string> = {
   connected: "█",
   connecting: "▒",
   down: "░",
-};
-const toneTokens: Record<McpRowTone, ThemeColorToken> = {
-  dim: "textDim",
-  normal: "text",
-  alert: "error",
 };
 const tileFill = ["▌", "▌▀", "▌▀▗", "█"] as const;
 const nameLimit = 32;
@@ -455,8 +351,7 @@ function actionRow(name: string, action: McpAction, label: string, held: boolean
 }
 
 function toolPhrase(count: number): string {
-  if (count === 0) return "no tools";
-  return `${count} ${count === 1 ? "tool" : "tools"}`;
+  return count === 0 ? "no tools" : pluralize(count, "tool");
 }
 
 function isOn(server: McpServerView): boolean {

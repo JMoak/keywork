@@ -14,12 +14,21 @@ export interface CommandMatch {
   score: number;
 }
 
+export type Registration =
+  | { kind: "registered" }
+  | { kind: "collision"; name: string; claimedBy: string };
+
 export class CommandRegistry {
   private readonly commands: CommandSpec[] = [];
   private readonly sources: Array<() => CommandSpec[]> = [];
 
-  register(command: CommandSpec): void {
+  register(command: CommandSpec): Registration {
+    for (const name of namesOf(command)) {
+      const owner = findByName(this.commands, name);
+      if (owner !== undefined) return { kind: "collision", name, claimedBy: owner.name };
+    }
     this.commands.push(command);
+    return { kind: "registered" };
   }
 
   addSource(source: () => CommandSpec[]): void {
@@ -58,11 +67,15 @@ export class CommandRegistry {
   }
 }
 
+function namesOf(command: CommandSpec): string[] {
+  return [command.name, ...(command.aliases ?? [])];
+}
+
 function findByName(commands: readonly CommandSpec[], raw: string): CommandSpec | undefined {
   const name = raw.toLowerCase();
   if (name === "") return undefined;
-  return commands.find(
-    (command) => command.name.toLowerCase() === name || command.aliases?.includes(name),
+  return commands.find((command) =>
+    namesOf(command).some((candidate) => candidate.toLowerCase() === name),
   );
 }
 

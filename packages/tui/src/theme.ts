@@ -1,26 +1,10 @@
-export interface Theme {
-  background: string;
-  panel: string;
-  panelLift: string;
-  text: string;
-  textMid: string;
-  textDim: string;
-  border: string;
-  borderFocus: string;
-  accent: string;
-  accentSoft: string;
-  success: string;
-  error: string;
-  ramp: readonly string[];
-}
+import { type FlavorTokenOverrides, type FlavorTokens, flavorTokensSchema } from "@keywork/shared";
+
+export type Theme = FlavorTokens;
 
 export type ThemeColorToken = Exclude<keyof Theme, "ramp">;
 
-export type ThemeOverrideValue = string | readonly string[];
-
-export interface ThemeOverrides {
-  readonly [token: string]: ThemeOverrideValue | undefined;
-}
+export type ThemeOverrides = FlavorTokenOverrides;
 
 export const keyworkNight: Theme = {
   background: "#1a1b26",
@@ -39,26 +23,5 @@ export const keyworkNight: Theme = {
 };
 
 export function resolveTheme(overrides: ThemeOverrides = {}): Theme {
-  const theme: Theme = { ...keyworkNight };
-  for (const [token, value] of Object.entries(overrides)) {
-    if (value === undefined) continue;
-    if (!(token in theme)) throw new Error(`Unknown theme token "${token}"`);
-    if (token === "ramp") theme.ramp = validRamp(value);
-    else theme[token as ThemeColorToken] = validColor(token, value);
-  }
-  return theme;
-}
-
-const rrggbb = /^#[0-9a-fA-F]{6}$/;
-
-function validColor(token: string, value: ThemeOverrideValue): string {
-  if (typeof value === "string" && rrggbb.test(value)) return value;
-  throw new Error(`Theme token "${token}" needs a #rrggbb color, got "${String(value)}"`);
-}
-
-function validRamp(value: ThemeOverrideValue): readonly string[] {
-  if (typeof value === "string" || value.length === 0 || value.length > 6) {
-    throw new Error(`Theme token "ramp" needs 1-6 #rrggbb stops, got "${String(value)}"`);
-  }
-  return value.map((stop) => validColor("ramp", stop));
+  return flavorTokensSchema.parse({ ...keyworkNight, ...overrides });
 }

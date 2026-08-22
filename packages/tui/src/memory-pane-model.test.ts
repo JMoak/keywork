@@ -2,19 +2,15 @@ import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
 import {
   type CuringStage,
-  curingGlyph,
   emptyMemoryInputs,
-  gardenerSweepView,
   type InboxItemView,
   type MemoryNoteView,
   type MemoryPaneInputs,
   MemoryPaneModel,
   type MemoryProvenance,
-  provenanceGlyph,
   type RecallEventView,
-  recallView,
-  toneToken,
 } from "./memory-pane-model.ts";
+import { toneInk } from "./pane-chrome.ts";
 import { resolveTheme } from "./theme.ts";
 
 interface NoteSpec {
@@ -132,7 +128,7 @@ describe("MemoryPaneModel overview sections", () => {
     const dark = resolveTheme();
     const light = resolveTheme({ text: "#24292f", textDim: "#8c959f", background: "#ffffff" });
     for (const theme of [dark, light]) {
-      expect(theme[toneToken("dim")]).not.toBe(theme[toneToken("normal")]);
+      expect(toneInk(theme, "dim")).not.toBe(toneInk(theme, "normal"));
     }
   });
 
@@ -140,18 +136,6 @@ describe("MemoryPaneModel overview sections", () => {
     const { model } = modelOver({ notes: garden.map(noteOf) });
     const row = model.rows().find((candidate) => candidate.text.includes("split-ratios →"));
     expect(row?.tone).toBe("dim");
-  });
-
-  it("maps the provenance ramp densest-first: user, agent, untrusted", () => {
-    expect(provenanceGlyph("user")).toBe("█");
-    expect(provenanceGlyph("agent")).toBe("▓");
-    expect(provenanceGlyph("untrusted")).toBe("░");
-    expect([0, 1, 2, 3].map((stage) => curingGlyph(stage as CuringStage))).toEqual([
-      "░",
-      "▒",
-      "▓",
-      "█",
-    ]);
   });
 
   it("renders recent recalls with provenance, scope, and annotation", () => {
@@ -505,56 +489,5 @@ describe("MemoryPaneModel property: cursor lands on a selectable visible row", (
       expect(rows[model.cursor]?.selectable).toBe(true);
       expect(model.visibleRows(5).some(({ index }) => index === model.cursor)).toBe(true);
     }
-  });
-});
-
-describe("recallView", () => {
-  it("passes the recall through and annotates citation and supersession", () => {
-    expect(recallView({ note: "Ratio Rule", scope: "workspace", provenance: "agent" })).toEqual({
-      note: "Ratio Rule",
-      scope: "workspace",
-      provenance: "agent",
-    });
-    expect(
-      recallView({
-        note: "Old Rule",
-        scope: "workspace",
-        provenance: "user",
-        cited: true,
-        supersededBy: "New Rule",
-      }),
-    ).toEqual({
-      note: "Old Rule",
-      scope: "workspace",
-      provenance: "user",
-      annotation: "cited · superseded by New Rule",
-    });
-  });
-
-  it("renders an annotated recall in the pane", () => {
-    const { model } = modelOver({
-      notes: [noteOf({ name: "Ratio Rule" })],
-      recalls: [
-        recallView({ note: "Ratio Rule", scope: "workspace", provenance: "agent", cited: true }),
-      ],
-    });
-    const recall = model.rows().find((row) => row.kind === "recall");
-    expect(recall?.text).toContain("Ratio Rule");
-    expect(recall?.text).toContain("cited");
-  });
-});
-
-describe("gardenerSweepView", () => {
-  it("summarizes only the phases that did work", () => {
-    expect(gardenerSweepView({ promoted: 2, merged: 0, superseded: 1, flagged: 0 })).toEqual({
-      state: "idle",
-      detail: "2 promoted · 1 superseded",
-    });
-  });
-
-  it("stays a calm idle tile after an uneventful sweep", () => {
-    expect(gardenerSweepView({ promoted: 0, merged: 0, superseded: 0, flagged: 0 })).toEqual({
-      state: "idle",
-    });
   });
 });

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,15 +11,17 @@ import {
   type Provider,
   type ProviderRequest,
   SessionStore,
+  ShellSession,
   type TurnDelta,
   tapJournal,
   textTurn,
+  toolCallTurn,
 } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
 import { type Composition, composeAgents, composeWorkspace, startMcpRegistry } from "./compose.ts";
 
 const fixtureServerPath = fileURLToPath(
-  new URL("../../engine/src/mcp/fixture-server.ts", import.meta.url),
+  new URL("../../engine/src/testing/mcp-fixture-server.ts", import.meta.url),
 );
 
 const tempDirs: string[] = [];
@@ -90,6 +93,13 @@ describe("composeWorkspace", () => {
     expect(composition.memory?.store.trusted).toBe(true);
   });
 
+  it("opens no shadow git when checkpoints are off", async () => {
+    const cwd = await tempDir();
+    const composition = await composedIn(cwd, { checkpoints: "off" });
+    expect(composition.checkpoints).toBeUndefined();
+    expect(existsSync(join(cwd, "snapshots-git"))).toBe(false);
+  });
+
   it("reports checkpoint unavailability through the seam and composes on", async () => {
     const cwd = await tempDir();
     const blocked = join(cwd, "not-a-directory");
@@ -121,6 +131,42 @@ describe("composeAgents", () => {
 
     expect(messageText(await chatStyle.send("hi"))).toBe("first");
     expect(messageText(await panesStyle.send("hi"))).toBe("second");
+  });
+
+  it("runs bash over a supplied shell session so state survives across calls", async () => {
+    const cwd = await tempDir();
+    await mkdir(join(cwd, "nested"));
+    const composition = await composedIn(cwd);
+    const shell = new ShellSession(cwd);
+    const outputs: string[] = [];
+    const agent = composeAgents(composition, { permissions: () => "allow" }).build({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "c1",
+          name: "bash",
+          arguments: { command: "cd nested" },
+        }),
+        toolCallTurn({
+          type: "tool-call",
+          callId: "c2",
+          name: "bash",
+          arguments: { command: "pwd" },
+        }),
+        textTurn("done"),
+      ]),
+      guard: {},
+      shell,
+    });
+    agent.bus.on("tool.finished", ({ callId, output }) => {
+      if (callId === "c2") outputs.push(output);
+    });
+    try {
+      await agent.send("move and look");
+    } finally {
+      await shell.close();
+    }
+    expect(outputs[0]?.trim().endsWith("nested")).toBe(true);
   });
 
   it("gives default agents the composed system prompt for their model and definitions their own", async () => {

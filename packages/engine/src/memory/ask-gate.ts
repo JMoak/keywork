@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { ReviewInbox, ReviewItem } from "./inbox.ts";
+import type { StagedReview } from "./staging.ts";
 import type { MemoryStore } from "./store.ts";
 import { isMissingFileError, writeFileAtomic } from "./vault-files.ts";
 
@@ -49,15 +49,15 @@ export class AskGateLedger {
     return [...(await this.load()).events];
   }
 
-  async proposePreferences(inbox: ReviewInbox, store?: MemoryStore): Promise<ReviewItem[]> {
+  async proposePreferences(store: MemoryStore): Promise<StagedReview[]> {
     const state = await this.load();
-    const proposed: ReviewItem[] = [];
+    const proposed: StagedReview[] = [];
     for (const [shape, streak] of approvalStreaks(state.events)) {
       if (streak < this.preferenceThreshold || state.proposedShapes.includes(shape)) continue;
-      const added = await inbox.add([
+      const added = await store.propose([
         { kind: "preference-proposal", toolShape: shape, approvals: streak },
       ]);
-      if (store !== undefined && added.length > 0) await writePreferenceNote(store, shape, streak);
+      if (added.length > 0) await writePreferenceNote(store, shape, streak);
       state.proposedShapes.push(shape);
       proposed.push(...added);
     }

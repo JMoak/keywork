@@ -1,6 +1,7 @@
 import { fitTitle } from "@keywork/engine";
 import type { GlyphSupport } from "./capability.ts";
 import { slugWords } from "./slug.ts";
+import { width } from "./width.ts";
 
 export type HeadlineFace = "half-block" | "block" | "caps";
 
@@ -101,7 +102,7 @@ const capsFace: Face = {
   rowsPerLine: 1,
   wordGap: 1,
   supports: () => true,
-  measure: (word) => Array.from(word).length,
+  measure: width,
   rasterize: (words) => [words.map((word) => word.toUpperCase()).join(" ")],
 };
 

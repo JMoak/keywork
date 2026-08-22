@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { helpFrame, paletteFrame } from "./app-core.ts";
 import type {
   ConnectionsPort,
   ConnectionTarget,
   InferencePort,
   ModelChoice,
 } from "./inference-port.ts";
+import { helpFrame, paletteFrame } from "./overlays/index.ts";
 import { AppProbe } from "./probe.ts";
 
 const choices: ModelChoice[] = [
@@ -99,13 +99,13 @@ describe("/model", () => {
     const { probe, switched } = probeWithInference();
     expect(probe.command("model")).toBe(true);
     expect(probe.snapshot().overlay).toBe("model");
-    expect(probe.core.modelPicker()?.selected()?.reference).toBe("openai/gpt-5-mini");
+    expect(probe.core.modelPicker()?.selected()?.choice.reference).toBe("openai/gpt-5-mini");
     probe.type("qwen");
     expect(
       probe.core
         .modelPicker()
-        ?.visible()
-        .map((choice) => choice.reference),
+        ?.rows()
+        .map((row) => row.choice.reference),
     ).toEqual(["ollama/qwen3"]);
     probe.keys("return");
     await probe.settled();
@@ -139,7 +139,7 @@ describe("/model", () => {
     probe.command("model");
     const frame = paletteFrame(probe.screen, choices.length);
     probe.hover(frame.x + 2, frame.firstRowY);
-    expect(probe.core.modelPicker()?.selected()?.reference).toBe("ollama/qwen3");
+    expect(probe.core.modelPicker()?.selected()?.choice.reference).toBe("ollama/qwen3");
     probe.click(frame.x + 2, frame.firstRowY);
     await probe.settled();
     expect(switched).toEqual(["ollama/qwen3"]);
@@ -156,7 +156,7 @@ describe("/model", () => {
     probe.command("model");
     probe.paste("qwen\n");
     expect(probe.core.modelPicker()?.query).toBe("qwen");
-    expect(probe.core.modelPicker()?.selected()?.reference).toBe("ollama/qwen3");
+    expect(probe.core.modelPicker()?.selected()?.choice.reference).toBe("ollama/qwen3");
   });
 });
 

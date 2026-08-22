@@ -1,11 +1,16 @@
 import type { ModelCapabilities } from "../capabilities.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
-import { ProviderHttpError } from "./openai.ts";
+import { ProviderHttpError } from "./errors.ts";
+
+export type Sleep = (ms: number, signal?: AbortSignal) => Promise<void>;
 
 export interface RetryOptions {
   attempts?: number;
   baseDelayMs?: number;
-  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  maxDelayMs?: number;
+  sleep?: Sleep;
+  now?: () => number;
+  random?: () => number;
 }
 
 export class RetryingProvider implements Provider {
@@ -14,7 +19,10 @@ export class RetryingProvider implements Provider {
   readonly capabilities: ModelCapabilities | undefined;
   private readonly attempts: number;
   private readonly baseDelayMs: number;
-  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  private readonly maxDelayMs: number;
+  private readonly sleep: Sleep;
+  private readonly now: () => number;
+  private readonly random: () => number;
 
   constructor(
     private readonly inner: Provider,
@@ -25,7 +33,10 @@ export class RetryingProvider implements Provider {
     this.capabilities = inner.capabilities;
     this.attempts = options.attempts ?? 3;
     this.baseDelayMs = options.baseDelayMs ?? 500;
+    this.maxDelayMs = options.maxDelayMs ?? 30_000;
     this.sleep = options.sleep ?? abortableSleep;
+    this.now = options.now ?? Date.now;
+    this.random = options.random ?? Math.random;
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
@@ -44,11 +55,25 @@ export class RetryingProvider implements Provider {
           request.signal?.aborted !== true &&
           isTransient(cause);
         if (!retryable) throw cause;
-        await this.sleep(this.baseDelayMs * 2 ** (attempt - 1), request.signal);
+        await this.sleep(this.delayBefore(attempt, cause), request.signal);
         if (request.signal?.aborted === true) throw cause;
       }
     }
   }
+
+  private delayBefore(attempt: number, cause: unknown): number {
+    const exponential = this.baseDelayMs * 2 ** (attempt - 1);
+    const jittered = exponential / 2 + this.random() * (exponential / 2);
+    return Math.min(this.maxDelayMs, retryAfterMs(cause, this.now()) ?? jittered);
+  }
+}
+
+function retryAfterMs(cause: unknown, now: number): number | undefined {
+  if (!(cause instanceof ProviderHttpError) || cause.retryAfter === undefined) return undefined;
+  const header = cause.retryAfter.trim();
+  if (/^\d+$/.test(header)) return Number(header) * 1000;
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
 }
 
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {

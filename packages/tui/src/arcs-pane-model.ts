@@ -1,8 +1,9 @@
 import { formatCostNanos } from "@keywork/engine";
 import { type ArcStatus, type ArcSummary, isArcSlug } from "./arcs.ts";
-import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
 import { isPrintable } from "./picker-keys.ts";
+import { pluralize } from "./pluralize.ts";
+import { RowCursor } from "./row-cursor.ts";
 import {
   livenessMark,
   relativeAge,
@@ -44,22 +45,21 @@ export interface ArcsPaneSeams {
   drilled?: ArcGroupKey;
 }
 
-export class ArcsPaneModel {
-  cursor = 0;
-  scrollTop = 0;
+export class ArcsPaneModel extends RowCursor<ArcGroupRow> {
   nameDraft: string | undefined;
   readonly sessions: SessionsOverviewModel;
+  protected override readonly volatileRows = true;
 
   private arcs: ArcSummary[] = [];
   private items: SessionOverviewItem[] = [];
   private drilledGroup: ArcGroupKey | undefined;
-  private anchorKey: string | undefined;
 
   constructor(
-    private readonly notify: () => void,
+    notify: () => void,
     private readonly effects: ArcsPaneEffects,
     private readonly seams: ArcsPaneSeams = {},
   ) {
+    super(notify);
     this.drilledGroup = seams.drilled;
     this.sessions = new SessionsOverviewModel(
       notify,
@@ -85,46 +85,15 @@ export class ArcsPaneModel {
   }
 
   setInputs(arcs: readonly ArcSummary[], items: readonly SessionOverviewItem[]): void {
-    this.anchorKey = this.rows()[this.cursor]?.label ?? this.anchorKey;
-    this.arcs = [...arcs];
-    this.items = [...items];
-    this.sessions.setItems(this.memberItems(this.drilledGroup));
-    this.reanchor();
-    this.notify();
+    this.mutate(() => {
+      this.arcs = [...arcs];
+      this.items = [...items];
+      this.sessions.setItems(this.memberItems(this.drilledGroup));
+    });
   }
 
   arcCount(): number {
     return this.arcs.filter((arc) => arc.status === "active").length;
-  }
-
-  activeSlugs(): string[] {
-    return this.arcs.filter((arc) => arc.status === "active").map((arc) => arc.slug);
-  }
-
-  rows(): ArcGroupRow[] {
-    const now = (this.seams.now ?? Date.now)();
-    const current = this.seams.currentSession?.();
-    const groups = [
-      ...this.arcs.filter((arc) => arc.status === "active").map((arc) => this.arcRow(arc, now)),
-      ...this.unboundRow(now),
-      ...this.arcs.filter((arc) => arc.status === "archived").map((arc) => this.arcRow(arc, now)),
-    ];
-    return groups.map((row) => ({ ...row, current: this.holdsSession(row.key, current) }));
-  }
-
-  visibleRows(rowCount: number): { index: number; row: ArcGroupRow }[] {
-    const all = this.rows();
-    this.cursor = clampIndex(this.cursor, all.length);
-    this.scrollTop = clampScroll(this.scrollTop, all.length, rowCount);
-    if (this.cursor < this.scrollTop) this.scrollTop = this.cursor;
-    if (this.cursor >= this.scrollTop + rowCount) this.scrollTop = this.cursor - rowCount + 1;
-    return all
-      .slice(this.scrollTop, this.scrollTop + rowCount)
-      .map((row, offset) => ({ index: this.scrollTop + offset, row }));
-  }
-
-  cursorRow(): ArcGroupRow | undefined {
-    return this.rows()[clampIndex(this.cursor, this.rows().length)];
   }
 
   drillInto(key: ArcGroupKey): void {
@@ -139,33 +108,13 @@ export class ArcsPaneModel {
     return true;
   }
 
-  selectVisible(offset: number, rowCount: number): boolean {
-    const target = this.visibleRows(rowCount)[offset];
-    if (target === undefined) return false;
-    this.cursor = target.index;
-    this.anchorKey = target.row.label;
-    this.drillInto(target.row.key);
-    return true;
-  }
-
   handleKey(chord: Chord, pageRows: number, sequence?: string): boolean {
     if (this.nameDraft !== undefined) return this.handleNameKey(chord, sequence);
     if (this.drilledGroup !== undefined) return this.handleSessionsKey(chord, pageRows);
-    const rows = this.rows();
-    this.cursor = clampIndex(this.cursor, rows.length);
     if (chord.shift && chord.name === "a") return this.abandonAtCursor();
     if (chord.shift || chord.ctrl || chord.meta) return false;
+    if (this.navigate(chord, pageRows)) return true;
     switch (chord.name) {
-      case "j":
-      case "down":
-        return this.moveCursor(1);
-      case "k":
-      case "up":
-        return this.moveCursor(-1);
-      case "pagedown":
-        return this.moveCursor(pageRows);
-      case "pageup":
-        return this.moveCursor(-pageRows);
       case "enter":
       case "return":
       case "l":
@@ -181,6 +130,21 @@ export class ArcsPaneModel {
       default:
         return false;
     }
+  }
+
+  protected buildRows(): ArcGroupRow[] {
+    const now = (this.seams.now ?? Date.now)();
+    const current = this.seams.currentSession?.();
+    const groups = [
+      ...this.arcs.filter((arc) => arc.status === "active").map((arc) => this.arcRow(arc, now)),
+      ...this.unboundRow(now),
+      ...this.arcs.filter((arc) => arc.status === "archived").map((arc) => this.arcRow(arc, now)),
+    ];
+    return groups.map((row) => ({ ...row, current: this.holdsSession(row.key, current) }));
+  }
+
+  protected keyOf(row: ArcGroupRow): string {
+    return row.key.kind === "arc" ? `arc:${row.key.slug}` : "unbound";
   }
 
   private handleSessionsKey(chord: Chord, pageRows: number): boolean {
@@ -248,21 +212,6 @@ export class ArcsPaneModel {
     const row = this.cursorRow();
     if (row?.key.kind === "arc" && row.status === "active") this.effects.abandon(row.key.slug);
     return true;
-  }
-
-  private moveCursor(delta: number): boolean {
-    this.cursor = clampIndex(this.cursor + delta, this.rows().length);
-    this.anchorKey = this.rows()[this.cursor]?.label ?? this.anchorKey;
-    this.notify();
-    return true;
-  }
-
-  private reanchor(): void {
-    const rows = this.rows();
-    if (rows.length === 0) return;
-    const found = rows.findIndex((row) => row.label === this.anchorKey);
-    this.cursor = found >= 0 ? found : clampIndex(this.cursor, rows.length);
-    this.anchorKey = rows[this.cursor]?.label;
   }
 
   private arcRow(arc: ArcSummary, now: number): Omit<ArcGroupRow, "current"> {
@@ -353,6 +302,5 @@ export function arcGroupParts(row: ArcGroupRow, cursored: boolean): ArcGroupPart
 }
 
 function sessionsFact(count: number): string {
-  if (count === 0) return "no sessions";
-  return count === 1 ? "1 session" : `${count} sessions`;
+  return count === 0 ? "no sessions" : pluralize(count, "session");
 }

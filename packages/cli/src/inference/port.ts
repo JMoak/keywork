@@ -4,6 +4,8 @@ import {
   formatTokenCount,
   type InferenceRegistry,
   type ProviderRegistration,
+  protocols,
+  type ResolutionFailure,
 } from "@keywork/engine";
 import type { InferencePort, ModelChoice, ResolutionNotice } from "@keywork/tui";
 import type { ObservationMap } from "./observations.ts";
@@ -13,11 +15,52 @@ export interface InferencePortDeps {
   observations: () => ObservationMap;
 }
 
+export interface CommandVocabulary {
+  connect: string;
+  model: string;
+}
+
+export const slashCommands: CommandVocabulary = { connect: "/connect", model: "/model" };
+
+export const shellCommands: CommandVocabulary = { connect: "keywork connect", model: "--model" };
+
 export function inferencePort(deps: InferencePortDeps): InferencePort {
   return {
     choices: () => choicesOf(deps.registry(), deps.observations()),
     describe: (reference) => describeResolution(deps.registry(), reference),
   };
+}
+
+export function nextActionFor(
+  failure: ResolutionFailure,
+  commands: CommandVocabulary = slashCommands,
+): string {
+  switch (failure.code) {
+    case "unconfigured":
+      return failure.available.length === 0
+        ? `run ${commands.connect}`
+        : `pick one with ${commands.model}`;
+    case "ambiguous":
+      return failure.reference === ""
+        ? `pick one with ${commands.model} or set "model" in keywork.json`
+        : "qualify it as provider/model";
+    case "unknown-provider":
+      return `run ${commands.connect} ${failure.provider} to add it`;
+    case "unknown-model":
+      return failure.provider === undefined
+        ? `use a provider-qualified reference like provider/model, or ${commands.connect} a provider`
+        : `run ${commands.connect} ${failure.provider} to refresh its models, or pick one with ${commands.model}`;
+    case "disabled-provider":
+      return `enable it with ${commands.connect} ${failure.provider}`;
+    case "unavailable-credential":
+      return `run ${commands.connect} ${failure.provider}`;
+    case "unsupported-protocol":
+      return `set it to one of ${protocols.join(", ")}`;
+    case "missing-capability":
+      return `declare models["${failure.model}"].${failure.capability}: true once the model supports it`;
+    case "insecure-endpoint":
+      return `use an https:// endpoint, or set connections.${failure.provider}.insecureTransport after reading its risk note`;
+  }
 }
 
 export function choicesOf(
@@ -36,24 +79,7 @@ export function choicesOf(
       ...windowFact(entry.registration, entry.spec.id),
     ],
   }));
-  const defaults = registry
-    .all()
-    .filter((registration) => registration.enabled && registration.defaultModel !== undefined)
-    .filter(
-      (registration) => !registration.models.some((spec) => spec.id === registration.defaultModel),
-    )
-    .map((registration) => ({
-      reference: `${registration.name}/${registration.defaultModel}`,
-      provider: registration.name,
-      model: registration.defaultModel as string,
-      available: registration.credential.kind !== "missing",
-      facts: [
-        registration.protocol,
-        credentialFact(registration),
-        "provider default",
-        ...windowFact(registration, registration.defaultModel as string),
-      ],
-    }));
+  const defaults = registry.all().flatMap(unlistedDefaultChoice);
   return [...listed, ...defaults].sort(byAvailabilityThenName);
 }
 
@@ -74,7 +100,7 @@ export function describeResolution(
     ok: false,
     code: resolution.failure.code,
     message: resolution.failure.message,
-    nextAction: resolution.failure.nextAction,
+    nextAction: nextActionFor(resolution.failure),
   };
 }
 
@@ -85,6 +111,26 @@ export function declaredWindowOf(
   const listed = registration.models.find((spec) => spec.id === modelId)?.capabilities;
   if (listed?.contextWindow !== undefined) return listed.contextWindow;
   return declaredCapabilitiesFor(registration.capabilityDeclarations, modelId).contextWindow;
+}
+
+function unlistedDefaultChoice(registration: ProviderRegistration): ModelChoice[] {
+  const model = registration.defaultModel;
+  if (model === undefined || !registration.enabled) return [];
+  if (registration.models.some((spec) => spec.id === model)) return [];
+  return [
+    {
+      reference: formatReference({ provider: registration.name, model }),
+      provider: registration.name,
+      model,
+      available: registration.credential.kind !== "missing",
+      facts: [
+        registration.protocol,
+        credentialFact(registration),
+        "provider default",
+        ...windowFact(registration, model),
+      ],
+    },
+  ];
 }
 
 function windowFact(registration: ProviderRegistration, modelId: string): string[] {

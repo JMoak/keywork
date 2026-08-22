@@ -65,10 +65,11 @@ describe("elideMiddle", () => {
     expect(elideMiddle("short", 10)).toBe("short");
   });
 
-  it("never splits surrogate pairs", () => {
+  it("never splits surrogate pairs and measures wide glyphs in cells", () => {
     const elided = elideMiddle("😀".repeat(40), 9);
     expect(elided).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
-    expect(Array.from(elided).length).toBeLessThanOrEqual(9);
+    expect(elided).toBe("😀😀…😀😀");
+    expect(elideMiddle("我们在这里写字", 5)).toBe("我…字");
   });
 
   it("collapses to a single ellipsis at width one", () => {

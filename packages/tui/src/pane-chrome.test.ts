@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { paneBorder, rampPositions } from "./chroma.ts";
 import type { PaneContext } from "./pane.ts";
-import { paneChrome } from "./pane-chrome.ts";
+import {
+  paneChrome,
+  paneLine,
+  rowsView,
+  selectedLine,
+  toneInk,
+  trayCommandsPressing,
+} from "./pane-chrome.ts";
 import { AppProbe } from "./probe.ts";
+import { RowCursor } from "./row-cursor.ts";
 import { keyworkNight } from "./theme.ts";
 
 function contextWith(overrides: Partial<PaneContext> = {}): PaneContext {
@@ -71,5 +79,93 @@ describe("pane hue identity", () => {
     const survivors = [...probe.core.panes.keys()];
     expect(survivors.length).toBe(2);
     expect([...rampPositions(survivors).values()]).toEqual([0, 1]);
+  });
+});
+
+function propsOf(child: unknown): { content?: string; bg?: unknown } {
+  return (child as { props: { content?: string; bg?: unknown } }).props;
+}
+
+class Words extends RowCursor<string> {
+  constructor(private readonly words: string[]) {
+    super(() => {});
+  }
+
+  protected buildRows(): string[] {
+    return this.words;
+  }
+
+  protected keyOf(row: string): string {
+    return row;
+  }
+
+  protected override selectable(row: string): boolean {
+    return row !== "heading";
+  }
+}
+
+describe("row lines", () => {
+  it("clips and pads the selected line and clips an inked line by display cells", () => {
+    const selected = propsOf(selectedLine("日本語テキスト", keyworkNight, 4));
+    expect(selected.content).toBe("日本");
+    expect(propsOf(selectedLine("日本語", keyworkNight, 5)).content).toBe("日本 ");
+    expect(selected.bg).toBe(keyworkNight.accent);
+    expect(propsOf(selectedLine("ab", keyworkNight, 4)).content).toBe("ab  ");
+    expect(propsOf(paneLine("abcdef", keyworkNight.text, 3)).content).toBe("abc");
+  });
+
+  it("paints only the cursored selectable row selected and the rest through the pane", () => {
+    const list = new Words(["heading", "alpha", "beta"]);
+    const dim = (row: string) => paneLine(row, keyworkNight.textDim, 10);
+    list.cursor = 1;
+    const lines = rowsView(list, 3, keyworkNight, 10, {
+      text: (row) => row.toUpperCase(),
+      line: dim,
+    });
+    expect(lines.map(propsOf).map((line) => line.content)).toEqual([
+      "heading",
+      "ALPHA     ",
+      "beta",
+    ]);
+    expect(propsOf(lines[1]).bg).toBe(keyworkNight.accent);
+    list.cursor = 0;
+    const unselectable = rowsView(list, 3, keyworkNight, 10, { text: (row) => row, line: dim });
+    expect(unselectable.map(propsOf).every((line) => line.bg === undefined)).toBe(true);
+  });
+
+  it("renders an empty list as the calm line it was given, or nothing", () => {
+    const dim = (row: string) => paneLine(row, keyworkNight.textDim, 20);
+    const calm = rowsView(new Words([]), 3, keyworkNight, 20, {
+      empty: "nothing here",
+      text: (row) => row,
+      line: dim,
+    });
+    expect(calm.map(propsOf).map((line) => line.content)).toEqual(["nothing here"]);
+    expect(rowsView(new Words([]), 3, keyworkNight, 20, { text: (row) => row, line: dim })).toEqual(
+      [],
+    );
+  });
+
+  it("maps every tone to a distinct theme ink", () => {
+    const tones = ["dim", "normal", "heading", "alert"] as const;
+    expect(new Set(tones.map((tone) => toneInk(keyworkNight, tone))).size).toBe(4);
+  });
+});
+
+describe("trayCommandsPressing", () => {
+  it("derives the shortcut glyph from the key and presses the chord when run", () => {
+    const pressed: string[] = [];
+    const commands = trayCommandsPressing(
+      (chord) => pressed.push(chord.shift ? `shift+${chord.name}` : chord.name),
+      [
+        { name: "open", description: "open it", key: "enter" },
+        { name: "back", description: "go back", key: "escape" },
+        { name: "label", description: "label it", key: "shift+l" },
+        { name: "refresh", description: "reload", key: "r" },
+      ],
+    );
+    expect(commands.map((command) => command.shortcut)).toEqual(["⏎", "esc", "L", "r"]);
+    for (const command of commands) command.run();
+    expect(pressed).toEqual(["enter", "escape", "shift+l", "r"]);
   });
 });

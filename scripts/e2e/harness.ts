@@ -2,27 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { arcService } from "../../packages/cli/src/arcs.ts";
-import { openWorkspaceMemory } from "../../packages/cli/src/memory.ts";
-import {
-  boundSessionCounts,
-  sessionChangeFeed,
-  sessionPort,
-  sessionTreePort,
-} from "../../packages/cli/src/sessions.ts";
+import { composePanes } from "../../packages/cli/src/compose-panes.ts";
 import { workspaceFile } from "../../packages/cli/src/workspace.ts";
+import { Agent, MockProvider } from "../../packages/engine/src/index.ts";
 import {
-  Agent,
-  Checkpoints,
-  type CheckpointsOptions,
-  compactNow,
-  contextBudgetFor,
-  declaredContextWindow,
-  MockProvider,
-  type SessionStore,
-  settleTurn,
-} from "../../packages/engine/src/index.ts";
-import { type AppOptions, assumedGlyphs, runApp } from "../../packages/tui/src/index.ts";
+  type AgentFactory,
+  type AppOptions,
+  assumedGlyphs,
+  runApp,
+} from "../../packages/tui/src/index.ts";
 import { scenarioArtifactDir, stepFileBase } from "./artifacts.ts";
 import type { CapturedFrame } from "./frame.ts";
 import {
@@ -134,18 +122,6 @@ export async function runScenario(
   };
 }
 
-export async function openCheckpoints(
-  options: CheckpointsOptions,
-): Promise<Checkpoints | undefined> {
-  try {
-    return await Checkpoints.open(options);
-  } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    console.warn(`checkpoints unavailable for ${options.worktree}: ${reason}`);
-    return undefined;
-  }
-}
-
 type TestingModule = typeof import("@opentui/core/testing");
 type TestSetup = Awaited<ReturnType<TestingModule["createTestRenderer"]>>;
 type KeyInput = Parameters<TestSetup["mockInput"]["pressKey"]>[0];
@@ -233,13 +209,31 @@ async function composeMockApp(
   paths: TemporaryPaths,
   seams: AppSeams,
 ): Promise<void> {
-  const checkpoints = await openCheckpoints({
-    worktree: paths.workspaceDir,
-    gitDir: join(paths.root, "snapshots-git"),
+  const app = await composePanes({
+    cwd: paths.workspaceDir,
+    projectTrusted: true,
+    sessionDir: paths.sessionDir,
+    workspace: workspaceFile(join(paths.root, "workspace-state.json"), 0),
+    config: {},
+    userRoot: paths.root,
+    checkpointsGitDir: join(paths.root, "snapshots-git"),
+    reportCheckpointsUnavailable: (reason) =>
+      console.warn(`checkpoints unavailable for ${paths.workspaceDir}: ${reason}`),
   });
+  await runApp({
+    ...app,
+    ...(scenario.provider !== "none" && { agentFactory: mockAgentFactory(scenario, paths) }),
+    ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
+    ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
+    glyphs: assumedGlyphs,
+    statusLabel: "keywork e2e",
+    ...seams,
+  });
+}
+
+function mockAgentFactory(scenario: Scenario, paths: TemporaryPaths): AgentFactory {
+  if (scenario.agentFactory !== undefined) return scenario.agentFactory;
   const tools = scenario.tools?.(paths.workspaceDir) ?? [];
-  const changes = sessionChangeFeed();
-  const stores = new Map<string, SessionStore>();
   const freshScript = () =>
     new MockProvider([...(scenario.turns ?? [])], {
       ...(scenario.contextWindow !== undefined && {
@@ -247,68 +241,14 @@ async function composeMockApp(
       }),
     });
   const sharedScript = scenario.script === "shared" ? freshScript() : undefined;
-  const arcs = arcService({
-    cwd: paths.workspaceDir,
-    trusted: true,
-    memory: () => openWorkspaceMemory(paths.workspaceDir, true),
-    boundSessionCounts: () => boundSessionCounts(paths.sessionDir),
-  });
-  await runApp({
-    ...seams,
-    ...(scenario.provider !== "none" && {
-      agentFactory:
-        scenario.agentFactory ??
-        ((guard, history, seams) =>
-          new Agent({
-            provider: sharedScript ?? freshScript(),
-            tools,
-            guard,
-            ...(history !== undefined && { history }),
-            ...(seams?.bus !== undefined && { bus: seams.bus }),
-          })),
-      afterTurn: async ({ sessionId, history, agent }) => {
-        const store = stores.get(sessionId);
-        if (store === undefined) return undefined;
-        return settleTurn({
-          store,
-          provider: agent.provider,
-          history,
-          budget: contextBudgetFor(declaredContextWindow(agent.provider)),
-        });
-      },
-      compact: async ({ sessionId, agent }, instructions) => {
-        const store = stores.get(sessionId);
-        if (store === undefined) throw new Error("no session store for this pane");
-        return compactNow({
-          store,
-          provider: agent.provider,
-          budget: contextBudgetFor(declaredContextWindow(agent.provider)),
-          instructions,
-        });
-      },
-    }),
-    ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
-    ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
-    sessions: sessionPort(paths.sessionDir, paths.workspaceDir, {
-      checkpointTag: () => checkpoints?.takeTurnTag(),
-      onAttach: (store) => {
-        stores.set(store.header.id, store);
-        arcs.attached(store);
-      },
-      onRelease: (sessionId) => {
-        stores.delete(sessionId);
-        arcs.released(sessionId);
-      },
-      onChange: (sessionId) => changes.emit(sessionId),
-      onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
-    }),
-    sessionTrees: sessionTreePort(paths.sessionDir, changes),
-    arcs: arcs.port,
-    workspace: workspaceFile(join(paths.root, "workspace-state.json"), 0),
-    ...(checkpoints !== undefined && { checkpoints }),
-    glyphs: assumedGlyphs,
-    statusLabel: "keywork e2e",
-  });
+  return (guard, history, seams) =>
+    new Agent({
+      provider: sharedScript ?? freshScript(),
+      tools,
+      guard,
+      ...(history !== undefined && { history }),
+      ...(seams?.bus !== undefined && { bus: seams.bus }),
+    });
 }
 
 function buildStage(context: StageContext): Stage {

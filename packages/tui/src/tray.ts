@@ -1,5 +1,6 @@
 import { Box, Text } from "@opentui/core";
 import type { Theme } from "./theme.ts";
+import { clip, padEnd, width } from "./width.ts";
 
 export interface TrayItem {
   name: string;
@@ -40,36 +41,36 @@ export function trayBox(theme: Theme, rows: readonly TrayChild[]): TrayChild {
   );
 }
 
-export function clipLine(text: string, width: number): string {
-  if (text.length <= width) return text;
-  if (width <= 1) return text.slice(0, Math.max(0, width));
-  return `${text.slice(0, width - 1)}…`;
+export function clipLine(text: string, cells: number): string {
+  return clip(text, cells);
 }
 
 const nameColumnCap = 24;
+const markerCells = 5;
 
 function nameColumnWidth(items: readonly TrayItem[], prefix: string): number {
-  const longest = items.reduce((width, item) => Math.max(width, item.name.length), 0);
-  return Math.min(nameColumnCap, longest + prefix.length);
+  const longest = items.reduce((widest, item) => Math.max(widest, width(item.name)), 0);
+  return Math.min(nameColumnCap, longest + width(prefix));
 }
 
 function trayRow(
   item: TrayItem,
   selected: boolean,
   column: number,
-  width: number,
+  rowWidth: number,
   theme: Theme,
   prefix: string,
 ): TrayChild {
   const marker = selected ? "▸" : " ";
-  const name = clipLine(` ${marker} ${prefix}${item.name}`.padEnd(column + 5), width);
-  const shortcut = item.shortcut === undefined ? " " : `${item.shortcut} `;
-  const room = Math.max(0, width - name.length - shortcut.length);
+  const shortcut = clip(item.shortcut === undefined ? " " : `${item.shortcut} `, rowWidth);
+  const nameRoom = Math.max(0, rowWidth - width(shortcut));
+  const name = clip(padEnd(` ${marker} ${prefix}${item.name}`, column + markerCells), nameRoom);
+  const room = Math.max(0, rowWidth - width(name) - width(shortcut));
   return Box(
     { flexDirection: "row", height: 1, overflow: "hidden" },
     Text({ content: name, fg: selected ? theme.accent : theme.text }),
     Text({
-      content: clipLine(item.description, room).padEnd(room),
+      content: padEnd(clip(item.description, room), room),
       fg: selected ? theme.text : theme.textDim,
     }),
     Text({ content: shortcut, fg: theme.textDim }),

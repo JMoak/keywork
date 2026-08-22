@@ -5,17 +5,22 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MalformedFrontmatterError } from "./frontmatter.ts";
 import { contentHash } from "./ledger.ts";
 import { InvalidTitleError } from "./naming.ts";
+import { InvalidDailyDateError, type Provenance } from "./notes.ts";
+import {
+  isStagedWrite,
+  MalformedStagedItemError,
+  type StagedItem,
+  StagedItemNotFoundError,
+} from "./staging.ts";
 import {
   DuplicateTitleError,
-  InvalidDailyDateError,
-  MalformedStagedItemError,
+  LedgerEntryNotFoundError,
   MemoryInertError,
   MemoryStore,
   type MemoryStoreOptions,
   MissingNoteError,
-  type Provenance,
-  ReservedPathError,
 } from "./store.ts";
+import { ReservedPathError } from "./vault-files.ts";
 
 const cleanups: string[] = [];
 
@@ -39,6 +44,10 @@ async function vault(options: Partial<MemoryStoreOptions> = {}): Promise<{
     ...options,
   });
   return { store, root };
+}
+
+function stagedTargets(items: StagedItem[]): string[] {
+  return items.flatMap((item) => (isStagedWrite(item) ? [item.target] : []));
 }
 
 async function diskFiles(root: string, dir = ""): Promise<Map<string, string>> {
@@ -336,7 +345,7 @@ describe("staging (untrusted provenance)", () => {
     const staged = await store.listStaged();
     expect(staged).toHaveLength(1);
     expect(staged[0]?.kind).toBe("note");
-    expect(staged[0]?.target).toBe("Planted.md");
+    expect(stagedTargets(staged)).toEqual(["Planted.md"]);
   });
 
   it("approve makes the note visible with untrusted provenance and an audit entry", async () => {
@@ -417,6 +426,142 @@ describe("staging (untrusted provenance)", () => {
       expect(await readdir(root)).toEqual([".staging"]);
     },
   );
+});
+
+describe("staged reviews (the human inbox)", () => {
+  const promotion = {
+    kind: "borderline-promotion" as const,
+    title: "Prefer pnpm",
+    body: "b",
+    confidence: 0.6,
+    source: "d#0",
+  };
+  const link = {
+    kind: "link-proposal" as const,
+    note: "Setup",
+    target: "Bun runtime",
+    mention: "bun",
+  };
+
+  it("stages proposals as sidecars, dedupes by key, and lists them with staged writes", async () => {
+    const { store, root } = await vault();
+    await store.writeNote({ title: "Planted", body: "p\n", provenance: "untrusted" });
+    const added = await store.propose([promotion, link, { ...promotion, title: "prefer PNPM" }]);
+    expect(added.map((item) => item.kind)).toEqual(["borderline-promotion", "link-proposal"]);
+    const staged = await store.listStaged();
+    expect(staged.map((item) => item.kind).sort()).toEqual([
+      "borderline-promotion",
+      "link-proposal",
+      "note",
+    ]);
+    expect(staged.flatMap((item) => (isStagedWrite(item) ? [] : [item.key])).sort()).toEqual([
+      "link:setup->bun runtime",
+      "promotion:prefer pnpm",
+    ]);
+    expect((await readdir(join(root, ".staging"))).filter((f) => f.endsWith(".json"))).toHaveLength(
+      3,
+    );
+    expect(await store.propose([link])).toEqual([]);
+  });
+
+  it("survives a fresh store over the same vault", async () => {
+    const { store, root } = await vault();
+    const [item] = await store.propose([link]);
+    const reopened = new MemoryStore({ vaultRoot: root, trusted: true });
+    expect((await reopened.listStaged()).map((entry) => entry.id)).toEqual([item?.id]);
+  });
+
+  it("approves or discards a review through the ledger, audited and revertable", async () => {
+    const { store, root } = await vault();
+    const [item] = await store.propose([link]);
+    const approval = await store.approve(item?.id ?? "");
+    expect(await store.listStaged()).toEqual([]);
+    expect(await readFile(join(root, "curation.md"), "utf8")).toContain(
+      "approved link:setup->bun runtime",
+    );
+    expect(await store.revert(approval.ledgerId)).toBe("reverted");
+    expect((await store.listStaged()).map((entry) => entry.id)).toEqual([item?.id]);
+    await store.discard(item?.id ?? "");
+    expect(await store.listStaged()).toEqual([]);
+    expect(await readFile(join(root, "curation.md"), "utf8")).toContain(
+      "discarded link:setup->bun runtime",
+    );
+    await expect(store.discard(item?.id ?? "")).rejects.toBeInstanceOf(StagedItemNotFoundError);
+  });
+
+  it("redacts proposal text before it reaches the sidecar", async () => {
+    const { store, root } = await vault({ secrets: { TOKEN: "hunter2secret" } });
+    await store.propose([{ ...promotion, body: "key hunter2secret" }]);
+    for (const [, content] of await diskFiles(root)) expect(content).not.toContain("hunter2secret");
+    const [item] = await store.listStaged();
+    expect(item?.kind === "borderline-promotion" && item.body).toBe("key ‹redacted:TOKEN›");
+  });
+
+  it("ignores foreign json in .staging and refuses non-uuid ids", async () => {
+    const { store, root } = await vault();
+    await mkdir(join(root, ".staging"), { recursive: true });
+    await writeFile(join(root, ".staging", "ask-gate.json"), '{"events":[]}', "utf8");
+    expect(await store.listStaged()).toEqual([]);
+    await expect(store.approve("ask-gate")).rejects.toBeInstanceOf(StagedItemNotFoundError);
+    await expect(store.approve("../MEMORY")).rejects.toBeInstanceOf(StagedItemNotFoundError);
+  });
+
+  it("adopts a legacy inbox.json once, as one revertable ledger step", async () => {
+    const { store, root } = await vault();
+    const legacy = [
+      {
+        ...link,
+        id: "legacy-1",
+        key: "link:setup->bun runtime",
+        created: "2026-08-01T00:00:00.000Z",
+      },
+      {
+        kind: "preference-proposal",
+        toolShape: "bash git",
+        approvals: 3,
+        key: "preference:bash git",
+        created: "2026-08-02T00:00:00.000Z",
+      },
+    ];
+    await mkdir(join(root, ".staging"), { recursive: true });
+    await writeFile(join(root, ".staging", "inbox.json"), JSON.stringify(legacy), "utf8");
+    const staged = await store.listStaged();
+    expect(staged.map((item) => item.kind)).toEqual(["link-proposal", "preference-proposal"]);
+    expect(staged.map((item) => item.created)).toEqual(legacy.map((item) => item.created));
+    expect(await readdir(join(root, ".staging"))).not.toContain("inbox.json");
+    const [adoption] = store.ledger();
+    expect(adoption?.deltas).toHaveLength(3);
+    expect(await store.propose([link])).toEqual([]);
+    expect(await store.revert(adoption?.id ?? "")).toBe("reverted");
+    expect(await readdir(join(root, ".staging"))).toEqual(["inbox.json"]);
+  });
+
+  it("refuses a malformed legacy inbox loudly instead of guessing", async () => {
+    const { store, root } = await vault();
+    await mkdir(join(root, ".staging"), { recursive: true });
+    await writeFile(join(root, ".staging", "inbox.json"), "not json", "utf8");
+    await expect(store.listStaged()).rejects.toBeInstanceOf(MalformedStagedItemError);
+    await expect(store.propose([link])).rejects.toBeInstanceOf(MalformedStagedItemError);
+  });
+
+  it("stays inert for an untrusted vault", async () => {
+    const { root } = await vault();
+    const inert = new MemoryStore({ vaultRoot: root, trusted: false });
+    await expect(inert.propose([link])).rejects.toBeInstanceOf(MemoryInertError);
+    expect(await inert.listStaged()).toEqual([]);
+  });
+});
+
+describe("ledger capacity", () => {
+  it("keeps only the newest entries revertable", async () => {
+    const { store } = await vault({ ledgerCapacity: 2 });
+    const first = await store.writeNote({ title: "A", body: "1\n", provenance: "user" });
+    const second = await store.writeNote({ title: "B", body: "2\n", provenance: "user" });
+    const third = await store.writeNote({ title: "C", body: "3\n", provenance: "user" });
+    expect(store.ledger().map((entry) => entry.id)).toEqual([second.ledgerId, third.ledgerId]);
+    await expect(store.revert(first.ledgerId)).rejects.toBeInstanceOf(LedgerEntryNotFoundError);
+    expect(await store.revert(second.ledgerId)).toBe("reverted");
+  });
 });
 
 describe("write serialization", () => {
