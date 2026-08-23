@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { columnOf, paneTitleCount } from "../frame-queries.ts";
+import { columnOf, paneTitleCount, rowOf } from "../frame-queries.ts";
 import type { Scenario } from "../scenario.ts";
 import { notesBefore } from "./fixtures.ts";
 
@@ -60,7 +60,27 @@ export const tilingTour: Scenario = {
     await stage.press("ctrl+k", "t", "escape");
     const withTree = await stage.until("session tree");
     assert.ok(withTree.includes(" workspace "), "browser stays docked beside the tree");
+    assert.ok(
+      rowOf(withTree, " session tree ") < rowOf(withTree, " workspace "),
+      "the browser arrived below the tree that was docked at boot",
+    );
     await stage.capture("session-tree");
+
+    await stage.press("ctrl+k", "j", "p", "escape");
+    const pinned = await stage.until(" ▪ workspace ");
+    assert.ok(
+      rowOf(pinned, " ▪ workspace ") < rowOf(pinned, " session tree "),
+      "pinning lifts the browser to the head of its dock, mark first in the title",
+    );
+    await stage.capture("browser-pinned");
+    await stage.press("ctrl+k", "p", "escape");
+    await stage.settle();
+    const unpinned = await stage.capture("browser-unpinned");
+    assert.ok(!unpinned.includes(" ▪ "), "the same chord unpins and clears the mark");
+    assert.ok(
+      rowOf(unpinned, " workspace ") < rowOf(unpinned, " session tree "),
+      "unpinning leaves the pane where it sits",
+    );
 
     const mainColumnBefore = columnOf(withTree, "session-1");
     await stage.press("ctrl+k", ".", ".", "escape");

@@ -32,6 +32,7 @@ export interface AppProbeOptions
       | "currentModel"
       | "switchModel"
       | "restoreWorkspace"
+      | "initialWorkspace"
       | "saveWorkspace"
       | "onPaneClosed"
     >

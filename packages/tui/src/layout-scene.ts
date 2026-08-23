@@ -96,10 +96,10 @@ function admissionOrder(arrangement: Arrangement): PaneId[] {
 
 function retaining(arrangement: Arrangement, shown: ReadonlySet<PaneId>): Arrangement {
   const keep = (id: PaneId): boolean => shown.has(id);
-  const dock = (side: DockSide) => ({
-    ...arrangement.docks[side],
-    panes: arrangement.docks[side].panes.filter(keep),
-  });
+  const dock = (side: DockSide) => {
+    const { panes, ratio, pins } = arrangement.docks[side];
+    return { panes: panes.filter(keep), ratio, pins: panes.slice(0, pins).filter(keep).length };
+  };
   return {
     tree: arrangement.tree === undefined ? undefined : retainLeaves(arrangement.tree, keep),
     docks: { left: dock("left"), right: dock("right") },

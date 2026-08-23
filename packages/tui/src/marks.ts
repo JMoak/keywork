@@ -41,6 +41,8 @@ export function pageMarks(support: GlyphSupport): PageMarks {
   };
 }
 
+export const pinMark = { tier1: "▪", tier0: "*" } satisfies TieredMark;
+
 export const assumedGlyphs: GlyphSupport = { glyphTier: 2, nerdFont: false };
 
 export const defaultPageMarks: PageMarks = pageMarks(assumedGlyphs);

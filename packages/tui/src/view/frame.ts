@@ -1,9 +1,11 @@
 import { Box, Text } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
+import { type GlyphSupport, resolveMark } from "../capability.ts";
 import { paneBorder, rampPositions } from "../chroma.ts";
 import type { Flavor } from "../flavor.ts";
 import type { Rect, Screen } from "../geometry.ts";
 import { minPaneSize } from "../layout.ts";
+import { pinMark } from "../marks.ts";
 import type { PaneView } from "../pane.ts";
 import type { Theme } from "../theme.ts";
 import { type StatusBarInputs, statusBar } from "./status-bar.ts";
@@ -15,6 +17,7 @@ const pointerPlaneZIndex = 1000;
 export interface FrameInputs extends StatusBarInputs {
   screen: Screen;
   instruments: Flavor["instruments"];
+  glyphs: GlyphSupport;
   arcOf(paneId: string): string | undefined;
 }
 
@@ -116,6 +119,7 @@ function paneViewFor(
     height: rect.height,
     borderColor: paneBorder(theme, rampPosition, focused),
     instruments: inputs.instruments,
+    ...(core.layout.pinned(id) && { pinMark: resolveMark(pinMark, inputs.glyphs) }),
   });
   return view ?? emptyView(theme);
 }

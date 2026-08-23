@@ -173,7 +173,7 @@ describe("Layout dock", () => {
     const rects = layout.rects(screen);
     expect(rects.get("b")).toEqual({ x: 0, y: 0, width: 40, height: 40 });
     expect(rects.get("a")).toEqual({ x: 40, y: 0, width: 80, height: 40 });
-    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3 });
+    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3, pins: 0 });
     assertExactTiling(layout);
   });
 
@@ -206,8 +206,8 @@ describe("Layout dock", () => {
     expect(rects.get("b")).toEqual({ x: 0, y: 0, width: 40, height: 40 });
     expect(rects.get("a")).toEqual({ x: 40, y: 0, width: 40, height: 40 });
     expect(rects.get("c")).toEqual({ x: 80, y: 0, width: 40, height: 40 });
-    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3 });
-    expect(layout.dock("right")).toEqual({ panes: ["c"], ratio: 1 / 3 });
+    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3, pins: 0 });
+    expect(layout.dock("right")).toEqual({ panes: ["c"], ratio: 1 / 3, pins: 0 });
     assertExactTiling(layout);
   });
 
@@ -290,8 +290,8 @@ describe("Layout dock", () => {
     layout.focus("c");
     layout.dockFocused("left", screen);
     layout.dockFocused("right", screen);
-    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3 });
-    expect(layout.dock("right")).toEqual({ panes: ["c"], ratio: 1 / 3 });
+    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3, pins: 0 });
+    expect(layout.dock("right")).toEqual({ panes: ["c"], ratio: 1 / 3, pins: 0 });
     expect((layout.rects(screen).get("c") as Rect).x).toBe(80);
     assertExactTiling(layout);
   });
@@ -301,7 +301,7 @@ describe("Layout dock", () => {
     layout.dockFocused("left", screen);
     const before = layout.rects(screen);
     expect(layout.dockFocused("left", screen)).toBe(true);
-    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3 });
+    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3, pins: 0 });
     expect(layout.rects(screen)).toEqual(before);
   });
 
@@ -342,9 +342,123 @@ describe("Layout dock", () => {
     const layout = layoutWith("a", "b");
     layout.dockFocused("left", screen);
     layout.open("c", screen);
-    expect(layout.dock("left")).toEqual({ panes: ["b", "c"], ratio: 1 / 3 });
+    expect(layout.dock("left")).toEqual({ panes: ["b", "c"], ratio: 1 / 3, pins: 0 });
     expect(layout.focused()).toBe("c");
     assertExactTiling(layout);
+  });
+});
+
+describe("Layout pins", () => {
+  function dockedLeft(...ids: string[]): Layout {
+    const layout = layoutWith("main", ...ids);
+    for (const id of ids) {
+      layout.focus(id);
+      layout.dockFocused("left", screen);
+    }
+    return layout;
+  }
+
+  it("pins move to the head of their dock in pin order and unpin drops to the free head", () => {
+    const layout = dockedLeft("a", "b", "c");
+    layout.focus("c");
+    expect(layout.pinFocused()).toBe(true);
+    expect(layout.dock("left")).toEqual({ panes: ["c", "a", "b"], ratio: 1 / 3, pins: 1 });
+    layout.focus("b");
+    layout.pinFocused();
+    expect(layout.dock("left")?.panes).toEqual(["c", "b", "a"]);
+    expect(layout.pinned("c") && layout.pinned("b") && !layout.pinned("a")).toBe(true);
+    layout.focus("c");
+    expect(layout.unpinFocused()).toBe(true);
+    expect(layout.dock("left")).toEqual({ panes: ["b", "c", "a"], ratio: 1 / 3, pins: 1 });
+    assertExactTiling(layout);
+  });
+
+  it("refuses to pin a main-area pane and pinning twice is a no-op", () => {
+    const layout = dockedLeft("a");
+    layout.focus("main");
+    expect(layout.pinFocused()).toBe(false);
+    expect(layout.unpinFocused()).toBe(false);
+    layout.focus("a");
+    layout.pinFocused();
+    layout.pinFocused();
+    expect(layout.dock("left")).toEqual({ panes: ["a"], ratio: 1 / 3, pins: 1 });
+  });
+
+  it("moves within the pinned group or within the free group, never across", () => {
+    const layout = dockedLeft("a", "b", "c", "d");
+    layout.focus("c");
+    layout.pinFocused();
+    layout.focus("d");
+    layout.pinFocused();
+    expect(layout.dock("left")?.panes).toEqual(["c", "d", "a", "b"]);
+    layout.focus("d");
+    expect(layout.move("down", screen)).toBe(false);
+    expect(layout.move("up", screen)).toBe(true);
+    expect(layout.dock("left")?.panes).toEqual(["d", "c", "a", "b"]);
+    layout.focus("a");
+    expect(layout.move("up", screen)).toBe(false);
+    expect(layout.move("down", screen)).toBe(true);
+    expect(layout.dock("left")?.panes).toEqual(["d", "c", "b", "a"]);
+    expect(layout.dock("left")?.pins).toBe(2);
+  });
+
+  it("lands arrivals below the pins however they arrive", () => {
+    const layout = dockedLeft("a");
+    layout.focus("a");
+    layout.pinFocused();
+    expect(layout.open("opened", screen)).toBe(true);
+    expect(layout.dock("left")?.panes).toEqual(["a", "opened"]);
+    layout.focus("main");
+    expect(layout.move("left", screen)).toBe(true);
+    expect(layout.dock("left")?.panes[0]).toBe("a");
+    expect(layout.open("fresh", screen)).toBe(true);
+    layout.dockFocused("left", screen);
+    const region = layout.rects(screen).get("a") as Rect;
+    const target = layout.dropTargetAt("fresh", region.x, region.y, screen) as DropTarget;
+    expect(target.kind).toBe("dock");
+    expect(layout.applyDrop("fresh", target, screen)).toBe(true);
+    expect(layout.dock("left")?.panes[0]).toBe("a");
+    expect(layout.pinned("a")).toBe(true);
+    assertExactTiling(layout);
+  });
+
+  it("carries the pin across docks and sheds it in the main area", () => {
+    const layout = dockedLeft("a", "b");
+    layout.focus("b");
+    layout.pinFocused();
+    layout.focus("main");
+    layout.dockFocused("right", screen);
+    layout.focus("b");
+    expect(layout.cycleFocused(screen)).toBe(true);
+    expect(layout.dock("right")).toEqual({ panes: ["b", "main"], ratio: 1 / 3, pins: 1 });
+    expect(layout.dock("left")).toEqual({ panes: ["a"], ratio: 1 / 3, pins: 0 });
+    expect(layout.cycleFocused(screen)).toBe(true);
+    expect(layout.dockSideOf("b")).toBeUndefined();
+    expect(layout.pinned("b")).toBe(false);
+    layout.dockFocused("left", screen);
+    expect(layout.dock("left")).toEqual({ panes: ["a", "b"], ratio: 1 / 3, pins: 0 });
+  });
+
+  it("closing a pinned pane releases its slot", () => {
+    const layout = dockedLeft("a", "b");
+    layout.focus("a");
+    layout.pinFocused();
+    layout.close("a");
+    expect(layout.dock("left")).toEqual({ panes: ["b"], ratio: 1 / 3, pins: 0 });
+  });
+
+  it("round-trips pins through the persisted state and clamps nonsense", () => {
+    const layout = dockedLeft("a", "b");
+    layout.focus("b");
+    layout.pinFocused();
+    const saved = JSON.parse(JSON.stringify(layout.toJSON()));
+    const revived = new Layout();
+    revived.load(Layout.parse(saved) as ReturnType<typeof Layout.parse> & object);
+    expect(revived.dock("left")).toEqual({ panes: ["b", "a"], ratio: 1 / 3, pins: 1 });
+    const nonsense = Layout.parse({ ...saved, docks: { left: { ...saved.docks.left, pins: 9 } } });
+    expect(nonsense?.docks?.left?.pins).toBe(2);
+    const absent = Layout.parse({ ...saved, docks: { left: { panes: ["b", "a"], ratio: 0.3 } } });
+    expect(absent?.docks?.left?.pins).toBe(0);
   });
 });
 

@@ -89,6 +89,13 @@ function dockOf(probe: AppProbe, id: string): "left" | "right" | undefined {
   return probe.snapshot().panes.find((pane) => pane.id === id)?.dock;
 }
 
+function pinnedIds(probe: AppProbe): string[] {
+  return probe
+    .snapshot()
+    .panes.filter((pane) => pane.pinned)
+    .map((pane) => pane.id);
+}
+
 describe("boot", () => {
   it("starts with a single focused pane", () => {
     const probe = new AppProbe();
@@ -212,6 +219,63 @@ describe("docking", () => {
     probe.command("split");
     expect(probe.command("dock-cycle")).toBe(true);
     expect(dockOf(probe, "session-2")).toBe("left");
+  });
+
+  it("pins head their dock, toggle on leader p, and refuse main-area panes", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("split");
+    probe.core.focusPane("session-2");
+    probe.command("dock-left");
+    probe.core.focusPane("session-3");
+    probe.command("dock-left");
+    expect(dockedIds(probe)).toEqual(["session-2", "session-3"]);
+    probe.keys("ctrl+k", "p");
+    expect(dockedIds(probe)).toEqual(["session-3", "session-2"]);
+    expect(pinnedIds(probe)).toEqual(["session-3"]);
+    probe.keys("ctrl+k", "p");
+    expect(pinnedIds(probe)).toEqual([]);
+    expect(dockedIds(probe)).toEqual(["session-3", "session-2"]);
+    expect(probe.command("pin")).toBe(true);
+    expect(pinnedIds(probe)).toEqual(["session-3"]);
+    expect(probe.command("unpin")).toBe(true);
+    expect(pinnedIds(probe)).toEqual([]);
+    probe.core.focusPane("session-1");
+    expect(dockOf(probe, "session-1")).toBeUndefined();
+    probe.keys("ctrl+k", "p");
+    expect(probe.snapshot().notice).toBe("pins are for docked panes · dock it first");
+    expect(pinnedIds(probe)).toEqual([]);
+  });
+
+  it("the fresh workspace ships unpinned and pins survive a restore at the head of the dock", () => {
+    const fresh = new AppProbe();
+    expect(pinnedIds(fresh)).toEqual([]);
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("dock-left");
+    probe.command("split");
+    probe.command("dock-left");
+    probe.command("pin");
+    expect(dockedIds(probe)).toEqual(["session-3", "session-2"]);
+    const restored = new AppProbe({ restoreWorkspace: mustParse(probe.workspaceState()) });
+    expect(dockedIds(restored)).toEqual(["session-3", "session-2"]);
+    expect(pinnedIds(restored)).toEqual(["session-3"]);
+  });
+
+  it("leader i is the palette's leader spelling now that leader p pins", () => {
+    const probe = new AppProbe().keys("ctrl+k", "i");
+    expect(probe.snapshot().overlay).toBe("palette");
+    expect(probe.core.paletteMode).toBe("commands");
+  });
+
+  it("the initial workspace is declared, pins included", () => {
+    const probe = new AppProbe({
+      createSessionTreePane: (id) => stubFilePane(id, "tree"),
+      initialWorkspace: [{ kind: "conversation" }, { kind: "session-tree", pinned: true }],
+    });
+    expect(paneIds(probe)).toEqual(["tree-1", "session-1"]);
+    expect(pinnedIds(probe)).toEqual(["tree-1"]);
+    expect(probe.snapshot().focused).toBe("session-1");
   });
 
   it("dock resize keys act on the focused pane's dock; side commands reach the other", () => {

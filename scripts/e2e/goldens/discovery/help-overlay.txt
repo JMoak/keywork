@@ -15,6 +15,7 @@
 ││                                │ ctrl+k shift+k                      move pane up │                                ││
 ││                                │ ctrl+k shift+l                   move pane right │                                ││
 ││                                │ ctrl+k c          cycle pane main → left → right │                                ││
+││                                │ ctrl+k p                pin docked pane (toggle) │                                ││
 ││                                │ ctrl+k .                  widen this pane's dock │                                ││
 ││                                │ ctrl+k ,                 narrow this pane's dock │                                ││
 ││                                │ ctrl+k shift+.             grow the focused pane │                                ││
@@ -25,8 +26,7 @@
 ││                                │ ctrl+k a                               arcs node │                                ││
 ││                                │ ctrl+k /                            this overlay │                                ││
 ││                                │ ctrl+p                   quick open (> commands) │                                ││
-││                                │ ctrl+shift+p                     command palette │                                ││
-││                                │ ctrl+q                                      quit │                                ││
-│╰────────────────────────────────│                    esc closes                    │────────────────────────────────╯│
-│ keywork e2e · 2 panes · ctrl+k n│                                                  │                               / │
-╰─────────────────────────────────╰──────────────────────────────────────────────────╯─────────────────────────────────╯
+││                                │ ctrl+k i                         command palette │                                ││
+│╰────────────────────────────────│ ctrl+q                                      quit │────────────────────────────────╯│
+│ keywork e2e · 2 panes · ctrl+k n│                    esc closes                    │                               / │
+╰─────────────────────────────────│                                                  │─────────────────────────────────╯

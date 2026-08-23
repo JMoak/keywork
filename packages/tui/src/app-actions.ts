@@ -8,6 +8,7 @@ export interface ActionTarget {
   focusToward(direction: Direction): void;
   movePane(direction: Direction): void;
   cyclePane(): void;
+  pinPane(): void;
   resizeDock(delta: number): void;
   resizePane(delta: number): void;
   summon(kind: SummonableKind): void;
@@ -138,6 +139,16 @@ export const appActions: Record<string, AppAction> = {
       aliases: ["cycle"],
     },
   },
+  "dock.pin": {
+    chords: "leader p",
+    help: "pin docked pane (toggle)",
+    chainable: true,
+    invoke: (target) => target.pinPane(),
+    command: {
+      name: "pin",
+      description: "pin this docked pane to the head of its dock (toggle)",
+    },
+  },
   "dock.grow": {
     chords: "leader .",
     help: "widen this pane's dock",
@@ -207,7 +218,7 @@ export const appActions: Record<string, AppAction> = {
     command: { name: "go", description: "jump to a pane (type > for commands)" },
   },
   "palette.commands": {
-    chords: ["ctrl+shift+p", "leader p"],
+    chords: ["leader i", "ctrl+shift+p"],
     help: "command palette",
     invoke: (target) => target.openPalette(">"),
     command: {

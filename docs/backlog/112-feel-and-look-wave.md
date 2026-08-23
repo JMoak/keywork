@@ -83,54 +83,102 @@ workspaces, readiness-phrased arc refusal). Untouched goldens (discovery, 5/5).
 - **Evidence:** `connect-model.test` rewritten (28 tests: screens, columns, facts, headings,
   navigation, verify/save, remove).
 
+### L3 · C71 dock pins (landed 2026-08-23)
+
+Built to the C71 design below and the decisions ledger (all `OWN`).
+
+- **Primitive.** `DockState` carries `pins`, the count of leading pinned panes, so "pins are a
+  prefix of the dock" holds by construction (`layout-arrangement.ts`: `isPinned`,
+  `pinnedInDock`, `unpinnedInDock`, `arrivalIndex`; `reorderedInDock` moves within the pinned
+  group or within the free group, never across). Arrivals (open-in-dock, push-into-dock, drag
+  drop, dock-cycle) land below the pins; a pinned pane carried to the other dock arrives
+  pinned at that dock's head (`Layout.landedInDock`); undocking sheds the pin; closing a
+  pinned pane releases its slot; drop previews are honest about where a pane will land.
+  Unpinning drops the pane to the head of the free group (the nearest place it can sit
+  unpinned, which is "where it is" whenever it was the last pin).
+- **Surface.** `/pin` toggles on `leader p` (chainable, so `ctrl+k j p` walks to a pane and
+  pins it), `/unpin` spelled out; main-area panes answer `pins are for docked panes · dock it
+  first`. The palette's leader spelling moved to `leader i` and leads the help row
+  (`ctrl+shift+p` stays as the second chord). Mark: `▪` (tier 1+) / `*` (tier 0) first in
+  the title through `paneChrome` for every pane kind (`PaneContext.pinMark`, resolved in
+  `view/frame.ts` from the session's glyph support).
+- **Initial workspace is declared** (`initial-workspace.ts`: conversation, session tree, MCP,
+  all unpinned); `AppCoreOptions.initialWorkspace` overrides it, which is the seam a future
+  config option plugs into (needs its `.describe()` per D9; not added yet).
+- **Persistence.** `pins` rides the dock state; parse defaults absent to 0 and clamps to the
+  pane count; v1 states migrate with `pins: 0`; `PaneSnapshot.pinned` for probes.
+- **Evidence.** `layout.test` "Layout pins" (ordering, no-ops, group moves, arrivals, carry
+  across docks, close, round-trip + clamps), `workflows.test` (chord, commands, notice,
+  restore at the head, declared initial workspace, `leader i`), `layout-state.test` /
+  `workspace-state.test` migrations updated for the new field; e2e `tiling-tour` gains
+  `browser-pinned` / `browser-unpinned` captures with the mark; discovery `help-overlay`
+  golden re-recorded (one new row, palette row now `ctrl+k i`). Gate: `bun run check` clean,
+  vitest 205 files / 2787 + 1 skipped, native `bun test` 2787 / 0 (one shell-session timing
+  flake under full load, green in isolation), `bun run e2e` 11/11.
+
 ## Scoping (options-first, per the 98/100 rules; nothing below is built)
 
-### C70 · cycle arc (the arc stage) · 3pt + 1pt captures · `OWN`
+### C70 · the arc pane · 3pt + 1pt captures · `OWN` (design final 2026-08-22, three rounds)
 
 **Jordan's ask.** "A 'cycle Arc' key in the navigation that's not a high priority key that
 fits. That would move all sessions as a grouped sick looking entity that keeps their
-uniqueness for selection intact as well."
+uniqueness for selection intact as well." Refined over three rounds into: an arc is a pane.
 
-**Reading.** Arcs are the *when* axis, but the main area is still one flat tiling of every
-session regardless of arc. Cycling an arc should bring one arc's sessions forward *as a
-group*: the group reads as one entity (one hue family, one motion), each member stays its
-own pane (own title, own micro-gradient, own focus, still reachable by `ctrl+p`).
+**Design: the arc pane is a compact docked controller for one arc.** Member sessions stay
+tiles in the main area exactly as today. The arc pane is a pane like any other (tiles, docks,
+zooms, pins under C71) whose title is the arc's name and whose body is one row per member
+session **in creation order** (derived from the arc's bindings, never stored). From it the
+group is folded and unfolded as a whole or one member at a time. A folded member's tile
+leaves the main tree; the session stays live (held, as restore and `/init` reopen already
+hold attachments), its row keeps reporting. Unfolding brings the tile back. "All folded" is
+the arc collapsed into the dock: the grouped entity at rest. No global "stage" or filter;
+the fold is the primitive, the pane is the handle.
 
-**Design: the stage is a visibility mask, not a second tree.** The main tree stays the one
-tree. A stage is a filter over its leaves: `all` (today's view), then one stage per active
-arc in creation order, then `no arc`, then back to `all`. Cycling to `#dock-v2` hides every
-main-area leaf not bound to dock-v2; hidden leaves collapse and their siblings take the room
-(the dwindle layout already does this for removals); returning to `all` restores everyone
-in place. No per-stage arrangements to persist, no second layout model, and `split` inside a
-stage inherits the stage's arc, so new panes land where the eye is. Docks are never
-filtered (tree, arcs node, memory, MCP are cross-arc by nature). Zoom composes as today.
+- **Rows.** `stamp · title · state word · age`, e.g. `▓ fix auth redirect · working 2m`.
+  The stamp cell is the member's lifecycle stamp through the same resolver the title bar
+  uses (C64 `LifecycleState`: working fills, needs-you `█`, idle blank, finished-unseen,
+  failed), so rows and titles never disagree. A folded member's row is dim with a `░` fold
+  mark in the stamp cell while idle. **Folded and waiting** (Jordan: stay folded, a classy
+  indicator): the stamp rises ░→▒→▓→█ in the arc hue at quick tempo (C53), the state word
+  reads `needs you`, and the arc pane's own lifecycle becomes needs-you (stamp now, inverted
+  label and saturation lift when C69 lands), so the dock tells you without pulling the tile
+  up. Later candidates for the row (turn count, cost, changed files) are 102's call.
+- **Pane-local keys** (letters, like the memory pane; no new leader chords): `enter` focuses
+  the member's tile, unfolding it first if folded (if already shown: just focus; unzoom if
+  the main area is zoomed on another pane). `space` folds / unfolds the row's member.
+  `a` toggles all: if any member is shown, fold all; else unfold all. `r` refreshes.
+  `leader z` on the arc pane zooms the rows to the main area (the whole-arc view).
+- **Fold geometry.** Unfolding re-attaches beside the arc's most recently focused visible
+  member so the group stays clustered; if none is visible, at the main area's edge
+  (`attachAtEdge`). Folding removes the leaf and siblings take the room (the dwindle layout
+  already does this). Motion (PD16, ink only): incoming tiles' borders rise ░→▒→▓→█ in the
+  arc hue over `quick`, outgoing snap away, any key settles.
+- **Half-height node.** Dock slots are equal today (`stackSlotRect`); each pane kind declares
+  a dock weight (session tree 1, arcs node 1, MCP 1, arc pane ½) and the stack sums weights.
+  A kind property, nothing persisted, no user-facing setting.
+- **Creation and lifetime.** `split-arc` / `/arc new` binds the new tile in main and focus
+  lands on it (C70-b). **The first arc created in a workspace** auto-docks its arc pane (same
+  dock as the arcs node if open, else right; below pins per C71); later arcs open theirs from
+  the arcs node row or `/arc open <slug>` (Jordan: first time per workspace, to keep docks
+  calm). `split` inside an arc adds a tile and a row (PD13 inherit). Closing the arc pane
+  leaves the arc untouched; `/arc close` / abandon removes the pane. Unbound sessions are
+  plain session panes and dock as today; there is no "no arc" group (C70-c). No status-chip
+  readout; the title carries the arc name and, when any member is folded, `· n folded` in
+  the facts zone (C70-d).
+- **Persistence.** Arc-pane descriptor `{ arc, folded: sessionId[] }`; folded members
+  restore held, not tiled; `WorkspaceState.introduced` records that the arc pane has been
+  auto-docked once. Restore drops folds whose sessions no longer exist.
+- **Later, built on the primitive (parked).** A "cycle arc" leader chord as "fold every other
+  arc, unfold this one"; the in-pane session view as a third level; main-area pins (C71-c).
+- **Acceptance.** e2e `arcs` scenario extension at 160×40: create the first arc (pane appears
+  docked at weight ½, below pins), `space` folds one (tile gone, row dim `░`), `a` folds all,
+  `a` unfolds all (rise captured), a folded member needs you (row `█` + `needs you`, pane
+  stamp needs-you, tile stays folded), `enter` on it unfolds and focuses, second arc does
+  not auto-dock and `/arc open` does, relaunch restores folds; tier-0 capture reads every
+  state from density alone. Unit: fold / unfold / toggle-all invariants, re-attach placement,
+  weighted `stackSlotRect`, descriptor round-trip, `introduced` once per workspace.
 
-- **Keys.** `leader ]` next stage, `leader [` previous, both sticky (`ctrl+k ] ] ]` walks
-  three arcs). Commands `/stage next|prev|all|<slug>`; `/arc stage` from the arcs node row
-  (`enter` on an arc row with `shift` held is a later nicety, keyboard first).
-- **Group identity.** Members already share the arc's golden-angle anchor with a
-  micro-gradient (C45), so a staged group reads as one hue family; uniqueness survives in
-  the micro-gradient, the title, and focus. Status chip becomes the stage readout while
-  staged: `#dock-v2 · 2 of 3 arcs` (nothing new on `all`). The arcs node lights the staged
-  arc's row in its hue.
-- **Motion (PD16, ink only).** Geometry snaps. Incoming members' borders rise ░→▒→▓→█ in the
-  arc hue over `quick`; outgoing members just disappear. The whole main area is one region,
-  the group rise is its one mover; any key settles it.
-- **Focus and jump.** Focus on a hidden pane moves to the stage's most recently focused
-  member (else the first). `ctrl+p` still lists every pane; jumping to a hidden one raises
-  its stage first, then focuses it. `hjkl` traverse visible leaves only.
-- **Persistence.** `WorkspaceState` gains `stage?: "all" | { arc } | "unbound"`; restore
-  re-applies it if the arc still exists, else `all`.
-- **Open decisions (Jordan).** (a) `]`/`[` versus `leader tab`; (b) whether `split-arc`
-  from inside a stage should jump to the new arc's stage (recommended: yes, the eye follows
-  the new work) or stay; (c) whether `no arc` deserves a stage (recommended: yes, it is how
-  you find strays).
-- **Acceptance.** e2e `arcs` scenario extension at 160×40: two arcs + one unbound pane;
-  cycle all → dock-v2 → arc-2 → no arc → all with a capture each; chip text; jump to a hidden
-  pane raises its stage; persisted stage restores after a relaunch; tier-0 render identical
-  minus hue. Unit: `Layout.stage(filter)` rects/focus/traversal, stage ordering, restore.
-
-### C71 · pins for docked panes · 2pt · `OWN`
+### C71 · pins for docked panes · 2pt · `OWN` · landed 2026-08-23 (ledger in L3 above)
 
 **Jordan's ask.** "We should be able to `pin` things that are docked, giving them a
 priority position relative to their pins."
@@ -206,6 +254,38 @@ surface.
   disclosure), an e2e `memory-browser` scenario with a seeded vault (garden → note → outline
   hop → query hits → ledger), tier-0 capture as the monochrome fixture.
 
+## Decisions (Jordan, 2026-08-22, evening)
+
+The open decisions above, answered. Where an answer changes a design, the section above is
+superseded by the note here until the section is rewritten.
+
+- **C70 reframed: an arc is a pane, not a visibility mask.** The original stage-as-filter
+  design was withdrawn and the section above now holds the final design after three rounds:
+  a compact docked arc pane, rows in creation order, fold / unfold per member and for all,
+  folded members held live, first arc per workspace auto-docks, `a` toggles all
+  (fold-if-any-shown), a folded member that needs you stays folded and the row stamp +
+  state word + pane lifecycle say so, `enter` just focuses. C70-a resolved as pane-local
+  keys, no new leader chords. C70-b jump, C70-c no "no arc" group, C70-d no chip.
+- **C71-a:** `/pin` lives on `leader p`. `leader p` is today a secondary chord for the command
+  palette (primary `ctrl+shift+p`, and `ctrl+p` then `>`); the palette's leader fallback moves
+  to `leader i` (decided) and the help overlay follows. Jordan notes the `>` mode prefix in
+  quick-open reads a little odd; assessment below under flags.
+- **C71-b:** fresh-start tree and MCP panes ship unpinned. `seedDefaultWorkspace` becomes a
+  declarative initial-workspace spec (kinds, docks, pins) so the initial state is defined in
+  one obvious place and can become user-configurable (a config option with its `.describe()`
+  justification per D9) without touching layout code.
+- **C71-c:** the main-area pin semantic is reserved (not built); its meaning is decided when
+  C70's arc panes make it concrete.
+- **C72-a:** the ledger lens is v1, over what is persisted today (store ledger ops +
+  `curation.md`); J13 recall/citation rows join when those events get a persisted home. The
+  browser plan merges with C47 (heat) and J13's rendering into one "next level viewer" plan
+  that reflects the memory system as a whole, rather than three surfaces.
+- **C72-b:** `?` opens the query line (a toggle, not a permanent line); the hint that
+  advertises it is part of the design and must look right.
+- **C72-c:** heat candidates (C47) render as the last step inside the merged C72 plan, through
+  the C40 harness for Jordan's pick, after the lens skeleton lands.
+- **C72-d:** `u` reverts the selected note's last ledger entry (never the vault's last op).
+
 ## Flags for Jordan
 
 - `/init`'s reopen rides the same in-process relaunch `/workspace` uses (destroy renderer,
@@ -216,4 +296,28 @@ surface.
   that reads as clutter in the discovery goldens later, gate it on readiness instead.
 - `/connect` cannot do the ChatGPT subscription sign-in (browser/device flow); the terminal
   `keywork connect` still can. The targets screen does not mention it yet.
-- Chords proposed above (`]`/`[`, `leader i`) are candidates, not decisions.
+- **`ctrl+shift+p` on Windows Terminal.** Windows Terminal binds it by default to its own
+  command palette and consumes it before the app sees input; there is no per-app scope, so
+  the only remedy is unbinding it in the terminal's `settings.json` (`{ "id": null, "keys":
+  "ctrl+shift+p" }` in `keybindings`; done on Jordan's machine 2026-08-22). Even unbound, the
+  legacy console path cannot tell `ctrl+shift+p` from `ctrl+p` without the kitty keyboard
+  protocol, so on win32 the help overlay should lead with `leader i` (rides C71) and the
+  README's keys section should say so. Decision: not worth fighting beyond that.
+- **Help overlay height.** The hotkeys overlay is 27 rows plus chrome and does not clamp to
+  the screen; the e2e discovery screen is 30 rows tall, so its golden shows the bottom
+  border clipped by one row (it was clipped by one row before C71 too, by the pin row now).
+  Real terminals at 40+ rows are unaffected. Paging or a two-column layout is a small
+  follow-up; not taken here.
+- **Pin mark ink.** The `▪` mark renders in the border ink, not dim: the OpenTUI Box title is
+  one string until C69's span-composed title row lands, which is where the dim ink goes.
+- **The `>` prefix in quick-open.** `ctrl+p` opens quick-open (jump to a pane); typing `>`
+  flips it to commands (`overlays/palette.ts paletteModeOf`). That is VS Code's convention
+  verbatim, and it is the only place in keywork where `>` means anything; everywhere else a
+  command is spelled `/name` (the prompt editor's slash commands, the help overlay's
+  examples, the docs). Options: (a) keep `>` (familiar to VS Code hands, zero change);
+  (b) make `/` the commands prefix in quick-open, matching keywork's own vocabulary, so
+  `ctrl+p /spl` and typing `/spl` in a prompt are the same gesture, with `>` kept as a
+  silent alias so nobody's muscle memory breaks; (c) drop the prefix and let quick-open
+  fuzzy over panes and commands together, commands marked by a `/` glyph in the row.
+  Recommendation: (b), one-line change plus the help text, and it rides C71 since that task
+  already touches the palette chord. Not decided.

@@ -54,10 +54,10 @@ describe("layout serialization", () => {
       focused: "b",
       dock: { side: "right", panes: ["b"], ratio: 0.25 },
     });
-    expect(state?.docks).toEqual({ right: { panes: ["b"], ratio: 0.25 } });
+    expect(state?.docks).toEqual({ right: { panes: ["b"], ratio: 0.25, pins: 0 } });
     const revived = new Layout();
     revived.load(state as LayoutState);
-    expect(revived.dock("right")).toEqual({ panes: ["b"], ratio: 0.25 });
+    expect(revived.dock("right")).toEqual({ panes: ["b"], ratio: 0.25, pins: 0 });
     expect(revived.dock("left")).toBeUndefined();
     expect(revived.focused()).toBe("b");
   });

@@ -76,11 +76,15 @@ export function arrangementOf(state: LayoutState): Arrangement {
 }
 
 function snapshotDock(dock: DockState): DockState {
-  return { panes: [...dock.panes], ratio: dock.ratio };
+  return { panes: [...dock.panes], ratio: dock.ratio, pins: dock.pins };
 }
 
 function revivedDock(dock: DockState | undefined): DockState {
-  return { panes: [...(dock?.panes ?? [])], ratio: dock?.ratio ?? defaultDockRatio };
+  return {
+    panes: [...(dock?.panes ?? [])],
+    ratio: dock?.ratio ?? defaultDockRatio,
+    pins: dock?.pins ?? 0,
+  };
 }
 
 function parseNode(value: unknown): LayoutNode | undefined {
@@ -126,7 +130,12 @@ function parseDock(value: unknown): DockState | undefined {
   if (!Array.isArray(panes) || panes.length === 0 || !panes.every(isPaneId)) return undefined;
   const ratio = parseRatio(value.ratio, dockRatioBounds);
   if (ratio === undefined) return undefined;
-  return { panes: [...panes], ratio };
+  return { panes: [...panes], ratio, pins: parsePins(value.pins, panes.length) };
+}
+
+function parsePins(value: unknown, paneCount: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) return 0;
+  return clamp(value, 0, paneCount);
 }
 
 function parseRatio(value: unknown, bounds: { min: number; max: number }): number | undefined {

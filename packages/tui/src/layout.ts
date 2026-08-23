@@ -1,4 +1,3 @@
-import { clamp } from "./clamp.ts";
 import {
   area,
   contains,
@@ -10,18 +9,22 @@ import {
 } from "./geometry.ts";
 import {
   type Arrangement,
+  arrivalIndex,
   type DockSide,
   type DockState,
   dockedAt,
   dockSides,
   emptyArrangement,
+  isPinned,
   lifted,
   mainPanes,
   otherSide,
   panesOf,
+  pinnedInDock,
   reorderedInDock,
   sideOf,
   swapped,
+  unpinnedInDock,
   withDockRatio,
   withTree,
 } from "./layout-arrangement.ts";
@@ -91,11 +94,32 @@ export class Layout {
 
   dock(side: DockSide): DockState | undefined {
     const dock = this.arrangement.docks[side];
-    return dock.panes.length === 0 ? undefined : { panes: [...dock.panes], ratio: dock.ratio };
+    if (dock.panes.length === 0) return undefined;
+    return { panes: [...dock.panes], ratio: dock.ratio, pins: dock.pins };
   }
 
   dockSideOf(id: PaneId): DockSide | undefined {
     return sideOf(this.arrangement, id);
+  }
+
+  pinned(id: PaneId): boolean {
+    return isPinned(this.arrangement, id);
+  }
+
+  pinFocused(): boolean {
+    const id = this.focusedId;
+    const side = id === undefined ? undefined : this.dockSideOf(id);
+    if (id === undefined || side === undefined) return false;
+    this.arrangement = pinnedInDock(this.arrangement, side, id);
+    return true;
+  }
+
+  unpinFocused(): boolean {
+    const id = this.focusedId;
+    const side = id === undefined ? undefined : this.dockSideOf(id);
+    if (id === undefined || side === undefined) return false;
+    this.arrangement = unpinnedInDock(this.arrangement, side, id);
+    return true;
   }
 
   open(id: PaneId, screen: Screen): boolean {
@@ -162,7 +186,7 @@ export class Layout {
     const id = this.focusedId;
     if (id === undefined) return false;
     if (this.dockSideOf(id) === side) return true;
-    return this.commit(dockedAt(lifted(this.arrangement, id), side, id), screen);
+    return this.commit(this.landedInDock(id, side), screen);
   }
 
   undockFocused(screen: Screen): boolean {
@@ -228,7 +252,7 @@ export class Layout {
         return this.swapPanes(dragged, target.with);
       case "dock":
         return this.commitFocusing(
-          dockedAt(lifted(this.arrangement, dragged), target.side, dragged, target.index),
+          this.landedInDock(dragged, target.side, target.index),
           dragged,
           screen,
         );
@@ -326,10 +350,17 @@ export class Layout {
   ): DropTarget | undefined {
     if (!holds(dockedAt(lifted(this.arrangement, dragged), side, dragged), screen))
       return undefined;
-    const others = this.arrangement.docks[side].panes.filter((id) => id !== dragged);
-    const slots = others.length + 1;
-    const index = clamp(Math.floor(((y - region.y) / region.height) * slots), 0, slots - 1);
+    const remaining = lifted(this.arrangement, dragged).docks[side];
+    const slots = remaining.panes.length + 1;
+    const wanted = Math.floor(((y - region.y) / region.height) * slots);
+    const index = this.pinned(dragged) ? remaining.pins : arrivalIndex(remaining, wanted);
     return { kind: "dock", side, index, rect: stackSlotRect(region, slots, index) };
+  }
+
+  private landedInDock(id: PaneId, side: DockSide, index?: number): Arrangement {
+    const pinned = this.pinned(id);
+    const landed = dockedAt(lifted(this.arrangement, id), side, id, index);
+    return pinned ? pinnedInDock(landed, side, id) : landed;
   }
 
   private mainDropTarget(

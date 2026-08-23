@@ -97,7 +97,7 @@ describe("parseWorkspaceState", () => {
     };
     const state = parseWorkspaceState(JSON.parse(JSON.stringify(v1)));
     expect(state?.version).toBe(2);
-    expect(state?.layout.docks).toEqual({ left: { panes: ["browser-1"], ratio: 0.25 } });
+    expect(state?.layout.docks).toEqual({ left: { panes: ["browser-1"], ratio: 0.25, pins: 0 } });
     expect(state?.layout.tree).toEqual({ kind: "leaf", id: "session-1" });
     expect(state?.layout.focused).toBe("browser-1");
     expect(state?.panes).toEqual([
@@ -118,7 +118,7 @@ describe("parseWorkspaceState", () => {
         { id: "mcp-1", kind: "mcp" },
       ],
     });
-    expect(state?.layout.docks).toEqual({ right: { panes: ["mcp-1"], ratio: 1 / 3 } });
+    expect(state?.layout.docks).toEqual({ right: { panes: ["mcp-1"], ratio: 1 / 3, pins: 0 } });
     expect(state?.layout.docks?.left).toBeUndefined();
   });
 

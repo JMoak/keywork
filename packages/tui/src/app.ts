@@ -116,6 +116,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     options.sessionTrees === undefined
       ? undefined
       : attachOnFork(options.sessionTrees, options.sessions, escrow);
+  const glyphs = options.glyphs ?? detectCapabilities();
   const sessions = new SessionPanes({
     core: () => core,
     escrow,
@@ -123,7 +124,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     arcIndex,
     animator,
     page: resolvePageThresholds(options.page),
-    glyphs: options.glyphs ?? detectCapabilities(),
+    glyphs,
     ...definedOnly({
       agentFactory: options.agentFactory,
       sessions: options.sessions,
@@ -176,6 +177,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         theme: flavors.theme,
         screen: screenWithin(renderer),
         instruments: flavors.active.instruments,
+        glyphs,
         arcOrdinal: arcIndex.ordinalOf,
         arcOf: (id) => sessions.arcOf(id),
         label:

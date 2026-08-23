@@ -34,6 +34,11 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       description: "return this pane to the main area",
       run: () => core.undockPane(),
     },
+    {
+      name: "unpin",
+      description: "release this pane's pin so it orders like the rest of its dock",
+      run: () => core.unpinPane(),
+    },
     ...when(available("file"), {
       name: "open",
       aliases: ["view"],

@@ -20,6 +20,7 @@ import { registerCoreCommands } from "./core-commands.ts";
 import type { Direction, Rect, Screen } from "./geometry.ts";
 import { type InferenceCommandSeams, runModelCommand } from "./inference-commands.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
+import { type InitialPane, initialWorkspace } from "./initial-workspace.ts";
 import { Keymap } from "./keymap.ts";
 import { type Chord, formatChord } from "./keys.ts";
 import { type DockSide, Layout, layoutStateIds } from "./layout.ts";
@@ -92,6 +93,7 @@ export interface AppCoreOptions extends PaneFactories {
   currentModel?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;
   restoreWorkspace?: WorkspaceState;
+  initialWorkspace?: readonly InitialPane[];
   saveWorkspace?: (state: WorkspaceState) => void;
   onPaneClosed?: (id: string) => void;
   onExit: () => void;
@@ -102,6 +104,7 @@ export interface PaneSnapshot {
   title: string;
   focused: boolean;
   dock: DockSide | undefined;
+  pinned: boolean;
 }
 
 export interface AppSnapshot {
@@ -172,6 +175,7 @@ export class AppCore implements ActionTarget {
         title: this.panes.get(id)?.title().trim() ?? id,
         focused: id === focused,
         dock: this.layout.dockSideOf(id),
+        pinned: this.layout.pinned(id),
       })),
       focused,
       zoomed: this.layout.zoomed(),
@@ -305,6 +309,28 @@ export class AppCore implements ActionTarget {
 
   cyclePane(): void {
     if (!this.layout.cycleFocused(this.screen())) this.noticeNoRoom("this pane's next home");
+    this.touch();
+  }
+
+  pinPane(): void {
+    const id = this.layout.focused();
+    if (id === undefined) return;
+    if (this.layout.pinned(id)) {
+      this.unpinPane();
+      return;
+    }
+    if (!this.layout.pinFocused()) {
+      this.postNotice("pins are for docked panes · dock it first");
+      return;
+    }
+    this.touch();
+  }
+
+  unpinPane(): void {
+    if (!this.layout.unpinFocused()) {
+      this.postNotice("pins are for docked panes · dock it first");
+      return;
+    }
     this.touch();
   }
 
@@ -647,10 +673,18 @@ export class AppCore implements ActionTarget {
   }
 
   private seedDefaultWorkspace(): void {
-    this.openPane();
-    this.place(summonRequests["session-tree"]);
-    this.place(summonRequests.mcp);
+    for (const entry of this.options.initialWorkspace ?? initialWorkspace) this.seed(entry);
     this.focusMainArea();
+  }
+
+  private seed(entry: InitialPane): void {
+    if (entry.kind === "conversation") {
+      this.openPane();
+      return;
+    }
+    if (this.place(summonRequests[entry.kind]) !== undefined && entry.pinned) {
+      this.layout.pinFocused();
+    }
   }
 
   private conversationSession(): string | undefined {

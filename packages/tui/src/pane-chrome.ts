@@ -43,7 +43,7 @@ export function paneChrome(
   title: string,
   ...children: PaneChild[]
 ): PaneView {
-  const { theme, focused, width, height, borderColor } = context;
+  const { theme, focused, width, height, borderColor, pinMark } = context;
   return Box(
     {
       width,
@@ -51,7 +51,7 @@ export function paneChrome(
       border: true,
       borderStyle: "rounded",
       borderColor: borderColor ?? (focused ? theme.borderFocus : theme.border),
-      title,
+      title: pinMark === undefined ? title : ` ${pinMark}${title}`,
       titleAlignment: "left",
       flexDirection: "column",
       overflow: "hidden",

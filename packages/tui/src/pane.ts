@@ -13,6 +13,7 @@ export interface PaneContext {
   height: number;
   borderColor?: string;
   instruments?: Flavor["instruments"];
+  pinMark?: string;
 }
 
 export interface FileOpenOptions {

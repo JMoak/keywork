@@ -6,6 +6,7 @@ export type DockSide = "left" | "right";
 export interface DockState {
   readonly panes: readonly PaneId[];
   readonly ratio: number;
+  readonly pins: number;
 }
 
 export interface Arrangement {
@@ -57,6 +58,13 @@ export function withDockRatio(
   });
 }
 
+export function isPinned(arrangement: Arrangement, id: PaneId): boolean {
+  const side = sideOf(arrangement, id);
+  if (side === undefined) return false;
+  const dock = arrangement.docks[side];
+  return dock.panes.indexOf(id) < dock.pins;
+}
+
 export function lifted(arrangement: Arrangement, id: PaneId): Arrangement {
   const side = sideOf(arrangement, id);
   if (side !== undefined) {
@@ -64,6 +72,7 @@ export function lifted(arrangement: Arrangement, id: PaneId): Arrangement {
     return withDock(arrangement, side, {
       ...dock,
       panes: dock.panes.filter((pane) => pane !== id),
+      pins: dock.pins - (isPinned(arrangement, id) ? 1 : 0),
     });
   }
   if (arrangement.tree === undefined) return arrangement;
@@ -78,8 +87,30 @@ export function dockedAt(
 ): Arrangement {
   const dock = arrangement.docks[side];
   const panes = [...dock.panes];
-  panes.splice(clamp(index, 0, panes.length), 0, id);
+  panes.splice(arrivalIndex(dock, index), 0, id);
   return withDock(arrangement, side, { ...dock, panes });
+}
+
+export function arrivalIndex(dock: DockState, wanted: number): number {
+  return clamp(wanted, dock.pins, dock.panes.length);
+}
+
+export function pinnedInDock(arrangement: Arrangement, side: DockSide, id: PaneId): Arrangement {
+  const dock = arrangement.docks[side];
+  const from = dock.panes.indexOf(id);
+  if (from < 0 || from < dock.pins) return arrangement;
+  const panes = dock.panes.filter((pane) => pane !== id);
+  panes.splice(dock.pins, 0, id);
+  return withDock(arrangement, side, { ...dock, panes, pins: dock.pins + 1 });
+}
+
+export function unpinnedInDock(arrangement: Arrangement, side: DockSide, id: PaneId): Arrangement {
+  const dock = arrangement.docks[side];
+  const from = dock.panes.indexOf(id);
+  if (from < 0 || from >= dock.pins) return arrangement;
+  const panes = dock.panes.filter((pane) => pane !== id);
+  panes.splice(dock.pins - 1, 0, id);
+  return withDock(arrangement, side, { ...dock, panes, pins: dock.pins - 1 });
 }
 
 export function reorderedInDock(
@@ -90,11 +121,13 @@ export function reorderedInDock(
 ): Arrangement | undefined {
   const dock = arrangement.docks[side];
   const from = dock.panes.indexOf(id);
-  const displaced = from < 0 ? undefined : dock.panes[from + step];
-  if (displaced === undefined) return undefined;
+  const to = from + step;
+  const displaced = from < 0 ? undefined : dock.panes[to];
+  const group = (index: number): "pinned" | "free" => (index < dock.pins ? "pinned" : "free");
+  if (displaced === undefined || group(from) !== group(to)) return undefined;
   const panes = [...dock.panes];
   panes[from] = displaced;
-  panes[from + step] = id;
+  panes[to] = id;
   return withDock(arrangement, side, { ...dock, panes });
 }
 
@@ -110,7 +143,7 @@ export function swapped(arrangement: Arrangement, one: PaneId, other: PaneId): A
   };
 }
 
-const emptyDock: DockState = { panes: [], ratio: defaultDockRatio };
+const emptyDock: DockState = { panes: [], ratio: defaultDockRatio, pins: 0 };
 
 function withDock(arrangement: Arrangement, side: DockSide, dock: DockState): Arrangement {
   return { ...arrangement, docks: { ...arrangement.docks, [side]: dock } };
