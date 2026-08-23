@@ -10,7 +10,8 @@ export type OverlayKind =
   | "model"
   | "arc"
   | "workspace"
-  | "connect";
+  | "connect"
+  | "setup";
 
 export interface OverlayFrame extends Rect {
   firstRowY: number;
@@ -67,7 +68,11 @@ export function paletteFrame(screen: Screen, rowCount: number): OverlayFrame {
 }
 
 export function helpFrame(screen: Screen, rowCount: number): OverlayFrame {
-  const width = Math.min(52, screen.width - 4);
+  return panelFrame(screen, rowCount, 52);
+}
+
+export function panelFrame(screen: Screen, rowCount: number, widest: number): OverlayFrame {
+  const width = Math.min(widest, screen.width - 4);
   const height = rowCount + 5;
   const y = Math.max(1, Math.floor((screen.height - height) / 2));
   return {

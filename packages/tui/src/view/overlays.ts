@@ -1,13 +1,14 @@
-import { Box, Text } from "@opentui/core";
+import { Box, fg, StyledText, Text } from "@opentui/core";
 import { bindingHelp } from "../app-actions.ts";
 import type { AppCore } from "../app-core.ts";
 import type { ArcOrdinals } from "../arcs.ts";
-import type { ConnectModel, EditorField } from "../connect-model.ts";
+import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
 import type { Keymap } from "../keymap.ts";
 import type { OverlayFrame } from "../overlays/index.ts";
 import type { Theme } from "../theme.ts";
 import { type TrayChild, trayRows } from "../tray.ts";
-import { clip, padEnd, width } from "../width.ts";
+import { clip, clipSpans, padEnd, width } from "../width.ts";
+import { setupPrompt, type WorkspaceReadiness } from "../workspace-setup.ts";
 import {
   arcPickerSpec,
   filterOverlay,
@@ -42,9 +43,20 @@ export function overlayView(core: AppCore, inputs: OverlayInputs) {
     return filterOverlay(workspacePickerSpec(workspace), theme, placement);
   }
   const connect = core.connectModel();
-  if (connect !== undefined)
-    return panel(" connect ", theme, placement, connectRows(connect, theme));
+  if (connect !== undefined) {
+    const title = connect.stage.kind === "connections" ? " connections " : " connect ";
+    return panel(title, theme, placement, connectRows(connect, theme, innerWidth(placement)));
+  }
+  const setup = core.setupConfirmation();
+  if (setup !== undefined) return panel(" workspace ", theme, placement, setupRows(setup, theme));
   return undefined;
+}
+
+function setupRows(readiness: WorkspaceReadiness, theme: Theme) {
+  return [
+    Text({ content: ` ${setupPrompt(readiness) ?? ""}`, fg: theme.text }),
+    Text({ content: " y sets it up · n cancels", fg: theme.accent }),
+  ];
 }
 
 export function overlayPosition(frame: OverlayFrame): OverlayPlacement {
@@ -168,90 +180,26 @@ function presetRows(core: AppCore, theme: Theme) {
   return rows;
 }
 
-function connectRows(model: ConnectModel, theme: Theme) {
-  const { stage } = model;
-  switch (stage.kind) {
-    case "targets":
-      return model.targetRows().map((row, index) =>
-        Text({
-          content: `${index === stage.index ? "▸" : " "} ${row.label} · ${row.detail}`,
-          fg: index === stage.index ? theme.accent : theme.text,
-        }),
-      );
-    case "editor":
-      return [
-        ...model.fields().map((field, index) => editorRow(field, index === stage.field, theme)),
-        Text({
-          content: " ↑↓ field · type to edit · ←→ toggle · enter acts · esc discards",
-          fg: theme.textDim,
-        }),
-      ];
-    case "verifying":
-      return [Text({ content: ` verifying ${stage.draft.endpoint}/models …`, fg: theme.text })];
-    case "failed":
-      return [
-        Text({ content: ` not saved · ${stage.reason}`, fg: theme.accent }),
-        Text({
-          content: ` observed ${stage.at} · any key returns to the editor`,
-          fg: theme.textDim,
-        }),
-      ];
-    case "receipt":
-      return [
-        Text({ content: ` saved ${stage.draft.name} · ${stage.draft.endpoint}`, fg: theme.text }),
-        Text({ content: ` verified ${stage.at} · ${modelsFact(stage.models)}`, fg: theme.textDim }),
-        Text({ content: " enter choose a model · esc done", fg: theme.accent }),
-      ];
-    case "remove-confirm":
-      return [
-        Text({
-          content: ` remove connection ${stage.name} and its ${stage.credential}?`,
-          fg: theme.text,
-        }),
-        Text({ content: " y remove · n keep", fg: theme.accent }),
-      ];
-    case "removed":
-      return [
-        Text({
-          content: ` removed ${stage.receipt.removed.join(", ") || "nothing"}`,
-          fg: theme.text,
-        }),
-        ...stage.receipt.retained.map((fact) =>
-          Text({ content: ` kept ${fact}`, fg: theme.textDim }),
-        ),
-        Text({ content: " any key closes", fg: theme.accent }),
-      ];
-  }
+function connectRows(model: ConnectModel, theme: Theme, room: number) {
+  return model.rows().map((row) => connectRowView(row, theme, room));
 }
 
-function editorRow(field: EditorField, selected: boolean, theme: Theme) {
-  const fg = selected ? theme.accent : field.kind === "danger" ? theme.textDim : theme.text;
-  const shown = editorFieldText(field, selected);
-  return Text({ content: `${selected ? "▸" : " "} ${field.label.padEnd(12)} ${shown}`, fg });
+function connectRowView(row: ConnectRow, theme: Theme, room: number) {
+  const chunks = row.spans.map((part) =>
+    fg(row.selected ? theme.accent : connectToneInk(part.tone, theme))(part.text),
+  );
+  return Text({ content: new StyledText(clipSpans(chunks, room)) });
 }
 
-export function editorFieldText(field: EditorField, selected: boolean): string {
-  switch (field.kind) {
-    case "toggle":
-      return `‹ ${field.value} ›`;
-    case "action":
-    case "danger":
-      return field.value;
-    case "secret":
-      if (field.value === "") return `(saved or none)${selected ? "▌" : ""}`;
-      return withCaret("•".repeat(field.value.length), field.cursor, selected);
+function connectToneInk(tone: ConnectTone, theme: Theme): string {
+  switch (tone) {
     case "text":
-      return withCaret(field.value, field.cursor, selected);
+      return theme.text;
+    case "dim":
+      return theme.textDim;
+    case "accent":
+      return theme.accent;
+    case "danger":
+      return theme.error;
   }
-}
-
-function withCaret(text: string, cursor: number, selected: boolean): string {
-  return selected ? `${text.slice(0, cursor)}▌${text.slice(cursor)}` : text;
-}
-
-function modelsFact(models: readonly string[]): string {
-  if (models.length === 0) return "no models reported";
-  return models.length === 1
-    ? `1 model reported: ${models[0]}`
-    : `${models.length} models reported`;
 }

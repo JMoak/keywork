@@ -31,7 +31,17 @@ export interface WorkspaceMemory {
   embeddings?: EmbeddingsPort;
 }
 
+export type MemoryAccess = () => WorkspaceMemory | undefined;
+
 export const memoryBootstrapBudget = 4096;
+
+export function workspaceMemoryAccess(cwd: string, trusted: boolean, slug?: string): MemoryAccess {
+  let opened: WorkspaceMemory | undefined;
+  return () => {
+    opened ??= openWorkspaceMemory(cwd, trusted, slug);
+    return opened;
+  };
+}
 
 export function openWorkspaceMemory(
   cwd: string,
@@ -134,19 +144,25 @@ export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise
   }
 }
 
-export function memoryPanePort(memory: WorkspaceMemory): MemoryPanePort {
-  const { store } = memory;
+export function memoryPanePort(memory: MemoryAccess): MemoryPanePort {
+  const store = (): MemoryStore => {
+    const opened = memory();
+    if (opened === undefined) throw new Error("memory isn't set up here yet · /init sets it up");
+    return opened.store;
+  };
   return {
-    load: () => loadInputs(store),
+    load: () => loadInputs(memory()?.store),
     approve: async (id) => {
-      await store.approve(id);
+      await store().approve(id);
     },
-    discard: (id) => store.discard(id),
+    discard: (id) => store().discard(id),
   };
 }
 
-async function loadInputs(store: MemoryStore): Promise<MemoryPaneInputs> {
-  if (!store.trusted) return { scopes: [], notes: [], inbox: [], recalls: [] };
+const emptyMemoryPane: MemoryPaneInputs = { scopes: [], notes: [], inbox: [], recalls: [] };
+
+async function loadInputs(store: MemoryStore | undefined): Promise<MemoryPaneInputs> {
+  if (store === undefined || !store.trusted) return emptyMemoryPane;
   const notes = (await store.listNotes()).map(noteView);
   const inbox = (await store.listStaged()).map(inboxView);
   return { scopes: ["workspace"], notes, inbox, recalls: [] };

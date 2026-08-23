@@ -39,6 +39,7 @@ import {
   type PresetPicker,
   type PresetsPort,
   pastedLine,
+  SetupConfirmOverlay,
   type WorkspaceOverlay,
 } from "./overlays/index.ts";
 import type { FileOpenOptions, Pane, PaneDescriptor, PaneIntents } from "./pane.ts";
@@ -63,6 +64,13 @@ import {
   type WorkspaceCommandSeams,
 } from "./workspace-commands.ts";
 import { type WorkspacesPort, workspaceChoiceOf } from "./workspace-picker.ts";
+import {
+  describeReady,
+  readinessNotice,
+  setupPrompt,
+  type WorkspaceReadiness,
+  type WorkspaceSetupPort,
+} from "./workspace-setup.ts";
 import { captureWorkspace, type WorkspaceState } from "./workspace-state.ts";
 
 export interface UndoPort {
@@ -80,6 +88,7 @@ export interface AppCoreOptions extends PaneFactories {
   arcs?: ArcsPort;
   focusedArc?: FocusedArcPort;
   workspaces?: WorkspacesPort;
+  workspaceSetup?: WorkspaceSetupPort;
   currentModel?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;
   restoreWorkspace?: WorkspaceState;
@@ -371,6 +380,11 @@ export class AppCore implements ActionTarget {
   openArcCommand(argument = ""): void {
     const arcs = this.options.arcs;
     if (arcs === undefined) return;
+    const blocker = this.workspaceBlocker();
+    if (blocker !== undefined) {
+      this.postNotice(blocker);
+      return;
+    }
     const seams: ArcCommandSeams = {
       arcs,
       focusedArc: this.options.focusedArc,
@@ -402,6 +416,20 @@ export class AppCore implements ActionTarget {
     this.settle(runWorkspaceCommand(seams, argument.trim()));
   }
 
+  openWorkspaceSetup(): void {
+    const port = this.options.workspaceSetup;
+    if (port === undefined) return;
+    const readiness = port.readiness();
+    if (setupPrompt(readiness) === undefined) {
+      this.postNotice(describeReady(readiness));
+      return;
+    }
+    this.overlay = new SetupConfirmOverlay(port, readiness, {
+      ...this.overlaySeams,
+      shutdown: () => this.shutdown(),
+    });
+  }
+
   openConnect(argument = ""): void {
     const port = this.options.connections;
     if (port === undefined) return;
@@ -409,6 +437,7 @@ export class AppCore implements ActionTarget {
       notify: () => this.notify(),
       chooseModel: () => this.openModelPicker(),
       notice: (text) => this.postNotice(text),
+      currentProvider: () => this.options.currentModel?.()?.split("/")[0],
     });
     model.open(argument);
     this.overlay = new ConnectOverlay(model, this.overlaySeams);
@@ -468,6 +497,15 @@ export class AppCore implements ActionTarget {
 
   connectModel(): ConnectModel | undefined {
     return this.overlay?.kind === "connect" ? this.overlay.model : undefined;
+  }
+
+  setupConfirmation(): WorkspaceReadiness | undefined {
+    return this.overlay?.kind === "setup" ? this.overlay.readiness : undefined;
+  }
+
+  workspaceBlocker(): string | undefined {
+    const readiness = this.options.workspaceSetup?.readiness();
+    return readiness === undefined ? undefined : readinessNotice(readiness);
   }
 
   postNotice(text: string): void {

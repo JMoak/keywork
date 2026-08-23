@@ -78,6 +78,12 @@ function builtinCommands(core: AppCore): CommandSpec[] {
         "switch or create a workspace over this root: /workspace [slug | new <slug> | default]",
       run: (args) => core.openWorkspaceCommand(args),
     }),
+    ...when(options.workspaceSetup !== undefined, {
+      name: "init",
+      aliases: ["trust"],
+      description: "trust this folder and set up its workspace, memory and arcs included: /init",
+      run: () => core.openWorkspaceSetup(),
+    }),
     ...when(options.arcs !== undefined, {
       name: "arc",
       description:

@@ -1,7 +1,7 @@
 import type { ConnectModel } from "../connect-model.ts";
 import type { Screen } from "../geometry.ts";
 import { type Chord, parseChord } from "../keys.ts";
-import { helpFrame, type OverlayFrame, RowOverlay } from "./overlay.ts";
+import { type OverlayFrame, panelFrame, RowOverlay } from "./overlay.ts";
 
 export interface ConnectSeams {
   dismiss(): void;
@@ -18,7 +18,7 @@ export class ConnectOverlay extends RowOverlay {
   }
 
   frame(screen: Screen): OverlayFrame {
-    return helpFrame(screen, this.rowCount());
+    return panelFrame(screen, this.rowCount(), connectPanelWidth);
   }
 
   rowCount(): number {
@@ -43,3 +43,5 @@ export class ConnectOverlay extends RowOverlay {
 }
 
 const escapeChord = parseChord("escape");
+
+const connectPanelWidth = 96;

@@ -19,6 +19,7 @@ export interface ArcServiceOptions {
   workspaceSlug?: string | undefined;
   memory: () => WorkspaceMemory | undefined;
   boundSessionCounts: () => Promise<ReadonlyMap<string, number>>;
+  unavailable?: (() => string) | undefined;
   now?: () => Date;
 }
 
@@ -37,8 +38,7 @@ export interface ArcService {
   ): MemorySearcher;
 }
 
-export const arcsUnavailable =
-  "arcs need a trusted workspace with memory · send a prompt or run keywork init first";
+export const arcsUnavailable = "arcs need a trusted workspace with memory · /init sets one up";
 
 export function arcService(options: ArcServiceOptions): ArcService {
   const bindings = new ArcBindings();
@@ -63,14 +63,15 @@ export function arcService(options: ArcServiceOptions): ArcService {
     registries.set(vaultRoot, created);
     return created;
   };
+  const unavailable = (): Error => new Error(options.unavailable?.() ?? arcsUnavailable);
   const requireRegistry = (): ArcRegistry => {
     const found = registry();
-    if (found === undefined) throw new Error(arcsUnavailable);
+    if (found === undefined) throw unavailable();
     return found;
   };
   const airlock = (): ArcAirlock => {
     const memory = options.memory();
-    if (memory === undefined) throw new Error(arcsUnavailable);
+    if (memory === undefined) throw unavailable();
     return new ArcAirlock({
       registry: requireRegistry(),
       bindings,

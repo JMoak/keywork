@@ -178,7 +178,7 @@ class Repl {
 
   async close(): Promise<void> {
     await this.composition.mcp?.stop();
-    await sweepOnClose(this.composition.memory).catch((cause: unknown) => {
+    await sweepOnClose(this.composition.memory()).catch((cause: unknown) => {
       this.io.printError(`memory sweep failed: ${toError(cause).message}`);
     });
   }

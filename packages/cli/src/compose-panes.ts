@@ -11,18 +11,20 @@ import {
   suggestTitle,
   tapJournal,
 } from "@keywork/engine";
-import type { KeyworkConfig } from "@keywork/shared";
+import type { KeyworkConfig, TrustStore } from "@keywork/shared";
 import {
   type AfterTurn,
   type AgentFactory,
   type AppOptions,
   type Compactor,
   type ExtensionsPort,
+  readinessNotice,
   runApp,
   type WorkspacePort,
+  type WorkspaceSetupPort,
   type WorkspacesPort,
 } from "@keywork/tui";
-import { arcService } from "./arcs.ts";
+import { arcService, arcsUnavailable } from "./arcs.ts";
 import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
 import {
   type AgentComposition,
@@ -44,6 +46,7 @@ import {
   sessionTreePort,
 } from "./sessions/ports.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
+import { workspaceSetupPort } from "./workspace-setup.ts";
 import { type WorkspaceRecall, workspacesPort } from "./workspaces.ts";
 
 export interface PanesLaunch {
@@ -51,6 +54,7 @@ export interface PanesLaunch {
   projectTrusted: boolean;
   workspaceSlug: string | undefined;
   workspaceRecall: WorkspaceRecall;
+  trustStore: TrustStore;
   inference: LiveInference;
   presets: PresetSwitch;
   sessionDir?: string | undefined;
@@ -61,12 +65,15 @@ export interface PanesLaunch {
 export interface PanesSeams {
   createRenderer?: AppOptions["createRenderer"];
   exit?: (code: number) => void;
-  switchWorkspace?: (slug: string | undefined) => void;
+  reopen?: (slug: string | undefined) => void;
 }
 
 export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Promise<void> {
   const { cwd, projectTrusted, workspaceSlug } = launch;
-  let pendingSwitch: { slug: string | undefined } | undefined;
+  let pendingReopen: { slug: string | undefined } | undefined;
+  const requestReopen = (slug: string | undefined): void => {
+    pendingReopen = { slug };
+  };
   const app = await composePanes({
     cwd,
     projectTrusted,
@@ -82,9 +89,13 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
       cwd,
       current: workspaceSlug,
       recall: launch.workspaceRecall,
-      requestSwitch: (next) => {
-        pendingSwitch = { slug: next };
-      },
+      requestSwitch: requestReopen,
+    }),
+    workspaceSetup: workspaceSetupPort({
+      cwd,
+      workspaceSlug,
+      trustStore: launch.trustStore,
+      ...(seams.reopen !== undefined && { requestReopen: () => requestReopen(workspaceSlug) }),
     }),
   });
   const exit = seams.exit ?? ((code: number) => process.exit(code));
@@ -92,8 +103,8 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
     ...app,
     ...(seams.createRenderer !== undefined && { createRenderer: seams.createRenderer }),
     exit: (code) => {
-      if (pendingSwitch !== undefined && seams.switchWorkspace !== undefined) {
-        seams.switchWorkspace(pendingSwitch.slug);
+      if (pendingReopen !== undefined && seams.reopen !== undefined) {
+        seams.reopen(pendingReopen.slug);
       } else exit(code);
     },
   });
@@ -109,6 +120,7 @@ export interface PanesOptions {
   inference?: LiveInference | undefined;
   presets?: PresetSwitch | undefined;
   workspaces?: WorkspacesPort | undefined;
+  workspaceSetup?: WorkspaceSetupPort | undefined;
   modelOverride?: string | undefined;
   materialize?: DeferredMaterialization | undefined;
   userRoot?: string | undefined;
@@ -130,12 +142,15 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     reportCheckpointsUnavailable: options.reportCheckpointsUnavailable,
   });
   const { checkpoints, extensions, mcp, memory } = composition;
+  const setup = options.workspaceSetup;
   const arcs = arcService({
     cwd,
     trusted: projectTrusted,
     workspaceSlug,
-    memory: () => memory,
+    memory,
     boundSessionCounts: () => boundSessionCounts(options.sessionDir),
+    unavailable:
+      setup === undefined ? undefined : () => readinessNotice(setup.readiness()) ?? arcsUnavailable,
   });
   const agents = composeAgents(composition, { permissions: presets?.resolver, arcs });
   const stores = new Map<string, SessionStore>();
@@ -160,14 +175,15 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     arcs: arcs.port,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
-    closers: [() => sweepOnClose(memory), ...(mcp === undefined ? [] : [() => mcp.stop()])],
+    closers: [() => sweepOnClose(memory()), ...(mcp === undefined ? [] : [() => mcp.stop()])],
     extensions: extensionsView(extensions, cwd),
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
-    ...(memory !== undefined && { memory: memoryPanePort(memory) }),
+    ...(projectTrusted && { memory: memoryPanePort(memory) }),
     ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
     ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
+    ...(setup !== undefined && { workspaceSetup: setup }),
     ...(presets !== undefined && {
       presets: presetsPortFor(presets),
       statusLabel: () => presets.active(),

@@ -30,11 +30,11 @@ import type { ArcService } from "./arcs.ts";
 import { loadWorkspaceExtensions, type WorkspaceExtensions } from "./commands.ts";
 import {
   bootstrapInjection,
+  type MemoryAccess,
   memoryRecall,
-  openWorkspaceMemory,
   type SessionKey,
-  type WorkspaceMemory,
   withMemoryPrompt,
+  workspaceMemoryAccess,
 } from "./memory.ts";
 import { snapshotGitDir } from "./paths.ts";
 
@@ -56,7 +56,7 @@ export interface Composition {
   scope: ToolScope;
   systemPromptFor(modelId: string | undefined): string;
   standingInjections: readonly ContextInjection[];
-  memory: WorkspaceMemory | undefined;
+  memory: MemoryAccess;
   checkpoints: Checkpoints | undefined;
   extensions: WorkspaceExtensions;
   mcp: McpRegistry | undefined;
@@ -66,8 +66,8 @@ export interface Composition {
 export async function composeWorkspace(options: CompositionOptions): Promise<Composition> {
   const { cwd, projectTrusted, workspaceSlug } = options;
   const instructions = projectTrusted ? await loadProjectInstructions(cwd) : undefined;
-  const memory = openWorkspaceMemory(cwd, projectTrusted, workspaceSlug);
-  const bootstrap = await bootstrapInjection(memory);
+  const memory = workspaceMemoryAccess(cwd, projectTrusted, workspaceSlug);
+  const bootstrap = await bootstrapInjection(memory());
   const systemPromptFor = (modelId: string | undefined): string =>
     withMemoryPrompt(
       buildSystemPrompt({
@@ -138,11 +138,12 @@ export function composeAgents(
   return {
     build: (spec) => buildAgent(composition, options, spec),
     flushFor: (sessionId, provider) => {
-      if (composition.memory === undefined) return undefined;
+      const memory = composition.memory();
+      if (memory === undefined) return undefined;
       providers.set(sessionId, provider);
       const existing = flushes.get(sessionId);
       if (existing !== undefined) return existing;
-      const workspaceStore = composition.memory.store;
+      const workspaceStore = memory.store;
       const flush = new MemoryFlush({
         provider: followingProvider(() => providers.get(sessionId) ?? provider),
         store: workspaceStore,
@@ -214,7 +215,7 @@ function buildAgent(
   const baseTools = [
     ...coreTools(composition.scope, {
       memory: journalingRecall(
-        memoryRecall(composition.memory, spec.sessionId, spec.onRetrieval, options.arcs),
+        memoryRecall(composition.memory(), spec.sessionId, spec.onRetrieval, options.arcs),
         () => self,
       ),
       shell: spec.shell,

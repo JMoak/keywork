@@ -156,16 +156,14 @@ async function openCommandContext(
 
 async function runPanes(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
   const { openPanes } = await import("./compose-panes.ts");
-  const launch = await panesLaunch(context, {
-    sessionDir: values["session-dir"],
-    fresh: values.fresh,
-    model: values.model,
-  });
-  let slug = context.workspaceSlug;
+  let flags = { sessionDir: values["session-dir"], fresh: values.fresh, model: values.model };
+  let current = context;
   for (;;) {
-    slug = await runUntilSwitch((switchTo) =>
-      openPanes({ ...launch, workspaceSlug: slug }, { switchWorkspace: switchTo }),
+    const reopenWith = await runUntilSwitch(async (reopen) =>
+      openPanes(await panesLaunch(current, flags), { reopen }),
     );
+    current = await openCommandContext(current.io, reopenWith);
+    flags = { ...flags, fresh: false };
   }
 }
 
@@ -179,6 +177,7 @@ async function panesLaunch(
     projectTrusted: context.projectTrusted,
     workspaceSlug: context.workspaceSlug,
     workspaceRecall: context.workspaceRecall,
+    trustStore: context.trustStore,
     inference,
     presets: userPresetSwitch(inference.current().config.permissions),
     sessionDir: flags.sessionDir,

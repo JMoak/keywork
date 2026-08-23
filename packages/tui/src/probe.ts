@@ -28,6 +28,7 @@ export interface AppProbeOptions
       | "arcs"
       | "focusedArc"
       | "workspaces"
+      | "workspaceSetup"
       | "currentModel"
       | "switchModel"
       | "restoreWorkspace"

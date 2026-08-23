@@ -81,7 +81,7 @@ describe("memoryPanePort", () => {
 
   it("maps notes, staged writes, and review items into pane inputs", async () => {
     const { memory, seed } = await populatedMemory();
-    const inputs = await memoryPanePort(memory).load();
+    const inputs = await memoryPanePort(() => memory).load();
     expect(inputs.scopes).toEqual(["workspace"]);
     const curing = new Map(inputs.notes.map((note) => [note.title, note.curing]));
     expect(curing.get("User Fact")).toBe(3);
@@ -106,7 +106,7 @@ describe("memoryPanePort", () => {
 
   it("routes approve to the store for staged writes and reviews alike", async () => {
     const { memory, seed, reviewId } = await populatedMemory();
-    const port = memoryPanePort(memory);
+    const port = memoryPanePort(() => memory);
     const [stagedItem] = await seed.store.listStaged();
     await port.approve(stagedItem?.id ?? "");
     expect((await seed.store.listNotes()).map((note) => note.title)).toContain("Web Claim");
@@ -117,21 +117,21 @@ describe("memoryPanePort", () => {
   it("discard drops a staged item without landing it", async () => {
     const { memory, seed } = await populatedMemory();
     const [stagedItem] = await seed.store.listStaged();
-    await memoryPanePort(memory).discard(stagedItem?.id ?? "");
+    await memoryPanePort(() => memory).discard(stagedItem?.id ?? "");
     expect((await seed.store.listStaged()).map((item) => item.kind)).toEqual(["contradiction"]);
     expect((await seed.store.listNotes()).map((note) => note.title)).not.toContain("Web Claim");
   });
 
   it("approving an already-resolved review item raises the calm typed error", async () => {
     const { memory, reviewId } = await populatedMemory();
-    const port = memoryPanePort(memory);
+    const port = memoryPanePort(() => memory);
     await port.approve(reviewId);
     await expect(port.approve(reviewId)).rejects.toBeInstanceOf(StagedItemNotFoundError);
   });
 
   it("an untrusted vault loads as calm emptiness, never content", async () => {
     const { memory } = await populatedMemory(false);
-    expect(await memoryPanePort(memory).load()).toEqual({
+    expect(await memoryPanePort(() => memory).load()).toEqual({
       scopes: [],
       notes: [],
       inbox: [],

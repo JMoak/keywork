@@ -86,17 +86,34 @@ describe("composePanes", () => {
     await expect(app.compact?.(turn, "")).rejects.toThrow("no session store for this pane");
   });
 
-  it("opens the memory pane and a closing sweep once the workspace declares a vault", async () => {
+  it("offers the memory pane to every trusted workspace and loads the vault lazily", async () => {
     const root = await tempDir();
     const cwd = join(root, "workspace");
     await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
     await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "panes" }));
+    const untrusted = await composedIn(await tempDir(), { projectTrusted: false });
     const bare = await composedIn(await tempDir());
     const declared = await composedIn(root);
-    expect(bare.app.memory).toBeUndefined();
+    expect(untrusted.app.memory).toBeUndefined();
+    expect(await bare.app.memory?.load()).toEqual({
+      scopes: [],
+      notes: [],
+      inbox: [],
+      recalls: [],
+    });
+    expect((await declared.app.memory?.load())?.scopes).toEqual(["workspace"]);
     expect(bare.app.closers).toHaveLength(1);
-    expect(declared.app.memory).toBeDefined();
     expect(declared.app.closers).toHaveLength(1);
+  });
+
+  it("passes the workspace setup port through and phrases arc refusals from its readiness", async () => {
+    const workspaceSetup = {
+      readiness: () => ({ kind: "undecided" as const, root: "C:/play" }),
+      setUp: async () => ({ root: "C:/play", vault: "C:/play/.keywork/memory", reopens: true }),
+    };
+    const { app } = await composedIn(await tempDir(), { workspaceSetup });
+    expect(app.workspaceSetup).toBe(workspaceSetup);
+    await expect(app.arcs?.create("dock-v2")).rejects.toThrow("C:/play isn't trusted yet");
   });
 
   it("binds the preset switch as the presets port and the status label", async () => {

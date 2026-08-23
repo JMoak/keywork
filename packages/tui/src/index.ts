@@ -189,4 +189,11 @@ export {
   workspaceChoiceOf,
   workspacePickerOver,
 } from "./workspace-picker.ts";
+export {
+  readinessNotice,
+  setupPrompt,
+  type WorkspaceReadiness,
+  type WorkspaceSetupPort,
+  type WorkspaceSetupReceipt,
+} from "./workspace-setup.ts";
 export type { WorkspaceState } from "./workspace-state.ts";

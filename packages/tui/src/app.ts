@@ -65,6 +65,7 @@ import {
 } from "./view/frame.ts";
 import { overlayView } from "./view/overlays.ts";
 import type { WorkspacesPort } from "./workspace-picker.ts";
+import { readinessNotice, type WorkspaceSetupPort } from "./workspace-setup.ts";
 import type { WorkspaceState } from "./workspace-state.ts";
 
 export interface AppOptions {
@@ -90,6 +91,7 @@ export interface AppOptions {
   sessionTrees?: SessionTreePort;
   arcs?: ArcsPort;
   workspaces?: WorkspacesPort;
+  workspaceSetup?: WorkspaceSetupPort;
   memory?: MemoryPanePort;
   mcp?: McpPanePort;
   extensions?: ExtensionsPort;
@@ -211,6 +213,9 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   renderer.auto();
   core.bindNotify(render);
   core.start();
+  const readiness = options.workspaceSetup?.readiness();
+  const blocker = readiness === undefined ? undefined : readinessNotice(readiness);
+  if (blocker !== undefined) core.postNotice(blocker);
   if (restore.kind === "failed") {
     core.postNotice(`couldn't restore the last workspace · details in ${crashLogFile}`);
   }
@@ -276,6 +281,7 @@ function hostPorts(
       inference: options.inference,
       connections: options.connections,
       workspaces: options.workspaces,
+      workspaceSetup: options.workspaceSetup,
       arcs: options.arcs,
     }),
     ...(options.arcs !== undefined && { focusedArc: sessions.focusedArcPort() }),

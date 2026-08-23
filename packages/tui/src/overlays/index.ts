@@ -6,6 +6,7 @@ import type { HelpOverlay } from "./help.ts";
 import type { PaletteOverlay } from "./palette.ts";
 import type { PickerOverlay } from "./picker.ts";
 import type { PresetConfirmOverlay, PresetOverlay } from "./preset.ts";
+import type { SetupConfirmOverlay } from "./setup.ts";
 
 export type ModelOverlay = PickerOverlay<"model", ModelPickerRow>;
 export type ArcOverlay = PickerOverlay<"arc", ArcPickerRow>;
@@ -19,7 +20,8 @@ export type Overlay =
   | ModelOverlay
   | ArcOverlay
   | WorkspaceOverlay
-  | ConnectOverlay;
+  | ConnectOverlay
+  | SetupConfirmOverlay;
 
 export { ConnectOverlay } from "./connect.ts";
 export { HelpOverlay } from "./help.ts";
@@ -28,6 +30,7 @@ export {
   type OverlayFrame,
   type OverlayKind,
   paletteFrame,
+  panelFrame,
   pastedLine,
   RowOverlay,
   routeRows,
@@ -46,3 +49,4 @@ export {
   type PresetPicker,
   type PresetsPort,
 } from "./preset.ts";
+export { SetupConfirmOverlay, type SetupSeams } from "./setup.ts";

@@ -80,7 +80,7 @@ describe("composeWorkspace", () => {
     const cwd = await tempDir();
     const composition = await composedIn(cwd);
     expect(composition.cwd).toBe(cwd);
-    expect(composition.memory).toBeUndefined();
+    expect(composition.memory()).toBeUndefined();
     expect(composition.mcp).toBeUndefined();
     expect(composition.extensions).toEqual({ commands: [], agents: [], skills: [], failures: [] });
     expect(composition.systemPromptFor(undefined).length).toBeGreaterThan(0);
@@ -89,8 +89,18 @@ describe("composeWorkspace", () => {
   it("opens workspace memory when a trusted declaration exists", async () => {
     const cwd = await declaredWorkspace();
     const composition = await composedIn(cwd, { projectTrusted: true });
-    expect(composition.memory).toBeDefined();
-    expect(composition.memory?.store.trusted).toBe(true);
+    expect(composition.memory()).toBeDefined();
+    expect(composition.memory()?.store.trusted).toBe(true);
+  });
+
+  it("finds memory lazily once a trusted workspace materializes after composition", async () => {
+    const cwd = await tempDir();
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    expect(composition.memory()).toBeUndefined();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "late" }));
+    expect(composition.memory()?.store.trusted).toBe(true);
+    expect(composition.memory()).toBe(composition.memory());
   });
 
   it("opens no shadow git when checkpoints are off", async () => {

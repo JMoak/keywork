@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { editorHeaderRows } from "./connect-model.ts";
 import type {
   ConnectionsPort,
   ConnectionTarget,
   InferencePort,
   ModelChoice,
 } from "./inference-port.ts";
-import { helpFrame, paletteFrame } from "./overlays/index.ts";
+import { paletteFrame } from "./overlays/index.ts";
 import { AppProbe } from "./probe.ts";
 
 const choices: ModelChoice[] = [
@@ -178,18 +179,22 @@ describe("/connect", () => {
     expect(probe.snapshot().overlay).toBe("connect");
   });
 
-  it("keeps the draft on a click inside the editor and focuses the clicked field", () => {
+  it("keeps the draft on a click inside the editor and focuses the clicked field past the heading", () => {
     const { probe, model } = connectEditor();
     probe.keys("down", "down").type("x");
-    const frame = helpFrame(probe.screen, model.rowCount());
-    probe.click(frame.x + 2, frame.firstRowY);
+    const frame = probe.core.overlayFrame();
+    if (frame === undefined || model.stage.kind !== "editor") throw new Error("editor expected");
+    probe.click(frame.x + 2, frame.firstRowY + editorHeaderRows(model.stage));
     expect(probe.snapshot().overlay).toBe("connect");
     expect(model.stage.kind === "editor" && model.stage.field).toBe(0);
     expect(model.stage.kind === "editor" && model.stage.draft.apiKey).toBe("x");
   });
 
-  it("discards the editor on a click outside, like escape", () => {
-    const { probe } = connectEditor();
+  it("a click outside the editor walks back to the list like escape, and once more closes", () => {
+    const { probe, model } = connectEditor();
+    probe.click(0, 0);
+    expect(probe.snapshot().overlay).toBe("connect");
+    expect(model.stage.kind).toBe("targets");
     probe.click(0, 0);
     expect(probe.snapshot().overlay).toBeUndefined();
   });
@@ -198,7 +203,8 @@ describe("/connect", () => {
     const { probe } = probeWithInference();
     probe.command("connect");
     const model = probe.core.connectModel();
-    const frame = helpFrame(probe.screen, model?.rowCount() ?? 0);
+    const frame = probe.core.overlayFrame();
+    if (frame === undefined) throw new Error("overlay expected");
     probe.click(frame.x + 2, frame.firstRowY);
     expect(model?.stage.kind).toBe("editor");
     expect(probe.snapshot().overlay).toBe("connect");
