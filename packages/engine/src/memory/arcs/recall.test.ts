@@ -54,6 +54,27 @@ describe("the boosted arc stratum", () => {
     expect(outcome.hits[0]?.layer).toBe("arc");
   });
 
+  it("keeps superseded notes below every live hit after the strata merge", async () => {
+    const { recall, registry, workspace } = await fixture();
+    await workspace.writeNote({
+      title: "Old Dock Ratio",
+      body: "The dock ratio convention was 60/40.\n",
+      provenance: "agent",
+    });
+    await workspace.writeNote({
+      title: "Dock Ratio",
+      body: "The dock ratio convention is 50/50.\n",
+      provenance: "user",
+      supersedes: "Old Dock Ratio",
+    });
+    await registry.createArc("dock-v2");
+    await seedArcNote(registry, "dock-v2", "Dock Ratio Finding");
+    const outcome = await recall.searchAmbient("dock ratio convention", "dock-v2");
+    const titles = outcome.hits.map((hit) => hit.note.title);
+    expect(titles.at(-1)).toBe("Old Dock Ratio");
+    expect(titles.indexOf("Dock Ratio")).toBeLessThan(titles.indexOf("Old Dock Ratio"));
+  });
+
   it("never masks a workspace hit, however loud the arc stratum is", async () => {
     const { recall, registry, workspace } = await fixture();
     await workspace.writeNote({

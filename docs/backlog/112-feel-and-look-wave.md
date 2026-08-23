@@ -200,6 +200,82 @@ throughout. All `OWN`. The primitive is general (held panes), the arc pane is it
   206 files / 2823 + 1 skipped, native `bun test` 2823 / 0, `bun run e2e` 12/12 with goldens
   verified unchanged.
 
+### L6 · C72, the memory browser: skeleton + ledger lens (landed 2026-08-23)
+
+The J9 memory pane became the browser: three lenses over one list, switched in place, plus the
+question box. All `OWN`. Same pane kind, `/memory` and `leader m` unchanged; the descriptor
+grew `lens`, `note`, `query` and the workspace revives all three.
+
+- **Garden lens (default).** State line `5 notes · 3 curing · ░1 · 1 conflict · swept 1d` with
+  the `? ask` hint flush right (facts drop from the tail, whole facts at a time, so the hint
+  survives narrowing). Layers in the order the focused session sees them: its arc layer first
+  (header `#slug · n notes · airlock ░k` in the arc hue; arc-distillation / arc-question cards
+  render under it), then workspace (`workspace · n notes · inbox ░k`, inbox cards), then other
+  active arcs. A layer that injects shows **the prompt cut**: `in prompt · 127 of 4.1k tokens`
+  above the notes the bootstrap actually carries (in bootstrap order), `by search only` above
+  the rest (most useful first, superseded last and dim with `→ successor`). Rows
+  `curing provenance title · pinned · age · n×` (recalls since the last sweep). Curing is a
+  real ladder now (`curingStage` in `cli/memory.ts`): user-stated or pinned `█ settled`,
+  usefulness ≥ 0.5 `█`, recalled `▓ cured`, promoted-with-confidence `▒ curing`, raw `░ fresh`.
+  Keys: `enter` drill, `i` inbox, `g` notes, `a`/`d`, `o` open the note's file, `u` revert the
+  cursored note's newest write this run (C72-d), `tab`/`l` ledger, `?` ask, `r`.
+- **The question box (`?`, C72-b).** A toggle that replaces the state line with
+  `? dock▌ · lexical` (disclosure: `lexical`, `hybrid · <embeddings>`, `lexical · <embeddings>
+  down`), asking per keystroke (frame-coalesced, stale outcomes dropped) through the *same*
+  retrieval the agent gets: `MemorySearch`, or `ArcRecall.searchAmbient` when the focused
+  session is arc-bound. Each hit is two rows: the note row (arc-layer hits wear `#slug` in the
+  arc hue) and a why-line `lexical #1 · graph #3 · #dock-v2 ×2 · superseded` built from the new
+  per-leg `SearchHit.ranks`, the arc boost and the superseded floor. `enter` opens the note lens,
+  `esc` back keeps the question, `esc` again closes it. Decision taken here: the box *is* the
+  pane's filter (title weight ×3 makes a plain title query rank first), so there is no second
+  fuzzy-filter line; Jordan can overrule.
+- **Note lens (`enter`).** Every row hangs from a two-cell rail (PD18). Title `▓█ Dock Rule`,
+  fact strip `agent · cured · in prompt · pinned · 2d · recalled 7× · #slug`, relations strip
+  `supersedes X · superseded by Y · from #slug · delivered 3d ago`, the body through
+  `renderMarkdown` at the page measure (headings, bullets, code, fences), then the walkable
+  outline: `links out` (1–2 hops), `links in`, typed relations from the graph as `→ depends on`
+  / `← depends on` groups (mirrored pairs like supersedes / superseded by fold into one), and
+  `staged` cards that target the note (`a`/`d` there). The cursor walks body lines with a `▌`
+  rail mark instead of inversion (blank lines skipped); outline rows invert as usual. `esc`/`h`
+  back to the garden on the same note, `tab`/`l` ledger filtered to the note, `o` file, `u`
+  revert.
+- **Ledger lens (`tab`/`l`, C72-a v1).** One feed, newest first: this run's store ops (`create`
+  / `edit` / `approve` / `discard` / `revert` / `stage`, with the touched note names, revertable
+  by id) and the persisted `curation.md` audit (`gardener sweep · promoted 1, …`, `approved ·
+  note → X`, `arc X closed · …`). `u` on an op row reverts that entry (`reverted · the previous
+  text is back` / `couldn't revert · the file changed since that write`); audit rows explain
+  they can't. Filtered to a note when entered from the note lens; `esc` returns there.
+- **Seams.** `MemoryPanePort` gains `revert(ledgerId)` and `query(text, arc?)`; the CLI port
+  (`memoryPanePort(memory, arcs.registry)`) loads layers (workspace prompt budget + arc
+  stores), per-note `file`, `relations` (graph edges), `recalls` (`Gardener.recallsSinceSweep`),
+  `ledger` (`store.ledger()` + new `store.readAudit()` over `memory/audit.ts`), `gardener.sweptAt`
+  from the last sweep audit line. `MemoryPaneFactory` now receives intents, the focused session
+  and the revival; `app.ts` passes `focusedArc` and `arcOrdinal`. `markdown-ink.ts` holds the
+  span-to-ink mapping the conversation pane used to own. `RowPaint.selected?` lets a list paint
+  its own cursor.
+- **Engine.** `SearchHit.ranks` (1-based rank inside each leg that found the note); `ArcRecall`
+  re-applies the superseded floor after merging strata (the browser exposed this: a superseded
+  workspace note outranked its successor whenever an arc was bound; `recall.test` covers it);
+  `ArcRecall.boost` is public; `Gardener.recallsSinceSweep()`; `MemoryStore.readAudit()`.
+- **Evidence.** `memory-rows.test` (state line, prompt cut, focused-arc-first with airlock
+  cards, calm states, question rows with why-lines, note lens stack, mirrored relations, ledger
+  feed and filter), `memory-pane-model.test` (lens keys, question box typing and stale
+  outcomes, outline hop, ledger filter and back, `u`/`o` routing, persistence snapshot and
+  restore, cursor property over random ops), `memory-pane.test` (port routing, ask with focused
+  arc, revert notices, descriptor, revival, rail painting), `cli/memory.test` (layers and budget,
+  ledger + audit, recalls and relations, query ranks, revert), `workspace-state` memory
+  descriptor, engine `audit.test`, `search.test` ranks, `gardener.test`, `recall.test` floor.
+  New e2e `memory-browser` at 160×40 over a seeded vault (notes, MOC, daily, audit, a staged
+  write, a contradiction card, an active arc with a note): captures `garden`, `ask`, `note`,
+  `hop`, `hop-outline`, `ledger-revert`, `relaunched-note-lens`. Gate: `bun run check` clean,
+  vitest 207 files / 2839 + 1 skipped, native `bun test` 2839 / 0, `bun run e2e` 13/13 with
+  goldens verified unchanged.
+- **Left for the next pass.** C47 heat candidates through the C40 harness for Jordan's pick
+  (C72-c, explicitly after this skeleton); J13 recall / citation rows when those events get a
+  persisted home; arc-store staging (stragglers) is not shown yet; the airlock cards are still
+  cleared by `a`/`d` like any inbox card (J18's triage surface is the real home); `user` layer
+  is modelled (`MemoryLayerKind`) but no store feeds it.
+
 ## Scoping (options-first, per the 98/100 rules; nothing below is built)
 
 ### C70 · the arc pane · 3pt + 1pt captures · `OWN` (design final 2026-08-22, three rounds) · landed 2026-08-23 in two parts (L4 and L5 above)
@@ -290,7 +366,7 @@ tree or arcs node never gets shoved.
 - **Acceptance.** `layout.test`: pin/unpin ordering invariants, J/K within groups, arrival
   below pins, dock-cycle carry, restore; an e2e capture in `tiling-tour` showing the mark.
 
-### C72 · the memory browser · 3pt skeleton + 2pt ledger lens · `OWN`
+### C72 · the memory browser · 3pt skeleton + 2pt ledger lens · `OWN` · landed 2026-08-23 (L6 above; heat candidates still to come per C72-c)
 
 **Jordan's ask.** "Eventually we want to envision a memory browser/interactive element for
 understanding the state of the memory without directly reading the files … the best

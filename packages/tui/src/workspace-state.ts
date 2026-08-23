@@ -97,12 +97,29 @@ function parsePane(value: unknown): WorkspacePane | undefined {
       if (typeof value.arc !== "string" || value.arc === "") return undefined;
       return { id: value.id, kind: "arc", arc: value.arc };
     case "memory":
-      return { id: value.id, kind: "memory" };
+      return parseMemoryPane(value);
     case "mcp":
       return { id: value.id, kind: "mcp" };
     default:
       return undefined;
   }
+}
+
+function parseMemoryPane(value: Record<string, unknown>): WorkspacePane | undefined {
+  const id = value.id;
+  if (typeof id !== "string") return undefined;
+  const lens = value.lens;
+  if (lens !== undefined && lens !== "garden" && lens !== "note" && lens !== "ledger")
+    return undefined;
+  if (value.note !== undefined && typeof value.note !== "string") return undefined;
+  if (value.query !== undefined && typeof value.query !== "string") return undefined;
+  return {
+    id,
+    kind: "memory",
+    ...(lens !== undefined && { lens }),
+    ...(typeof value.note === "string" && { note: value.note }),
+    ...(typeof value.query === "string" && { query: value.query }),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

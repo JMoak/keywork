@@ -2049,12 +2049,12 @@ describe("memory pane", () => {
     };
     const port: MemoryPanePort = {
       load: async () => ({
-        scopes: ["workspace"],
+        layers: [{ id: "workspace", kind: "workspace" as const, label: "workspace" }],
         notes: [
           {
             name: "ratio-rule",
             title: "ratio-rule",
-            scope: "workspace",
+            layer: "workspace",
             provenance: "agent" as const,
             curing: 3 as const,
             links: [],
@@ -2062,7 +2062,7 @@ describe("memory pane", () => {
           },
         ],
         inbox: world.inbox,
-        recalls: [],
+        ledger: [],
         ...inputs,
       }),
       approve: async (id) => {
@@ -2155,7 +2155,7 @@ describe("memory pane", () => {
   });
 
   it("an empty vault renders the calm invitation, not a dashboard of zeros", async () => {
-    const { probe } = memoryProbe({ scopes: [], notes: [], inbox: [], recalls: [] });
+    const { probe } = memoryProbe({ layers: [], notes: [], inbox: [], ledger: [] });
     probe.command("memory");
     await probe.settled();
     const rows = memoryPane(probe).model.rows();

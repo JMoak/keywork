@@ -98,12 +98,12 @@ describe("pane content stays inside the chrome at every drawable size", () => {
     const pane = new MemoryPane("memory-1", () => {}, {
       load: async () => ({
         ...emptyMemoryInputs,
-        scopes: ["workspace"],
+        layers: [{ id: "workspace", kind: "workspace", label: "workspace" }],
         notes: [
           {
             name: longName,
             title: longName,
-            scope: "workspace",
+            layer: "workspace",
             provenance: "agent",
             curing: 3,
             links: [],

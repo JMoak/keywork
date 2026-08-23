@@ -128,6 +128,22 @@ describe("MemorySearch", () => {
     expect(outcome.hits[0]?.legs.sort()).toEqual(["lexical", "semantic"]);
   });
 
+  it("records each hit's rank within every leg that found it", async () => {
+    const store = await vault();
+    await seeded(store, [
+      { title: "Session garden", body: "the conversation curing garden" },
+      { title: "Session store", body: "JSONL conversation entries" },
+      { title: "Garden shed", body: "plant tools" },
+    ]);
+    const outcome = await new MemorySearch(store, countingPort()).search("conversation garden");
+    const ranks = new Map(outcome.hits.map((hit) => [hit.note.title, hit.ranks]));
+    expect(ranks.get("Session garden")).toEqual({ lexical: 1, semantic: 1 });
+    expect(ranks.get("Garden shed")?.lexical).toBeGreaterThan(1);
+    for (const hit of outcome.hits) {
+      expect(Object.keys(hit.ranks).sort()).toEqual([...hit.legs].sort());
+    }
+  });
+
   it("keeps lexical results and reports degradation when embedding fails", async () => {
     const store = await vault();
     await seeded(store, [{ title: "Dock ratio", body: "0.3 default" }]);

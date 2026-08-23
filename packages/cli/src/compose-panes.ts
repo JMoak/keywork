@@ -180,7 +180,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
-    ...(projectTrusted && { memory: memoryPanePort(memory) }),
+    ...(projectTrusted && { memory: memoryPanePort(memory, arcs.registry) }),
     ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
     ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
     ...(setup !== undefined && { workspaceSetup: setup }),

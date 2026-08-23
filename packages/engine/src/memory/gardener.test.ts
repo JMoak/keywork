@@ -336,6 +336,18 @@ describe("usefulness EMA", () => {
     expect((await spam.store.readNote("Hot note"))?.usefulness).toBe(0.3);
   });
 
+  it("totals recalls across sessions until the sweep folds them away", async () => {
+    const seed = await vault();
+    await seed.store.writeNote({ title: "Hot note", body: "lore\n", provenance: "agent" });
+    const g = gardener(seed.store).gardener;
+    g.recordRecall("Hot note", "session-1");
+    g.recordRecall("Hot note", "session-2");
+    g.recordRecall("Hot note", "session-2");
+    expect(g.recallsSinceSweep().get("Hot note")).toBe(3);
+    await g.sweep();
+    expect(g.recallsSinceSweep().size).toBe(0);
+  });
+
   it("rewards recalls spread across sessions and decays unrecalled notes", async () => {
     const { store } = await vault();
     await store.writeNote({

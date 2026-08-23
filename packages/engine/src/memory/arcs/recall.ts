@@ -6,6 +6,7 @@ import {
 } from "../bootstrap.ts";
 import type { Note } from "../notes.ts";
 import {
+  applySupersededFloor,
   type EmbeddingsPort,
   MemorySearch,
   type RetrievalSource,
@@ -34,10 +35,10 @@ export interface ArcRecallOptions {
 export const defaultArcBoost = 2;
 
 export class ArcRecall {
+  readonly boost: number;
   private readonly workspace: MemorySearch;
   private readonly registry: ArcRegistry;
   private readonly embeddings: EmbeddingsPort | undefined;
-  private readonly boost: number;
   private readonly arcSearches = new Map<string, MemorySearch>();
 
   constructor(options: ArcRecallOptions) {
@@ -59,7 +60,7 @@ export class ArcRecall {
     const stratum = await this.arcSearch(arc).search(query, options);
     const boosted = stratum.hits.map((hit) => taggedArc(hit, arc, this.boost));
     return {
-      hits: [...workspaceHits, ...boosted].sort((a, b) => b.score - a.score),
+      hits: applySupersededFloor([...workspaceHits, ...boosted].sort((a, b) => b.score - a.score)),
       workspaceSource: workspace.source,
       arcSource: stratum.source,
     };

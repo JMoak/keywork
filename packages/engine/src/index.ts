@@ -192,6 +192,7 @@ export {
   defaultPreferenceThreshold,
   toolShape,
 } from "./memory/ask-gate.ts";
+export { type AuditEntry, auditLine, parseAuditLog } from "./memory/audit.ts";
 export {
   type BootstrapInjection,
   type BootstrapLayer,
@@ -296,6 +297,7 @@ export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
 export type { NoteRelations } from "./memory/search.ts";
 export {
   type EmbeddingsPort,
+  type LegRanks,
   MemorySearch,
   type MemorySearcher,
   type RetrievalSource,

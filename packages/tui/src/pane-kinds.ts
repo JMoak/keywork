@@ -1,6 +1,6 @@
 import type { CommandRegistry } from "./commands.ts";
 import type { DockSide } from "./layout.ts";
-import type { FileOpenOptions, Pane, PaneDescriptor, PaneIntents } from "./pane.ts";
+import type { FileOpenOptions, MemoryLens, Pane, PaneDescriptor, PaneIntents } from "./pane.ts";
 
 export type PaneKind = PaneDescriptor["kind"];
 export type PaneHome = "main" | DockSide;
@@ -54,7 +54,18 @@ export type ArcPaneFactory = (
   targetSession: () => string | undefined,
   arc: string,
 ) => Pane;
-export type MemoryPaneFactory = (id: string, notify: () => void) => Pane;
+export interface MemoryPaneRevival {
+  lens?: MemoryLens;
+  note?: string;
+  query?: string;
+}
+export type MemoryPaneFactory = (
+  id: string,
+  notify: () => void,
+  intents: PaneIntents,
+  targetSession: () => string | undefined,
+  revival?: MemoryPaneRevival,
+) => Pane;
 export type McpPaneFactory = (id: string, notify: () => void) => Pane;
 
 export interface PaneFactories {
@@ -75,7 +86,7 @@ export type PaneRequest =
   | { kind: "session-tree"; sessionId?: string }
   | { kind: "arcs"; arc?: string }
   | { kind: "arc"; arc: string }
-  | { kind: "memory" }
+  | ({ kind: "memory" } & MemoryPaneRevival)
   | { kind: "mcp" };
 
 export interface PaneKindSpec {
@@ -171,7 +182,11 @@ export function buildPane(
         request.arc,
       );
     case "memory":
-      return factories.createMemoryPane?.(id, notify);
+      return factories.createMemoryPane?.(id, notify, seams.intents, seams.conversationSession, {
+        ...(request.lens !== undefined && { lens: request.lens }),
+        ...(request.note !== undefined && { note: request.note }),
+        ...(request.query !== undefined && { query: request.query }),
+      });
     case "mcp":
       return factories.createMcpPane?.(id, notify);
   }

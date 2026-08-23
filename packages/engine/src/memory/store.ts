@@ -1,4 +1,5 @@
 import { anchorFrontmatter, type CheckpointAnchor } from "./anchors.ts";
+import { type AuditEntry, auditLine, parseAuditLog } from "./audit.ts";
 import { type BootstrapSelection, mostUsefulFirst, selectWithinBudget } from "./bootstrap.ts";
 import { type Frontmatter, parseDocument, serializeDocument } from "./frontmatter.ts";
 import {
@@ -202,6 +203,12 @@ export class MemoryStore {
       await this.adoptLegacyInbox();
       return this.staging.list();
     });
+  }
+
+  async readAudit(): Promise<AuditEntry[]> {
+    if (!this.trusted) return [];
+    const raw = await this.files.read(auditFile);
+    return raw === null ? [] : parseAuditLog(raw);
   }
 
   async bootstrap(tokenBudget: number): Promise<BootstrapSelection> {
@@ -534,7 +541,7 @@ export class MemoryStore {
   }
 
   private async audit(event: string): Promise<void> {
-    const line = `- ${this.now().toISOString()} ${event}\n`;
+    const line = auditLine(this.now().toISOString(), event);
     const before = await this.files.read(auditFile);
     await this.apply(fileDelta(auditFile, before, `${before ?? ""}${line}`));
   }

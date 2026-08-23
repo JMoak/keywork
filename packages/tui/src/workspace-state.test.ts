@@ -149,6 +149,35 @@ describe("parseWorkspaceState", () => {
     expect(parseWorkspaceState({ version: 2, layout, panes: panes("") })).toBeUndefined();
   });
 
+  it("reads a memory pane's lens, note, and question, and refuses malformed ones", () => {
+    const layout = {
+      tree: { kind: "leaf", id: "session-1" },
+      docks: { left: { panes: ["memory-1"], ratio: 1 / 3 } },
+    };
+    const panes = (memory: Record<string, unknown>) => [
+      { id: "session-1", kind: "conversation" },
+      { id: "memory-1", kind: "memory", ...memory },
+    ];
+    const bare = parseWorkspaceState({ version: 2, layout, panes: panes({}) });
+    expect(bare?.panes[1]).toEqual({ id: "memory-1", kind: "memory" });
+    const lensed = parseWorkspaceState({
+      version: 2,
+      layout,
+      panes: panes({ lens: "note", note: "Dock Rule", query: "dock" }),
+    });
+    expect(lensed?.panes[1]).toEqual({
+      id: "memory-1",
+      kind: "memory",
+      lens: "note",
+      note: "Dock Rule",
+      query: "dock",
+    });
+    expect(
+      parseWorkspaceState({ version: 2, layout, panes: panes({ lens: "x" }) }),
+    ).toBeUndefined();
+    expect(parseWorkspaceState({ version: 2, layout, panes: panes({ note: 3 }) })).toBeUndefined();
+  });
+
   it("discards wholesale on unknown pane kinds, bad fields, or stray ids", () => {
     const withPane = (pane: unknown) => {
       const state = valid() as { panes: unknown[] };

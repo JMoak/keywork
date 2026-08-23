@@ -99,6 +99,14 @@ export class Gardener {
     this.recallsBySession.set(sessionId, session);
   }
 
+  recallsSinceSweep(): ReadonlyMap<string, number> {
+    const totals = new Map<string, number>();
+    for (const session of this.recallsBySession.values()) {
+      for (const [name, count] of session) totals.set(name, (totals.get(name) ?? 0) + count);
+    }
+    return totals;
+  }
+
   async sweep(options: SweepOptions = {}): Promise<SweepReport> {
     const report = emptyReport();
     if (!this.store.trusted) return { ...report, inert: true };

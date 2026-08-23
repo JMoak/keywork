@@ -8,6 +8,7 @@ import { discovery } from "./discovery.ts";
 import { firstConversation } from "./first-conversation.ts";
 import { livePlayground } from "./live-playground.ts";
 import { longSession } from "./long-session.ts";
+import { memoryBrowser } from "./memory-browser.ts";
 import { pageTiers } from "./page-tiers.ts";
 import { pointerTour } from "./pointer-tour.ts";
 import { sessionLifecycle } from "./session-lifecycle.ts";
@@ -23,6 +24,7 @@ export const scenarios: readonly Scenario[] = [
   longSession,
   arcsOnScreen,
   arcFold,
+  memoryBrowser,
   discovery,
   defectRepros,
   pointerTour,

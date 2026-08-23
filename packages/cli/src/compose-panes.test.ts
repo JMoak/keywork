@@ -96,12 +96,14 @@ describe("composePanes", () => {
     const declared = await composedIn(root);
     expect(untrusted.app.memory).toBeUndefined();
     expect(await bare.app.memory?.load()).toEqual({
-      scopes: [],
+      layers: [],
       notes: [],
       inbox: [],
-      recalls: [],
+      ledger: [],
     });
-    expect((await declared.app.memory?.load())?.scopes).toEqual(["workspace"]);
+    expect((await declared.app.memory?.load())?.layers.map((layer) => layer.id)).toEqual([
+      "workspace",
+    ]);
     expect(bare.app.closers).toHaveLength(1);
     expect(declared.app.closers).toHaveLength(1);
   });

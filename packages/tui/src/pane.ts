@@ -37,8 +37,10 @@ export type PaneDescriptor =
   | { kind: "session-tree"; sessionId?: string }
   | { kind: "arcs"; arc?: string }
   | { kind: "arc"; arc: string }
-  | { kind: "memory" }
+  | { kind: "memory"; lens?: MemoryLens; note?: string; query?: string }
   | { kind: "mcp" };
+
+export type MemoryLens = "garden" | "note" | "ledger";
 
 export interface Pane {
   readonly id: string;

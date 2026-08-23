@@ -114,16 +114,25 @@ export type {
   McpServerState,
   McpServerView,
 } from "./mcp-pane-model.ts";
-export { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+export { MemoryPane, type MemoryPaneOptions, type MemoryPanePort } from "./memory-pane.ts";
 export type {
   CuringStage,
   GardenerActivityView,
   InboxItemView,
   InboxKind,
+  LedgerEventView,
+  MemoryLayerKind,
+  MemoryLayerView,
+  MemoryLensState,
   MemoryNoteView,
   MemoryPaneInputs,
   MemoryProvenance,
-  RecallEventView,
+  MemoryQueryHit,
+  MemoryQueryOutcome,
+  NoteRelationView,
+  PromptBudgetView,
+  QueryLeg,
+  QuerySource,
 } from "./memory-pane-model.ts";
 export {
   Animator,

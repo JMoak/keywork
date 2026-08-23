@@ -82,10 +82,17 @@ describe("memoryPanePort", () => {
   it("maps notes, staged writes, and review items into pane inputs", async () => {
     const { memory, seed } = await populatedMemory();
     const inputs = await memoryPanePort(() => memory).load();
-    expect(inputs.scopes).toEqual(["workspace"]);
+    expect(inputs.layers).toEqual([
+      {
+        id: "workspace",
+        kind: "workspace",
+        label: "workspace",
+        prompt: { budget: 4096, used: 0 },
+      },
+    ]);
     const curing = new Map(inputs.notes.map((note) => [note.title, note.curing]));
     expect(curing.get("User Fact")).toBe(3);
-    expect(curing.get("Fresh Guess")).toBe(1);
+    expect(curing.get("Fresh Guess")).toBe(0);
     expect(curing.get("Proven Rule")).toBe(3);
     const staged = inputs.inbox.filter((item) => item.kind === "staged");
     const [stagedItem] = await seed.store.listStaged();
@@ -97,11 +104,78 @@ describe("memoryPanePort", () => {
         provenance: "untrusted",
         created: stagedItem?.created,
         detail: "note",
+        note: "Web Claim",
       },
     ]);
     const contradiction = inputs.inbox.find((item) => item.kind === "contradiction");
     expect(contradiction?.title).toBe("User Fact vs Fresh Guess");
     expect(contradiction?.provenance).toBe("agent");
+    const fact = inputs.notes.find((note) => note.title === "User Fact");
+    expect(fact?.file).toBe(join(memory.vaultRoot, "User Fact.md"));
+    expect(fact?.body).toBe("typed by hand\n");
+  });
+
+  it("marks the notes the prompt carries, in bootstrap order, and shows the budget used", async () => {
+    const { memory, seed } = await populatedMemory();
+    await seed.store.writeMoc(["Proven Rule", "User Fact"], "user");
+    const inputs = await memoryPanePort(() => memory).load();
+    const injected = inputs.notes.filter((note) => note.injected).map((note) => note.title);
+    expect(injected).toEqual(["Proven Rule", "User Fact"]);
+    expect(inputs.notes.slice(0, 2).map((note) => note.title)).toEqual(injected);
+    expect(inputs.layers[0]?.prompt?.used).toBeGreaterThan(0);
+  });
+
+  it("feeds this run's ledger ops and the persisted audit into one event list", async () => {
+    const { memory, seed } = await populatedMemory();
+    await seed.store.recordAudit("gardener sweep: promoted 1, merged 0");
+    const inputs = await memoryPanePort(() => memory).load();
+    const verbs = inputs.ledger.map((event) => `${event.verb} ${event.subject}`);
+    expect(verbs).toContain("create User Fact");
+    expect(verbs).toContain("stage staged item");
+    expect(verbs).toContain("gardener sweep promoted 1, merged 0");
+    expect(inputs.ledger.find((event) => event.subject === "User Fact")?.notes).toEqual([
+      "User Fact",
+    ]);
+    expect(inputs.gardener?.sweptAt).toBeDefined();
+  });
+
+  it("counts recalls since the last sweep and exposes typed relations", async () => {
+    const { memory, seed } = await populatedMemory();
+    await seed.store.writeNote({
+      title: "Layout",
+      body: "see [[User Fact]]\n",
+      provenance: "agent",
+    });
+    memory.gardener.recordRecall("User Fact", "session-1");
+    memory.gardener.recordRecall("User Fact", "session-2");
+    const inputs = await memoryPanePort(() => memory).load();
+    const fact = inputs.notes.find((note) => note.title === "User Fact");
+    expect(fact?.recalls).toBe(2);
+    expect(fact?.relations).toEqual([{ name: "Layout", predicate: "relates_to", direction: "in" }]);
+  });
+
+  it("answers questions the way the agent's search would, with per-leg ranks", async () => {
+    const { memory } = await populatedMemory();
+    const outcome = await memoryPanePort(() => memory).query?.("recalled often");
+    expect(outcome?.source).toBe("lexical");
+    expect(outcome?.hits[0]).toEqual({
+      note: "Proven Rule",
+      layer: "workspace",
+      ranks: { lexical: 1 },
+      superseded: false,
+    });
+  });
+
+  it("reverts a ledger op through the store", async () => {
+    const { memory, seed } = await populatedMemory();
+    const result = await seed.store.writeNote({
+      title: "User Fact",
+      body: "revised\n",
+      provenance: "user",
+    });
+    const port = memoryPanePort(() => memory);
+    expect(await port.revert?.(result.ledgerId)).toBe("reverted");
+    expect((await seed.store.readNote("User Fact"))?.body).toBe("typed by hand\n");
   });
 
   it("routes approve to the store for staged writes and reviews alike", async () => {
@@ -132,10 +206,10 @@ describe("memoryPanePort", () => {
   it("an untrusted vault loads as calm emptiness, never content", async () => {
     const { memory } = await populatedMemory(false);
     expect(await memoryPanePort(() => memory).load()).toEqual({
-      scopes: [],
+      layers: [],
       notes: [],
       inbox: [],
-      recalls: [],
+      ledger: [],
     });
   });
 });

@@ -13,6 +13,7 @@ export type RowTone = "dim" | "normal" | "heading" | "alert";
 export interface RowPaint<Row> {
   text(row: Row): string;
   line(row: Row): PaneChild;
+  selected?(row: Row): PaneChild | undefined;
   empty?: string;
 }
 
@@ -77,9 +78,10 @@ export function rowsView<Row>(
   if (visible.length === 0) {
     return paint.empty === undefined ? [] : [paneLine(paint.empty, theme.textDim, width)];
   }
-  return visible.map(({ row, selected }) =>
-    selected ? selectedLine(paint.text(row), theme, width) : paint.line(row),
-  );
+  return visible.map(({ row, selected }) => {
+    if (!selected) return paint.line(row);
+    return paint.selected?.(row) ?? selectedLine(paint.text(row), theme, width);
+  });
 }
 
 export function selectedLine(content: string, theme: Theme, width: number): PaneChild {

@@ -17,10 +17,13 @@ export interface NoteRelations {
   contradicts: string[];
 }
 
+export type LegRanks = Partial<Record<SearchLeg, number>>;
+
 export interface SearchHit {
   note: Note;
   score: number;
   legs: SearchLeg[];
+  ranks: LegRanks;
   superseded: boolean;
   relations: NoteRelations;
 }
@@ -205,11 +208,15 @@ function fuseRankings(rankings: RankedNote[][]): FusedHit[] {
         note: entry.note,
         score: 0,
         legs: [],
+        ranks: {},
         superseded: entry.note.supersededBy !== undefined,
       };
       hit.score += 1 / (rrfK + rank + 1);
       const leg = legNames[legIndex];
-      if (leg !== undefined && !hit.legs.includes(leg)) hit.legs.push(leg);
+      if (leg !== undefined && !hit.legs.includes(leg)) {
+        hit.legs.push(leg);
+        hit.ranks[leg] = rank + 1;
+      }
       byPath.set(entry.note.path, hit);
     });
   });
@@ -227,7 +234,7 @@ function withRelations(hit: FusedHit, graph: MemoryGraph): SearchHit {
   };
 }
 
-function applySupersededFloor(hits: FusedHit[]): FusedHit[] {
+export function applySupersededFloor<Hit extends { superseded: boolean }>(hits: Hit[]): Hit[] {
   return [...hits.filter((hit) => !hit.superseded), ...hits.filter((hit) => hit.superseded)];
 }
 

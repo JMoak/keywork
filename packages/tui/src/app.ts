@@ -273,7 +273,13 @@ function paneFactories(
           }),
       }),
     ...(memory !== undefined && {
-      createMemoryPane: (id: string, notify: () => void) => new MemoryPane(id, notify, memory),
+      createMemoryPane: (id, notify, intents, _targetSession, revival) =>
+        new MemoryPane(id, notify, memory, {
+          intents,
+          focusedArc: () => sessions.focused()?.pane.arc,
+          arcOrdinal: arcIndex.ordinalOf,
+          ...(revival !== undefined && { revival: { lens: "garden", ...revival } }),
+        }),
     }),
     ...(mcp !== undefined && {
       createMcpPane: (id: string, notify: () => void) => new McpPane(id, notify, mcp),
