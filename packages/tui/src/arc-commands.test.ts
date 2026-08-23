@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { FocusedArcPort } from "./arc-commands.ts";
 import type { ArcCloseOutcome, ArcSummary, ArcsPort } from "./arcs.ts";
-import { AppProbe } from "./probe.ts";
+import type { Pane, PaneDescriptor } from "./pane.ts";
+import { AppProbe, type AppProbeOptions } from "./probe.ts";
 
 interface ArcWorld {
   arcs: ArcSummary[];
@@ -189,6 +190,100 @@ describe("/arc command grammar", () => {
     probe.keys("escape");
     expect(probe.core.arcPicker()).toBeUndefined();
     expect(world.bound).toEqual([]);
+  });
+});
+
+describe("arc panes", () => {
+  function stubPane(id: string, describe?: () => PaneDescriptor): Pane {
+    return {
+      id,
+      title: () => ` ${id} `,
+      ...(describe !== undefined && { describe }),
+      view: () => {
+        throw new Error("never rendered");
+      },
+    };
+  }
+
+  function arcPaneProbe(world: ArcWorld, extra: Partial<AppProbeOptions> = {}): AppProbe {
+    return new AppProbe({
+      ...portsOver(world),
+      createArcsPane: (id) => stubPane(id, () => ({ kind: "arcs" })),
+      createArcPane: (id, _notify, _intents, _target, arc) =>
+        stubPane(id, () => ({ kind: "arc", arc })),
+      ...extra,
+    });
+  }
+
+  function dockOf(probe: AppProbe, id: string) {
+    return probe.snapshot().panes.find((pane) => pane.id === id)?.dock;
+  }
+
+  it("/arc open docks a pane for a known arc to the right and focuses an existing one after", async () => {
+    const world = worldOf();
+    const probe = arcPaneProbe(world);
+    probe.command("arc open dock-v2");
+    await flush();
+    expect(dockOf(probe, "arc-1")).toBe("right");
+    expect(probe.snapshot().focused).toBe("arc-1");
+    expect(probe.core.panes.get("arc-1")?.describe?.()).toEqual({ kind: "arc", arc: "dock-v2" });
+    probe.core.focusPane("session-1");
+    probe.command("arc open dock-v2");
+    await flush();
+    expect(probe.snapshot().panes.filter((pane) => pane.id.startsWith("arc-"))).toHaveLength(1);
+    expect(probe.snapshot().focused).toBe("arc-1");
+  });
+
+  it("/arc open refuses unknown arcs, and without a slug opens the focused session's arc", async () => {
+    const world = worldOf();
+    const probe = arcPaneProbe(world);
+    probe.command("arc open ghost");
+    await flush();
+    expect(probe.snapshot().notice).toBe("no arc named ghost · /arc new ghost creates it");
+    probe.command("arc open");
+    await flush();
+    expect(probe.snapshot().notice).toBe("no arc here · /arc open <slug> names one");
+    world.current = "dock-v2";
+    probe.command("arc open");
+    await flush();
+    expect(dockOf(probe, "arc-1")).toBe("right");
+  });
+
+  it("an arc pane joins a dock that already exists instead of opening a new column", async () => {
+    const world = worldOf();
+    const probe = arcPaneProbe(world);
+    probe.command("split");
+    probe.command("dock-left");
+    probe.command("arc open dock-v2");
+    await flush();
+    expect(dockOf(probe, "arc-1")).toBe("left");
+    expect(probe.core.layout.dock("right")).toBeUndefined();
+  });
+
+  it("arc panes land beside a docked arcs node and introduction never steals focus", async () => {
+    const world = worldOf();
+    const probe = arcPaneProbe(world);
+    probe.command("arcs");
+    probe.core.focusPane("session-1");
+    probe.core.introduceArcPane("dock-v2");
+    expect(dockOf(probe, "arcs-1")).toBe("left");
+    expect(dockOf(probe, "arc-1")).toBe("left");
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.core.introduceArcPane("dock-v2");
+    expect(probe.snapshot().panes.filter((pane) => pane.id.startsWith("arc-"))).toHaveLength(1);
+  });
+
+  it("an arc pane takes half a dock slot and survives a restore", async () => {
+    const world = worldOf();
+    const probe = arcPaneProbe(world);
+    probe.command("split");
+    probe.command("dock-right");
+    probe.command("arc open dock-v2");
+    await flush();
+    expect([probe.rect("session-2").height, probe.rect("arc-1").height]).toEqual([27, 13]);
+    const restored = arcPaneProbe(world, { restoreWorkspace: probe.workspaceState() });
+    expect(restored.core.panes.get("arc-1")?.describe?.()).toEqual({ kind: "arc", arc: "dock-v2" });
+    expect(dockOf(restored, "arc-1")).toBe("right");
   });
 });
 

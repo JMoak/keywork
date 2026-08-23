@@ -47,6 +47,7 @@ import type { FileOpenOptions, Pane, PaneDescriptor, PaneIntents } from "./pane.
 import {
   type ArcOrigin,
   buildPane,
+  dockWeightOf,
   type PaneFactories,
   PaneIds,
   type PaneOrigin,
@@ -119,7 +120,7 @@ export interface AppSnapshot {
 }
 
 export class AppCore implements ActionTarget {
-  readonly layout = new Layout();
+  readonly layout = new Layout({ dockWeight: dockWeightOf });
   readonly keymap = new Keymap({ leader: "ctrl+k", bindings: appBindings });
   readonly registry = new CommandRegistry();
   readonly panes = new Map<string, Pane>();
@@ -274,6 +275,19 @@ export class AppCore implements ActionTarget {
     else this.place(summonRequests[kind]);
   }
 
+  openArcPane(slug: string): void {
+    const existing = this.arcPaneFor(slug);
+    if (existing !== undefined) this.focusPane(existing);
+    else this.placeArcPane(slug);
+  }
+
+  introduceArcPane(slug: string): void {
+    if (this.arcPaneFor(slug) !== undefined) return;
+    const focused = this.layout.focused();
+    this.placeArcPane(slug);
+    if (focused !== undefined) this.layout.focus(focused);
+  }
+
   openPath(path: string): void {
     if (this.pointsAtDirectory(path)) this.openBrowser(path);
     else this.openFile(path);
@@ -415,6 +429,7 @@ export class AppCore implements ActionTarget {
       arcs,
       focusedArc: this.options.focusedArc,
       notice: (text) => this.postNotice(text),
+      openArcPane: (slug) => this.openArcPane(slug),
       showPicker: (picker) => {
         this.overlay = new PickerOverlay("arc", picker, {
           ...this.overlaySeams,
@@ -707,6 +722,27 @@ export class AppCore implements ActionTarget {
     return (
       this.options.createBrowserPane !== undefined && this.options.isDirectory?.(path) === true
     );
+  }
+
+  private arcPaneFor(slug: string): string | undefined {
+    for (const [id, pane] of this.panes) {
+      const descriptor = pane.describe?.();
+      if (descriptor?.kind === "arc" && descriptor.arc === slug) return id;
+    }
+    return undefined;
+  }
+
+  private placeArcPane(slug: string): void {
+    const dock = this.dockForArcPane();
+    if (this.place({ kind: "arc", arc: slug }) === undefined) return;
+    if (dock !== undefined) this.layout.dockFocused(dock, this.screen());
+  }
+
+  private dockForArcPane(): DockSide | undefined {
+    const arcsNode = [...this.panes.keys()].find((id) => paneKindOf(id) === "arcs");
+    const besideArcsNode = arcsNode === undefined ? undefined : this.layout.dockSideOf(arcsNode);
+    if (besideArcsNode !== undefined) return besideArcsNode;
+    return (["left", "right"] as const).find((side) => this.layout.dock(side) !== undefined);
   }
 
   private focusMainArea(): void {

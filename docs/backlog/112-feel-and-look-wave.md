@@ -116,9 +116,45 @@ Built to the C71 design below and the decisions ledger (all `OWN`).
   vitest 205 files / 2787 + 1 skipped, native `bun test` 2787 / 0 (one shell-session timing
   flake under full load, green in isolation), `bun run e2e` 11/11.
 
+### L4 · C70 part 1, the arc pane as a docked node (landed 2026-08-23)
+
+The first half of the C70 design below: the pane, its rows, its arrival and its slot. The
+fold primitive (`space` / `a`, held members, the "folded and waiting" row) is part 2 and is not
+built. All `OWN`.
+
+- **Pane kind `arc`** (`arc-pane.ts`, `PaneDescriptor { kind: "arc"; arc }`, id prefix `arc-`,
+  factory `createArcPane`): title `#slug · n sessions`, body = the arc's member sessions as
+  rows **in creation order** (`SessionOverviewItem.createdAt` from the CLI port,
+  `SessionsOverviewModel` seam `order: "created"`), each `stamp title · state word · age` where
+  the stamp is the liveness mark and the word is `working` / `idle` / `closed` (busy / open in a
+  pane / no pane). `enter` focuses an open member or attaches and opens a closed one (the
+  shared `focusOrOpenSession`, which the arcs node and the session tree now use too); `r`
+  refreshes; `/` opens the tray; escape is not a way out, an arc pane stays an arc pane.
+  Refreshes ride the session feed; persisted as `{ kind: "arc", arc }` and restored by slug.
+- **Half-height slot.** `PaneKindSpec.dockWeight` (arc pane `0.5`); `Layout({ dockWeight })`
+  feeds `dockSlotRects`, which shares a dock's rows by weight and falls back to even slots the
+  moment a weighted slot would drop under the minimum height; drop previews use the same
+  geometry. Pins and weights compose.
+- **Arrival.** `/arc open [slug]` opens (or focuses) the arc's pane; the **first arc a workspace
+  ever lists** introduces its pane without stealing focus (`firstArcIntroducer` over the arc
+  index's listings: 0 → 1 arcs, once). Where it lands: beside the arcs node if one is docked,
+  else in a dock that already exists (left first), else right. The "else right" in the design
+  below was refined after the e2e showed a new third-of-screen dock column evicting panes; a
+  small node joins an existing column.
+- **Evidence.** `arc-pane.test` (order, state words, enter focus/open, tray, feed refresh,
+  dispose, empty title), `arc-commands.test` "arc panes" (`/arc open` docks and focuses,
+  refusals, joins an existing dock, beside the arcs node, introduction keeps focus, half slot
+  27 / 13, restore), `arc-index.test` (`firstArcIntroducer`), `layout.test` "Layout dock
+  weights" (27 / 13 rows, honest drop preview, even fallback), `layout-scene.test`
+  (`dockSlotRects`), `workspace-state.test` (arc descriptor), `pane-kinds.test` (factory table);
+  e2e `arcs` extended (first arc introduces its pane into the tree's dock with the state word,
+  second arc does not, `/arc open arc-2` lands beside the arcs node; captures `arc-bound`,
+  `split-new-arc`, `arc-pane-opened`). Gate: `bun run check` clean, vitest 206 files / 2806 + 1
+  skipped, native `bun test` 2806 / 0, `bun run e2e` 11/11 with goldens verified unchanged.
+
 ## Scoping (options-first, per the 98/100 rules; nothing below is built)
 
-### C70 · the arc pane · 3pt + 1pt captures · `OWN` (design final 2026-08-22, three rounds)
+### C70 · the arc pane · 3pt + 1pt captures · `OWN` (design final 2026-08-22, three rounds) · part 1 landed 2026-08-23 (L4 above), part 2 = fold / unfold, open
 
 **Jordan's ask.** "A 'cycle Arc' key in the navigation that's not a high priority key that
 fits. That would move all sessions as a grouped sick looking entity that keeps their

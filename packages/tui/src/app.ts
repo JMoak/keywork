@@ -8,7 +8,8 @@ import {
   type PasteEvent,
 } from "@opentui/core";
 import { AppCore, type AppCoreOptions } from "./app-core.ts";
-import { arcIndexOf } from "./arc-index.ts";
+import { arcIndexOf, firstArcIntroducer } from "./arc-index.ts";
+import { ArcPane } from "./arc-pane.ts";
 import type { ArcsPort } from "./arcs.ts";
 import { ArcsPane } from "./arcs-pane.ts";
 import { BrowserPane } from "./browser-pane.ts";
@@ -110,7 +111,11 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const frames = new FrameCoalescer(microtaskFrame, () => paint());
   const render = (): void => frames.request();
   const animator = new Animator({ onFrame: render });
-  const arcIndex = arcIndexOf(options.arcs, render);
+  const introduceFirstArc = firstArcIntroducer((slug) => core.introduceArcPane(slug));
+  const arcIndex = arcIndexOf(options.arcs, (listed) => {
+    introduceFirstArc(listed);
+    render();
+  });
   const paneSessions = paneSessionIndex(options.sessions);
   const trees =
     options.sessionTrees === undefined
@@ -257,6 +262,13 @@ function paneFactories(
             presence: paneSessions,
             arcOrdinal: arcIndex.ordinalOf,
             ...(arc !== undefined && { drilled: { kind: "arc", slug: arc } }),
+          }),
+        createArcPane: (id, notify, intents, targetSession, slug) =>
+          new ArcPane(id, notify, intents, {
+            slug,
+            sessions: trees,
+            currentSession: targetSession,
+            presence: paneSessions,
           }),
       }),
     ...(memory !== undefined && {

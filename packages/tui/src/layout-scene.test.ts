@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dockedAt, emptyArrangement, withDockRatio, withTree } from "./layout-arrangement.ts";
-import { holds, regionsOf, sceneOf, sceneRects, stackSlotRect } from "./layout-scene.ts";
+import { dockSlotRects, holds, regionsOf, sceneOf, sceneRects } from "./layout-scene.ts";
 import { type LayoutNode, leaf, minPaneSize } from "./layout-tree.ts";
 
 const pair: LayoutNode = {
@@ -32,9 +32,25 @@ describe("regions", () => {
 
   it("stacks dock slots with the spare rows going to the first slots", () => {
     const rect = { x: 0, y: 0, width: 10, height: 7 };
-    expect(stackSlotRect(rect, 3, 0)).toEqual({ x: 0, y: 0, width: 10, height: 3 });
-    expect(stackSlotRect(rect, 3, 1)).toEqual({ x: 0, y: 3, width: 10, height: 2 });
-    expect(stackSlotRect(rect, 3, 2)).toEqual({ x: 0, y: 5, width: 10, height: 2 });
+    expect(dockSlotRects(rect, [1, 1, 1])).toEqual([
+      { x: 0, y: 0, width: 10, height: 3 },
+      { x: 0, y: 3, width: 10, height: 2 },
+      { x: 0, y: 5, width: 10, height: 2 },
+    ]);
+  });
+
+  it("gives a half-weight slot half the rows of a full one when every slot still fits", () => {
+    const rect = { x: 0, y: 0, width: 10, height: 30 };
+    expect(dockSlotRects(rect, [0.5, 1]).map((slot) => slot.height)).toEqual([10, 20]);
+    expect(dockSlotRects(rect, [1, 0.5, 1]).map((slot) => slot.height)).toEqual([12, 6, 12]);
+  });
+
+  it("falls back to even slots when a weighted slot would drop under the minimum height", () => {
+    const tight = { x: 0, y: 0, width: 10, height: minPaneSize.height * 2 };
+    expect(dockSlotRects(tight, [0.5, 1]).map((slot) => slot.height)).toEqual([
+      minPaneSize.height,
+      minPaneSize.height,
+    ]);
   });
 });
 

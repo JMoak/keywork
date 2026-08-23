@@ -122,6 +122,21 @@ describe("parseWorkspaceState", () => {
     expect(state?.layout.docks?.left).toBeUndefined();
   });
 
+  it("reads an arc pane by its slug and refuses one without a slug", () => {
+    const layout = {
+      tree: { kind: "leaf", id: "session-1" },
+      docks: { right: { panes: ["arc-1"], ratio: 1 / 3 } },
+    };
+    const panes = (arc: unknown) => [
+      { id: "session-1", kind: "conversation" },
+      { id: "arc-1", kind: "arc", ...(arc !== undefined && { arc }) },
+    ];
+    const state = parseWorkspaceState({ version: 2, layout, panes: panes("dock-v2") });
+    expect(state?.panes[1]).toEqual({ id: "arc-1", kind: "arc", arc: "dock-v2" });
+    expect(parseWorkspaceState({ version: 2, layout, panes: panes(undefined) })).toBeUndefined();
+    expect(parseWorkspaceState({ version: 2, layout, panes: panes("") })).toBeUndefined();
+  });
+
   it("discards wholesale on unknown pane kinds, bad fields, or stray ids", () => {
     const withPane = (pane: unknown) => {
       const state = valid() as { panes: unknown[] };

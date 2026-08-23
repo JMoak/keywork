@@ -25,7 +25,15 @@ interface RecordedIntents {
 }
 
 function itemOf(id: string, modifiedAt = 0): SessionOverviewItem {
-  return { id, title: `title-${id}`, modifiedAt, entryCount: 2, branchCount: 0, labelCount: 0 };
+  return {
+    id,
+    title: `title-${id}`,
+    createdAt: modifiedAt,
+    modifiedAt,
+    entryCount: 2,
+    branchCount: 0,
+    labelCount: 0,
+  };
 }
 
 function worldOf(...sessionIds: string[]): TreeWorld {

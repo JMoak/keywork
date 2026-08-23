@@ -462,6 +462,48 @@ describe("Layout pins", () => {
   });
 });
 
+describe("Layout dock weights", () => {
+  function weighted(): Layout {
+    const layout = new Layout({ dockWeight: (id) => (id.startsWith("half") ? 0.5 : 1) });
+    for (const id of ["main", "full", "half"]) expect(layout.open(id, screen)).toBe(true);
+    for (const id of ["full", "half"]) {
+      layout.focus(id);
+      layout.dockFocused("left", screen);
+    }
+    return layout;
+  }
+
+  it("gives a half-weight pane half the rows of a full one in the same dock", () => {
+    const layout = weighted();
+    const rects = layout.rects(screen);
+    expect(rects.get("full")?.height).toBe(27);
+    expect(rects.get("half")?.height).toBe(13);
+    expect(rects.get("half")?.y).toBe(27);
+    assertExactTiling(layout);
+  });
+
+  it("previews a drop into a weighted dock at the slot the pane will really take", () => {
+    const layout = weighted();
+    layout.focus("main");
+    expect(layout.open("second", screen)).toBe(true);
+    const region = layout.rects(screen).get("full") as Rect;
+    const target = layout.dropTargetAt("second", region.x, region.y + region.height - 1, screen);
+    expect(target?.kind).toBe("dock");
+    if (target?.kind !== "dock") return;
+    expect(layout.applyDrop("second", target, screen)).toBe(true);
+    expect(layout.rects(screen).get("second")).toEqual(target.rect);
+    assertExactTiling(layout);
+  });
+
+  it("keeps every dock slot at the minimum height by evening out weights when space is short", () => {
+    const layout = weighted();
+    const tight: Screen = { width: 60, height: 8 };
+    const rects = layout.rects(tight);
+    expect(rects.get("full")?.height).toBe(rects.get("half")?.height);
+    assertExactTiling(layout, tight);
+  });
+});
+
 describe("Layout cycle", () => {
   it("cycles the focused pane main → left → right → main", () => {
     const layout = layoutWith("a", "b");

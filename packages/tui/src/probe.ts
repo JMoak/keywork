@@ -18,6 +18,7 @@ export interface AppProbeOptions
       | "createBrowserPane"
       | "createSessionTreePane"
       | "createArcsPane"
+      | "createArcPane"
       | "createMemoryPane"
       | "createMcpPane"
       | "isDirectory"

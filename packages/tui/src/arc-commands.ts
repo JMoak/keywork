@@ -12,6 +12,7 @@ export interface ArcCommandSeams {
   focusedArc: FocusedArcPort | undefined;
   notice(text: string): void;
   showPicker(picker: ArcPicker): void;
+  openArcPane(slug: string): void;
 }
 
 export function runArcCommand(seams: ArcCommandSeams, argument: string): Promise<void> {
@@ -21,6 +22,8 @@ export function runArcCommand(seams: ArcCommandSeams, argument: string): Promise
       return showArcPicker(seams);
     case "new":
       return createArc(seams, operand);
+    case "open":
+      return openArcPane(seams, operand);
     case "none":
     case "release":
       return bindFocusedArc(seams, undefined);
@@ -81,6 +84,20 @@ async function createArc(seams: ArcCommandSeams, requested: string | undefined):
   }
   await focused.bind(slug);
   seams.notice(`arc → ${slug} · new`);
+}
+
+async function openArcPane(seams: ArcCommandSeams, requested: string | undefined): Promise<void> {
+  const slug = requested ?? seams.focusedArc?.current();
+  if (slug === undefined) {
+    seams.notice("no arc here · /arc open <slug> names one");
+    return;
+  }
+  const found = (await seams.arcs.list()).find((arc) => arc.slug === slug);
+  if (found === undefined) {
+    seams.notice(`no arc named ${slug} · /arc new ${slug} creates it`);
+    return;
+  }
+  seams.openArcPane(slug);
 }
 
 async function switchArc(seams: ArcCommandSeams, slug: string): Promise<void> {

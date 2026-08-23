@@ -807,7 +807,15 @@ describe("session tree", () => {
   }
 
   function overviewItemOf(id: string, modifiedAt: number, title = id): SessionOverviewItem {
-    return { id, title, modifiedAt, entryCount: 5, branchCount: 1, labelCount: 1 };
+    return {
+      id,
+      title,
+      createdAt: modifiedAt,
+      modifiedAt,
+      entryCount: 5,
+      branchCount: 1,
+      labelCount: 1,
+    };
   }
 
   function treeProbe() {

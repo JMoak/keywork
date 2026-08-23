@@ -47,6 +47,13 @@ export type ArcsPaneFactory = (
   targetSession: () => string | undefined,
   arc?: string,
 ) => Pane;
+export type ArcPaneFactory = (
+  id: string,
+  notify: () => void,
+  intents: PaneIntents,
+  targetSession: () => string | undefined,
+  arc: string,
+) => Pane;
 export type MemoryPaneFactory = (id: string, notify: () => void) => Pane;
 export type McpPaneFactory = (id: string, notify: () => void) => Pane;
 
@@ -56,6 +63,7 @@ export interface PaneFactories {
   createBrowserPane?: BrowserPaneFactory;
   createSessionTreePane?: SessionTreePaneFactory;
   createArcsPane?: ArcsPaneFactory;
+  createArcPane?: ArcPaneFactory;
   createMemoryPane?: MemoryPaneFactory;
   createMcpPane?: McpPaneFactory;
 }
@@ -66,6 +74,7 @@ export type PaneRequest =
   | { kind: "browser"; root: string }
   | { kind: "session-tree"; sessionId?: string }
   | { kind: "arcs"; arc?: string }
+  | { kind: "arc"; arc: string }
   | { kind: "memory" }
   | { kind: "mcp" };
 
@@ -73,6 +82,7 @@ export interface PaneKindSpec {
   readonly idPrefix: string;
   readonly home: PaneHome;
   readonly factory: keyof PaneFactories;
+  readonly dockWeight?: number;
 }
 
 export const paneKinds: Readonly<Record<PaneKind, PaneKindSpec>> = {
@@ -81,9 +91,15 @@ export const paneKinds: Readonly<Record<PaneKind, PaneKindSpec>> = {
   browser: { idPrefix: "browser", home: "left", factory: "createBrowserPane" },
   "session-tree": { idPrefix: "tree", home: "left", factory: "createSessionTreePane" },
   arcs: { idPrefix: "arcs", home: "left", factory: "createArcsPane" },
+  arc: { idPrefix: "arc", home: "right", factory: "createArcPane", dockWeight: 0.5 },
   memory: { idPrefix: "memory", home: "left", factory: "createMemoryPane" },
   mcp: { idPrefix: "mcp", home: "right", factory: "createMcpPane" },
 };
+
+export function dockWeightOf(id: string): number {
+  const kind = paneKindOf(id);
+  return kind === undefined ? 1 : (paneKinds[kind].dockWeight ?? 1);
+}
 
 export const summonRequests: Readonly<Record<SummonableKind, PaneRequest>> = {
   browser: { kind: "browser", root: "." },
@@ -140,6 +156,14 @@ export function buildPane(
       );
     case "arcs":
       return factories.createArcsPane?.(
+        id,
+        notify,
+        seams.intents,
+        seams.conversationSession,
+        request.arc,
+      );
+    case "arc":
+      return factories.createArcPane?.(
         id,
         notify,
         seams.intents,

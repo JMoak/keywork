@@ -109,6 +109,10 @@ describe("buildPane", () => {
         calls.push(`arcs ${id} ${target()} ${arc}`);
         return stubPane(id);
       },
+      createArcPane: (id, _notify, _intents, target, arc) => {
+        calls.push(`arc ${id} ${target()} ${arc}`);
+        return stubPane(id);
+      },
       createMemoryPane: (id) => {
         calls.push(`memory ${id}`);
         return stubPane(id);
@@ -129,6 +133,7 @@ describe("buildPane", () => {
     buildPane(factories, seams, "browser-1", { kind: "browser", root: "." });
     buildPane(factories, seams, "tree-1", { kind: "session-tree", sessionId: "s2" });
     buildPane(factories, seams, "arcs-1", { kind: "arcs", arc: "dock" });
+    buildPane(factories, seams, "arc-1", { kind: "arc", arc: "dock" });
     buildPane(factories, seams, "memory-1", { kind: "memory" });
     buildPane(factories, seams, "mcp-1", { kind: "mcp" });
     expect(calls).toEqual([
@@ -137,6 +142,7 @@ describe("buildPane", () => {
       "browser browser-1 .",
       "tree tree-1 s-focused s2",
       "arcs arcs-1 s-focused dock",
+      "arc arc-1 s-focused dock",
       "memory memory-1",
       "mcp mcp-1",
     ]);

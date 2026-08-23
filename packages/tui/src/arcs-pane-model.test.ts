@@ -41,6 +41,7 @@ function itemOf(id: string, minutesAgo: number, extra: Partial<SessionOverviewIt
   return {
     id,
     title: `title-${id}`,
+    createdAt: now - (minutesAgo + 1) * minute,
     modifiedAt: now - minutesAgo * minute,
     entryCount: 4,
     branchCount: 0,

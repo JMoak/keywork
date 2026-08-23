@@ -33,6 +33,7 @@ export type PaneDescriptor =
   | { kind: "browser"; root: string }
   | { kind: "session-tree"; sessionId?: string }
   | { kind: "arcs"; arc?: string }
+  | { kind: "arc"; arc: string }
   | { kind: "memory" }
   | { kind: "mcp" };
 

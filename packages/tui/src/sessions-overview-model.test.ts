@@ -19,6 +19,7 @@ function itemOf(id: string, modifiedAt: number, extra: Partial<SessionOverviewIt
   return {
     id,
     title: `title-${id}`,
+    createdAt: modifiedAt,
     modifiedAt,
     entryCount: 4,
     branchCount: 1,

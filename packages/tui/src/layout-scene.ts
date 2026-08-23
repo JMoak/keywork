@@ -39,17 +39,35 @@ export function sceneOf(
   return tiled(retaining(arrangement, shown), screen);
 }
 
-export function sceneRects(scene: Scene, screen: Screen): Map<PaneId, Rect> {
+export type DockWeights = (id: PaneId) => number;
+
+export const evenWeights: DockWeights = () => 1;
+
+export function sceneRects(
+  scene: Scene,
+  screen: Screen,
+  weightOf: DockWeights = evenWeights,
+): Map<PaneId, Rect> {
   if (scene.kind === "solo") return new Map([[scene.id, fullRect(screen)]]);
   const rects = new Map<PaneId, Rect>();
   const { arrangement, regions } = scene;
-  if (regions.left !== undefined)
-    stackVertically(arrangement.docks.left.panes, regions.left, rects);
+  if (regions.left !== undefined) {
+    stackVertically(arrangement.docks.left.panes, regions.left, rects, weightOf);
+  }
   if (arrangement.tree !== undefined) collectRects(arrangement.tree, regions.main, rects);
   if (regions.right !== undefined) {
-    stackVertically(arrangement.docks.right.panes, regions.right, rects);
+    stackVertically(arrangement.docks.right.panes, regions.right, rects, weightOf);
   }
   return rects;
+}
+
+export function dockSlotRects(rect: Rect, weights: readonly number[]): Rect[] {
+  let y = rect.y;
+  return integerShares(honestWeights(weights, rect.height), rect.height).map((height) => {
+    const slot = { x: rect.x, y, width: rect.width, height };
+    y += height;
+    return slot;
+  });
 }
 
 export function regionsOf(arrangement: Arrangement, screen: Screen): Regions {
@@ -71,15 +89,21 @@ export function holds(arrangement: Arrangement, screen: Screen): boolean {
   );
 }
 
-export function stackSlotRect(rect: Rect, slots: number, index: number): Rect {
-  const base = Math.floor(rect.height / slots);
-  const extra = rect.height % slots;
-  return {
-    x: rect.x,
-    y: rect.y + index * base + Math.min(index, extra),
-    width: rect.width,
-    height: base + (index < extra ? 1 : 0),
-  };
+function honestWeights(weights: readonly number[], height: number): readonly number[] {
+  const unit = height / sum(weights);
+  const everySlotFits = weights.every((weight) => Math.floor(weight * unit) >= minPaneSize.height);
+  return everySlotFits ? weights : weights.map(() => 1);
+}
+
+function integerShares(weights: readonly number[], height: number): number[] {
+  const total = sum(weights);
+  const floors = weights.map((weight) => Math.floor((weight * height) / total));
+  const leftover = height - sum(floors);
+  return floors.map((share, index) => (index < leftover ? share + 1 : share));
+}
+
+function sum(values: readonly number[]): number {
+  return values.reduce((total, value) => total + value, 0);
 }
 
 function tiled(arrangement: Arrangement, screen: Screen): Scene {
@@ -106,9 +130,15 @@ function retaining(arrangement: Arrangement, shown: ReadonlySet<PaneId>): Arrang
   };
 }
 
-function stackVertically(ids: readonly PaneId[], rect: Rect, into: Map<PaneId, Rect>): void {
+function stackVertically(
+  ids: readonly PaneId[],
+  rect: Rect,
+  into: Map<PaneId, Rect>,
+  weightOf: DockWeights,
+): void {
+  const slots = dockSlotRects(rect, ids.map(weightOf));
   ids.forEach((id, index) => {
-    into.set(id, stackSlotRect(rect, ids.length, index));
+    into.set(id, slots[index] as Rect);
   });
 }
 

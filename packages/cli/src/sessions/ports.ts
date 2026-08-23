@@ -180,6 +180,7 @@ function overviewItem(summary: SessionSummary): SessionOverviewItem {
   return {
     id: summary.id,
     title: summary.title,
+    createdAt: Date.parse(summary.createdAt),
     modifiedAt: Date.parse(summary.lastActivityAt),
     entryCount: summary.entryCount,
     branchCount: summary.branchCount,

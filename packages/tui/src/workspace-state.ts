@@ -62,6 +62,9 @@ function parsePane(value: unknown): WorkspacePane | undefined {
     case "arcs":
       if (value.arc !== undefined && typeof value.arc !== "string") return undefined;
       return { id: value.id, kind: "arcs", ...(value.arc !== undefined && { arc: value.arc }) };
+    case "arc":
+      if (typeof value.arc !== "string" || value.arc === "") return undefined;
+      return { id: value.id, kind: "arc", arc: value.arc };
     case "memory":
       return { id: value.id, kind: "memory" };
     case "mcp":

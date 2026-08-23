@@ -39,6 +39,7 @@ describe("pane content stays inside the chrome at every drawable size", () => {
           {
             id: "sess",
             title: `${longName} ${longName}`,
+            createdAt: 0,
             modifiedAt: 1,
             entryCount: 123,
             branchCount: 45,

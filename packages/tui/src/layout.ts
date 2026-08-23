@@ -28,7 +28,15 @@ import {
   withDockRatio,
   withTree,
 } from "./layout-arrangement.ts";
-import { holds, type Scene, sceneOf, sceneRects, stackSlotRect } from "./layout-scene.ts";
+import {
+  type DockWeights,
+  dockSlotRects,
+  evenWeights,
+  holds,
+  type Scene,
+  sceneOf,
+  sceneRects,
+} from "./layout-scene.ts";
 import {
   arrangementOf,
   type LayoutState,
@@ -49,6 +57,7 @@ import {
 
 export type { Direction, Rect, Screen } from "./geometry.ts";
 export type { DockSide, DockState } from "./layout-arrangement.ts";
+export type { DockWeights } from "./layout-scene.ts";
 export { type DocksState, type LayoutState, layoutStateIds } from "./layout-state.ts";
 export { type LayoutNode, minPaneSize, type Orientation, type PaneId } from "./layout-tree.ts";
 
@@ -57,10 +66,19 @@ export type DropTarget =
   | { kind: "dock"; side: DockSide; index: number; rect: Rect }
   | { kind: "main"; rect: Rect };
 
+export interface LayoutOptions {
+  dockWeight?: DockWeights;
+}
+
 export class Layout {
   private arrangement: Arrangement = emptyArrangement();
   private focusedId: PaneId | undefined;
   private zoomedId: PaneId | undefined;
+  private readonly weightOf: DockWeights;
+
+  constructor(options: LayoutOptions = {}) {
+    this.weightOf = options.dockWeight ?? evenWeights;
+  }
 
   static parse(value: unknown): LayoutState | undefined {
     return parseLayoutState(value);
@@ -269,7 +287,7 @@ export class Layout {
   }
 
   rects(screen: Screen): Map<PaneId, Rect> {
-    return sceneRects(this.scene(screen), screen);
+    return sceneRects(this.scene(screen), screen, this.weightOf);
   }
 
   emptyMainRect(screen: Screen): Rect | undefined {
@@ -290,7 +308,7 @@ export class Layout {
   }
 
   private tiledRects(screen: Screen): Map<PaneId, Rect> {
-    return sceneRects(this.tiledScene(screen), screen);
+    return sceneRects(this.tiledScene(screen), screen, this.weightOf);
   }
 
   private commit(candidate: Arrangement, screen: Screen): boolean {
@@ -354,7 +372,10 @@ export class Layout {
     const slots = remaining.panes.length + 1;
     const wanted = Math.floor(((y - region.y) / region.height) * slots);
     const index = this.pinned(dragged) ? remaining.pins : arrivalIndex(remaining, wanted);
-    return { kind: "dock", side, index, rect: stackSlotRect(region, slots, index) };
+    const stacked = [...remaining.panes];
+    stacked.splice(index, 0, dragged);
+    const rect = dockSlotRects(region, stacked.map(this.weightOf))[index] as Rect;
+    return { kind: "dock", side, index, rect };
   }
 
   private landedInDock(id: PaneId, side: DockSide, index?: number): Arrangement {

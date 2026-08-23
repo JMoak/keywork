@@ -25,7 +25,7 @@ import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
-import { overviewRowView, type SessionTreePort } from "./session-tree-pane.ts";
+import { focusOrOpenSession, overviewRowView, type SessionTreePort } from "./session-tree-pane.ts";
 import { overviewRowLine, type SessionPresence } from "./sessions-overview-model.ts";
 import { slugChunks, slugInk } from "./slug.ts";
 import type { Theme } from "./theme.ts";
@@ -163,14 +163,13 @@ export class ArcsPane implements Pane {
     );
   }
 
-  private async focusOrOpen(sessionId: string): Promise<void> {
-    const paneId = this.options.presence?.paneFor(sessionId);
-    if (paneId !== undefined) {
-      this.intents.focusPane(paneId);
-      return;
-    }
-    const attached = (await this.options.sessions.attach?.(sessionId)) ?? true;
-    if (attached && this.tasks.live()) this.intents.openSession(sessionId);
+  private focusOrOpen(sessionId: string): Promise<void> {
+    return focusOrOpenSession(sessionId, {
+      sessions: this.options.sessions,
+      intents: this.intents,
+      live: () => this.tasks.live(),
+      ...(this.options.presence !== undefined && { presence: this.options.presence }),
+    });
   }
 
   private async create(slug: string): Promise<void> {

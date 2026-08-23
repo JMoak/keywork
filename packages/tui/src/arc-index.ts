@@ -1,5 +1,11 @@
 import type { AppCore } from "./app-core.ts";
-import { type ArcOrdinals, type ArcsPort, arcOrdinalsOf, suggestArcSlug } from "./arcs.ts";
+import {
+  type ArcOrdinals,
+  type ArcSummary,
+  type ArcsPort,
+  arcOrdinalsOf,
+  suggestArcSlug,
+} from "./arcs.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import type { PaneOrigin } from "./pane-kinds.ts";
 
@@ -9,7 +15,9 @@ export interface ArcIndex {
   dispose(): void;
 }
 
-export function arcIndexOf(arcs: ArcsPort | undefined, onRefreshed: () => void): ArcIndex {
+export type ArcsListener = (listed: readonly ArcSummary[]) => void;
+
+export function arcIndexOf(arcs: ArcsPort | undefined, onRefreshed: ArcsListener): ArcIndex {
   let ordinals: ArcOrdinals = () => undefined;
   let disposed = false;
   const refresh = (): void => {
@@ -19,7 +27,7 @@ export function arcIndexOf(arcs: ArcsPort | undefined, onRefreshed: () => void):
       .then((listed) => {
         if (disposed) return;
         ordinals = arcOrdinalsOf(listed);
-        onRefreshed();
+        onRefreshed(listed);
       })
       .catch(() => {});
   };
@@ -31,6 +39,15 @@ export function arcIndexOf(arcs: ArcsPort | undefined, onRefreshed: () => void):
       disposed = true;
       unsubscribe?.();
     },
+  };
+}
+
+export function firstArcIntroducer(introduce: (slug: string) => void): ArcsListener {
+  let known: number | undefined;
+  return (listed) => {
+    const only = listed[0];
+    if (known === 0 && listed.length === 1 && only !== undefined) introduce(only.slug);
+    known = listed.length;
   };
 }
 

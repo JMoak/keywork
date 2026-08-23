@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arcIndexOf, seedArcFromOrigin } from "./arc-index.ts";
+import { arcIndexOf, firstArcIntroducer, seedArcFromOrigin } from "./arc-index.ts";
 import type { ArcsPort } from "./arcs.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { AppProbe } from "./probe.ts";
@@ -45,6 +45,31 @@ describe("arcIndexOf", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(refreshed).toBe(0);
     expect(index.ordinalOf("first")).toBeUndefined();
+  });
+});
+
+describe("firstArcIntroducer", () => {
+  const arc = (slug: string) => ({ slug, status: "active" as const, created: "", sessions: 0 });
+
+  it("introduces exactly the arc that takes an empty workspace to one arc", () => {
+    const introduced: string[] = [];
+    const onListed = firstArcIntroducer((slug) => introduced.push(slug));
+    onListed([]);
+    onListed([arc("dock-v2")]);
+    onListed([arc("dock-v2"), arc("arc-2")]);
+    expect(introduced).toEqual(["dock-v2"]);
+  });
+
+  it("stays quiet when the workspace already had arcs at boot or lists nothing twice", () => {
+    const introduced: string[] = [];
+    const onListed = firstArcIntroducer((slug) => introduced.push(slug));
+    onListed([arc("dock-v2")]);
+    onListed([arc("dock-v2"), arc("arc-2")]);
+    onListed([]);
+    onListed([]);
+    expect(introduced).toEqual([]);
+    onListed([arc("fresh")]);
+    expect(introduced).toEqual(["fresh"]);
   });
 });
 

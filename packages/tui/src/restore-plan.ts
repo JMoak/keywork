@@ -60,6 +60,7 @@ async function restorable(
       return statKind(resolve(process.cwd(), pane.root))?.isDirectory() === true;
     case "session-tree":
     case "arcs":
+    case "arc":
     case "memory":
     case "mcp":
       return true;

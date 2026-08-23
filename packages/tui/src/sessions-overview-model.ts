@@ -6,6 +6,7 @@ import { RowCursor } from "./row-cursor.ts";
 export interface SessionOverviewItem {
   id: string;
   title: string;
+  createdAt: number;
   modifiedAt: number;
   entryCount: number;
   branchCount: number;
@@ -40,10 +41,13 @@ export interface SessionsOverviewEffects {
   drill(sessionId: string): void;
 }
 
+export type SessionOrder = "recent" | "created";
+
 export interface SessionsOverviewSeams {
   presence?: SessionPresence;
   currentSession?: () => string | undefined;
   now?: () => number;
+  order?: SessionOrder;
 }
 
 export class SessionsOverviewModel extends RowCursor<SessionOverviewRow> {
@@ -61,7 +65,7 @@ export class SessionsOverviewModel extends RowCursor<SessionOverviewRow> {
 
   setItems(items: readonly SessionOverviewItem[]): void {
     this.mutate(() => {
-      this.items = [...items].sort((a, b) => b.modifiedAt - a.modifiedAt);
+      this.items = [...items].sort(sessionOrders[this.seams.order ?? "recent"]);
     }, this.currentKey() ?? this.seams.currentSession?.());
   }
 
@@ -125,6 +129,14 @@ export class SessionsOverviewModel extends RowCursor<SessionOverviewRow> {
     return presence.busy(sessionId) ? "busy" : "attached";
   }
 }
+
+const sessionOrders: Record<
+  SessionOrder,
+  (a: SessionOverviewItem, b: SessionOverviewItem) => number
+> = {
+  recent: (a, b) => b.modifiedAt - a.modifiedAt,
+  created: (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+};
 
 export const livenessMark: Record<SessionLiveness, string> = {
   busy: "█",

@@ -210,14 +210,13 @@ export class SessionTreePane implements Pane {
     return true;
   }
 
-  private async focusOrOpen(sessionId: string, intents: PaneIntents): Promise<void> {
-    const paneId = this.presence?.paneFor(sessionId);
-    if (paneId !== undefined) {
-      intents.focusPane(paneId);
-      return;
-    }
-    const attached = (await this.port.attach?.(sessionId)) ?? true;
-    if (attached && this.tasks.live()) intents.openSession(sessionId);
+  private focusOrOpen(sessionId: string, intents: PaneIntents): Promise<void> {
+    return focusOrOpenSession(sessionId, {
+      sessions: this.port,
+      intents,
+      live: () => this.tasks.live(),
+      ...(this.presence !== undefined && { presence: this.presence }),
+    });
   }
 
   private async fork(entryId: string, intents: PaneIntents): Promise<void> {
@@ -268,6 +267,23 @@ export class SessionTreePane implements Pane {
     const caret = focused ? "▌" : "";
     return Text({ content: `label: ${this.model.labelDraft ?? ""}${caret}`, fg: theme.accent });
   }
+}
+
+export interface SessionOpener {
+  sessions: Pick<SessionTreePort, "attach">;
+  intents: PaneIntents;
+  presence?: SessionPresence;
+  live(): boolean;
+}
+
+export async function focusOrOpenSession(sessionId: string, opener: SessionOpener): Promise<void> {
+  const paneId = opener.presence?.paneFor(sessionId);
+  if (paneId !== undefined) {
+    opener.intents.focusPane(paneId);
+    return;
+  }
+  const attached = (await opener.sessions.attach?.(sessionId)) ?? true;
+  if (attached && opener.live()) opener.intents.openSession(sessionId);
 }
 
 export function overviewRowView(
