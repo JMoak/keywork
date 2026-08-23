@@ -126,6 +126,7 @@ describe("ArcsPaneModel rows", () => {
     const presence: SessionPresence = {
       paneFor: (id) => (id === "s2" || id === "s3" ? `pane-${id}` : undefined),
       busy: (id) => id === "s2",
+      waiting: () => false,
     };
     const { model } = modelOver({ presence });
     expect(lines(model.rows()).map((line) => line[0])).toEqual(["█", "▓", "░", "░"]);

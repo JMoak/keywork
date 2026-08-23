@@ -21,6 +21,9 @@ interface Recorded {
   intents: PaneIntents;
   opened: string[];
   focused: string[];
+  held: Set<string>;
+  shows: Array<[string, readonly string[] | undefined]>;
+  notices: string[];
 }
 
 function itemOf(id: string, createdMinutesAgo: number, arc?: string): SessionOverviewItem {
@@ -56,16 +59,44 @@ function worldOf(): World {
 function recordedIntents(): Recorded {
   const opened: string[] = [];
   const focused: string[] = [];
+  const held = new Set<string>();
+  const shows: Recorded["shows"] = [];
+  const notices: string[] = [];
   return {
     opened,
     focused,
+    held,
+    shows,
+    notices,
     intents: {
       openFile: () => {},
       openSession: (sessionId) => opened.push(sessionId),
       focusPane: (id) => focused.push(id),
+      notice: (text) => notices.push(text),
+      holdPane: (id) => {
+        held.add(id);
+        return true;
+      },
+      showPane: (id, near) => {
+        held.delete(id);
+        shows.push([id, near]);
+        return true;
+      },
+      paneHeld: (id) => held.has(id),
     },
   };
 }
+
+function presenceOf(
+  paneFor: (sessionId: string) => string | undefined,
+  activity: Partial<Pick<SessionPresence, "busy" | "waiting">> = {},
+): SessionPresence {
+  return { paneFor, busy: () => false, waiting: () => false, ...activity };
+}
+
+const membersOpen = presenceOf((sessionId) =>
+  sessionId === "unbound" ? undefined : `pane-${sessionId}`,
+);
 
 function paneOver(world: World, presence?: SessionPresence) {
   const recorded = recordedIntents();
@@ -104,7 +135,9 @@ function press(pane: ArcPane, ...specs: string[]): void {
 }
 
 function rowLines(pane: ArcPane): string[] {
-  return pane.members.visibleRows(20).map(({ row }) => memberRowLine(row));
+  return pane.members
+    .visibleRows(20)
+    .map(({ row }) => memberRowLine(row, pane.placementOf(row.id)));
 }
 
 describe("ArcPane", () => {
@@ -123,10 +156,12 @@ describe("ArcPane", () => {
 
   it("reads liveness from presence: working while busy, idle while merely open", async () => {
     const world = worldOf();
-    const { pane } = paneOver(world, {
-      paneFor: (sessionId) => (sessionId === "unbound" ? undefined : `pane-${sessionId}`),
-      busy: (sessionId) => sessionId === "oldest",
-    });
+    const { pane } = paneOver(
+      world,
+      presenceOf((sessionId) => (sessionId === "unbound" ? undefined : `pane-${sessionId}`), {
+        busy: (sessionId) => sessionId === "oldest",
+      }),
+    );
     await pane.settled();
     expect(rowLines(pane)).toEqual([
       "█ title-oldest · working · 1m",
@@ -137,10 +172,10 @@ describe("ArcPane", () => {
 
   it("enter focuses an open member's pane and opens a closed one after attaching", async () => {
     const world = worldOf();
-    const { pane, recorded } = paneOver(world, {
-      paneFor: (sessionId) => (sessionId === "middle" ? "session-7" : undefined),
-      busy: () => false,
-    });
+    const { pane, recorded } = paneOver(
+      world,
+      presenceOf((sessionId) => (sessionId === "middle" ? "session-7" : undefined)),
+    );
     await pane.settled();
     press(pane, "enter");
     await pane.settled();
@@ -185,5 +220,76 @@ describe("ArcPane", () => {
     expect(() =>
       pane.view({ theme: resolveTheme(), focused: true, width: 60, height: 8 }),
     ).not.toThrow();
+  });
+});
+
+describe("ArcPane folds", () => {
+  it("space folds the selected member's pane and unfolds it beside the arc's cluster", async () => {
+    const world = worldOf();
+    const { pane, recorded } = paneOver(world, membersOpen);
+    await pane.settled();
+    press(pane, "space");
+    expect([...recorded.held]).toEqual(["pane-middle"]);
+    expect(rowLines(pane)[1]).toBe("░ title-middle · folded · 1m");
+    expect(pane.title()).toBe(" #dock-v2 · 3 sessions · 1 folded ");
+    press(pane, "space");
+    expect(recorded.held.size).toBe(0);
+    expect(recorded.shows).toEqual([
+      ["pane-middle", ["pane-oldest", "pane-middle", "pane-newest", "arc-1"]],
+    ]);
+    expect(rowLines(pane)[1]).toBe("▓ title-middle · idle · 1m");
+    expect(pane.title()).toBe(" #dock-v2 · 3 sessions ");
+  });
+
+  it("a folds every shown member while any is shown, then unfolds them all", async () => {
+    const world = worldOf();
+    const { pane, recorded } = paneOver(world, membersOpen);
+    await pane.settled();
+    press(pane, "space", "a");
+    expect([...recorded.held].sort()).toEqual(["pane-middle", "pane-newest", "pane-oldest"]);
+    expect(pane.title()).toBe(" #dock-v2 · 3 sessions · 3 folded ");
+    press(pane, "a");
+    expect(recorded.held.size).toBe(0);
+    expect(recorded.shows.map(([id]) => id)).toEqual(["pane-oldest", "pane-middle", "pane-newest"]);
+  });
+
+  it("a folded member that needs you keeps a full stamp and the arc pane wears it too", async () => {
+    const world = worldOf();
+    const { pane, recorded } = paneOver(
+      world,
+      presenceOf((sessionId) => (sessionId === "unbound" ? undefined : `pane-${sessionId}`), {
+        busy: (sessionId) => sessionId === "middle",
+        waiting: (sessionId) => sessionId === "middle",
+      }),
+    );
+    await pane.settled();
+    expect(rowLines(pane)[1]).toBe("█ title-middle · needs you · 1m");
+    expect(pane.title()).toBe(" #dock-v2 · 3 sessions ");
+    press(pane, "space");
+    expect(recorded.held.has("pane-middle")).toBe(true);
+    expect(rowLines(pane)[1]).toBe("█ title-middle · needs you · 1m");
+    expect(pane.title()).toBe(" █ #dock-v2 · 3 sessions · 1 folded ");
+  });
+
+  it("enter on a folded member unfolds it first and then focuses its pane", async () => {
+    const world = worldOf();
+    const { pane, recorded } = paneOver(world, membersOpen);
+    await pane.settled();
+    press(pane, "space");
+    expect(recorded.held.has("pane-middle")).toBe(true);
+    press(pane, "enter");
+    await pane.settled();
+    expect(recorded.held.size).toBe(0);
+    expect(recorded.shows.map(([id]) => id)).toEqual(["pane-middle"]);
+    expect(recorded.focused).toEqual(["pane-middle"]);
+  });
+
+  it("space on a closed member only explains itself", async () => {
+    const world = worldOf();
+    const { pane, recorded } = paneOver(world);
+    await pane.settled();
+    press(pane, "space");
+    expect(recorded.held.size).toBe(0);
+    expect(recorded.notices).toEqual(["closed session · enter opens it"]);
   });
 });

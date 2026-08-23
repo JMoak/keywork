@@ -1942,6 +1942,90 @@ describe("workspace persistence", () => {
   });
 });
 
+describe("held panes", () => {
+  it("holds a pane off the layout but alive, and shows it again beside its cluster's most recent focus", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("split");
+    expect(probe.core.holdPane("session-2")).toBe(true);
+    expect(paneIds(probe)).toEqual(["session-1", "session-3"]);
+    expect(probe.snapshot().held).toEqual(["session-2"]);
+    expect(probe.core.panes.has("session-2")).toBe(true);
+    expect(probe.workspaceState().held.map((pane) => pane.id)).toEqual(["session-2"]);
+
+    probe.core.focusPane("session-1");
+    const anchorBefore = probe.rect("session-1");
+    const otherBefore = probe.rect("session-3");
+    expect(probe.core.showPane("session-2", ["session-1", "session-3"])).toBe(true);
+    expect(probe.snapshot().held).toEqual([]);
+    expect(probe.snapshot().focused).toBe("session-1");
+    const anchorAfter = probe.rect("session-1");
+    const anchorSplit =
+      anchorAfter.width < anchorBefore.width || anchorAfter.height < anchorBefore.height;
+    expect(anchorSplit).toBe(true);
+    expect(probe.rect("session-3")).toEqual(otherBefore);
+  });
+
+  it("lands at the main edge toward the cluster's dock when none of the cluster is on screen", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("dock-left");
+    probe.core.focusPane("session-1");
+    probe.command("split");
+    expect(probe.core.holdPane("session-3")).toBe(true);
+    expect(probe.core.showPane("session-3", ["session-2"])).toBe(true);
+    const edge = probe.rect("session-3");
+    const main = probe.rect("session-1");
+    expect(edge.x < main.x && edge.height === main.height).toBe(true);
+  });
+
+  it("focusing a held pane brings it back beside the focus; the last visible pane cannot be held", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    expect(probe.core.holdPane("session-1")).toBe(true);
+    expect(probe.core.holdPane("session-2")).toBe(false);
+    probe.core.focusPane("session-1");
+    expect(paneIds(probe).sort()).toEqual(["session-1", "session-2"]);
+    expect(probe.snapshot().focused).toBe("session-1");
+    expect(probe.snapshot().held).toEqual([]);
+  });
+
+  it("closing the last visible pane brings held panes back instead of quitting", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.core.holdPane("session-1");
+    probe.core.closePane();
+    expect(probe.exited).toBe(false);
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    expect(probe.snapshot().held).toEqual([]);
+  });
+
+  it("held panes persist apart from the layout and restore held", () => {
+    const first = new AppProbe();
+    first.command("split");
+    (first.core.panes.get("session-1") as ConversationPane).sessionId = "sess-a";
+    (first.core.panes.get("session-2") as ConversationPane).sessionId = "sess-b";
+    first.core.holdPane("session-1");
+    const state = mustParse(JSON.parse(JSON.stringify(first.workspaceState())));
+    expect(state.held).toEqual([{ id: "session-1", kind: "conversation", sessionId: "sess-a" }]);
+
+    const second = new AppProbe({
+      restoreWorkspace: state,
+      createPane: (id, notify, commands, resumeSessionId) => {
+        const pane = new ConversationPane(id, undefined, notify, undefined, commands);
+        pane.sessionId = resumeSessionId;
+        return pane;
+      },
+    });
+    expect(paneIds(second)).toEqual(["session-2"]);
+    expect(second.snapshot().held).toEqual(["session-1"]);
+    expect((second.core.panes.get("session-1") as ConversationPane).sessionId).toBe("sess-a");
+    second.core.focusPane("session-1");
+    expect(paneIds(second).sort()).toEqual(["session-1", "session-2"]);
+    expect(second.snapshot().held).toEqual([]);
+  });
+});
+
 describe("memory pane", () => {
   interface MemoryWorld {
     inbox: InboxItemView[];

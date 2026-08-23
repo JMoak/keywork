@@ -73,7 +73,7 @@ import {
   type WorkspaceReadiness,
   type WorkspaceSetupPort,
 } from "./workspace-setup.ts";
-import { captureWorkspace, type WorkspaceState } from "./workspace-state.ts";
+import { captureWorkspace, type WorkspacePane, type WorkspaceState } from "./workspace-state.ts";
 
 export interface UndoPort {
   undo(): Promise<boolean>;
@@ -110,6 +110,7 @@ export interface PaneSnapshot {
 
 export interface AppSnapshot {
   panes: PaneSnapshot[];
+  held: string[];
   focused: string | undefined;
   zoomed: string | undefined;
   overlay: OverlayKind | undefined;
@@ -129,10 +130,14 @@ export class AppCore implements ActionTarget {
     openSession: (sessionId, draft) => this.openPane(sessionId, draft),
     focusPane: (id) => this.focusPane(id),
     notice: (text) => this.postNotice(text),
+    holdPane: (id) => this.holdPane(id),
+    showPane: (id, near) => this.showPane(id, near),
+    paneHeld: (id) => this.paneHeld(id),
   };
   leaderArmed = false;
   lastKey = "";
   notice = "";
+  private readonly held = new Set<string>();
   private overlay: Overlay | undefined;
   private readonly pointer = new PanePointer({
     layout: this.layout,
@@ -165,7 +170,7 @@ export class AppCore implements ActionTarget {
   }
 
   workspaceState(): WorkspaceState {
-    return captureWorkspace(this.layout, this.panes);
+    return captureWorkspace(this.layout, this.panes, this.held);
   }
 
   snapshot(): AppSnapshot {
@@ -178,6 +183,7 @@ export class AppCore implements ActionTarget {
         dock: this.layout.dockSideOf(id),
         pinned: this.layout.pinned(id),
       })),
+      held: this.heldPanes(),
       focused,
       zoomed: this.layout.zoomed(),
       overlay: this.overlay?.kind,
@@ -255,7 +261,8 @@ export class AppCore implements ActionTarget {
   }
 
   closePane(): void {
-    if (this.panes.size <= 1) {
+    if (this.layout.panes().length <= 1) this.showHeldPanes();
+    if (this.layout.panes().length <= 1) {
       this.shutdown();
       return;
     }
@@ -302,8 +309,40 @@ export class AppCore implements ActionTarget {
   }
 
   focusPane(id: string): void {
+    if (this.held.has(id) && !this.showPane(id)) return;
     this.layout.focus(id);
     this.touch();
+  }
+
+  holdPane(id: string): boolean {
+    if (!this.layout.panes().includes(id) || this.layout.panes().length <= 1) return false;
+    this.layout.close(id);
+    this.held.add(id);
+    this.touch();
+    return true;
+  }
+
+  showPane(id: string, near?: readonly string[]): boolean {
+    if (!this.held.has(id)) return this.layout.panes().includes(id);
+    const focused = this.layout.focused();
+    const shown = near === undefined ? this.openInMain(id) : this.openAmong(id, near);
+    if (!shown) {
+      this.noticeNoRoom("the main area");
+      return false;
+    }
+    this.held.delete(id);
+    if (focused !== undefined) this.layout.focus(focused);
+    this.panes.get(id)?.revealed?.();
+    this.touch();
+    return true;
+  }
+
+  paneHeld(id: string): boolean {
+    return this.held.has(id);
+  }
+
+  heldPanes(): string[] {
+    return [...this.held];
   }
 
   focusToward(direction: Direction): void {
@@ -665,26 +704,63 @@ export class AppCore implements ActionTarget {
   private restoreFrom(state: WorkspaceState): boolean {
     const layoutIds = new Set(layoutStateIds(state.layout));
     const failed: string[] = [];
-    for (const entry of state.panes) {
-      if (!layoutIds.has(entry.id)) continue;
+    const revive = (entry: WorkspacePane): boolean => {
       try {
         const pane = buildPane(this.options, this.buildSeams, entry.id, entry);
         if (pane !== undefined) this.adopt(entry.id, pane);
+        return pane !== undefined;
       } catch {
         failed.push(entry.id);
+        return false;
       }
+    };
+    for (const entry of state.panes) {
+      if (layoutIds.has(entry.id)) revive(entry);
+    }
+    if (this.panes.size === 0) return false;
+    for (const entry of state.held) {
+      if (revive(entry)) this.held.add(entry.id);
     }
     if (failed.length > 0) {
       this.postNotice(
         `couldn't restore ${pluralize(failed.length, "pane")} · ${failed.join(", ")}`,
       );
     }
-    if (this.panes.size === 0) return false;
     this.layout.load(state.layout);
     for (const id of this.layout.panes()) {
       if (!this.panes.has(id)) this.layout.close(id);
     }
     return true;
+  }
+
+  private openInMain(id: string): boolean {
+    this.focusMainArea();
+    return this.layout.open(id, this.screen());
+  }
+
+  private openAmong(id: string, near: readonly string[]): boolean {
+    const anchor = this.anchorAmong(near);
+    if (anchor !== undefined) return this.layout.open(id, this.screen(), anchor);
+    return this.layout.openAtEdge(id, this.edgeToward(near), this.screen());
+  }
+
+  private anchorAmong(near: readonly string[]): string | undefined {
+    const shownInMain = (id: string): boolean =>
+      this.layout.panes().includes(id) && this.layout.dockSideOf(id) === undefined;
+    const candidates = near.filter(shownInMain);
+    return this.layout.recentlyFocused().find((id) => candidates.includes(id)) ?? candidates[0];
+  }
+
+  private edgeToward(near: readonly string[]): DockSide {
+    for (const id of near) {
+      const side = this.layout.dockSideOf(id);
+      if (side !== undefined) return side;
+    }
+    return "left";
+  }
+
+  private showHeldPanes(): void {
+    for (const id of this.heldPanes()) this.showPane(id);
   }
 
   private seedDefaultWorkspace(): void {

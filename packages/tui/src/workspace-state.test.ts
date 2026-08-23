@@ -57,6 +57,18 @@ describe("captureWorkspace", () => {
       { id: "session-1", kind: "conversation" },
     ]);
   });
+
+  it("captures held panes apart from the layout and reads them back", () => {
+    const { layout, panes } = workspaceOf(
+      ["session-1", { kind: "conversation", sessionId: "abc" }],
+      ["session-2", { kind: "conversation", sessionId: "def" }],
+    );
+    layout.close("session-2");
+    const state = captureWorkspace(layout, panes, ["session-2"]);
+    expect(state.panes).toEqual([{ id: "session-1", kind: "conversation", sessionId: "abc" }]);
+    expect(state.held).toEqual([{ id: "session-2", kind: "conversation", sessionId: "def" }]);
+    expect(parseWorkspaceState(JSON.parse(JSON.stringify(state)))?.held).toEqual(state.held);
+  });
 });
 
 describe("parseWorkspaceState", () => {
@@ -163,5 +175,23 @@ describe("parseWorkspaceState", () => {
     state.panes.pop();
     const parsed = parseWorkspaceState(state);
     expect(parsed?.panes).toEqual([{ id: "session-1", kind: "conversation", sessionId: "abc" }]);
+  });
+
+  it("reads a state without held panes as holding none, and refuses malformed held lists", () => {
+    const withHeld = (held: unknown) => ({ ...(valid() as object), held });
+    expect(parseWorkspaceState(withHeld(undefined))?.held).toEqual([]);
+    expect(parseWorkspaceState(withHeld([{ id: "held-1", kind: "conversation" }]))?.held).toEqual([
+      { id: "held-1", kind: "conversation" },
+    ]);
+    const refused: unknown[] = [
+      "nope",
+      [{ id: "session-1", kind: "conversation" }],
+      [
+        { id: "held-1", kind: "conversation" },
+        { id: "held-1", kind: "conversation" },
+      ],
+      [{ id: "held-1", kind: "hologram" }],
+    ];
+    for (const held of refused) expect(parseWorkspaceState(withHeld(held))).toBeUndefined();
   });
 });

@@ -21,6 +21,7 @@ const state: WorkspaceState = {
   version: 2,
   layout: { tree: { kind: "leaf", id: "session-1" }, focused: "session-1" },
   panes: [{ id: "session-1", kind: "conversation", sessionId: "abc" }],
+  held: [],
 };
 
 describe("workspaceFile", () => {

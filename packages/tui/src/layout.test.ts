@@ -1034,3 +1034,50 @@ describe("screens too small for the arrangement", () => {
     expect(layout.panes()).toEqual(["a", "b", "c", "d"]);
   });
 });
+
+describe("Layout focus trail and placed opens", () => {
+  it("remembers focus most-recent-first and forgets closed panes", () => {
+    const layout = layoutWith("a", "b", "c");
+    expect(layout.recentlyFocused()).toEqual(["c", "b", "a"]);
+    layout.focus("a");
+    expect(layout.recentlyFocused()).toEqual(["a", "c", "b"]);
+    layout.close("c");
+    expect(layout.recentlyFocused()).toEqual(["a", "b"]);
+    layout.load(layout.toJSON());
+    expect(layout.recentlyFocused()).toEqual(["a"]);
+  });
+
+  it("opens beside a named pane instead of the focused one, splitting by its shape", () => {
+    const layout = layoutWith("a", "b");
+    layout.focus("b");
+    expect(layout.open("c", screen, "a")).toBe(true);
+    expect(layout.focused()).toBe("c");
+    const rects = layout.rects(screen);
+    const a = rects.get("a");
+    const c = rects.get("c");
+    expect(a !== undefined && c !== undefined && a.x === c.x && c.y > a.y).toBe(true);
+    assertExactTiling(layout);
+  });
+
+  it("opens beside a docked pane inside its dock, and beside an unknown pane as a fresh split", () => {
+    const docked = layoutWith("main", "side");
+    docked.dockFocused("left", screen);
+    docked.focus("main");
+    expect(docked.open("next", screen, "side")).toBe(true);
+    expect(docked.dock("left")?.panes).toEqual(["side", "next"]);
+    const single = layoutWith("only");
+    expect(single.open("fresh", screen, "ghost")).toBe(true);
+    expect(single.panes()).toEqual(["only", "fresh"]);
+    assertExactTiling(single);
+  });
+
+  it("opens at a main edge as a full-height column next to that side's dock", () => {
+    const layout = layoutWith("a", "b", "c");
+    expect(layout.openAtEdge("edge", "left", screen)).toBe(true);
+    expect(layout.focused()).toBe("edge");
+    const rect = layout.rects(screen).get("edge");
+    expect(rect).toEqual({ x: 0, y: 0, width: 60, height: 40 });
+    expect(layout.openAtEdge("edge", "right", screen)).toBe(false);
+    assertExactTiling(layout);
+  });
+});

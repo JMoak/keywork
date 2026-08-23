@@ -152,9 +152,57 @@ built. All `OWN`.
   `split-new-arc`, `arc-pane-opened`). Gate: `bun run check` clean, vitest 206 files / 2806 + 1
   skipped, native `bun test` 2806 / 0, `bun run e2e` 11/11 with goldens verified unchanged.
 
+### L5 · C70 part 2, the fold primitive (landed 2026-08-23)
+
+The second half of C70: members fold into the arc pane and come back, sessions stay live
+throughout. All `OWN`. The primitive is general (held panes), the arc pane is its first handle.
+
+- **Held panes** (`AppCore.holdPane / showPane / paneHeld / heldPanes`, reachable from panes
+  through `PaneIntents.holdPane / showPane / paneHeld`): a held pane stays in `core.panes`
+  (agent, attachment, presence, lifecycle all alive) and leaves the layout. `showPane(id,
+  near)` re-attaches beside the most recently focused on-screen member of `near`, else the
+  first on-screen member, else at the main edge nearest the dock that holds any of `near`
+  (the arc pane passes its members plus itself); `showPane(id)` with no cluster opens like a
+  fresh pane in the main area. Showing never steals focus; `focusPane` on a held pane shows it
+  first (so the session tree's `enter` still reaches a folded member); `holdPane` refuses the
+  last on-screen pane; closing the last on-screen pane brings held panes back rather than
+  quitting. `Layout` gained a focus trail (`recentlyFocused`, most recent first, pruned on
+  close, reset by `load`), `open(id, screen, beside)` (anchor defaults to focus; an unknown
+  anchor falls back to focus) and `openAtEdge(id, side, screen)`.
+- **Persistence.** `WorkspaceState.held: WorkspacePane[]` beside `panes` (version stays 2;
+  a state without `held` reads as holding nothing; held ids may not collide with layout ids or
+  each other). `loadRestorePlan` escrows held sessions too and drops held panes whose session is
+  gone; `restoreFrom` revives held entries straight into the held set. The design's
+  `{ arc, folded }` descriptor is therefore unnecessary: fold state is derived from which
+  member panes are held, so the arc pane and the tree can never disagree about it.
+- **Presence learns `waiting`.** `PaneSessionIndex.bind(paneId, sessionId, { busy, waiting })`,
+  `SessionPresence.waiting`, `SessionLiveness` gains `"waiting"` (`█`, ahead of busy) read
+  from `ConversationPane.awaitingYou()` (a pending ask). The tree, arcs node and arc pane all
+  see it.
+- **Arc pane** (`arc-pane.ts`): `space` folds / unfolds the cursor member, `a` folds every
+  shown member or, when none is shown, unfolds them all; `enter` unfolds first, then focuses;
+  `space` on a closed member only explains itself. Rows: `MemberPlacement` = shown / folded /
+  closed; a resting folded member reads `░ title · folded · age` dim; a waiting member reads
+  `█ title · needs you · age` with stamp and word in the arc hue (`arcOrdinal` seam), folded or
+  not; title carries `· n folded` and wears the `█` stamp while a folded member waits (` █
+  #slug · 2 sessions · 2 folded `). Tray lists fold and fold all. Unfolded tiles rise in: the
+  core calls `Pane.revealed?()`, and `ConversationPane` ramps its border from `theme.border`
+  to its hue over `quick` (PD16 ink only; settled on dispose).
+- **Evidence.** `arc-pane.test` "ArcPane folds" (space, a both ways, folded and waiting, enter
+  unfolds then focuses, closed member notice), `layout.test` "Layout focus trail and placed
+  opens", `workflows.test` "held panes" (hold / show beside the cluster's recent focus, edge
+  toward the cluster's dock, focus on held, last-pane close guard, persist and restore held),
+  `workspace-state.test` (held capture, parse defaults and refusals), `restore-plan.test` (held
+  escrow and drop), `sessions-overview-model.test` (waiting liveness); new e2e scenario
+  `arc-fold` at 160×40 (captures `member-folded`, `all-folded-one-waiting` with the arc
+  collapsed into the dock and the pane stamp up, `all-unfolded` clustered from the edge,
+  `enter-unfolds-and-focuses`, `relaunched-fold-restored`). Gate: `bun run check` clean, vitest
+  206 files / 2823 + 1 skipped, native `bun test` 2823 / 0, `bun run e2e` 12/12 with goldens
+  verified unchanged.
+
 ## Scoping (options-first, per the 98/100 rules; nothing below is built)
 
-### C70 · the arc pane · 3pt + 1pt captures · `OWN` (design final 2026-08-22, three rounds) · part 1 landed 2026-08-23 (L4 above), part 2 = fold / unfold, open
+### C70 · the arc pane · 3pt + 1pt captures · `OWN` (design final 2026-08-22, three rounds) · landed 2026-08-23 in two parts (L4 and L5 above)
 
 **Jordan's ask.** "A 'cycle Arc' key in the navigation that's not a high priority key that
 fits. That would move all sessions as a grouped sick looking entity that keeps their

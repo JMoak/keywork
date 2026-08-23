@@ -18,6 +18,7 @@ import {
   type TieredRamp,
   tile,
 } from "./capability.ts";
+import { rampColor } from "./chroma.ts";
 import { contextGauge, gaugeStyleFor, type InstrumentTier } from "./context-gauge.ts";
 import {
   type CommandsPort,
@@ -87,6 +88,7 @@ export class ConversationPane implements Pane {
   private pulseInk = 1;
   private pulsing = false;
   private drainInk: number | undefined;
+  private arrivalInk: number | undefined;
 
   constructor(
     readonly id: string,
@@ -223,11 +225,33 @@ export class ConversationPane implements Pane {
     this.closed = true;
     this.animator?.settleRegion(`stamp:${this.id}`);
     this.animator?.settleRegion(`pulse:${this.id}`);
+    this.animator?.settleRegion(`arrive:${this.id}`);
     this.model.dispose();
   }
 
   disposed(): boolean {
     return this.closed;
+  }
+
+  awaitingYou(): boolean {
+    return this.model.pendingAsk !== undefined;
+  }
+
+  revealed(): void {
+    const animator = this.animator;
+    if (animator === undefined) return;
+    this.arrivalInk = 0;
+    animator.play({
+      region: `arrive:${this.id}`,
+      tempo: "quick",
+      shape: "arrival",
+      apply: (ink) => {
+        this.arrivalInk = ink;
+      },
+      onSettled: () => {
+        this.arrivalInk = undefined;
+      },
+    });
   }
 
   async settled(): Promise<void> {
@@ -244,9 +268,15 @@ export class ConversationPane implements Pane {
     this.lastFocused = context.focused;
     this.syncStamp(context.focused);
     const page = resolvePage(context.width, this.pageThresholds);
-    return this.wearsMasthead(page)
-      ? this.mastheadView(context)
-      : this.transcriptView(context, page);
+    const framed = this.framedThroughArrival(context);
+    return this.wearsMasthead(page) ? this.mastheadView(framed) : this.transcriptView(framed, page);
+  }
+
+  private framedThroughArrival(context: PaneContext): PaneContext {
+    const ink = this.arrivalInk;
+    if (ink === undefined || context.borderColor === undefined) return context;
+    const risen = rampColor([context.theme.border, context.borderColor], ink);
+    return { ...context, borderColor: risen };
   }
 
   private composedTitle(context: PaneContext): string {

@@ -18,9 +18,10 @@ export interface SessionOverviewItem {
 export interface SessionPresence {
   paneFor(sessionId: string): string | undefined;
   busy(sessionId: string): boolean;
+  waiting(sessionId: string): boolean;
 }
 
-export type SessionLiveness = "busy" | "attached" | "idle";
+export type SessionLiveness = "waiting" | "busy" | "attached" | "idle";
 
 export interface SessionOverviewRow {
   id: string;
@@ -126,6 +127,7 @@ export class SessionsOverviewModel extends RowCursor<SessionOverviewRow> {
   private livenessOf(sessionId: string): SessionLiveness {
     const presence = this.seams.presence;
     if (presence === undefined || presence.paneFor(sessionId) === undefined) return "idle";
+    if (presence.waiting(sessionId)) return "waiting";
     return presence.busy(sessionId) ? "busy" : "attached";
   }
 }
@@ -139,6 +141,7 @@ const sessionOrders: Record<
 };
 
 export const livenessMark: Record<SessionLiveness, string> = {
+  waiting: "█",
   busy: "█",
   attached: "▓",
   idle: "░",

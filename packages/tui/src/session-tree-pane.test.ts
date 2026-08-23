@@ -286,6 +286,7 @@ describe("SessionTreePane focus-or-open", () => {
     const presence: SessionPresence = {
       paneFor: (sessionId) => (sessionId === "s1" ? "session-9" : undefined),
       busy: () => false,
+      waiting: () => false,
     };
     const { pane, recorded } = paneOver(world, { presence });
     await pane.settled();
@@ -298,7 +299,11 @@ describe("SessionTreePane focus-or-open", () => {
 
   it("enter attaches then opens a resumed pane when no pane holds the session", async () => {
     const world = worldOf("s1", "s2");
-    const presence: SessionPresence = { paneFor: () => undefined, busy: () => false };
+    const presence: SessionPresence = {
+      paneFor: () => undefined,
+      busy: () => false,
+      waiting: () => false,
+    };
     const { pane, recorded } = paneOver(world, { presence });
     await pane.settled();
     press(pane, "j", "enter");
@@ -313,6 +318,7 @@ describe("SessionTreePane focus-or-open", () => {
     const presence: SessionPresence = {
       paneFor: (sessionId) => (sessionId === "s2" ? "session-7" : undefined),
       busy: () => false,
+      waiting: () => false,
     };
     const { pane, recorded } = paneOver(world, { presence });
     await pane.settled();

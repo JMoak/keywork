@@ -1,5 +1,5 @@
 import { fg, StyledText, Text } from "@opentui/core";
-import { arcTag } from "./arcs.ts";
+import { type ArcOrdinals, arcInk, arcTag } from "./arcs.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
@@ -35,9 +35,12 @@ export interface ArcPaneOptions {
   sessions: Pick<SessionTreePort, "overview" | "attach" | "subscribe">;
   currentSession: () => string | undefined;
   presence?: SessionPresence;
+  arcOrdinal?: ArcOrdinals;
   now?: () => number;
   scheduleFrame?: FrameScheduler;
 }
+
+export type MemberPlacement = "shown" | "folded" | "closed";
 
 export class ArcPane implements Pane {
   readonly members: SessionsOverviewModel;
@@ -87,14 +90,25 @@ export class ArcPane implements Pane {
 
   title(): string {
     const count = this.members.sessionCount();
-    return paneTitle(
-      arcTag(this.options.slug),
+    const folded = this.memberIds("folded").length;
+    const facts = [
       count === 0 ? undefined : pluralize(count, "session"),
-    );
+      folded === 0 ? undefined : `${folded} folded`,
+    ].filter((fact) => fact !== undefined);
+    const name = this.foldedMemberAwaitsYou()
+      ? `${needsYouStamp} ${arcTag(this.options.slug)}`
+      : arcTag(this.options.slug);
+    return paneTitle(name, facts.length === 0 ? undefined : facts.join(" · "));
   }
 
   describe(): PaneDescriptor {
     return { kind: "arc", arc: this.options.slug };
+  }
+
+  placementOf(sessionId: string): MemberPlacement {
+    const paneId = this.paneOf(sessionId);
+    if (paneId === undefined) return "closed";
+    return this.intents.paneHeld?.(paneId) === true ? "folded" : "shown";
   }
 
   handleKey(chord: Chord, sequence?: string): boolean {
@@ -103,6 +117,7 @@ export class ArcPane implements Pane {
       this.tray.openTray();
       return true;
     }
+    if (this.handleFoldKey(chord)) return true;
     return this.members.handleKey(chord, this.lastPageRows);
   }
 
@@ -137,7 +152,81 @@ export class ArcPane implements Pane {
     );
   }
 
+  private handleFoldKey(chord: Chord): boolean {
+    if (chord.shift || chord.ctrl || chord.meta) return false;
+    switch (chord.name) {
+      case "space":
+        return this.toggleFoldAtCursor();
+      case "a":
+        return this.toggleAll();
+      default:
+        return false;
+    }
+  }
+
+  private toggleFoldAtCursor(): true {
+    const row = this.members.cursorRow();
+    if (row === undefined) return true;
+    switch (this.placementOf(row.id)) {
+      case "shown":
+        this.fold(row.id);
+        break;
+      case "folded":
+        this.unfold(row.id);
+        break;
+      case "closed":
+        this.intents.notice?.("closed session · enter opens it");
+        break;
+    }
+    this.tasks.emit();
+    return true;
+  }
+
+  private toggleAll(): true {
+    const shown = this.memberIds("shown");
+    if (shown.length > 0) for (const sessionId of shown) this.fold(sessionId);
+    else for (const sessionId of this.memberIds("folded")) this.unfold(sessionId);
+    this.tasks.emit();
+    return true;
+  }
+
+  private fold(sessionId: string): void {
+    const paneId = this.paneOf(sessionId);
+    if (paneId !== undefined) this.intents.holdPane?.(paneId);
+  }
+
+  private unfold(sessionId: string): void {
+    const paneId = this.paneOf(sessionId);
+    if (paneId !== undefined) this.intents.showPane?.(paneId, this.cluster());
+  }
+
+  private cluster(): string[] {
+    const memberPanes = this.members
+      .rows()
+      .map((row) => this.paneOf(row.id))
+      .filter((paneId) => paneId !== undefined);
+    return [...memberPanes, this.id];
+  }
+
+  private memberIds(placement: MemberPlacement): string[] {
+    return this.members
+      .rows()
+      .map((row) => row.id)
+      .filter((sessionId) => this.placementOf(sessionId) === placement);
+  }
+
+  private foldedMemberAwaitsYou(): boolean {
+    return this.members
+      .rows()
+      .some((row) => row.liveness === "waiting" && this.placementOf(row.id) === "folded");
+  }
+
+  private paneOf(sessionId: string): string | undefined {
+    return this.options.presence?.paneFor(sessionId);
+  }
+
   private focusOrOpen(sessionId: string): Promise<void> {
+    if (this.placementOf(sessionId) === "folded") this.unfold(sessionId);
     return focusOrOpenSession(sessionId, {
       sessions: this.options.sessions,
       intents: this.intents,
@@ -149,10 +238,11 @@ export class ArcPane implements Pane {
   private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
+    const ink = arcInk(theme, this.options.arcOrdinal?.(this.options.slug));
     return rowsView(this.members, rows, theme, width, {
       empty: "░ no sessions in this arc yet · ctrl+k s inside a member adds one",
-      text: (row) => memberRowLine(row),
-      line: (row) => memberRowView(row, theme, width),
+      text: (row) => memberRowLine(row, this.placementOf(row.id)),
+      line: (row) => memberRowView(row, this.placementOf(row.id), theme, width, ink),
     });
   }
 
@@ -164,40 +254,65 @@ export class ArcPane implements Pane {
 export interface MemberRowParts {
   readonly lead: string;
   readonly title: string;
-  readonly facts: string;
+  readonly state: string;
+  readonly age: string;
 }
 
-export function memberRowParts(row: SessionOverviewRow): MemberRowParts {
+export function memberRowParts(
+  row: SessionOverviewRow,
+  placement: MemberPlacement,
+): MemberRowParts {
+  const restingFolded = placement === "folded" && row.liveness === "attached";
   return {
-    lead: `${livenessMark[row.liveness]} `,
+    lead: `${restingFolded ? foldMark : livenessMark[row.liveness]} `,
     title: row.title,
-    facts: ` · ${livenessWord[row.liveness]} · ${row.age}`,
+    state: ` · ${stateWord(row.liveness, placement)}`,
+    age: ` · ${row.age}`,
   };
 }
 
-export function memberRowLine(row: SessionOverviewRow): string {
-  const { lead, title, facts } = memberRowParts(row);
-  return `${lead}${title}${facts}`;
+export function memberRowLine(row: SessionOverviewRow, placement: MemberPlacement): string {
+  const { lead, title, state, age } = memberRowParts(row, placement);
+  return `${lead}${title}${state}${age}`;
 }
 
+const foldMark = "░";
+const needsYouStamp = "█";
+
 const livenessWord: Record<SessionLiveness, string> = {
+  waiting: "needs you",
   busy: "working",
   attached: "idle",
   idle: "closed",
 };
 
 const memberTray: readonly KeyedTrayCommand[] = [
-  { name: "open", description: "open the selected session", key: "enter" },
+  { name: "open", description: "open the selected session, unfolding it first", key: "enter" },
+  { name: "fold", description: "fold or unfold the selected session", key: "space" },
+  { name: "fold all", description: "fold every shown session, or unfold them all", key: "a" },
   { name: "refresh", description: "reload this arc's sessions", key: "r" },
 ];
 
-function memberRowView(row: SessionOverviewRow, theme: Theme, width: number): PaneChild {
-  const color = row.current ? theme.accentSoft : theme.text;
-  const { lead, title, facts } = memberRowParts(row);
+function stateWord(liveness: SessionLiveness, placement: MemberPlacement): string {
+  return placement === "folded" && liveness === "attached" ? "folded" : livenessWord[liveness];
+}
+
+function memberRowView(
+  row: SessionOverviewRow,
+  placement: MemberPlacement,
+  theme: Theme,
+  width: number,
+  arcHue: string,
+): PaneChild {
+  const color =
+    placement === "folded" ? theme.textDim : row.current ? theme.accentSoft : theme.text;
+  const attention = row.liveness === "waiting" ? arcHue : undefined;
+  const { lead, title, state, age } = memberRowParts(row, placement);
   const chunks = [
-    fg(color)(lead),
+    fg(attention ?? color)(lead),
     ...slugChunks(title, slugInk(theme, color)),
-    fg(theme.textDim)(facts),
+    fg(attention ?? theme.textDim)(state),
+    fg(theme.textDim)(age),
   ];
   return Text({ content: new StyledText(clipSpans(chunks, width)) });
 }

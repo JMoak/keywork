@@ -58,6 +58,7 @@ describe("restoring a workspace", () => {
         { id: "session-1", kind: "conversation" },
         { id: "file-1", kind: "file", path: "notes.md" },
       ],
+      held: [],
     };
   }
 

@@ -27,11 +27,10 @@ export async function loadRestorePlan(
   try {
     const state = parseWorkspaceState(await sources.workspace.load());
     if (state === undefined) return { kind: "fresh" };
-    const panes: WorkspacePane[] = [];
-    for (const pane of state.panes) {
-      if (await restorable(pane, sources.sessions, escrow)) panes.push(pane);
-    }
-    return panes.length === 0 ? { kind: "fresh" } : { kind: "restore", state: { ...state, panes } };
+    const panes = await restorablePanes(state.panes, sources.sessions, escrow);
+    const held = await restorablePanes(state.held, sources.sessions, escrow);
+    if (panes.length === 0) return { kind: "fresh" };
+    return { kind: "restore", state: { ...state, panes, held } };
   } catch (cause) {
     return { kind: "failed", cause };
   }
@@ -39,6 +38,18 @@ export async function loadRestorePlan(
 
 export function statKind(path: string) {
   return statSync(path, { throwIfNoEntry: false });
+}
+
+async function restorablePanes(
+  panes: readonly WorkspacePane[],
+  sessions: SessionPort | undefined,
+  escrow: SessionEscrow,
+): Promise<WorkspacePane[]> {
+  const kept: WorkspacePane[] = [];
+  for (const pane of panes) {
+    if (await restorable(pane, sessions, escrow)) kept.push(pane);
+  }
+  return kept;
 }
 
 async function restorable(

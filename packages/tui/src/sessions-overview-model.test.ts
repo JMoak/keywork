@@ -58,15 +58,22 @@ describe("SessionsOverviewModel rows", () => {
     expect(model.rows().map((row) => row.id)).toEqual(["new", "mid", "old"]);
   });
 
-  it("derives liveness from presence: busy over attached over idle", () => {
+  it("derives liveness from presence: waiting over busy over attached over idle", () => {
     const presence: SessionPresence = {
       paneFor: (sessionId) => (sessionId === "gone" ? undefined : `pane-${sessionId}`),
-      busy: (sessionId) => sessionId === "hot",
+      busy: (sessionId) => sessionId === "hot" || sessionId === "asking",
+      waiting: (sessionId) => sessionId === "asking",
     };
-    const { model } = modelOver([itemOf("hot", 3), itemOf("warm", 2), itemOf("gone", 1)], {
-      presence,
-    });
-    expect(model.rows().map((row) => row.liveness)).toEqual(["busy", "attached", "idle"]);
+    const { model } = modelOver(
+      [itemOf("asking", 4), itemOf("hot", 3), itemOf("warm", 2), itemOf("gone", 1)],
+      { presence },
+    );
+    expect(model.rows().map((row) => row.liveness)).toEqual([
+      "waiting",
+      "busy",
+      "attached",
+      "idle",
+    ]);
   });
 
   it("everything is idle without a presence seam", () => {

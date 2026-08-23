@@ -74,6 +74,7 @@ export class Layout {
   private arrangement: Arrangement = emptyArrangement();
   private focusedId: PaneId | undefined;
   private zoomedId: PaneId | undefined;
+  private trail: PaneId[] = [];
   private readonly weightOf: DockWeights;
 
   constructor(options: LayoutOptions = {}) {
@@ -90,7 +91,8 @@ export class Layout {
 
   load(state: LayoutState): void {
     this.arrangement = arrangementOf(state);
-    this.focusedId = state.focused;
+    this.trail = [];
+    this.focusOn(state.focused);
     this.zoomedId = undefined;
   }
 
@@ -100,6 +102,10 @@ export class Layout {
 
   focused(): PaneId | undefined {
     return this.focusedId;
+  }
+
+  recentlyFocused(): PaneId[] {
+    return [...this.trail];
   }
 
   zoomed(): PaneId | undefined {
@@ -140,26 +146,32 @@ export class Layout {
     return true;
   }
 
-  open(id: PaneId, screen: Screen): boolean {
+  open(id: PaneId, screen: Screen, beside: PaneId | undefined = this.focusedId): boolean {
     if (this.panes().includes(id)) {
-      this.focusedId = id;
+      this.focusOn(id);
       return true;
     }
-    const focused = this.focusedId;
+    const anchor = beside !== undefined && this.panes().includes(beside) ? beside : this.focusedId;
     const tree = this.arrangement.tree;
-    const focusedDock = focused === undefined ? undefined : this.dockSideOf(focused);
-    if (focused !== undefined && focusedDock !== undefined && tree !== undefined) {
-      return this.openInDock(id, focusedDock, focused, screen);
+    const anchorDock = anchor === undefined ? undefined : this.dockSideOf(anchor);
+    if (anchor !== undefined && anchorDock !== undefined && tree !== undefined) {
+      return this.openInDock(id, anchorDock, anchor, screen);
     }
-    if (tree === undefined || focused === undefined) {
+    if (tree === undefined || anchor === undefined) {
       this.arrangement = withTree(this.arrangement, leaf(id));
       this.zoomedId = undefined;
-      this.focusedId = id;
+      this.focusOn(id);
       return true;
     }
-    const orientation = splitOrientation(this.tiledRects(screen).get(focused));
-    const grown = splitLeaf(tree, focused, leaf(id), orientation);
+    const orientation = splitOrientation(this.tiledRects(screen).get(anchor));
+    const grown = splitLeaf(tree, anchor, leaf(id), orientation);
     return this.commitFocusing(withTree(this.arrangement, grown), id, screen);
+  }
+
+  openAtEdge(id: PaneId, edge: DockSide, screen: Screen): boolean {
+    if (this.panes().includes(id)) return false;
+    const landing = attachAtEdge(this.arrangement.tree, id, edge);
+    return this.commitFocusing(withTree(this.arrangement, landing), id, screen);
   }
 
   close(id: PaneId): void {
@@ -167,19 +179,20 @@ export class Layout {
     const side = this.dockSideOf(id);
     const slot = side === undefined ? -1 : this.arrangement.docks[side].panes.indexOf(id);
     this.arrangement = lifted(this.arrangement, id);
+    this.trail = this.trail.filter((pane) => pane !== id);
     if (this.zoomedId === id) this.zoomedId = undefined;
-    if (this.focusedId === id) this.focusedId = this.heirAfterClosing(side, slot);
+    if (this.focusedId === id) this.focusOn(this.heirAfterClosing(side, slot));
   }
 
   focus(id: PaneId): void {
     if (!this.panes().includes(id)) return;
     if (this.zoomedId !== undefined && this.zoomedId !== id) this.zoomedId = undefined;
-    this.focusedId = id;
+    this.focusOn(id);
   }
 
   moveFocus(direction: Direction, screen: Screen): PaneId | undefined {
     const neighbor = this.neighbor(direction, screen);
-    if (neighbor !== undefined) this.focusedId = neighbor;
+    if (neighbor !== undefined) this.focusOn(neighbor);
     return neighbor;
   }
 
@@ -320,8 +333,14 @@ export class Layout {
 
   private commitFocusing(candidate: Arrangement, id: PaneId, screen: Screen): boolean {
     if (!this.commit(candidate, screen)) return false;
-    this.focusedId = id;
+    this.focusOn(id);
     return true;
+  }
+
+  private focusOn(id: PaneId | undefined): void {
+    this.focusedId = id;
+    if (id === undefined) return;
+    this.trail = [id, ...this.trail.filter((pane) => pane !== id)];
   }
 
   private heirAfterClosing(side: DockSide | undefined, slot: number): PaneId | undefined {
@@ -408,7 +427,7 @@ export class Layout {
     if (dragged === other || !this.panes().includes(other)) return false;
     this.arrangement = swapped(this.arrangement, dragged, other);
     this.zoomedId = undefined;
-    this.focusedId = dragged;
+    this.focusOn(dragged);
     return true;
   }
 

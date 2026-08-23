@@ -1,4 +1,5 @@
 import type { Scenario } from "../scenario.ts";
+import { arcFold } from "./arc-fold.ts";
 import { arcsOnScreen } from "./arcs.ts";
 import { chromaSweep } from "./chroma-sweep.ts";
 import { coldStart } from "./cold-start.ts";
@@ -21,6 +22,7 @@ export const scenarios: readonly Scenario[] = [
   sessionLifecycle,
   longSession,
   arcsOnScreen,
+  arcFold,
   discovery,
   defectRepros,
   pointerTour,

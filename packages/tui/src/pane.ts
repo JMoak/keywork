@@ -25,6 +25,9 @@ export interface PaneIntents {
   openSession(sessionId: string, draft?: string): void;
   focusPane(id: string): void;
   notice?(text: string): void;
+  holdPane?(id: string): boolean;
+  showPane?(id: string, near?: readonly string[]): boolean;
+  paneHeld?(id: string): boolean;
 }
 
 export type PaneDescriptor =
@@ -46,5 +49,6 @@ export interface Pane {
   handlePaste?(text: string): boolean;
   handleMouse?(local: { x: number; y: number }, event: PointerEvent): boolean;
   settled?(): Promise<void>;
+  revealed?(): void;
   dispose?(): void;
 }

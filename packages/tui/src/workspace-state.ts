@@ -11,29 +11,60 @@ export interface WorkspaceState {
   version: typeof workspaceStateVersion;
   layout: LayoutState;
   panes: WorkspacePane[];
+  held: WorkspacePane[];
 }
 
-export function captureWorkspace(layout: Layout, panes: ReadonlyMap<string, Pane>): WorkspaceState {
-  const described: WorkspacePane[] = [];
-  for (const id of layout.panes()) {
-    const descriptor = panes.get(id)?.describe?.();
-    if (descriptor !== undefined) described.push({ id, ...descriptor });
-  }
-  return { version: workspaceStateVersion, layout: layout.toJSON(), panes: described };
+export function captureWorkspace(
+  layout: Layout,
+  panes: ReadonlyMap<string, Pane>,
+  held: Iterable<string> = [],
+): WorkspaceState {
+  return {
+    version: workspaceStateVersion,
+    layout: layout.toJSON(),
+    panes: describedPanes(layout.panes(), panes),
+    held: describedPanes(held, panes),
+  };
 }
 
 export function parseWorkspaceState(value: unknown): WorkspaceState | undefined {
   if (!isRecord(value) || !readableVersions.has(value.version)) return undefined;
   const layout = Layout.parse(value.layout);
   if (layout === undefined || !Array.isArray(value.panes)) return undefined;
-  const knownIds = new Set(layoutStateIds(layout));
+  const heldEntries = value.held ?? [];
+  if (!Array.isArray(heldEntries)) return undefined;
+  const layoutIds = new Set(layoutStateIds(layout));
+  const unclaimed = new Set(layoutIds);
+  const panes = parsePanes(value.panes, (id) => unclaimed.delete(id));
+  const held = parsePanes(heldEntries, (id) => !layoutIds.has(id));
+  if (panes === undefined || held === undefined || hasDuplicateIds(held)) return undefined;
+  return { version: workspaceStateVersion, layout, panes, held };
+}
+
+function describedPanes(ids: Iterable<string>, panes: ReadonlyMap<string, Pane>): WorkspacePane[] {
+  const described: WorkspacePane[] = [];
+  for (const id of ids) {
+    const descriptor = panes.get(id)?.describe?.();
+    if (descriptor !== undefined) described.push({ id, ...descriptor });
+  }
+  return described;
+}
+
+function parsePanes(
+  entries: readonly unknown[],
+  admits: (id: string) => boolean,
+): WorkspacePane[] | undefined {
   const panes: WorkspacePane[] = [];
-  for (const entry of value.panes) {
+  for (const entry of entries) {
     const pane = parsePane(entry);
-    if (pane === undefined || !knownIds.delete(pane.id)) return undefined;
+    if (pane === undefined || !admits(pane.id)) return undefined;
     panes.push(pane);
   }
-  return { version: workspaceStateVersion, layout, panes };
+  return panes;
+}
+
+function hasDuplicateIds(panes: readonly WorkspacePane[]): boolean {
+  return new Set(panes.map((pane) => pane.id)).size !== panes.length;
 }
 
 function parsePane(value: unknown): WorkspacePane | undefined {

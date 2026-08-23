@@ -103,18 +103,24 @@ export function attachOnFork(
   };
 }
 
+export interface PaneSessionActivity {
+  busy?(): boolean;
+  waiting?(): boolean;
+}
+
 export interface PaneSessionIndex {
-  bind(paneId: string, sessionId: () => string | undefined, busy?: () => boolean): void;
+  bind(paneId: string, sessionId: () => string | undefined, activity?: PaneSessionActivity): void;
   closed(paneId: string): void;
   closeAll(): void;
   size(): number;
   paneFor(sessionId: string): string | undefined;
   busy(sessionId: string): boolean;
+  waiting(sessionId: string): boolean;
 }
 
 interface PaneSessionBinding {
   sessionId: () => string | undefined;
-  busy: () => boolean;
+  activity: PaneSessionActivity;
 }
 
 export function paneSessionIndex(sessions: SessionPort | undefined): PaneSessionIndex {
@@ -125,9 +131,13 @@ export function paneSessionIndex(sessions: SessionPort | undefined): PaneSession
     }
     return undefined;
   };
+  const activityOf = (sessionId: string): PaneSessionActivity => {
+    const paneId = paneFor(sessionId);
+    return paneId === undefined ? {} : (bindings.get(paneId)?.activity ?? {});
+  };
   return {
-    bind: (paneId, sessionId, busy = () => false) => {
-      bindings.set(paneId, { sessionId, busy });
+    bind: (paneId, sessionId, activity = {}) => {
+      bindings.set(paneId, { sessionId, activity });
     },
     closed: (paneId) => {
       const sessionId = bindings.get(paneId)?.sessionId();
@@ -143,10 +153,8 @@ export function paneSessionIndex(sessions: SessionPort | undefined): PaneSession
     },
     size: () => bindings.size,
     paneFor,
-    busy: (sessionId) => {
-      const paneId = paneFor(sessionId);
-      return paneId === undefined ? false : (bindings.get(paneId)?.busy() ?? false);
-    },
+    busy: (sessionId) => activityOf(sessionId).busy?.() ?? false,
+    waiting: (sessionId) => activityOf(sessionId).waiting?.() ?? false,
   };
 }
 

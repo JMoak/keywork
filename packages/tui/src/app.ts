@@ -269,6 +269,7 @@ function paneFactories(
             sessions: trees,
             currentSession: targetSession,
             presence: paneSessions,
+            arcOrdinal: arcIndex.ordinalOf,
           }),
       }),
     ...(memory !== undefined && {

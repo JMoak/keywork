@@ -201,11 +201,10 @@ class PaneSession implements SessionControls {
         ...(draft !== undefined && { initialDraft: draft }),
       },
     );
-    deps.paneSessions.bind(
-      id,
-      () => this.pane.sessionId,
-      () => this.pane.currentAgent()?.busy() ?? false,
-    );
+    deps.paneSessions.bind(id, () => this.pane.sessionId, {
+      busy: () => this.pane.currentAgent()?.busy() ?? false,
+      waiting: () => this.pane.awaitingYou(),
+    });
     if (attachment !== undefined) {
       this.wire(attachment, initial.agent);
       return;

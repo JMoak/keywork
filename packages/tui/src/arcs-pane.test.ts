@@ -268,6 +268,7 @@ describe("ArcsPane mouse", () => {
     const presence: SessionPresence = {
       paneFor: (sessionId) => (sessionId === "s2" ? "session-7" : undefined),
       busy: () => false,
+      waiting: () => false,
     };
     const { pane, recorded } = paneOver(world, { presence });
     await pane.settled();
@@ -293,6 +294,7 @@ describe("ArcsPane focus-or-open", () => {
     const presence: SessionPresence = {
       paneFor: (sessionId) => (sessionId === "s1" ? "session-9" : undefined),
       busy: () => false,
+      waiting: () => false,
     };
     const { pane, recorded } = paneOver(world, { presence });
     await pane.settled();

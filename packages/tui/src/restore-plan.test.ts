@@ -92,6 +92,31 @@ describe("loadRestorePlan", () => {
     expect(escrow.claim("s1")?.id).toBe("s1");
   });
 
+  it("holds opened sessions for held panes too and drops held panes whose session is gone", async () => {
+    const escrow = sessionEscrow(undefined);
+    const state = stateWith([{ id: "session-1", kind: "conversation", sessionId: "s1" }]) as {
+      held?: unknown;
+    };
+    state.held = [
+      { id: "session-2", kind: "conversation", sessionId: "s2" },
+      { id: "session-3", kind: "conversation", sessionId: "missing" },
+    ];
+    const plan = await loadRestorePlan(
+      {
+        workspace: workspaceLoading(state),
+        sessions: {
+          open: async (id) => (id === "missing" ? undefined : attachmentOf(id)),
+          create: async () => undefined,
+        },
+      },
+      escrow,
+    );
+    expect(plan.kind).toBe("restore");
+    if (plan.kind !== "restore") return;
+    expect(plan.state.held.map((pane) => pane.id)).toEqual(["session-2"]);
+    expect(escrow.claim("s2")?.id).toBe("s2");
+  });
+
   it("drops a conversation whose session cannot be opened and a file that is gone", async () => {
     const plan = await loadRestorePlan(
       {
