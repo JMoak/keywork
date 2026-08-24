@@ -9,6 +9,8 @@ import {
   presetOrder,
   requiresConfirmation,
 } from "@keywork/shared";
+import type { PresetsPort } from "@keywork/tui";
+import { updateUserConfig } from "./user-config.ts";
 
 export interface PresetPort {
   active(): ActivePreset;
@@ -26,14 +28,46 @@ export interface PresetSwitchOptions {
 
 export function createPresetSwitch(options: PresetSwitchOptions): PresetSwitch {
   let permissions = options.initial;
-  let policy = permissionPolicy(permissions);
+  let resolver = permissionsResolver(permissions);
   return {
-    resolver: (call) => policy(call.name, call.arguments),
+    resolver: (call) => resolver(call),
     active: () => activePreset(permissions),
     apply: async (name) => {
       await options.persist(permissionPresets[name]);
       permissions = permissionPresets[name];
-      policy = permissionPolicy(permissions);
+      resolver = permissionsResolver(permissions);
+    },
+  };
+}
+
+export function userPresetSwitch(initial: PermissionsConfig | undefined): PresetSwitch {
+  return createPresetSwitch({
+    initial,
+    persist: async (permissions) => {
+      await updateUserConfig((existing) => ({ ...existing, permissions }));
+    },
+  });
+}
+
+export function permissionsResolver(
+  permissions: PermissionsConfig | undefined,
+): PermissionResolver {
+  const policy = permissionPolicy(permissions);
+  return (call) => policy(call.name, call.arguments);
+}
+
+export function presetResolver(name: PresetName): PermissionResolver {
+  return permissionsResolver(permissionPresets[name]);
+}
+
+export function presetsPortFor(presets: PresetPort): PresetsPort {
+  return {
+    names: () => presetOrder,
+    active: () => presets.active(),
+    requiresConfirmation: (name) =>
+      isPresetName(name) && requiresConfirmation(presets.active(), name),
+    apply: async (name) => {
+      if (isPresetName(name)) await presets.apply(name);
     },
   };
 }

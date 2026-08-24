@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Agent, AgentBusyError } from "./agent.ts";
+import { Agent, QueuedPromptCancelledError } from "./agent.ts";
 import { type Message, messageText, textMessage, toolCalls } from "./messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
@@ -123,7 +123,7 @@ describe("Agent end-to-end with mock provider", () => {
       interrupted = true;
     });
 
-    const final = await agent.send("anything", controller.signal);
+    const final = await agent.send("anything", { signal: controller.signal });
 
     expect(interrupted).toBe(true);
     expect(final.parts).toEqual([]);
@@ -176,6 +176,51 @@ describe("Agent end-to-end with mock provider", () => {
     expect(executed).toEqual([]);
     const toolResult = agent.history()[2]?.parts[0];
     expect(toolResult).toMatchObject({ isError: true, output: "declined by user" });
+  });
+
+  it("labels a guard-answered ask with the guard's gate", async () => {
+    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+      textTurn("Understood."),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool],
+      guard: { confirm: async () => false, gate: "headless" },
+    });
+    const gates: string[] = [];
+    agent.bus.on("gate.permission", ({ decision }) =>
+      gates.push(`${decision.verdict}:${decision.gate}`),
+    );
+
+    await agent.send("Change something");
+
+    expect(gates).toEqual(["denied:headless"]);
+  });
+
+  it("announces standing injections once, before the first turn, after subscribers attach", async () => {
+    const provider = new MockProvider([textTurn("one"), textTurn("two")]);
+    const agent = new Agent({
+      provider,
+      standingInjections: [
+        { source: "project-instructions", id: "AGENTS.md" },
+        { source: "memory-bootstrap", scope: "workspace" },
+      ],
+    });
+    const seen: string[] = [];
+    agent.bus.on("context.injected", ({ injection }) => seen.push(`injected:${injection.source}`));
+    agent.bus.on("turn.started", () => seen.push("turn.started"));
+
+    await agent.send("first");
+    await agent.send("second");
+
+    expect(seen).toEqual([
+      "injected:project-instructions",
+      "injected:memory-bootstrap",
+      "turn.started",
+      "turn.started",
+    ]);
   });
 
   it("checkpoints once per send, before the first mutating tool only", async () => {
@@ -509,7 +554,7 @@ describe("Agent end-to-end with mock provider", () => {
     expect(messageText(final)).toBe("recovered");
   });
 
-  it("rejects a send while a turn is in flight and frees up once it settles", async () => {
+  it("queues a send while a turn is in flight and runs it once the turn settles", async () => {
     let calls = 0;
     const provider: Provider = {
       name: "two-phase",
@@ -520,13 +565,26 @@ describe("Agent end-to-end with mock provider", () => {
 
     const first = agent.send("one");
     expect(agent.busy()).toBe(true);
-    await expect(agent.send("two")).rejects.toBeInstanceOf(AgentBusyError);
+    const second = agent.send("two");
+    expect(agent.queued().map((prompt) => prompt.text)).toEqual(["two"]);
     expect(agent.history().filter((message) => message.role === "user")).toHaveLength(1);
 
     agent.interrupt();
     await first;
+    expect(agent.busy()).toBe(true);
+    expect(messageText(await second)).toBe("free again");
     expect(agent.busy()).toBe(false);
-    expect(messageText(await agent.send("three"))).toBe("free again");
+    expect(agent.queued()).toEqual([]);
+  });
+
+  it("hands out a history snapshot that later turns do not mutate", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("one")]) });
+    const before = agent.history();
+
+    await agent.send("go");
+
+    expect(before).toEqual([]);
+    expect(agent.history()).toHaveLength(2);
   });
 
   it("keeps usage the provider delivered before a stream failure", async () => {
@@ -545,6 +603,113 @@ describe("Agent end-to-end with mock provider", () => {
     expect(agent.usage()).toEqual({ inputTokens: 7, outputTokens: 3 });
   });
 
+  it("keeps the partial assistant message when the stream fails mid-turn", async () => {
+    const provider: Provider = {
+      name: "flaky",
+      async *stream(): AsyncGenerator<TurnDelta> {
+        yield { type: "text", text: "half an answer" };
+        throw new Error("wire dropped");
+      },
+    };
+    const agent = new Agent({ provider });
+
+    await expect(agent.send("go")).rejects.toThrow("wire dropped");
+
+    expect(agent.history().map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(agent.history().at(-1)).toMatchObject({
+      role: "assistant",
+      parts: [{ type: "text", text: "half an answer" }],
+    });
+    expect(agent.busy()).toBe(false);
+  });
+
+  it("never leaves two consecutive user messages after a stream failure and a retry", async () => {
+    let calls = 0;
+    const provider: Provider = {
+      name: "flaky-then-fine",
+      async *stream(): AsyncGenerator<TurnDelta> {
+        if (calls++ === 0) {
+          yield { type: "text", text: "half" };
+          throw new Error("wire dropped");
+        }
+        yield* textTurn("whole");
+      },
+    };
+    const agent = new Agent({ provider });
+
+    await expect(agent.send("first")).rejects.toThrow("wire dropped");
+    await agent.send("second");
+
+    const roles = agent.history().map((message) => message.role);
+    expect(roles).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(roles.some((role, index) => role === "user" && roles[index - 1] === "user")).toBe(false);
+  });
+
+  it("settles tool calls orphaned by a stream failure the way an interrupt does", async () => {
+    const provider: Provider = {
+      name: "flaky-tools",
+      async *stream(): AsyncGenerator<TurnDelta> {
+        yield {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "call-1", name: "echo", arguments: { text: "x" } },
+        };
+        throw new Error("wire dropped");
+      },
+    };
+    const agent = new Agent({ provider, tools: [echoTool] });
+
+    await expect(agent.send("go")).rejects.toThrow("wire dropped");
+
+    expect(orphanedCallIds(agent.history())).toEqual([]);
+    expect(agent.history().at(-1)?.parts[0]).toMatchObject({
+      type: "tool-result",
+      callId: "call-1",
+      output: "interrupted before execution",
+      isError: true,
+    });
+  });
+
+  it("stays free and resolves when context.injected or turn.started listeners throw", async () => {
+    const provider = new MockProvider([textTurn("one"), textTurn("two")]);
+    const agent = new Agent({
+      provider,
+      standingInjections: [{ source: "project-instructions", id: "AGENTS.md" }],
+    });
+    const failures: string[] = [];
+    agent.bus.on("engine.error", ({ error }) => failures.push(error.message));
+    agent.bus.on("context.injected", () => {
+      throw new Error("bad tap");
+    });
+    agent.bus.on("turn.started", () => {
+      throw new Error("render crashed");
+    });
+
+    expect(messageText(await agent.send("first"))).toBe("one");
+
+    expect(agent.busy()).toBe(false);
+    expect(failures).toEqual(["bad tap", "render crashed"]);
+    expect(messageText(await agent.send("second"))).toBe("two");
+    expect(agent.busy()).toBe(false);
+  });
+
+  it("never rejects a successful turn because a turn.completed listener threw", async () => {
+    const provider = new MockProvider([textTurn("done"), textTurn("again")]);
+    const agent = new Agent({ provider });
+    const failures: string[] = [];
+    agent.bus.on("engine.error", ({ error }) => failures.push(error.message));
+    agent.bus.on("turn.completed", () => {
+      throw new Error("render crashed");
+    });
+
+    const final = await agent.send("go");
+
+    expect(messageText(final)).toBe("done");
+    expect(failures).toEqual(["render crashed"]);
+    expect(agent.busy()).toBe(false);
+    expect(agent.history().map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(messageText(await agent.send("more"))).toBe("again");
+  });
+
   it("accumulates streamed text into one part", async () => {
     const provider = new MockProvider([
       [
@@ -559,5 +724,179 @@ describe("Agent end-to-end with mock provider", () => {
 
     expect(final.parts).toHaveLength(1);
     expect(messageText(final)).toBe("Hello world");
+  });
+});
+
+function lastUserText(messages: readonly Message[]): string {
+  const last = messages.at(-1);
+  return last === undefined ? "" : messageText(last);
+}
+
+describe("Agent turn queue", () => {
+  it("delivers three queued prompts after the turn, in order, each as its own turn, staying busy throughout", async () => {
+    const prompts: string[] = [];
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const provider: Provider = {
+      name: "gated",
+      async *stream(request): AsyncGenerator<TurnDelta> {
+        prompts.push(lastUserText(request.messages));
+        if (prompts.length === 1) await gate;
+        yield* textTurn(`re: ${prompts.at(-1)}`);
+      },
+    };
+    const agent = new Agent({ provider });
+    const busyAtTurnStart: boolean[] = [];
+    agent.bus.on("turn.started", () => busyAtTurnStart.push(agent.busy()));
+
+    const first = agent.send("one");
+    const second = agent.send("two", { behavior: "queue" });
+    const third = agent.send("three", { behavior: "queue" });
+    const fourth = agent.send("four", { behavior: "queue" });
+    expect(agent.queued().map((prompt) => prompt.text)).toEqual(["two", "three", "four"]);
+
+    open();
+    expect(messageText(await first)).toBe("re: one");
+    expect(agent.busy()).toBe(true);
+    expect(messageText(await second)).toBe("re: two");
+    expect(agent.busy()).toBe(true);
+    expect(messageText(await third)).toBe("re: three");
+    expect(agent.busy()).toBe(true);
+    expect(messageText(await fourth)).toBe("re: four");
+    expect(agent.busy()).toBe(false);
+
+    expect(prompts).toEqual(["one", "two", "three", "four"]);
+    expect(busyAtTurnStart).toEqual([true, true, true, true]);
+    expect(agent.history().map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+  });
+
+  it("steer interrupts a slow tool mid-execution and the model sees the steering message next", async () => {
+    let toolAborted = false;
+    const slowTool: Tool = {
+      ...echoTool,
+      name: "slow",
+      execute: (_args, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              toolAborted = true;
+              reject(new Error("tool aborted"));
+            },
+            { once: true },
+          );
+        }),
+    };
+    const requests: string[][] = [];
+    const provider: Provider = {
+      name: "steerable",
+      stream: (request) => {
+        requests.push(request.messages.map((message) => `${message.role}:${messageText(message)}`));
+        return requests.length === 1
+          ? streamOf(
+              toolCallTurn({ type: "tool-call", callId: "call-1", name: "slow", arguments: {} }),
+            )
+          : streamOf(textTurn("steered"));
+      },
+    };
+    const agent = new Agent({ provider, tools: [slowTool] });
+    const toolStarted = new Promise<void>((resolve) =>
+      agent.bus.on("tool.started", () => resolve()),
+    );
+    const events: string[] = [];
+    agent.bus.on("turn.interrupted", () => events.push("interrupted"));
+    agent.bus.on("turn.completed", () => events.push("completed"));
+
+    const first = agent.send("go");
+    await toolStarted;
+    const steered = agent.send("stop, do this instead", { behavior: "steer" });
+    expect(agent.queued().map((prompt) => prompt.behavior)).toEqual(["steer"]);
+
+    await first;
+    expect(toolAborted).toBe(true);
+    expect(messageText(await steered)).toBe("steered");
+    expect(events).toEqual(["interrupted", "completed"]);
+    expect(requests.at(-1)?.at(-1)).toBe("user:stop, do this instead");
+    expect(orphanedCallIds(agent.history())).toEqual([]);
+    expect(agent.busy()).toBe(false);
+  });
+
+  it("runs steers ahead of queued prompts, in the order they were steered", async () => {
+    const prompts: string[] = [];
+    const provider: Provider = {
+      name: "ordered",
+      stream: (request) => {
+        prompts.push(lastUserText(request.messages));
+        return prompts.length === 1 ? hangUntilAborted(request.signal) : streamOf(textTurn("ok"));
+      },
+    };
+    const agent = new Agent({ provider });
+
+    const first = agent.send("first");
+    const queued = agent.send("queued", { behavior: "queue" });
+    const steerOne = agent.send("steer one", { behavior: "steer" });
+    const steerTwo = agent.send("steer two", { behavior: "steer" });
+    expect(agent.queued().map((prompt) => prompt.text)).toEqual([
+      "steer one",
+      "steer two",
+      "queued",
+    ]);
+
+    await Promise.all([first, queued, steerOne, steerTwo]);
+
+    expect(prompts).toEqual(["first", "steer one", "steer two", "queued"]);
+  });
+
+  it("steers an idle agent like a plain send", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("hi")]) });
+    let interrupted = false;
+    agent.bus.on("turn.interrupted", () => {
+      interrupted = true;
+    });
+
+    expect(messageText(await agent.send("now", { behavior: "steer" }))).toBe("hi");
+
+    expect(interrupted).toBe(false);
+  });
+
+  it("cancels a queued prompt by id, rejects its send, and announces queue changes", async () => {
+    let calls = 0;
+    const provider: Provider = {
+      name: "two-phase",
+      stream: (request) =>
+        calls++ === 0 ? hangUntilAborted(request.signal) : streamOf(textTurn("ok")),
+    };
+    const agent = new Agent({ provider });
+    const queueSizes: number[] = [];
+    agent.bus.on("queue.changed", ({ queued }) => queueSizes.push(queued.length));
+
+    const first = agent.send("one");
+    const doomed = agent.send("two");
+    const kept = agent.send("three");
+    const doomedId = agent.queued()[0]?.id ?? "";
+    expect(doomedId).not.toBe("");
+
+    expect(agent.cancelQueued(doomedId)).toBe(true);
+    expect(agent.cancelQueued(doomedId)).toBe(false);
+    await expect(doomed).rejects.toBeInstanceOf(QueuedPromptCancelledError);
+    expect(agent.queued().map((prompt) => prompt.text)).toEqual(["three"]);
+    expect(agent.busy()).toBe(true);
+
+    agent.interrupt();
+    await first;
+    expect(messageText(await kept)).toBe("ok");
+    expect(queueSizes).toEqual([1, 2, 1, 0]);
+    expect(agent.history().map((message) => message.role)).toEqual(["user", "user", "assistant"]);
   });
 });

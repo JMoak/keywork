@@ -1,17 +1,9 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StagedItemNotFoundError } from "@keywork/engine";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  MemoryFlush,
-  MockProvider,
-  ReviewItemNotFoundError,
-  SessionStore,
-  textMessage,
-  textTurn,
-} from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  flushAfterTurn,
   memoryPanePort,
   memoryRecall,
   openWorkspaceMemory,
@@ -72,7 +64,7 @@ describe("memoryPanePort", () => {
       body: "from a fetched page\n",
       provenance: "untrusted",
     });
-    const [review] = await seed.inbox.add([
+    const [review] = await seed.store.propose([
       {
         kind: "contradiction",
         a: "User Fact",
@@ -89,63 +81,135 @@ describe("memoryPanePort", () => {
 
   it("maps notes, staged writes, and review items into pane inputs", async () => {
     const { memory, seed } = await populatedMemory();
-    const inputs = await memoryPanePort(memory).load();
-    expect(inputs.scopes).toEqual(["workspace"]);
+    const inputs = await memoryPanePort(() => memory).load();
+    expect(inputs.layers).toEqual([
+      {
+        id: "workspace",
+        kind: "workspace",
+        label: "workspace",
+        prompt: { budget: 4096, used: 0 },
+      },
+    ]);
     const curing = new Map(inputs.notes.map((note) => [note.title, note.curing]));
     expect(curing.get("User Fact")).toBe(3);
-    expect(curing.get("Fresh Guess")).toBe(1);
+    expect(curing.get("Fresh Guess")).toBe(0);
     expect(curing.get("Proven Rule")).toBe(3);
     const staged = inputs.inbox.filter((item) => item.kind === "staged");
     const [stagedItem] = await seed.store.listStaged();
     expect(staged).toEqual([
       {
-        id: `staged:${stagedItem?.id}`,
+        id: stagedItem?.id,
         kind: "staged",
         title: "Web Claim.md",
         provenance: "untrusted",
         created: stagedItem?.created,
         detail: "note",
+        note: "Web Claim",
       },
     ]);
     const contradiction = inputs.inbox.find((item) => item.kind === "contradiction");
     expect(contradiction?.title).toBe("User Fact vs Fresh Guess");
     expect(contradiction?.provenance).toBe("agent");
+    const fact = inputs.notes.find((note) => note.title === "User Fact");
+    expect(fact?.file).toBe(join(memory.vaultRoot, "User Fact.md"));
+    expect(fact?.body).toBe("typed by hand\n");
   });
 
-  it("routes approve to the store for staged items and to the inbox for reviews", async () => {
+  it("marks the notes the prompt carries, in bootstrap order, and shows the budget used", async () => {
+    const { memory, seed } = await populatedMemory();
+    await seed.store.writeMoc(["Proven Rule", "User Fact"], "user");
+    const inputs = await memoryPanePort(() => memory).load();
+    const injected = inputs.notes.filter((note) => note.injected).map((note) => note.title);
+    expect(injected).toEqual(["Proven Rule", "User Fact"]);
+    expect(inputs.notes.slice(0, 2).map((note) => note.title)).toEqual(injected);
+    expect(inputs.layers[0]?.prompt?.used).toBeGreaterThan(0);
+  });
+
+  it("feeds this run's ledger ops and the persisted audit into one event list", async () => {
+    const { memory, seed } = await populatedMemory();
+    await seed.store.recordAudit("gardener sweep: promoted 1, merged 0");
+    const inputs = await memoryPanePort(() => memory).load();
+    const verbs = inputs.ledger.map((event) => `${event.verb} ${event.subject}`);
+    expect(verbs).toContain("create User Fact");
+    expect(verbs).toContain("stage staged item");
+    expect(verbs).toContain("gardener sweep promoted 1, merged 0");
+    expect(inputs.ledger.find((event) => event.subject === "User Fact")?.notes).toEqual([
+      "User Fact",
+    ]);
+    expect(inputs.gardener?.sweptAt).toBeDefined();
+  });
+
+  it("counts recalls since the last sweep and exposes typed relations", async () => {
+    const { memory, seed } = await populatedMemory();
+    await seed.store.writeNote({
+      title: "Layout",
+      body: "see [[User Fact]]\n",
+      provenance: "agent",
+    });
+    memory.gardener.recordRecall("User Fact", "session-1");
+    memory.gardener.recordRecall("User Fact", "session-2");
+    const inputs = await memoryPanePort(() => memory).load();
+    const fact = inputs.notes.find((note) => note.title === "User Fact");
+    expect(fact?.recalls).toBe(2);
+    expect(fact?.relations).toEqual([{ name: "Layout", predicate: "relates_to", direction: "in" }]);
+  });
+
+  it("answers questions the way the agent's search would, with per-leg ranks", async () => {
+    const { memory } = await populatedMemory();
+    const outcome = await memoryPanePort(() => memory).query?.("recalled often");
+    expect(outcome?.source).toBe("lexical");
+    expect(outcome?.hits[0]).toEqual({
+      note: "Proven Rule",
+      layer: "workspace",
+      ranks: { lexical: 1 },
+      superseded: false,
+    });
+  });
+
+  it("reverts a ledger op through the store", async () => {
+    const { memory, seed } = await populatedMemory();
+    const result = await seed.store.writeNote({
+      title: "User Fact",
+      body: "revised\n",
+      provenance: "user",
+    });
+    const port = memoryPanePort(() => memory);
+    expect(await port.revert?.(result.ledgerId)).toBe("reverted");
+    expect((await seed.store.readNote("User Fact"))?.body).toBe("typed by hand\n");
+  });
+
+  it("routes approve to the store for staged writes and reviews alike", async () => {
     const { memory, seed, reviewId } = await populatedMemory();
-    const port = memoryPanePort(memory);
+    const port = memoryPanePort(() => memory);
     const [stagedItem] = await seed.store.listStaged();
-    await port.approve(`staged:${stagedItem?.id}`);
+    await port.approve(stagedItem?.id ?? "");
     expect((await seed.store.listNotes()).map((note) => note.title)).toContain("Web Claim");
-    await port.approve(`review:${reviewId}`);
-    expect(await seed.inbox.list()).toEqual([]);
+    await port.approve(reviewId);
+    expect(await seed.store.listStaged()).toEqual([]);
   });
 
   it("discard drops a staged item without landing it", async () => {
     const { memory, seed } = await populatedMemory();
     const [stagedItem] = await seed.store.listStaged();
-    await memoryPanePort(memory).discard(`staged:${stagedItem?.id}`);
-    expect(await seed.store.listStaged()).toEqual([]);
+    await memoryPanePort(() => memory).discard(stagedItem?.id ?? "");
+    expect((await seed.store.listStaged()).map((item) => item.kind)).toEqual(["contradiction"]);
     expect((await seed.store.listNotes()).map((note) => note.title)).not.toContain("Web Claim");
   });
 
   it("approving an already-resolved review item raises the calm typed error", async () => {
     const { memory, reviewId } = await populatedMemory();
-    const port = memoryPanePort(memory);
-    await port.approve(`review:${reviewId}`);
-    await expect(port.approve(`review:${reviewId}`)).rejects.toBeInstanceOf(
-      ReviewItemNotFoundError,
-    );
+    const port = memoryPanePort(() => memory);
+    await port.approve(reviewId);
+    await expect(port.approve(reviewId)).rejects.toBeInstanceOf(StagedItemNotFoundError);
   });
 
   it("an untrusted vault loads as calm emptiness, never content", async () => {
     const { memory } = await populatedMemory(false);
-    expect(await memoryPanePort(memory).load()).toEqual({
-      scopes: [],
+    expect(await memoryPanePort(() => memory).load()).toEqual({
+      layers: [],
       notes: [],
       inbox: [],
-      recalls: [],
+      ledger: [],
     });
   });
 });
@@ -243,56 +307,6 @@ describe("withMemoryPrompt", () => {
   });
 });
 
-describe("flushAfterTurn", () => {
-  async function sessionWith(messages: number): Promise<SessionStore> {
-    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), ".");
-    for (let index = 0; index < messages; index += 1) {
-      await store.append(textMessage(index % 2 === 0 ? "user" : "assistant", `turn ${index}`));
-    }
-    return store;
-  }
-
-  it("persists the flush turn to the session JSONL when the threshold trips", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    const session = await sessionWith(4);
-    const flush = new MemoryFlush({
-      provider: new MockProvider([textTurn("tests run on Node, not Bun")]),
-      store: memory.store,
-    });
-    const flushed = await flushAfterTurn(flush, session, session.messages(), 100);
-    expect(flushed).toHaveLength(2);
-    expect(session.messages()).toHaveLength(6);
-    expect((await memory.store.readDaily()).map((entry) => entry.text)).toEqual([
-      "tests run on Node, not Bun",
-    ]);
-  });
-
-  it("stays calm when the provider fails mid-flush: nothing persisted, session continues", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    const session = await sessionWith(4);
-    const flush = new MemoryFlush({
-      provider: {
-        name: "failing",
-        stream: () => {
-          throw new Error("socket reset");
-        },
-      },
-      store: memory.store,
-    });
-    const flushed = await flushAfterTurn(flush, session, session.messages(), 100);
-    expect(flushed).toEqual([]);
-    expect(session.messages()).toHaveLength(4);
-    expect(await memory.store.readDaily()).toEqual([]);
-  });
-
-  it("does nothing below the threshold or without a flush", async () => {
-    const session = await sessionWith(2);
-    expect(await flushAfterTurn(undefined, session, session.messages())).toEqual([]);
-  });
-});
-
 describe("sweepOnClose", () => {
   it("leaves an audit entry on a trusted vault and swallows nothing-to-do", async () => {
     const cwd = await declaredWorkspace();
@@ -309,6 +323,29 @@ describe("sweepOnClose", () => {
     await expect(sweepOnClose(memory)).resolves.toBeUndefined();
     await expect(sweepOnClose(undefined)).resolves.toBeUndefined();
   });
+
+  it("still proposes preferences when the sweep fails, then surfaces the failure", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, true);
+    if (memory === undefined) throw new Error("memory expected");
+    for (const _ of [1, 2, 3]) await memory.askGate.record("bash git", "yes");
+    vi.spyOn(memory.gardener, "sweep").mockRejectedValue(new Error("disk full"));
+
+    await expect(sweepOnClose(memory)).rejects.toThrow("memory close: disk full");
+
+    const items = await memory.store.listStaged();
+    expect(items.filter((item) => item.kind === "preference-proposal")).toHaveLength(1);
+  });
+
+  it("names every failure when both close steps fail", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, true);
+    if (memory === undefined) throw new Error("memory expected");
+    vi.spyOn(memory.gardener, "sweep").mockRejectedValue(new Error("disk full"));
+    vi.spyOn(memory.askGate, "proposePreferences").mockRejectedValue(new Error("ledger locked"));
+
+    await expect(sweepOnClose(memory)).rejects.toThrow("disk full · ledger locked");
+  });
 });
 
 describe("ask-gate preferences at close", () => {
@@ -320,7 +357,7 @@ describe("ask-gate preferences at close", () => {
 
     await sweepOnClose(memory);
 
-    const items = await memory.inbox.list();
+    const items = await memory.store.listStaged();
     expect(items.filter((item) => item.kind === "preference-proposal")).toHaveLength(1);
   });
 
@@ -332,7 +369,7 @@ describe("ask-gate preferences at close", () => {
 
     await sweepOnClose(memory);
 
-    expect(await memory.inbox.list()).toHaveLength(0);
+    expect(await memory.store.listStaged()).toHaveLength(0);
   });
 });
 

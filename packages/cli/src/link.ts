@@ -1,32 +1,31 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import { scopeContains } from "@keywork/engine";
-import { type TrustStore, updateWorkspaceDeclaration, type Workspace } from "@keywork/shared";
+import { scopeContains, toolScope } from "@keywork/engine";
+import {
+  canonicalPath,
+  type TrustStore,
+  updateWorkspaceDeclaration,
+  type Workspace,
+} from "@keywork/shared";
 import { type AnchorMemory, fileAnchorMemory } from "./anchor.ts";
-import { type Confirm, ensureWorkspace, type WorkspaceCommandIo } from "./init.ts";
+import { type CommandIo, type Confirm, resolveCommandIo } from "./command-io.ts";
+import { ensureWorkspace } from "./init.ts";
 
 export async function linkCommand(
   target: string | undefined,
   cwd: string,
   trustStore: TrustStore,
-  io: WorkspaceCommandIo = {},
+  io: CommandIo = {},
   confirm?: Confirm,
   anchorMemory: AnchorMemory = fileAnchorMemory(),
 ): Promise<number> {
-  const print = io.print ?? console.log;
-  const printError = io.printError ?? console.error;
+  const resolved = resolveCommandIo(io);
+  const { print, printError } = resolved;
   if (target === undefined || target.trim() === "") {
     printError("usage: keywork link <dir>");
     return 1;
   }
-  const workspace = await ensureWorkspace({
-    cwd,
-    trustStore,
-    print,
-    printError,
-    confirm,
-    anchorMemory,
-  });
+  const workspace = await ensureWorkspace({ cwd, trustStore, io: resolved, confirm, anchorMemory });
   if (workspace === undefined) return 1;
   const dir = resolve(cwd, target);
   const refusal = linkRefusal(workspace, dir);
@@ -56,16 +55,21 @@ function linkRefusal(
   dir: string,
 ): { line: string; exitCode: number } | undefined {
   if (!isDirectory(dir)) return { line: `${dir} isn't a directory`, exitCode: 1 };
-  if (scopeContains(workspace.root, dir)) {
+  if (scopeContains(toolScope(workspace.root), dir)) {
     return { line: `${dir} is already inside the workspace`, exitCode: 0 };
   }
-  if (scopeContains(dir, workspace.root)) {
+  if (scopeContains(toolScope(dir), workspace.root)) {
     return { line: "can't link a folder that contains the workspace itself", exitCode: 1 };
   }
-  if ([...workspace.contextDirs, ...workspace.missingContextDirs].includes(dir)) {
-    return { line: `${dir} is already linked`, exitCode: 0 };
-  }
+  if (alreadyLinked(workspace, dir)) return { line: `${dir} is already linked`, exitCode: 0 };
   return undefined;
+}
+
+function alreadyLinked(workspace: Workspace, dir: string): boolean {
+  const target = canonicalPath(dir);
+  return [...workspace.contextDirs, ...workspace.missingContextDirs].some(
+    (linked) => canonicalPath(linked) === target,
+  );
 }
 
 function isDirectory(path: string): boolean {

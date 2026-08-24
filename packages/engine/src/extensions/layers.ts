@@ -1,16 +1,22 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
-import {
-  type Frontmatter,
-  MalformedFrontmatterError,
-  parseDocument,
-} from "../memory/frontmatter.ts";
+import { basename, join } from "node:path";
+import { type Frontmatter, parseDocument } from "../memory/frontmatter.ts";
 
 export type LayerSource = "project" | "user";
 
-export interface LayeredDirs {
-  projectDir?: string;
-  userDir?: string;
+export interface LayerRoots {
+  projectRoot?: string | undefined;
+  userRoot?: string | undefined;
+}
+
+export interface ExtensionConventions {
+  readonly dirs: readonly string[];
+  readonly discover: (dir: string) => Promise<DiscoveredFile[]>;
+}
+
+export interface DiscoveredFile {
+  readonly file: string;
+  readonly name: string;
 }
 
 export interface ExtensionLoadFailure {
@@ -24,21 +30,45 @@ export interface MarkdownDefinition {
   body: string;
   file: string;
   source: LayerSource;
+  convention: string;
 }
 
-export async function loadLayeredMarkdown<T extends { name: string }>(
-  dirs: LayeredDirs,
+export interface LayeredLoad<T> {
+  items: T[];
+  failures: ExtensionLoadFailure[];
+}
+
+export async function loadLayered<T extends { name: string }>(
+  roots: LayerRoots,
+  conventions: ExtensionConventions,
   build: (definition: MarkdownDefinition) => T,
-): Promise<{ items: T[]; failures: ExtensionLoadFailure[] }> {
+): Promise<LayeredLoad<T>> {
   const byName = new Map<string, T>();
   const failures: ExtensionLoadFailure[] = [];
-  for (const layer of layersInPrecedence(dirs)) {
-    for (const file of await markdownFilesIn(layer.dir)) {
-      const item = await buildFromFile(file, layer.source, build, failures);
-      if (item !== undefined) byName.set(item.name, item);
+  for (const layer of layersByPrecedence(roots, conventions)) {
+    for (const found of await conventions.discover(layer.dir)) {
+      try {
+        const item = build(await readDefinition(found, layer));
+        if (!byName.has(item.name)) byName.set(item.name, item);
+      } catch (cause) {
+        failures.push({ file: found.file, reason: reasonFor(cause) });
+      }
     }
   }
   return { items: [...byName.values()], failures };
+}
+
+export async function markdownFilesIn(dir: string): Promise<DiscoveredFile[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+      .map((entry) => entry.name)
+      .sort()
+      .map((name) => ({ file: join(dir, name), name: basename(name, ".md") }));
+  } catch {
+    return [];
+  }
 }
 
 export function definitionString(frontmatter: Frontmatter, key: string): string | undefined {
@@ -52,55 +82,47 @@ export function definitionList(frontmatter: Frontmatter, key: string): string[] 
   return typeof value === "string" ? [value] : undefined;
 }
 
+interface Layer {
+  readonly source: LayerSource;
+  readonly convention: string;
+  readonly dir: string;
+}
+
 const validName = /^[A-Za-z0-9][\w-]*$/;
 
-function layersInPrecedence(dirs: LayeredDirs): { dir: string; source: LayerSource }[] {
+function layersByPrecedence(roots: LayerRoots, conventions: ExtensionConventions): Layer[] {
   return [
-    ...(dirs.userDir !== undefined ? [{ dir: dirs.userDir, source: "user" as const }] : []),
-    ...(dirs.projectDir !== undefined
-      ? [{ dir: dirs.projectDir, source: "project" as const }]
-      : []),
+    ...layersUnder("project", roots.projectRoot, conventions.dirs),
+    ...layersUnder("user", roots.userRoot, conventions.dirs),
   ];
 }
 
-async function markdownFilesIn(dir: string): Promise<string[]> {
-  try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-      .map((entry) => join(dir, entry.name))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-async function buildFromFile<T>(
-  file: string,
+function layersUnder(
   source: LayerSource,
-  build: (definition: MarkdownDefinition) => T,
-  failures: ExtensionLoadFailure[],
-): Promise<T | undefined> {
-  const name = fileStem(file);
-  if (!validName.test(name)) {
-    failures.push({ file, reason: `invalid name "${name}"; use letters, digits, - or _` });
-    return undefined;
-  }
-  try {
-    const { frontmatter, body } = parseDocument(await readFile(file, "utf8"), file);
-    return build({ name, frontmatter, body, file, source });
-  } catch (cause) {
-    failures.push({ file, reason: reasonFor(cause) });
-    return undefined;
-  }
+  root: string | undefined,
+  dirs: readonly string[],
+): Layer[] {
+  if (root === undefined) return [];
+  return dirs.map((convention) => ({ source, convention, dir: join(root, convention) }));
 }
 
-function fileStem(file: string): string {
-  const base = file.slice(Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) + 1);
-  return base.slice(0, -".md".length);
+async function readDefinition(found: DiscoveredFile, layer: Layer): Promise<MarkdownDefinition> {
+  const { frontmatter, body } = parseDocument(await readFile(found.file, "utf8"), found.file);
+  return {
+    name: validatedName(definitionString(frontmatter, "name") ?? found.name),
+    frontmatter,
+    body,
+    file: found.file,
+    source: layer.source,
+    convention: layer.convention,
+  };
+}
+
+function validatedName(name: string): string {
+  if (validName.test(name)) return name;
+  throw new Error(`invalid name "${name}"; use letters, digits, - or _`);
 }
 
 function reasonFor(cause: unknown): string {
-  if (cause instanceof MalformedFrontmatterError) return cause.message;
   return cause instanceof Error ? cause.message : String(cause);
 }

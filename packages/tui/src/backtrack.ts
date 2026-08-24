@@ -1,17 +1,20 @@
-import type { SessionEntry, SessionTreeNode } from "@keywork/engine";
+import type { MessageEntry, SessionEntry, SessionTreeNode } from "@keywork/engine";
 
 export interface PromptAnchor {
   id: string;
   parentId: string | null;
+  checkpoint: string | undefined;
 }
 
 export function promptAnchor(
   roots: readonly SessionTreeNode[],
-  promptOrdinal: number,
+  promptId: string,
 ): PromptAnchor | undefined {
-  const prompts = activePath(roots).filter(isUserPrompt);
-  const entry = prompts[promptOrdinal];
-  return entry === undefined ? undefined : { id: entry.id, parentId: entry.parentId };
+  const prompt = activePath(roots)
+    .filter(isUserPrompt)
+    .find((entry) => entry.id === promptId);
+  if (prompt === undefined) return undefined;
+  return { id: prompt.id, parentId: prompt.parentId, checkpoint: prompt.checkpoint };
 }
 
 function activePath(roots: readonly SessionTreeNode[]): SessionEntry[] {
@@ -25,6 +28,6 @@ function activePath(roots: readonly SessionTreeNode[]): SessionEntry[] {
   }
 }
 
-function isUserPrompt(entry: SessionEntry): boolean {
+function isUserPrompt(entry: SessionEntry): entry is MessageEntry {
   return entry.type === "message" && entry.message.role === "user";
 }

@@ -1,12 +1,38 @@
 import { detectCapabilities } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
-import { doctorCommand, doctorReport } from "./doctor.ts";
+import { doctorCommand, doctorReport, renderDoctorReport } from "./doctor.ts";
+import { composeInference } from "./inference/runtime.ts";
 
 function report(env: Record<string, string | undefined>, platform = "linux"): string {
-  return doctorReport(detectCapabilities({ env, platform }));
+  return renderDoctorReport(doctorReport(detectCapabilities({ env, platform })));
 }
 
 describe("doctorReport", () => {
+  it("exposes the report as labeled rows before any rendering", () => {
+    const { rows } = doctorReport(
+      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
+    );
+    expect(rows.map((row) => row.label)).toEqual([
+      "terminal",
+      "color",
+      "sync frames",
+      "glyph tier",
+      "nerd font",
+      "sample",
+    ]);
+    expect(rows[0]?.value).toBe("Windows Terminal");
+  });
+
+  it("adds one context row per provider, continuation rows unlabeled", () => {
+    const { registry } = composeInference({
+      env: { OPENAI_API_KEY: "k" },
+      config: { connections: { ollama: { endpoint: "http://localhost:11434/v1", models: ["q"] } } },
+      credentials: {},
+    });
+    const rows = doctorReport(detectCapabilities({ env: {}, platform: "linux" }), registry).rows;
+    expect(rows.slice(-2).map((row) => row.label)).toEqual(["context", ""]);
+  });
+
   it("prints the full profile for a major terminal", () => {
     expect(report({ WT_SESSION: "guid" }, "win32")).toBe(
       [
@@ -53,14 +79,56 @@ describe("doctorReport", () => {
 });
 
 describe("doctorCommand", () => {
-  it("logs the report for the given environment and exits 0", () => {
+  it("logs the report for the given environment and exits 0", async () => {
     const lines: string[] = [];
-    const code = doctorCommand(
+    const code = await doctorCommand(
       { env: { TERM: "xterm-256color", LANG: "C" }, platform: "linux" },
       (line) => lines.push(line),
     );
     expect(code).toBe(0);
     expect(lines.join("\n")).toContain("terminal     unrecognized");
     expect(lines.join("\n")).toContain("color        256 colors");
+  });
+
+  it("lists each connected provider's models with declared or assumed windows", async () => {
+    const { registry } = composeInference({
+      env: { OPENAI_API_KEY: "k" },
+      config: {
+        connections: { ollama: { endpoint: "http://localhost:11434/v1", models: ["qwen3"] } },
+        models: { qwen3: { contextWindow: 32_768 } },
+      },
+      credentials: {},
+      observations: { ollama: { models: ["qwen3", "llama3"] } },
+    });
+    const lines: string[] = [];
+    await doctorCommand(
+      { env: { WT_SESSION: "guid" }, platform: "win32" },
+      (line) => lines.push(line),
+      async () => registry,
+    );
+    const report = lines.join("\n");
+    expect(report).toContain("context      ollama: qwen3 33k · llama3 assumed");
+    expect(report).toContain("             openai: gpt-5-mini assumed");
+  });
+
+  it("says when no provider is connected, and shrugs off a failed inference load", async () => {
+    const lines: string[] = [];
+    await doctorCommand(
+      { env: {}, platform: "linux" },
+      (line) => lines.push(line),
+      async () => {
+        throw new Error("config broke");
+      },
+    );
+    expect(lines.join("\n")).not.toContain("context ");
+
+    lines.length = 0;
+    const { registry } = composeInference({ env: {}, config: {}, credentials: {} });
+    await doctorCommand(
+      { env: {}, platform: "linux" },
+      (line) => lines.push(line),
+      async () => registry,
+    );
+    expect(lines.join("\n")).toContain("context      no provider connected yet · keywork connect");
   });
 });

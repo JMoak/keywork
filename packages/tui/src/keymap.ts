@@ -16,6 +16,10 @@ export interface KeymapOptions {
   bindings: Record<string, BindingSpec>;
 }
 
+export class KeymapError extends Error {
+  override readonly name = "KeymapError";
+}
+
 export class Keymap {
   readonly timeoutMs: number;
   private readonly leader: Chord;
@@ -26,19 +30,21 @@ export class Keymap {
   constructor(options: KeymapOptions) {
     this.leader = parseChord(options.leader ?? "ctrl+k");
     this.timeoutMs = options.timeoutMs ?? 2000;
+    const claims = new Map<string, string>();
     for (const [action, spec] of Object.entries(options.bindings)) {
       const specs = typeof spec === "string" ? [spec] : spec;
       const parsed = specs.filter((entry) => entry !== "none").map(parseBinding);
+      for (const binding of parsed) this.claim(claims, binding, action);
       if (parsed.length > 0) this.bindings.set(action, parsed);
     }
   }
 
   press(chord: Chord, nowMs: number, repeat = false): KeymapResult {
     if (this.isPending(nowMs)) {
-      if (chordsEqual(chord, this.leader)) {
-        return repeat ? { type: "leader-pending" } : this.disarm();
-      }
-      return this.resolveLeaderKey(chord, nowMs);
+      if (!chordsEqual(chord, this.leader)) return this.resolveLeaderKey(chord, nowMs);
+      if (repeat) return { type: "leader-pending" };
+      this.disarm();
+      return cancelled;
     }
     if (chordsEqual(chord, this.leader)) {
       this.arm(nowMs);
@@ -60,39 +66,57 @@ export class Keymap {
   describe(action: string): string | undefined {
     const binding = this.bindings.get(action)?.[0];
     if (binding === undefined) return undefined;
-    if (binding.kind === "chord") return formatChord(binding.chord);
-    return `${formatChord(this.leader)} ${binding.key}`;
+    return binding.kind === "chord"
+      ? formatChord(binding.chord)
+      : this.describeLeaderKey(binding.key);
   }
 
   actions(): readonly string[] {
     return [...this.bindings.keys()];
   }
 
+  private claim(claims: Map<string, string>, binding: Binding, action: string): void {
+    const spec =
+      binding.kind === "chord" ? formatChord(binding.chord) : this.describeLeaderKey(binding.key);
+    if (binding.kind === "chord" && chordsEqual(binding.chord, this.leader)) {
+      throw new KeymapError(`"${spec}" is the leader and cannot also run "${action}"`);
+    }
+    const holder = claims.get(spec);
+    if (holder === action) throw new KeymapError(`"${spec}" is listed twice for "${action}"`);
+    if (holder !== undefined) {
+      throw new KeymapError(`"${spec}" is bound to both "${holder}" and "${action}"`);
+    }
+    claims.set(spec, action);
+  }
+
+  private describeLeaderKey(key: string): string {
+    return `${formatChord(this.leader)} ${key}`;
+  }
+
   private isPending(nowMs: number): boolean {
     if (this.pendingSince === undefined) return false;
     if (nowMs - this.pendingSince <= this.timeoutMs) return true;
-    this.pendingSince = undefined;
+    this.disarm();
     return false;
   }
 
   private resolveLeaderKey(chord: Chord, nowMs: number): KeymapResult {
     const scope = this.armedScope;
     this.disarm();
-    if (chord.name === "escape") return { type: "cancelled" };
+    if (chord.name === "escape") return cancelled;
     if (chord.ctrl || chord.meta) {
-      return scope === undefined ? { type: "cancelled" } : this.press(chord, nowMs);
+      return scope === undefined ? cancelled : this.press(chord, nowMs);
     }
     const action = this.findByLeaderKey(chord);
     if (action !== undefined && (scope === undefined || scope.has(action))) {
       return { type: "action", action };
     }
-    return scope === undefined ? { type: "cancelled" } : this.press(chord, nowMs);
+    return scope === undefined ? cancelled : this.press(chord, nowMs);
   }
 
-  private disarm(): KeymapResult {
+  private disarm(): void {
     this.pendingSince = undefined;
     this.armedScope = undefined;
-    return { type: "cancelled" };
   }
 
   private findByChord(chord: Chord): string | undefined {
@@ -105,7 +129,7 @@ export class Keymap {
   }
 
   private findByLeaderKey(chord: Chord): string | undefined {
-    const pressed = chord.shift ? `shift+${chord.name}` : chord.name;
+    const pressed = leaderKeyOf(chord);
     for (const [action, bindings] of this.bindings) {
       for (const binding of bindings) {
         if (binding.kind === "leader" && binding.key === pressed) return action;
@@ -115,9 +139,20 @@ export class Keymap {
   }
 }
 
+const cancelled: KeymapResult = { type: "cancelled" };
+
 function parseBinding(spec: string): Binding {
   const leaderMatch = spec.match(/^leader\s+(\S+)$/i);
-  if (leaderMatch !== null)
-    return { kind: "leader", key: (leaderMatch[1] as string).toLowerCase() };
-  return { kind: "chord", chord: parseChord(spec) };
+  if (leaderMatch === null) return { kind: "chord", chord: parseChord(spec) };
+  const key = parseChord(leaderMatch[1] as string);
+  if (key.ctrl || key.meta) {
+    throw new KeymapError(
+      `"${spec}" can never fire: leader keys take at most shift, since ctrl and alt end the leader`,
+    );
+  }
+  return { kind: "leader", key: leaderKeyOf(key) };
+}
+
+function leaderKeyOf(chord: Chord): string {
+  return chord.shift ? `shift+${chord.name}` : chord.name;
 }

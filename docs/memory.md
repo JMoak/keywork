@@ -1,8 +1,8 @@
-# Memory vault — layout and invariants
+# Memory vault: layout and invariants
 
 The memory store (`packages/engine/src/memory/`) is a per-scope atomic-note vault
 (backlog J3) with the J11 write-gating kernel: provenance tagged, untrusted writes
-staged until approved, everything one-key revertable. Files are truth — there is no
+staged until approved, everything one-key revertable. Files are truth; there is no
 database. The vault root is injected (J1's `resolveVaultPath` supplies it); so is the
 clock, so every timestamp is deterministic under test.
 
@@ -10,19 +10,19 @@ clock, so every timestamp is deterministic under test.
 
 ```
 <vault root>/
-  MEMORY.md                 links-only map of content (MOC) — never prose
+  MEMORY.md                 links-only map of content (MOC), never prose
   curation.md               append-only curation audit (approve/discard events)
   daily/YYYY-MM-DD.md       append-only episodic log, per-entry provenance markers
-  <Concept Title>.md        atomic notes — one concept per file
+  <Concept Title>.md        atomic notes, one concept per file
   entities/<repo/path>.md   entity notes named by repo path (P4)
-  .staging/                 staged untrusted writes (content + metadata sidecar)
+  .staging/<uuid>.json      staged items: untrusted writes (content + metadata sidecar) and reviews
   .obsidian/                never created by keywork; ignored if present (gitignore it)
 ```
 
 - **Atomic notes** carry the machine layer in YAML frontmatter: `provenance`
   (`user` | `agent` | `untrusted`), `created`, optional `pinned`, `confidence`,
   `aliases`, and quoted wikilink relations (`supersedes: "[[Old Note]]"`,
-  `superseded_by: "[[New Note]]"` — the pair is stamped across both notes in one
+  `superseded_by: "[[New Note]]"`; the pair is stamped across both notes in one
   ledger step). Bodies use bare `[[Name]]` wikilinks. A note without frontmatter is
   treated as human-authored (`user`).
 - **Titles** are unique concept-oriented filenames, enforced case-insensitively.
@@ -39,7 +39,7 @@ clock, so every timestamp is deterministic under test.
 ## Invariants
 
 1. **Provenance is structural.** Every durable write is stamped with its caller-
-   declared provenance class — frontmatter for notes, the per-entry marker for daily
+   declared provenance class: frontmatter for notes, the per-entry marker for daily
    logs.
 2. **Untrusted writes are staged by construction.** `provenance: "untrusted"` writes
    land in `.staging/` and are invisible to `listNotes`, `readNote`, `readMoc`,
@@ -55,14 +55,14 @@ clock, so every timestamp is deterministic under test.
    nothing.
 4. **Redaction precedes persistence** (P5). Exact values of injected secret env vars
    are elided as `‹redacted:NAME›`, and conservative secret shapes (`sk-` keys,
-   `Bearer` tokens, long mixed-case tokens) are elided by shape — before anything,
+   `Bearer` tokens, long mixed-case tokens) are elided by shape before anything,
    staged content included, reaches disk.
 5. **Untrusted workspace ⇒ inert memory** (P1). With the injected `trusted` flag
    false, reads return nothing, writes throw `MemoryInertError`, and bootstrap
    yields empty.
 6. **Bootstrap never truncates** (R4). Given a token budget, the MOC resolves to
-   whole notes in documented priority order — pinned notes first, then MOC order,
+   whole notes in documented priority order: pinned notes first, then MOC order,
    superseded and unresolved links excluded; a note that does not fit is skipped,
    never cut.
 7. **Malformed frontmatter is a typed error naming the file**
-   (`MalformedFrontmatterError`) — never a crash, never a silent skip.
+   (`MalformedFrontmatterError`): never a crash, never a silent skip.

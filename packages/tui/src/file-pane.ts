@@ -4,6 +4,7 @@ import type { Chord } from "./keys.ts";
 import type { FileOpenOptions, Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import type { Theme } from "./theme.ts";
+import { take } from "./width.ts";
 
 export class FilePane implements Pane {
   private readonly model: FileModel;
@@ -32,6 +33,14 @@ export class FilePane implements Pane {
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
+  settled(): Promise<void> {
+    return this.model.settled();
+  }
+
+  dispose(): void {
+    this.model.dispose();
+  }
+
   view(context: PaneContext): PaneView {
     const { theme, height, width } = context;
     this.lastPageRows = paneContentHeight(height);
@@ -51,7 +60,7 @@ export class FilePane implements Pane {
     const gutter = String(this.model.lineCount()).length;
     return this.model.visibleLines(rows).map((line) =>
       Text({
-        content: `${String(line.number).padStart(gutter)} ${line.text}`.slice(0, width),
+        content: take(`${String(line.number).padStart(gutter)} ${line.text}`, width),
         fg: theme.text,
       }),
     );

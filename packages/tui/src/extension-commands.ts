@@ -1,4 +1,5 @@
-import type { CommandRegistry } from "./commands.ts";
+import { toError } from "@keywork/shared";
+import type { CommandRegistry, CommandSpec } from "./commands.ts";
 
 export interface ExtensionCommandEntry {
   name: string;
@@ -29,20 +30,26 @@ export interface ExtensionSeams {
   notice(text: string): void;
 }
 
+export interface ShadowedExtension {
+  name: string;
+  claimedBy: string;
+}
+
 export function registerExtensions(
   registry: CommandRegistry,
   extensions: ExtensionsPort,
   seams: ExtensionSeams,
-): void {
-  for (const command of extensions.commands) {
-    registry.register({
-      name: command.name,
-      description: command.description ?? `workspace command: /${command.name}`,
-      ...(command.needsArgs && { needsArgs: true as const }),
-      run: (args) => runExtensionCommand(command, args ?? "", seams),
-    });
-  }
-  registerAgents(registry, extensions.agents, seams);
+): ShadowedExtension[] {
+  const specs = [
+    ...extensions.commands.map((command) => extensionCommand(command, seams)),
+    ...agentCommands(extensions.agents, seams),
+  ];
+  return specs.flatMap((spec) => {
+    const outcome = registry.register(spec);
+    return outcome.kind === "collision"
+      ? [{ name: outcome.name, claimedBy: outcome.claimedBy }]
+      : [];
+  });
 }
 
 export function extensionFailureNotice(failures: readonly string[]): string | undefined {
@@ -52,24 +59,42 @@ export function extensionFailureNotice(failures: readonly string[]): string | un
   return more === 0 ? `skipped extension ${first}` : `skipped extension ${first} (+${more} more)`;
 }
 
-function registerAgents(
-  registry: CommandRegistry,
+export function shadowedExtensionNotice(
+  shadowed: readonly ShadowedExtension[],
+): string | undefined {
+  const first = shadowed[0];
+  if (first === undefined) return undefined;
+  const more = shadowed.length - 1;
+  const lead = `/${first.name} is taken by /${first.claimedBy} · the extension command is skipped`;
+  return more === 0 ? lead : `${lead} (+${more} more)`;
+}
+
+function extensionCommand(command: ExtensionCommandEntry, seams: ExtensionSeams): CommandSpec {
+  return {
+    name: command.name,
+    description: command.description ?? `workspace command: /${command.name}`,
+    ...(command.needsArgs && { needsArgs: true as const }),
+    run: (args) => runExtensionCommand(command, args ?? "", seams),
+  };
+}
+
+function agentCommands(
   agents: readonly ExtensionAgentEntry[],
   seams: ExtensionSeams,
-): void {
-  if (agents.length === 0) return;
-  for (const agent of agents) {
-    registry.register({
+): CommandSpec[] {
+  if (agents.length === 0) return [];
+  return [
+    {
+      name: "agent-none",
+      description: "switch this pane back to the default agent",
+      run: () => switchAgent(undefined, seams),
+    },
+    ...agents.map((agent) => ({
       name: `agent-${agent.name}`,
       description: agent.description ?? `switch this pane to the ${agent.name} agent`,
       run: () => switchAgent(agent.name, seams),
-    });
-  }
-  registry.register({
-    name: "agent-none",
-    description: "switch this pane back to the default agent",
-    run: () => switchAgent(undefined, seams),
-  });
+    })),
+  ];
 }
 
 function switchAgent(name: string | undefined, seams: ExtensionSeams): void {
@@ -99,6 +124,6 @@ function runExtensionCommand(
     .render(args, (shell) => target.confirmShell(shell))
     .then((prompt) => target.submitPrompt(prompt))
     .catch((cause: unknown) => {
-      seams.notice(`/${command.name} failed: ${(cause as Error).message}`);
+      seams.notice(`/${command.name} failed: ${toError(cause).message}`);
     });
 }

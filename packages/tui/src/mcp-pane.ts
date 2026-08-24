@@ -1,20 +1,16 @@
-import { Text } from "@opentui/core";
 import { type Chord, parseChord } from "./keys.ts";
-import {
-  type McpAction,
-  McpPaneModel,
-  type McpRow,
-  type McpServerView,
-  mcpToneToken,
-  stateGlyph,
-} from "./mcp-pane-model.ts";
+import { type McpAction, McpPaneModel, type McpServerView, stateGlyph } from "./mcp-pane-model.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import {
+  type PaneChild,
   paneChrome,
   paneContentHeight,
   paneContentWidth,
   paneFailureLine,
+  paneLine,
   paneTitle,
+  rowsView,
+  toneInk,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
@@ -55,16 +51,16 @@ export class McpPane implements Pane {
     private readonly port: McpPanePort,
   ) {
     this.tasks = new PaneTasks(notify);
-    this.tray = new PaneTrayModel(
-      () => this.tasks.emit(),
-      () => this.trayCommands(),
-    );
     this.model = new McpPaneModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
       restart: (name) => this.transition(name, () => this.port.restart(name)),
       setEnabled: (name, on) => this.transition(name, () => this.port.setEnabled(name, on)),
       listTools: (name) => this.tasks.track(() => this.deliverTools(name)),
     });
+    this.tray = new PaneTrayModel(
+      () => this.tasks.emit(),
+      () => this.trayCommands(),
+    );
     this.unsubscribe = port.subscribe?.((servers) => this.model.setServers(servers));
     this.refresh();
   }
@@ -167,19 +163,12 @@ export class McpPane implements Pane {
     this.model.setServers(await this.port.load());
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number) {
+  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
-    return this.model
-      .visibleRows(rows)
-      .map(({ index, row }) => this.rowLine(row, index === this.model.cursor, theme, width));
-  }
-
-  private rowLine(row: McpRow, selected: boolean, theme: Theme, width: number) {
-    const content = row.text.slice(0, width);
-    if (selected && row.selectable) {
-      return Text({ content: content.padEnd(width), fg: theme.background, bg: theme.accent });
-    }
-    return Text({ content, fg: theme[mcpToneToken(row.tone)] });
+    return rowsView(this.model, rows, theme, width, {
+      text: (row) => row.text,
+      line: (row) => paneLine(row.text, toneInk(theme, row.tone), width),
+    });
   }
 }

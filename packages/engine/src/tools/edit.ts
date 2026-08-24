@@ -10,7 +10,7 @@ const schema = z.object({
   replaceAll: z.boolean().optional().describe("Replace every occurrence instead of exactly one."),
 });
 
-export function editTool(scope: string | ToolScope, onSaved?: (path: string) => void) {
+export function editTool(scope: ToolScope, onSaved?: (path: string) => void) {
   return defineTool({
     name: "edit",
     description: "Replace exact text in a file. oldText must match exactly once unless replaceAll.",

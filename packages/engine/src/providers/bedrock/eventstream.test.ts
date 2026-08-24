@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ProviderStreamError } from "../openai.ts";
+import { ProviderStreamError } from "../errors.ts";
+import { chunkedStream, concatBytes } from "../stream-fixtures.ts";
 import { crc32, type EventStreamMessage, eventStreamMessages } from "./eventstream.ts";
-import { chunkedStream, concatBytes, encodeFrame, eventFrame, rawFrame } from "./frame-fixtures.ts";
+import { encodeFrame, eventFrame, rawFrame } from "./frame-fixtures.ts";
 
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();

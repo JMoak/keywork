@@ -81,7 +81,7 @@ describe("fitTitle", () => {
     expect(fitTitle("fix-mcp-reconnect", 20)).toBe("fix-mcp-reconnect");
   });
 
-  it("sheds the arc prefix first — the border hue already carries it", () => {
+  it("sheds the arc prefix first because the border hue already carries it", () => {
     expect(fitTitle("mcp-hardening:sleep-wake", 12)).toBe("sleep-wake");
   });
 

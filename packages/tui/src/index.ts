@@ -1,22 +1,36 @@
+export { type AppOptions, runApp } from "./app.ts";
+export type { FocusedArcPort } from "./arc-commands.ts";
 export {
-  type AgentFactory,
-  type AgentSeams,
-  type AppOptions,
-  type CheckpointsPort,
-  runApp,
-  type SessionAttachment,
-  type SessionPort,
-  type SessionTurn,
-  type WorkspacePort,
-} from "./app.ts";
-export type { PresetsPort } from "./app-core.ts";
+  type ArcPicker,
+  type ArcPickerChoice,
+  type ArcPickerRow,
+  arcChoiceOf,
+  arcPickerOver,
+  describeArcRow,
+} from "./arc-picker.ts";
+export {
+  type ArcCloseOutcome,
+  type ArcOrdinals,
+  type ArcStatus,
+  type ArcSummary,
+  type ArcsPort,
+  activeFirst,
+  arcInk,
+  arcOrdinalsOf,
+  arcSlugProblem,
+  arcTag,
+  describeCloseOutcome,
+  isArcSlug,
+  suggestArcSlug,
+} from "./arcs.ts";
+export { ArcsPane, type ArcsPaneOptions } from "./arcs-pane.ts";
+export type { ArcGroupKey, ArcGroupRow, ArcsLevel } from "./arcs-pane-model.ts";
 export {
   border,
   type CapabilityProfile,
   type ColorDepth,
   density,
   detectCapabilities,
-  frameWrap,
   type GlyphSupport,
   type GlyphTier,
   resolveMark,
@@ -28,7 +42,16 @@ export {
   type TieredRamp,
   tile,
 } from "./capability.ts";
-export type { ForkOutcome, Titler } from "./conversation-model.ts";
+export {
+  barCells,
+  contextGauge,
+  contextReadout,
+  type GaugeOptions,
+  type GaugeStyle,
+  gaugeStyleFor,
+  type InstrumentTier,
+} from "./context-gauge.ts";
+export type { CompactionHook, ForkOutcome, Titler } from "./conversation-model.ts";
 export type {
   ConversationTarget,
   ExtensionAgentEntry,
@@ -43,22 +66,73 @@ export {
   startupFlavors,
   themeOf,
 } from "./flavor.ts";
+export type { CheckpointsPort } from "./fork.ts";
+export {
+  type Highlighter,
+  highlightedLanguages,
+  highlighterFor,
+  type SyntaxClass,
+  type SyntaxSpan,
+} from "./highlighter.ts";
+export type {
+  ConnectionDraft,
+  ConnectionProtocol,
+  ConnectionsPort,
+  ConnectionTarget,
+  CredentialChoice,
+  InferencePort,
+  ModelChoice,
+  RemovalReceipt,
+  ResolutionNotice,
+  SavedConnection,
+  VerificationOutcome,
+} from "./inference-port.ts";
+export {
+  type MarkdownRow,
+  type MarkdownSpan,
+  type MarkdownTone,
+  markdownRowText,
+  renderMarkdown,
+} from "./markdown.ts";
+export {
+  assumedGlyphs,
+  defaultPageMarks,
+  type PageMarks,
+  pageMarkFamilies,
+  pageMarks,
+  type VoiceStamps,
+} from "./marks.ts";
+export {
+  type Headline,
+  type HeadlineFace,
+  type HeadlineFrame,
+  headline,
+} from "./masthead.ts";
 export { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 export type {
   McpProgress,
   McpServerState,
   McpServerView,
 } from "./mcp-pane-model.ts";
-export { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+export { MemoryPane, type MemoryPaneOptions, type MemoryPanePort } from "./memory-pane.ts";
 export type {
   CuringStage,
   GardenerActivityView,
   InboxItemView,
   InboxKind,
+  LedgerEventView,
+  MemoryLayerKind,
+  MemoryLayerView,
+  MemoryLensState,
   MemoryNoteView,
   MemoryPaneInputs,
   MemoryProvenance,
-  RecallEventView,
+  MemoryQueryHit,
+  MemoryQueryOutcome,
+  NoteRelationView,
+  PromptBudgetView,
+  QueryLeg,
+  QuerySource,
 } from "./memory-pane-model.ts";
 export {
   Animator,
@@ -73,6 +147,7 @@ export {
   type TempoSpec,
   tempos,
 } from "./motion.ts";
+export type { PresetsPort } from "./overlays/index.ts";
 export {
   type PageGrammar,
   type PageThresholdOverrides,
@@ -83,6 +158,17 @@ export {
   resolvePage,
   resolvePageThresholds,
 } from "./page.ts";
+export type { ArcOrigin, PaneOrigin } from "./pane-kinds.ts";
+export type { WorkspacePort } from "./restore-plan.ts";
+export type {
+  AfterTurn,
+  AgentFactory,
+  AgentSeams,
+  Compactor,
+  SessionAttachment,
+  SessionPort,
+  SessionTurn,
+} from "./session-attachment.ts";
 export type { SessionTreeView } from "./session-tree-model.ts";
 export type { SessionTreePaneSeams, SessionTreePort } from "./session-tree-pane.ts";
 export type {
@@ -91,6 +177,32 @@ export type {
   SessionOverviewRow,
   SessionPresence,
 } from "./sessions-overview-model.ts";
+export {
+  type SlugInk,
+  type SlugPart,
+  type SlugRole,
+  slugChunks,
+  slugInk,
+  slugParts,
+  slugWords,
+} from "./slug.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
 export { type LifecycleState, type TitleBarState, titleBar } from "./title-bar.ts";
+export {
+  describeWorkspaceRow,
+  type WorkspaceChoice,
+  type WorkspacePicker,
+  type WorkspacePickerChoice,
+  type WorkspacePickerRow,
+  type WorkspacesPort,
+  workspaceChoiceOf,
+  workspacePickerOver,
+} from "./workspace-picker.ts";
+export {
+  readinessNotice,
+  setupPrompt,
+  type WorkspaceReadiness,
+  type WorkspaceSetupPort,
+  type WorkspaceSetupReceipt,
+} from "./workspace-setup.ts";
 export type { WorkspaceState } from "./workspace-state.ts";

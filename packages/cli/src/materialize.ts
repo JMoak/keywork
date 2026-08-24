@@ -1,9 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import { type Provider, scopeContains } from "@keywork/engine";
+import { type Provider, scopeContains, toolScope } from "@keywork/engine";
 import {
   openWorkspace,
   resolveAnchor,
+  toError,
   type Workspace,
   writeWorkspaceDeclaration,
 } from "@keywork/shared";
@@ -42,20 +43,21 @@ export function deferredMaterialization(
     try {
       created = materializeIfDue(options);
     } catch (cause) {
-      options.report?.(`keywork: workspace setup failed: ${(cause as Error).message}`);
+      options.report?.(`keywork: workspace setup failed: ${toError(cause).message}`);
     }
   };
   return {
     wrapProvider: (provider) => ({
       name: provider.name,
       modelId: provider.modelId,
+      capabilities: provider.capabilities,
       stream: (request) => {
         attemptOnce();
         return provider.stream(request);
       },
     }),
     fileSaved: (path) => {
-      if (scopeContains(anchorRootFor(options), path)) attemptOnce();
+      if (scopeContains(toolScope(anchorRootFor(options)), path)) attemptOnce();
     },
     materialized: () => created,
   };

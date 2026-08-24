@@ -1,21 +1,23 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { confinedPath, scopeContains, scopeCwd, toolScope } from "./confine.ts";
+import { confinedPath, scopeContains, type ToolScope, toolScope } from "./confine.ts";
 import { editTool } from "./edit.ts";
 import { readTool } from "./read.ts";
 import { writeTool } from "./write.ts";
 
 let scratch: string;
 let root: string;
+let repo: ToolScope;
 let linked: string;
 let sibling: string;
 
 beforeEach(async () => {
   scratch = mkdtempSync(join(tmpdir(), "keywork-confine-"));
   root = join(scratch, "repo");
+  repo = toolScope(root);
   linked = join(scratch, "linked");
   sibling = join(scratch, "sibling");
   await mkdir(root, { recursive: true });
@@ -27,10 +29,29 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
+function linkDirectory(target: string, path: string): void {
+  symlinkSync(target, path, "junction");
+}
+
+const canLinkDirectories = probeDirectoryLinks();
+
+function probeDirectoryLinks(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), "keywork-link-probe-"));
+  try {
+    mkdirSync(join(probe, "target"));
+    linkDirectory(join(probe, "target"), join(probe, "link"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+}
+
 describe("confinedPath", () => {
   it("keeps the single-root behavior and message", () => {
-    expect(confinedPath(root, "src/app.ts")).toBe(join(root, "src", "app.ts"));
-    expect(() => confinedPath(root, "../outside.txt")).toThrow("escapes the project root");
+    expect(confinedPath(repo, "src/app.ts")).toBe(join(root, "src", "app.ts"));
+    expect(() => confinedPath(repo, "../outside.txt")).toThrow("escapes the project root");
   });
 
   it("admits paths inside a linked folder", () => {
@@ -49,13 +70,34 @@ describe("confinedPath", () => {
     const scope = toolScope(join(root, "packages"), [linked]);
     expect(confinedPath(scope, "app.ts")).toBe(join(root, "packages", "app.ts"));
   });
+
+  it("resolves paths whose parents do not exist yet through the nearest existing ancestor", () => {
+    expect(confinedPath(repo, "brand/new/tree/file.txt")).toBe(
+      join(root, "brand", "new", "tree", "file.txt"),
+    );
+    expect(() => confinedPath(repo, "brand/new/../../../escape.txt")).toThrow("escapes");
+  });
+
+  it.skipIf(process.platform !== "win32")("rejects targets on another drive letter", () => {
+    const otherDrive = root.toUpperCase().startsWith("C:") ? "D:" : "C:";
+    const elsewhere = `${otherDrive}\\elsewhere\\file.txt`;
+    expect(() => confinedPath(repo, elsewhere)).toThrow("escapes the project root");
+    expect(scopeContains(repo, elsewhere)).toBe(false);
+  });
 });
 
 describe("toolScope", () => {
   it("dedupes roots and always covers the working directory", () => {
     const scope = toolScope(root, [root, linked, linked]);
     expect(scope.roots).toEqual([root, linked]);
-    expect(scopeCwd(scope)).toBe(root);
+    expect(scope.cwd).toBe(root);
+  });
+
+  it("leaves a hand-built scope narrower than its cwd unwidened", () => {
+    const narrow = { cwd: root, roots: [join(root, "sub")] };
+    expect(scopeContains(narrow, join(root, "sub", "file.txt"))).toBe(true);
+    expect(scopeContains(narrow, join(root, "elsewhere", "file.txt"))).toBe(false);
+    expect(() => confinedPath(narrow, "elsewhere/file.txt")).toThrow("escapes");
   });
 });
 
@@ -64,7 +106,53 @@ describe("scopeContains", () => {
     const scope = toolScope(root, [linked]);
     expect(scopeContains(scope, join(linked, "deep", "file.txt"))).toBe(true);
     expect(scopeContains(scope, join(sibling, "file.txt"))).toBe(false);
-    expect(scopeContains(root, join(root, "file.txt"))).toBe(true);
+    expect(scopeContains(repo, join(root, "file.txt"))).toBe(true);
+  });
+});
+
+describe.skipIf(!canLinkDirectories)("links that leave the scope", () => {
+  let escapeLink: string;
+
+  beforeEach(async () => {
+    escapeLink = join(root, "link");
+    await writeFile(join(sibling, "secret.txt"), "TOPSECRET");
+    linkDirectory(sibling, escapeLink);
+  });
+
+  it("rejects a link inside the root that points outside it", () => {
+    expect(() => confinedPath(repo, "link/secret.txt")).toThrow("escapes the project root");
+    expect(scopeContains(repo, join(escapeLink, "secret.txt"))).toBe(false);
+    expect(scopeContains(repo, escapeLink)).toBe(false);
+  });
+
+  it("rejects creating a file through the link even though the parent does not exist yet", () => {
+    expect(() => confinedPath(repo, "link/fresh/new.txt")).toThrow("escapes the project root");
+  });
+
+  it("keeps all three file tools out of the linked-away folder", async () => {
+    await expect(readTool(repo).execute({ path: "link/secret.txt" })).rejects.toThrow(/escapes/);
+    await expect(
+      writeTool(repo).execute({ path: "link/planted.txt", content: "x" }),
+    ).rejects.toThrow(/escapes/);
+    await expect(
+      editTool(repo).execute({ path: "link/secret.txt", oldText: "TOP", newText: "x" }),
+    ).rejects.toThrow(/escapes/);
+    expect(await readFile(join(sibling, "secret.txt"), "utf8")).toBe("TOPSECRET");
+  });
+
+  it("still admits a link whose target lies inside the scope", async () => {
+    await mkdir(join(root, "sub"));
+    await writeFile(join(root, "sub", "inside.txt"), "fine");
+    linkDirectory(join(root, "sub"), join(root, "sub-link"));
+    const scope = toolScope(root, [linked]);
+    linkDirectory(linked, join(root, "linked-link"));
+
+    expect(confinedPath(repo, "sub-link/inside.txt")).toBe(join(root, "sub-link", "inside.txt"));
+    expect(confinedPath(repo, "sub-link/created/later.txt")).toBe(
+      join(root, "sub-link", "created", "later.txt"),
+    );
+    expect(scopeContains(scope, join(root, "linked-link", "notes.md"))).toBe(true);
+    expect(await readTool(repo).execute({ path: "sub-link/inside.txt" })).toContain("fine");
   });
 });
 

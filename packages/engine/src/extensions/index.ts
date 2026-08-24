@@ -1,7 +1,13 @@
-export type {
-  ExtensionLoadFailure,
-  LayeredDirs,
-  LayerSource,
+export {
+  type DiscoveredFile,
+  type ExtensionConventions,
+  type ExtensionLoadFailure,
+  type LayeredLoad,
+  type LayerRoots,
+  type LayerSource,
+  loadLayered,
+  type MarkdownDefinition,
+  markdownFilesIn,
 } from "./layers.ts";
 export {
   type AgentDefinition,

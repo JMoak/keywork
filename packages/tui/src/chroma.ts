@@ -1,4 +1,5 @@
-import { keyworkNight, type Theme } from "./theme.ts";
+import { canonicalHex, hexChannels } from "@keywork/shared";
+import type { Theme } from "./theme.ts";
 
 export interface Oklch {
   readonly l: number;
@@ -6,11 +7,11 @@ export interface Oklch {
   readonly h: number;
 }
 
-export type PaneBorderTheme = Pick<Theme, "border" | "ramp">;
+export type PaneBorderTheme = Pick<Theme, "border" | "borderFocus" | "ramp">;
 
 export function paneBorder(theme: PaneBorderTheme, position: number, focused: boolean): string {
   const hue = rampColor(theme.ramp, position);
-  return focused ? focusLift(hue) : borderCarryingHue(theme, hue);
+  return focused ? focusLift(hue, theme.borderFocus) : borderCarryingHue(theme, hue);
 }
 
 export function rampPositions(
@@ -34,9 +35,9 @@ export function rampColor(ramp: readonly string[], t: number): string {
   const segment = Math.min(Math.floor(position), Math.max(ramp.length - 2, 0));
   const blend = position - segment;
   const from = stopAt(ramp, segment);
-  if (blend === 0) return normalizeHex(from);
+  if (blend === 0) return canonicalHex(from);
   const to = stopAt(ramp, segment + 1);
-  if (blend === 1) return normalizeHex(to);
+  if (blend === 1) return canonicalHex(to);
   return oklchToHex(mixOklch(hexToOklch(from), hexToOklch(to), blend));
 }
 
@@ -46,11 +47,12 @@ export function spawnRankPositions(paneCount: number): number[] {
   return Array.from({ length: paneCount }, (_, rank) => rank / (paneCount - 1));
 }
 
-export function focusLift(hex: string): string {
+export function focusLift(hex: string, focusHex: string): string {
   const { l, c, h } = hexToOklch(hex);
+  const target = hexToOklch(focusHex);
   return oklchToHex({
-    l: Math.max(l, focusTarget.l),
-    c: c < neutralChroma ? c : Math.max(c, focusTarget.c),
+    l: Math.max(l, target.l),
+    c: c < neutralChroma ? c : Math.max(c, target.c),
     h,
   });
 }
@@ -90,8 +92,6 @@ const goldenRatioConjugate = 0.618033988749895;
 const microGradientSpan = 0.08;
 const neutralChroma = 1e-4;
 const gamutSlack = 1e-6;
-const rrggbb = /^#[0-9a-fA-F]{6}$/;
-const focusTarget = hexToOklch(keyworkNight.borderFocus);
 
 type Triple = readonly [number, number, number];
 
@@ -206,16 +206,6 @@ function channelByte(linear: number): string {
   return Math.round(srgbFromLinear(clamp(linear, 0, 1)) * 255)
     .toString(16)
     .padStart(2, "0");
-}
-
-function hexChannels(hex: string): Triple {
-  const value = Number.parseInt(normalizeHex(hex).slice(1), 16);
-  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
-}
-
-function normalizeHex(hex: string): string {
-  if (!rrggbb.test(hex)) throw new Error(`Expected a #rrggbb color, got "${hex}"`);
-  return hex.toLowerCase();
 }
 
 function stopAt(ramp: readonly string[], index: number): string {

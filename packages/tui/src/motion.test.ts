@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { frameWrap } from "./capability.ts";
 import {
   Animator,
   type AnimatorOptions,
@@ -223,16 +222,12 @@ describe("Animator", () => {
   });
 });
 
-describe("the synchronized frame hook", () => {
-  it("fires once per step and carries the DEC 2026 wrap from detection", () => {
-    const painted: string[] = [];
-    const wrap = frameWrap({ synchronizedOutput: true });
+describe("the frame hook", () => {
+  it("fires once per step with the ink already applied", () => {
+    const painted: number[] = [];
     const clock = new TestClock();
     let ink = 0;
-    const animator = new Animator({
-      schedule: clock.schedule,
-      onFrame: () => painted.push(wrap(`ink:${ink}`)),
-    });
+    const animator = new Animator({ schedule: clock.schedule, onFrame: () => painted.push(ink) });
     animator.play({
       region: "pane-1",
       tempo: "quick",
@@ -243,8 +238,85 @@ describe("the synchronized frame hook", () => {
     });
     clock.advance(120);
     expect(painted.length).toBe(tempos.quick.steps);
-    expect(painted.every((frame) => frame.startsWith("\x1b[?2026h"))).toBe(true);
-    expect(painted.at(-1)).toBe("\x1b[?2026hink:1\x1b[?2026l");
+    expect(painted.at(-1)).toBe(1);
+  });
+
+  it("never re-enters a frame: a motion played while painting paints on the next tick", () => {
+    const clock = new TestClock();
+    let depth = 0;
+    let deepest = 0;
+    let frames = 0;
+    const inks: number[] = [];
+    const animator: Animator = new Animator({
+      schedule: clock.schedule,
+      onFrame: () => {
+        depth += 1;
+        deepest = Math.max(deepest, depth);
+        frames += 1;
+        if (frames === 1) {
+          animator.play({
+            region: "nested",
+            tempo: "instant",
+            shape: "arrival",
+            apply: (ink) => inks.push(ink),
+          });
+        }
+        depth -= 1;
+      },
+    });
+    animator.play({ region: "outer", tempo: "instant", shape: "arrival", apply: () => {} });
+    expect(deepest).toBe(1);
+    expect(inks).toEqual([1]);
+    expect(frames).toBe(1);
+    clock.advance(0);
+    expect(frames).toBe(2);
+    expect(deepest).toBe(1);
+  });
+
+  it("a motion settled from inside its own frame schedules no further steps", () => {
+    const clock = new TestClock();
+    let frames = 0;
+    const inks: number[] = [];
+    const animator: Animator = new Animator({
+      schedule: clock.schedule,
+      onFrame: () => {
+        frames += 1;
+        if (frames === 1) animator.settleRegion("outer");
+      },
+    });
+    animator.play({
+      region: "outer",
+      tempo: "quick",
+      shape: "arrival",
+      apply: (i) => inks.push(i),
+    });
+    expect(frames).toBe(1);
+    expect(inks.at(-1)).toBe(1);
+    expect(animator.moving).toBe(false);
+    clock.advance(1000);
+    expect(inks.length).toBe(2);
+    expect(frames).toBe(2);
+    expect(clock.pending).toBe(0);
+  });
+
+  it("flushes a deferred frame when everything is settled, leaving no timer behind", () => {
+    const clock = new TestClock();
+    let frames = 0;
+    const animator: Animator = new Animator({
+      schedule: clock.schedule,
+      onFrame: () => {
+        frames += 1;
+        if (frames === 1) {
+          animator.play({ region: "nested", tempo: "instant", shape: "arrival", apply: () => {} });
+        }
+      },
+    });
+    animator.play({ region: "outer", tempo: "quick", shape: "arrival", apply: () => {} });
+    expect(frames).toBe(1);
+    expect(clock.pending).toBe(2);
+    animator.settleAll();
+    expect(frames).toBe(3);
+    expect(clock.pending).toBe(0);
   });
 });
 

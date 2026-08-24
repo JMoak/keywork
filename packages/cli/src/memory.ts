@@ -1,53 +1,76 @@
 import { join } from "node:path";
 import {
+  ArcRecall,
+  type ArcRegistry,
+  type ArcSearchHit,
   AskGateLedger,
+  type AuditEntry,
   bootstrapMemory,
   type EmbeddingsPort,
-  estimateContextTokens,
   Gardener,
-  type MemoryFlush,
+  type LedgerEntry,
+  MemoryGraph,
   type MemoryRecall,
   MemorySearch,
   MemoryStore,
-  type Message,
   type Note,
+  noteName,
+  type Provenance,
   type RetrievalSource,
-  ReviewInbox,
-  type ReviewItem,
-  type SessionStore,
+  type SearchHit,
   type StagedItem,
+  type StagedWrite,
+  titleKey,
 } from "@keywork/engine";
-import { resolveVaultPath } from "@keywork/shared";
+import { resolveVaultPath, toError } from "@keywork/shared";
 import type {
   CuringStage,
   InboxItemView,
+  LedgerEventView,
+  MemoryLayerView,
   MemoryNoteView,
   MemoryPaneInputs,
   MemoryPanePort,
+  MemoryQueryHit,
+  MemoryQueryOutcome,
+  NoteRelationView,
 } from "@keywork/tui";
+import type { ArcService } from "./arcs.ts";
 
 export interface WorkspaceMemory {
+  vaultRoot: string;
   store: MemoryStore;
   search: MemorySearch;
-  inbox: ReviewInbox;
   gardener: Gardener;
   askGate: AskGateLedger;
   embeddings?: EmbeddingsPort;
 }
 
-export const memoryBootstrapBudget = 4096;
-export const assumedContextWindow = 200_000;
+export type MemoryAccess = () => WorkspaceMemory | undefined;
 
-export function openWorkspaceMemory(cwd: string, trusted: boolean): WorkspaceMemory | undefined {
-  const vaultRoot = resolveVaultPath(cwd);
+export const memoryBootstrapBudget = 4096;
+
+export function workspaceMemoryAccess(cwd: string, trusted: boolean, slug?: string): MemoryAccess {
+  let opened: WorkspaceMemory | undefined;
+  return () => {
+    opened ??= openWorkspaceMemory(cwd, trusted, slug);
+    return opened;
+  };
+}
+
+export function openWorkspaceMemory(
+  cwd: string,
+  trusted: boolean,
+  slug?: string,
+): WorkspaceMemory | undefined {
+  const vaultRoot = resolveVaultPath(cwd, slug);
   if (vaultRoot === undefined) return undefined;
   const store = new MemoryStore({ vaultRoot, trusted });
-  const inbox = new ReviewInbox({ filePath: join(vaultRoot, ".staging", "inbox.json") });
   return {
+    vaultRoot,
     store,
     search: new MemorySearch(store),
-    inbox,
-    gardener: new Gardener({ store, inbox }),
+    gardener: new Gardener({ store }),
     askGate: trusted
       ? new AskGateLedger({ filePath: join(vaultRoot, ".staging", "ask-gate.json") })
       : new AskGateLedger(),
@@ -60,11 +83,17 @@ export function memoryRecall(
   memory: WorkspaceMemory | undefined,
   sessionId?: SessionKey,
   onRetrieval?: (disclosure: string) => void,
+  arcs?: ArcService,
 ): MemoryRecall | undefined {
   if (memory === undefined) return undefined;
+  const workspace = recallSearch(memory, onRetrieval);
+  const search =
+    arcs === undefined || sessionId === undefined
+      ? workspace
+      : arcs.searcher(workspace, sessionId, memory.embeddings);
   return {
     store: memory.store,
-    search: recallSearch(memory, onRetrieval),
+    search,
     onRecall: recallTap(memory, sessionId),
   };
 }
@@ -111,100 +140,177 @@ export function withMemoryPrompt(systemPrompt: string, injection: string): strin
   return injection === "" ? systemPrompt : `${systemPrompt}\n\n${injection}`;
 }
 
-export async function flushAfterTurn(
-  flush: MemoryFlush | undefined,
-  store: SessionStore,
-  history: readonly Message[],
-  contextWindow: number = assumedContextWindow,
-): Promise<Message[]> {
-  if (flush === undefined) return [];
-  try {
-    const outcome = await flush.maybeFlush(history, estimateContextTokens(store), contextWindow);
-    for (const message of outcome.messages) await store.append(message);
-    return outcome.messages;
-  } catch {
-    return [];
+export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise<void> {
+  if (memory === undefined) return;
+  const failures: Error[] = [];
+  const attempt = (work: () => Promise<unknown>): Promise<void> =>
+    work().then(
+      () => undefined,
+      (cause: unknown) => {
+        failures.push(toError(cause));
+      },
+    );
+  await attempt(() => memory.gardener.sweep());
+  if (memory.store.trusted) await attempt(() => memory.askGate.proposePreferences(memory.store));
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `memory close: ${failures.map((failure) => failure.message).join(" · ")}`,
+    );
   }
 }
 
-export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise<void> {
-  if (memory === undefined) return;
-  try {
-    await memory.gardener.sweep();
-  } catch {}
-  if (!memory.store.trusted) return;
-  try {
-    await memory.askGate.proposePreferences(memory.inbox, memory.store);
-  } catch {}
-}
+export type ArcRegistryAccess = () => ArcRegistry | undefined;
 
-export function memoryPanePort(memory: WorkspaceMemory): MemoryPanePort {
-  const { store, inbox } = memory;
+export function memoryPanePort(memory: MemoryAccess, arcs?: ArcRegistryAccess): MemoryPanePort {
+  const store = (): MemoryStore => {
+    const opened = memory();
+    if (opened === undefined) throw new Error("memory isn't set up here yet · /init sets it up");
+    return opened.store;
+  };
+  const recalls = new WeakMap<ArcRegistry, ArcRecall>();
   return {
-    load: () => loadInputs(store, inbox),
-    approve: (id) => actOn(store, inbox, id, "approve"),
-    discard: (id) => actOn(store, inbox, id, "discard"),
+    load: () => loadInputs(memory(), arcs?.()),
+    approve: async (id) => {
+      await store().approve(id);
+    },
+    discard: (id) => store().discard(id),
+    revert: (ledgerId) => store().revert(ledgerId),
+    query: (text, arc) => askMemory(memory(), arcs?.(), recalls, text, arc),
   };
 }
 
-const stagedIdPrefix = "staged:";
-const reviewIdPrefix = "review:";
+export const workspaceLayerId = "workspace";
 
-async function loadInputs(store: MemoryStore, inbox: ReviewInbox): Promise<MemoryPaneInputs> {
-  if (!store.trusted) return { scopes: [], notes: [], inbox: [], recalls: [] };
-  const notes = (await store.listNotes()).map(noteView);
-  const staged = (await store.listStaged()).map(stagedView);
-  const reviews = (await inbox.list()).map(reviewView);
-  return { scopes: ["workspace"], notes, inbox: [...staged, ...reviews], recalls: [] };
+export function arcLayerId(slug: string): string {
+  return `arc:${slug}`;
 }
 
-async function actOn(
-  store: MemoryStore,
-  inbox: ReviewInbox,
-  id: string,
-  action: "approve" | "discard",
-): Promise<void> {
-  if (id.startsWith(stagedIdPrefix)) {
-    const stagedId = id.slice(stagedIdPrefix.length);
-    if (action === "approve") await store.approve(stagedId);
-    else await store.discard(stagedId);
-    return;
-  }
-  await inbox.resolve(id.startsWith(reviewIdPrefix) ? id.slice(reviewIdPrefix.length) : id);
+export function curingStage(note: Note): CuringStage {
+  if (note.provenance === "user" || note.pinned) return 3;
+  const usefulness = note.usefulness ?? 0;
+  if (usefulness >= settledUsefulness) return 3;
+  if (usefulness > 0) return 2;
+  return note.confidence === undefined ? 0 : 1;
 }
 
-function noteView(note: Note): MemoryNoteView {
+const settledUsefulness = 0.5;
+const emptyMemoryPane: MemoryPaneInputs = { layers: [], notes: [], inbox: [], ledger: [] };
+
+interface LoadedLayer {
+  layer: MemoryLayerView;
+  notes: MemoryNoteView[];
+}
+
+async function loadInputs(
+  memory: WorkspaceMemory | undefined,
+  registry: ArcRegistry | undefined,
+): Promise<MemoryPaneInputs> {
+  if (memory === undefined || !memory.store.trusted) return emptyMemoryPane;
+  const recalls = memory.gardener.recallsSinceSweep();
+  const workspace = await workspaceLayer(memory, recalls);
+  const arcLayers = await activeArcLayers(memory, registry, recalls);
+  const audit = await memory.store.readAudit();
+  const layers = [workspace, ...arcLayers];
   return {
+    layers: layers.map((loaded) => loaded.layer),
+    notes: layers.flatMap((loaded) => loaded.notes),
+    inbox: (await memory.store.listStaged()).map(inboxView),
+    ledger: [...memory.store.ledger().map(ledgerOpView), ...audit.map(auditView)],
+    gardener: { state: "idle", ...lastSweep(audit) },
+  };
+}
+
+async function workspaceLayer(
+  memory: WorkspaceMemory,
+  recalls: ReadonlyMap<string, number>,
+): Promise<LoadedLayer> {
+  const notes = await memory.store.listNotes();
+  const selection = await memory.store.bootstrap(memoryBootstrapBudget);
+  const injected = new Set(selection.notes.map((note) => note.name));
+  const ordered = [...selection.notes, ...notes.filter((note) => !injected.has(note.name))];
+  return {
+    layer: {
+      id: workspaceLayerId,
+      kind: "workspace",
+      label: "workspace",
+      prompt: { budget: memoryBootstrapBudget, used: selection.tokens },
+    },
+    notes: noteViews(ordered, workspaceLayerId, memory.vaultRoot, recalls, injected),
+  };
+}
+
+async function activeArcLayers(
+  memory: WorkspaceMemory,
+  registry: ArcRegistry | undefined,
+  recalls: ReadonlyMap<string, number>,
+): Promise<LoadedLayer[]> {
+  if (registry === undefined) return [];
+  const layers: LoadedLayer[] = [];
+  for (const arc of await registry.listArcs()) {
+    if (arc.status !== "active") continue;
+    const notes = await registry.arcStore(arc.slug).listNotes();
+    const root = join(memory.vaultRoot, "arcs", arc.slug);
+    layers.push({
+      layer: { id: arcLayerId(arc.slug), kind: "arc", label: arc.slug, arc: arc.slug },
+      notes: noteViews(notes, arcLayerId(arc.slug), root, recalls, new Set()),
+    });
+  }
+  return layers;
+}
+
+function noteViews(
+  notes: readonly Note[],
+  layer: string,
+  root: string,
+  recalls: ReadonlyMap<string, number>,
+  injected: ReadonlySet<string>,
+): MemoryNoteView[] {
+  const graph = MemoryGraph.fromNotes(notes);
+  return notes.map((note) => ({
     name: note.name,
     title: note.title,
-    scope: "workspace",
+    layer,
+    path: note.path,
+    file: join(root, note.path),
     provenance: note.provenance,
     curing: curingStage(note),
     links: note.links,
     aliases: note.aliases,
+    body: note.body,
+    tokens: note.tokens,
+    pinned: note.pinned,
+    injected: injected.has(note.name),
+    recalls: recalls.get(note.name) ?? 0,
+    relations: relationsOf(graph, note),
+    ...(note.created !== undefined && { created: note.created }),
+    ...(note.usefulness !== undefined && { usefulness: note.usefulness }),
+    ...(note.confidence !== undefined && { confidence: note.confidence }),
+    ...(note.supersedes !== undefined && { supersedes: note.supersedes }),
     ...(note.supersededBy !== undefined && { supersededBy: note.supersededBy }),
-  };
+    ...(note.delivered !== undefined && { delivered: note.delivered }),
+    ...(note.distilledFrom !== undefined && { distilledFrom: note.distilledFrom }),
+  }));
 }
 
-function curingStage(note: Note): CuringStage {
-  if (note.provenance !== "agent") return 3;
-  return note.usefulness === undefined ? 1 : 3;
+function relationsOf(graph: MemoryGraph, note: Note): NoteRelationView[] {
+  const key = titleKey(note.name);
+  return graph.edges.flatMap((edge): NoteRelationView[] => {
+    if (titleKey(edge.subject) === key)
+      return [{ name: edge.object, predicate: edge.predicate, direction: "out" }];
+    if (titleKey(edge.object) === key)
+      return [{ name: edge.subject, predicate: edge.predicate, direction: "in" }];
+    return [];
+  });
 }
 
-function stagedView(item: StagedItem): InboxItemView {
-  return {
-    id: `${stagedIdPrefix}${item.id}`,
-    kind: "staged",
-    title: item.target,
-    provenance: "untrusted",
-    created: item.created,
-    detail: item.kind,
-  };
-}
-
-function reviewView(item: ReviewItem): InboxItemView {
-  const base = { id: `${reviewIdPrefix}${item.id}`, created: item.created } as const;
+function inboxView(item: StagedItem): InboxItemView {
+  const base = { id: item.id, created: item.created } as const;
   switch (item.kind) {
+    case "note":
+    case "daily":
+    case "moc":
+      return stagedWriteView(item, base);
     case "borderline-promotion":
       return {
         ...base,
@@ -212,6 +318,7 @@ function reviewView(item: ReviewItem): InboxItemView {
         title: item.title,
         provenance: "agent",
         detail: `from ${item.source}`,
+        note: item.title,
       };
     case "contradiction":
       return {
@@ -226,6 +333,7 @@ function reviewView(item: ReviewItem): InboxItemView {
         kind: "proposal",
         title: `merge ${item.retire} into ${item.keep}`,
         provenance: "agent",
+        note: item.keep,
       };
     case "supersession-proposal":
       return {
@@ -233,6 +341,7 @@ function reviewView(item: ReviewItem): InboxItemView {
         kind: "proposal",
         title: `${item.winner} supersedes ${item.loser}`,
         provenance: "agent",
+        note: item.winner,
       };
     case "link-proposal":
       return {
@@ -240,21 +349,26 @@ function reviewView(item: ReviewItem): InboxItemView {
         kind: "proposal",
         title: `link ${item.note} → ${item.target}`,
         provenance: "agent",
+        note: item.note,
       };
     case "arc-distillation":
       return {
         ...base,
         kind: "proposal",
-        title: `arc ${item.arc}: deliver ${item.note}`,
+        title: `deliver ${item.note}`,
         provenance: "agent",
         detail: item.eligible ? "eligible" : "below bar",
+        arc: item.arc,
+        note: item.note,
       };
     case "arc-question":
       return {
         ...base,
         kind: "proposal",
-        title: `arc ${item.arc}: triage ${item.note}`,
+        title: `triage ${item.note}`,
         provenance: "agent",
+        arc: item.arc,
+        note: item.note,
       };
     case "preference-proposal":
       return {
@@ -267,7 +381,103 @@ function reviewView(item: ReviewItem): InboxItemView {
   }
 }
 
-function worseProvenance(a: Note["provenance"], b: Note["provenance"]): Note["provenance"] {
-  const order: Note["provenance"][] = ["user", "agent", "untrusted"];
+function stagedWriteView(
+  item: StagedWrite,
+  base: Pick<InboxItemView, "id" | "created">,
+): InboxItemView {
+  return {
+    ...base,
+    kind: "staged",
+    title: item.target,
+    provenance: "untrusted",
+    detail: item.kind,
+    ...(item.kind === "note" && { note: noteName(item.target) }),
+  };
+}
+
+function worseProvenance(a: Provenance, b: Provenance): Provenance {
+  const order: Provenance[] = ["user", "agent", "untrusted"];
   return order.indexOf(a) >= order.indexOf(b) ? a : b;
+}
+
+function ledgerOpView(entry: LedgerEntry): LedgerEventView {
+  const paths = entry.deltas.map((delta) => delta.path).filter(isNotePath);
+  const names = paths.map(noteName);
+  const staged = paths.length === 0;
+  return {
+    id: entry.id,
+    at: entry.timestamp,
+    verb: staged && entry.op === "create" ? "stage" : entry.op,
+    subject: staged ? "staged item" : names.join(", "),
+    notes: names.filter((name) => !name.startsWith("daily/")),
+  };
+}
+
+function isNotePath(path: string): boolean {
+  return path.endsWith(".md") && !path.startsWith(".staging/") && path !== "curation.md";
+}
+
+function auditView(entry: AuditEntry): LedgerEventView {
+  const colon = entry.event.indexOf(": ");
+  const space = entry.event.indexOf(" ");
+  const split = colon !== -1 ? colon : space;
+  const verb = split === -1 ? entry.event : entry.event.slice(0, split);
+  const subject = split === -1 ? "" : entry.event.slice(split + (colon !== -1 ? 2 : 1));
+  return { at: entry.timestamp, verb, subject, notes: [] };
+}
+
+function lastSweep(audit: readonly AuditEntry[]): { sweptAt?: string } {
+  const swept = audit.filter((entry) => entry.event.startsWith("gardener sweep")).at(-1);
+  return swept === undefined ? {} : { sweptAt: swept.timestamp };
+}
+
+async function askMemory(
+  memory: WorkspaceMemory | undefined,
+  registry: ArcRegistry | undefined,
+  recalls: WeakMap<ArcRegistry, ArcRecall>,
+  text: string,
+  arc: string | undefined,
+): Promise<MemoryQueryOutcome> {
+  if (memory === undefined || !memory.store.trusted) return { hits: [], source: "lexical" };
+  if (registry === undefined || arc === undefined) {
+    const outcome = await memory.search.search(text);
+    return queryOutcome(outcome.hits.map(workspaceHit), outcome.source);
+  }
+  const recall = recalls.get(registry) ?? arcRecallOver(memory, registry);
+  recalls.set(registry, recall);
+  const outcome = await recall.searchAmbient(text, arc);
+  return queryOutcome(
+    outcome.hits.map((hit) => layeredHit(hit, recall.boost)),
+    outcome.workspaceSource,
+  );
+}
+
+function arcRecallOver(memory: WorkspaceMemory, registry: ArcRegistry): ArcRecall {
+  return new ArcRecall({
+    workspace: memory.search,
+    registry,
+    ...(memory.embeddings !== undefined && { embeddings: memory.embeddings }),
+  });
+}
+
+function queryOutcome(hits: MemoryQueryHit[], source: RetrievalSource): MemoryQueryOutcome {
+  return {
+    hits,
+    source: source.kind,
+    ...(source.kind !== "lexical" && { embeddings: source.embeddings }),
+  };
+}
+
+function workspaceHit(hit: SearchHit): MemoryQueryHit {
+  return {
+    note: hit.note.name,
+    layer: workspaceLayerId,
+    ranks: hit.ranks,
+    superseded: hit.superseded,
+  };
+}
+
+function layeredHit(hit: ArcSearchHit, boost: number): MemoryQueryHit {
+  if (hit.layer === "workspace") return workspaceHit(hit);
+  return { ...workspaceHit(hit), layer: arcLayerId(hit.arc), boost };
 }

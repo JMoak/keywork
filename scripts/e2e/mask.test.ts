@@ -22,15 +22,16 @@ describe("applyMasks", () => {
     expect(mask("saved 2026-08-15 ok")).toBe("saved <DATE>···· ok");
   });
 
-  it("masks clock times with and without seconds", () => {
-    expect(mask("at 12:34:56")).toBe("at <TIME>··");
-    expect(mask("at 09:41 sharp")).toBe("at <TIME sharp");
+  it("masks clock times with and without seconds, keeping the placeholder whole", () => {
+    expect(mask("at 12:34:56")).toBe("at <T>·····");
+    expect(mask("at 09:41 sharp")).toBe("at <T>·· sharp");
   });
 
-  it("masks relative ages", () => {
-    expect(mask("edited 3m ago")).toBe("edited <AGE>·");
-    expect(mask("edited 2h ago")).toBe("edited <AGE>·");
-    expect(mask("took 5s total")).toBe("took <A total");
+  it("masks relative ages down to the two-character form the overview renders", () => {
+    expect(mask("edited 3m ago")).toBe("edited ~·····");
+    expect(mask("· 3m ·")).toBe("· ~· ·");
+    expect(mask("· 12h · 5d · 3w")).toBe("· ~·· · ~· · ~·");
+    expect(mask("took 5s total")).toBe("took ~· total");
   });
 
   it("preserves the length of a realistic frame line", () => {
@@ -39,7 +40,7 @@ describe("applyMasks", () => {
     expect(masked.length).toBe(line.length);
     expect(masked).toContain("<DATE>");
     expect(masked).toContain("<SESSION>");
-    expect(masked).toContain("<AGE>");
+    expect(masked).toContain("~");
     expect(masked).not.toMatch(/\d/);
   });
 
@@ -52,8 +53,13 @@ describe("applyMasks", () => {
     expect(applyMasks("hello world", rules)).toBe("hello <W>··");
   });
 
+  it("refuses a placeholder longer than its match instead of truncating it", () => {
+    const rules: readonly MaskRule[] = [{ pattern: /\d+s/g, replacement: "<AGE>" }];
+    expect(() => applyMasks("took 5s", rules)).toThrow(/longer than its match/);
+  });
+
   it("masks every occurrence, not just the first", () => {
-    expect(mask("12:34 and 23:45")).toBe("<TIME and <TIME");
+    expect(mask("12:34 and 23:45")).toBe("<T>·· and <T>··");
   });
 });
 

@@ -23,15 +23,15 @@ afterEach(async () => {
   }
 });
 
-async function agentsDir(files: Record<string, string>): Promise<string> {
+async function projectWithAgents(files: Record<string, string>): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "keywork-agents-"));
   cleanups.push(root);
-  const dir = join(root, "agents");
+  const dir = join(root, ".keywork", "agents");
   await mkdir(dir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
     await writeFile(join(dir, name), content, "utf8");
   }
-  return dir;
+  return root;
 }
 
 function stubTool(name: string, mutates = false): Tool {
@@ -76,11 +76,11 @@ class CapturingProvider implements Provider {
 
 describe("loadAgents", () => {
   it("parses model, tools allowlist, permission overrides, and the prompt body", async () => {
-    const dir = await agentsDir({
+    const root = await projectWithAgents({
       "reviewer.md":
         "---\ndescription: Careful reviewer\nmodel: some-model\ntools: [read, bash]\ndeny: [write]\nask: [bash]\n---\nYou only review code.\n",
     });
-    const { agents, failures } = await loadAgents({ projectDir: dir });
+    const { agents, failures } = await loadAgents({ projectRoot: root });
     expect(failures).toEqual([]);
     expect(agents[0]).toMatchObject({
       name: "reviewer",
@@ -93,11 +93,11 @@ describe("loadAgents", () => {
   });
 
   it("quarantines malformed agent files and keeps the rest", async () => {
-    const dir = await agentsDir({
+    const root = await projectWithAgents({
       "broken.md": "---\ntools: [never closed\n---\nbody",
       "fine.md": "prompt only",
     });
-    const { agents, failures } = await loadAgents({ projectDir: dir });
+    const { agents, failures } = await loadAgents({ projectRoot: root });
     expect(agents.map((agent) => agent.name)).toEqual(["fine"]);
     expect(failures).toHaveLength(1);
   });
@@ -157,10 +157,10 @@ describe("narrowedPermissions", () => {
 
 describe("a markdown agent in a mock conversation", () => {
   it("restricts the tool list and swaps the system prompt", async () => {
-    const dir = await agentsDir({
+    const root = await projectWithAgents({
       "scout.md": "---\ntools: [read]\ndeny: [write]\n---\nYou are the scout. Only read.\n",
     });
-    const { agents } = await loadAgents({ projectDir: dir });
+    const { agents } = await loadAgents({ projectRoot: root });
     const scout = agents[0];
     if (scout === undefined) throw new Error("fixture agent missing");
 
@@ -180,8 +180,8 @@ describe("a markdown agent in a mock conversation", () => {
   });
 
   it("denies a tool the agent file forbids, fail closed", async () => {
-    const dir = await agentsDir({ "scout.md": "---\ndeny: [write]\n---\nScout.\n" });
-    const { agents } = await loadAgents({ projectDir: dir });
+    const root = await projectWithAgents({ "scout.md": "---\ndeny: [write]\n---\nScout.\n" });
+    const { agents } = await loadAgents({ projectRoot: root });
     const scout = agents[0];
     if (scout === undefined) throw new Error("fixture agent missing");
 

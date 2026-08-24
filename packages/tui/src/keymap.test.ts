@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Keymap } from "./keymap.ts";
+import { Keymap, KeymapError } from "./keymap.ts";
 import { chordOf, formatChord, parseChord } from "./keys.ts";
 
 const keymap = () =>
@@ -169,6 +169,48 @@ describe("Keymap", () => {
     expect(map.press(parseChord("shift+h"), 1)).toEqual({ type: "action", action: "swap.left" });
     map.press(parseChord("ctrl+k"), 2);
     expect(map.press(parseChord("h"), 3)).toEqual({ type: "action", action: "focus.left" });
+  });
+});
+
+describe("Keymap registration", () => {
+  it("rejects two actions claiming one chord, naming both", () => {
+    expect(() => new Keymap({ bindings: { "a.one": "ctrl+p", "b.two": "ctrl+p" } })).toThrow(
+      /"ctrl\+p" is bound to both "a.one" and "b.two"/,
+    );
+    expect(() => new Keymap({ bindings: { "a.one": "ctrl+p", "b.two": "ctrl+p" } })).toThrow(
+      KeymapError,
+    );
+  });
+
+  it("rejects two actions claiming one leader key, shifted keys distinct", () => {
+    expect(() => new Keymap({ bindings: { "a.one": "leader h", "b.two": "leader H" } })).toThrow(
+      /"ctrl\+k h" is bound to both/,
+    );
+    expect(
+      () => new Keymap({ bindings: { "a.one": "leader h", "b.two": "leader shift+h" } }),
+    ).not.toThrow();
+  });
+
+  it("rejects a chord listed twice for the same action", () => {
+    expect(() => new Keymap({ bindings: { "a.one": ["leader h", "leader h"] } })).toThrow(
+      /listed twice for "a.one"/,
+    );
+  });
+
+  it("rejects binding the leader chord itself to an action", () => {
+    expect(() => new Keymap({ leader: "ctrl+k", bindings: { "a.one": "ctrl+k" } })).toThrow(
+      /"ctrl\+k" is the leader/,
+    );
+  });
+
+  it("rejects modified leader keys, which could never fire", () => {
+    expect(() => new Keymap({ bindings: { "a.one": "leader ctrl+x" } })).toThrow(KeymapError);
+    expect(() => new Keymap({ bindings: { "a.one": "leader alt+x" } })).toThrow(/can never fire/);
+  });
+
+  it("lets 'none' unbind without claiming anything", () => {
+    const map = new Keymap({ bindings: { "a.one": "none", "b.two": "none" } });
+    expect(map.actions()).toEqual([]);
   });
 });
 

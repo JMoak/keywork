@@ -1,9 +1,15 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { basename, dirname } from "node:path/posix";
+import { type PathPredicate, repoRoot, reportViolations, walkRepo } from "./lib/repo-files.ts";
 
 const allowedVersion = /^(workspace:\*|\d+\.\d+\.\d+(-[\w.]+)?)$/;
 const shaPinnedAction = /^[^@\s]+@[0-9a-f]{40}$/;
-const excludedDirectories = new Set(["node_modules", ".git", "dist", "docs"]);
+
+export const manifestPath: PathPredicate = (path) => basename(path) === "package.json";
+
+export const workflowPath: PathPredicate = (path) =>
+  dirname(path) === ".github/workflows" && /\.ya?ml$/.test(path);
 
 export function findRangedDependencies(manifest: {
   dependencies?: Record<string, string>;
@@ -21,45 +27,25 @@ export function findUnpinnedActions(workflow: string): string[] {
     .filter((action) => !action.startsWith("./") && !shaPinnedAction.test(action));
 }
 
-async function manifestPaths(dir = "."): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const nested = await Promise.all(
-    entries.map((entry) => {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        return excludedDirectories.has(entry.name) ? [] : manifestPaths(path);
-      }
-      return entry.name === "package.json" ? [path] : [];
-    }),
-  );
-  return nested.flat();
-}
-
-async function workflowPaths(): Promise<string[]> {
-  const dir = join(".github", "workflows");
-  const entries = await readdir(dir, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isFile() && /\.ya?ml$/.test(entry.name))
-    .map((entry) => join(dir, entry.name));
-}
-
 if (import.meta.main) {
+  const manifests = await walkRepo(manifestPath);
+  const workflows = await walkRepo(workflowPath);
   const violations: string[] = [];
-  for (const path of await manifestPaths()) {
-    const manifest = JSON.parse(await readFile(path, "utf8"));
-    for (const dep of findRangedDependencies(manifest)) {
-      violations.push(`${path}: ${dep}`);
-    }
+  for (const path of manifests) {
+    const manifest = JSON.parse(await readFile(join(repoRoot, path), "utf8"));
+    for (const dep of findRangedDependencies(manifest)) violations.push(`${path}: ${dep}`);
   }
-  for (const path of await workflowPaths()) {
-    for (const action of findUnpinnedActions(await readFile(path, "utf8"))) {
+  for (const path of workflows) {
+    for (const action of findUnpinnedActions(await readFile(join(repoRoot, path), "utf8"))) {
       violations.push(`${path}: ${action}`);
     }
   }
-  if (violations.length > 0) {
-    console.error("Unpinned dependencies (exact versions and full-SHA action pins only):");
-    for (const violation of violations) console.error(`  ${violation}`);
-    process.exit(1);
-  }
-  console.log("check:pins ok");
+  process.exitCode = reportViolations(
+    {
+      check: "check:pins",
+      heading: "Unpinned dependencies (exact versions and full-SHA action pins only):",
+      scanned: `${manifests.length} manifests, ${workflows.length} workflows`,
+    },
+    violations,
+  );
 }

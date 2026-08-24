@@ -99,13 +99,6 @@ export const tile = {
   failed: { tier2: "▛", tier0: "x" } satisfies TieredMark,
 };
 
-export function frameWrap(
-  profile: Pick<CapabilityProfile, "synchronizedOutput">,
-): (frame: string) => string {
-  if (!profile.synchronizedOutput) return (frame) => frame;
-  return (frame) => `\x1b[?2026h${frame}\x1b[?2026l`;
-}
-
 interface BaseProfile {
   readonly colorDepth: ColorDepth;
   readonly synchronizedOutput: boolean;

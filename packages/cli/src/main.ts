@@ -1,319 +1,420 @@
 #!/usr/bin/env bun
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { debugEnabled, type SessionStore } from "@keywork/engine";
+import { debugEnabled, type PermissionResolver, ResolutionError } from "@keywork/engine";
 import {
   ConfigError,
-  loadConfig,
   openWorkspace,
+  type PermissionsConfig,
+  type PresetName,
   presetOrder,
-  requiresConfirmation,
   TrustStore,
 } from "@keywork/shared";
-import type { PresetsPort } from "@keywork/tui";
+import type { CommandIo } from "./command-io.ts";
+import type { PanesLaunch, PanesSeams } from "./compose-panes.ts";
 import {
-  type CredentialMap,
-  legacyCredentials,
-  readCredentials,
-  saveCredential,
-} from "./auth-store.ts";
-import { chat } from "./chat.ts";
-import { dispatchCommand, nonInteractiveUsage, usage } from "./dispatch.ts";
-import { createPresetSwitch, isPresetName } from "./presets.ts";
-import { type PersistCredential, providerSetupHint, resolveProvider } from "./provider.ts";
-import { runHeadless } from "./run.ts";
+  type CommandName,
+  type Dispatch,
+  dispatchCommand,
+  exitCodes,
+  nonInteractiveUsage,
+  usage,
+} from "./dispatch.ts";
+import { nextActionFor, shellCommands } from "./inference/port.ts";
+import { composeInference, connectHint } from "./inference/runtime.ts";
+import { type LiveInference, openInferenceState } from "./inference-state.ts";
+import { defaultSessionDir, ensureStateLayout } from "./paths.ts";
+import { isPresetName, permissionsResolver, presetResolver, userPresetSwitch } from "./presets.ts";
+import { conclude, exitCodeOf, runHeadless } from "./run.ts";
+import { terminalConfirm } from "./terminal-input.ts";
+import { versionLine } from "./version.ts";
+import { fileWorkspaceRecall, selectWorkspace, type WorkspaceRecall } from "./workspaces.ts";
 
-function loadKeyworkConfig(cwd: string, projectTrusted: boolean): ReturnType<typeof loadConfig> {
-  return loadConfig({
-    userDir: join(homedir(), ".keywork"),
-    projectDir: join(cwd, ".keywork"),
-    projectTrusted,
+export interface MainSeams {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  interactive?: boolean;
+  print?: (line: string) => void;
+  printError?: (line: string) => void;
+  composeInference?: typeof composeInference;
+}
+
+export async function main(argv: readonly string[], seams: MainSeams = {}): Promise<number> {
+  const io = resolveSeams(seams);
+  const decision = dispatchCommand(argv, io.interactive);
+  if (decision.kind === "version") {
+    io.print(versionLine());
+    return 0;
+  }
+  if (decision.kind === "help") {
+    io.print(usage);
+    return 0;
+  }
+  if (decision.kind === "usage") {
+    io.printError(`keywork: ${decision.reason}\n\n${io.interactive ? usage : nonInteractiveUsage}`);
+    return decision.exitCode;
+  }
+  const invocation = parseInvocation(decision.rest);
+  if (!invocation.ok) return refuseInvocation(decision, invocation.problem, io);
+  const context = await openCommandContext(io, invocation.values.workspace);
+  return commands[decision.command](context, invocation);
+}
+
+export interface PanesLaunchOptions {
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  printError?: (line: string) => void;
+  workspace?: string | undefined;
+  sessionDir?: string | undefined;
+  fresh?: boolean;
+  model?: string | undefined;
+}
+
+export async function launchPanes(
+  options: PanesLaunchOptions,
+  seams: PanesSeams = {},
+): Promise<void> {
+  const io = resolveSeams({ ...options, interactive: true });
+  const context = await openCommandContext(io, options.workspace);
+  const { openPanes } = await import("./compose-panes.ts");
+  await openPanes(await panesLaunch(context, options), seams);
+}
+
+export function runUntilSwitch(
+  open: (switchTo: (next: string | undefined) => void) => Promise<void>,
+): Promise<string | undefined> {
+  return new Promise((switchTo, reject) => {
+    open(switchTo).catch(reject);
   });
 }
 
-async function main(argv: string[]): Promise<number> {
-  const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
-  const decision = dispatchCommand(argv, interactive);
-  if (decision.kind === "usage") {
-    console.error(nonInteractiveUsage);
-    return decision.exitCode;
-  }
-  const { command, rest } = decision;
+interface MainIo {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  interactive: boolean;
+  print: (line: string) => void;
+  printError: (line: string) => void;
+  composeInference: typeof composeInference;
+}
 
-  const { values, positionals } = parseArgs({
-    args: rest,
+interface CommandContext {
+  io: MainIo;
+  cwd: string;
+  workspaceSlug: string | undefined;
+  workspaceRecall: WorkspaceRecall;
+  trustStore: TrustStore;
+  projectTrusted: boolean;
+  openInference(): Promise<LiveInference>;
+}
+
+type Command = (context: CommandContext, invocation: ParsedInvocation) => Promise<number>;
+
+const commands: Record<CommandName, Command> = {
+  panes: runPanes,
+  chat: runChat,
+  run: runHeadlessPrompt,
+  sessions: runSessions,
+  connect: runConnect,
+  setup: runConnect,
+  init: runInit,
+  link: runLink,
+  workspace: runWorkspace,
+  trust: (context) => runTrust("trust", context),
+  untrust: (context) => runTrust("untrust", context),
+  doctor: runDoctor,
+};
+
+async function openCommandContext(
+  io: MainIo,
+  requestedWorkspace: string | undefined,
+): Promise<CommandContext> {
+  const { cwd } = io;
+  ensureStateLayout();
+  const workspaceRecall = fileWorkspaceRecall();
+  const workspaceSlug = selectWorkspace(cwd, requestedWorkspace, workspaceRecall, io.printError);
+  for (const dir of openWorkspace(cwd, workspaceSlug)?.missingContextDirs ?? []) {
+    io.printError(`keywork: skipping context dir ${dir}, it doesn't exist`);
+  }
+  const trustStore = new TrustStore();
+  const projectTrusted = trustStore.resolve(cwd) === "trusted";
+  return {
+    io,
+    cwd,
+    workspaceSlug,
+    workspaceRecall,
+    trustStore,
+    projectTrusted,
+    openInference: () =>
+      openInferenceState({
+        cwd,
+        projectTrusted,
+        env: io.env,
+        warn: io.printError,
+        compose: io.composeInference,
+      }),
+  };
+}
+
+async function runPanes(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
+  const { openPanes } = await import("./compose-panes.ts");
+  let flags = { sessionDir: values["session-dir"], fresh: values.fresh, model: values.model };
+  let current = context;
+  for (;;) {
+    const reopenWith = await runUntilSwitch(async (reopen) =>
+      openPanes(await panesLaunch(current, flags), { reopen }),
+    );
+    current = await openCommandContext(current.io, reopenWith);
+    flags = { ...flags, fresh: false };
+  }
+}
+
+async function panesLaunch(
+  context: CommandContext,
+  flags: Pick<PanesLaunchOptions, "sessionDir" | "fresh" | "model">,
+): Promise<PanesLaunch> {
+  const inference = await context.openInference();
+  return {
+    cwd: context.cwd,
+    projectTrusted: context.projectTrusted,
+    workspaceSlug: context.workspaceSlug,
+    workspaceRecall: context.workspaceRecall,
+    trustStore: context.trustStore,
+    inference,
+    presets: userPresetSwitch(inference.current().config.permissions),
+    sessionDir: flags.sessionDir,
+    fresh: flags.fresh,
+    modelOverride: flags.model,
+  };
+}
+
+async function runChat(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
+  const { io, cwd, projectTrusted, workspaceSlug } = context;
+  const { config, runtime } = (await context.openInference()).current();
+  const bound = runtime.resolve({ override: values.model, default: config.model });
+  if (!bound.ok) {
+    io.printError(
+      `${bound.failure.message} · ${nextActionFor(bound.failure, shellCommands)}\n\n${connectHint}`,
+    );
+    return 1;
+  }
+  const presets = userPresetSwitch(config.permissions);
+  const { chat } = await import("./chat.ts");
+  await chat({
+    cwd,
+    provider: runtime.provider(bound.binding),
+    label: `${bound.binding.reference.provider}/${bound.binding.reference.model}`,
+    resume: values.continue,
+    projectTrusted,
+    permissions: presets.resolver,
+    presets,
+    ...(workspaceSlug !== undefined && { workspaceSlug }),
+    ...(config.prompts !== undefined && { prompts: config.prompts }),
+    ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
+    ...(values.resume !== undefined && { resumeId: values.resume }),
+    ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
+  });
+  return 0;
+}
+
+async function runHeadlessPrompt(
+  context: CommandContext,
+  { values, positionals }: ParsedInvocation,
+): Promise<number> {
+  const { io, cwd, projectTrusted, workspaceSlug } = context;
+  const headlessIo = { json: values.json, print: io.print, printError: io.printError };
+  const prompt = positionals.join(" ").trim();
+  if (prompt === "") {
+    const error = `keywork run needs a prompt, like: keywork run "fix the tests"`;
+    return conclude({ outcome: "usage", error }, headlessIo);
+  }
+  const preset = values.preset;
+  if (preset !== undefined && !isPresetName(preset)) {
+    const error = `keywork run: no preset named "${preset}" (options: ${presetOrder.join(" · ")})`;
+    return conclude({ outcome: "usage", error }, headlessIo);
+  }
+  const { config, runtime } = (await context.openInference()).current();
+  const bound = runtime.resolve({ override: values.model, default: config.model });
+  if (!bound.ok) return conclude({ outcome: "unresolved", failure: bound.failure }, headlessIo);
+  return untilInterrupted(async (signal) => {
+    const outcome = await runHeadless({
+      prompt,
+      cwd,
+      json: values.json,
+      projectTrusted,
+      permissions: headlessPermissions(preset, config.permissions),
+      debug: values.debug || debugEnabled(io.env),
+      provider: runtime.provider(bound.binding),
+      signal,
+      print: io.print,
+      printError: io.printError,
+      ...(workspaceSlug !== undefined && { workspaceSlug }),
+      ...(config.prompts !== undefined && { prompts: config.prompts }),
+      ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
+      ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
+    });
+    return exitCodeOf(outcome);
+  });
+}
+
+function headlessPermissions(
+  preset: PresetName | undefined,
+  configured: PermissionsConfig | undefined,
+): PermissionResolver {
+  return preset === undefined ? permissionsResolver(configured) : presetResolver(preset);
+}
+
+async function untilInterrupted(run: (signal: AbortSignal) => Promise<number>): Promise<number> {
+  const interrupts = new AbortController();
+  const interrupt = (): void => interrupts.abort();
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  try {
+    return await run(interrupts.signal);
+  } finally {
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
+  }
+}
+
+async function runSessions(
+  context: CommandContext,
+  { values, positionals }: ParsedInvocation,
+): Promise<number> {
+  const { sessionsCommand } = await import("./sessions/command.ts");
+  return sessionsCommand(
+    positionals,
+    values["session-dir"] ?? defaultSessionDir(context.cwd, context.workspaceSlug),
+    { json: values.json, ...commandIo(context), confirm: terminalConfirm() },
+  );
+}
+
+async function runConnect(
+  context: CommandContext,
+  { positionals }: ParsedInvocation,
+): Promise<number> {
+  const inference = await context.openInference();
+  const { connectCommand } = await import("./setup.ts");
+  return connectCommand(inference.connections, { argument: positionals[0] });
+}
+
+async function runInit(context: CommandContext): Promise<number> {
+  const { initCommand } = await import("./init.ts");
+  return initCommand(context.cwd, context.trustStore, commandIo(context), terminalConfirm());
+}
+
+async function runLink(
+  context: CommandContext,
+  { positionals }: ParsedInvocation,
+): Promise<number> {
+  const { linkCommand } = await import("./link.ts");
+  return linkCommand(
+    positionals[0],
+    context.cwd,
+    context.trustStore,
+    commandIo(context),
+    terminalConfirm(),
+  );
+}
+
+async function runWorkspace(
+  context: CommandContext,
+  { positionals }: ParsedInvocation,
+): Promise<number> {
+  const { workspaceCommand } = await import("./workspaces.ts");
+  return workspaceCommand(
+    positionals,
+    context.cwd,
+    commandIo(context),
+    terminalConfirm(),
+    context.workspaceRecall,
+  );
+}
+
+async function runTrust(action: "trust" | "untrust", context: CommandContext): Promise<number> {
+  const { trustCommand } = await import("./trust.ts");
+  return trustCommand(action, context.cwd, context.trustStore, commandIo(context));
+}
+
+async function runDoctor(context: CommandContext): Promise<number> {
+  const { doctorCommand } = await import("./doctor.ts");
+  return doctorCommand(
+    { env: context.io.env, platform: process.platform },
+    context.io.print,
+    async () => (await context.openInference()).current().runtime.registry,
+  );
+}
+
+function commandIo(context: CommandContext): CommandIo {
+  return { print: context.io.print, printError: context.io.printError };
+}
+
+function resolveSeams(seams: MainSeams): MainIo {
+  return {
+    cwd: seams.cwd ?? process.cwd(),
+    env: seams.env ?? process.env,
+    interactive:
+      seams.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true),
+    print: seams.print ?? console.log,
+    printError: seams.printError ?? console.error,
+    composeInference: seams.composeInference ?? composeInference,
+  };
+}
+
+function parseInvocationArgs(args: readonly string[]) {
+  return parseArgs({
+    args: [...args],
     allowPositionals: true,
     options: {
       json: { type: "boolean", default: false },
       debug: { type: "boolean", default: false },
       model: { type: "string" },
+      preset: { type: "string" },
       continue: { type: "boolean", default: false },
       fresh: { type: "boolean", default: false },
       resume: { type: "string" },
       "session-dir": { type: "string" },
+      workspace: { type: "string" },
     },
   });
+}
 
-  const cwd = process.cwd();
-  const { ensureStateLayout } = await import("./paths.ts");
-  ensureStateLayout();
-  const workspace = openWorkspace(cwd);
-  for (const dir of workspace?.missingContextDirs ?? []) {
-    console.warn(`keywork: skipping context dir ${dir}, it doesn't exist`);
-  }
-  if (command === "doctor") {
-    const { doctorCommand } = await import("./doctor.ts");
-    return doctorCommand({ env: process.env, platform: process.platform }, console.log);
-  }
-  const trustStore = new TrustStore();
-  if (command === "trust" || command === "untrust") {
-    const { trustCommand } = await import("./trust.ts");
-    return trustCommand(command, cwd, trustStore);
-  }
-  if (command === "init" || command === "link") {
-    const { terminalConfirm } = await import("./sessions.ts");
-    const confirm = terminalConfirm();
-    if (command === "init") {
-      const { initCommand } = await import("./init.ts");
-      return initCommand(cwd, trustStore, {}, confirm);
-    }
-    const { linkCommand } = await import("./link.ts");
-    return linkCommand(positionals[0], cwd, trustStore, {}, confirm);
-  }
-  const projectTrusted = trustStore.resolve(cwd) === "trusted";
-  const config = await loadKeyworkConfig(cwd, projectTrusted);
-  const presets = createPresetSwitch({
-    initial: config.permissions,
-    persist: async (permissions) => {
-      const { updateUserConfig } = await import("./setup.ts");
-      await updateUserConfig((existing) => ({ ...existing, permissions }));
-    },
-  });
-  const toolPermissions = presets.resolver;
-  const model = values.model ?? config.model;
-  const persistCredential: PersistCredential = async (provider, credential) => {
-    await saveCredential(provider, credential);
-  };
-  const loadCredentials = async (loaded: typeof config): Promise<CredentialMap> => ({
-    ...legacyCredentials(loaded.apiKeys),
-    ...(await readCredentials()),
-  });
-  let resolved = resolveProvider(
-    process.env,
-    model,
-    await loadCredentials(config),
-    config.bedrockRegion,
-    persistCredential,
-    config.models,
-  );
+type ParsedInvocation = ReturnType<typeof parseInvocationArgs>;
 
-  const onboardIfNeeded = async (): Promise<void> => {
-    if (resolved !== undefined || !process.stdin.isTTY) return;
-    console.log("Welcome to keywork. No model provider yet, let's fix that.\n");
-    const { runSetup } = await import("./setup.ts");
-    if ((await runSetup()) !== 0) return;
-    const refreshed = await loadKeyworkConfig(cwd, projectTrusted);
-    resolved = resolveProvider(
-      process.env,
-      values.model ?? refreshed.model,
-      await loadCredentials(refreshed),
-      refreshed.bedrockRegion,
-      persistCredential,
-      refreshed.models,
-    );
-  };
+type Invocation = ({ ok: true } & ParsedInvocation) | { ok: false; problem: string };
 
-  switch (command) {
-    case "chat": {
-      await onboardIfNeeded();
-      if (resolved === undefined) {
-        console.error(providerSetupHint);
-        return 1;
-      }
-      await chat({
-        cwd,
-        provider: resolved.provider,
-        label: resolved.label,
-        modelId: resolved.modelId,
-        resume: values.continue,
-        projectTrusted,
-        permissions: toolPermissions,
-        presets,
-        ...(config.prompts !== undefined && { prompts: config.prompts }),
-        ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
-        ...(values.resume !== undefined && { resumeId: values.resume }),
-        ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
-      });
-      return 0;
-    }
-    case "run": {
-      const prompt = positionals.join(" ").trim();
-      if (prompt === "") {
-        console.error(`keywork run needs a prompt, like: keywork run "fix the tests"`);
-        return 1;
-      }
-      const outcome = await runHeadless({
-        prompt,
-        cwd,
-        json: values.json,
-        projectTrusted,
-        permissions: toolPermissions,
-        debug: values.debug || debugEnabled(process.env),
-        ...(resolved !== undefined && { provider: resolved.provider, modelId: resolved.modelId }),
-        ...(config.prompts !== undefined && { prompts: config.prompts }),
-        ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
-        ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
-      });
-      return outcome.exitCode;
-    }
-    case "sessions": {
-      const { sessionsCommand, terminalConfirm } = await import("./sessions.ts");
-      const { defaultSessionDir } = await import("./paths.ts");
-      return sessionsCommand(
-        positionals,
-        values["session-dir"] ?? defaultSessionDir(cwd),
-        console.log,
-        terminalConfirm(),
-      );
-    }
-    case "setup": {
-      const { runSetup } = await import("./setup.ts");
-      return runSetup();
-    }
-    case "panes": {
-      await onboardIfNeeded();
-      const active = resolved;
-      const { runApp } = await import("@keywork/tui");
-      const { renderCommand, scanTemplate, suggestTitle, tapJournal } = await import(
-        "@keywork/engine"
-      );
-      const { defaultSessionDir, workspaceIdentity, workspaceStateFile } = await import(
-        "./paths.ts"
-      );
-      const { composeAgents, composeWorkspace } = await import("./compose.ts");
-      const { freshWorkspace, workspaceFile } = await import("./workspace.ts");
-      const { deferredMaterialization } = await import("./materialize.ts");
-      const materializer = deferredMaterialization({ cwd, trusted: projectTrusted });
-      const provider =
-        active === undefined ? undefined : materializer.wrapProvider(active.provider);
-      const { sessionChangeFeed, sessionPort, sessionTreePort } = await import("./sessions.ts");
-      const { commandRuntime } = await import("./commands.ts");
-      const { mcpPanePort } = await import("./mcp.ts");
-      const { flushAfterTurn, memoryPanePort, sweepOnClose } = await import("./memory.ts");
-      const composition = await composeWorkspace({
-        cwd,
-        projectTrusted,
-        prompts: config.prompts,
-        mcpServers: config.mcpServers,
-        modelId: active?.modelId,
-        onFileSaved: (path) => materializer.fileSaved(path),
-      });
-      const { checkpoints, extensions, mcp, memory } = composition;
-      const agents =
-        provider === undefined
-          ? undefined
-          : composeAgents(composition, { provider, permissions: toolPermissions });
-      const stateStore = workspaceFile(workspaceStateFile(workspaceIdentity(cwd)));
-      const sessionDir = values["session-dir"] ?? defaultSessionDir(cwd);
-      const extensionsView = {
-        commands: extensions.commands.map((command) => ({
-          name: command.name,
-          ...(command.description !== undefined && { description: command.description }),
-          needsArgs: scanTemplate(command.template).some((segment) => segment.kind === "arguments"),
-          render: (args: string, confirmShell: (shell: string) => Promise<boolean>) =>
-            renderCommand(
-              command.template,
-              args,
-              commandRuntime(cwd, {
-                confirm: (call) => confirmShell((call.arguments as { command: string }).command),
-              }),
-            ),
-        })),
-        agents: extensions.agents.map((agent) => ({
-          name: agent.name,
-          ...(agent.description !== undefined && { description: agent.description }),
-        })),
-        failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
-      };
-
-      const stores = new Map<string, SessionStore>();
-      const sessionChanges = sessionChangeFeed();
-      const sessions = sessionPort(sessionDir, cwd, {
-        checkpointTag: () => checkpoints?.takeTurnTag(),
-        onAttach: (store) => stores.set(store.header.id, store),
-        onRelease: (sessionId) => {
-          stores.delete(sessionId);
-          agents?.release(sessionId);
-        },
-        onChange: (sessionId) => sessionChanges.emit(sessionId),
-      });
-
-      const presetsPort: PresetsPort = {
-        names: () => presetOrder,
-        active: () => presets.active(),
-        requiresConfirmation: (name) =>
-          isPresetName(name) && requiresConfirmation(presets.active(), name),
-        apply: async (name) => {
-          if (isPresetName(name)) await presets.apply(name);
-        },
-      };
-
-      await runApp({
-        workspace: values.fresh ? freshWorkspace(stateStore) : stateStore,
-        sessions,
-        sessionTrees: sessionTreePort(sessionDir, sessionChanges),
-        presets: presetsPort,
-        afterTurn: async ({ sessionId, history }) => {
-          const store = stores.get(sessionId);
-          if (store === undefined) return [];
-          const joined = await flushAfterTurn(agents?.flushFor(sessionId), store, history);
-          if (joined.length > 0) sessionChanges.emit(sessionId);
-          return joined;
-        },
-        closers: [() => sweepOnClose(memory), ...(mcp === undefined ? [] : [() => mcp.stop()])],
-        extensions: extensionsView,
-        ...(config.theme !== undefined && { themeOverrides: config.theme }),
-        ...(config.page !== undefined && { page: config.page }),
-        ...(checkpoints !== undefined && { checkpoints }),
-        ...(memory !== undefined && { memory: memoryPanePort(memory) }),
-        ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
-        ...(active !== undefined &&
-          provider !== undefined &&
-          agents !== undefined && {
-            agentFactory: (guard, history, seams, agentName) => {
-              const agent = agents.build({
-                guard,
-                history,
-                bus: seams?.bus,
-                sessionId: () => seams?.sessionId(),
-                onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
-                definition: extensions.agents.find((candidate) => candidate.name === agentName),
-              });
-              tapJournal(agent.bus, () => {
-                const sessionId = seams?.sessionId();
-                return sessionId === undefined ? undefined : stores.get(sessionId);
-              });
-              return agent;
-            },
-            titler: (conversation) => suggestTitle(provider, conversation),
-            statusLabel: () => `${active.label} · ${presets.active()}`,
-          }),
-      });
-      return 0;
-    }
-    default: {
-      console.log(usage);
-      return command === "help" ? 0 : 1;
-    }
+function parseInvocation(args: readonly string[]): Invocation {
+  try {
+    return { ok: true, ...parseInvocationArgs(args) };
+  } catch (cause) {
+    return { ok: false, problem: cause instanceof Error ? cause.message : String(cause) };
   }
 }
 
-process.exitCode = await main(process.argv.slice(2)).catch((cause: unknown) => {
-  if (cause instanceof ConfigError) {
-    console.error(cause.message);
-    return 1;
+function refuseInvocation(
+  decision: Extract<Dispatch, { kind: "command" }>,
+  problem: string,
+  io: MainIo,
+): number {
+  if (decision.command === "run") {
+    return conclude(
+      { outcome: "usage", error: `keywork run: ${problem}` },
+      { json: decision.rest.includes("--json"), print: io.print, printError: io.printError },
+    );
   }
-  console.error(cause instanceof Error ? (cause.stack ?? cause.message) : String(cause));
-  return 1;
-});
+  io.printError(`keywork: ${problem}\n\n${usage}`);
+  return exitCodes.usage;
+}
+
+if (import.meta.main) {
+  process.exitCode = await main(process.argv.slice(2)).catch((cause: unknown) => {
+    if (cause instanceof ResolutionError) {
+      console.error(`${cause.message} · ${nextActionFor(cause.failure, shellCommands)}`);
+      return 1;
+    }
+    if (cause instanceof ConfigError) {
+      console.error(cause.message);
+      return 1;
+    }
+    console.error(cause instanceof Error ? (cause.stack ?? cause.message) : String(cause));
+    return 1;
+  });
+}

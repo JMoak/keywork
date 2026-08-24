@@ -7,18 +7,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
 import type { Tool } from "../tools.ts";
 import { McpAbortedError, type McpConnection, type McpTool } from "./client.ts";
+import type { McpServerState } from "./reconciler.ts";
 import {
   isMcpBackedTool,
   McpRegistry,
   McpRegistryClosedError,
   type McpRegistryOptions,
   McpServerNotFoundError,
-  type McpServerState,
   type McpToolCallReport,
-  mcpSearchToolName,
 } from "./registry.ts";
+import { mcpSearchToolName } from "./tool-search.ts";
 
-const fixturePath = fileURLToPath(new URL("./fixture-server.ts", import.meta.url));
+const fixturePath = fileURLToPath(new URL("../testing/mcp-fixture-server.ts", import.meta.url));
 
 const registries: McpRegistry[] = [];
 const tempDirs: string[] = [];
@@ -42,17 +42,29 @@ function fixtureServer(profile: string, extraArgs: string[] = []): McpServerConf
   };
 }
 
-function fakeConnection(tools: McpTool[]): McpConnection & { drop(error: Error): void } {
+interface FakeConnection extends McpConnection {
+  drop(error: Error): void;
+  relist(tools: McpTool[]): void;
+}
+
+function fakeConnection(initialTools: McpTool[]): FakeConnection {
+  let tools = initialTools;
   const closeHandlers: Array<(error?: Error) => void> = [];
+  const toolsChangedHandlers: Array<() => void> = [];
   return {
     serverName: "fake",
     listTools: () => Promise.resolve(tools),
     callTool: (name, args) =>
       Promise.resolve({ text: `${name}:${JSON.stringify(args)}`, isError: false }),
     onClose: (handler) => closeHandlers.push(handler),
+    onToolsChanged: (handler) => toolsChangedHandlers.push(handler),
     close: () => Promise.resolve(),
     drop: (error) => {
       for (const handler of closeHandlers) handler(error);
+    },
+    relist: (next) => {
+      tools = next;
+      for (const handler of toolsChangedHandlers) handler();
     },
   };
 }
@@ -171,13 +183,61 @@ describe("lazy tool surface", () => {
     registry.start();
     await waitFor(() => stateOf(registry, "alpha") === "connected");
 
-    expect(view.map((tool) => tool.name)).toEqual(["read", mcpSearchToolName]);
+    expect(view().map((tool) => tool.name)).toEqual(["read", mcpSearchToolName]);
     await findTool(registry, mcpSearchToolName).execute({ tools: ["alpha__echo"] });
-    expect(view.map((tool) => tool.name)).toEqual(["read", mcpSearchToolName, "alpha__echo"]);
+    expect(view().map((tool) => tool.name)).toEqual(["read", mcpSearchToolName, "alpha__echo"]);
+    expect(view().find((tool) => tool.name === "alpha__echo")?.execute).toBeTypeOf("function");
 
-    registry.dropSurface(view);
     await registry.disable("alpha");
-    expect(view.map((tool) => tool.name)).toEqual(["read", mcpSearchToolName, "alpha__echo"]);
+    expect(view().map((tool) => tool.name)).toEqual(["read", mcpSearchToolName]);
+  });
+
+  it("holds no reference to composed surfaces, so rebuilds cost the same after 100 agents", async () => {
+    let baseReads = 0;
+    const countingBase = (): readonly Tool[] =>
+      new Proxy<Tool[]>([], {
+        get: (target, property) => {
+          if (property === Symbol.iterator || property === "length") baseReads += 1;
+          return Reflect.get(target, property);
+        },
+      });
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => Promise.resolve(fakeConnection([fakeTool("probe")])),
+    });
+    const views = Array.from({ length: 100 }, () => registry.surface(countingBase()));
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "connected");
+
+    const readsBeforeRebuild = baseReads;
+    await findTool(registry, mcpSearchToolName).execute({ tools: ["alpha__probe"] });
+    expect(baseReads).toBe(readsBeforeRebuild);
+
+    expect(views[99]?.().map((tool) => tool.name)).toEqual([mcpSearchToolName, "alpha__probe"]);
+    expect(views[0]?.()).toHaveLength(2);
+  });
+
+  it("re-lists the catalog when a server announces tools/list_changed", async () => {
+    const connection = fakeConnection([fakeTool("probe")]);
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => Promise.resolve(connection),
+    });
+    registry.start();
+    await waitFor(() => stateOf(registry, "alpha") === "connected");
+    await findTool(registry, mcpSearchToolName).execute({ tools: ["alpha__probe"] });
+    expect(toolNames(registry)).toEqual([mcpSearchToolName, "alpha__probe"]);
+
+    connection.relist([fakeTool("probe"), fakeTool("sprout")]);
+    await waitFor(() => registry.listTools("alpha").length === 2);
+
+    expect(findTool(registry, mcpSearchToolName).description).toContain("alpha__sprout");
+    expect(registry.status()[0]?.toolCount).toBe(2);
+    expect(toolNames(registry)).toEqual([mcpSearchToolName, "alpha__probe"]);
+
+    connection.relist([fakeTool("sprout")]);
+    await waitFor(() => registry.listTools("alpha").length === 1);
+    expect(toolNames(registry)).toEqual([mcpSearchToolName]);
   });
 
   it("exposes nothing at all with zero configured servers", () => {
@@ -414,6 +474,31 @@ describe("structured lifecycle ownership", () => {
     await waitFor(() => stateOf(registry, "alpha") === "down");
     expect(doomed.closed).toBe(true);
     expect(registry.status()[0]?.lastError).toContain("catalog unavailable");
+  });
+
+  it("enable on a server still connecting resolves only once the server is up", async () => {
+    let release: ((connection: McpConnection) => void) | undefined;
+    const opening = new Promise<McpConnection>((resolve) => {
+      release = resolve;
+    });
+    const registry = makeRegistry({
+      servers: { alpha: fixtureServer("basic") },
+      connect: () => opening,
+    });
+    registry.start();
+    expect(stateOf(registry, "alpha")).toBe("connecting");
+
+    let enabled = false;
+    const enabling = registry.enable("alpha").then(() => {
+      enabled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(enabled).toBe(false);
+
+    release?.(fakeConnection([fakeTool("probe")]));
+    await enabling;
+    expect(stateOf(registry, "alpha")).toBe("connected");
+    await expect(registry.enable("alpha")).resolves.toBeUndefined();
   });
 
   it("a verb during backoff preempts the delay", async () => {

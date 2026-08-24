@@ -1,3 +1,7 @@
+import { type Highlighter, highlighterFor, type SyntaxClass } from "./highlighter.ts";
+import { defaultPageMarks, type PageMarks } from "./marks.ts";
+import { segments, take, width } from "./width.ts";
+
 export type MarkdownTone =
   | "body"
   | "code"
@@ -12,7 +16,8 @@ export type MarkdownTone =
   | "fenceTag"
   | "meta"
   | "ok"
-  | "bad";
+  | "bad"
+  | SyntaxClass;
 
 export interface MarkdownSpan {
   text: string;
@@ -30,19 +35,24 @@ export function renderMarkdown(
   source: string,
   proseColumns: number,
   bleedColumns: number,
+  marks: PageMarks = defaultPageMarks,
 ): MarkdownRow[] {
   const prose = Math.max(1, proseColumns);
   const bleed = Math.max(1, bleedColumns);
   const rows: MarkdownRow[] = [];
-  let inFence = false;
+  let fence: Fence | undefined;
   for (const line of source.split("\n")) {
-    const fence = fenceLine.exec(line);
-    if (fence !== null) {
-      if (!inFence) rows.push(fenceHeadRow(fence[1] ?? ""));
-      inFence = !inFence;
+    const head = fenceLine.exec(line);
+    if (head !== null) {
+      if (fence === undefined) {
+        fence = openFence(head[1] ?? "", marks);
+        rows.push(fence.head);
+      } else {
+        fence = undefined;
+      }
       continue;
     }
-    rows.push(...(inFence ? fenceRows(line, bleed) : blockRows(line, prose)));
+    rows.push(...(fence === undefined ? blockRows(line, prose, marks) : fence.rows(line, bleed)));
   }
   return rows;
 }
@@ -51,32 +61,65 @@ export function markdownRowText(row: MarkdownRow): string {
   return row.spans.map((span) => span.text).join("");
 }
 
+export function markdownBlocks(source: string): string[] {
+  const blocks: string[] = [];
+  let fence: string[] | undefined;
+  for (const line of source.split("\n")) {
+    if (fence !== undefined) {
+      fence.push(line);
+      if (fenceLine.test(line)) {
+        blocks.push(fence.join("\n"));
+        fence = undefined;
+      }
+      continue;
+    }
+    if (fenceLine.test(line)) fence = [line];
+    else blocks.push(line);
+  }
+  if (fence !== undefined) blocks.push(fence.join("\n"));
+  return blocks;
+}
+
 const fenceLine = /^ {0,3}`{3,} *([^`\s]*).*$/;
 const headingLine = /^(#{1,6}) +(.*\S) *$/;
 const ruleLine = /^ {0,3}(-{3,}|\*{3,}|_{3,}) *$/;
 const bulletLine = /^(\s*)[-*+] +(\S.*)$/;
 const orderedLine = /^(\s*)(\d{1,9}[.)]) +(\S.*)$/;
 const linkPattern = /^\[([^\]\n]+)\]\(([^()\s]+)\)/;
-const headingMarks = ["█", "▓", "▒"];
-const fenceRail = "▎ ";
 
-function blockRows(line: string, prose: number): MarkdownRow[] {
+interface Fence {
+  readonly head: MarkdownRow;
+  rows(line: string, bleed: number): MarkdownRow[];
+}
+
+function openFence(language: string, marks: PageMarks): Fence {
+  const rail: MarkdownSpan = { text: `${marks.fenceRail} `, tone: "fenceRail" };
+  const code = highlighterFor(language);
+  return {
+    head: fenceHeadRow(rail, language),
+    rows: (line, bleed) => fenceRows(rail, code, line, bleed),
+  };
+}
+
+function blockRows(line: string, prose: number, marks: PageMarks): MarkdownRow[] {
   if (line.trim() === "") return [{ spans: [], panel: false }];
   const heading = headingLine.exec(line);
   if (heading !== null) {
-    return headingRows((heading[1] ?? "#").length, heading[2] ?? "", prose);
+    return headingRows((heading[1] ?? "#").length, heading[2] ?? "", prose, marks);
   }
-  if (ruleLine.test(line)) return [ruleRow(prose)];
+  if (ruleLine.test(line)) return [ruleRow(prose, marks)];
   const bullet = bulletLine.exec(line);
-  if (bullet !== null) return listRows(bullet[1] ?? "", "•", bullet[2] ?? "", prose);
+  if (bullet !== null) return listRows(bullet[1] ?? "", marks.bullet, bullet[2] ?? "", prose);
   const ordered = orderedLine.exec(line);
   if (ordered !== null)
     return listRows(ordered[1] ?? "", ordered[2] ?? "", ordered[3] ?? "", prose);
   return proseRows(inlineSpans(line, { tone: "body" }), prose, []);
 }
 
-function headingRows(depth: number, text: string, prose: number): MarkdownRow[] {
-  const mark: MarkdownSpan = { text: `${headingMarks[depth - 1] ?? "░"} `, tone: "headingMark" };
+function headingRows(depth: number, text: string, prose: number, marks: PageMarks): MarkdownRow[] {
+  const weights = marks.headingWeights;
+  const weight = weights[Math.min(depth, weights.length) - 1] ?? "";
+  const mark: MarkdownSpan = { text: `${weight} `, tone: "headingMark" };
   return proseRows(inlineSpans(text, { tone: "heading", bold: true }), prose, [mark]);
 }
 
@@ -85,28 +128,53 @@ function listRows(indent: string, marker: string, text: string, prose: number): 
   return proseRows(inlineSpans(text, { tone: "body" }), prose, [lead]);
 }
 
-function ruleRow(prose: number): MarkdownRow {
-  return { spans: [{ text: "─".repeat(prose), tone: "rule" }], panel: false };
+function ruleRow(prose: number, marks: PageMarks): MarkdownRow {
+  return { spans: [{ text: marks.rule.repeat(prose), tone: "rule" }], panel: false };
 }
 
-function fenceHeadRow(language: string): MarkdownRow {
-  const spans: MarkdownSpan[] = [{ text: fenceRail, tone: "fenceRail" }];
+function fenceHeadRow(rail: MarkdownSpan, language: string): MarkdownRow {
+  const spans: MarkdownSpan[] = [rail];
   if (language !== "") spans.push({ text: language, tone: "fenceTag" });
   return { spans, panel: true };
 }
 
-function fenceRows(line: string, bleed: number): MarkdownRow[] {
-  const room = Math.max(1, bleed - count(fenceRail));
-  return hardWrap(line, room).map((piece) => {
-    const spans: MarkdownSpan[] = [{ text: fenceRail, tone: "fenceRail" }];
-    if (piece !== "") spans.push({ text: piece, tone: "fence" });
-    return { spans, panel: true };
-  });
+function fenceRows(
+  rail: MarkdownSpan,
+  code: Highlighter,
+  line: string,
+  bleed: number,
+): MarkdownRow[] {
+  const room = Math.max(1, bleed - width(rail.text));
+  const highlighted = code
+    .line(line)
+    .map((span): MarkdownSpan => ({ text: span.text, tone: span.syntax ?? "fence" }));
+  return hardWrapSpans(highlighted, room).map((spans) => ({
+    spans: [{ ...rail }, ...spans],
+    panel: true,
+  }));
 }
 
-function proseRows(content: MarkdownSpan[], width: number, lead: MarkdownSpan[]): MarkdownRow[] {
-  const hang = lead.reduce((total, span) => total + count(span.text), 0);
-  return wrapSpans(content, width, hang).map((spans, index) => ({
+function hardWrapSpans(spans: readonly MarkdownSpan[], cells: number): MarkdownSpan[][] {
+  let row: MarkdownSpan[] = [];
+  const rows = [row];
+  let used = 0;
+  for (const span of spans) {
+    for (const segment of segments(span.text)) {
+      if (used > 0 && used + segment.width > cells) {
+        row = [];
+        rows.push(row);
+        used = 0;
+      }
+      appendSpan(row, { ...span, text: segment.text });
+      used += segment.width;
+    }
+  }
+  return rows;
+}
+
+function proseRows(content: MarkdownSpan[], measure: number, lead: MarkdownSpan[]): MarkdownRow[] {
+  const hang = lead.reduce((total, span) => total + width(span.text), 0);
+  return wrapSpans(content, measure, hang).map((spans, index) => ({
     spans: index === 0 ? [...lead, ...spans] : hanging(hang, spans),
     panel: false,
   }));
@@ -117,8 +185,8 @@ function hanging(hang: number, spans: MarkdownSpan[]): MarkdownSpan[] {
   return [{ text: " ".repeat(hang), tone: "body" }, ...spans];
 }
 
-function wrapSpans(content: MarkdownSpan[], width: number, hang: number): MarkdownSpan[][] {
-  const room = Math.max(1, width - hang);
+function wrapSpans(content: MarkdownSpan[], measure: number, hang: number): MarkdownSpan[][] {
+  const room = Math.max(1, measure - hang);
   const lines: MarkdownSpan[][] = [];
   let line: MarkdownSpan[] = [];
   let used = 0;
@@ -129,33 +197,33 @@ function wrapSpans(content: MarkdownSpan[], width: number, hang: number): Markdo
     used = 0;
   };
   for (const token of tokensOf(content)) {
+    const cells = width(token.text);
     if (/^\s+$/.test(token.text)) {
       if (used === 0 && lines.length > 0) continue;
-      if (used + count(token.text) > room) {
+      if (used + cells > room) {
         breakLine();
         continue;
       }
       appendSpan(line, { ...token });
-      used += count(token.text);
+      used += cells;
       continue;
     }
     let piece = token.text;
     while (piece !== "") {
-      const length = count(piece);
       const remaining = room - used;
-      if (length <= remaining) {
+      const head = take(piece, remaining);
+      if (width(piece) <= remaining) {
         appendSpan(line, { ...token, text: piece });
-        used += length;
+        used += width(piece);
         break;
       }
-      if (used > 0 && length <= room) {
+      if (used > 0 && (width(piece) <= room || head === "")) {
         breakLine();
         continue;
       }
-      const points = Array.from(piece);
-      const take = Math.max(1, remaining);
-      appendSpan(line, { ...token, text: points.slice(0, take).join("") });
-      piece = points.slice(take).join("");
+      const placed = head === "" ? leadingGlyph(piece) : head;
+      appendSpan(line, { ...token, text: placed });
+      piece = piece.slice(placed.length);
       breakLine();
     }
   }
@@ -164,6 +232,10 @@ function wrapSpans(content: MarkdownSpan[], width: number, hang: number): Markdo
     lines.push(line);
   }
   return lines;
+}
+
+function leadingGlyph(text: string): string {
+  return segments(text)[0]?.text ?? text;
 }
 
 function trimLineEnd(line: MarkdownSpan[]): void {
@@ -301,18 +373,4 @@ function enclosedBy(text: string, from: number, marker: string): string | undefi
 function atWordEdge(text: string, index: number): boolean {
   const character = text[index];
   return character === undefined || !/\w/.test(character);
-}
-
-function hardWrap(line: string, width: number): string[] {
-  if (line === "") return [""];
-  const points = Array.from(line);
-  const pieces: string[] = [];
-  for (let at = 0; at < points.length; at += width) {
-    pieces.push(points.slice(at, at + width).join(""));
-  }
-  return pieces;
-}
-
-function count(text: string): number {
-  return Array.from(text).length;
 }

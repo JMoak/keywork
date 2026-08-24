@@ -76,6 +76,11 @@ export interface ModelChangeEntry extends EntryBase {
   modelId: string;
 }
 
+export interface ArcBindingEntry extends EntryBase {
+  type: "arc_binding";
+  arc?: string;
+}
+
 export interface FileTrackingDetails {
   readFiles: string[];
   modifiedFiles: string[];
@@ -90,7 +95,8 @@ export type SessionEntry =
   | CustomEntry
   | CustomMessageEntry
   | ThinkingLevelChangeEntry
-  | ModelChangeEntry;
+  | ModelChangeEntry
+  | ArcBindingEntry;
 
 export type FileEntry = SessionHeader | SessionEntry;
 
@@ -101,17 +107,21 @@ export interface SessionTreeNode {
   onActivePath: boolean;
 }
 
-export function parseFileEntries(content: string): FileEntry[] {
-  return content
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .flatMap((line) => {
-      try {
-        return [migrateFileEntry(JSON.parse(line) as FileEntry)];
-      } catch {
-        return [];
-      }
-    });
+export interface ParsedSessionFile {
+  entries: FileEntry[];
+  droppedLines: number;
+}
+
+export function parseFileEntries(content: string): ParsedSessionFile {
+  const entries: FileEntry[] = [];
+  let droppedLines = 0;
+  for (const line of content.split("\n")) {
+    if (line.trim() === "") continue;
+    const entry = parseLine(line);
+    if (entry === undefined) droppedLines += 1;
+    else entries.push(entry);
+  }
+  return { entries, droppedLines };
 }
 
 export type PromptCheckpoint =
@@ -145,15 +155,16 @@ export function pathToEntry(
 }
 
 export function contextEntriesFor(path: readonly SessionEntry[]): SessionEntry[] {
-  const compaction = path.findLast(
-    (entry): entry is CompactionEntry => entry.type === "compaction",
-  );
-  if (compaction === undefined) return [...path];
-  const compactionIndex = path.findIndex((entry) => entry.id === compaction.id);
-  const before = path.slice(0, compactionIndex);
-  const keptFrom = before.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
-  const kept = keptFrom === -1 ? [] : before.slice(keptFrom);
-  return [compaction, ...kept, ...path.slice(compactionIndex + 1)];
+  const latest = latestCompaction(path);
+  if (latest === undefined) return [...path];
+  const { compaction, index } = latest;
+  const contextBefore = contextEntriesFor(path.slice(0, index));
+  const keptFrom = contextBefore.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
+  const kept =
+    keptFrom === -1
+      ? []
+      : contextBefore.slice(keptFrom).filter((entry) => entry.type !== "compaction");
+  return [compaction, ...kept, ...path.slice(index + 1)];
 }
 
 export function contextMessages(entries: readonly SessionEntry[]): Message[] {
@@ -196,6 +207,24 @@ export function buildTree(
     else parent.children.push(node);
   }
   return roots;
+}
+
+function parseLine(line: string): FileEntry | undefined {
+  try {
+    return migrateFileEntry(JSON.parse(line) as FileEntry);
+  } catch {
+    return undefined;
+  }
+}
+
+function latestCompaction(
+  path: readonly SessionEntry[],
+): { compaction: CompactionEntry; index: number } | undefined {
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const entry = path[index];
+    if (entry?.type === "compaction") return { compaction: entry, index };
+  }
+  return undefined;
 }
 
 function activePathEntries(roots: readonly SessionTreeNode[]): SessionEntry[] {

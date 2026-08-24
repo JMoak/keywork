@@ -86,6 +86,30 @@ export function codexAuthHeaders(credential: OauthCredential): Record<string, st
   };
 }
 
+export interface OpenerCommand {
+  executable: string;
+  args: readonly string[];
+  windowsVerbatimArguments: boolean;
+}
+
+export function openerCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): OpenerCommand {
+  if (platform === "win32") {
+    return {
+      executable: "cmd",
+      args: ["/c", "start", '""', `"${url}"`],
+      windowsVerbatimArguments: true,
+    };
+  }
+  return {
+    executable: platform === "darwin" ? "open" : "xdg-open",
+    args: [url],
+    windowsVerbatimArguments: false,
+  };
+}
+
 interface WireToken {
   access_token?: string;
   refresh_token?: string;
@@ -328,14 +352,13 @@ async function safeText(response: Response): Promise<string> {
 }
 
 function openInBrowser(url: string): void {
-  const command =
-    process.platform === "win32"
-      ? { executable: "cmd", args: ["/c", "start", "", url] }
-      : process.platform === "darwin"
-        ? { executable: "open", args: [url] }
-        : { executable: "xdg-open", args: [url] };
+  const command = openerCommand(url);
   try {
-    spawn(command.executable, command.args, { detached: true, stdio: "ignore" }).unref();
+    spawn(command.executable, [...command.args], {
+      detached: true,
+      stdio: "ignore",
+      windowsVerbatimArguments: command.windowsVerbatimArguments,
+    }).unref();
   } catch {
     // The sign-in URL is already printed; a missing opener is not fatal.
   }

@@ -1,10 +1,19 @@
-import { readdir, readFile, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import type { Dirent } from "node:fs";
+import { readdir, realpath } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { z } from "zod";
-import { parseDocument } from "../memory/frontmatter.ts";
 import { defineTool } from "../tools/define.ts";
 import type { Tool } from "../tools.ts";
-import { definitionString, type ExtensionLoadFailure } from "./layers.ts";
+import {
+  type DiscoveredFile,
+  definitionString,
+  type ExtensionConventions,
+  type ExtensionLoadFailure,
+  type LayerRoots,
+  type LayerSource,
+  loadLayered,
+  type MarkdownDefinition,
+} from "./layers.ts";
 
 export interface SkillDefinition {
   name: string;
@@ -12,7 +21,8 @@ export interface SkillDefinition {
   body: string;
   dir: string;
   file: string;
-  origin: string;
+  source: LayerSource;
+  convention: string;
 }
 
 export interface SkillLoad {
@@ -22,16 +32,9 @@ export interface SkillLoad {
 
 export const skillConventionDirs = [".keywork/skills", ".claude/skills", ".cursor/skills"];
 
-export async function discoverSkills(root: string): Promise<SkillLoad> {
-  const byName = new Map<string, SkillDefinition>();
-  const failures: ExtensionLoadFailure[] = [];
-  for (const convention of skillConventionDirs) {
-    for (const file of await skillFilesUnder(join(root, convention))) {
-      const skill = await readSkill(file, convention, failures);
-      if (skill !== undefined && !byName.has(skill.name)) byName.set(skill.name, skill);
-    }
-  }
-  return { skills: [...byName.values()], failures };
+export async function discoverSkills(roots: LayerRoots): Promise<SkillLoad> {
+  const { items, failures } = await loadLayered(roots, skillConventions, buildSkill);
+  return { skills: items, failures };
 }
 
 export function skillTool(
@@ -55,8 +58,25 @@ export function skillTool(
   });
 }
 
-const maxSkillDepth = 5;
 const skillFileName = "SKILL.md";
+const maxSkillDepth = 5;
+
+const skillConventions: ExtensionConventions = {
+  dirs: skillConventionDirs,
+  discover: skillFilesUnder,
+};
+
+function buildSkill(definition: MarkdownDefinition): SkillDefinition {
+  return {
+    name: definition.name,
+    description: definitionString(definition.frontmatter, "description") ?? "",
+    body: definition.body.trim(),
+    dir: dirname(definition.file),
+    file: definition.file,
+    source: definition.source,
+    convention: definition.convention,
+  };
+}
 
 function skillToolDescription(skills: readonly SkillDefinition[]): string {
   const listing = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n");
@@ -67,10 +87,10 @@ function names(skills: readonly SkillDefinition[]): string {
   return skills.map((skill) => skill.name).join(", ");
 }
 
-async function skillFilesUnder(dir: string): Promise<string[]> {
+async function skillFilesUnder(dir: string): Promise<DiscoveredFile[]> {
   const files: string[] = [];
   await walk(dir, 0, new Set(), files);
-  return files.sort();
+  return files.sort().map((file) => ({ file, name: basename(dirname(file)) }));
 }
 
 async function walk(
@@ -81,9 +101,11 @@ async function walk(
 ): Promise<void> {
   if (depth > maxSkillDepth || !(await markVisited(dir, visited))) return;
   const entries = await readdirOrEmpty(dir);
-  if (entries.includes(skillFileName)) files.push(join(dir, skillFileName));
+  if (entries.some((entry) => entry.name === skillFileName)) files.push(join(dir, skillFileName));
   for (const entry of entries) {
-    await walk(join(dir, entry), depth + 1, visited, files);
+    if (entry.isDirectory() || entry.isSymbolicLink()) {
+      await walk(join(dir, entry.name), depth + 1, visited, files);
+    }
   }
 }
 
@@ -98,40 +120,10 @@ async function markVisited(dir: string, visited: Set<string>): Promise<boolean> 
   }
 }
 
-async function readdirOrEmpty(dir: string): Promise<string[]> {
+async function readdirOrEmpty(dir: string): Promise<Dirent[]> {
   try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink() || entry.isFile())
-      .map((entry) => entry.name);
+    return await readdir(dir, { withFileTypes: true });
   } catch {
     return [];
   }
-}
-
-async function readSkill(
-  file: string,
-  origin: string,
-  failures: ExtensionLoadFailure[],
-): Promise<SkillDefinition | undefined> {
-  const dir = file.slice(0, file.length - skillFileName.length - 1);
-  try {
-    const { frontmatter, body } = parseDocument(await readFile(file, "utf8"), file);
-    const name = definitionString(frontmatter, "name") ?? dirBasename(dir);
-    return {
-      name,
-      description: definitionString(frontmatter, "description") ?? "",
-      body: body.trim(),
-      dir,
-      file,
-      origin,
-    };
-  } catch (cause) {
-    failures.push({ file, reason: cause instanceof Error ? cause.message : String(cause) });
-    return undefined;
-  }
-}
-
-function dirBasename(dir: string): string {
-  return dir.slice(Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\")) + 1);
 }

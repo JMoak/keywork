@@ -161,11 +161,34 @@ describe("loadConfig", () => {
     expect(config.theme).toEqual({ accent: "#445566", background: "#000000" });
   });
 
-  it("rejects theme values that are not #rrggbb", async () => {
+  it("rejects theme values that are not #rrggbb, pointing at the token", async () => {
     const userDir = await dirWithConfig({ theme: { accent: "hotpink" } });
 
     await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
-    await expect(loadConfig({ userDir })).rejects.toThrow(/#rrggbb/);
+    await expect(loadConfig({ userDir })).rejects.toThrow(/#rrggbb[\s\S]*at theme\.accent/);
+  });
+
+  it("rejects a misspelled theme token at load instead of inside the app", async () => {
+    const userDir = await dirWithConfig({ theme: { acent: "#ff00ff" } });
+
+    await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
+    await expect(loadConfig({ userDir })).rejects.toThrow(
+      /Unrecognized key: "acent"[\s\S]*at theme/,
+    );
+  });
+
+  it("accepts any real flavor token as a theme override", async () => {
+    const userDir = await dirWithConfig({
+      theme: { panelLift: "#24283b", textMid: "#828bb8", borderFocus: "#bb9af7" },
+    });
+
+    const config = await loadConfig({ userDir });
+
+    expect(config.theme).toEqual({
+      panelLift: "#24283b",
+      textMid: "#828bb8",
+      borderFocus: "#bb9af7",
+    });
   });
 
   it("accepts uppercase hex theme values", async () => {

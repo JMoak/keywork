@@ -1,6 +1,7 @@
 import type { BootstrapInjection } from "./bootstrap.ts";
 import { titleKey } from "./naming.ts";
-import { extractWikilinks, type MemoryStore, type Provenance } from "./store.ts";
+import { extractWikilinks, type Provenance } from "./notes.ts";
+import type { MemoryStore } from "./store.ts";
 
 export type RecallSurface = "bootstrap" | "search" | "get";
 

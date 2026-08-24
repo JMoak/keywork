@@ -1,36 +1,42 @@
 import {
-  type ImagePart,
   type Message,
   messageText,
+  ownedBy,
   type Part,
+  type ProviderStateOwner,
   type ToolCallPart,
 } from "../messages.ts";
-import type { ProviderRequest } from "../provider.ts";
+import type { ProviderRequest, ToolDefinition } from "../provider.ts";
+import { imageDataUrl } from "./wire-parts.ts";
 
 // The Responses surface rejects an empty instructions field, so a neutral
 // fallback stands in when no system prompt was assembled.
 const defaultInstructions = "You are a helpful assistant.";
 
-export function toResponsesRequest(request: ProviderRequest, model: string): object {
+export function toResponsesRequest(
+  request: ProviderRequest,
+  model: string,
+  owner?: ProviderStateOwner,
+): object {
   return {
     model,
     stream: true,
     store: false,
     include: ["reasoning.encrypted_content"],
     instructions: request.systemPrompt === "" ? defaultInstructions : request.systemPrompt,
-    input: request.messages.flatMap(toInputItems),
+    input: request.messages.flatMap((message) => toInputItems(message, owner)),
     ...(request.tools.length > 0 && { tools: request.tools.map(toWireTool) }),
   };
 }
 
-function toInputItems(message: Message): object[] {
+function toInputItems(message: Message, owner: ProviderStateOwner | undefined): object[] {
   switch (message.role) {
     case "system":
       return [roleItem("system", [{ type: "input_text", text: messageText(message) }])];
     case "user":
       return [roleItem("user", message.parts.flatMap(userContentPart))];
     case "assistant":
-      return message.parts.flatMap(assistantItem);
+      return message.parts.flatMap((part) => assistantItem(part, owner));
     case "tool":
       return message.parts.flatMap((part) =>
         part.type === "tool-result"
@@ -55,11 +61,7 @@ function userContentPart(part: Part): object[] {
   }
 }
 
-function imageDataUrl(part: ImagePart): string {
-  return `data:${part.mediaType};base64,${part.data}`;
-}
-
-function assistantItem(part: Part): object[] {
+function assistantItem(part: Part, owner: ProviderStateOwner | undefined): object[] {
   switch (part.type) {
     case "text":
       return part.text === ""
@@ -68,7 +70,7 @@ function assistantItem(part: Part): object[] {
     case "tool-call":
       return [functionCallItem(part)];
     case "redacted-thinking":
-      return reasoningItem(part.data);
+      return ownedBy(part, owner) ? reasoningItem(part.data) : [];
     default:
       return [];
   }
@@ -92,7 +94,7 @@ function reasoningItem(data: string): object[] {
   }
 }
 
-function toWireTool(tool: { name: string; description: string; parameters: unknown }): object {
+function toWireTool(tool: ToolDefinition): object {
   return {
     type: "function",
     name: tool.name,

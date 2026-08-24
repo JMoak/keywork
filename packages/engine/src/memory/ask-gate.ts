@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import type { ReviewInbox, ReviewItem } from "./inbox.ts";
+import { readFile } from "node:fs/promises";
+import type { StagedReview } from "./staging.ts";
 import type { MemoryStore } from "./store.ts";
+import { isMissingFileError, writeFileAtomic } from "./vault-files.ts";
 
 export type AskAnswer = "yes" | "always" | "no";
 
@@ -49,15 +49,15 @@ export class AskGateLedger {
     return [...(await this.load()).events];
   }
 
-  async proposePreferences(inbox: ReviewInbox, store?: MemoryStore): Promise<ReviewItem[]> {
+  async proposePreferences(store: MemoryStore): Promise<StagedReview[]> {
     const state = await this.load();
-    const proposed: ReviewItem[] = [];
+    const proposed: StagedReview[] = [];
     for (const [shape, streak] of approvalStreaks(state.events)) {
       if (streak < this.preferenceThreshold || state.proposedShapes.includes(shape)) continue;
-      const added = await inbox.add([
+      const added = await store.propose([
         { kind: "preference-proposal", toolShape: shape, approvals: streak },
       ]);
-      if (store !== undefined && added.length > 0) await writePreferenceNote(store, shape, streak);
+      if (added.length > 0) await writePreferenceNote(store, shape, streak);
       state.proposedShapes.push(shape);
       proposed.push(...added);
     }
@@ -73,8 +73,7 @@ export class AskGateLedger {
 
   private async save(state: AskGateState): Promise<void> {
     if (this.filePath === undefined) return;
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await writeFileAtomic(this.filePath, `${JSON.stringify(state, null, 2)}\n`);
   }
 }
 
@@ -117,8 +116,9 @@ async function readState(filePath: string): Promise<AskGateState> {
   let raw: string;
   try {
     raw = await readFile(filePath, "utf8");
-  } catch {
-    return emptyState();
+  } catch (error) {
+    if (isMissingFileError(error)) return emptyState();
+    throw error;
   }
   return validState(parseState(raw));
 }

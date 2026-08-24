@@ -1,3 +1,4 @@
+import { apcaLc, parseFlavor } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
 import {
   arcAnchor,
@@ -14,6 +15,32 @@ import {
 import { keyworkNight } from "./theme.ts";
 
 const ramp = keyworkNight.ramp;
+
+const firstLight = parseFlavor({
+  name: "first-light",
+  appearance: "light",
+  tokens: {
+    background: "#f2f2f7",
+    panel: "#e6e6ef",
+    panelLift: "#dcdce8",
+    text: "#1a1b26",
+    textMid: "#3f4468",
+    textDim: "#5f6486",
+    border: "#c0c4d8",
+    borderFocus: "#5a35c8",
+    accent: "#5a35c8",
+    accentSoft: "#6f55c9",
+    success: "#28691e",
+    error: "#a4213f",
+    ramp: ["#5a35c8", "#2f6bc4", "#1f8a99"],
+  },
+  density: { light: "textDim", medium: "textMid", heavy: "text", full: "accent" },
+  gap: 0,
+  chromeWeight: "regular",
+  instruments: "calm",
+}).tokens;
+
+const borderFocusFloorLc = 40;
 
 function channels(hex: string): number[] {
   const value = Number.parseInt(hex.slice(1), 16);
@@ -133,11 +160,11 @@ describe("spawnRankPositions", () => {
 
 describe("focusLift", () => {
   it("maps today's accent exactly onto today's borderFocus token", () => {
-    expect(focusLift(keyworkNight.accent)).toBe(keyworkNight.borderFocus);
+    expect(focusLift(keyworkNight.accent, keyworkNight.borderFocus)).toBe(keyworkNight.borderFocus);
   });
 
   it("lifts a dim border to focus luminance without changing its hue", () => {
-    const lifted = focusLift(keyworkNight.border);
+    const lifted = focusLift(keyworkNight.border, keyworkNight.borderFocus);
     expect(hueDelta(lifted, keyworkNight.border)).toBeLessThan(2);
     const before = hexToOklch(keyworkNight.border);
     const after = hexToOklch(lifted);
@@ -147,7 +174,7 @@ describe("focusLift", () => {
 
   it("never darkens or desaturates a stop already at focus strength", () => {
     for (const stop of ramp) {
-      const lifted = hexToOklch(focusLift(stop));
+      const lifted = hexToOklch(focusLift(stop, keyworkNight.borderFocus));
       const original = hexToOklch(stop);
       expect(lifted.l).toBeGreaterThanOrEqual(original.l - 0.005);
       expect(lifted.c).toBeGreaterThanOrEqual(original.c - 0.01);
@@ -155,7 +182,12 @@ describe("focusLift", () => {
   });
 
   it("keeps neutral input neutral instead of inventing a hue", () => {
-    expect(hexToOklch(focusLift("#808080")).c).toBeLessThan(0.001);
+    expect(hexToOklch(focusLift("#808080", keyworkNight.borderFocus)).c).toBeLessThan(0.001);
+  });
+
+  it("lifts toward the given focus token, not the built-in palette", () => {
+    expect(focusLift(firstLight.accent, firstLight.borderFocus)).toBe(firstLight.borderFocus);
+    expect(focusLift(firstLight.accent, keyworkNight.borderFocus)).not.toBe(firstLight.borderFocus);
   });
 });
 
@@ -181,7 +213,7 @@ describe("paneBorder", () => {
   });
 
   it("renders today's exact tokens at every rank when the ramp is one accent stop", () => {
-    const flat = { border: keyworkNight.border, ramp: [keyworkNight.accent] };
+    const flat = { ...keyworkNight, ramp: [keyworkNight.accent] };
     for (const t of [0, 0.25, 0.5, 0.75, 1]) {
       expect(paneBorder(flat, t, false)).toBe(keyworkNight.border);
       expect(paneBorder(flat, t, true)).toBe(keyworkNight.borderFocus);
@@ -207,6 +239,14 @@ describe("paneBorder", () => {
       const rested = hexToOklch(paneBorder(keyworkNight, t, false)).l;
       expect(lifted - rested).toBeGreaterThan(0.25);
     }
+  });
+
+  it("keeps a light flavor's focus border above its borderFocus contrast floor at every rank", () => {
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      const focused = paneBorder(firstLight, t, true);
+      expect(apcaLc(focused, firstLight.background)).toBeGreaterThanOrEqual(borderFocusFloorLc);
+    }
+    expect(paneBorder(firstLight, 0, true)).toBe(firstLight.borderFocus);
   });
 });
 

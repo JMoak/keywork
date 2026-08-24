@@ -1,0 +1,18 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "resolveJsonModule": true,
+    "paths": { "@opentui/core/*": ["../packages/tui/node_modules/@opentui/core/*"] }
+  },
+  "include": [".", "guardrail-patterns.json"],
+  "exclude": ["dist"],
+  "references": [
+    { "path": "../packages/shared" },
+    { "path": "../packages/engine" },
+    { "path": "../packages/extensions" },
+    { "path": "../packages/tui" },
+    { "path": "../packages/cli" }
+  ]
+}

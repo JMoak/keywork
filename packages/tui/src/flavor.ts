@@ -1,4 +1,4 @@
-import { type Flavor, type FlavorTokens, parseFlavor } from "@keywork/shared";
+import { type Flavor, parseFlavor } from "@keywork/shared";
 import type { CommandRegistry } from "./commands.ts";
 import { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
 
@@ -7,7 +7,7 @@ export type { Flavor } from "@keywork/shared";
 export const keyworkNightFlavor: Flavor = parseFlavor({
   name: "keywork-night",
   appearance: "dark",
-  tokens: paletteTokens(keyworkNight),
+  tokens: keyworkNight,
   density: { light: "textDim", medium: "textMid", heavy: "text", full: "accent" },
   gap: 0,
   chromeWeight: "regular",
@@ -19,11 +19,7 @@ export function themeOf(flavor: Flavor): Theme {
 }
 
 export function startupFlavors(overrides: ThemeOverrides = {}): Flavor[] {
-  const worn = parseFlavor({
-    ...keyworkNightFlavor,
-    tokens: paletteTokens(resolveTheme(overrides)),
-  });
-  return [worn];
+  return [parseFlavor({ ...keyworkNightFlavor, tokens: resolveTheme(overrides) })];
 }
 
 export class FlavorSwitch {
@@ -77,9 +73,4 @@ export function registerFlavorCommands(
       },
     });
   }
-}
-
-function paletteTokens(theme: Theme): FlavorTokens {
-  const { ramp, ...colors } = theme;
-  return { ...colors, ramp: [...ramp] };
 }

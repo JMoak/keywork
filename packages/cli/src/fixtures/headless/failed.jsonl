@@ -1,0 +1,4 @@
+{"type":"run.started","cwd":"<cwd>","provider":"broken","model":null,"session":null}
+{"type":"turn.started","userText":"hi"}
+{"type":"engine.error","message":"provider unreachable after retries"}
+{"type":"run.finished","outcome":"failed","exitCode":1,"error":"provider unreachable after retries"}

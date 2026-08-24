@@ -1,33 +1,49 @@
-import { type EngineEvents, EventBus } from "./bus.ts";
+import { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
 import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
-import type { PermissionDecision } from "./session/journal.ts";
+import type { ContextInjection, PermissionDecision, PermissionGate } from "./session/journal.ts";
 import { findTool, type Tool } from "./tools.ts";
+
+export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
 
 export interface ToolGuard {
   confirm?(call: ToolCallPart): Promise<boolean>;
+  gate?: ConfirmingGate;
   beforeMutation?(): Promise<void>;
 }
 
 export type ToolPermission = "allow" | "ask" | "deny";
 export type PermissionResolver = (call: ToolCallPart) => ToolPermission | undefined;
+export type ToolSource = () => readonly Tool[];
 
 export interface AgentOptions {
   provider: Provider;
   systemPrompt?: string;
-  tools?: readonly Tool[];
+  tools?: readonly Tool[] | ToolSource;
   bus?: EventBus<EngineEvents>;
   history?: readonly Message[];
   guard?: ToolGuard;
   permissions?: PermissionResolver;
+  standingInjections?: readonly ContextInjection[];
 }
 
-export class AgentBusyError extends Error {
-  constructor() {
-    super("a turn is already in flight; interrupt it or await it first");
-    this.name = "AgentBusyError";
+export interface SendOptions {
+  behavior?: SendBehavior;
+  signal?: AbortSignal;
+}
+
+export class QueuedPromptCancelledError extends Error {
+  constructor(id: string) {
+    super(`queued prompt ${id} was cancelled before its turn`);
+    this.name = "QueuedPromptCancelledError";
   }
+}
+
+interface PendingPrompt extends QueuedPrompt {
+  signal: AbortSignal | undefined;
+  resolve(message: Message): void;
+  reject(error: Error): void;
 }
 
 interface AssistantTurn {
@@ -39,12 +55,14 @@ interface AssistantTurn {
 
 export class Agent {
   readonly bus: EventBus<EngineEvents>;
-  private readonly provider: Provider;
+  readonly provider: Provider;
   private readonly systemPrompt: string;
-  private readonly tools: readonly Tool[];
+  private readonly tools: ToolSource;
   private readonly messages: Message[];
   private readonly guard: ToolGuard | undefined;
   private readonly permissions: PermissionResolver | undefined;
+  private readonly pending: PendingPrompt[] = [];
+  private unannouncedInjections: readonly ContextInjection[];
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
   private costTotals: CostRollup = emptyCostRollup();
   private active: AbortController | undefined;
@@ -53,15 +71,16 @@ export class Agent {
   constructor(options: AgentOptions) {
     this.provider = options.provider;
     this.systemPrompt = options.systemPrompt ?? "";
-    this.tools = options.tools ?? [];
+    this.tools = toolSource(options.tools);
     this.bus = options.bus ?? new EventBus();
     this.messages = [...(options.history ?? [])];
     this.guard = options.guard;
     this.permissions = options.permissions;
+    this.unannouncedInjections = options.standingInjections ?? [];
   }
 
   history(): readonly Message[] {
-    return this.messages;
+    return [...this.messages];
   }
 
   usage(): Usage {
@@ -77,67 +96,129 @@ export class Agent {
   }
 
   busy(): boolean {
-    return this.active !== undefined;
+    return this.active !== undefined || this.pending.length > 0;
+  }
+
+  queued(): readonly QueuedPrompt[] {
+    return this.pending.map(({ id, text, behavior }) => ({ id, text, behavior }));
   }
 
   interrupt(): void {
     this.active?.abort();
   }
 
-  async send(userText: string, signal?: AbortSignal): Promise<Message> {
-    if (this.active !== undefined) throw new AgentBusyError();
+  send(userText: string, options: SendOptions = {}): Promise<Message> {
+    if (this.active === undefined) return this.runTurn(userText, options.signal);
+    const behavior = options.behavior ?? "queue";
+    const settled = this.enqueue(userText, behavior, options.signal);
+    if (behavior === "steer") this.active.abort();
+    return settled;
+  }
+
+  cancelQueued(id: string): boolean {
+    const index = this.pending.findIndex((prompt) => prompt.id === id);
+    if (index === -1) return false;
+    for (const cancelled of this.pending.splice(index, 1)) {
+      cancelled.reject(new QueuedPromptCancelledError(id));
+    }
+    this.announceQueue();
+    return true;
+  }
+
+  private enqueue(
+    text: string,
+    behavior: SendBehavior,
+    signal: AbortSignal | undefined,
+  ): Promise<Message> {
+    return new Promise((resolve, reject) => {
+      const prompt: PendingPrompt = {
+        id: crypto.randomUUID(),
+        text,
+        behavior,
+        signal,
+        resolve,
+        reject,
+      };
+      this.pending.splice(this.queuePositionFor(behavior), 0, prompt);
+      this.announceQueue();
+    });
+  }
+
+  private queuePositionFor(behavior: SendBehavior): number {
+    if (behavior === "queue") return this.pending.length;
+    return this.pending.findLastIndex((prompt) => prompt.behavior === "steer") + 1;
+  }
+
+  private startNextQueued(): void {
+    const next = this.pending.shift();
+    if (next === undefined) return;
+    this.announceQueue();
+    void this.runTurn(next.text, next.signal).then(next.resolve, next.reject);
+  }
+
+  private announceQueue(): void {
+    this.bus.emit("queue.changed", { queued: this.queued() });
+  }
+
+  private async runTurn(userText: string, signal: AbortSignal | undefined): Promise<Message> {
     const controller = new AbortController();
     this.active = controller;
     const forwardAbort = () => controller.abort();
     if (signal?.aborted) controller.abort();
     signal?.addEventListener("abort", forwardAbort, { once: true });
-
-    this.checkpointed = false;
-    this.messages.push(textMessage("user", userText));
-    this.bus.emit("turn.started", { userText });
     try {
-      return await this.runUntilFinalMessage(controller);
+      this.checkpointed = false;
+      this.messages.push(textMessage("user", userText));
+      this.announceStandingInjections();
+      this.bus.emit("turn.started", { userText });
+      return await this.runUntilFinalMessage(controller.signal);
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       this.bus.emit("engine.error", { error });
       throw error;
     } finally {
-      this.release(controller);
       signal?.removeEventListener("abort", forwardAbort);
+      this.active = undefined;
+      this.startNextQueued();
     }
   }
 
-  private async runUntilFinalMessage(controller: AbortController): Promise<Message> {
-    const signal = controller.signal;
+  private async runUntilFinalMessage(signal: AbortSignal): Promise<Message> {
     while (true) {
       const turn = await this.streamAssistantTurn(signal);
       this.totals = addUsage(this.totals, turn.usage);
       this.costTotals = withTurnCost(this.costTotals, turn.usage, this.provider.modelId);
-      if (turn.failure !== undefined) throw turn.failure;
+      if (turn.failure !== undefined) {
+        this.keepPartialMessage(turn.message);
+        this.settleOrphanedToolCalls(turn.message);
+        throw turn.failure;
+      }
       if (turn.interrupted) {
-        if (turn.message.parts.length > 0) this.messages.push(turn.message);
-        return this.finishInterrupted(controller, turn.message);
+        this.keepPartialMessage(turn.message);
+        return this.finishInterrupted(turn.message);
       }
       this.messages.push(turn.message);
 
       const calls = toolCalls(turn.message);
-      if (calls.length === 0) return this.finishCompleted(controller, turn);
+      if (calls.length === 0) return this.finishCompleted(turn);
       await this.executeToolCalls(calls, signal);
-      if (signal.aborted) return this.finishInterrupted(controller, turn.message);
+      if (signal.aborted) return this.finishInterrupted(turn.message);
     }
   }
 
-  private finishCompleted(controller: AbortController, turn: AssistantTurn): Message {
-    this.release(controller);
+  private finishCompleted(turn: AssistantTurn): Message {
     this.bus.emit("turn.completed", { message: turn.message, usage: turn.usage });
     return turn.message;
   }
 
-  private finishInterrupted(controller: AbortController, message: Message): Message {
+  private finishInterrupted(message: Message): Message {
     this.settleOrphanedToolCalls(message);
-    this.release(controller);
     this.bus.emit("turn.interrupted", { message });
     return message;
+  }
+
+  private keepPartialMessage(message: Message): void {
+    if (message.parts.length > 0) this.messages.push(message);
   }
 
   private settleOrphanedToolCalls(message: Message): void {
@@ -168,8 +249,10 @@ export class Agent {
     return ids;
   }
 
-  private release(controller: AbortController): void {
-    if (this.active === controller) this.active = undefined;
+  private announceStandingInjections(): void {
+    const injections = this.unannouncedInjections;
+    this.unannouncedInjections = [];
+    for (const injection of injections) this.bus.emit("context.injected", { injection });
   }
 
   private async streamAssistantTurn(signal: AbortSignal): Promise<AssistantTurn> {
@@ -178,7 +261,7 @@ export class Agent {
     const request = {
       systemPrompt: this.systemPrompt,
       messages: [...this.messages],
-      tools: this.tools,
+      tools: this.tools(),
       signal,
     };
     try {
@@ -212,7 +295,7 @@ export class Agent {
     signal: AbortSignal,
   ): Promise<{ callId: string; output: string; isError: boolean }> {
     try {
-      const tool = findTool(this.tools, call.name);
+      const tool = findTool(this.tools(), call.name);
       const policyVerdict = this.permissions?.(call);
       const verdict = policyVerdict ?? defaultPermission(tool);
       const gate = policyVerdict === undefined ? "default" : "policy";
@@ -221,15 +304,15 @@ export class Agent {
         return { callId: call.callId, output: "denied by permission policy", isError: true };
       }
       if (verdict === "ask") {
-        const askedUser = this.guard?.confirm !== undefined;
+        const guardAsked = this.guard?.confirm !== undefined;
         const approved = await this.confirmWithGuard(call);
         this.emitPermissionDecision(
           call,
           approved ? "granted" : "denied",
-          askedUser ? "user" : gate,
+          guardAsked ? (this.guard?.gate ?? "user") : gate,
         );
         if (!approved) {
-          return { callId: call.callId, output: "declined by user", isError: true };
+          return { callId: call.callId, output: declinedOutput(this.guard?.gate), isError: true };
         }
       } else {
         this.emitPermissionDecision(call, "granted", gate);
@@ -264,11 +347,23 @@ export class Agent {
   }
 }
 
+function toolSource(tools: readonly Tool[] | ToolSource | undefined): ToolSource {
+  if (typeof tools === "function") return tools;
+  const fixed = tools ?? [];
+  return () => fixed;
+}
+
 function defaultPermission(tool: Tool): ToolPermission {
   return tool.mutates === true ? "ask" : "allow";
 }
 
-function addUsage(left: Usage, right: Usage): Usage {
+function declinedOutput(gate: ConfirmingGate | undefined): string {
+  return gate === "headless"
+    ? "not approved: this run has no one to ask, so the call was refused"
+    : "declined by user";
+}
+
+export function addUsage(left: Usage, right: Usage): Usage {
   const cacheCreation =
     (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0);
   const cacheRead = (left.cacheReadInputTokens ?? 0) + (right.cacheReadInputTokens ?? 0);

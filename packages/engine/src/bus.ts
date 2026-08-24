@@ -2,11 +2,20 @@ import type { Message, ToolCallPart, Usage } from "./messages.ts";
 import type { TurnDelta } from "./provider.ts";
 import type { ContextInjection, PermissionDecision } from "./session/journal.ts";
 
+export type SendBehavior = "steer" | "queue";
+
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  behavior: SendBehavior;
+}
+
 interface LiveEvents {
-  "turn.started": { userText: string };
+  "turn.started": { userText: string; entryId?: string };
   "turn.delta": { delta: TurnDelta };
   "turn.completed": { message: Message; usage: Usage };
   "turn.interrupted": { message: Message };
+  "queue.changed": { queued: readonly QueuedPrompt[] };
   "tool.started": { call: ToolCallPart };
   "tool.output": { chunk: string; callId?: string };
   "tool.finished": { callId: string; output: string; isError: boolean };
@@ -24,19 +33,54 @@ export type EngineEvents = {
 
 type Listener<T> = (payload: T) => void;
 
-export class EventBus<Events = EngineEvents> {
-  private readonly listeners = new Map<keyof Events, Set<Listener<never>>>();
+const failureEvent = "engine.error";
+
+interface ReportsFailures {
+  [failureEvent]: { error: Error };
+}
+
+interface Registration {
+  listener: Listener<never>;
+}
+
+export class EventBus<Events extends ReportsFailures = EngineEvents> {
+  private readonly registrations = new Map<keyof Events, Registration[]>();
 
   on<K extends keyof Events>(type: K, listener: Listener<Events[K]>): () => void {
-    const existing = this.listeners.get(type) ?? new Set();
-    existing.add(listener as Listener<never>);
-    this.listeners.set(type, existing);
-    return () => existing.delete(listener as Listener<never>);
+    const registration: Registration = { listener: listener as Listener<never> };
+    const existing = this.registrations.get(type) ?? [];
+    existing.push(registration);
+    this.registrations.set(type, existing);
+    return () => this.forget(type, registration);
   }
 
   emit<K extends keyof Events>(type: K, payload: Events[K]): void {
-    for (const listener of this.listeners.get(type) ?? []) {
-      (listener as Listener<Events[K]>)(payload);
+    for (const { listener } of [...(this.registrations.get(type) ?? [])]) {
+      try {
+        (listener as Listener<Events[K]>)(payload);
+      } catch (cause) {
+        this.reportListenerFailure(type, cause);
+      }
     }
+  }
+
+  listenerCount(type?: keyof Events): number {
+    if (type !== undefined) return this.registrations.get(type)?.length ?? 0;
+    let total = 0;
+    for (const registrations of this.registrations.values()) total += registrations.length;
+    return total;
+  }
+
+  private forget(type: keyof Events, registration: Registration): void {
+    const existing = this.registrations.get(type);
+    const index = existing?.indexOf(registration) ?? -1;
+    if (existing === undefined || index === -1) return;
+    existing.splice(index, 1);
+  }
+
+  private reportListenerFailure(type: keyof Events, cause: unknown): void {
+    if (type === failureEvent) return;
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    this.emit(failureEvent, { error });
   }
 }

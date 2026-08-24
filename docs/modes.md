@@ -1,4 +1,4 @@
-# keywork Modes — Plan · Recall · Agent
+# keywork Modes: Plan · Recall · Agent
 
 > E7 spec, 2026-08-16, implementing [`backlog/99-workspace-and-modes.md`](backlog/99-workspace-and-modes.md)
 > PD12 (with PD13.4's touchpoint). Where PD12 speaks this document implements it; where PD12
@@ -72,7 +72,7 @@ add is the default (below).
 |---|---|
 | Toolset | `read`, `bash`, `memory_search`, `memory_get`, `skill`; `write`/`edit` and all MCP-mounted tools **removed from the list** |
 | Permissions | `write: deny`, `edit: deny` (backstop for aliases); `bash`: **investigation allowlist, everything else denied** (rules below) |
-| Prompt | `Mode: plan — read, search, and design. File-mutation tools are unavailable; only read-only investigation commands run, everything else will be refused. Deliver findings and a concrete plan. Switching to agent mode is the user's act alone.` |
+| Prompt | `Mode: plan. Read, search, and design. File-mutation tools are unavailable; only read-only investigation commands run, everything else will be refused. Deliver findings and a concrete plan. Switching to agent mode is the user's act alone.` |
 
 **⟨PR-2⟩** Three edges decided here (bash posture **amended by Jordan, 2026-08-16**: the
 original ask-always draft was too broad; Plan now runs a narrow allowlist and denies the
@@ -107,7 +107,7 @@ rest):
    union; entries may say `allow` or `ask`, never `deny`, since global `permissions.bash`
    deny rules already win through `stricter` and belong there). The I12 alternative, a
    bash-less read-only toolset (Pi's `createReadOnlyToolDefinitions`,
-   `backlog/92-iteration-3.md:156-158`), remains rejected as the default (it guts
+   `backlog/archive/92-iteration-3.md:160-162`), remains rejected as the default (it guts
    investigation) and remains the natural shape for *headless* plan runs if those ever
    exist.
 2. **MCP tools are excluded from Plan's toolset.** Their mutation behavior is undeclared
@@ -127,7 +127,7 @@ proposal, never by direct write.
 |---|---|
 | Toolset | `memory_search`, `memory_get`, `read`, `write`, `edit`; no `bash`, no `skill`, no MCP |
 | Permissions | `bash: deny` (backstop); `write`/`edit` **vault-jailed**: any target outside the vault root resolves `deny`; inside the vault they resolve `allow`; no ask, because every Recall write lands staged (next section), so the gate would double-charge |
-| Prompt | `Mode: recall — answer from memory first: search with memory_search before reading the repo. You may propose memory corrections or prunes by writing to the vault; every write becomes a staged proposal for the user's review, never a direct change. If a review finds nothing worth proposing, reply exactly NO_REPLY. Work outside memory needs agent mode.` |
+| Prompt | `Mode: recall. Answer from memory first: search with memory_search before reading the repo. You may propose memory corrections or prunes by writing to the vault; every write becomes a staged proposal for the user's review, never a direct change. If a review finds nothing worth proposing, reply exactly NO_REPLY. Work outside memory needs agent mode.` |
 
 `read` keeps its ordinary workspace confinement: checking a note's claim against the
 actual file is the whole point of a correction session. Memory-search-first is prompt
@@ -167,10 +167,10 @@ staging + R3 one-inbox machinery. The seams, all landed:
   honors so *every* durable memory write from a Recall session lands staged regardless of
   provenance, with its true provenance preserved in the sidecar. One flag on the landed
   kernel; no second pipeline.
-- **One inbox**: staged items surface through the `ReviewInbox`
-  (`packages/engine/src/memory/inbox.ts:65-121`; dedupe by semantic key at
-  `inbox.ts:79-98`) at `.staging/inbox.json` (`packages/cli/src/memory.ts:43`), rendered
-  in the memory pane with the `░n` counter (`packages/tui/src/memory-pane-model.test.ts:232`)
+- **One inbox**: staged items are the `MemoryStore`'s staged items
+  (`packages/engine/src/memory/store.ts` `listStaged`; reviews deduped by semantic key via
+  `admitReviews` / `reviewKey` in `staging.ts`), each a `.staging/<uuid>.json` sidecar, read
+  by `packages/cli/src/memory.ts` and rendered in the memory pane with the `░n` counter (`packages/tui/src/memory-pane-model.test.ts:232`)
   and drained at the P3 doors. Recall proposals are ordinary rows there: no fourth-door
   ceremony, no new surface.
 - **Prunes are supersessions and discards; nothing is deleted**: a prune proposal stages a
@@ -191,7 +191,7 @@ showing the staged diff:
   deliberate act taken in the memory pane (`d` on the row), never a reflex key on an
   overlay.
 - The tool result the model sees is the same in both cases:
-  `staged proposal ‹id› — awaiting review`. The model never learns mid-turn whether the
+  `staged proposal ‹id› · awaiting review`. The model never learns mid-turn whether the
   human approved; its plan cannot fork on an approval race.
 
 **NO_REPLY**: when a review turn finds nothing to propose, the prompt instructs replying
@@ -228,7 +228,7 @@ config default.** Each link, made concrete:
      default: z.enum(["plan", "recall", "agent"]).default("agent").describe(
        "Mode a session starts in when nothing more specific resolves (its own mode entry, " +
        "then its split source, then the arc's most recently used mode); exists because a " +
-       "plan-first team should not pay a keystroke per session to say so. Ships as agent — " +
+       "plan-first team should not pay a keystroke per session to say so. Ships as agent; " +
        "safe because mutating tools still ask under the ordinary gate, so the default is " +
        "never silently mutating.",
      ),
@@ -408,7 +408,7 @@ IDs are working labels (M-*); formal E-series IDs assigned at integration. The C
 harness (`scripts/e2e-capture.ts`, `scripts/e2e/`) is the acceptance vehicle wherever a
 frame is named.
 
-### M-1 (2pt) — Mode bundles & composition law
+### M-1 (2pt): Mode bundles & composition law
 The three bundles as shared constants; mode toolset intersection + stricter-wins resolver
 wrapper composed after agent narrowing in both compositions (`cli/src/main.ts:291-324`,
 `cli/src/chat.ts:104-107`); Recall's vault-jail resolver; `PermissionResolver` grows the
@@ -423,9 +423,9 @@ past the blanket while a config `permissions.bash` deny wins inside the allowlis
 `modes.planBash` extension resolves under most-literal-wins across the union;
 MCP-surfaced tool invisible in Plan.
 
-### M-2 (2pt) — Recall staged-proposal write path
+### M-2 (2pt): Recall staged-proposal write path
 `stageAll` session posture on the memory write path (provenance preserved in the sidecar);
-staged-proposal tool-result text; prune-as-supersession staging into the `ReviewInbox`;
+staged-proposal tool-result text; prune-as-supersession staging as `MemoryStore` staged items;
 `NO_REPLY` suppression in the conversation surface for Recall review turns.
 **Accept:** property extension of the J11 walk: no Recall-mode write sequence becomes
 load-bearing without `approve`; approve lands with true provenance and ledger revert;
@@ -433,7 +433,7 @@ decline leaves the item listed by the inbox; `NO_REPLY` turn renders nothing whi
 JSONL records it; e2e-harness scenario: Recall session proposes a correction, `░n`
 increments in a captured frame.
 
-### M-3 (1pt) — Session entry & resolution chain
+### M-3 (1pt): Session entry & resolution chain
 `keywork/mode` custom entries (public appender on `SessionStore`); attach-time resolution;
 split materialization (source's effective mode stamped; sessionless-source splits skip);
 `arcModes` MRU slot in workspace state behind the `workspaceIdentity` seam (vacuous until
@@ -442,7 +442,7 @@ J17); `modes.default` config option with the `.describe()` text above.
 chain fixture exercises every link including the vacuous-arc skip; Pi-format compatibility
 test still pins the closed vocabulary; schema round-trip with the user-layer-only rule.
 
-### M-4 (2pt) — shift+tab & mid-turn application
+### M-4 (2pt): shift+tab & mid-turn application
 `mode.cycle` action + chord (both terminal encodings), palette row `/mode`; record-now /
 apply-at-boundary via the `agentSwitchers`/`bindSessionLifecycle` rebuild seam; pending
 `░` state; the `!chord.shift` guard at `conversation-model.ts:607`.
@@ -458,21 +458,21 @@ rapid presses apply only the last; overlays keep shift+tab inert; back-tab encod
 drives the action; dispose mid-pending leaks nothing (the recorded entry stands, no swap
 fires).
 
-### M-5 (1pt) — Presentation
+### M-5 (1pt): Presentation
 Mode word in pane title (lens-first, Agent elided), focus-aware status-line slot, pending
 prefix, zero-state.
 **Accept:** C40 captures: all-Agent frame byte-identical to today's; mixed-mode
 three-pane fixture shows per-pane words and a focus-tracking status line; monochrome and
 `NO_COLOR` captures stay legible; pending-prefix frame during a mid-turn switch.
 
-### M-6 (1pt) — Recall in-pane approval
+### M-6 (1pt): Recall in-pane approval
 The staged-proposal overlay riding `pendingAsk` (diff window, `y`/`n`/`esc` semantics per
 the flow above; `d` reserved for the memory pane).
 **Accept:** probe workflow: propose → overlay with diff → `y` approves through
 `store.approve`; `n` leaves it staged and the inbox row present; capture fixture of the
 overlay; dispose mid-ask leaves the item staged, never discarded.
 
-### M-7 (1pt) — Mode scenario pack
+### M-7 (1pt): Mode scenario pack
 End-to-end capture scenarios: cycle across all three modes, Plan denial turn, Recall
 proposal round-trip; masked goldens opt-in per the C40 conventions.
 **Accept:** scenarios run offline on the mock provider; goldens reproduce across two runs;
@@ -481,13 +481,13 @@ the pack lands in `scripts/e2e/scenarios.ts` alongside S1–S6.
 Sequencing: `M-1 → M-2 → M-6` (engine → memory → overlay), `M-3` independent after M-1's
 types, `M-4` after M-1 + M-3, `M-5` after M-4, `M-7` last. Total 10pt.
 
-## Decision index — reviewed by Jordan, 2026-08-16
+## Decision index (reviewed by Jordan, 2026-08-16)
 
 | # | Decision | Where | Verdict |
 |---|---|---|---|
-| PR-1 | Mode is an orthogonal narrowing lens over the active agent rather than three agents | The shape | **Approved** — implementation must meet a "top-tier strategy, foresight, and beauty" bar (Jordan's words); the M-task acceptance criteria carry that weight |
+| PR-1 | Mode is an orthogonal narrowing lens over the active agent rather than three agents | The shape | **Approved**; implementation must meet a "top-tier strategy, foresight, and beauty" bar (Jordan's words); the M-task acceptance criteria carry that weight |
 | PR-2 | Plan's bash posture | Plan | **Approved with amendment** (Jordan, 2026-08-16): the ask-always draft was too broad; Plan now runs the narrow read-only investigation allowlist recorded above, deny outside it; spec updated in place |
-| PR-3 | Recall writes always stage; decline leaves staged (inbox is the record); discard only in the memory pane | Recall's proposal flow | **Approved** — with a "top-tier consideration" bar on the implementation |
-| PR-4 | Mid-turn switch records immediately, applies at the turn boundary, never interrupts | shift+tab | **Approved** — robustness emphasized; M-4's acceptance pins the race cases (switch during stream, during pending ask, with queued prompts) rather than sampling them |
+| PR-3 | Recall writes always stage; decline leaves staged (inbox is the record); discard only in the memory pane | Recall's proposal flow | **Approved**, with a "top-tier consideration" bar on the implementation |
+| PR-4 | Mid-turn switch records immediately, applies at the turn boundary, never interrupts | shift+tab | **Approved**, robustness emphasized; M-4's acceptance pins the race cases (switch during stream, during pending ask, with queued prompts) rather than sampling them |
 | PR-5 | Mode entries are Pi `custom` entries (`keywork/mode`), and arc bindings should follow | The session entry | **Approved** as specced (low-stakes per Jordan) |
-| PR-6 | Agent mode renders no ink anywhere (word appears only for Plan/Recall) | Presentation | Proposed — not in the reviewed batch; stands for review with the doc |
+| PR-6 | Agent mode renders no ink anywhere (word appears only for Plan/Recall) | Presentation | Proposed (not in the reviewed batch); stands for review with the doc |

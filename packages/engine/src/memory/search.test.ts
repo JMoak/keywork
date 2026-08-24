@@ -128,6 +128,22 @@ describe("MemorySearch", () => {
     expect(outcome.hits[0]?.legs.sort()).toEqual(["lexical", "semantic"]);
   });
 
+  it("records each hit's rank within every leg that found it", async () => {
+    const store = await vault();
+    await seeded(store, [
+      { title: "Session garden", body: "the conversation curing garden" },
+      { title: "Session store", body: "JSONL conversation entries" },
+      { title: "Garden shed", body: "plant tools" },
+    ]);
+    const outcome = await new MemorySearch(store, countingPort()).search("conversation garden");
+    const ranks = new Map(outcome.hits.map((hit) => [hit.note.title, hit.ranks]));
+    expect(ranks.get("Session garden")).toEqual({ lexical: 1, semantic: 1 });
+    expect(ranks.get("Garden shed")?.lexical).toBeGreaterThan(1);
+    for (const hit of outcome.hits) {
+      expect(Object.keys(hit.ranks).sort()).toEqual([...hit.legs].sort());
+    }
+  });
+
   it("keeps lexical results and reports degradation when embedding fails", async () => {
     const store = await vault();
     await seeded(store, [{ title: "Dock ratio", body: "0.3 default" }]);
@@ -187,6 +203,24 @@ describe("MemorySearch", () => {
     await store.writeNote({ title: "Curing garden", body: "hardened now", provenance: "user" });
     await search.search("plant");
     expect(port.calls[3]).toEqual([expect.stringContaining("hardened now")]);
+  });
+
+  it("forgets vectors for notes that disappear from the vault", async () => {
+    const store = await vault();
+    const note = {
+      title: "Curing garden",
+      body: "staged entries harden",
+      provenance: "user",
+    } as const;
+    const created = await store.writeNote(note);
+    const port = countingPort();
+    const search = new MemorySearch(store, port);
+    await search.search("plant");
+    await store.revert(created.ledgerId);
+    await search.search("plant");
+    await store.writeNote(note);
+    await search.search("plant");
+    expect(port.calls.filter((call) => call[0]?.includes("Curing garden"))).toHaveLength(2);
   });
 
   it("returns nothing for a blank query", async () => {

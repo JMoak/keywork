@@ -1,9 +1,16 @@
 import { parseDocument } from "../frontmatter.ts";
 import type { CurationJudgmentPort } from "../gardener.ts";
 import { Gardener } from "../gardener.ts";
-import type { ReviewInbox, ReviewItemDetail } from "../inbox.ts";
 import { titleKey } from "../naming.ts";
-import type { MemoryStore, Note, StagedItem } from "../store.ts";
+import { type Note, noteName, noteWriteTarget, parseDailyEntries } from "../notes.ts";
+import {
+  describeStaged,
+  isStagedWrite,
+  type ReviewProposal,
+  type StagedItem,
+  type StagedWrite,
+} from "../staging.ts";
+import type { MemoryStore } from "../store.ts";
 import type { ArcBindings } from "./bindings.ts";
 import type { CapEvents, OpenQuestion } from "./questions.ts";
 import { type ArcRecord, type ArcRegistry, arcMocLink, MissingArcError } from "./registry.ts";
@@ -59,7 +66,6 @@ export interface ArcAirlockOptions {
   registry: ArcRegistry;
   bindings: ArcBindings;
   workspace: MemoryStore;
-  inbox: ReviewInbox;
   judgment?: CurationJudgmentPort;
   citedNotes?: (arc: string) => Promise<Iterable<string>>;
   now?: () => Date;
@@ -124,7 +130,6 @@ export class ArcAirlock {
   private readonly registry: ArcRegistry;
   private readonly bindings: ArcBindings;
   private readonly workspace: MemoryStore;
-  private readonly inbox: ReviewInbox;
   private readonly judgment: CurationJudgmentPort | undefined;
   private readonly citedNotes: ((arc: string) => Promise<Iterable<string>>) | undefined;
   private readonly now: () => Date;
@@ -133,7 +138,6 @@ export class ArcAirlock {
     this.registry = options.registry;
     this.bindings = options.bindings;
     this.workspace = options.workspace;
-    this.inbox = options.inbox;
     this.judgment = options.judgment;
     this.citedNotes = options.citedNotes;
     this.now = options.now ?? (() => new Date());
@@ -146,7 +150,7 @@ export class ArcAirlock {
     const candidates = await this.gatherCandidates(slug);
     const questions = await this.registry.openQuestions(slug).open();
     const capEvents = await this.registry.openQuestions(slug).capEvents();
-    const inboxKeys = await this.openFourthDoor(slug, candidates, questions);
+    const inboxKeys = await this.stageArcReviews(slug, candidates, questions);
     return { arc: slug, sweep, candidates, questions, capEvents, inboxKeys };
   }
 
@@ -172,12 +176,12 @@ export class ArcAirlock {
       deliveryTime,
     );
     await this.workspace.appendDaily(
-      `arc ${slug} delivered — distilled ${delivered.length} notes`,
+      `arc ${slug} delivered · distilled ${delivered.length} notes`,
       "agent",
     );
     const arc = await this.registry.archiveArc(slug, { delivered: deliveryTime });
     const releasedSessions = this.bindings.releaseArc(slug);
-    const drainedInboxKeys = await this.drainFourthDoor(slug);
+    const drainedInboxKeys = await this.drainArcReviews(slug);
     await this.workspace.recordAudit(
       `arc ${slug} closed: delivered ${delivered.length}, left ${left.length} archived, ` +
         `questions ${questionTally(decisions)}`,
@@ -196,7 +200,7 @@ export class ArcAirlock {
   async abandon(slug: string): Promise<ArcRecord> {
     const arc = await this.registry.archiveArc(slug, { abandoned: true });
     this.bindings.releaseArc(slug);
-    await this.drainFourthDoor(slug);
+    await this.drainArcReviews(slug);
     await this.workspace.recordAudit(`arc ${slug} abandoned: archived without distillation`);
     return arc;
   }
@@ -210,7 +214,7 @@ export class ArcAirlock {
     for (const item of await arcStore.listStaged()) {
       await this.routeStraggler(slug, item);
       await arcStore.discard(item.id);
-      routed.push(item.target);
+      routed.push(describeStaged(item));
     }
     if (routed.length > 0)
       await this.workspace.recordAudit(
@@ -244,14 +248,14 @@ export class ArcAirlock {
     if (this.judgment === undefined) return;
     const gardener = new Gardener({
       store: this.registry.arcStore(slug),
-      inbox: this.inbox,
+      inbox: this.workspace,
       judgment: this.judgment,
     });
     await gardener.sweep();
   }
 
   private async gatherCandidates(slug: string): Promise<ArcCloseCandidate[]> {
-    const notes = (await this.registry.arcStore(slug).listNotes()).filter(isCandidateNote);
+    const notes = await this.registry.arcStore(slug).listNotes();
     const cited = new Set(
       [...((await this.citedNotes?.(slug)) ?? [])].map((name) => titleKey(name)),
     );
@@ -268,7 +272,7 @@ export class ArcAirlock {
 
   private async contradictedNames(): Promise<Set<string>> {
     const names = new Set<string>();
-    for (const item of await this.inbox.list()) {
+    for (const item of await this.workspace.listStaged()) {
       if (item.kind !== "contradiction") continue;
       names.add(titleKey(item.a));
       names.add(titleKey(item.b));
@@ -276,14 +280,14 @@ export class ArcAirlock {
     return names;
   }
 
-  private async openFourthDoor(
+  private async stageArcReviews(
     slug: string,
     candidates: ArcCloseCandidate[],
     questions: OpenQuestion[],
   ): Promise<string[]> {
-    const details: ReviewItemDetail[] = [
+    const proposals: ReviewProposal[] = [
       ...candidates.map(
-        (candidate): ReviewItemDetail => ({
+        (candidate): ReviewProposal => ({
           kind: "arc-distillation",
           arc: slug,
           note: candidate.note.name,
@@ -291,18 +295,18 @@ export class ArcAirlock {
         }),
       ),
       ...questions.map(
-        (question): ReviewItemDetail => ({ kind: "arc-question", arc: slug, note: question.title }),
+        (question): ReviewProposal => ({ kind: "arc-question", arc: slug, note: question.title }),
       ),
     ];
-    return (await this.inbox.add(details)).map((item) => item.key);
+    return (await this.workspace.propose(proposals)).map((item) => item.key);
   }
 
-  private async drainFourthDoor(slug: string): Promise<string[]> {
+  private async drainArcReviews(slug: string): Promise<string[]> {
     const drained: string[] = [];
-    for (const item of await this.inbox.list()) {
+    for (const item of await this.workspace.listStaged()) {
       if (item.kind !== "arc-distillation" && item.kind !== "arc-question") continue;
       if (item.arc !== slug) continue;
-      await this.inbox.resolve(item.id);
+      await this.workspace.discard(item.id);
       drained.push(item.key);
     }
     return drained;
@@ -347,14 +351,14 @@ export class ArcAirlock {
       if (!candidate.eligible)
         throw new IneligibleDeliveryError(slug, candidate.note.name, candidate.shortfalls);
       const result = await this.workspace.writeNote({
-        ...noteTarget(candidate.note),
+        ...noteWriteTarget(candidate.note.path),
         body: candidate.note.body,
         provenance: candidate.note.provenance,
         ...(candidate.note.confidence !== undefined && { confidence: candidate.note.confidence }),
         delivered: deliveryTime,
         distilledFrom: arcMocLink(slug),
       });
-      delivered.push(noteNameFromPath(result.path));
+      delivered.push(noteName(result.path));
     }
     return delivered;
   }
@@ -401,52 +405,35 @@ export class ArcAirlock {
       delivered: deliveryTime,
       distilledFrom: arcMocLink(slug),
     });
-    return noteNameFromPath(result.path);
+    return noteName(result.path);
   }
 
   private async routeStraggler(slug: string, item: StagedItem): Promise<void> {
+    if (!isStagedWrite(item)) {
+      await this.workspace.propose([item]);
+      return;
+    }
     if (item.kind === "note") {
       const { body } = parseDocument(item.content, item.target);
       await this.workspace.writeNote({
-        ...stagedNoteTarget(item.target),
+        ...noteWriteTarget(item.target),
         body,
         provenance: "untrusted",
       });
       return;
     }
-    const text =
-      item.kind === "daily" ? stripDailyMarkers(item.content) : `arc ${slug} straggler MOC update`;
-    await this.workspace.appendDaily(`straggler from arc ${slug}: ${text}`, "untrusted");
+    await this.workspace.appendDaily(
+      `straggler from arc ${slug}: ${stragglerText(slug, item)}`,
+      "untrusted",
+    );
   }
 }
 
-function isCandidateNote(note: Note): boolean {
-  return note.name !== "MOC" && !note.path.startsWith("questions/");
-}
-
-function noteTarget(note: Note): { title: string } | { entity: string } {
-  return note.path.startsWith("entities/")
-    ? { entity: note.name.slice("entities/".length) }
-    : { title: note.title };
-}
-
-function stagedNoteTarget(target: string): { title: string } | { entity: string } {
-  const name = noteNameFromPath(target);
-  return target.startsWith("entities/")
-    ? { entity: name.slice("entities/".length) }
-    : { title: name.slice(name.lastIndexOf("/") + 1) };
-}
-
-function noteNameFromPath(path: string): string {
-  return path.endsWith(".md") ? path.slice(0, -".md".length) : path;
-}
-
-function stripDailyMarkers(content: string): string {
-  return content
-    .split("\n")
-    .map((line) => line.replace(/^- \d{2}:\d{2} \[prov: (?:user|agent|untrusted)\] /, ""))
-    .join("\n")
-    .trim();
+function stragglerText(slug: string, item: StagedWrite): string {
+  if (item.kind !== "daily") return `arc ${slug} straggler MOC update`;
+  return parseDailyEntries(item.content)
+    .map((entry) => entry.text)
+    .join("\n");
 }
 
 function questionTally(decisions: CloseDecisions): string {

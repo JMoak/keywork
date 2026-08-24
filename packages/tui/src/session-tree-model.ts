@@ -1,6 +1,7 @@
 import { messageText, type SessionEntry, type SessionTreeNode } from "@keywork/engine";
-import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
+import { isPrintable } from "./picker-keys.ts";
+import { RowCursor } from "./row-cursor.ts";
 
 export interface SessionTreeView {
   sessionId: string;
@@ -26,21 +27,18 @@ export interface SessionTreeRow {
   collapsed: boolean;
 }
 
-export class SessionTreeModel {
-  cursor = 0;
-  scrollTop = 0;
+export class SessionTreeModel extends RowCursor<SessionTreeRow> {
   labelDraft: string | undefined;
 
   private view: SessionTreeView | undefined;
   private readonly collapsedIds = new Set<string>();
-  private anchorId: string | undefined;
-  private revision = 0;
-  private cachedRows: { revision: number; rows: SessionTreeRow[] } | undefined;
 
   constructor(
-    private readonly notify: () => void,
+    notify: () => void,
     private readonly effects: SessionTreeEffects,
-  ) {}
+  ) {
+    super(notify);
+  }
 
   sessionId(): string | undefined {
     return this.view?.sessionId;
@@ -55,83 +53,49 @@ export class SessionTreeModel {
   }
 
   setView(view: SessionTreeView | undefined): void {
-    this.anchorId = this.rows()[this.cursor]?.id ?? this.anchorId;
-    this.view = view;
-    this.touch();
-    this.reanchor();
-    this.notify();
-  }
-
-  rows(): SessionTreeRow[] {
-    if (this.cachedRows?.revision === this.revision) return this.cachedRows.rows;
-    const rows: SessionTreeRow[] = [];
-    this.collect(this.view?.roots ?? [], 0, rows);
-    this.cachedRows = { revision: this.revision, rows };
-    return rows;
-  }
-
-  visibleRows(rowCount: number): { index: number; row: SessionTreeRow }[] {
-    const all = this.rows();
-    this.cursor = clampIndex(this.cursor, all.length);
-    this.scrollTop = clampScroll(this.scrollTop, all.length, rowCount);
-    if (this.cursor < this.scrollTop) this.scrollTop = this.cursor;
-    if (this.cursor >= this.scrollTop + rowCount) this.scrollTop = this.cursor - rowCount + 1;
-    return all
-      .slice(this.scrollTop, this.scrollTop + rowCount)
-      .map((row, offset) => ({ index: this.scrollTop + offset, row }));
+    this.mutate(() => {
+      this.view = view;
+    });
   }
 
   entryCount(): number {
     return this.rows().length;
   }
 
-  cursorRow(): SessionTreeRow | undefined {
-    return this.rows()[clampIndex(this.cursor, this.rows().length)];
-  }
-
-  selectVisible(offset: number, rowCount: number): boolean {
-    const target = this.visibleRows(rowCount)[offset];
-    if (target === undefined) return false;
-    this.cursor = target.index;
-    this.anchorId = target.row.id;
-    this.notify();
-    return true;
-  }
-
-  handleKey(chord: Chord, pageRows: number): boolean {
-    if (this.labelDraft !== undefined) return this.handleLabelKey(chord);
-    const rows = this.rows();
-    this.cursor = clampIndex(this.cursor, rows.length);
-    if (chord.shift && chord.name === "l") return this.beginLabel(rows[this.cursor]);
+  handleKey(chord: Chord, pageRows: number, sequence?: string): boolean {
+    if (this.labelDraft !== undefined) return this.handleLabelKey(chord, sequence);
+    if (chord.shift && chord.name === "l") return this.beginLabel();
+    if (chord.shift || chord.ctrl || chord.meta) return false;
+    if (this.navigate(chord, pageRows)) return true;
     switch (chord.name) {
-      case "j":
-      case "down":
-        return this.moveCursor(1, rows);
-      case "k":
-      case "up":
-        return this.moveCursor(-1, rows);
-      case "pagedown":
-        return this.moveCursor(pageRows, rows);
-      case "pageup":
-        return this.moveCursor(-pageRows, rows);
       case "h":
-        return this.collapseOrJumpToParent(rows);
+        return this.collapseOrJumpToParent();
       case "l":
-        return this.expand(rows[this.cursor]);
+        return this.expand();
       case "enter":
       case "return":
-        return this.toggleCollapse(rows[this.cursor]);
+        return this.toggleCollapse();
       case "r":
         this.effects.refresh();
         return true;
       case "f":
-        return this.forkAtCursor(rows);
+        return this.forkAtCursor();
       default:
         return false;
     }
   }
 
-  private handleLabelKey(chord: Chord): boolean {
+  protected buildRows(): SessionTreeRow[] {
+    const rows: SessionTreeRow[] = [];
+    this.collect(this.view?.roots ?? [], 0, rows);
+    return rows;
+  }
+
+  protected keyOf(row: SessionTreeRow): string {
+    return row.id;
+  }
+
+  private handleLabelKey(chord: Chord, sequence: string | undefined): boolean {
     const draft = this.labelDraft ?? "";
     switch (chord.name) {
       case "escape":
@@ -146,14 +110,15 @@ export class SessionTreeModel {
         this.notify();
         return true;
       default:
-        if (!isPrintable(chord)) return false;
-        this.labelDraft = draft + (chord.name === "space" ? " " : chord.name);
+        if (!isPrintable(chord, sequence)) return false;
+        this.labelDraft = draft + sequence;
         this.notify();
         return true;
     }
   }
 
-  private beginLabel(row: SessionTreeRow | undefined): boolean {
+  private beginLabel(): boolean {
+    const row = this.cursorRow();
     if (row === undefined) return true;
     this.labelDraft = row.label ?? "";
     this.notify();
@@ -168,67 +133,34 @@ export class SessionTreeModel {
     return true;
   }
 
-  private forkAtCursor(rows: SessionTreeRow[]): boolean {
-    const row = rows[this.cursor];
+  private forkAtCursor(): boolean {
+    const row = this.cursorRow();
     if (row !== undefined) this.effects.fork(row.id);
     return true;
   }
 
-  private moveCursor(delta: number, rows: SessionTreeRow[]): boolean {
-    this.cursor = clampIndex(this.cursor + delta, rows.length);
-    this.anchorId = rows[this.cursor]?.id;
-    this.notify();
-    return true;
-  }
-
-  private collapseOrJumpToParent(rows: SessionTreeRow[]): boolean {
-    const row = rows[this.cursor];
+  private collapseOrJumpToParent(): boolean {
+    const row = this.cursorRow();
     if (row === undefined) return true;
-    if (row.hasChildren && !row.collapsed) {
-      return this.mutate(() => this.collapsedIds.add(row.id));
-    }
+    if (row.hasChildren && !row.collapsed) return this.mutate(() => this.collapsedIds.add(row.id));
     if (row.parentId === null) return true;
-    const parentAt = rows.findIndex((candidate) => candidate.id === row.parentId);
-    if (parentAt >= 0) {
-      this.cursor = parentAt;
-      this.anchorId = rows[parentAt]?.id;
-      this.notify();
-    }
+    const parentAt = this.rows().findIndex((candidate) => candidate.id === row.parentId);
+    if (parentAt >= 0) this.moveTo(parentAt);
     return true;
   }
 
-  private expand(row: SessionTreeRow | undefined): boolean {
+  private expand(): boolean {
+    const row = this.cursorRow();
     if (row === undefined || !row.collapsed) return true;
     return this.mutate(() => this.collapsedIds.delete(row.id));
   }
 
-  private toggleCollapse(row: SessionTreeRow | undefined): boolean {
+  private toggleCollapse(): boolean {
+    const row = this.cursorRow();
     if (row === undefined || !row.hasChildren) return true;
     return this.mutate(() => {
       if (!this.collapsedIds.delete(row.id)) this.collapsedIds.add(row.id);
     });
-  }
-
-  private mutate(action: () => void): boolean {
-    this.anchorId = this.rows()[this.cursor]?.id ?? this.anchorId;
-    action();
-    this.touch();
-    this.reanchor();
-    this.notify();
-    return true;
-  }
-
-  private touch(): void {
-    this.revision += 1;
-    this.cachedRows = undefined;
-  }
-
-  private reanchor(): void {
-    const rows = this.rows();
-    if (rows.length === 0) return;
-    const found = rows.findIndex((row) => row.id === this.anchorId);
-    this.cursor = found >= 0 ? found : clampIndex(this.cursor, rows.length);
-    this.anchorId = rows[this.cursor]?.id ?? this.anchorId;
   }
 
   private collect(nodes: readonly SessionTreeNode[], depth: number, out: SessionTreeRow[]): void {
@@ -269,6 +201,8 @@ function entryText(entry: SessionEntry): string {
       return `thinking → ${entry.thinkingLevel}`;
     case "model_change":
       return `model → ${entry.provider}/${entry.modelId}`;
+    case "arc_binding":
+      return entry.arc === undefined ? "arc released" : `arc → ${entry.arc}`;
     case "custom":
       return entry.customType;
   }
@@ -277,8 +211,4 @@ function entryText(entry: SessionEntry): string {
 function excerpt(text: string, limit = 48): string {
   const flat = text.replaceAll("\n", " ").trim();
   return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
-}
-
-function isPrintable(chord: Chord): boolean {
-  return (chord.name.length === 1 || chord.name === "space") && !chord.ctrl && !chord.meta;
 }

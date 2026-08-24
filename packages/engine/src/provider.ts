@@ -1,3 +1,4 @@
+import type { ModelCapabilities } from "./capabilities.ts";
 import type { Message, RedactedThinkingPart, ToolCallPart, Usage } from "./messages.ts";
 
 export type TurnDelta =
@@ -22,5 +23,10 @@ export interface ProviderRequest {
 export interface Provider {
   name: string;
   modelId?: string | undefined;
+  capabilities?: ModelCapabilities | undefined;
   stream(request: ProviderRequest): AsyncIterable<TurnDelta>;
+}
+
+export function declaredContextWindow(provider: Provider): number | undefined {
+  return provider.capabilities?.contextWindow;
 }

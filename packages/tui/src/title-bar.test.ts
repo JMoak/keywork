@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolvePage, resolvePageThresholds } from "./page.ts";
 import { titleBar } from "./title-bar.ts";
 
 describe("the title-bar grammar", () => {
@@ -31,6 +32,24 @@ describe("the title-bar grammar", () => {
     expect(titleBar({ name: "session-1" }, 132, true)).toBe(" session-1 ");
   });
 
+  it("tags the arc after the name at broadsheet only, where the border hue already carries it", () => {
+    const bound = { ...full, arc: "dock-v2" };
+    expect(titleBar(bound, 132, true)).toBe(" █ auth-retry-fix #dock-v2 · $0.012 · plan ");
+    expect(titleBar(bound, 84, true)).toBe(" █ auth-retry-fix · $0.012 ");
+  });
+
+  it("sheds the arc tag before the mode word under pressure", () => {
+    const bound = {
+      ...full,
+      arc: "a-rather-long-arc-name-that-goes-on",
+      name: "a-long-descriptive-session-title-about-retry-logic",
+    };
+    const title = titleBar(bound, 100, true);
+    expect(title).not.toContain("#a-rather-long-arc-name");
+    expect(title).toContain("plan");
+    expect(title).toContain("$0.012");
+  });
+
   it("sheds mode word then telemetry then name words under pressure", () => {
     const wide = { ...full, name: "a-very-long-descriptive-session-title" };
     const roomy = titleBar(wide, 132, true);
@@ -54,6 +73,21 @@ describe("the title-bar grammar", () => {
         expect(Array.from(title).length).toBeLessThanOrEqual(Math.max(width - 2, 6));
       }
     }
+  });
+
+  it("tiers by the configured page thresholds, so title and body agree at the boundary", () => {
+    const thresholds = resolvePageThresholds({ broadsheetAt: 90, columnAt: 60, clippingAt: 30 });
+    expect(resolvePage(92, thresholds).tier).toBe("broadsheet");
+    expect(titleBar(full, 92, true, thresholds)).toBe(" █ auth-retry-fix · $0.012 · plan ");
+    expect(titleBar(full, 92, true)).toBe(" █ auth-retry-fix · $0.012 ");
+    expect(titleBar(full, 59, true, thresholds)).toBe(" █ auth-retry-fix ");
+  });
+
+  it("measures zones in display cells, not code points", () => {
+    const wide = { name: "我们在这里写字", stamp: "█", telemetry: "$0.012" };
+    const title = titleBar(wide, 16, true);
+    expect(Array.from(title).length).toBeLessThanOrEqual(14);
+    expect(title.trim().length).toBeGreaterThan(0);
   });
 
   it("hands sibling titles to the fitter for distinctive-word keeps", () => {

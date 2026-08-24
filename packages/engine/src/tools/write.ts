@@ -9,7 +9,7 @@ const schema = z.object({
   content: z.string().describe("Full file content to write."),
 });
 
-export function writeTool(scope: string | ToolScope, onSaved?: (path: string) => void) {
+export function writeTool(scope: ToolScope, onSaved?: (path: string) => void) {
   return defineTool({
     name: "write",
     description: "Create or overwrite a file, creating parent directories as needed.",

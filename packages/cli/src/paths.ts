@@ -1,28 +1,34 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { resolveAnchor } from "@keywork/shared";
+import { canonicalPath, type JsonFileStore, jsonFileStore, resolveAnchor } from "@keywork/shared";
 
 export const stateLayoutVersion = 2;
 
-export function projectKey(cwd: string): string {
-  return createHash("sha256").update(cwd).digest("hex").slice(0, 12);
+export function projectKey(cwd: string, platform?: NodeJS.Platform): string {
+  return identityHash(canonicalPath(cwd, platform));
 }
 
 export type WorkspaceIdentity = string;
 
-export function workspaceIdentity(cwd: string): WorkspaceIdentity {
+export function workspaceIdentity(
+  cwd: string,
+  slug?: string,
+  platform?: NodeJS.Platform,
+): WorkspaceIdentity {
   const anchor = resolveAnchor(cwd);
-  return anchor.source === "launch" ? projectKey(cwd) : anchoredIdentity(anchor.root);
+  if (slug !== undefined) return anchoredIdentity(anchor.root, slug, platform);
+  return anchor.source === "launch"
+    ? projectKey(cwd, platform)
+    : anchoredIdentity(anchor.root, undefined, platform);
 }
 
-export function defaultSessionDir(cwd: string): string {
-  return join(keyworkHome(), "sessions", workspaceIdentity(cwd));
+export function defaultSessionDir(cwd: string, slug?: string): string {
+  return join(keyworkHome(), "sessions", workspaceIdentity(cwd, slug));
 }
 
-export function snapshotGitDir(cwd: string): string {
-  return join(keyworkHome(), "snapshots", workspaceIdentity(cwd));
+export function snapshotGitDir(cwd: string, slug?: string): string {
+  return join(keyworkHome(), "snapshots", workspaceIdentity(cwd, slug));
 }
 
 export function workspaceStateFile(identity: WorkspaceIdentity): string {
@@ -48,7 +54,8 @@ export function ensureStateLayout(
   migrations: readonly StateMigration[] = stateLayoutMigrations,
   version: number = stateLayoutVersion,
 ): number {
-  const recorded = readLayoutVersion(stateHome);
+  const marker = stateLayoutMarker(stateHome);
+  const recorded = marker.read()?.version;
   if (recorded !== undefined && recorded > version) {
     throw new StateLayoutError(
       `state layout at ${stateHome} is version ${recorded}, newer than this keywork understands (${version}); update keywork before opening it`,
@@ -59,8 +66,32 @@ export function ensureStateLayout(
       migration.migrate(stateHome);
     }
   }
-  if (recorded !== version) writeLayoutVersion(stateHome, version);
+  if (recorded !== version) marker.write({ version });
   return version;
+}
+
+export function keyworkHome(): string {
+  return join(homedir(), ".keywork");
+}
+
+interface StateLayoutMarker {
+  version: number;
+}
+
+function stateLayoutMarker(stateHome: string): JsonFileStore<StateLayoutMarker> {
+  const file = join(stateHome, "state-layout.json");
+  return jsonFileStore<StateLayoutMarker>({
+    file,
+    mode: "strict",
+    error: (path, detail) => new StateLayoutError(`state layout marker at ${path} is ${detail}`),
+    validate: (data) => {
+      const version = (data as { version?: unknown }).version;
+      if (typeof version !== "number" || !Number.isInteger(version) || version < 1) {
+        throw new StateLayoutError(`state layout marker at ${file} has no usable version`);
+      }
+      return { version };
+    },
+  });
 }
 
 function pendingMigrations(
@@ -73,45 +104,13 @@ function pendingMigrations(
     .sort((a, b) => a.from - b.from);
 }
 
-function keyworkHome(): string {
-  return join(homedir(), ".keywork");
+function anchoredIdentity(root: string, slug?: string, platform?: NodeJS.Platform): string {
+  const canonicalRoot = canonicalPath(root, platform);
+  return identityHash(
+    slug === undefined ? `workspace:${canonicalRoot}` : `workspace:${canonicalRoot}:${slug}`,
+  );
 }
 
-function anchoredIdentity(root: string): string {
-  return createHash("sha256").update(`workspace:${root}`).digest("hex").slice(0, 12);
-}
-
-function layoutFile(stateHome: string): string {
-  return join(stateHome, "state-layout.json");
-}
-
-function readLayoutVersion(stateHome: string): number | undefined {
-  let raw: string;
-  try {
-    raw = readFileSync(layoutFile(stateHome), "utf8");
-  } catch {
-    return undefined;
-  }
-  const version = (parseLayout(stateHome, raw) as { version?: unknown }).version;
-  if (typeof version !== "number" || !Number.isInteger(version) || version < 1) {
-    throw new StateLayoutError(
-      `state layout marker at ${layoutFile(stateHome)} has no usable version`,
-    );
-  }
-  return version;
-}
-
-function writeLayoutVersion(stateHome: string, version: number): void {
-  mkdirSync(stateHome, { recursive: true });
-  writeFileSync(layoutFile(stateHome), `${JSON.stringify({ version }, null, 2)}\n`, "utf8");
-}
-
-function parseLayout(stateHome: string, raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch (cause) {
-    throw new StateLayoutError(
-      `state layout marker at ${layoutFile(stateHome)} is not valid JSON: ${(cause as Error).message}`,
-    );
-  }
+function identityHash(subject: string): string {
+  return createHash("sha256").update(subject).digest("hex").slice(0, 12);
 }

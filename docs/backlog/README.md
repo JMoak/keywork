@@ -1,9 +1,9 @@
-# keywork — Backlog Index
+# keywork: Backlog Index
 
 > The full task breakdown derived from [`../tasks.md`](../tasks.md) and [`../vision.md`](../vision.md).
 > Tasks are sized 1–3 points where possible (a few are honestly bigger and say so) and listed
-> **in execution order** within each file. Dependencies are intentionally not modeled here —
-> order implies them loosely; the workstream files can be attacked in parallel.
+> **in execution order** within each file. Dependencies are intentionally not modeled here;
+> order implies them loosely, and the workstream files can be attacked in parallel.
 >
 > **Point scale:** 1pt ≈ one focused hour or two · 2pt ≈ a half-day · 3pt ≈ a full day.
 > **Strategy tags:** `LIFT:pi` / `LIFT:opencode` / `LIFT:aider` / `LIFT:openclaw` /
@@ -17,42 +17,89 @@
 > **Standing guardrails:** no Anthropic wiring of any kind before workstream G; API-key /
 > Agent-SDK only, ever; no subscription-OAuth code paths ported from any source.
 
+## Where a topic is decided
+
+Precedence is topic-scoped: an overlay wins where it speaks, and where it is silent the
+next-newer overlay that speaks applies, down to the base workstream file. The table names the
+file that currently owns each topic; the file itself says what it amends.
+
+| Topic | Owning file(s) |
+|---|---|
+| Workspace anchoring, modes (Plan · Recall · Agent), arc splits | [`99`](99-workspace-and-modes.md) (PD11–PD13); mode semantics in [`../modes.md`](../modes.md) |
+| Chroma and arcs (arc as the work unit, ramp, funding ladder, workspace multiplicity) | [`98`](98-chroma-and-arcs.md) (PD8–PD10); landed arc surfaces in [`110`](110-arcs-on-screen.md) |
+| Typography and the page (transcript type, title bar, titling, needs-you chrome) | [`104`](104-the-page.md) (PD18–PD20, PD25); glyph tiers, themes and motion in [`100`](100-visual-craft.md) (PD14–PD17) |
+| Instrument display (cost lineage, changed files, lens grammar) | [`102`](102-instrument-grammar.md) (discussion capture, not authoritative) |
+| Inference resolution, `/connect`, `/model`, onboarding | [`105`](105-inference-resolution.md) (IR-01–IR-19, CD-01–CD-10); implementation ledger [`107`](107-inference-implementation.md) |
+| Long-session survivability and the launch rail (compaction, gauge, headless contract, packaging, soak) | [`108`](108-survivability-and-launch-rail.md); stream 3 ledger [`109`](109-long-session-survivability.md) |
+| Arcs and workspaces on screen | [`110`](110-arcs-on-screen.md) |
+| Bots (the *who* axis) | [`106`](106-bots.md), proposal pending Jordan's adoption |
+| Memory and skills (workstream J) | [`95`](95-memory-and-skills.md); the arc rung in [`98`](98-chroma-and-arcs.md) PD9; bot layer in [`106`](106-bots.md) once adopted |
+| File browser and calculated mouse | [`94`](94-file-browser-and-mouse.md) |
+| Trust and permissions | [`50-trust.md`](50-trust.md), amended by [`97`](97-product-direction.md) E7 and [`99`](99-workspace-and-modes.md) PD12 (per-pane permission mode), [`103`](103-dsh-influence.md) E8/E9 (sandbox, secrets), [`108`](108-survivability-and-launch-rail.md) A19/A20 (gates as entries, headless `ask` answers no) |
+| Code audit and its waves | [`111`](111-code-audit.md) |
+| Workspace readiness and `/init`, the `/connect` surface, the arc pane and its fold primitive, dock pins, memory browser scoping | [`112`](112-feel-and-look-wave.md) |
+
+## Workstreams
+
 | File | Workstream | Tasks | Points |
 |---|---|---|---|
-| [`00-m0-skeleton.md`](00-m0-skeleton.md) | M0 — repo skeleton | 6 | 9 |
-| [`10-engine.md`](10-engine.md) | A — engine core | 15 | 30 |
-| [`20-sessions.md`](20-sessions.md) | B — session trees | 8 | 15 |
-| [`30-tui.md`](30-tui.md) | C — TUI, keyboard, tiling | 18 | 37 |
-| [`40-extensions.md`](40-extensions.md) | D — extensions, commands, MCP | 12 | 24 |
-| [`50-trust.md`](50-trust.md) | E — trust & safety | 5 | 10 |
-| [`60-code-intel.md`](60-code-intel.md) | F — code intelligence | 5 | 10 |
-| [`70-anthropic.md`](70-anthropic.md) | G — Anthropic (late, gated) | 2 | 3 |
-| [`80-p2-reach.md`](80-p2-reach.md) | P2 — server, attach, workspaces; external-surface posture 2026-08-10 (citizenship ladder, Wispr-flagship fixture C34, injection endpoint P2.6, native-shell gate) | 7 | 20 |
+| [`00-m0-skeleton.md`](00-m0-skeleton.md) | M0: repo skeleton | 6 | 9 |
+| [`10-engine.md`](10-engine.md) | A: engine core | 15 | 30 |
+| [`20-sessions.md`](20-sessions.md) | B: session trees | 8 | 15 |
+| [`30-tui.md`](30-tui.md) | C: TUI, keyboard, tiling | 18 | 37 |
+| [`40-extensions.md`](40-extensions.md) | D: extensions, commands, MCP | 12 | 24 |
+| [`50-trust.md`](50-trust.md) | E: trust & safety | 5 | 10 |
+| [`60-code-intel.md`](60-code-intel.md) | F: code intelligence | 5 | 10 |
+| [`70-anthropic.md`](70-anthropic.md) | G: Anthropic (late, gated) | 2 | 3 |
+| [`80-p2-reach.md`](80-p2-reach.md) | P2: server, attach, workspaces; external-surface posture (2026-08-10) | 7 | 20 |
 
-| [`90-plan-review.md`](90-plan-review.md) | **Authoritative overlay** — combined two-reviewer findings: 15 new tasks (E6 trust gate, C0 TUI harness, D0 slash registry, packaging/docs/onboarding, …), resequencing (guardrail CI grep → M0, undo → M1), resizing, corrected milestone map | 15 | +43 |
-| [`91-progress-and-feedback.md`](91-progress-and-feedback.md) | **Authoritative overlay** — completed ledger (done/partial per ID), 7 new tasks from first user feedback (C24 empty state, C25 slash autocomplete, C26 quick menu superseding C5, C27/C28 dock layout, D12 provider-free commands, D13 `/onboarding`), corrected mid-M2 milestone statement, next-up ordering | 7 | +12 |
-| [`92-iteration-3.md`](92-iteration-3.md) | **Authoritative overlay** atop 91 — iteration-3 tracks (safety net, sessions durable/navigable/forkable) plus the running done-ledger of landed waves (Track S/T/P/V, Bedrock, workstream-J kernels, D5–D8/D10/D14, MCP lifecycle hardening 2026-08-15); binding platform priority (Linux primary, Windows fully supported) | — | — |
-| [`93-adversarial-review.md`](93-adversarial-review.md) | Adversarial-review findings + parallel work plan — WP-1…WP-8 waves (root-jail, interrupt repair, SSE hardening, …) all landed 2026-08-10; kept as the fixed-defect corpus and review-wave precedent | — | — |
-| [`96-conversation-enrichment.md`](96-conversation-enrichment.md) | Planning overlay for the conversation pane's streaming feed — 12 sized enrichment candidates (V2.x); adoption gated on the `research/coding-agent-nuances.md` merge; V2.1/V2.2/V2.10/V2.13 already landed via 92 | — | — |
-| [`97-product-direction.md`](97-product-direction.md) | **Authoritative overlay** (2026-08-15, wins over 96/95/94/92/91/90) — second hands-on feedback pass: panes becomes bare-`keywork`'s front door (D15), two-dock engine + location cycling superseding 92 Track Q item 4 (C38), geometry unification fixing the overlap glitch (C35), live/dedup'd sessions surfaces (C36, C37), per-pane permission-mode design (E7, absorbs E5), task-group memory design (J15), workspace anchoring & linked folders (J16); addendum: E2E screen-capture harness C39–C43 over OpenTUI's headless test renderer (design in `../research/e2e-screen-capture.md`; C42 CI job dropped 2026-08-15 — local dev tool only); open design questions Q1–Q10; work streams W0–W6 | 12 | +25 |
-| [`99-workspace-and-modes.md`](99-workspace-and-modes.md) | **Authoritative overlay** (2026-08-16, wins over 98 and below) — decision session: PD11 workspace materialization/anchoring/linking (lazy first-durable-act, git-root anchor, focus dirs + per-subpath MRU, smooth linking, clean re-key with versioned state layout — resolves 97 Q1–Q3/Q5, unblocks J16/J19); PD12 modes Plan·Recall·Agent (shift+tab, per-session resolution chain, Recall = read-only + proposal-gated memory curation; supersedes PD3 split-into-mode keys; E7 rescoped); PD13 arc-aware splits (regular split inherits arc, Split New Arc auto-names and binds the new session only) | — | — |
-| [`100-visual-craft.md`](100-visual-craft.md) | **Authoritative overlay** (2026-08-16, wins over 99 and below) — the sexy pass: sixteen visual-craft items dispositioned to the r/designporn × r/programming bar. PD14 glyph tiers & capability ladder (Nerd Fonts enhancement-never-dependency, majors-first profiles, `keywork doctor`); PD15 first-class theme system (flavor = one readable file bundling palette/ramp/density/gaps/chrome/instrumentation; curated gallery incl. first-class light + omarchy-cockpit; live hot-swap; contrast floor); PD16 motion grammar drafted into `../design-language.md` ("motion lives in ink, never in geometry"; four tempos; ambient budget); PD17 cockpit + options-first context gauge on real flush/compaction thresholds; restraint enforcement principles. Tasks C48–C57; poster-gate not adopted, onboarding choreography parked | 10 | +19 |
-| [`101-feedback-round-4.md`](101-feedback-round-4.md) | **Authoritative overlay** (2026-08-16, wins over 100 and below) — live-use feedback pass. Landed ledger: input-path crash containment + coalesced renders + crash journal, structural Dock·Main·Dock with idle-main panel and mouse-draggable dock edges, Hyprland-style H/J/K/L pane movement (D/U retired, C cycles), persisted session titles through the store, click-to-focus on session rows, fresh-start default layout. New tasks FR1–FR6: pane drag with rectangular drop previews, runtime endurance soak, entity nodes (arcs/workspaces/MCP-polish + color grammar), command trays & coverage audit, ChatGPT-subscription provider (`LIFT:openclaw`, ToS-gated) + cost capture (`LIFT:opencode`), arc edge chroma, tastiness pass, TUI-native tips, LSP the OpenCode way, subagent spawn transparency, enterprise-security scoping doc | 18 | +36 |
-| [`104-the-page.md`](104-the-page.md) | **Authoritative overlay** (2026-08-16, wins over 103 and below where it speaks) — the page pass: PD18 transcript typography decided from rendered candidates. Width-tier grammar (broadsheet·column·clipping·masthead; type scale is a content scale), adaptive measure ⊕ density rail, markdown louder-with-simplicity, tonal ladder (`textMid`/`panelLift` landed as C58, `textFaint` broadsheet-reserved), block voice = density stamps (voice-is-provenance resolves 102's Q6 for the transcript), designed tool row, block-glyph masthead for tiny panes; "The page" section added to `../design-language.md`; C52 widened; addendum PD19 title-bar grammar (two-zone anatomy, lifecycle stamp via tile-fill states incl. finished-unseen hold-and-drain, real-estate priority order, C64); addendum PD20 titling pipeline (colon namespace `arc:session`, self-naming `title_session` tool + cheap-call fallback, retitle-on-pivot with title changes as session entries, slug display ladder, `fitTitle` landed in engine) | 8 | +15 |
-| [`102-instrument-grammar.md`](102-instrument-grammar.md) | **Discussion capture** (2026-08-16, not yet authoritative) — instrument display: cost-with-lineage decided (pursue, flagship-shaming bar), changed-files-with-turn-provenance decided (pursue if robust; checkpoint-diff attribution is the feasibility finding), detail-slot lens grammar + model/effort provenance chip queued for a dedicated design session with anchors, open questions Q1–Q9, and sequencing sketch | — | — |
-| [`103-dsh-influence.md`](103-dsh-influence.md) | **Scoping overlay** (2026-08-16, wins over 101 and below where it speaks) — DeepSeek Harness (dsh, MIT) research pass: A20 headless exit contract, A19 every gate & injection as session entries, E8 OS-enforced sandbox modes (phased E8a–c), A21 persistent shell sessions, E9 secrets at rest via OS keychain, A22 declared model capabilities; non-adoptions of record (plugin microkernel, web-first UI, messaging channels, patch-layering profiles); every task `OWN` until Q-DSH1 sanctions `LIFT:dsh`; directions (Code Mode post-M2, ACP dialect on P2, termination & budget policy, taint-first web access); open questions Q-DSH1–Q-DSH9 | 6 | +10 |
-| [`98-chroma-and-arcs.md`](98-chroma-and-arcs.md) | **Authoritative overlay** (2026-08-15 vision pass 3, wins over 97 and below) — the work unit is named **arc**; PD8 chromatic depth (theme `ramp`, spawn-rank border sweep, arc anchor hues — chroma section added to `../design-language.md`); PD9 the funding ladder & arc cycle (session → arc layer → workspace vault → user global; arc airlock = fourth inbox door; distillation stamped `delivered:`), answering 97's Q6–Q8 and delivering J15; PD10 workspace multiplicity (reverses Q4 — multiple workspaces per root, compat layout, per-root MRU). Tasks C44–C46, J17–J19; addendum 2026-08-16 (the workflow round) — fifteen memory-workflow ideas dispositioned onto the ladder (signal capture J20, arc briefing J21 spec-first, point-of-action recall J22, return delta J23, cross-arc meta-distillation J24, gated global re-attestation J25, garden heat & epochs C47 options-first; open questions absorbed into J17/J18; 95's J8/J10/J13 amended; federation questions Q11–Q13 queued) | 13 | +27 |
-| [`95-memory-and-skills.md`](95-memory-and-skills.md) | **Workstream J** — memory & self-healing skills: workspace/user scopes (J-D1), engine-core memory (J-D2), hybrid RRF retrieval (J-D3), Gardener curation, pre-compaction flush, memory pane, Hermes-style skill healing, write gating = provenance-gated optimism + airlock with curing-garden rendering (J-D4 resolved); atomic-note Obsidian-citizen vault + bi-temporal entity graph with PPR third retrieval leg (J-D5). Sources: OpenClaw (MIT), Hermes (MIT), HippoRAG (MIT), Graphiti (Apache-2.0, design), rosavera (Jordan's own); fifth-pass fault resolutions 2026-08-10 (sync self-reconciliation J14, recall citations J13, airlock instrumentation, session-staleness rungs, backpressure guarantee A18) | 15 | +36 |
+## Overlays
+
+Each row says what the file decides and when it binds; the detail lives in the file.
+
+| File | Kind | Decides |
+|---|---|---|
+| [`94-file-browser-and-mouse.md`](94-file-browser-and-mouse.md) | Planning overlay (2026-08-10); wins for its two lanes | The file browser (C-series) and calculated pointer support (H-series) design lanes. |
+| [`95-memory-and-skills.md`](95-memory-and-skills.md) | Planning overlay (2026-08-10); wins for workstream J | Memory and self-healing skills: scopes, engine-core memory, hybrid retrieval, Gardener curation, provenance-gated airlock writes, Obsidian-citizen vault and entity graph (J-D1–J-D5), fifth-pass fault resolutions. 15 tasks, +36. |
+| [`96-conversation-enrichment.md`](96-conversation-enrichment.md) | Planning overlay (2026-08-10); wins for the conversation pane's streaming feed | Twelve sized enrichment candidates (V2.x); adoption gated on the `research/coding-agent-nuances.md` merge; V2.1/V2.2/V2.10/V2.13 landed via 92. |
+| [`97-product-direction.md`](97-product-direction.md) | Authoritative (2026-08-15); wins over 96 and below | Second feedback pass: panes as the front door (D15), two-dock layout (C38), geometry fix (C35), sessions surfaces (C36/C37), per-pane permission mode (E7), J15/J16, e2e capture harness (C39–C43); Q1–Q10 open. 12 tasks, +25. |
+| [`98-chroma-and-arcs.md`](98-chroma-and-arcs.md) | Authoritative (2026-08-15); wins over 97 and below | Names the work unit **arc**: PD8 chromatic depth, PD9 funding ladder and arc cycle, PD10 workspace multiplicity; workflow-round addendum J20–J25/C47. 13 tasks, +27. |
+| [`99-workspace-and-modes.md`](99-workspace-and-modes.md) | Authoritative (2026-08-16); wins over 98 and below | PD11 workspace materialization, anchoring and linking; PD12 modes Plan · Recall · Agent; PD13 arc-aware splits. |
+| [`100-visual-craft.md`](100-visual-craft.md) | Authoritative (2026-08-16); wins over 99 and below | The visual-craft pass: PD14 glyph tiers, PD15 first-class theme system, PD16 motion grammar, PD17 cockpit gauge; tasks C48–C57. 10 tasks, +19. |
+| [`101-feedback-round-4.md`](101-feedback-round-4.md) | Authoritative (2026-08-16); wins over 100 and below | Live-use feedback: landed ledger (crash containment, Dock · Main · Dock, H/J/K/L pane movement, persisted titles) and new tasks FR1–FR6. 18 tasks, +36. |
+| [`102-instrument-grammar.md`](102-instrument-grammar.md) | Discussion capture (2026-08-16); not authoritative | Instrument display: cost-with-lineage and changed-files provenance pursued, lens grammar queued for a design session; Q1–Q9 open. |
+| [`103-dsh-influence.md`](103-dsh-influence.md) | Scoping overlay (2026-08-16); wins over 101 and below where it speaks | DeepSeek Harness research: A19–A22, E8 sandbox modes, E9 secrets at rest, non-adoptions of record; Q-DSH1–Q-DSH9. 6 tasks, +10. |
+| [`104-the-page.md`](104-the-page.md) | Authoritative (2026-08-16); wins over 103 and below where it speaks | The page pass: PD18 transcript typography, PD19 title-bar grammar, PD20 titling pipeline, PD25 needs-you chrome. 9 tasks, +17. |
+| [`105-inference-resolution.md`](105-inference-resolution.md) | Authoritative decisions (2026-08-20); wins over 104 and below where it speaks | Inference resolution as an engine primitive: the stable IR-01–IR-19 contract and the CD-01–CD-10 connection-surface contract. |
+| [`106-bots.md`](106-bots.md) | Proposal (2026-08-21); not adopted, builds nothing yet | Bots as the *who* axis (PD21–PD24); Q-B1 and the scope layout decided, the rest awaits Jordan. 6 tasks, +12. |
+| [`107-inference-implementation.md`](107-inference-implementation.md) | Implementation + ledger (2026-08-21) for 105; 105 wins on disagreement | IR-T1–IR-T5 sized and landed, gates IR-G1–G5 green, deviations of record. 5 tasks, +13. |
+| [`108-survivability-and-launch-rail.md`](108-survivability-and-launch-rail.md) | Planning + ledger (2026-08-21); wins over 107 and below where it speaks | Stream 3 long-session survivability (ledger in 109) and stream 4 the launch rail (A19, A20 headless exit contract, G3 packaging, FR1.2 soak), all landed; headless `ask` answers no (flagged). 4 tasks, +9. |
+| [`109-long-session-survivability.md`](109-long-session-survivability.md) | Implementation + ledger (2026-08-21) for 108 stream 3; cited records win | Context budget primitive, after-turn settler, C55 gauge on real marks (options round open), declared windows end to end, cost across model switches. 5 tasks, +9. |
+| [`110-arcs-on-screen.md`](110-arcs-on-screen.md) | Implementation + ledger (2026-08-21) for stream 5; cited records win | Arcs and workspaces visible and drivable: binding entries, CLI arc service, `/arc` and PD13 splits, arc hue, arcs node, workspace multiplicity. 6 tasks, +14. |
+| [`111-code-audit.md`](111-code-audit.md) | Audit + work plan (2026-08-22); names defects and tasks, changes no decision | Whole-tree audit: P0/P1/P2 findings, structure and redundancy items, docs and em-dash ledger, waves A–D with Jordan's decisions; waves A + B landed 2026-08-22. ~60 tasks. |
+| [`112-feel-and-look-wave.md`](112-feel-and-look-wave.md) | Ledger + scoping (2026-08-22); wins where it speaks | Landed: workspace readiness + `/init` (arcs-initiation root cause), lazy memory, `/connect` connections screen, C71 dock pins, C70 the arc pane in two parts (docked node, then the fold primitive: held panes, `space` / `a`, folded-and-waiting rows, held restore), C72 the memory browser (garden / note / ledger lenses, the `?` question box with why-lines, prompt cut, one-key revert) (2026-08-23); open: C72-c heat candidates; decisions ledger at the end. 3 tasks, +11. |
+
+### Archived
+
+Superseded overlays, kept for the record under [`archive/`](archive/); 97 declared them
+superseded and nothing current cites them for a live decision.
+
+| File | Was |
+|---|---|
+| [`archive/90-plan-review.md`](archive/90-plan-review.md) | Two-reviewer plan review (2026-08-10): 15 new tasks, resequencing, corrected milestone map. 15 tasks, +43. |
+| [`archive/91-progress-and-feedback.md`](archive/91-progress-and-feedback.md) | Completed ledger and the first user-feedback tasks (C24–C28, D12, D13). 7 tasks, +12. |
+| [`archive/92-iteration-3.md`](archive/92-iteration-3.md) | Iteration-3 tracks and the running done-ledger of landed waves; platform priority of record (Linux primary, Windows fully supported). |
+| [`archive/93-adversarial-review.md`](archive/93-adversarial-review.md) | Adversarial-review findings, WP-1…WP-8 all landed 2026-08-10; kept as the fixed-defect corpus. |
 
 **Total: 156 tasks, ~330 points** (after review + progress overlays; D14 MCP status dock
 and workstream J added 2026-08-10; J13/J14/A18 from the fifth-pass fault review; C34/P2.6
 from the external-surface posture; C35–C43/D15/E7/J15/J16 from the 2026-08-15 product
 direction overlay and its screen-capture addendum; C44–C46/J17–J19 from the 2026-08-15
-vision pass 3 — chroma & arcs, with J15 delivered by that overlay; J20–J25/C47 from its
+vision pass 3 on chroma and arcs, with J15 delivered by that overlay; J20–J25/C47 from its
 2026-08-16 workflow-round addendum; C48–C57 from the 2026-08-16 visual-craft overlay; A19–A22/E8/E9 from the 2026-08-16 dsh-influence overlay).
 
-**Milestone map — see `90-plan-review.md` (authoritative), current status in
-`91-progress-and-feedback.md`:**
+**Milestone map** (from `archive/90-plan-review.md`; status ledger in
+`archive/91-progress-and-feedback.md`, later waves in their own overlays):
 **M1** = M0 · A1–A17 · B1–B8 · C0–C7, C12, C19, C20 · D0 · E3, E4 ·
 **M2** = C8–C11, C13, C14, C15a, C16–C18, C21–C23 · D1–D11 · E1, E2, E5, E6 (exit gate:
 one keywork feature built *using* keywork) · **M3** = F1–F5 · G1–G6 · C15b · **P2** post-v1.
@@ -61,10 +108,10 @@ one keywork feature built *using* keywork) · **M3** = F1–F5 · G1–G6 · C15
 superseded narrative.
 
 **Release posture (Jordan, 2026-08-10):** keywork is **FSL-1.1-MIT** (`LICENSE.md`);
-the repo **goes public at the M2 demo** — arriving as the tiling-pane harness, with CI
+the repo **goes public at the M2 demo**, arriving as the tiling-pane harness, with CI
 green and docs coherent as the publishing bar. **The launch screencast is
 "zero-to-working in 60 seconds"**: install → onboarding → first agent turn → first undo,
-one real-time minute — which makes onboarding polish (C19, D13) and packaging (G3)
+one real-time minute, which makes onboarding polish (C19, D13) and packaging (G3)
 launch-critical. The README one-liner leads **feel-led** (the terminal-video-game /
 craft experience; Jordan wordsmiths the final line), with the tiling screenshot
 adjacent so the feel claim is instantly grounded. Security order of record: WP-1..3 (93) land before all remaining

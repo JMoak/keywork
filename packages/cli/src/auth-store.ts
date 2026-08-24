@@ -1,6 +1,6 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type JsonFileStore, jsonFileStore } from "@keywork/shared";
 
 export type Credential = { type: "api_key"; key: string } | OauthCredential;
 
@@ -19,16 +19,7 @@ export function defaultAuthDir(): string {
 }
 
 export async function readCredentials(dir: string = defaultAuthDir()): Promise<CredentialMap> {
-  const raw = await readFile(join(dir, "auth.json"), "utf8")
-    .then((text) => JSON.parse(text) as unknown)
-    .catch(() => undefined);
-  if (typeof raw !== "object" || raw === null) return {};
-  return Object.fromEntries(
-    Object.entries(raw as Record<string, unknown>).flatMap(([provider, value]) => {
-      const credential = asCredential(value);
-      return credential === undefined ? [] : [[provider, credential] as const];
-    }),
-  );
+  return credentialStore(dir).read() ?? {};
 }
 
 export async function saveCredential(
@@ -36,13 +27,20 @@ export async function saveCredential(
   credential: Credential,
   dir: string = defaultAuthDir(),
 ): Promise<string> {
-  const existing = await readCredentials(dir);
-  const file = join(dir, "auth.json");
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const merged = { ...existing, [provider]: credential };
-  await writeFile(file, `${JSON.stringify(merged, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await chmod(file, 0o600);
-  return file;
+  const store = credentialStore(dir);
+  store.write({ ...store.read(), [provider]: credential });
+  return store.file;
+}
+
+export async function deleteCredential(
+  provider: string,
+  dir: string = defaultAuthDir(),
+): Promise<boolean> {
+  const store = credentialStore(dir);
+  const { [provider]: removed, ...rest } = store.read() ?? {};
+  if (removed === undefined) return false;
+  store.write(rest);
+  return true;
 }
 
 export function legacyCredentials(apiKeys: Record<string, string> | undefined): CredentialMap {
@@ -50,6 +48,25 @@ export function legacyCredentials(apiKeys: Record<string, string> | undefined): 
     Object.entries(apiKeys ?? {})
       .filter(([, key]) => key !== "")
       .map(([provider, key]) => [provider, { type: "api_key", key } as const]),
+  );
+}
+
+function credentialStore(dir: string): JsonFileStore<CredentialMap> {
+  return jsonFileStore<CredentialMap>({
+    file: join(dir, "auth.json"),
+    mode: "lenient",
+    private: true,
+    validate: onlyCredentialEntries,
+  });
+}
+
+function onlyCredentialEntries(data: unknown): CredentialMap {
+  if (typeof data !== "object" || data === null) return {};
+  return Object.fromEntries(
+    Object.entries(data as Record<string, unknown>).flatMap(([provider, value]) => {
+      const credential = asCredential(value);
+      return credential === undefined ? [] : [[provider, credential] as const];
+    }),
   );
 }
 

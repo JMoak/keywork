@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigError } from "@keywork/shared";
+import { ConfigError, canonicalPath } from "@keywork/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   defaultSessionDir,
@@ -34,12 +34,42 @@ afterEach(async () => {
 });
 
 describe("workspaceIdentity", () => {
-  it("falls back to the exact cwd hash for an undeclared cwd", async () => {
+  it("falls back to the canonical cwd hash for an undeclared cwd", async () => {
     const cwd = await tempRoot();
-    const cwdHash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
+    const cwdHash = createHash("sha256").update(canonicalPath(cwd)).digest("hex").slice(0, 12);
 
     expect(workspaceIdentity(cwd)).toBe(cwdHash);
     expect(workspaceIdentity(cwd)).toBe(projectKey(cwd));
+  });
+
+  it("folds path case into one identity on win32 and keeps it distinct elsewhere", async () => {
+    const cwd = await tempRoot();
+    const shouted = cwd.toUpperCase();
+
+    expect(projectKey(cwd, "win32")).toBe(projectKey(shouted, "win32"));
+    expect(projectKey(cwd, "linux")).not.toBe(projectKey(shouted, "linux"));
+    expect(workspaceIdentity(cwd, undefined, "win32")).toBe(
+      workspaceIdentity(shouted, undefined, "win32"),
+    );
+  });
+
+  it("folds the anchored root's case on win32 for declared and named identities", async () => {
+    const root = await tempRoot();
+    await declareWorkspace(root, { name: "alpha" });
+    const shouted = root.toUpperCase();
+
+    expect(workspaceIdentity(root, undefined, "win32")).toBe(
+      createHash("sha256").update(`workspace:${root.toLowerCase()}`).digest("hex").slice(0, 12),
+    );
+    expect(workspaceIdentity(root, "frontend", "win32")).toBe(
+      createHash("sha256")
+        .update(`workspace:${root.toLowerCase()}:frontend`)
+        .digest("hex")
+        .slice(0, 12),
+    );
+    expect(workspaceIdentity(root, undefined, "linux")).not.toBe(
+      workspaceIdentity(shouted, undefined, "win32"),
+    );
   });
 
   it("keys a declared workspace off its root, identically from every subdirectory", async () => {
@@ -75,6 +105,40 @@ describe("workspaceIdentity", () => {
     await writeFile(join(root, ".keywork", "workspace.json"), "{ not json");
 
     expect(() => workspaceIdentity(root)).toThrow(ConfigError);
+  });
+});
+
+describe("workspaceIdentity for named workspaces (PD10)", () => {
+  it("partitions a named workspace from the default over the same root", async () => {
+    const root = await tempRoot();
+    await declareWorkspace(root, { name: "alpha" });
+    const nested = join(root, "packages", "deep");
+    await mkdir(nested, { recursive: true });
+
+    const named = workspaceIdentity(root, "frontend");
+    expect(named).not.toBe(workspaceIdentity(root));
+    expect(named).toBe(workspaceIdentity(nested, "frontend"));
+    expect(named).not.toBe(workspaceIdentity(root, "infra"));
+    expect(named).toBe(
+      createHash("sha256")
+        .update(`workspace:${canonicalPath(root)}:frontend`)
+        .digest("hex")
+        .slice(0, 12),
+    );
+  });
+
+  it("keeps the default identity byte-identical when named workspaces exist", async () => {
+    const root = await tempRoot();
+    await declareWorkspace(root, { name: "alpha" });
+    const before = workspaceIdentity(root);
+    await mkdir(join(root, ".keywork", "workspaces", "frontend"), { recursive: true });
+    expect(workspaceIdentity(root)).toBe(before);
+    expect(defaultSessionDir(root, "frontend")).toBe(
+      join(homedir(), ".keywork", "sessions", workspaceIdentity(root, "frontend")),
+    );
+    expect(snapshotGitDir(root, "frontend")).toBe(
+      join(homedir(), ".keywork", "snapshots", workspaceIdentity(root, "frontend")),
+    );
   });
 });
 
@@ -169,5 +233,17 @@ describe("ensureStateLayout", () => {
     await writeFile(join(home, "state-layout.json"), JSON.stringify({ version: 99 }));
 
     expect(() => ensureStateLayout(home)).toThrow(StateLayoutError);
+  });
+
+  it("refuses a corrupt or versionless marker instead of restamping it", async () => {
+    const home = await stateHome();
+    const marker = join(home, "state-layout.json");
+    await writeFile(marker, "{ not json");
+    expect(() => ensureStateLayout(home)).toThrow(StateLayoutError);
+    expect(() => ensureStateLayout(home)).toThrow(/not valid JSON/);
+    expect(readFileSync(marker, "utf8")).toBe("{ not json");
+
+    await writeFile(marker, JSON.stringify({ version: "two" }));
+    expect(() => ensureStateLayout(home)).toThrow(/no usable version/);
   });
 });

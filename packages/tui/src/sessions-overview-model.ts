@@ -1,10 +1,12 @@
 import { formatCostNanos } from "@keywork/engine";
-import { clampIndex, clampScroll } from "./clamp.ts";
+import { arcTag } from "./arcs.ts";
 import type { Chord } from "./keys.ts";
+import { RowCursor } from "./row-cursor.ts";
 
 export interface SessionOverviewItem {
   id: string;
   title: string;
+  createdAt: number;
   modifiedAt: number;
   entryCount: number;
   branchCount: number;
@@ -16,9 +18,10 @@ export interface SessionOverviewItem {
 export interface SessionPresence {
   paneFor(sessionId: string): string | undefined;
   busy(sessionId: string): boolean;
+  waiting(sessionId: string): boolean;
 }
 
-export type SessionLiveness = "busy" | "attached" | "idle";
+export type SessionLiveness = "waiting" | "busy" | "attached" | "idle";
 
 export interface SessionOverviewRow {
   id: string;
@@ -39,37 +42,62 @@ export interface SessionsOverviewEffects {
   drill(sessionId: string): void;
 }
 
+export type SessionOrder = "recent" | "created";
+
 export interface SessionsOverviewSeams {
   presence?: SessionPresence;
   currentSession?: () => string | undefined;
   now?: () => number;
+  order?: SessionOrder;
 }
 
-export class SessionsOverviewModel {
-  cursor = 0;
-  scrollTop = 0;
+export class SessionsOverviewModel extends RowCursor<SessionOverviewRow> {
+  protected override readonly volatileRows = true;
 
   private items: SessionOverviewItem[] = [];
-  private anchorId: string | undefined;
 
   constructor(
-    private readonly notify: () => void,
+    notify: () => void,
     private readonly effects: SessionsOverviewEffects,
     private readonly seams: SessionsOverviewSeams = {},
-  ) {}
+  ) {
+    super(notify);
+  }
 
   setItems(items: readonly SessionOverviewItem[]): void {
-    this.anchorId = this.items[this.cursor]?.id ?? this.anchorId;
-    this.items = [...items].sort((a, b) => b.modifiedAt - a.modifiedAt);
-    this.reanchor();
-    this.notify();
+    this.mutate(() => {
+      this.items = [...items].sort(sessionOrders[this.seams.order ?? "recent"]);
+    }, this.currentKey() ?? this.seams.currentSession?.());
   }
 
   sessionCount(): number {
     return this.items.length;
   }
 
-  rows(): SessionOverviewRow[] {
+  activateVisible(offset: number, rowCount: number): boolean {
+    if (!this.selectVisible(offset, rowCount)) return false;
+    return this.withCursorSession((sessionId) => this.effects.activate(sessionId));
+  }
+
+  handleKey(chord: Chord, pageRows: number): boolean {
+    if (chord.shift || chord.ctrl || chord.meta) return false;
+    if (this.navigate(chord, pageRows)) return true;
+    switch (chord.name) {
+      case "enter":
+      case "return":
+        return this.withCursorSession((sessionId) => this.effects.activate(sessionId));
+      case "l":
+      case "right":
+        return this.withCursorSession((sessionId) => this.effects.drill(sessionId));
+      case "r":
+        this.effects.refresh();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  protected buildRows(): SessionOverviewRow[] {
     const now = (this.seams.now ?? Date.now)();
     const current = this.seams.currentSession?.();
     return this.items.map((item) => ({
@@ -86,97 +114,60 @@ export class SessionsOverviewModel {
     }));
   }
 
-  visibleRows(rowCount: number): { index: number; row: SessionOverviewRow }[] {
-    const all = this.rows();
-    this.cursor = clampIndex(this.cursor, all.length);
-    this.scrollTop = clampScroll(this.scrollTop, all.length, rowCount);
-    if (this.cursor < this.scrollTop) this.scrollTop = this.cursor;
-    if (this.cursor >= this.scrollTop + rowCount) this.scrollTop = this.cursor - rowCount + 1;
-    return all
-      .slice(this.scrollTop, this.scrollTop + rowCount)
-      .map((row, offset) => ({ index: this.scrollTop + offset, row }));
+  protected keyOf(row: SessionOverviewRow): string {
+    return row.id;
   }
 
-  cursorRow(): SessionOverviewRow | undefined {
-    return this.rows()[clampIndex(this.cursor, this.items.length)];
-  }
-
-  activateVisible(offset: number, rowCount: number): boolean {
-    const target = this.visibleRows(rowCount)[offset];
-    if (target === undefined) return false;
-    this.cursor = target.index;
-    this.anchorId = target.row.id;
-    this.notify();
-    this.effects.activate(target.row.id);
-    return true;
-  }
-
-  handleKey(chord: Chord, pageRows: number): boolean {
-    this.cursor = clampIndex(this.cursor, this.items.length);
-    if (chord.shift || chord.ctrl || chord.meta) return false;
-    switch (chord.name) {
-      case "j":
-      case "down":
-        return this.moveCursor(1);
-      case "k":
-      case "up":
-        return this.moveCursor(-1);
-      case "pagedown":
-        return this.moveCursor(pageRows);
-      case "pageup":
-        return this.moveCursor(-pageRows);
-      case "enter":
-      case "return":
-        return this.withCursorSession((sessionId) => this.effects.activate(sessionId));
-      case "l":
-      case "right":
-        return this.withCursorSession((sessionId) => this.effects.drill(sessionId));
-      case "r":
-        this.effects.refresh();
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  private moveCursor(delta: number): boolean {
-    this.cursor = clampIndex(this.cursor + delta, this.items.length);
-    this.anchorId = this.items[this.cursor]?.id ?? this.anchorId;
-    this.notify();
-    return true;
-  }
-
-  private withCursorSession(action: (sessionId: string) => void): boolean {
-    const item = this.items[clampIndex(this.cursor, this.items.length)];
-    if (item !== undefined) action(item.id);
+  private withCursorSession(action: (sessionId: string) => void): true {
+    const row = this.cursorRow();
+    if (row !== undefined) action(row.id);
     return true;
   }
 
   private livenessOf(sessionId: string): SessionLiveness {
     const presence = this.seams.presence;
     if (presence === undefined || presence.paneFor(sessionId) === undefined) return "idle";
+    if (presence.waiting(sessionId)) return "waiting";
     return presence.busy(sessionId) ? "busy" : "attached";
-  }
-
-  private reanchor(): void {
-    if (this.items.length === 0) return;
-    const wanted = this.anchorId ?? this.seams.currentSession?.();
-    const found = this.items.findIndex((item) => item.id === wanted);
-    this.cursor = found >= 0 ? found : clampIndex(this.cursor, this.items.length);
-    this.anchorId = this.items[this.cursor]?.id;
   }
 }
 
+const sessionOrders: Record<
+  SessionOrder,
+  (a: SessionOverviewItem, b: SessionOverviewItem) => number
+> = {
+  recent: (a, b) => b.modifiedAt - a.modifiedAt,
+  created: (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+};
+
 export const livenessMark: Record<SessionLiveness, string> = {
+  waiting: "█",
   busy: "█",
   attached: "▓",
   idle: "░",
 };
 
+export interface OverviewRowParts {
+  readonly lead: string;
+  readonly title: string;
+  readonly age: string;
+  readonly arcTag: string | undefined;
+  readonly counts: string;
+}
+
+export function overviewRowParts(row: SessionOverviewRow, cursored: boolean): OverviewRowParts {
+  return {
+    lead: `${livenessMark[row.liveness]} `,
+    title: row.title,
+    age: ` · ${row.age}`,
+    arcTag: row.arc === undefined ? undefined : ` ${arcTag(row.arc)}`,
+    counts: cursored ? ` · ${countSummary(row)}` : "",
+  };
+}
+
 export function overviewRowLine(row: SessionOverviewRow, cursored: boolean): string {
-  const arc = row.arc === undefined ? "" : ` #${row.arc}`;
-  const counts = cursored ? ` · ${countSummary(row)}` : "";
-  return `${livenessMark[row.liveness]} ${row.title} · ${row.age}${arc}${counts}`;
+  const { lead, title, age, arcTag: arc, counts } = overviewRowParts(row, cursored);
+  return `${lead}${title}${age}${arc ?? ""}${counts}`;
 }
 
 export function relativeAge(nowMs: number, thenMs: number): string {

@@ -17,7 +17,7 @@ async function fileWith(content: string): Promise<{ cwd: string; name: string }>
 async function loadedModel(content: string): Promise<FileModel> {
   const { cwd, name } = await fileWith(content);
   const model = new FileModel(cwd, name, () => {});
-  await model.lastLoad;
+  await model.settled();
   return model;
 }
 
@@ -73,7 +73,7 @@ describe("FileModel", () => {
     const content = Array.from({ length: 50 }, (_, index) => `line-${index + 1}`).join("\n");
     const { cwd, name } = await fileWith(content);
     const model = new FileModel(cwd, name, () => {}, { atEnd: true });
-    await model.lastLoad;
+    await model.settled();
 
     expect(model.visibleLines(10)[0]?.number).toBe(41);
     expect(model.visibleLines(10).at(-1)?.number).toBe(50);
@@ -87,7 +87,7 @@ describe("FileModel", () => {
   it("reports missing files as a readable failure", async () => {
     const { cwd } = await fileWith("irrelevant");
     const model = new FileModel(cwd, "not-there.ts", () => {});
-    await model.lastLoad;
+    await model.settled();
 
     expect(model.state.kind).toBe("failed");
     expect(model.visibleLines(10)).toEqual([]);
@@ -97,8 +97,31 @@ describe("FileModel", () => {
     const { cwd } = await fileWith("irrelevant");
     await writeFile(join(cwd, "blob.bin"), Buffer.from([1, 0, 2]));
     const model = new FileModel(cwd, "blob.bin", () => {});
-    await model.lastLoad;
+    await model.settled();
 
     expect(model.state).toEqual({ kind: "failed", reason: "binary file" });
+  });
+
+  it("notifies once when the load lands", async () => {
+    const { cwd, name } = await fileWith("a\nb");
+    let notified = 0;
+    const model = new FileModel(cwd, name, () => {
+      notified += 1;
+    });
+    await model.settled();
+    expect(notified).toBe(1);
+  });
+
+  it("stays silent when disposed before the load lands", async () => {
+    const { cwd, name } = await fileWith("a\nb");
+    let notified = 0;
+    const model = new FileModel(cwd, name, () => {
+      notified += 1;
+    });
+    model.dispose();
+    await model.settled();
+    expect(notified).toBe(0);
+    expect(model.handleKey(parseChord("down"), 10)).toBe(true);
+    expect(notified).toBe(0);
   });
 });

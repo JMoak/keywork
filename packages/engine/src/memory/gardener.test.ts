@@ -9,8 +9,8 @@ import {
   type PairVerdict,
   type PromotionProposal,
 } from "./gardener.ts";
-import { ReviewInbox } from "./inbox.ts";
-import { MemoryStore, type Note } from "./store.ts";
+import type { Note } from "./notes.ts";
+import { MemoryStore } from "./store.ts";
 
 const cleanups: string[] = [];
 
@@ -59,15 +59,10 @@ function scriptedPort(script: PortScript): CurationJudgmentPort & {
 function gardener(
   store: MemoryStore,
   port?: CurationJudgmentPort,
-  inbox = new ReviewInbox({ now: clock }),
-): { gardener: Gardener; inbox: ReviewInbox } {
+): { gardener: Gardener; inbox: { list: () => ReturnType<MemoryStore["listStaged"]> } } {
   return {
-    gardener: new Gardener({
-      store,
-      inbox,
-      ...(port !== undefined && { judgment: port }),
-    }),
-    inbox,
+    gardener: new Gardener({ store, ...(port !== undefined && { judgment: port }) }),
+    inbox: { list: () => store.listStaged() },
   };
 }
 
@@ -339,6 +334,18 @@ describe("usefulness EMA", () => {
 
     expect(spamReport.usefulness["Hot note"]).toBe(honestReport.usefulness["Hot note"]);
     expect((await spam.store.readNote("Hot note"))?.usefulness).toBe(0.3);
+  });
+
+  it("totals recalls across sessions until the sweep folds them away", async () => {
+    const seed = await vault();
+    await seed.store.writeNote({ title: "Hot note", body: "lore\n", provenance: "agent" });
+    const g = gardener(seed.store).gardener;
+    g.recordRecall("Hot note", "session-1");
+    g.recordRecall("Hot note", "session-2");
+    g.recordRecall("Hot note", "session-2");
+    expect(g.recallsSinceSweep().get("Hot note")).toBe(3);
+    await g.sweep();
+    expect(g.recallsSinceSweep().size).toBe(0);
   });
 
   it("rewards recalls spread across sessions and decays unrecalled notes", async () => {

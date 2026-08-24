@@ -1,4 +1,4 @@
-import { ProviderStreamError } from "../openai.ts";
+import { ProviderStreamError } from "../errors.ts";
 
 export interface EventStreamMessage {
   headers: Record<string, string>;

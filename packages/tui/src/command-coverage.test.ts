@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionCommandNames } from "./app-core.ts";
+import { actionCommandNames, actionCovering, appActions } from "./app-actions.ts";
 import type { Pane } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
 
@@ -18,6 +18,7 @@ function fullyEquippedProbe(): AppProbe {
     createFilePane: (id) => stubPane(id),
     createBrowserPane: (id) => stubPane(id),
     createSessionTreePane: (id) => stubPane(id),
+    createArcsPane: (id) => stubPane(id),
     createMemoryPane: (id) => stubPane(id),
     createMcpPane: (id) => stubPane(id),
     isDirectory: () => false,
@@ -59,6 +60,23 @@ describe("command coverage", () => {
       (command) => !probe.command(command),
     );
     expect(refused).toEqual([]);
+  });
+
+  it("shows a covering command the same shortcut as the action it covers", () => {
+    const probe = fullyEquippedProbe();
+    const mismatched = probe.core.registry
+      .all()
+      .filter((command) => actionCovering(command.name) !== undefined)
+      .filter((command) => {
+        const action = actionCovering(command.name) ?? "";
+        return command.shortcut !== probe.core.keymap.describe(action);
+      })
+      .map((command) => command.name);
+    expect(mismatched).toEqual([]);
+    const covering = Object.entries(appActions)
+      .filter(([, action]) => "coveredBy" in action)
+      .map(([name]) => name);
+    expect(covering.length).toBeGreaterThan(0);
   });
 
   it("keeps command names and aliases collision-free", () => {

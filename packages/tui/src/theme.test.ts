@@ -7,18 +7,12 @@ describe("resolveTheme", () => {
     expect(resolveTheme()).not.toBe(keyworkNight);
   });
 
-  it("applies overrides per token", () => {
-    const theme = resolveTheme({ accent: "#ff00ff" });
-    expect(theme.accent).toBe("#ff00ff");
-    expect(theme.border).toBe(keyworkNight.border);
-  });
-
-  it("rejects unknown tokens with the token named", () => {
-    expect(() => resolveTheme({ acent: "#ff00ff" })).toThrow(/Unknown theme token "acent"/);
-  });
-
-  it("rejects malformed colors", () => {
-    expect(() => resolveTheme({ accent: "purple" })).toThrow(/#rrggbb/);
+  it("overrides one token and leaves every other token equal to the palette's", () => {
+    const { accent, ...untouched } = resolveTheme({ accent: "#ff00ff" });
+    const { accent: night, ...nightUntouched } = keyworkNight;
+    expect(accent).toBe("#ff00ff");
+    expect(accent).not.toBe(night);
+    expect(untouched).toEqual(nightUntouched);
   });
 
   it("defaults the ramp to Tokyo Night violet, blue, cyan", () => {
@@ -39,19 +33,11 @@ describe("resolveTheme", () => {
     expect(resolveTheme({ ramp: ["#ff00ff"] }).ramp).toEqual(["#ff00ff"]);
   });
 
-  it("rejects a ramp that is empty, oversized, or not an array", () => {
-    expect(() => resolveTheme({ ramp: [] })).toThrow(/1-6 #rrggbb stops/);
+  it("holds overrides to the shared flavor token schema instead of a second validator", () => {
+    expect(() => resolveTheme({ accent: "purple" })).toThrow(/#rrggbb/);
+    expect(() => resolveTheme({ ramp: [] })).toThrow(/ramp/);
     expect(() => resolveTheme({ ramp: Array.from({ length: 7 }, () => "#112233") })).toThrow(
-      /1-6 #rrggbb stops/,
+      /ramp/,
     );
-    expect(() => resolveTheme({ ramp: "#112233" })).toThrow(/1-6 #rrggbb stops/);
-  });
-
-  it("rejects malformed ramp stops", () => {
-    expect(() => resolveTheme({ ramp: ["#112233", "teal"] })).toThrow(/#rrggbb/);
-  });
-
-  it("rejects a color token given a stop list", () => {
-    expect(() => resolveTheme({ accent: ["#112233"] })).toThrow(/#rrggbb/);
   });
 });

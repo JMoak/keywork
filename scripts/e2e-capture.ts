@@ -5,7 +5,7 @@ import { type CaptureArgs, liveModeRefusal, parseCaptureArgs } from "./e2e/cli-a
 import { runScenario, type ScenarioResult } from "./e2e/harness.ts";
 import { liveWorld } from "./e2e/live.ts";
 import type { Scenario } from "./e2e/scenario.ts";
-import { defaultScenarios, scenarioNamed, scenarios } from "./e2e/scenarios.ts";
+import { defaultScenarios, scenarioNamed, scenarios } from "./e2e/scenarios/index.ts";
 
 const parsed = parseCaptureArgs(process.argv.slice(2));
 if (!parsed.ok) {
@@ -18,8 +18,8 @@ if (!parsed.ok) {
 
 if (parsed.args.list) {
   for (const scenario of scenarios) {
-    const marker = scenario.manual === true ? "  [manual — run with --cwd <dir> --live]" : "";
-    console.log(`${scenario.name} — ${scenario.description}${marker}`);
+    const marker = scenario.manual === true ? "  [manual: run with --cwd <dir> --live]" : "";
+    console.log(`${scenario.name}: ${scenario.description}${marker}`);
   }
   process.exit(0);
 }

@@ -4,6 +4,8 @@ import { killTree, within } from "../proc.ts";
 export const mcpProtocolVersion = "2025-06-18";
 
 const closeGraceMs = 500;
+const maxLineChars = 4 * 1024 * 1024;
+const toolsChangedNotification = "notifications/tools/list_changed";
 
 export interface McpTool {
   name: string;
@@ -21,6 +23,7 @@ export interface McpConnection {
   listTools(): Promise<McpTool[]>;
   callTool(name: string, args: unknown): Promise<McpToolResult>;
   onClose(handler: (error?: Error) => void): void;
+  onToolsChanged(handler: () => void): void;
   close(): Promise<void>;
 }
 
@@ -91,6 +94,7 @@ class StdioChannel implements McpConnection {
   private readonly exited: Promise<void>;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly closeHandlers: Array<(error?: Error) => void> = [];
+  private readonly toolsChangedHandlers: Array<() => void> = [];
   private buffer = "";
   private stderrTail = "";
   private nextId = 1;
@@ -161,6 +165,10 @@ class StdioChannel implements McpConnection {
     this.closeHandlers.push(handler);
   }
 
+  onToolsChanged(handler: () => void): void {
+    this.toolsChangedHandlers.push(handler);
+  }
+
   close(): Promise<void> {
     this.closedDeliberately = true;
     this.teardown ??= this.retire();
@@ -201,6 +209,7 @@ class StdioChannel implements McpConnection {
   }
 
   private receive(chunk: string): void {
+    if (this.closed) return;
     this.buffer += chunk;
     let newline = this.buffer.indexOf("\n");
     while (newline !== -1) {
@@ -209,6 +218,16 @@ class StdioChannel implements McpConnection {
       if (line.length > 0) this.dispatchLine(line);
       newline = this.buffer.indexOf("\n");
     }
+    if (this.buffer.length > maxLineChars) this.rejectFlood();
+  }
+
+  private rejectFlood(): void {
+    this.buffer = "";
+    this.settleClosed(
+      new McpProtocolError(`server sent over ${maxLineChars} characters without a newline`),
+    );
+    this.teardown ??= killTree(this.child, this.exited);
+    void this.teardown.catch(() => undefined);
   }
 
   private dispatchLine(line: string): void {
@@ -230,6 +249,10 @@ class StdioChannel implements McpConnection {
           id: message.id as number | string,
           error: { code: -32601, message: "method not supported" },
         });
+        return;
+      }
+      if (message.method === toolsChangedNotification) {
+        for (const handler of this.toolsChangedHandlers) handler();
       }
       return;
     }

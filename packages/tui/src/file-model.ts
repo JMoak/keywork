@@ -1,7 +1,8 @@
-﻿import { readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
+import { failureMessage, PaneTasks } from "./pane-tasks.ts";
 
 export type FileState =
   | { kind: "loading" }
@@ -12,16 +13,17 @@ export class FileModel {
   state: FileState = { kind: "loading" };
   scrollTop = 0;
   readonly name: string;
-  readonly lastLoad: Promise<void>;
+  private readonly tasks: PaneTasks;
 
   constructor(
     cwd: string,
     readonly path: string,
-    private readonly notify: () => void,
+    notify: () => void,
     options: { atEnd?: true } = {},
   ) {
     this.name = basename(path);
-    this.lastLoad = this.load(resolve(cwd, path), options.atEnd === true);
+    this.tasks = new PaneTasks(notify);
+    this.tasks.track(() => this.load(resolve(cwd, path), options.atEnd === true));
   }
 
   handleKey(chord: Chord, pageRows: number): boolean {
@@ -55,15 +57,23 @@ export class FileModel {
     return this.state.kind === "loaded" ? this.state.lines.length : 0;
   }
 
+  settled(): Promise<void> {
+    return this.tasks.settled();
+  }
+
+  dispose(): void {
+    this.tasks.dispose();
+  }
+
   private scrollBy(delta: number): boolean {
     this.scrollTop = Math.max(0, this.scrollTop + delta);
-    this.notify();
+    this.tasks.emit();
     return true;
   }
 
   private scrollTo(top: number): boolean {
     this.scrollTop = Math.max(0, top);
-    this.notify();
+    this.tasks.emit();
     return true;
   }
 
@@ -72,7 +82,6 @@ export class FileModel {
       const { size } = await stat(absolutePath);
       if (size > maxFileBytes) {
         this.state = { kind: "failed", reason: `file too large (${megabytes(size)} MB)` };
-        this.notify();
         return;
       }
       const content = await readFile(absolutePath, "utf8");
@@ -81,9 +90,8 @@ export class FileModel {
         : { kind: "loaded", lines: content.split(/\r?\n/) };
       if (atEnd) this.scrollTop = this.lineCount();
     } catch (cause) {
-      this.state = { kind: "failed", reason: (cause as Error).message };
+      this.state = { kind: "failed", reason: failureMessage(cause) };
     }
-    this.notify();
   }
 }
 

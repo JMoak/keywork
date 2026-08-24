@@ -1,5 +1,6 @@
 import { type SessionTreeNode, textMessage } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
+import type { FrameScheduler } from "./frame-scheduler.ts";
 import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { SessionTreeView } from "./session-tree-model.ts";
@@ -24,7 +25,15 @@ interface RecordedIntents {
 }
 
 function itemOf(id: string, modifiedAt = 0): SessionOverviewItem {
-  return { id, title: `title-${id}`, modifiedAt, entryCount: 2, branchCount: 0, labelCount: 0 };
+  return {
+    id,
+    title: `title-${id}`,
+    createdAt: modifiedAt,
+    modifiedAt,
+    entryCount: 2,
+    branchCount: 0,
+    labelCount: 0,
+  };
 }
 
 function worldOf(...sessionIds: string[]): TreeWorld {
@@ -106,11 +115,35 @@ function recordedIntents(): RecordedIntents {
   };
 }
 
+interface ManualFrames {
+  scheduleFrame: FrameScheduler;
+  pendingCount(): number;
+  runPending(): void;
+}
+
+function manualFrames(): ManualFrames {
+  const pending: Array<() => void> = [];
+  return {
+    scheduleFrame: (run) => {
+      pending.push(run);
+      return () => {
+        const at = pending.indexOf(run);
+        if (at !== -1) pending.splice(at, 1);
+      };
+    },
+    pendingCount: () => pending.length,
+    runPending: () => {
+      for (const run of pending.splice(0)) run();
+    },
+  };
+}
+
 interface PaneSetup {
   presence?: SessionPresence;
   sessionId?: string;
   forkResult?: () => Promise<string | undefined>;
   notify?: () => void;
+  frames?: ManualFrames;
 }
 
 function paneOver(world: TreeWorld, setup: PaneSetup = {}) {
@@ -125,17 +158,19 @@ function paneOver(world: TreeWorld, setup: PaneSetup = {}) {
     {
       ...(setup.sessionId !== undefined && { sessionId: setup.sessionId }),
       ...(setup.presence !== undefined && { presence: setup.presence }),
+      ...(setup.frames !== undefined && { scheduleFrame: setup.frames.scheduleFrame }),
     },
   );
   return { pane, recorded, port };
 }
 
 function press(pane: SessionTreePane, ...specs: string[]): void {
-  for (const spec of specs) pane.handleKey(parseChord(spec));
+  for (const spec of specs) pane.handleKey(parseChord(spec), typedSequence(spec));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function typedSequence(spec: string): string | undefined {
+  if (spec === "space") return " ";
+  return spec.length === 1 ? spec : undefined;
 }
 
 describe("SessionTreePane two levels", () => {
@@ -183,6 +218,19 @@ describe("SessionTreePane two levels", () => {
     await pane.settled();
     expect(pane.level()).toBe("overview");
     expect(pane.overview.cursorRow()?.id).toBe("s3");
+  });
+
+  it("labels keep the typed case: Shift+H then i reads back Hi", async () => {
+    const world = worldOf("s1");
+    const { pane } = paneOver(world);
+    await pane.settled();
+    press(pane, "l");
+    await pane.settled();
+    press(pane, "shift+l");
+    pane.handleKey(parseChord("shift+h"), "H");
+    pane.handleKey(parseChord("i"), "i");
+    expect(pane.model.labelDraft).toBe("Hi");
+    press(pane, "escape");
   });
 
   it("esc at the entries level cancels the label editor before leaving", async () => {
@@ -238,6 +286,7 @@ describe("SessionTreePane focus-or-open", () => {
     const presence: SessionPresence = {
       paneFor: (sessionId) => (sessionId === "s1" ? "session-9" : undefined),
       busy: () => false,
+      waiting: () => false,
     };
     const { pane, recorded } = paneOver(world, { presence });
     await pane.settled();
@@ -250,7 +299,11 @@ describe("SessionTreePane focus-or-open", () => {
 
   it("enter attaches then opens a resumed pane when no pane holds the session", async () => {
     const world = worldOf("s1", "s2");
-    const presence: SessionPresence = { paneFor: () => undefined, busy: () => false };
+    const presence: SessionPresence = {
+      paneFor: () => undefined,
+      busy: () => false,
+      waiting: () => false,
+    };
     const { pane, recorded } = paneOver(world, { presence });
     await pane.settled();
     press(pane, "j", "enter");
@@ -265,6 +318,7 @@ describe("SessionTreePane focus-or-open", () => {
     const presence: SessionPresence = {
       paneFor: (sessionId) => (sessionId === "s2" ? "session-7" : undefined),
       busy: () => false,
+      waiting: () => false,
     };
     const { pane, recorded } = paneOver(world, { presence });
     await pane.settled();
@@ -356,7 +410,8 @@ describe("SessionTreePane entry-level effects", () => {
 describe("SessionTreePane push refresh", () => {
   it("a pushed change re-lists the overview within a frame, coalescing bursts", async () => {
     const world = worldOf("s1");
-    const { pane } = paneOver(world);
+    const frames = manualFrames();
+    const { pane } = paneOver(world, { frames });
     await pane.settled();
     expect(world.overviewLoads).toBe(1);
 
@@ -368,7 +423,8 @@ describe("SessionTreePane push refresh", () => {
       listener("s2");
     }
     expect(world.overviewLoads).toBe(1);
-    await sleep(40);
+    expect(frames.pendingCount()).toBe(1);
+    frames.runPending();
     await pane.settled();
     expect(world.overviewLoads).toBe(2);
     expect(pane.overview.rows().map((row) => row.id)).toEqual(["s2", "s1"]);
@@ -376,7 +432,8 @@ describe("SessionTreePane push refresh", () => {
 
   it("a pushed change refreshes the drilled entry tree, not the overview", async () => {
     const world = worldOf("s1");
-    const { pane } = paneOver(world);
+    const frames = manualFrames();
+    const { pane } = paneOver(world, { frames });
     await pane.settled();
     press(pane, "l");
     await pane.settled();
@@ -384,7 +441,7 @@ describe("SessionTreePane push refresh", () => {
 
     world.entriesBySession.set("s1", ["s1-e1", "s1-e2", "s1-e3"]);
     for (const listener of world.listeners) listener("s1");
-    await sleep(40);
+    frames.runPending();
     await pane.settled();
     expect(world.entryLoads).toEqual(["s1", "s1"]);
     expect(pane.model.entryCount()).toBe(3);
@@ -392,13 +449,30 @@ describe("SessionTreePane push refresh", () => {
 
   it("unsubscribes and cancels a pending refresh on dispose", async () => {
     const world = worldOf("s1");
-    const { pane } = paneOver(world);
+    const frames = manualFrames();
+    const { pane } = paneOver(world, { frames });
     await pane.settled();
     for (const listener of world.listeners) listener("s1");
+    expect(frames.pendingCount()).toBe(1);
     pane.dispose();
-    await sleep(40);
+    expect(frames.pendingCount()).toBe(0);
+    frames.runPending();
+    await pane.settled();
     expect(world.unsubscribed).toBe(1);
     expect(world.overviewLoads).toBe(1);
+  });
+
+  it("coalesces pushes through the real frame timer", async () => {
+    const world = worldOf("s1");
+    const { pane } = paneOver(world);
+    await pane.settled();
+    for (const listener of world.listeners) {
+      listener("s1");
+      listener("s1");
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 40));
+    await pane.settled();
+    expect(world.overviewLoads).toBe(2);
   });
 
   it("starts no new work after dispose", async () => {

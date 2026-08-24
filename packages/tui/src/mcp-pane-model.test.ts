@@ -4,11 +4,9 @@ import {
   McpPaneModel,
   type McpServerState,
   type McpServerView,
-  mcpToneToken,
   stateGlyph,
   tileMark,
 } from "./mcp-pane-model.ts";
-import { resolveTheme } from "./theme.ts";
 
 interface ServerSpec {
   name: string;
@@ -156,14 +154,7 @@ describe("McpPaneModel status lines", () => {
       { name: "docs", state: "connecting" },
       { name: "extra", state: "down", toolCount: 0 },
     ]);
-    expect(model.serverCount()).toBe(4);
     expect(model.counts()).toEqual({ connected: 1, connecting: 1, down: 2 });
-  });
-
-  it("maps tones to distinct theme tokens", () => {
-    const theme = resolveTheme();
-    const tokens = (["dim", "normal", "alert"] as const).map((tone) => theme[mcpToneToken(tone)]);
-    expect(new Set(tokens).size).toBe(3);
   });
 });
 
@@ -266,10 +257,12 @@ describe("McpPaneModel transition holds", () => {
   });
 
   it("clears the hold for vanished servers", () => {
-    const { model } = modelOver(pair);
+    const { model, recorded } = modelOver(pair);
     model.setBusy("filesystem", true);
     model.setServers([serverOf({ name: "linear", state: "down" })]);
-    expect(model.isBusy("filesystem")).toBe(false);
+    model.setServers(pair.map(serverOf));
+    press(model, "k", "enter", "j", "enter");
+    expect(recorded.restarted).toEqual(["filesystem"]);
   });
 });
 
@@ -387,6 +380,16 @@ describe("McpPaneModel refresh under the cursor", () => {
 });
 
 describe("McpPaneModel navigation edges", () => {
+  it("ignores modified chords so ctrl+r is not a refresh", () => {
+    const { model, recorded } = modelOver(pair);
+    expect(model.handleKey(parseChord("ctrl+r"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("shift+j"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("alt+enter"), 5)).toBe(false);
+    expect(recorded.refreshes).toBe(0);
+    expect(model.cursorRow()?.id).toBe("server:filesystem");
+    expect(model.rows()).toHaveLength(3);
+  });
+
   it("clamps at the top and bottom and skips non-selectable rows", () => {
     const { model } = modelOver(pair);
     press(model, "k", "k");

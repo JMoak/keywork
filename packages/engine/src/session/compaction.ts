@@ -1,5 +1,6 @@
 import { type Message, textMessage, type Usage } from "../messages.ts";
 import type { Provider } from "../provider.ts";
+import type { ContextBudget } from "./context-budget.ts";
 import {
   type CompactionEntry,
   contextMessages,
@@ -9,19 +10,9 @@ import {
 } from "./entries.ts";
 import type { SessionStore } from "./store.ts";
 
-export interface CompactionSettings {
-  reserveTokens: number;
-  keepRecentTokens: number;
-}
-
-export const defaultCompactionSettings: CompactionSettings = {
-  reserveTokens: 16384,
-  keepRecentTokens: 20000,
-};
-
 export interface CompactionOptions {
-  settings?: Partial<CompactionSettings>;
-  instructions?: string;
+  budget: ContextBudget;
+  instructions?: string | undefined;
 }
 
 export interface CompactionPlan {
@@ -32,26 +23,22 @@ export interface CompactionPlan {
   tokensBefore: number;
 }
 
-export function shouldCompact(
-  contextTokens: number,
-  contextWindow: number,
-  settings: CompactionSettings = defaultCompactionSettings,
-): boolean {
-  return contextTokens > contextWindow - settings.reserveTokens;
+export function estimateContextTokens(store: SessionStore): number {
+  return estimateConversationTokens(contextMessages(store.contextEntries()));
 }
 
-export function estimateContextTokens(store: SessionStore): number {
-  return estimateTokens(contextMessages(store.contextEntries()));
+export function estimateConversationTokens(messages: readonly Message[]): number {
+  return Math.ceil(serializeConversation(messages).length / 4);
 }
 
 export function planCompaction(
   store: SessionStore,
-  settings: CompactionSettings = defaultCompactionSettings,
+  budget: ContextBudget,
 ): CompactionPlan | undefined {
   const context = store.contextEntries();
   const previous = context[0]?.type === "compaction" ? context[0] : undefined;
   const candidates = previous === undefined ? context : context.slice(1);
-  const cut = findCutIndex(candidates, settings.keepRecentTokens);
+  const cut = findCutIndex(candidates, budget.keepRecent);
   if (cut === undefined) return undefined;
 
   const entriesToSummarize = candidates
@@ -64,17 +51,16 @@ export function planCompaction(
     firstKeptEntryId: (candidates[cut] as SessionEntry).id,
     ...(previous?.summary !== undefined && { previousSummary: previous.summary }),
     ...(previous?.details !== undefined && { previousDetails: previous.details }),
-    tokensBefore: estimateTokens(contextMessages(context)),
+    tokensBefore: estimateConversationTokens(contextMessages(context)),
   };
 }
 
 export async function compactSession(
   store: SessionStore,
   provider: Provider,
-  options: CompactionOptions = {},
+  options: CompactionOptions,
 ): Promise<CompactionEntry | undefined> {
-  const settings = { ...defaultCompactionSettings, ...options.settings };
-  const plan = planCompaction(store, settings);
+  const plan = planCompaction(store, options.budget);
   if (plan === undefined) return undefined;
 
   const { text, usage } = await generateSummary(provider, plan, options.instructions);
@@ -182,12 +168,8 @@ function pathArgument(args: unknown): string | undefined {
   return typeof path === "string" ? path : undefined;
 }
 
-function estimateTokens(messages: readonly Message[]): number {
-  return Math.ceil(serializeConversation(messages).length / 4);
-}
-
 function estimateEntryTokens(entry: SessionEntry): number {
-  if (entry.type === "message") return estimateTokens([entry.message]);
+  if (entry.type === "message") return estimateConversationTokens([entry.message]);
   if (entry.type === "compaction" || entry.type === "branch_summary")
     return Math.ceil(entry.summary.length / 4);
   return 0;

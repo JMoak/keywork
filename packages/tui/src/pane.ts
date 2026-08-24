@@ -1,3 +1,4 @@
+import type { Flavor } from "@keywork/shared";
 import type { Box } from "@opentui/core";
 import type { Chord } from "./keys.ts";
 import type { PointerEvent } from "./pointer.ts";
@@ -11,6 +12,8 @@ export interface PaneContext {
   width: number;
   height: number;
   borderColor?: string;
+  instruments?: Flavor["instruments"];
+  pinMark?: string;
 }
 
 export interface FileOpenOptions {
@@ -21,6 +24,10 @@ export interface PaneIntents {
   openFile(path: string, options?: FileOpenOptions): void;
   openSession(sessionId: string, draft?: string): void;
   focusPane(id: string): void;
+  notice?(text: string): void;
+  holdPane?(id: string): boolean;
+  showPane?(id: string, near?: readonly string[]): boolean;
+  paneHeld?(id: string): boolean;
 }
 
 export type PaneDescriptor =
@@ -28,8 +35,12 @@ export type PaneDescriptor =
   | { kind: "file"; path: string }
   | { kind: "browser"; root: string }
   | { kind: "session-tree"; sessionId?: string }
-  | { kind: "memory" }
+  | { kind: "arcs"; arc?: string }
+  | { kind: "arc"; arc: string }
+  | { kind: "memory"; lens?: MemoryLens; note?: string; query?: string }
   | { kind: "mcp" };
+
+export type MemoryLens = "garden" | "note" | "ledger";
 
 export interface Pane {
   readonly id: string;
@@ -40,5 +51,6 @@ export interface Pane {
   handlePaste?(text: string): boolean;
   handleMouse?(local: { x: number; y: number }, event: PointerEvent): boolean;
   settled?(): Promise<void>;
+  revealed?(): void;
   dispose?(): void;
 }

@@ -1,20 +1,63 @@
-import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
-import type { ThemeColorToken } from "./theme.ts";
+import {
+  findNote,
+  gardenRows,
+  ledgerRows,
+  type MemoryRow,
+  type MemoryRowKind,
+  noteRows,
+  queryRows,
+} from "./memory-rows.ts";
+import { isPrintable } from "./picker-keys.ts";
+import { RowCursor } from "./row-cursor.ts";
 
 export type MemoryProvenance = "user" | "agent" | "untrusted";
 export type CuringStage = 0 | 1 | 2 | 3;
-export type RowTone = "dim" | "normal" | "heading" | "alert";
+export type MemoryLens = "garden" | "note" | "ledger";
+export type MemoryLayerKind = "workspace" | "arc" | "user";
+
+export interface PromptBudgetView {
+  budget: number;
+  used: number;
+}
+
+export interface MemoryLayerView {
+  id: string;
+  kind: MemoryLayerKind;
+  label: string;
+  arc?: string;
+  prompt?: PromptBudgetView;
+}
+
+export interface NoteRelationView {
+  name: string;
+  predicate: string;
+  direction: "out" | "in";
+}
 
 export interface MemoryNoteView {
   name: string;
   title: string;
-  scope: string;
+  layer: string;
   provenance: MemoryProvenance;
   curing: CuringStage;
   links: string[];
   aliases: string[];
+  path?: string;
+  file?: string;
+  body?: string;
+  tokens?: number;
+  pinned?: boolean;
+  injected?: boolean;
+  recalls?: number;
+  created?: string;
+  usefulness?: number;
+  confidence?: number;
+  supersedes?: string;
   supersededBy?: string;
+  delivered?: string;
+  distilledFrom?: string;
+  relations?: NoteRelationView[];
 }
 
 export type InboxKind = "staged" | "promotion" | "contradiction" | "proposal";
@@ -26,13 +69,16 @@ export interface InboxItemView {
   provenance: MemoryProvenance;
   created: string;
   detail?: string;
+  arc?: string;
+  note?: string;
 }
 
-export interface RecallEventView {
-  note: string;
-  scope: string;
-  provenance: MemoryProvenance;
-  annotation?: string;
+export interface LedgerEventView {
+  id?: string;
+  at: string;
+  verb: string;
+  subject: string;
+  notes: string[];
 }
 
 export interface GardenerActivityView {
@@ -40,126 +86,137 @@ export interface GardenerActivityView {
   phasesDone?: number;
   phaseCount?: number;
   detail?: string;
+  sweptAt?: string;
 }
 
 export interface MemoryPaneInputs {
-  scopes: string[];
+  layers: MemoryLayerView[];
   notes: MemoryNoteView[];
   inbox: InboxItemView[];
-  recalls: RecallEventView[];
+  ledger: LedgerEventView[];
   gardener?: GardenerActivityView;
+}
+
+export type QueryLeg = "lexical" | "semantic" | "graph";
+export type QuerySource = "lexical" | "hybrid" | "lexical-degraded";
+
+export interface MemoryQueryHit {
+  note: string;
+  layer: string;
+  ranks: Partial<Record<QueryLeg, number>>;
+  boost?: number;
+  superseded: boolean;
+}
+
+export interface MemoryQueryOutcome {
+  hits: MemoryQueryHit[];
+  source: QuerySource;
+  embeddings?: string;
+}
+
+export interface MemoryQueryState {
+  text: string;
+  pending: boolean;
+  outcome?: MemoryQueryOutcome;
+}
+
+export interface MemoryLensState {
+  lens: MemoryLens;
+  note?: string;
+  query?: string;
 }
 
 export interface MemoryPaneEffects {
   refresh(): void;
   approve(id: string): void;
   discard(id: string): void;
+  revert(ledgerId: string): void;
+  openFile(path: string): void;
+  ask(query: string): void;
+  notice?(text: string): void;
 }
 
-export type MemoryRowKind =
-  | "header"
-  | "scope"
-  | "inbox"
-  | "gardener"
-  | "note"
-  | "link"
-  | "backlink"
-  | "recall"
-  | "empty";
-
-export interface MemoryRow {
-  id: string;
-  kind: MemoryRowKind;
-  text: string;
-  tone: RowTone;
-  selectable: boolean;
-  note?: string;
-  inboxId?: string;
+export interface MemoryPaneSeams {
+  focusedArc?: () => string | undefined;
+  now?: () => number;
 }
 
 export const emptyMemoryInputs: MemoryPaneInputs = {
-  scopes: [],
+  layers: [],
   notes: [],
   inbox: [],
-  recalls: [],
+  ledger: [],
 };
 
-export function curingGlyph(stage: CuringStage): string {
-  return densityRamp[stage];
-}
-
-export function provenanceGlyph(provenance: MemoryProvenance): string {
-  return provenanceMarks[provenance];
-}
-
-export function toneToken(tone: RowTone): ThemeColorToken {
-  return toneTokens[tone];
-}
-
-export interface RecallFeedEntry {
-  note: string;
-  scope: string;
-  provenance: MemoryProvenance;
-  cited?: boolean;
-  supersededBy?: string;
-}
-
-export function recallView(entry: RecallFeedEntry): RecallEventView {
-  const annotations = [
-    ...(entry.cited === true ? ["cited"] : []),
-    ...(entry.supersededBy === undefined ? [] : [`superseded by ${entry.supersededBy}`]),
-  ];
-  return {
-    note: entry.note,
-    scope: entry.scope,
-    provenance: entry.provenance,
-    ...(annotations.length > 0 && { annotation: annotations.join(" · ") }),
-  };
-}
-
-export interface GardenerSweepCounts {
-  promoted: number;
-  merged: number;
-  superseded: number;
-  flagged: number;
-}
-
-export function gardenerSweepView(counts: GardenerSweepCounts): GardenerActivityView {
-  const detail = (Object.entries(counts) as [string, number][])
-    .filter(([, count]) => count > 0)
-    .map(([phase, count]) => `${count} ${phase}`)
-    .join(" · ");
-  return { state: "idle", ...(detail !== "" && { detail }) };
-}
-
-export class MemoryPaneModel {
-  cursor = 0;
-  scrollTop = 0;
-
+export class MemoryPaneModel extends RowCursor<MemoryRow> {
   private inputs: MemoryPaneInputs = emptyMemoryInputs;
+  private lens: MemoryLens = "garden";
   private focusedNote: string | undefined;
-  private anchorId: string | undefined;
-  private revision = 0;
-  private cachedRows: { revision: number; rows: MemoryRow[] } | undefined;
+  private ledgerNote: string | undefined;
+  private query: MemoryQueryState | undefined;
+  private bodyWidth = 40;
 
   constructor(
-    private readonly notify: () => void,
+    notify: () => void,
     private readonly effects: MemoryPaneEffects,
-  ) {}
+    private readonly seams: MemoryPaneSeams = {},
+  ) {
+    super(notify);
+  }
 
   setInputs(inputs: MemoryPaneInputs): void {
-    this.anchorId = this.rows()[this.cursor]?.id ?? this.anchorId;
-    this.inputs = inputs;
-    if (this.focusedNote !== undefined && this.findNote(this.focusedNote) === undefined) {
-      this.focusedNote = undefined;
-    }
-    this.touch();
-    this.reanchor();
-    this.notify();
+    this.mutate(() => {
+      this.inputs = inputs;
+      if (this.focusedNote !== undefined && this.findNote(this.focusedNote) === undefined) {
+        this.focusedNote = undefined;
+        if (this.lens === "note") this.lens = "garden";
+      }
+    });
+  }
+
+  setBodyWidth(width: number): void {
+    if (width === this.bodyWidth) return;
+    this.rebuild(() => {
+      this.bodyWidth = width;
+    });
+  }
+
+  setQueryOutcome(query: string, outcome: MemoryQueryOutcome): void {
+    if (this.query === undefined || this.query.text !== query) return;
+    this.mutate(() => {
+      this.query = { text: query, pending: false, outcome };
+    });
+  }
+
+  restore(state: MemoryLensState): void {
+    this.mutate(() => {
+      const note = state.note === undefined ? undefined : this.findNote(state.note)?.name;
+      this.focusedNote = note;
+      this.ledgerNote = state.lens === "ledger" ? note : undefined;
+      this.lens = state.lens === "note" && note === undefined ? "garden" : state.lens;
+      if (state.query !== undefined && state.query !== "") this.beginQuery(state.query);
+    });
+  }
+
+  state(): MemoryLensState {
+    const note = this.lensNote();
+    return {
+      lens: this.lens,
+      ...(note !== undefined && { note }),
+      ...(this.query !== undefined && this.query.text !== "" && { query: this.query.text }),
+    };
+  }
+
+  currentLens(): MemoryLens {
+    return this.lens;
   }
 
   focused(): string | undefined {
     return this.focusedNote;
+  }
+
+  asking(): boolean {
+    return this.query !== undefined;
   }
 
   noteCount(): number {
@@ -170,57 +227,72 @@ export class MemoryPaneModel {
     return this.inputs.inbox.filter((item) => item.kind === "staged").length;
   }
 
-  rows(): MemoryRow[] {
-    if (this.cachedRows?.revision === this.revision) return this.cachedRows.rows;
+  handleKey(chord: Chord, pageRows: number, sequence?: string): boolean {
+    if (this.query !== undefined && this.lens === "garden")
+      return this.handleQueryKey(chord, pageRows, sequence);
+    if (chord.shift || chord.ctrl || chord.meta) return false;
+    if (this.navigate(chord, pageRows)) return true;
+    switch (this.lens) {
+      case "garden":
+        return this.handleGardenKey(chord);
+      case "note":
+        return this.handleNoteKey(chord);
+      case "ledger":
+        return this.handleLedgerKey(chord);
+    }
+  }
+
+  protected buildRows(): MemoryRow[] {
+    const now = (this.seams.now ?? Date.now)();
+    switch (this.lens) {
+      case "garden":
+        return this.query === undefined
+          ? gardenRows(this.inputs, { focusedArc: this.seams.focusedArc?.(), now })
+          : queryRows(this.inputs, this.query, now);
+      case "note":
+        return this.noteLensRows(now);
+      case "ledger":
+        return ledgerRows(this.inputs, { note: this.ledgerNote, now });
+    }
+  }
+
+  protected keyOf(row: MemoryRow): string {
+    return row.id;
+  }
+
+  protected override selectable(row: MemoryRow): boolean {
+    return row.selectable;
+  }
+
+  private noteLensRows(now: number): MemoryRow[] {
     const focus = this.focusedNote === undefined ? undefined : this.findNote(this.focusedNote);
-    const rows = focus === undefined ? this.overviewRows() : this.focusRows(focus);
-    this.cachedRows = { revision: this.revision, rows };
-    return rows;
+    if (focus === undefined)
+      return gardenRows(this.inputs, { focusedArc: this.seams.focusedArc?.(), now });
+    return noteRows(this.inputs, focus, { now, bodyWidth: this.bodyWidth });
   }
 
-  visibleRows(rowCount: number): { index: number; row: MemoryRow }[] {
-    const all = this.rows();
-    this.cursor = clampIndex(this.cursor, all.length);
-    this.scrollTop = clampScroll(this.scrollTop, all.length, rowCount);
-    if (this.cursor < this.scrollTop) this.scrollTop = this.cursor;
-    if (this.cursor >= this.scrollTop + rowCount) this.scrollTop = this.cursor - rowCount + 1;
-    return all
-      .slice(this.scrollTop, this.scrollTop + rowCount)
-      .map((row, offset) => ({ index: this.scrollTop + offset, row }));
-  }
-
-  cursorRow(): MemoryRow | undefined {
-    return this.rows()[clampIndex(this.cursor, this.rows().length)];
-  }
-
-  handleKey(chord: Chord, pageRows: number): boolean {
-    const rows = this.rows();
-    this.cursor = clampIndex(this.cursor, rows.length);
+  private handleGardenKey(chord: Chord): boolean {
     switch (chord.name) {
-      case "j":
-      case "down":
-        return this.moveSelection(1, rows);
-      case "k":
-      case "up":
-        return this.moveSelection(-1, rows);
-      case "pagedown":
-        return this.moveSelection(pageRows, rows);
-      case "pageup":
-        return this.moveSelection(-pageRows, rows);
       case "enter":
       case "return":
-        return this.activate(rows[this.cursor]);
+        return this.drillAtCursor();
+      case "?":
+        return this.mutate(() => this.beginQuery(""));
+      case "tab":
+      case "l":
+        return this.showLedger(undefined);
       case "i":
-        return this.jumpTo("inbox", rows);
+        return this.jumpTo("inbox");
       case "g":
-        return this.jumpTo("note", rows);
+        return this.jumpTo("note");
       case "a":
-        return this.actOnInbox(rows[this.cursor], (id) => this.effects.approve(id));
+        return this.actOnInbox((id) => this.effects.approve(id));
       case "d":
-        return this.actOnInbox(rows[this.cursor], (id) => this.effects.discard(id));
-      case "h":
-      case "escape":
-        return this.leaveFocus();
+        return this.actOnInbox((id) => this.effects.discard(id));
+      case "o":
+        return this.openCursoredFile();
+      case "u":
+        return this.revertCursoredNote();
       case "r":
         this.effects.refresh();
         return true;
@@ -229,354 +301,210 @@ export class MemoryPaneModel {
     }
   }
 
-  private overviewRows(): MemoryRow[] {
-    const { scopes, notes, inbox, recalls } = this.inputs;
-    if (notes.length === 0 && inbox.length === 0 && recalls.length === 0) {
-      return this.calmRows(scopes);
+  private handleNoteKey(chord: Chord): boolean {
+    switch (chord.name) {
+      case "escape":
+      case "h":
+      case "backspace":
+        return this.leaveNote();
+      case "enter":
+      case "return":
+        return this.drillAtCursor();
+      case "tab":
+      case "l":
+        return this.showLedger(this.focusedNote);
+      case "a":
+        return this.actOnInbox((id) => this.effects.approve(id));
+      case "d":
+        return this.actOnInbox((id) => this.effects.discard(id));
+      case "o":
+        return this.openFocusedFile();
+      case "u":
+        return this.revertNote(this.focusedNote);
+      case "r":
+        this.effects.refresh();
+        return true;
+      default:
+        return false;
     }
-    return [
-      ...this.scopeRows(scopes, notes),
-      ...this.inboxRows(inbox),
-      ...this.gardenRows(notes),
-      ...this.recallRows(recalls),
-    ];
   }
 
-  private calmRows(scopes: string[]): MemoryRow[] {
-    const rows: MemoryRow[] = [
-      {
-        id: "calm",
-        kind: "empty",
-        text: "nothing remembered yet",
-        tone: "dim",
-        selectable: false,
-      },
-    ];
-    if (scopes.length > 0) {
-      rows.push({
-        id: "calm-scopes",
-        kind: "empty",
-        text: scopes.join(" · "),
-        tone: "dim",
-        selectable: false,
-      });
+  private handleLedgerKey(chord: Chord): boolean {
+    switch (chord.name) {
+      case "escape":
+      case "backspace":
+        return this.leaveLedger();
+      case "tab":
+        return this.showGarden();
+      case "enter":
+      case "return":
+        return this.drillAtCursor();
+      case "o":
+        return this.openCursoredFile();
+      case "u":
+        return this.revertCursoredEntry();
+      case "r":
+        this.effects.refresh();
+        return true;
+      default:
+        return false;
     }
-    return rows;
   }
 
-  private scopeRows(scopes: string[], notes: MemoryNoteView[]): MemoryRow[] {
-    const names = scopes.length > 0 ? scopes : orderedScopesOf(notes);
-    if (names.length === 0) return [];
-    return [
-      header("scopes"),
-      ...names.map((name) => {
-        const inScope = notes.filter((note) => note.scope === name);
-        const fresh = inScope.filter((note) => isFresh(note.curing)).length;
-        return {
-          id: `scope:${name}`,
-          kind: "scope" as const,
-          text: scopeText(name, inScope.length, fresh),
-          tone: "normal" as const,
-          selectable: false,
-        };
-      }),
-    ];
-  }
-
-  private inboxRows(inbox: InboxItemView[]): MemoryRow[] {
-    if (inbox.length === 0) return [];
-    const ordered = [...inbox].sort((a, b) => a.created.localeCompare(b.created));
-    return [
-      header(`inbox ░${inbox.length}`),
-      ...ordered.map((item) => ({
-        id: `inbox:${item.id}`,
-        kind: "inbox" as const,
-        text: inboxText(item),
-        tone: "normal" as const,
-        selectable: true,
-        inboxId: item.id,
-      })),
-    ];
-  }
-
-  private gardenRows(notes: MemoryNoteView[]): MemoryRow[] {
-    if (notes.length === 0) return [];
-    return [
-      header("garden"),
-      ...this.gardenerRow(),
-      ...notes.map((note) => this.noteRow(note, "note", `note:${note.name}`, 0)),
-    ];
-  }
-
-  private gardenerRow(): MemoryRow[] {
-    const activity = this.inputs.gardener;
-    if (activity === undefined) return [];
-    return [
-      {
-        id: "gardener",
-        kind: "gardener",
-        text: gardenerText(activity),
-        tone: activity.state === "failed" ? "alert" : "dim",
-        selectable: false,
-      },
-    ];
-  }
-
-  private recallRows(recalls: RecallEventView[]): MemoryRow[] {
-    if (recalls.length === 0) return [];
-    return [
-      header("recalls"),
-      ...recalls.slice(-recallLimit).map((recall, at) => ({
-        id: `recall:${at}:${recall.note}`,
-        kind: "recall" as const,
-        text: recallText(recall),
-        tone: "normal" as const,
-        selectable: true,
-        note: recall.note,
-      })),
-    ];
-  }
-
-  private focusRows(focus: MemoryNoteView): MemoryRow[] {
-    return [
-      header(`note · ${focus.title}`),
-      this.noteRow(focus, "note", `focus:${focus.name}`, 0),
-      ...this.linksOutRows(focus),
-      ...this.linksInRows(focus),
-    ];
-  }
-
-  private linksOutRows(focus: MemoryNoteView): MemoryRow[] {
-    const rows: MemoryRow[] = [header("links out")];
-    for (const link of focus.links) {
-      const target = this.findNote(link);
-      if (target === undefined) {
-        rows.push(deadLinkRow(`out:${link}`, link, 1));
-        continue;
-      }
-      rows.push(this.noteRow(target, "link", `out:${target.name}`, 1));
-      for (const hop of target.links) {
-        if (matchesNote(focus, hop)) continue;
-        const second = this.findNote(hop);
-        if (second === undefined) rows.push(deadLinkRow(`out:${target.name}:${hop}`, hop, 2));
-        else rows.push(this.noteRow(second, "link", `out:${target.name}:${second.name}`, 2));
-      }
+  private handleQueryKey(chord: Chord, pageRows: number, sequence: string | undefined): boolean {
+    const query = this.query;
+    if (query === undefined) return false;
+    switch (chord.name) {
+      case "escape":
+        return this.mutate(() => {
+          this.query = undefined;
+        });
+      case "enter":
+      case "return":
+        return this.drillAtCursor();
+      case "tab":
+        this.query = undefined;
+        return this.showLedger(undefined);
+      case "up":
+      case "down":
+      case "pageup":
+      case "pagedown":
+        return this.navigate(chord, pageRows);
+      case "backspace":
+        return this.mutate(() => this.beginQuery(query.text.slice(0, -1)));
+      default:
+        if (!isPrintable(chord, sequence)) return false;
+        return this.mutate(() => this.beginQuery(query.text + sequence));
     }
-    const linksIn = this.backlinksOf(focus);
-    if (rows.length === 1 && linksIn.length === 0) {
-      return [
-        { id: "no-links", kind: "empty", text: "no links yet", tone: "dim", selectable: false },
-      ];
+  }
+
+  private beginQuery(text: string): void {
+    this.query = { text, pending: text !== "" };
+    if (text !== "") this.effects.ask(text);
+  }
+
+  private drillAtCursor(): boolean {
+    const row = this.cursorRow();
+    const reference = row?.note;
+    const focus = reference === undefined ? undefined : this.findNote(reference, row?.layer);
+    if (focus === undefined) return true;
+    return this.mutate(() => {
+      this.focusedNote = focus.name;
+      this.lens = "note";
+    }, `focus:${focus.name}`);
+  }
+
+  private lensNote(): string | undefined {
+    switch (this.lens) {
+      case "garden":
+        return undefined;
+      case "note":
+        return this.focusedNote;
+      case "ledger":
+        return this.ledgerNote;
     }
-    return rows.length === 1 ? [] : rows;
   }
 
-  private linksInRows(focus: MemoryNoteView): MemoryRow[] {
-    const sources = this.backlinksOf(focus);
-    if (sources.length === 0) return [];
-    return [
-      header("links in"),
-      ...sources.map((source) => this.noteRow(source, "backlink", `in:${source.name}`, 1)),
-    ];
-  }
-
-  private backlinksOf(focus: MemoryNoteView): MemoryNoteView[] {
-    return this.inputs.notes.filter(
-      (note) => note.name !== focus.name && note.links.some((link) => matchesNote(focus, link)),
-    );
-  }
-
-  private noteRow(
-    note: MemoryNoteView,
-    kind: MemoryRowKind,
-    id: string,
-    indent: number,
-  ): MemoryRow {
-    return {
-      id,
-      kind,
-      text: `${"  ".repeat(indent)}${noteText(note)}`,
-      tone: noteTone(note),
-      selectable: true,
-      note: note.name,
-    };
-  }
-
-  private findNote(reference: string): MemoryNoteView | undefined {
-    return this.inputs.notes.find((note) => matchesNote(note, reference));
-  }
-
-  private moveSelection(delta: number, rows: MemoryRow[]): boolean {
-    const selectable = rows
-      .map((row, index) => ({ row, index }))
-      .filter(({ row }) => row.selectable);
-    if (selectable.length === 0) return true;
-    const at = selectable.findIndex(({ index }) => index >= this.cursor);
-    const current = at === -1 ? selectable.length - 1 : at;
-    const next = clampIndex(current + delta, selectable.length);
-    this.cursor = selectable[next]?.index ?? this.cursor;
-    this.anchorId = rows[this.cursor]?.id;
-    this.notify();
-    return true;
-  }
-
-  private activate(row: MemoryRow | undefined): boolean {
-    if (row?.note === undefined) return true;
-    if (this.findNote(row.note) === undefined) return true;
-    this.anchorId = undefined;
-    this.focusedNote = row.note;
-    this.cursor = 0;
-    this.scrollTop = 0;
-    this.touch();
-    this.settleOnSelectable();
-    this.notify();
-    return true;
-  }
-
-  private leaveFocus(): boolean {
-    if (this.focusedNote === undefined) return true;
+  private leaveNote(): boolean {
     const returning = this.focusedNote;
-    this.focusedNote = undefined;
-    this.touch();
-    this.anchorId = `note:${returning}`;
-    this.reanchor();
-    this.notify();
+    this.mutate(() => {
+      this.lens = "garden";
+    });
+    if (returning !== undefined) this.settleOn((row) => row.selectable && row.note === returning);
     return true;
   }
 
-  private jumpTo(kind: MemoryRowKind, rows: MemoryRow[]): boolean {
-    const at = rows.findIndex((row) => row.kind === kind && row.selectable);
-    if (at === -1) return true;
-    this.cursor = at;
-    this.anchorId = rows[at]?.id;
-    this.notify();
-    return true;
+  private showLedger(note: string | undefined): boolean {
+    this.mutate(() => {
+      this.ledgerNote = note;
+      this.lens = "ledger";
+    });
+    return this.jumpTo("ledger");
   }
 
-  private actOnInbox(row: MemoryRow | undefined, act: (id: string) => void): boolean {
-    if (row?.inboxId === undefined) return true;
-    act(row.inboxId);
-    return true;
-  }
-
-  private settleOnSelectable(): void {
-    const rows = this.rows();
-    const at = rows.findIndex((row) => row.selectable);
-    this.cursor = at === -1 ? 0 : at;
-  }
-
-  private touch(): void {
-    this.revision += 1;
-    this.cachedRows = undefined;
-  }
-
-  private reanchor(): void {
-    const rows = this.rows();
-    if (rows.length === 0) {
-      this.cursor = 0;
-      return;
+  private leaveLedger(): boolean {
+    const returning = this.ledgerNote;
+    if (returning !== undefined && this.findNote(returning) !== undefined) {
+      return this.mutate(() => {
+        this.focusedNote = returning;
+        this.ledgerNote = undefined;
+        this.lens = "note";
+      }, `focus:${returning}`);
     }
-    const found = rows.findIndex((row) => row.id === this.anchorId);
-    this.cursor = found >= 0 ? found : clampIndex(this.cursor, rows.length);
-    if (!(rows[this.cursor]?.selectable ?? false)) this.settleOnSelectable();
-    this.anchorId = rows[this.cursor]?.id ?? this.anchorId;
+    return this.showGarden();
   }
-}
 
-const densityRamp = ["░", "▒", "▓", "█"] as const;
-const provenanceMarks: Record<MemoryProvenance, string> = {
-  user: "█",
-  agent: "▓",
-  untrusted: "░",
-};
-const toneTokens: Record<RowTone, ThemeColorToken> = {
-  dim: "textDim",
-  normal: "text",
-  heading: "accentSoft",
-  alert: "error",
-};
-const inboxKindWords: Record<InboxKind, string> = {
-  staged: "staged",
-  promotion: "promote",
-  contradiction: "conflict",
-  proposal: "proposal",
-};
-const tileFill = ["▌", "▌▀", "▌▀▗", "█"] as const;
-const recallLimit = 8;
-
-function header(text: string): MemoryRow {
-  return { id: `header:${text}`, kind: "header", text, tone: "heading", selectable: false };
-}
-
-function isFresh(stage: CuringStage): boolean {
-  return stage <= 1;
-}
-
-function scopeText(name: string, count: number, fresh: number): string {
-  const notes = `${count} ${count === 1 ? "note" : "notes"}`;
-  return fresh === 0 ? `${name} · ${notes}` : `${name} · ${notes} · ${fresh} fresh`;
-}
-
-function inboxText(item: InboxItemView): string {
-  const detail = item.detail === undefined ? "" : ` · ${item.detail}`;
-  return `${provenanceGlyph(item.provenance)} ${inboxKindWords[item.kind]} · ${item.title}${detail}`;
-}
-
-function noteText(note: MemoryNoteView): string {
-  const marks = `${curingGlyph(note.curing)}${provenanceGlyph(note.provenance)}`;
-  const title = isFresh(note.curing) ? `~${note.title}` : note.title;
-  const superseded = note.supersededBy === undefined ? "" : ` → ${note.supersededBy}`;
-  return `${marks} ${title}${superseded}`;
-}
-
-function noteTone(note: MemoryNoteView): RowTone {
-  if (note.supersededBy !== undefined) return "dim";
-  return isFresh(note.curing) ? "dim" : "normal";
-}
-
-function gardenerText(activity: GardenerActivityView): string {
-  const detail = activity.detail === undefined ? "" : ` · ${activity.detail}`;
-  if (activity.state === "failed") return `gardener ▛${detail}`;
-  if (activity.state === "idle") return `gardener █ idle${detail}`;
-  return `gardener ${tileFillGlyph(activity)}${detail}`;
-}
-
-function tileFillGlyph(activity: GardenerActivityView): string {
-  const { phasesDone, phaseCount } = activity;
-  if (phasesDone === undefined || phaseCount === undefined || phaseCount === 0) {
-    return tileFill[0];
+  private showGarden(): boolean {
+    return this.mutate(() => {
+      this.ledgerNote = undefined;
+      this.lens = "garden";
+    });
   }
-  const step = Math.floor((phasesDone / phaseCount) * (tileFill.length - 1));
-  return tileFill[clampIndex(step, tileFill.length)] ?? tileFill[0];
-}
 
-function recallText(recall: RecallEventView): string {
-  const annotation = recall.annotation === undefined ? "" : ` · ${recall.annotation}`;
-  return `${provenanceGlyph(recall.provenance)} ${recall.note} · ${recall.scope}${annotation}`;
-}
+  private jumpTo(kind: MemoryRowKind): boolean {
+    return this.settleOn((row) => row.kind === kind && row.selectable);
+  }
 
-function deadLinkRow(id: string, link: string, indent: number): MemoryRow {
-  return {
-    id,
-    kind: "link",
-    text: `${"  ".repeat(indent)}? ${link}`,
-    tone: "dim",
-    selectable: false,
-  };
-}
+  private settleOn(wanted: (row: MemoryRow) => boolean): true {
+    const at = this.rows().findIndex(wanted);
+    if (at !== -1) this.moveTo(at);
+    return true;
+  }
 
-function matchesNote(note: MemoryNoteView, reference: string): boolean {
-  const key = reference.trim().toLowerCase();
-  if (key === "") return false;
-  return (
-    note.name.toLowerCase() === key ||
-    note.title.toLowerCase() === key ||
-    note.aliases.some((alias) => alias.toLowerCase() === key)
-  );
-}
+  private actOnInbox(act: (id: string) => void): boolean {
+    const inboxId = this.cursorRow()?.inboxId;
+    if (inboxId !== undefined) act(inboxId);
+    return true;
+  }
 
-function orderedScopesOf(notes: MemoryNoteView[]): string[] {
-  const scopes: string[] = [];
-  for (const note of notes) if (!scopes.includes(note.scope)) scopes.push(note.scope);
-  return scopes;
+  private openCursoredFile(): boolean {
+    const row = this.cursorRow();
+    const file = row?.file ?? this.fileOf(row?.note);
+    if (file === undefined) this.effects.notice?.("nothing to open here");
+    else this.effects.openFile(file);
+    return true;
+  }
+
+  private openFocusedFile(): boolean {
+    const file = this.fileOf(this.focusedNote);
+    if (file === undefined) this.effects.notice?.("this note has no file to open");
+    else this.effects.openFile(file);
+    return true;
+  }
+
+  private revertCursoredNote(): boolean {
+    return this.revertNote(this.cursorRow()?.note);
+  }
+
+  private revertNote(reference: string | undefined): boolean {
+    const note = reference === undefined ? undefined : this.findNote(reference);
+    if (note === undefined) {
+      this.effects.notice?.("select a note to revert its last change");
+      return true;
+    }
+    const entry = this.inputs.ledger.find(
+      (event) => event.id !== undefined && event.notes.includes(note.name),
+    );
+    if (entry?.id === undefined) {
+      this.effects.notice?.(`no change to revert for ${note.title} this run`);
+      return true;
+    }
+    this.effects.revert(entry.id);
+    return true;
+  }
+
+  private revertCursoredEntry(): boolean {
+    const id = this.cursorRow()?.ledgerId;
+    if (id === undefined) this.effects.notice?.("only this run's writes can be reverted");
+    else this.effects.revert(id);
+    return true;
+  }
+
+  private fileOf(reference: string | undefined): string | undefined {
+    return reference === undefined ? undefined : this.findNote(reference)?.file;
+  }
+
+  private findNote(reference: string, layer?: string): MemoryNoteView | undefined {
+    return findNote(this.inputs.notes, reference, layer);
+  }
 }

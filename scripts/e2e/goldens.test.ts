@@ -1,20 +1,31 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { goldenPath, verifyGolden, writeGolden } from "./goldens.ts";
+import {
+  committedGoldenRoot,
+  goldenPath,
+  goldenTree,
+  pruneGoldens,
+  verifyGolden,
+  writeGolden,
+} from "./goldens.ts";
 
 describe("goldenPath", () => {
-  it("nests goldens by scenario under the golden root", () => {
-    expect(goldenPath("/root", "cold-start", "01-no-provider-guidance")).toBe(
-      join("/root", "cold-start", "01-no-provider-guidance.txt"),
+  it("keys goldens by scenario and kebab-cased step name, never by capture order", () => {
+    expect(goldenPath("/root", "cold-start", "No Provider Guidance")).toBe(
+      join("/root", "cold-start", "no-provider-guidance.txt"),
     );
+  });
+
+  it("locates the committed golden tree beside the harness", () => {
+    expect(committedGoldenRoot).toBe(join(import.meta.dirname, "goldens"));
   });
 });
 
 describe("golden round-trip", () => {
   let root: string;
-  const path = () => goldenPath(root, "demo", "01-step");
+  const path = () => goldenPath(root, "demo", "step");
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "keywork-goldens-"));
@@ -50,5 +61,44 @@ describe("golden round-trip", () => {
   it("tolerates CRLF creeping into either side", () => {
     writeGolden(path(), "alpha\r\nbeta\r\n");
     expect(() => verifyGolden(path(), "alpha\nbeta\n")).not.toThrow();
+  });
+});
+
+describe("golden tree maintenance", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "keywork-goldens-"));
+    writeGolden(goldenPath(root, "discovery", "palette"), "palette\n");
+    writeGolden(goldenPath(root, "discovery", "help-overlay"), "help\n");
+    writeGolden(goldenPath(root, "discovery", "01-palette"), "stale\n");
+    writeGolden(goldenPath(root, "cold-start", "no-provider-guidance"), "boot\n");
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("lists the committed steps per scenario", () => {
+    expect(goldenTree(root)).toEqual({
+      "cold-start": ["no-provider-guidance"],
+      discovery: ["01-palette", "help-overlay", "palette"],
+    });
+  });
+
+  it("returns an empty tree for a root that does not exist", () => {
+    expect(goldenTree(join(root, "missing"))).toEqual({});
+  });
+
+  it("prunes goldens no capture of the scenario produced and leaves other scenarios alone", () => {
+    const removed = pruneGoldens(root, "discovery", ["Palette", "help-overlay"]);
+    expect(removed).toEqual(["01-palette"]);
+    expect(existsSync(goldenPath(root, "discovery", "01-palette"))).toBe(false);
+    expect(existsSync(goldenPath(root, "discovery", "palette"))).toBe(true);
+    expect(existsSync(goldenPath(root, "cold-start", "no-provider-guidance"))).toBe(true);
+  });
+
+  it("prunes nothing for a scenario without a golden directory", () => {
+    expect(pruneGoldens(root, "tiling-tour", ["boot"])).toEqual([]);
   });
 });

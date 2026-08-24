@@ -1,63 +1,85 @@
 import type { Agent, ToolCallPart } from "@keywork/engine";
+import { Box, bg, fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import {
-  Box,
-  bg,
-  bold,
-  fg,
-  italic,
-  StyledText,
-  Text,
-  type TextChunk,
-  underline,
-} from "@opentui/core";
+  density,
+  type GlyphSupport,
+  resolveMark,
+  resolveRamp,
+  type TieredRamp,
+  tile,
+} from "./capability.ts";
+import { rampColor } from "./chroma.ts";
+import { contextGauge, gaugeStyleFor, type InstrumentTier } from "./context-gauge.ts";
 import {
   type CommandsPort,
+  type CompactionHook,
   ConversationModel,
   type ConversationPorts,
+  type SettledOutcome,
   type Titler,
-  type TranscriptLine,
 } from "./conversation-model.ts";
 import type { DiffLine } from "./diff-render.ts";
 import type { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
-import type { MarkdownSpan, MarkdownTone } from "./markdown.ts";
+import type { MarkdownSpan } from "./markdown.ts";
+import { markdownChunk } from "./markdown-ink.ts";
+import { assumedGlyphs, type PageMarks, pageMarks } from "./marks.ts";
+import { headline } from "./masthead.ts";
 import { type Animator, inkAt } from "./motion.ts";
-import { type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
+import { type PageGrammar, type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
 import { titleBar } from "./title-bar.ts";
+import type { TranscriptLine } from "./transcript-view.ts";
 import { trayBox, trayRows } from "./tray.ts";
+import { clip, padEnd, width } from "./width.ts";
 
 const askDiffRows = 10;
-const pulseRamp = ["▓", "█"] as const;
-const workRamp = ["░", "▒", "▓"] as const;
-const drainRamp = ["░", "▒", "▓", "█"] as const;
+const mastheadStatusRows = 1;
+
+const lifecycleRamps = {
+  pulse: { tier1: ["▓", "█"], tier0: ["+", "#"] },
+  work: { tier1: ["░", "▒", "▓"], tier0: [".", ":", "+"] },
+  drain: density,
+} satisfies Record<string, TieredRamp>;
+
+interface LifecycleGlyphs {
+  readonly pulse: readonly string[];
+  readonly work: readonly string[];
+  readonly drain: readonly string[];
+  readonly finished: string;
+  readonly failed: string;
+}
 
 export interface ConversationPaneOptions {
   ports?: ConversationPorts;
   initialDraft?: string;
   page?: PageThresholds;
+  glyphs?: GlyphSupport;
   animator?: Animator;
   siblingTitles?: () => readonly string[];
 }
 
 export class ConversationPane implements Pane {
-  sessionId: string | undefined;
-  private readonly model: ConversationModel;
+  readonly model: ConversationModel;
   private readonly pageThresholds: PageThresholds;
+  private readonly glyphs: GlyphSupport;
+  private readonly marks: PageMarks;
+  private readonly lifecycle: LifecycleGlyphs;
   private closed = false;
   private lastLines: readonly TranscriptLine[] = [];
   private lastMaxRows = 0;
+  private lastFocused = false;
 
   private readonly animator: Animator | undefined;
   private readonly siblingTitles: (() => readonly string[]) | undefined;
-  private wasBusy = false;
-  private unseen: "finished" | "failed" | undefined;
+  private unseen: SettledOutcome | undefined;
   private pulseInk = 1;
   private pulsing = false;
   private drainInk: number | undefined;
+  private arrivalInk: number | undefined;
 
   constructor(
     readonly id: string,
@@ -69,9 +91,31 @@ export class ConversationPane implements Pane {
   ) {
     this.model = new ConversationModel(agent, notify, titler, commands, options?.ports);
     this.pageThresholds = options?.page ?? pageTierThresholds;
+    this.glyphs = options?.glyphs ?? assumedGlyphs;
+    this.marks = pageMarks(this.glyphs);
+    this.lifecycle = lifecycleGlyphs(this.glyphs);
     this.animator = options?.animator;
     this.siblingTitles = options?.siblingTitles;
-    if (options?.initialDraft !== undefined) this.model.buffer.load(options.initialDraft);
+    this.model.onSettled((outcome) => {
+      if (!this.lastFocused) this.unseen = outcome;
+    });
+    if (options?.initialDraft !== undefined) this.model.editor.load(options.initialDraft);
+  }
+
+  get sessionId(): string | undefined {
+    return this.model.ledger.sessionId;
+  }
+
+  set sessionId(id: string | undefined) {
+    this.model.ledger.sessionId = id;
+  }
+
+  get arc(): string | undefined {
+    return this.model.ledger.arc;
+  }
+
+  set arc(slug: string | undefined) {
+    this.model.ledger.arc = slug;
   }
 
   describe(): PaneDescriptor {
@@ -89,7 +133,10 @@ export class ConversationPane implements Pane {
   }
 
   handleKey(chord: Chord, sequence: string | undefined): boolean {
-    return this.model.handleKey(chord, sequence);
+    return this.model.handleKey(chord, sequence, {
+      transcriptRows: Math.max(1, this.lastMaxRows),
+      askRows: askDiffRows,
+    });
   }
 
   handlePaste(text: string): boolean {
@@ -120,12 +167,33 @@ export class ConversationPane implements Pane {
     this.model.bindAfterTurn(hook);
   }
 
+  bindCompaction(hook: CompactionHook): void {
+    this.model.bindCompaction(hook);
+  }
+
+  postNotice(text: string): void {
+    this.model.postNotice(text);
+  }
+
+  telemetry(instruments: InstrumentTier = "calm"): string {
+    const reading = this.model.contextReading();
+    const gauge =
+      reading === undefined
+        ? ""
+        : contextGauge(reading, { style: gaugeStyleFor(instruments), glyphs: this.glyphs });
+    return [gauge, this.model.usageSummary()].filter((part) => part !== "").join(" · ");
+  }
+
   submitPrompt(text: string): void {
     this.model.submitText(text);
   }
 
   adoptTitle(title: string): void {
     this.model.adoptTitle(title);
+  }
+
+  adoptPromptId(entryId: string): void {
+    this.model.adoptPromptId(entryId);
   }
 
   titled(): string | undefined {
@@ -146,11 +214,35 @@ export class ConversationPane implements Pane {
 
   dispose(): void {
     this.closed = true;
+    this.animator?.settleRegion(`stamp:${this.id}`);
+    this.animator?.settleRegion(`pulse:${this.id}`);
+    this.animator?.settleRegion(`arrive:${this.id}`);
     this.model.dispose();
   }
 
   disposed(): boolean {
     return this.closed;
+  }
+
+  awaitingYou(): boolean {
+    return this.model.pendingAsk !== undefined;
+  }
+
+  revealed(): void {
+    const animator = this.animator;
+    if (animator === undefined) return;
+    this.arrivalInk = 0;
+    animator.play({
+      region: `arrive:${this.id}`,
+      tempo: "quick",
+      shape: "arrival",
+      apply: (ink) => {
+        this.arrivalInk = ink;
+      },
+      onSettled: () => {
+        this.arrivalInk = undefined;
+      },
+    });
   }
 
   async settled(): Promise<void> {
@@ -163,29 +255,38 @@ export class ConversationPane implements Pane {
     }
   }
 
+  view(context: PaneContext): PaneView {
+    this.lastFocused = context.focused;
+    this.syncStamp(context.focused);
+    const page = resolvePage(context.width, this.pageThresholds);
+    const framed = this.framedThroughArrival(context);
+    return this.wearsMasthead(page) ? this.mastheadView(framed) : this.transcriptView(framed, page);
+  }
+
+  private framedThroughArrival(context: PaneContext): PaneContext {
+    const ink = this.arrivalInk;
+    if (ink === undefined || context.borderColor === undefined) return context;
+    const risen = rampColor([context.theme.border, context.borderColor], ink);
+    return { ...context, borderColor: risen };
+  }
+
   private composedTitle(context: PaneContext): string {
-    this.observeLifecycle(context);
     return titleBar(
       {
         name: this.model.title ?? this.id,
         stamp: this.stampGlyph(),
-        telemetry: this.model.usageSummary() || undefined,
+        arc: this.arc,
+        telemetry: this.telemetry(context.instruments) || undefined,
         siblings: this.siblingTitles?.(),
       },
       context.width,
       context.focused,
+      this.pageThresholds,
     );
   }
 
-  private observeLifecycle(context: PaneContext): void {
-    const settledNow = this.wasBusy && !this.model.busy;
-    if (settledNow && !context.focused) {
-      this.unseen = this.model.entries.at(-1)?.kind === "error" ? "failed" : "finished";
-    }
-    this.wasBusy = this.model.busy;
-    if (this.unseen !== undefined && context.focused && this.drainInk === undefined) {
-      this.beginDrain();
-    }
+  private syncStamp(focused: boolean): void {
+    if (this.unseen !== undefined && focused && this.drainInk === undefined) this.beginDrain();
     this.syncPulse();
   }
 
@@ -234,42 +335,82 @@ export class ConversationPane implements Pane {
   }
 
   private stampGlyph(): string | undefined {
-    if (this.model.pendingAsk !== undefined) return inkAt(pulseRamp, this.pulseInk);
-    if (this.model.busy) return workRamp[this.model.activity % workRamp.length];
-    if (this.drainInk !== undefined) return inkAt(drainRamp, this.drainInk);
-    if (this.unseen === "failed") return "▛";
-    if (this.unseen === "finished") return "█";
+    const glyphs = this.lifecycle;
+    if (this.model.pendingAsk !== undefined) return inkAt(glyphs.pulse, this.pulseInk);
+    if (this.model.busy) return glyphs.work[this.model.activity % glyphs.work.length];
+    if (this.drainInk !== undefined) return inkAt(glyphs.drain, this.drainInk);
+    if (this.unseen === "failed") return glyphs.failed;
+    if (this.unseen === "finished") return glyphs.finished;
     return undefined;
   }
 
-  view(context: PaneContext): PaneView {
+  private wearsMasthead(page: PageGrammar): boolean {
+    return (
+      page.masthead &&
+      this.model.editor.isEmpty() &&
+      this.model.pendingAsk === undefined &&
+      !this.model.backtracking() &&
+      !this.model.disclosing()
+    );
+  }
+
+  private mastheadView(context: PaneContext): PaneView {
     const { theme, focused, width, height } = context;
     const innerWidth = paneContentWidth(width);
-    const page = resolvePage(width, this.pageThresholds);
+    const prompt = promptLines(this.model.editor.buffer, focused);
+    const head = headline(this.model.title ?? this.id, {
+      width: innerWidth,
+      rows: Math.max(0, paneContentHeight(height) - mastheadStatusRows - prompt.length),
+      glyphs: this.glyphs,
+      siblings: this.siblingTitles?.(),
+    });
+    this.lastLines = [];
+    this.lastMaxRows = 0;
+    return paneChrome(
+      context,
+      this.composedTitle(context),
+      Box(
+        { flexGrow: 1, flexDirection: "column", overflow: "hidden" },
+        ...head.lines.map((line) => Text({ content: line || " ", fg: theme.text })),
+        Text({
+          content: clip(this.mastheadStatus(context.instruments), innerWidth),
+          fg: theme.textMid,
+        }),
+      ),
+      ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
+    );
+  }
+
+  private mastheadStatus(instruments: PaneContext["instruments"]): string {
+    const state = this.model.busy
+      ? "working"
+      : this.model.entries.at(-1)?.kind === "error"
+        ? "failed"
+        : "idle";
+    const telemetry = this.telemetry(instruments);
+    return telemetry === "" ? state : `${state} · ${telemetry}`;
+  }
+
+  private transcriptView(context: PaneContext, page: PageGrammar): PaneView {
+    const { theme, focused, width, height } = context;
+    const innerWidth = paneContentWidth(width);
     const suggestions = focused ? this.model.suggestions() : [];
-    const prompt = promptLines(this.model.buffer, focused);
+    const prompt = promptLines(this.model.editor.buffer, focused);
     const queued = this.model.queued();
     const ask = this.model.pendingAsk;
     const diffRows = ask?.diff === undefined ? [] : this.askDiffRows(theme);
-    const backtrackHint = this.model.backtracking()
-      ? [
-          Text({
-            content: "backtrack · ↑ older · ↓ newer · enter edit & fork · esc cancel",
-            fg: theme.accent,
-          }),
-        ]
-      : [];
+    const keyHint = this.keyHint(theme);
     const trayChromeRows = 2;
     const reservedRows =
       (suggestions.length === 0 ? 0 : suggestions.length + trayChromeRows) +
       prompt.length +
       queued.length +
       diffRows.length +
-      backtrackHint.length +
+      keyHint.length +
       (ask === undefined ? 0 : 1) +
       (this.model.scrollBack > 0 ? 1 : 0);
     const maxRows = Math.max(0, paneContentHeight(height) - reservedRows);
-    const lines = this.model.visibleTranscript(innerWidth, maxRows, page);
+    const lines = this.model.visibleTranscript(innerWidth, maxRows, page, this.marks);
     this.lastLines = lines;
     this.lastMaxRows = maxRows;
     const scrollBack = this.model.scrollBack;
@@ -283,7 +424,7 @@ export class ConversationPane implements Pane {
       ...(scrollBack > 0 && !this.model.backtracking()
         ? [
             Text({
-              content: `— ↓ ${scrollBack} more · esc returns to live —`,
+              content: `↓ ${scrollBack} more · esc returns to live`,
               fg: theme.textDim,
             }),
           ]
@@ -301,9 +442,29 @@ export class ConversationPane implements Pane {
           ]),
       ...diffRows,
       ...(ask === undefined ? [] : [askRow(ask.summary, innerWidth, theme)]),
-      ...backtrackHint,
+      ...keyHint,
       ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
     );
+  }
+
+  private keyHint(theme: Theme) {
+    if (this.model.backtracking()) {
+      return [
+        Text({
+          content: "backtrack · ↑ older · ↓ newer · enter edit & fork · esc cancel",
+          fg: theme.accent,
+        }),
+      ];
+    }
+    if (this.model.disclosing()) {
+      return [
+        Text({
+          content: "disclose · tab toggles · shift+tab older · esc done",
+          fg: theme.accent,
+        }),
+      ];
+    }
+    return [];
   }
 
   private askDiffRows(theme: Theme) {
@@ -318,23 +479,22 @@ export class ConversationPane implements Pane {
 
 const askControls = "  [y] allow  [a] always  [n] deny";
 
-function askRow(summary: string, width: number, theme: Theme) {
-  const room = Math.max(0, width - askControls.length - 2);
-  const clipped = summary.length > room ? `${summary.slice(0, Math.max(0, room - 1))}…` : summary;
-  return Text({ content: `? ${clipped}${askControls}`, fg: theme.accent });
+function askRow(summary: string, paneWidth: number, theme: Theme) {
+  const room = Math.max(0, paneWidth - askControls.length - 2);
+  return Text({ content: `? ${clip(summary, room)}${askControls}`, fg: theme.accent });
 }
 
-function transcriptRow(line: TranscriptLine, width: number, theme: Theme) {
+function transcriptRow(line: TranscriptLine, paneWidth: number, theme: Theme) {
   const stamp = line.stamp ?? "";
   if (line.selected === true) {
     return Text({
-      content: `${stamp}${line.text || " "}`.padEnd(width),
+      content: padEnd(`${stamp}${line.text || " "}`, paneWidth),
       fg: theme.background,
       bg: theme.accent,
     });
   }
   const lead = stamp === "" ? [] : [fg(stampColor(line, theme))(stamp)];
-  const bodyWidth = width - Array.from(stamp).length;
+  const bodyWidth = paneWidth - width(stamp);
   if (line.spans !== undefined) {
     return styledRow(lead, line.spans, line.panel === true, bodyWidth, theme);
   }
@@ -363,53 +523,27 @@ function styledRow(
   lead: TextChunk[],
   spans: MarkdownSpan[],
   panel: boolean,
-  width: number,
+  bodyWidth: number,
   theme: Theme,
 ) {
   if (lead.length === 0 && spans.length === 0) return Text({ content: " " });
-  const chunks = [...lead, ...spans.map((span) => spanChunk(span, theme, panel))];
+  const chunks = [...lead, ...spans.map((span) => markdownChunk(span, theme, panel))];
   if (panel) {
-    const filled = spans.reduce((total, span) => total + Array.from(span.text).length, 0);
-    if (filled < width) chunks.push(bg(theme.panel)(" ".repeat(width - filled)));
+    const filled = spans.reduce((total, span) => total + width(span.text), 0);
+    if (filled < bodyWidth) chunks.push(bg(theme.panel)(" ".repeat(bodyWidth - filled)));
   }
   return Text({ content: new StyledText(chunks) });
 }
 
-function spanChunk(span: MarkdownSpan, theme: Theme, panel: boolean): TextChunk {
-  let chunk = fg(spanColor(span.tone, theme))(span.text);
-  if (span.bold === true) chunk = bold(chunk);
-  if (span.italic === true) chunk = italic(chunk);
-  if (span.tone === "link") chunk = underline(chunk);
-  if (span.tone === "code") chunk = bg(theme.panelLift)(chunk);
-  if (panel) chunk = bg(theme.panel)(chunk);
-  return chunk;
-}
-
-function spanColor(tone: MarkdownTone, theme: Theme): string {
-  switch (tone) {
-    case "body":
-    case "code":
-    case "fence":
-      return theme.text;
-    case "link":
-    case "heading":
-    case "headingMark":
-    case "listMarker":
-      return theme.accent;
-    case "linkUrl":
-      return theme.textMid;
-    case "fenceRail":
-      return theme.accentSoft;
-    case "rule":
-    case "fenceTag":
-      return theme.textDim;
-    case "meta":
-      return theme.textMid;
-    case "ok":
-      return theme.success;
-    case "bad":
-      return theme.error;
-  }
+function lifecycleGlyphs(glyphs: GlyphSupport): LifecycleGlyphs {
+  const drain = resolveRamp(lifecycleRamps.drain, glyphs);
+  return {
+    pulse: resolveRamp(lifecycleRamps.pulse, glyphs),
+    work: resolveRamp(lifecycleRamps.work, glyphs),
+    drain,
+    finished: drain.at(-1) ?? "#",
+    failed: resolveMark(tile.failed, glyphs),
+  };
 }
 
 function diffRow(line: DiffLine, theme: Theme) {

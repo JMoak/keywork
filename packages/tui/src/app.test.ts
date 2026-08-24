@@ -1,271 +1,177 @@
-import { Agent, type Message, MockProvider, textMessage, textTurn } from "@keywork/engine";
+import { Agent, MockProvider, toolCallTurn } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import {
-  attachOnFork,
-  bindSessionLifecycle,
-  crashLogFile,
-  discardFrame,
-  doctorCommand,
-  paneSessionIndex,
-  pointerPlaneId,
-  type SessionAttachment,
-  type SessionPort,
-  startFreshSession,
-} from "./app.ts";
 import { ConversationPane } from "./conversation-pane.ts";
-import type { SessionTreePort } from "./session-tree-pane.ts";
+import { Animator } from "./motion.ts";
+import type { Pane } from "./pane.ts";
+import { AppProbe } from "./probe.ts";
+import { resolveTheme } from "./theme.ts";
+import type { WorkspaceState } from "./workspace-state.ts";
 
-function attachmentOf(id: string): SessionAttachment {
-  return { id, history: [], replay: () => {}, append: async () => {} };
-}
-
-function flush(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-function releasingPort(released: string[]): SessionPort {
+function countingPane(id: string, describes: string[]): Pane {
   return {
-    open: async (id) => attachmentOf(id),
-    create: async () => undefined,
-    release: (sessionId) => {
-      released.push(sessionId);
+    id,
+    title: () => id,
+    view: () => {
+      throw new Error("never rendered");
+    },
+    describe: () => {
+      describes.push(id);
+      return { kind: "memory" };
     },
   };
 }
 
-function forkingTrees(forkedId: string): SessionTreePort {
-  return {
-    load: async () => undefined,
-    setLabel: async () => {},
-    fork: async () => forkedId,
-  };
-}
-
-describe("discardFrame", () => {
-  function mountedFrame(childCount: number) {
-    const destroyed: string[] = [];
-    const mounted = Array.from({ length: childCount }, (_, ordinal) => {
-      const child = {
-        id: `renderable-${ordinal}`,
-        destroyRecursively: () => {
-          destroyed.push(child.id);
-          mounted.splice(mounted.indexOf(child), 1);
-        },
-      };
-      return child;
+describe("resuming a session with no attachment", () => {
+  it("posts a notice and opens no pane when the factory refuses the resume", () => {
+    const probe = new AppProbe({
+      createPane: (id, notify, commands, resumeSessionId) =>
+        resumeSessionId === undefined
+          ? new ConversationPane(id, undefined, notify, undefined, commands)
+          : undefined,
     });
-    return { root: { getChildren: () => mounted }, mounted, destroyed };
+    probe.core.intents.openSession("gone-1");
+    expect(probe.snapshot().panes.map((pane) => pane.id)).toEqual(["session-1"]);
+    expect(probe.snapshot().focused).toBe("session-1");
+    expect(probe.snapshot().notice).toBe(
+      "can't open session gone-1 · its store is missing or unreadable",
+    );
+    probe.command("split");
+    expect(probe.snapshot().panes.map((pane) => pane.id)).toEqual(["session-1", "session-2"]);
+  });
+});
+
+describe("restoring a workspace", () => {
+  function restoredState(): WorkspaceState {
+    return {
+      version: 2,
+      layout: {
+        tree: {
+          kind: "split",
+          orientation: "row",
+          ratio: 0.5,
+          first: { kind: "leaf", id: "session-1" },
+          second: { kind: "leaf", id: "file-1" },
+        },
+        focused: "session-1",
+      },
+      panes: [
+        { id: "session-1", kind: "conversation" },
+        { id: "file-1", kind: "file", path: "notes.md" },
+      ],
+      held: [],
+    };
   }
 
-  it("destroys every renderable of the outgoing frame exactly once", () => {
-    const frame = mountedFrame(3);
-
-    discardFrame(frame.root);
-
-    expect(frame.destroyed).toEqual(["renderable-0", "renderable-1", "renderable-2"]);
-    expect(frame.mounted).toEqual([]);
-  });
-
-  it("is a no-op on an empty frame", () => {
-    const frame = mountedFrame(0);
-    discardFrame(frame.root);
-    expect(frame.destroyed).toEqual([]);
-  });
-
-  it("never destroys the pointer plane, so mouse hits always resolve", () => {
-    const frame = mountedFrame(2);
-    let planeDestroyed = false;
-    frame.mounted.push({
-      id: pointerPlaneId,
-      destroyRecursively: () => {
-        planeDestroyed = true;
+  it("drops a pane whose factory throws, closes its slot and says so", () => {
+    const probe = new AppProbe({
+      restoreWorkspace: restoredState(),
+      createFilePane: () => {
+        throw new Error("unreadable");
       },
     });
-
-    discardFrame(frame.root);
-
-    expect(planeDestroyed).toBe(false);
-    expect(frame.destroyed).toEqual(["renderable-0", "renderable-1"]);
-  });
-});
-
-describe("startFreshSession", () => {
-  it("wires the created session while the pane is live", async () => {
-    let wired: string | undefined;
-    let release: (attachment: SessionAttachment | undefined) => void = () => {};
-    startFreshSession(
-      {
-        open: async () => undefined,
-        create: () =>
-          new Promise((resolve) => {
-            release = resolve;
-          }),
-      },
-      () => {},
-      (attachment) => {
-        wired = attachment.id;
-      },
-      () => true,
-    );
-    release(attachmentOf("s-live"));
-    await flush();
-    expect(wired).toBe("s-live");
+    expect(probe.snapshot().panes.map((pane) => pane.id)).toEqual(["session-1"]);
+    expect(probe.snapshot().notice).toBe("couldn't restore 1 pane · file-1");
   });
 
-  it("discards and releases a session that lands after the pane was disposed", async () => {
-    let wired = false;
-    let notified = 0;
-    const released: string[] = [];
-    let release: (attachment: SessionAttachment | undefined) => void = () => {};
-    startFreshSession(
-      {
-        open: async () => undefined,
-        create: () =>
-          new Promise((resolve) => {
-            release = resolve;
-          }),
-        release: (sessionId) => {
-          released.push(sessionId);
-        },
-      },
-      () => {
-        notified += 1;
-      },
-      () => {
-        wired = true;
-      },
-      () => false,
-    );
-    release(attachmentOf("s-late"));
-    await flush();
-    expect(wired).toBe(false);
-    expect(notified).toBe(0);
-    expect(released).toEqual(["s-late"]);
-  });
-});
-
-describe("attachOnFork", () => {
-  it("disposes a forked attachment nobody claims", async () => {
-    const attachments = new Map<string, SessionAttachment>();
-    const released: string[] = [];
-    const port = attachOnFork(forkingTrees("forked-1"), releasingPort(released), attachments);
-
-    const forkedId = await port.fork("s1", "e1");
-
-    expect(forkedId).toBe("forked-1");
-    expect(attachments.has("forked-1")).toBe(true);
-    await flush();
-    expect(attachments.size).toBe(0);
-    expect(released).toEqual(["forked-1"]);
-  });
-
-  it("leaves a claimed fork attachment alone", async () => {
-    const attachments = new Map<string, SessionAttachment>();
-    const released: string[] = [];
-    const port = attachOnFork(forkingTrees("forked-1"), releasingPort(released), attachments);
-
-    await port.fork("s1", "e1");
-    attachments.delete("forked-1");
-    await flush();
-
-    expect(released).toEqual([]);
-  });
-
-  it("forwards the tree port's subscribe seam", () => {
-    const listeners: string[] = [];
-    const trees: SessionTreePort = {
-      ...forkingTrees("forked-1"),
-      subscribe: (listener) => {
-        listeners.push("subscribed");
-        listener("s1");
-        return () => {};
-      },
-    };
-    const port = attachOnFork(trees, undefined, new Map());
-    const seen: string[] = [];
-    port.subscribe?.((sessionId) => seen.push(sessionId));
-    expect(listeners).toEqual(["subscribed"]);
-    expect(seen).toEqual(["s1"]);
-  });
-});
-
-describe("paneSessionIndex", () => {
-  it("releases a closed pane's session and prunes the index", () => {
-    const released: string[] = [];
-    const index = paneSessionIndex(releasingPort(released));
-    index.bind("session-1", () => "s1");
-    index.bind("session-2", () => undefined);
-    expect(index.size()).toBe(2);
-
-    index.closed("session-1");
-    index.closed("session-2");
-
-    expect(released).toEqual(["s1"]);
-    expect(index.size()).toBe(0);
-  });
-
-  it("tolerates a port without release and unknown panes", () => {
-    const index = paneSessionIndex({ open: async () => undefined, create: async () => undefined });
-    index.bind("session-1", () => "s1");
-    index.closed("session-1");
-    index.closed("never-bound");
-    expect(index.size()).toBe(0);
-  });
-});
-
-describe("doctorCommand", () => {
-  function doctorProbe(exists: boolean) {
-    const opened: { path: string; atEnd: boolean }[] = [];
-    const notices: string[] = [];
-    const command = doctorCommand({
-      logFile: crashLogFile,
-      exists: () => exists,
-      openFile: (path, options) => opened.push({ path, atEnd: options?.atEnd === true }),
-      notice: (text) => notices.push(text),
+  it("numbers new panes after the restored ones", () => {
+    const probe = new AppProbe({
+      restoreWorkspace: restoredState(),
+      createFilePane: (id) => countingPane(id, []),
     });
-    return { command, opened, notices };
-  }
-
-  it("opens the crash log at its tail when crashes are recorded", () => {
-    const { command, opened, notices } = doctorProbe(true);
-    command.run();
-    expect(opened).toEqual([{ path: crashLogFile, atEnd: true }]);
-    expect(notices).toEqual([]);
-  });
-
-  it("posts a calm notice when there is no crash log", () => {
-    const { command, opened, notices } = doctorProbe(false);
-    command.run();
-    expect(opened).toEqual([]);
-    expect(notices).toEqual(["no crashes recorded · nothing to show"]);
+    probe.command("split");
+    expect(probe.snapshot().panes.map((pane) => pane.id)).toEqual([
+      "session-1",
+      "session-2",
+      "file-1",
+    ]);
   });
 });
 
-describe("bindSessionLifecycle", () => {
-  it("persists a turn in flight at close but skips the agent swap", async () => {
-    const appended: Message[] = [];
-    const attachment: SessionAttachment = {
-      id: "s1",
-      history: [],
-      replay: () => {},
-      append: async (message) => {
-        appended.push(message);
-      },
-    };
-    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
-    const next = new Agent({ provider: new MockProvider([]) });
-    const pane = new ConversationPane("session-1", agent, () => {});
-    bindSessionLifecycle({
-      pane,
-      agent,
-      attachment,
-      afterTurn: async () => [textMessage("user", "joined")],
-      rebuild: () => next,
+describe("workspace capture", () => {
+  it("skips the capture on pointer moves and keys that change nothing persisted", () => {
+    const describes: string[] = [];
+    const saves: WorkspaceState[] = [];
+    const probe = new AppProbe({
+      createMemoryPane: (id) => countingPane(id, describes),
+      saveWorkspace: (state) => saves.push(state),
     });
-    pane.submitPrompt("go");
-    pane.dispose();
-    await pane.settled();
-    expect(appended.length).toBeGreaterThan(0);
-    expect(pane.currentAgent()).toBe(agent);
+    probe.command("memory");
+    const describedAfterOpen = describes.length;
+    const savesAfterOpen = saves.length;
+    for (let step = 0; step < 25; step += 1) probe.hover(5 + step, 5);
+    probe.keys("ctrl+p").type("spl").keys("escape");
+    expect(describes.length).toBe(describedAfterOpen);
+    expect(saves.length).toBe(savesAfterOpen);
+    probe.keys("ctrl+k", "l");
+    expect(describes.length).toBe(describedAfterOpen + 1);
+    expect(saves.length).toBe(savesAfterOpen + 1);
+  });
+
+  it("persists again when a pane's descriptor changes behind a repaint", () => {
+    const saves: WorkspaceState[] = [];
+    let root = "src";
+    let notify = (): void => {};
+    const probe = new AppProbe({
+      createBrowserPane: (id, _root, paneNotify) => {
+        notify = paneNotify;
+        return {
+          id,
+          title: () => id,
+          view: () => {
+            throw new Error("never rendered");
+          },
+          describe: () => ({ kind: "browser", root }),
+        };
+      },
+      saveWorkspace: (state) => saves.push(state),
+    });
+    probe.command("browse");
+    const before = saves.length;
+    notify();
+    expect(saves.length).toBe(before);
+    root = "src/deeper";
+    notify();
+    expect(saves.length).toBe(before + 1);
+    expect(saves.at(-1)?.panes.find((pane) => pane.kind === "browser")).toEqual({
+      id: "browser-1",
+      kind: "browser",
+      root: "src/deeper",
+    });
+  });
+});
+
+describe("closing a pane mid-animation", () => {
+  it("settles its motion regions so nothing animates into a dead pane", async () => {
+    const animator = new Animator({ schedule: () => () => {} });
+    const probe = new AppProbe({
+      createPane: (id, notify) => {
+        const provider = new MockProvider([
+          toolCallTurn({ type: "tool-call", callId: "c1", name: "scribble", arguments: {} }),
+        ]);
+        const agent = new Agent({
+          provider,
+          tools: [
+            {
+              name: "scribble",
+              description: "writes",
+              parameters: { type: "object" },
+              mutates: true,
+              execute: async () => "wrote",
+            },
+          ],
+        });
+        return new ConversationPane(id, agent, notify, undefined, undefined, { animator });
+      },
+    });
+    probe.command("split");
+    probe.type("go").keys("enter");
+    const pane = probe.core.panes.get("session-2");
+    for (let tick = 0; tick < 20 && probe.model("session-2")?.pendingAsk === undefined; tick += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    pane?.view({ theme: resolveTheme(), focused: true, width: 60, height: 20 });
+    expect(animator.moving).toBe(true);
+    probe.command("exit");
+    expect(animator.moving).toBe(false);
   });
 });

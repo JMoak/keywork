@@ -1,6 +1,6 @@
 import { ProviderStreamError } from "./errors.ts";
 
-const maxSseBufferBytes = 1_048_576;
+const maxLineChars = 1_048_576;
 
 export async function* sseJsonEvents(
   provider: string,
@@ -10,17 +10,18 @@ export async function* sseJsonEvents(
   let buffer = "";
   for await (const chunk of body) {
     buffer += decoder.decode(chunk, { stream: true });
-    if (buffer.length > maxSseBufferBytes) {
-      throw new ProviderStreamError(provider, "event stream buffer exceeded the size ceiling");
-    }
+    let start = 0;
     let newline = buffer.indexOf("\n");
     while (newline !== -1) {
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      newline = buffer.indexOf("\n");
-      const event = parseSseLine(line);
+      const event = parseSseLine(buffer.slice(start, newline));
+      start = newline + 1;
+      newline = buffer.indexOf("\n", start);
       if (event === endOfStream) return;
       if (event !== skipLine) yield event;
+    }
+    buffer = buffer.slice(start);
+    if (buffer.length > maxLineChars) {
+      throw new ProviderStreamError(provider, "event stream line exceeded the size ceiling");
     }
   }
   buffer += decoder.decode();

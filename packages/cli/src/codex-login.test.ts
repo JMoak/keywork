@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import type { FetchLike } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import type { OauthCredential } from "./auth-store.ts";
@@ -6,6 +7,7 @@ import {
   freshAccessToken,
   loginWithBrowser,
   loginWithDeviceCode,
+  openerCommand,
 } from "./codex-login.ts";
 
 function jwtWithAccount(accountId: string): string {
@@ -94,6 +96,45 @@ describe("codexAuthHeaders", () => {
       "OpenAI-Beta": "responses=experimental",
     });
   });
+});
+
+describe("openerCommand", () => {
+  const url =
+    "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_x&scope=openid+profile&state=s1";
+
+  it("hands cmd a quoted URL verbatim so start cannot split it at an ampersand", () => {
+    expect(openerCommand(url, "win32")).toEqual({
+      executable: "cmd",
+      args: ["/c", "start", '""', `"${url}"`],
+      windowsVerbatimArguments: true,
+    });
+  });
+
+  it("passes the URL as a single argument to open and xdg-open", () => {
+    expect(openerCommand(url, "darwin")).toEqual({
+      executable: "open",
+      args: [url],
+      windowsVerbatimArguments: false,
+    });
+    expect(openerCommand(url, "linux")).toEqual({
+      executable: "xdg-open",
+      args: [url],
+      windowsVerbatimArguments: false,
+    });
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "round-trips the URL through cmd /c echo without losing anything after the ampersand",
+    () => {
+      const command = openerCommand(url, "win32");
+      const echoed = spawnSync(command.executable, ["/c", "echo", ...command.args.slice(2)], {
+        windowsVerbatimArguments: command.windowsVerbatimArguments,
+        encoding: "utf8",
+      });
+      expect(echoed.stderr).toBe("");
+      expect(echoed.stdout.trim()).toBe(`"" "${url}"`);
+    },
+  );
 });
 
 describe("loginWithBrowser", () => {

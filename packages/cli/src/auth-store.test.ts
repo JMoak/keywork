@@ -1,8 +1,14 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { legacyCredentials, readCredentials, saveCredential } from "./auth-store.ts";
+import {
+  type Credential,
+  deleteCredential,
+  legacyCredentials,
+  readCredentials,
+  saveCredential,
+} from "./auth-store.ts";
 
 const tempDirs: string[] = [];
 
@@ -69,6 +75,36 @@ describe("credential store", () => {
     const file = await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir);
     const raw = await readFile(file, "utf8");
     expect(raw.endsWith("\n")).toBe(true);
+  });
+
+  it("keeps the existing auth.json intact when serialization throws", async () => {
+    const dir = await tempDir();
+    const file = await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir);
+    const before = await readFile(file, "utf8");
+    const unserializable: Credential = Object.assign(
+      { type: "api_key" as const, key: "sk-2" },
+      {
+        toJSON(): never {
+          throw new Error("cannot serialize");
+        },
+      },
+    );
+
+    await expect(saveCredential("openrouter", unserializable, dir)).rejects.toThrow(
+      "cannot serialize",
+    );
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect(await readdir(dir)).toEqual(["auth.json"]);
+  });
+
+  it("deletes one provider and reports whether anything was there", async () => {
+    const dir = await tempDir();
+    await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir);
+    await saveCredential("openrouter", { type: "api_key", key: "sk-2" }, dir);
+
+    expect(await deleteCredential("openai", dir)).toBe(true);
+    expect(await deleteCredential("openai", dir)).toBe(false);
+    expect(await readCredentials(dir)).toEqual({ openrouter: { type: "api_key", key: "sk-2" } });
   });
 });
 

@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { type JsonFileStore, jsonFileStore } from "../json-file-store.ts";
 import { configSchema, defaultConfig, type KeyworkConfig } from "./schema.ts";
 
 export interface ConfigSource {
@@ -19,11 +19,23 @@ export class ConfigError extends Error {
   }
 }
 
+export function keyworkConfigStore(file: string): JsonFileStore<KeyworkConfig> {
+  return jsonFileStore<KeyworkConfig>({
+    file,
+    mode: "strict",
+    private: true,
+    error: (path, detail) => new ConfigError(path, detail),
+    validate: (data) => {
+      const result = configSchema.safeParse(data);
+      if (!result.success) throw new ConfigError(file, z.prettifyError(result.error));
+      return result.data;
+    },
+  });
+}
+
 export async function loadConfig(source: ConfigSource): Promise<KeyworkConfig> {
-  const [user, project] = await Promise.all([
-    readLayer(source.userDir),
-    readLayer(source.projectTrusted === true ? source.projectDir : undefined),
-  ]);
+  const user = readLayer(source.userDir);
+  const project = readLayer(source.projectTrusted === true ? source.projectDir : undefined);
   return applyLayers(defaultConfig, user, project && preferencesAllowedFromProjectLayer(project));
 }
 
@@ -81,37 +93,7 @@ function mergedPrompts(
   };
 }
 
-async function readLayer(dir: string | undefined): Promise<KeyworkConfig | undefined> {
+function readLayer(dir: string | undefined): KeyworkConfig | undefined {
   if (dir === undefined) return undefined;
-  const file = join(dir, "keywork.json");
-  const raw = await readFileIfExists(file);
-  if (raw === undefined) return undefined;
-  return parseLayer(file, raw);
-}
-
-function parseLayer(file: string, raw: string): KeyworkConfig {
-  const json = parseJson(file, raw);
-  const result = configSchema.safeParse(json);
-  if (!result.success) throw new ConfigError(file, z.prettifyError(result.error));
-  return result.data;
-}
-
-function parseJson(file: string, raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch (cause) {
-    throw new ConfigError(file, `not valid JSON: ${(cause as Error).message}`);
-  }
-}
-
-const absenceCodes = new Set(["ENOENT", "ENOTDIR"]);
-
-async function readFileIfExists(path: string): Promise<string | undefined> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (cause) {
-    const code = (cause as NodeJS.ErrnoException).code ?? "unknown";
-    if (absenceCodes.has(code)) return undefined;
-    throw new ConfigError(path, `unreadable (${code}): ${(cause as Error).message}`);
-  }
+  return keyworkConfigStore(join(dir, "keywork.json")).read();
 }

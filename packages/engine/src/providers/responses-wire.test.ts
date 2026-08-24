@@ -88,6 +88,34 @@ describe("toResponsesRequest", () => {
     ]);
   });
 
+  it("sends private reasoning only to its owner and lets unowned legacy state through", () => {
+    const reasoning = (id: string) =>
+      JSON.stringify({ type: "reasoning", id, encrypted_content: "blob" });
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "redacted-thinking",
+            data: reasoning("mine"),
+            owner: { provider: "p", model: "m" },
+          },
+          {
+            type: "redacted-thinking",
+            data: reasoning("theirs"),
+            owner: { provider: "p", model: "other" },
+          },
+          { type: "redacted-thinking", data: reasoning("legacy") },
+        ],
+      },
+    ];
+    const owned = toResponsesRequest(request({ messages }), "m", {
+      provider: "p",
+      model: "m",
+    }) as WireRequest;
+    expect(owned.input.map((item) => (item as { id: string }).id)).toEqual(["mine", "legacy"]);
+  });
+
   it("drops unparseable reasoning payloads instead of corrupting the request", () => {
     const messages: Message[] = [
       { role: "assistant", parts: [{ type: "redacted-thinking", data: "not json" }] },

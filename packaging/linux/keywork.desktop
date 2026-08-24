@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=keywork
+GenericName=Coding agent
+Comment=a coding agent you drive from the keyboard
+Exec=keywork
+Terminal=true
+Icon=utilities-terminal
+Categories=Development;Utility;TerminalEmulator;
+Keywords=agent;coding;terminal;keyboard;
+StartupNotify=false

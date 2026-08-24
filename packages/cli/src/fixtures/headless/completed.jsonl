@@ -1,0 +1,6 @@
+{"type":"run.started","cwd":"<cwd>","provider":"mock","model":"mock-model","session":"<session>"}
+{"type":"turn.started","userText":"hi"}
+{"type":"turn.delta","delta":{"type":"text","text":"all done"}}
+{"type":"turn.delta","delta":{"type":"done","usage":{"inputTokens":0,"outputTokens":0}}}
+{"type":"turn.completed","message":{"role":"assistant","parts":[{"type":"text","text":"all done"}]},"usage":{"inputTokens":0,"outputTokens":0}}
+{"type":"run.finished","outcome":"completed","exitCode":0,"message":"all done"}

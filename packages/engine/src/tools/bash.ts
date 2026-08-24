@@ -3,10 +3,17 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { killTree } from "../proc.ts";
+import {
+  BoundedOutput,
+  CommandRun,
+  commandAborted,
+  commandResult,
+  commandTimedOut,
+  defaultTimeoutMs,
+  shellSpawnOptions,
+} from "./command-run.ts";
 import { defineTool } from "./define.ts";
 
-const defaultTimeoutMs = 120_000;
-const maxOutputChars = 30_000;
 const settleAfterExitMs = 100;
 
 const schema = z.object({
@@ -52,15 +59,6 @@ export function bashTool(
   });
 }
 
-export function scrubbedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(env).filter(([name]) => !holdsSecret(name)));
-}
-
-function holdsSecret(name: string): boolean {
-  const upper = name.toUpperCase();
-  return upper.endsWith("_API_KEY") || upper.startsWith("KEYWORK_");
-}
-
 function findGitBash(): string | undefined {
   const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"]];
   return roots
@@ -77,43 +75,31 @@ function execute(
   signal?: AbortSignal,
   onOutput?: (chunk: string) => void,
 ): Promise<string> {
+  signal?.throwIfAborted();
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(shell.file, shell.args(command), {
-      cwd,
-      windowsHide: true,
-      detached: process.platform !== "win32",
-      env: scrubbedEnv(process.env),
-    });
+    const child = spawn(shell.file, shell.args(command), shellSpawnOptions(cwd));
     const closed = childClosed(child);
-    let output = "";
-    let truncated = false;
+    const output = new BoundedOutput(onOutput);
     let terminationReason: TerminationReason | undefined;
     let termination: Promise<void> | undefined;
-    let settled = false;
     let settleTimer: NodeJS.Timeout | undefined;
 
-    const capture = (chunk: Buffer) => {
-      onOutput?.(chunk.toString());
-      if (truncated) return;
-      output += chunk.toString();
-      if (output.length > maxOutputChars) {
-        output = output.slice(0, maxOutputChars);
-        truncated = true;
-      }
-    };
-    child.stdout.on("data", capture);
-    child.stderr.on("data", capture);
+    const capture = (chunk: Buffer) => output.append(chunk.toString());
+    child.stdout?.on("data", capture);
+    child.stderr?.on("data", capture);
 
-    const rendered = () => (truncated ? `${output}\n... (output truncated)` : output);
+    const run = new CommandRun({
+      timeoutMs,
+      signal,
+      onTimeout: () => terminate("timeout"),
+      onAbort: () => terminate("abort"),
+    });
 
-    const settle = (outcome: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (settleTimer !== undefined) clearTimeout(settleTimer);
-      signal?.removeEventListener("abort", onAbort);
-      outcome();
-    };
+    const settle = (outcome: () => void) =>
+      run.settle(() => {
+        if (settleTimer !== undefined) clearTimeout(settleTimer);
+        outcome();
+      });
 
     const finish = async (code: number | null) => {
       let terminationFailure: unknown;
@@ -124,28 +110,19 @@ function execute(
       }
       settle(() => {
         if (terminationReason === "timeout") {
-          rejectPromise(
-            new Error(`Command timed out after ${timeoutMs}ms:\n${rendered()}`, {
-              ...(terminationFailure !== undefined && { cause: terminationFailure }),
-            }),
-          );
+          rejectPromise(commandTimedOut(timeoutMs, output.rendered(), terminationFailure));
           return;
         }
         if (terminationReason === "abort") {
-          rejectPromise(
-            new Error("Command aborted", {
-              ...(terminationFailure !== undefined && { cause: terminationFailure }),
-            }),
-          );
+          rejectPromise(commandAborted(terminationFailure));
           return;
         }
-        const body = rendered().trimEnd();
-        resolvePromise(code === 0 ? body : `${body}\n(exit code ${code})`.trimStart());
+        resolvePromise(commandResult(output.rendered(), code));
       });
     };
 
     const terminate = (reason: TerminationReason) => {
-      if (settled || termination !== undefined) return;
+      if (termination !== undefined) return;
       terminationReason = reason;
       termination = killTree(child, closed);
       void termination.then(
@@ -153,11 +130,6 @@ function execute(
         () => finish(null),
       );
     };
-
-    const timer = setTimeout(() => terminate("timeout"), timeoutMs);
-    const onAbort = () => terminate("abort");
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) terminate("abort");
 
     child.on("error", (error) => settle(() => rejectPromise(error)));
     child.on("close", (code) => void finish(code));

@@ -20,14 +20,22 @@ export function debugLogFile(sessionDir: string, now = Date.now(), pid = process
   return join(sessionDir, "debug", `${now}-${pid}.jsonl`);
 }
 
+export interface DiagnosticsOptions {
+  onWriteFailure?: (error: Error) => void;
+}
+
 export class DiagnosticsLog {
   private pending = Promise.resolve();
+  private failureReported = false;
 
-  private constructor(readonly file: string) {}
+  private constructor(
+    readonly file: string,
+    private readonly onWriteFailure: (error: Error) => void,
+  ) {}
 
-  static async open(file: string): Promise<DiagnosticsLog> {
+  static async open(file: string, options: DiagnosticsOptions = {}): Promise<DiagnosticsLog> {
     await mkdir(dirname(file), { recursive: true });
-    return new DiagnosticsLog(file);
+    return new DiagnosticsLog(file, options.onWriteFailure ?? (() => undefined));
   }
 
   log(level: DiagnosticsLevel, event: string, payload: unknown): void {
@@ -37,9 +45,7 @@ export class DiagnosticsLog {
       event,
       payload: redactSecrets(payload),
     };
-    this.pending = this.pending.then(() =>
-      appendFile(this.file, `${JSON.stringify(line)}\n`, "utf8"),
-    );
+    this.pending = this.pending.then(() => this.append(line));
   }
 
   tap(bus: EventBus<EngineEvents>): () => void {
@@ -60,28 +66,54 @@ export class DiagnosticsLog {
   flush(): Promise<void> {
     return this.pending;
   }
+
+  private async append(line: DiagnosticsLine): Promise<void> {
+    try {
+      await appendFile(this.file, `${JSON.stringify(line)}\n`, "utf8");
+      this.failureReported = false;
+    } catch (cause) {
+      this.reportWriteFailureOnce(cause);
+    }
+  }
+
+  private reportWriteFailureOnce(cause: unknown): void {
+    if (this.failureReported) return;
+    this.failureReported = true;
+    this.onWriteFailure(cause instanceof Error ? cause : new Error(String(cause)));
+  }
 }
 
 export function redactSecrets(value: unknown): unknown {
-  if (typeof value === "string") return redactKeyShapes(value);
-  if (Array.isArray(value)) return value.map(redactSecrets);
-  if (value instanceof Error) return { name: value.name, message: redactKeyShapes(value.message) };
-  if (value !== null && typeof value === "object") return redactObject(value);
-  return value;
+  return redactValue(value, new WeakSet());
 }
 
 const secretFieldName = /key|token|secret|password|credential|authorization/i;
 const keyShapes = [/\bsk-[\w-]{8,}/g, /\bBearer\s+[\w.~+/=-]+/gi];
 
-function redactObject(value: object): Record<string, unknown> {
+function redactValue(value: unknown, ancestors: WeakSet<object>): unknown {
+  if (typeof value === "string") return redactKeyShapes(value);
+  if (value instanceof Error) return { name: value.name, message: redactKeyShapes(value.message) };
+  if (value === null || typeof value !== "object") return value;
+  if (ancestors.has(value)) return "[circular]";
+  ancestors.add(value);
+  try {
+    return Array.isArray(value)
+      ? value.map((entry) => redactValue(entry, ancestors))
+      : redactObject(value, ancestors);
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function redactObject(value: object, ancestors: WeakSet<object>): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(value).map(([name, entry]) => [name, redactField(name, entry)]),
+    Object.entries(value).map(([name, entry]) => [name, redactField(name, entry, ancestors)]),
   );
 }
 
-function redactField(name: string, entry: unknown): unknown {
+function redactField(name: string, entry: unknown, ancestors: WeakSet<object>): unknown {
   const hidesWholeValue = secretFieldName.test(name) && typeof entry !== "number";
-  return hidesWholeValue ? "[redacted]" : redactSecrets(entry);
+  return hidesWholeValue ? "[redacted]" : redactValue(entry, ancestors);
 }
 
 function redactKeyShapes(text: string): string {

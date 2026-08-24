@@ -8,12 +8,13 @@ import {
   connectStdioServer,
   McpAbortedError,
   type McpConnection,
+  McpProtocolError,
   McpRequestTimeoutError,
   McpServerExitedError,
   type StdioServerSpec,
 } from "./client.ts";
 
-const fixturePath = fileURLToPath(new URL("./fixture-server.ts", import.meta.url));
+const fixturePath = fileURLToPath(new URL("../testing/mcp-fixture-server.ts", import.meta.url));
 
 function fixtureSpec(profile: string): StdioServerSpec {
   return { command: process.execPath, args: [fixturePath, profile] };
@@ -82,6 +83,14 @@ describe("stdio MCP client", () => {
     });
   });
 
+  it("rejects a server that floods stdout without a newline instead of buffering it", async () => {
+    const begun = Date.now();
+    await expect(
+      connectStdioServer(fixtureSpec("flood"), { requestTimeoutMs: 20_000 }),
+    ).rejects.toBeInstanceOf(McpProtocolError);
+    expect(Date.now() - begun).toBeLessThan(15_000);
+  });
+
   it("times out against a server that never handshakes", async () => {
     await expect(
       connectStdioServer(fixtureSpec("silent"), { requestTimeoutMs: 200 }),
@@ -146,6 +155,25 @@ describe("stdio MCP client", () => {
     await connection.close();
     controller.abort();
     await connection.close();
+  });
+
+  it("surfaces tools/list_changed notifications so the catalog can be re-listed", async () => {
+    await withConnection("growing", async (connection) => {
+      let changes = 0;
+      connection.onToolsChanged(() => {
+        changes += 1;
+      });
+      expect((await connection.listTools()).map((tool) => tool.name)).not.toContain("sprout");
+
+      expect((await connection.callTool("grow", {})).text).toBe("grown");
+      const deadline = Date.now() + 5_000;
+      while (changes === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(changes).toBe(1);
+      expect((await connection.listTools()).map((tool) => tool.name)).toContain("sprout");
+    });
   });
 
   it("fails in-flight calls cleanly when the server crashes mid-call", async () => {

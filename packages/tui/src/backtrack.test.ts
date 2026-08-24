@@ -6,6 +6,7 @@ interface Spec {
   id: string;
   role: "user" | "assistant";
   active?: false;
+  checkpoint?: string;
   children?: Spec[];
 }
 
@@ -17,6 +18,7 @@ function node(spec: Spec, parentId: string | null): SessionTreeNode {
       parentId,
       timestamp: "",
       message: textMessage(spec.role, spec.id),
+      ...(spec.checkpoint !== undefined && { checkpoint: spec.checkpoint }),
     },
     children: (spec.children ?? []).map((child) => node(child, spec.id)),
     onActivePath: spec.active !== false,
@@ -28,6 +30,7 @@ const linear = [
     {
       id: "u1",
       role: "user",
+      checkpoint: "tree-one",
       children: [
         {
           id: "a1",
@@ -44,17 +47,22 @@ const linear = [
 ];
 
 describe("promptAnchor", () => {
-  it("finds the nth user prompt along the active path", () => {
-    expect(promptAnchor(linear, 0)).toEqual({ id: "u1", parentId: null });
-    expect(promptAnchor(linear, 1)).toEqual({ id: "u2", parentId: "a1" });
+  it("finds a user prompt on the active path by its entry id, with its checkpoint", () => {
+    expect(promptAnchor(linear, "u1")).toEqual({
+      id: "u1",
+      parentId: null,
+      checkpoint: "tree-one",
+    });
+    expect(promptAnchor(linear, "u2")).toEqual({ id: "u2", parentId: "a1", checkpoint: undefined });
   });
 
-  it("ignores prompts on abandoned branches", () => {
-    expect(promptAnchor(linear, 2)).toBeUndefined();
+  it("ignores prompts on abandoned branches and non-prompt entries", () => {
+    expect(promptAnchor(linear, "u2-alt")).toBeUndefined();
+    expect(promptAnchor(linear, "a1")).toBeUndefined();
   });
 
-  it("returns undefined for an empty tree or an out-of-range ordinal", () => {
-    expect(promptAnchor([], 0)).toBeUndefined();
-    expect(promptAnchor(linear, 99)).toBeUndefined();
+  it("returns undefined for an empty tree or an unknown id", () => {
+    expect(promptAnchor([], "u1")).toBeUndefined();
+    expect(promptAnchor(linear, "ghost")).toBeUndefined();
   });
 });

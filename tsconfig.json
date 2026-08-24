@@ -5,6 +5,7 @@
     { "path": "packages/engine" },
     { "path": "packages/extensions" },
     { "path": "packages/tui" },
-    { "path": "packages/cli" }
+    { "path": "packages/cli" },
+    { "path": "scripts" }
   ]
 }

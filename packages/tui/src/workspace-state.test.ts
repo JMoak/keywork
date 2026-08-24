@@ -57,6 +57,18 @@ describe("captureWorkspace", () => {
       { id: "session-1", kind: "conversation" },
     ]);
   });
+
+  it("captures held panes apart from the layout and reads them back", () => {
+    const { layout, panes } = workspaceOf(
+      ["session-1", { kind: "conversation", sessionId: "abc" }],
+      ["session-2", { kind: "conversation", sessionId: "def" }],
+    );
+    layout.close("session-2");
+    const state = captureWorkspace(layout, panes, ["session-2"]);
+    expect(state.panes).toEqual([{ id: "session-1", kind: "conversation", sessionId: "abc" }]);
+    expect(state.held).toEqual([{ id: "session-2", kind: "conversation", sessionId: "def" }]);
+    expect(parseWorkspaceState(JSON.parse(JSON.stringify(state)))?.held).toEqual(state.held);
+  });
 });
 
 describe("parseWorkspaceState", () => {
@@ -97,7 +109,7 @@ describe("parseWorkspaceState", () => {
     };
     const state = parseWorkspaceState(JSON.parse(JSON.stringify(v1)));
     expect(state?.version).toBe(2);
-    expect(state?.layout.docks).toEqual({ left: { panes: ["browser-1"], ratio: 0.25 } });
+    expect(state?.layout.docks).toEqual({ left: { panes: ["browser-1"], ratio: 0.25, pins: 0 } });
     expect(state?.layout.tree).toEqual({ kind: "leaf", id: "session-1" });
     expect(state?.layout.focused).toBe("browser-1");
     expect(state?.panes).toEqual([
@@ -118,8 +130,52 @@ describe("parseWorkspaceState", () => {
         { id: "mcp-1", kind: "mcp" },
       ],
     });
-    expect(state?.layout.docks).toEqual({ right: { panes: ["mcp-1"], ratio: 1 / 3 } });
+    expect(state?.layout.docks).toEqual({ right: { panes: ["mcp-1"], ratio: 1 / 3, pins: 0 } });
     expect(state?.layout.docks?.left).toBeUndefined();
+  });
+
+  it("reads an arc pane by its slug and refuses one without a slug", () => {
+    const layout = {
+      tree: { kind: "leaf", id: "session-1" },
+      docks: { right: { panes: ["arc-1"], ratio: 1 / 3 } },
+    };
+    const panes = (arc: unknown) => [
+      { id: "session-1", kind: "conversation" },
+      { id: "arc-1", kind: "arc", ...(arc !== undefined && { arc }) },
+    ];
+    const state = parseWorkspaceState({ version: 2, layout, panes: panes("dock-v2") });
+    expect(state?.panes[1]).toEqual({ id: "arc-1", kind: "arc", arc: "dock-v2" });
+    expect(parseWorkspaceState({ version: 2, layout, panes: panes(undefined) })).toBeUndefined();
+    expect(parseWorkspaceState({ version: 2, layout, panes: panes("") })).toBeUndefined();
+  });
+
+  it("reads a memory pane's lens, note, and question, and refuses malformed ones", () => {
+    const layout = {
+      tree: { kind: "leaf", id: "session-1" },
+      docks: { left: { panes: ["memory-1"], ratio: 1 / 3 } },
+    };
+    const panes = (memory: Record<string, unknown>) => [
+      { id: "session-1", kind: "conversation" },
+      { id: "memory-1", kind: "memory", ...memory },
+    ];
+    const bare = parseWorkspaceState({ version: 2, layout, panes: panes({}) });
+    expect(bare?.panes[1]).toEqual({ id: "memory-1", kind: "memory" });
+    const lensed = parseWorkspaceState({
+      version: 2,
+      layout,
+      panes: panes({ lens: "note", note: "Dock Rule", query: "dock" }),
+    });
+    expect(lensed?.panes[1]).toEqual({
+      id: "memory-1",
+      kind: "memory",
+      lens: "note",
+      note: "Dock Rule",
+      query: "dock",
+    });
+    expect(
+      parseWorkspaceState({ version: 2, layout, panes: panes({ lens: "x" }) }),
+    ).toBeUndefined();
+    expect(parseWorkspaceState({ version: 2, layout, panes: panes({ note: 3 }) })).toBeUndefined();
   });
 
   it("discards wholesale on unknown pane kinds, bad fields, or stray ids", () => {
@@ -148,5 +204,23 @@ describe("parseWorkspaceState", () => {
     state.panes.pop();
     const parsed = parseWorkspaceState(state);
     expect(parsed?.panes).toEqual([{ id: "session-1", kind: "conversation", sessionId: "abc" }]);
+  });
+
+  it("reads a state without held panes as holding none, and refuses malformed held lists", () => {
+    const withHeld = (held: unknown) => ({ ...(valid() as object), held });
+    expect(parseWorkspaceState(withHeld(undefined))?.held).toEqual([]);
+    expect(parseWorkspaceState(withHeld([{ id: "held-1", kind: "conversation" }]))?.held).toEqual([
+      { id: "held-1", kind: "conversation" },
+    ]);
+    const refused: unknown[] = [
+      "nope",
+      [{ id: "session-1", kind: "conversation" }],
+      [
+        { id: "held-1", kind: "conversation" },
+        { id: "held-1", kind: "conversation" },
+      ],
+      [{ id: "held-1", kind: "hologram" }],
+    ];
+    for (const held of refused) expect(parseWorkspaceState(withHeld(held))).toBeUndefined();
   });
 });

@@ -53,6 +53,16 @@ describe("startupFlavors", () => {
     expect(worn?.tokens.text).toBe(keyworkNight.text);
   });
 
+  it("leaves every token it was not handed equal to keywork-night's", () => {
+    const [worn] = startupFlavors({ accentSoft: "#7dcfff" });
+    const { accentSoft, ...rest } = worn?.tokens ?? keyworkNight;
+    const { accentSoft: night, ...nightRest } = keyworkNight;
+    expect(accentSoft).toBe("#7dcfff");
+    expect(accentSoft).not.toBe(night);
+    expect(rest).toEqual(nightRest);
+    expect({ ...worn, tokens: undefined }).toEqual({ ...keyworkNightFlavor, tokens: undefined });
+  });
+
   it("refuses overrides that sink below the contrast floor, helpfully", () => {
     expect(() => startupFlavors({ text: "#20222e" })).toThrow(/text on background/);
   });

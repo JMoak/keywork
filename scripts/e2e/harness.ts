@@ -2,18 +2,25 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  sessionChangeFeed,
-  sessionPort,
-  sessionTreePort,
-} from "../../packages/cli/src/sessions.ts";
+import { composePanes } from "../../packages/cli/src/compose-panes.ts";
 import { workspaceFile } from "../../packages/cli/src/workspace.ts";
-import { Agent, Checkpoints, MockProvider } from "../../packages/engine/src/index.ts";
-import { type AppOptions, runApp } from "../../packages/tui/src/index.ts";
+import { Agent, MockProvider } from "../../packages/engine/src/index.ts";
+import {
+  type AgentFactory,
+  type AppOptions,
+  assumedGlyphs,
+  runApp,
+} from "../../packages/tui/src/index.ts";
 import { scenarioArtifactDir, stepFileBase } from "./artifacts.ts";
 import type { CapturedFrame } from "./frame.ts";
-import { goldenPath, verifyGolden, writeGolden } from "./goldens.ts";
-import type { CaptureOptions, FrameSize, Scenario, Stage } from "./scenario.ts";
+import {
+  committedGoldenRoot,
+  goldenPath,
+  pruneGoldens,
+  verifyGolden,
+  writeGolden,
+} from "./goldens.ts";
+import type { FrameSize, Scenario, Stage } from "./scenario.ts";
 import { frameToSvg } from "./svg.ts";
 
 export interface HarnessOptions {
@@ -21,6 +28,7 @@ export interface HarnessOptions {
   readonly size: FrameSize;
   readonly updateGoldens?: boolean;
   readonly world?: ComposedWorld;
+  readonly goldenRoot?: string;
 }
 
 export type AppSeams = Pick<AppOptions, "createRenderer" | "exit">;
@@ -49,11 +57,11 @@ export async function runScenario(
   const artifactDir = freshArtifactDir(options.outRoot, scenario.name);
   const world = options.world ?? temporaryWorld(scenario);
   const size = scenario.size ?? options.size;
-  const testing = await loadTesting();
+  const goldenRoot = options.goldenRoot ?? committedGoldenRoot;
+  const updateGoldens = options.updateGoldens === true;
   const previousCwd = process.cwd();
-  process.chdir(world.workspaceDir);
-  scenario.beforeBoot?.(world);
   const boot = async (): Promise<RunningApp> => {
+    const testing = await loadTesting();
     const setup = await testing.createTestRenderer({ width: size.width, height: size.height });
     const exit: ExitLatch = { code: undefined };
     await world.compose({
@@ -69,6 +77,8 @@ export async function runScenario(
   let app: RunningApp | undefined;
   let error: string | undefined;
   try {
+    process.chdir(world.workspaceDir);
+    scenario.beforeBoot?.(world);
     app = await boot();
     await scenario.run(
       buildStage({
@@ -76,12 +86,15 @@ export async function runScenario(
         app,
         reboot: boot,
         scenarioName: scenario.name,
+        goldenSteps: new Set(scenario.goldens ?? []),
+        goldenRoot,
         artifactDir,
         captures,
         goldens,
-        updateGoldens: options.updateGoldens === true,
+        updateGoldens,
       }),
     );
+    settleGoldens(scenario, goldens, goldenRoot, updateGoldens);
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
     const running = app;
@@ -133,6 +146,8 @@ interface StageContext {
   readonly app: RunningApp;
   readonly reboot: () => Promise<RunningApp>;
   readonly scenarioName: string;
+  readonly goldenSteps: ReadonlySet<string>;
+  readonly goldenRoot: string;
   readonly artifactDir: string;
   readonly captures: string[];
   readonly goldens: string[];
@@ -143,7 +158,6 @@ const untilTimeoutMs = 10_000;
 const quitTimeoutMs = 5_000;
 const pollMs = 15;
 const escapeParserWindowMs = 50;
-const goldenRoot = fileURLToPath(new URL("goldens", import.meta.url));
 
 function loadTesting(): Promise<TestingModule> {
   const anchor = fileURLToPath(new URL("../../packages/tui/src/index.ts", import.meta.url));
@@ -156,6 +170,19 @@ function freshArtifactDir(outRoot: string, scenarioName: string): string {
   rmSync(artifactDir, { recursive: true, force: true, maxRetries: 3 });
   mkdirSync(artifactDir, { recursive: true });
   return artifactDir;
+}
+
+function settleGoldens(
+  scenario: Scenario,
+  captured: readonly string[],
+  goldenRoot: string,
+  updateGoldens: boolean,
+): void {
+  const missing = (scenario.goldens ?? []).filter((step) => !captured.includes(step));
+  if (missing.length > 0) {
+    throw new Error(`declared goldens never captured: ${missing.join(", ")}`);
+  }
+  if (updateGoldens) pruneGoldens(goldenRoot, scenario.name, captured);
 }
 
 function temporaryWorld(scenario: Scenario): ComposedWorld {
@@ -182,33 +209,46 @@ async function composeMockApp(
   paths: TemporaryPaths,
   seams: AppSeams,
 ): Promise<void> {
-  const checkpoints = await Checkpoints.open({
-    worktree: paths.workspaceDir,
-    gitDir: join(paths.root, "snapshots-git"),
-  }).catch(() => undefined);
-  const tools = scenario.tools?.(paths.workspaceDir) ?? [];
-  const changes = sessionChangeFeed();
-  await runApp({
-    ...seams,
-    ...(scenario.provider !== "none" && {
-      agentFactory: (guard, history) =>
-        new Agent({
-          provider: new MockProvider([...(scenario.turns ?? [])]),
-          tools,
-          guard,
-          ...(history !== undefined && { history }),
-        }),
-    }),
-    ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
-    sessions: sessionPort(paths.sessionDir, paths.workspaceDir, {
-      checkpointTag: () => checkpoints?.takeTurnTag(),
-      onChange: (sessionId) => changes.emit(sessionId),
-    }),
-    sessionTrees: sessionTreePort(paths.sessionDir, changes),
+  const app = await composePanes({
+    cwd: paths.workspaceDir,
+    projectTrusted: true,
+    sessionDir: paths.sessionDir,
     workspace: workspaceFile(join(paths.root, "workspace-state.json"), 0),
-    ...(checkpoints !== undefined && { checkpoints }),
-    statusLabel: "keywork e2e",
+    config: {},
+    userRoot: paths.root,
+    checkpointsGitDir: join(paths.root, "snapshots-git"),
+    reportCheckpointsUnavailable: (reason) =>
+      console.warn(`checkpoints unavailable for ${paths.workspaceDir}: ${reason}`),
   });
+  await runApp({
+    ...app,
+    ...(scenario.provider !== "none" && { agentFactory: mockAgentFactory(scenario, paths) }),
+    ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
+    ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
+    glyphs: assumedGlyphs,
+    statusLabel: "keywork e2e",
+    ...seams,
+  });
+}
+
+function mockAgentFactory(scenario: Scenario, paths: TemporaryPaths): AgentFactory {
+  if (scenario.agentFactory !== undefined) return scenario.agentFactory;
+  const tools = scenario.tools?.(paths.workspaceDir) ?? [];
+  const freshScript = () =>
+    new MockProvider([...(scenario.turns ?? [])], {
+      ...(scenario.contextWindow !== undefined && {
+        capabilities: { input: ["text"], toolCalls: true, contextWindow: scenario.contextWindow },
+      }),
+    });
+  const sharedScript = scenario.script === "shared" ? freshScript() : undefined;
+  return (guard, history, seams) =>
+    new Agent({
+      provider: sharedScript ?? freshScript(),
+      tools,
+      guard,
+      ...(history !== undefined && { history }),
+      ...(seams?.bus !== undefined && { bus: seams.bus }),
+    });
 }
 
 function buildStage(context: StageContext): Stage {
@@ -251,7 +291,7 @@ function buildStage(context: StageContext): Stage {
     },
     settle: () => settle(app.setup),
     until: (marker, timeoutMs = untilTimeoutMs) => frameContaining(app.setup, marker, timeoutMs),
-    capture: async (stepName, options?: CaptureOptions) => {
+    capture: async (stepName) => {
       ordinal += 1;
       const base = stepFileBase(ordinal, stepName);
       const frame = app.setup.captureCharFrame();
@@ -261,11 +301,11 @@ function buildStage(context: StageContext): Stage {
         frameToSvg(app.setup.captureSpans() as CapturedFrame),
       );
       captures.push(base);
-      if (options?.golden === true) {
-        const golden = goldenPath(goldenRoot, context.scenarioName, base);
+      if (context.goldenSteps.has(stepName)) {
+        const golden = goldenPath(context.goldenRoot, context.scenarioName, stepName);
         if (context.updateGoldens) writeGolden(golden, frame);
         else verifyGolden(golden, frame);
-        goldens.push(base);
+        goldens.push(stepName);
       }
       return frame;
     },
@@ -277,6 +317,11 @@ function buildStage(context: StageContext): Stage {
     resize: async (width, height) => {
       app.setup.resize(width, height);
       await settle(app.setup);
+    },
+    renderOnce: async () => {
+      const startedAt = performance.now();
+      await app.setup.renderOnce();
+      return performance.now() - startedAt;
     },
     relaunch: async () => {
       await quit();

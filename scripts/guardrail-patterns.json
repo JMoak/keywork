@@ -1,0 +1,73 @@
+{
+  "allowed": [
+    "const key = process.env.ANTHROPIC_API_KEY; fetch(\"https://api.anthropic.com/v1/messages\")",
+    "const verifier = pkce.code_verifier; // the openai device flow keeps its own pkce pair",
+    "Claude Code is a separate product; keywork reaches Anthropic through the Agent SDK."
+  ],
+  "codeOnly": [
+    {
+      "name": "anthropic-oauth",
+      "pattern": "anthropic[\\s\\S]{0,120}oauth|oauth[\\s\\S]{0,120}anthropic",
+      "flags": "i",
+      "flagged": ["const token = await anthropicClient.refreshOauthToken(stored);"]
+    },
+    {
+      "name": "crush-source-reference",
+      "pattern": "charmbracelet/crush",
+      "flags": "i",
+      "flagged": ["// ported from charmbracelet/crush"]
+    }
+  ],
+  "everywhere": [
+    {
+      "name": "oauth-token-prefix",
+      "pattern": "sk-ant-oat|sk-ant-ort",
+      "flags": "i",
+      "flagged": ["if (key.startsWith(\"sk-ant-oat\"))", "refresh: sk-ant-ort01-abc"]
+    },
+    {
+      "name": "claude-ai-auth-endpoint",
+      "pattern": "claude\\.ai/(oauth|login|v1/oauth)",
+      "flags": "i",
+      "flagged": ["open https://claude.ai/oauth/authorize?response_type=code"]
+    },
+    {
+      "name": "console-oauth-endpoint",
+      "pattern": "console\\.anthropic\\.com/[\\w/]*oauth",
+      "flags": "i",
+      "flagged": ["https://console.anthropic.com/v1/oauth/authorize"]
+    },
+    {
+      "name": "client-spoof-header",
+      "pattern": "[\"'`]x-app[\"'`]\\s*[:,]\\s*[\"'`]cli[\"'`]|user[-_]?agent[\\s\\S]{0,40}claude[- ]?(code|cli)",
+      "flags": "i",
+      "flagged": ["headers[\"user-agent\"] = \"claude-cli/1.0\"", "{ \"x-app\": \"cli\" }"]
+    },
+    {
+      "name": "claude-code-oauth-client-id",
+      "pattern": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+      "flags": "i",
+      "flagged": ["client_id: \"9d1c250a-e61b-44d9-88ed-5944d1962f5e\""]
+    },
+    {
+      "name": "oauth-token-endpoint",
+      "pattern": "/v1/oauth/token",
+      "flags": "i",
+      "flagged": ["POST /v1/oauth/token with grant_type=refresh_token"]
+    },
+    {
+      "name": "pkce-near-claude",
+      "pattern": "code_(verifier|challenge)[\\s\\S]{0,400}claude|claude[\\s\\S]{0,400}code_(verifier|challenge)",
+      "flags": "i",
+      "flagged": [
+        "const { code_verifier, code_challenge } = pkce(); const url = `https://claude.ai/authorize`"
+      ]
+    },
+    {
+      "name": "claude-code-identifier",
+      "pattern": "claude_code|claudeCode",
+      "flags": "",
+      "flagged": ["const claudeCodeVersion = \"1.0.0\"", "scope: claude_code"]
+    }
+  ]
+}

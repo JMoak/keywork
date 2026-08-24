@@ -1,9 +1,11 @@
 import { Agent, MockProvider, type TurnDelta } from "@keywork/engine";
-import { AppCore, type AppCoreOptions, type AppSnapshot, type PaneFactory } from "./app-core.ts";
+import { AppCore, type AppCoreOptions, type AppSnapshot } from "./app-core.ts";
 import type { ConversationModel } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
+import { definedOnly } from "./defined.ts";
+import type { Rect, Screen } from "./geometry.ts";
 import { type Chord, parseChord } from "./keys.ts";
-import type { Rect, Screen } from "./layout.ts";
+import type { PaneFactory } from "./pane-kinds.ts";
 import type { PointerEvent, ScrollDirection } from "./pointer.ts";
 import type { WorkspaceState } from "./workspace-state.ts";
 
@@ -15,12 +17,23 @@ export interface AppProbeOptions
       | "createFilePane"
       | "createBrowserPane"
       | "createSessionTreePane"
+      | "createArcsPane"
+      | "createArcPane"
       | "createMemoryPane"
       | "createMcpPane"
       | "isDirectory"
       | "undo"
       | "presets"
+      | "inference"
+      | "connections"
+      | "arcs"
+      | "focusedArc"
+      | "workspaces"
+      | "workspaceSetup"
+      | "currentModel"
+      | "switchModel"
       | "restoreWorkspace"
+      | "initialWorkspace"
       | "saveWorkspace"
       | "onPaneClosed"
     >
@@ -38,30 +51,11 @@ export class AppProbe {
   constructor(options: AppProbeOptions = {}) {
     this.screen = options.screen ?? { width: 120, height: 40 };
     const screen = this.screen;
+    const { script, screen: _screen, ...seams } = options;
     this.core = new AppCore({
+      ...definedOnly(seams),
       screen: () => screen,
-      createPane: options.createPane ?? conversationPanes(options.script),
-      ...(options.createFilePane !== undefined && { createFilePane: options.createFilePane }),
-      ...(options.createBrowserPane !== undefined && {
-        createBrowserPane: options.createBrowserPane,
-      }),
-      ...(options.createSessionTreePane !== undefined && {
-        createSessionTreePane: options.createSessionTreePane,
-      }),
-      ...(options.createMemoryPane !== undefined && {
-        createMemoryPane: options.createMemoryPane,
-      }),
-      ...(options.createMcpPane !== undefined && {
-        createMcpPane: options.createMcpPane,
-      }),
-      ...(options.isDirectory !== undefined && { isDirectory: options.isDirectory }),
-      ...(options.undo !== undefined && { undo: options.undo }),
-      ...(options.presets !== undefined && { presets: options.presets }),
-      ...(options.restoreWorkspace !== undefined && {
-        restoreWorkspace: options.restoreWorkspace,
-      }),
-      ...(options.saveWorkspace !== undefined && { saveWorkspace: options.saveWorkspace }),
-      ...(options.onPaneClosed !== undefined && { onPaneClosed: options.onPaneClosed }),
+      createPane: options.createPane ?? conversationPanes(script),
       onExit: () => {
         this.exited = true;
       },
@@ -86,7 +80,6 @@ export class AppProbe {
   }
 
   paste(text: string): this {
-    this.clockMs += 1;
     this.core.handlePaste(text);
     return this;
   }
@@ -149,8 +142,7 @@ export class AppProbe {
   }
 
   private point(event: PointerEvent): void {
-    this.clockMs += 1;
-    this.core.handleMouse(event, this.clockMs);
+    this.core.handleMouse(event);
   }
 }
 

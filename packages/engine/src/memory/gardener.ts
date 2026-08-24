@@ -1,7 +1,8 @@
-import { ReviewInbox, type ReviewItemDetail } from "./inbox.ts";
 import { InvalidTitleError, titleKey } from "./naming.ts";
+import { isEntityPath, type Note, noteWriteTarget } from "./notes.ts";
 import { tokenize } from "./search.ts";
-import { DuplicateTitleError, type MemoryStore, type Note } from "./store.ts";
+import type { ReviewProposal } from "./staging.ts";
+import { DuplicateTitleError, type MemoryStore } from "./store.ts";
 
 export interface DailyEntryCandidate {
   id: string;
@@ -69,7 +70,7 @@ export interface SweepReport {
 
 export interface GardenerOptions {
   store: MemoryStore;
-  inbox?: ReviewInbox;
+  inbox?: Pick<MemoryStore, "propose">;
   judgment?: CurationJudgmentPort;
   thresholds?: Partial<CurationThresholds>;
 }
@@ -80,14 +81,14 @@ export interface SweepOptions {
 
 export class Gardener {
   private readonly store: MemoryStore;
-  private readonly inbox: ReviewInbox;
+  private readonly inbox: Pick<MemoryStore, "propose">;
   private readonly judgment: CurationJudgmentPort | undefined;
   private readonly thresholds: CurationThresholds;
   private readonly recallsBySession = new Map<string, Map<string, number>>();
 
   constructor(options: GardenerOptions) {
     this.store = options.store;
-    this.inbox = options.inbox ?? new ReviewInbox();
+    this.inbox = options.inbox ?? options.store;
     this.judgment = options.judgment;
     this.thresholds = { ...defaultCurationThresholds, ...options.thresholds };
   }
@@ -98,15 +99,23 @@ export class Gardener {
     this.recallsBySession.set(sessionId, session);
   }
 
+  recallsSinceSweep(): ReadonlyMap<string, number> {
+    const totals = new Map<string, number>();
+    for (const session of this.recallsBySession.values()) {
+      for (const [name, count] of session) totals.set(name, (totals.get(name) ?? 0) + count);
+    }
+    return totals;
+  }
+
   async sweep(options: SweepOptions = {}): Promise<SweepReport> {
     const report = emptyReport();
     if (!this.store.trusted) return { ...report, inert: true };
-    const proposals: ReviewItemDetail[] = [];
+    const proposals: ReviewProposal[] = [];
     await this.promoteFromDailyLogs(options.dates, report, proposals);
     await this.curateNotePairs(report, proposals);
     await this.foldUsefulness(report);
     this.proposeUnlinkedMentions(await this.store.listNotes(), proposals);
-    report.flagged = (await this.inbox.add(proposals)).map((item) => item.key);
+    report.flagged = (await this.inbox.propose(proposals)).map((item) => item.key);
     await this.store.recordAudit(auditSummary(report));
     return report;
   }
@@ -114,7 +123,7 @@ export class Gardener {
   private async promoteFromDailyLogs(
     dates: string[] | undefined,
     report: SweepReport,
-    proposals: ReviewItemDetail[],
+    proposals: ReviewProposal[],
   ): Promise<void> {
     if (this.judgment === undefined) return;
     const entries = await this.dailyEntries(dates ?? (await this.store.listDailyDates()));
@@ -130,7 +139,7 @@ export class Gardener {
     proposal: PromotionProposal,
     byId: Map<string, TaintableEntry>,
     report: SweepReport,
-    proposals: ReviewItemDetail[],
+    proposals: ReviewProposal[],
   ): Promise<void> {
     const reject = (reason: ProposalRejection): void => {
       report.rejected.push({ entryId: proposal.entryId, title: proposal.title, reason });
@@ -181,11 +190,11 @@ export class Gardener {
     return entries;
   }
 
-  private async curateNotePairs(report: SweepReport, proposals: ReviewItemDetail[]): Promise<void> {
+  private async curateNotePairs(report: SweepReport, proposals: ReviewProposal[]): Promise<void> {
     if (this.judgment === undefined) return;
     const notes = await this.store.listNotes();
     const eligible = notes.filter(
-      (note) => note.supersededBy === undefined && !note.path.startsWith("entities/"),
+      (note) => note.supersededBy === undefined && !isEntityPath(note.path),
     );
     const retired = new Set<string>();
     for (const [a, b] of similarPairs(eligible, this.thresholds.pairSimilarityFloor)) {
@@ -212,7 +221,7 @@ export class Gardener {
     b: Note,
     verdict: PairVerdict,
     report: SweepReport,
-    proposals: ReviewItemDetail[],
+    proposals: ReviewProposal[],
     retired: Set<string>,
   ): Promise<void> {
     const { keep, retire } = resolveKeep(a, b, verdict);
@@ -290,13 +299,15 @@ export class Gardener {
   }
 
   private async stampUsefulness(note: Note, usefulness: number): Promise<void> {
-    const target = note.path.startsWith("entities/")
-      ? { entity: note.name.slice("entities/".length) }
-      : { title: note.title };
-    await this.store.writeNote({ ...target, body: note.body, provenance: "agent", usefulness });
+    await this.store.writeNote({
+      ...noteWriteTarget(note.path),
+      body: note.body,
+      provenance: "agent",
+      usefulness,
+    });
   }
 
-  private proposeUnlinkedMentions(notes: Note[], proposals: ReviewItemDetail[]): void {
+  private proposeUnlinkedMentions(notes: Note[], proposals: ReviewProposal[]): void {
     const targets = notes.map((note) => ({
       note,
       keys: new Set([note.name, note.title, ...note.aliases].map(titleKey)),

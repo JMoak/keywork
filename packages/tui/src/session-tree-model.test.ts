@@ -73,7 +73,12 @@ function modelOver(specs: NodeSpec[]) {
 }
 
 function press(model: SessionTreeModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5);
+  for (const spec of specs) model.handleKey(parseChord(spec), 5, typedSequence(spec));
+}
+
+function typedSequence(spec: string): string | undefined {
+  if (spec === "space") return " ";
+  return spec.length === 1 ? spec : undefined;
 }
 
 describe("SessionTreeModel flattening", () => {
@@ -173,6 +178,16 @@ describe("SessionTreeModel effects", () => {
     expect(recorded.forks).toEqual([]);
     expect(model.rows()).toEqual([]);
   });
+
+  it("ignores modified chords other than shift+l", () => {
+    const { model, recorded } = modelOver(branchy);
+    expect(model.handleKey(parseChord("ctrl+r"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("shift+f"), 5)).toBe(false);
+    expect(model.handleKey(parseChord("alt+j"), 5)).toBe(false);
+    expect(recorded.refreshes).toBe(0);
+    expect(recorded.forks).toEqual([]);
+    expect(model.cursor).toBe(0);
+  });
 });
 
 describe("SessionTreeModel labeling", () => {
@@ -207,6 +222,27 @@ describe("SessionTreeModel labeling", () => {
     expect(model.labelDraft).toBe("jk");
     expect(model.cursor).toBe(0);
     press(model, "escape");
+  });
+
+  it("keeps capitals, spaces, and punctuation from the raw sequence", () => {
+    const { model } = modelOver(branchy);
+    press(model, "shift+l", "backspace", "backspace", "backspace", "backspace");
+    model.handleKey(parseChord("shift+h"), 5, "H");
+    model.handleKey(parseChord("i"), 5, "i");
+    expect(model.labelDraft).toBe("Hi");
+    press(model, "space");
+    model.handleKey(parseChord("shift+/"), 5, "?");
+    expect(model.labelDraft).toBe("Hi ?");
+  });
+
+  it("drops control sequences and ctrl or alt chords from the draft", () => {
+    const { model } = modelOver(branchy);
+    press(model, "shift+l");
+    expect(model.handleKey(parseChord("ctrl+a"), 5, "")).toBe(false);
+    expect(model.handleKey(parseChord("tab"), 5, "\t")).toBe(false);
+    expect(model.handleKey(parseChord("alt+x"), 5, "x")).toBe(false);
+    expect(model.handleKey(parseChord("x"), 5, undefined)).toBe(false);
+    expect(model.labelDraft).toBe("");
   });
 });
 

@@ -1,12 +1,18 @@
-import type { LayerBootstrap } from "../bootstrap.ts";
 import {
+  type BootstrapSelection,
+  type LayerBootstrap,
+  mostUsefulFirst,
+  selectWithinBudget,
+} from "../bootstrap.ts";
+import type { Note } from "../notes.ts";
+import {
+  applySupersededFloor,
   type EmbeddingsPort,
   MemorySearch,
   type RetrievalSource,
   type SearchHit,
   type SearchOptions,
 } from "../search.ts";
-import type { BootstrapSelection, Note } from "../store.ts";
 import { type ArcRegistry, MissingArcError } from "./registry.ts";
 
 export type MemoryLayerRef = { layer: "workspace" } | { layer: "arc"; arc: string };
@@ -29,10 +35,10 @@ export interface ArcRecallOptions {
 export const defaultArcBoost = 2;
 
 export class ArcRecall {
+  readonly boost: number;
   private readonly workspace: MemorySearch;
   private readonly registry: ArcRegistry;
   private readonly embeddings: EmbeddingsPort | undefined;
-  private readonly boost: number;
   private readonly arcSearches = new Map<string, MemorySearch>();
 
   constructor(options: ArcRecallOptions) {
@@ -54,7 +60,7 @@ export class ArcRecall {
     const stratum = await this.arcSearch(arc).search(query, options);
     const boosted = stratum.hits.map((hit) => taggedArc(hit, arc, this.boost));
     return {
-      hits: [...workspaceHits, ...boosted].sort((a, b) => b.score - a.score),
+      hits: applySupersededFloor([...workspaceHits, ...boosted].sort((a, b) => b.score - a.score)),
       workspaceSource: workspace.source,
       arcSource: stratum.source,
     };
@@ -94,33 +100,23 @@ export async function arcBootstrapLayer(
   slug: string,
   budget: number,
 ): Promise<LayerBootstrap> {
+  const name = `arc:${slug}`;
   const record = await registry.readArc(slug);
-  const notes = record?.status === "active" ? await registry.arcStore(slug).listNotes() : [];
-  return { name: `arc:${slug}`, selection: selectArcNotes(notes, budget) };
+  if (record?.status !== "active") return { name, selection: selectWithinBudget([], budget) };
+  const moc = await registry.readMocNote(slug);
+  const notes = await registry.arcStore(slug).listNotes();
+  return { name, selection: selectArcNotes(moc, notes, budget) };
 }
 
-function selectArcNotes(notes: Note[], budget: number): BootstrapSelection {
+function selectArcNotes(moc: Note | undefined, notes: Note[], budget: number): BootstrapSelection {
   const live = notes.filter((note) => note.supersededBy === undefined);
-  const moc = live.filter((note) => note.name === "MOC");
-  const pinned = live.filter((note) => note.name !== "MOC" && note.pinned);
-  const rest = live.filter((note) => note.name !== "MOC" && !note.pinned);
-  const selected: Note[] = [];
-  const skipped: string[] = [];
-  let tokens = 0;
-  for (const note of [...moc, ...mostUsefulFirst(pinned), ...mostUsefulFirst(rest)]) {
-    if (tokens + note.tokens > budget) {
-      skipped.push(note.name);
-      continue;
-    }
-    selected.push(note);
-    tokens += note.tokens;
-  }
-  return { notes: selected, tokens, budget, skipped };
-}
-
-function mostUsefulFirst(notes: Note[]): Note[] {
-  const priorOf = (note: Note) => note.usefulness ?? note.confidence ?? 0;
-  return [...notes].sort((a, b) => priorOf(b) - priorOf(a));
+  const pinned = live.filter((note) => note.pinned);
+  const rest = live.filter((note) => !note.pinned);
+  const mocFirst = moc === undefined ? [] : [moc];
+  return selectWithinBudget(
+    [...mocFirst, ...mostUsefulFirst(pinned), ...mostUsefulFirst(rest)],
+    budget,
+  );
 }
 
 function taggedWorkspace(hit: SearchHit): ArcSearchHit {

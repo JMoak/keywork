@@ -4,14 +4,13 @@ export const defaultMasks: readonly MaskRule[] = [
   { pattern: /(?<!\d)\d{13}-\d{4}-\d+(?!\d)/g, replacement: "<SESSION>" },
   { pattern: /(?<!\d)\d{13}(?!\d)/g, replacement: "<EPOCH-MS>" },
   { pattern: /(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)/g, replacement: "<DATE>" },
-  { pattern: /(?<!\d)\d{2}:\d{2}(?::\d{2})?(?!\d)/g, replacement: "<TIME>" },
-  { pattern: /\b\d+[smhd](?: ago)?\b/g, replacement: "<AGE>" },
+  { pattern: /(?<!\d)\d{2}:\d{2}(?::\d{2})?(?!\d)/g, replacement: "<T>" },
+  { pattern: /\b\d+[smhdw](?: ago)?\b/g, replacement: "~" },
 ];
 
 export function applyMasks(text: string, rules: readonly MaskRule[]): string {
   return rules.reduce(
-    (masked, rule) =>
-      masked.replace(rule.pattern, (match) => samePadded(rule.replacement, match.length)),
+    (masked, rule) => masked.replace(rule.pattern, (match) => samePadded(rule.replacement, match)),
     text,
   );
 }
@@ -32,10 +31,11 @@ export function diffFrames(expected: string, actual: string): string | undefined
   return mismatches.join("\n");
 }
 
-function samePadded(placeholder: string, length: number): string {
-  return placeholder.length > length
-    ? placeholder.slice(0, length)
-    : placeholder.padEnd(length, "·");
+function samePadded(placeholder: string, match: string): string {
+  if (placeholder.length > match.length) {
+    throw new Error(`mask placeholder "${placeholder}" is longer than its match "${match}"`);
+  }
+  return placeholder.padEnd(match.length, "·");
 }
 
 function describeMismatch(

@@ -1,6 +1,8 @@
 import { MemoryGraph } from "./graph.ts";
+import { contentHash } from "./ledger.ts";
 import { titleKey } from "./naming.ts";
-import type { MemoryStore, Note } from "./store.ts";
+import type { Note } from "./notes.ts";
+import type { MemoryStore } from "./store.ts";
 
 export interface EmbeddingsPort {
   readonly id: string;
@@ -15,10 +17,13 @@ export interface NoteRelations {
   contradicts: string[];
 }
 
+export type LegRanks = Partial<Record<SearchLeg, number>>;
+
 export interface SearchHit {
   note: Note;
   score: number;
   legs: SearchLeg[];
+  ranks: LegRanks;
   superseded: boolean;
   relations: NoteRelations;
 }
@@ -38,6 +43,10 @@ export interface SearchOptions {
 }
 
 export type SearchObserver = (outcome: SearchOutcome) => void;
+
+export interface MemorySearcher {
+  search(query: string, options?: SearchOptions): Promise<SearchOutcome>;
+}
 
 const defaultLimit = 8;
 const legDepth = 50;
@@ -70,6 +79,7 @@ export class MemorySearch {
   private async runSearch(query: string, options: SearchOptions): Promise<SearchOutcome> {
     const limit = options.limit ?? defaultLimit;
     const notes = await this.store.listNotes();
+    this.forgetVanishedNotes(notes);
     if (notes.length === 0 || query.trim() === "") return { hits: [], source: this.source() };
     const graph = MemoryGraph.fromNotes(notes);
     const lexical = lexicalRanking(notes, query);
@@ -112,24 +122,26 @@ export class MemorySearch {
   private async noteVectors(notes: Note[]): Promise<Map<string, number[]>> {
     const port = this.embeddings;
     if (port === undefined) return new Map();
-    const stale = notes.filter((note) => {
-      const cached = this.vectors.get(note.path);
-      return cached === undefined || cached.hash !== embeddingText(note);
-    });
+    const texts = new Map(notes.map((note) => [note.path, embeddingText(note)]));
+    const stale = [...texts].filter(
+      ([path, text]) => this.vectors.get(path)?.hash !== contentHash(text),
+    );
     if (stale.length > 0) {
-      const embedded = await port.embed(stale.map(embeddingText));
-      stale.forEach((note, index) => {
+      const embedded = await port.embed(stale.map(([, text]) => text));
+      stale.forEach(([path, text], index) => {
         const vector = embedded[index];
         if (vector === undefined) throw new Error("embedding response shorter than request");
-        this.vectors.set(note.path, { hash: embeddingText(note), vector: normalize(vector) });
+        this.vectors.set(path, { hash: contentHash(text), vector: normalize(vector) });
       });
     }
-    const result = new Map<string, number[]>();
-    for (const note of notes) {
-      const cached = this.vectors.get(note.path);
-      if (cached !== undefined) result.set(note.path, cached.vector);
+    return new Map([...this.vectors].map(([path, cached]) => [path, cached.vector]));
+  }
+
+  private forgetVanishedNotes(notes: Note[]): void {
+    const present = new Set(notes.map((note) => note.path));
+    for (const path of this.vectors.keys()) {
+      if (!present.has(path)) this.vectors.delete(path);
     }
-    return result;
   }
 }
 
@@ -196,11 +208,15 @@ function fuseRankings(rankings: RankedNote[][]): FusedHit[] {
         note: entry.note,
         score: 0,
         legs: [],
+        ranks: {},
         superseded: entry.note.supersededBy !== undefined,
       };
       hit.score += 1 / (rrfK + rank + 1);
       const leg = legNames[legIndex];
-      if (leg !== undefined && !hit.legs.includes(leg)) hit.legs.push(leg);
+      if (leg !== undefined && !hit.legs.includes(leg)) {
+        hit.legs.push(leg);
+        hit.ranks[leg] = rank + 1;
+      }
       byPath.set(entry.note.path, hit);
     });
   });
@@ -218,7 +234,7 @@ function withRelations(hit: FusedHit, graph: MemoryGraph): SearchHit {
   };
 }
 
-function applySupersededFloor(hits: FusedHit[]): FusedHit[] {
+export function applySupersededFloor<Hit extends { superseded: boolean }>(hits: Hit[]): Hit[] {
   return [...hits.filter((hit) => !hit.superseded), ...hits.filter((hit) => hit.superseded)];
 }
 

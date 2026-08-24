@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { contrastFailures, type Flavor, parseFlavor } from "./flavor.ts";
+import {
+  contrastFailures,
+  type Flavor,
+  flavorTokenOverridesSchema,
+  flavorTokensSchema,
+  parseFlavor,
+} from "./flavor.ts";
 
 const night: Flavor = {
   name: "night-fixture",
@@ -70,5 +76,27 @@ describe("parseFlavor", () => {
 describe("contrastFailures", () => {
   it("reads clean on the reference palette", () => {
     expect(contrastFailures(night)).toEqual([]);
+  });
+});
+
+describe("flavorTokenOverridesSchema", () => {
+  it("accepts any subset of the flavor tokens and nothing else", () => {
+    expect(flavorTokenOverridesSchema.parse({ accent: "#ff00ff", ramp: ["#ff00ff"] })).toEqual({
+      accent: "#ff00ff",
+      ramp: ["#ff00ff"],
+    });
+    expect(flavorTokenOverridesSchema.parse({})).toEqual({});
+    expect(Object.keys(flavorTokenOverridesSchema.shape)).toEqual(
+      Object.keys(flavorTokensSchema.shape),
+    );
+  });
+
+  it("names a misspelled token and holds colors to the flavor rule", () => {
+    const misspelled = flavorTokenOverridesSchema.safeParse({ acent: "#ff00ff" });
+    expect(misspelled.success).toBe(false);
+    expect(misspelled.error?.issues[0]?.message).toMatch(/Unrecognized key: "acent"/);
+    const malformed = flavorTokenOverridesSchema.safeParse({ accent: "purple" });
+    expect(malformed.error?.issues[0]?.path).toEqual(["accent"]);
+    expect(malformed.error?.issues[0]?.message).toMatch(/#rrggbb/);
   });
 });

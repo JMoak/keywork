@@ -1,12 +1,14 @@
 import { readFile } from "node:fs/promises";
-import { confinedPath } from "../tools/confine.ts";
+import { confinedPath, toolScope } from "../tools/confine.ts";
 import {
   definitionString,
+  type ExtensionConventions,
   type ExtensionLoadFailure,
-  type LayeredDirs,
+  type LayerRoots,
   type LayerSource,
-  loadLayeredMarkdown,
+  loadLayered,
   type MarkdownDefinition,
+  markdownFilesIn,
 } from "./layers.ts";
 
 export interface CommandDefinition {
@@ -29,8 +31,8 @@ export interface CommandRuntime {
   embedFile(path: string): Promise<string | undefined>;
 }
 
-export async function loadCommands(dirs: LayeredDirs): Promise<CommandLoad> {
-  const { items, failures } = await loadLayeredMarkdown(dirs, buildCommand);
+export async function loadCommands(roots: LayerRoots): Promise<CommandLoad> {
+  const { items, failures } = await loadLayered(roots, commandConventions, buildCommand);
   return { commands: items, failures };
 }
 
@@ -52,8 +54,9 @@ export async function renderCommand(
 }
 
 export function fileEmbedder(root: string): (path: string) => Promise<string | undefined> {
+  const scope = toolScope(root);
   return async (path) => {
-    const confined = confinedPath(root, path);
+    const confined = confinedPath(scope, path);
     try {
       return await readFile(confined, "utf8");
     } catch (cause) {
@@ -156,6 +159,11 @@ async function renderSegment(
       return (await runtime.embedFile(segment.path)) ?? segment.raw;
   }
 }
+
+const commandConventions: ExtensionConventions = {
+  dirs: [".keywork/commands"],
+  discover: markdownFilesIn,
+};
 
 function buildCommand(definition: MarkdownDefinition): CommandDefinition {
   const description = definitionString(definition.frontmatter, "description");

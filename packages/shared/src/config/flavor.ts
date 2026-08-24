@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hexColor } from "../color.ts";
 import { apcaLc } from "../contrast.ts";
 
 export function parseFlavor(candidate: unknown): Flavor {
@@ -31,8 +32,6 @@ export function contrastFailures(flavor: Flavor): string[] {
   ];
 }
 
-const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "flavor colors must be #rrggbb");
-
 const inkToken = z.enum([
   "text",
   "textMid",
@@ -44,42 +43,42 @@ const inkToken = z.enum([
   "borderFocus",
 ]);
 
-const tokens = z
+export const flavorTokensSchema = z
   .object({
-    background: color.describe(
+    background: hexColor.describe(
       "The screen ground; every readability floor the validator enforces is measured against it.",
     ),
-    panel: color.describe(
+    panel: hexColor.describe(
       "Raised surface behind status rows, trays, and fences; exists so elevated blocks separate from the ground without borders.",
     ),
-    panelLift: color.describe(
+    panelLift: hexColor.describe(
       "One step above panel for code spans and highlighted rows; exists because the page needs a second elevation that stays quiet.",
     ),
-    text: color.describe(
+    text: hexColor.describe(
       "Primary reading ink; held to body-text contrast on every surface it composes with.",
     ),
-    textMid: color.describe(
+    textMid: hexColor.describe(
       "Supporting-fact ink for paths, counts, and results; exists as the middle rung of the tonal ladder.",
     ),
-    textDim: color.describe(
+    textDim: hexColor.describe(
       "Chrome ink for labels and separators; quiet by design, floored so chrome never disappears.",
     ),
-    border: color.describe(
+    border: hexColor.describe(
       "Resting pane border; a hairline that only needs to be findable, so it carries the lowest floor.",
     ),
-    borderFocus: color.describe(
+    borderFocus: hexColor.describe(
       "Focus strength and the focus-lift target; floored high because focus must survive a glance.",
     ),
-    accent: color.describe(
+    accent: hexColor.describe(
       "The identity color; the ramp starts here so a single pane renders exactly the flat look.",
     ),
-    accentSoft: color.describe("Muted accent for secondary marks and hints."),
-    success: color.describe(
+    accentSoft: hexColor.describe("Muted accent for secondary marks and hints."),
+    success: hexColor.describe(
       "Outcome ink for good results; only outcome words wear it, so it must read at a glance.",
     ),
-    error: color.describe("Outcome ink for failures; floored like success for the same glance."),
+    error: hexColor.describe("Outcome ink for failures; floored like success for the same glance."),
     ramp: z
-      .array(color)
+      .array(hexColor)
       .min(1)
       .max(6)
       .describe(
@@ -90,6 +89,8 @@ const tokens = z
   .describe(
     "The complete token palette; a flavor is self-contained, so every token is stated rather than inherited.",
   );
+
+export const flavorTokenOverridesSchema = flavorTokensSchema.partial();
 
 const density = z
   .object({
@@ -116,7 +117,7 @@ export const flavorSchema = z
       .describe(
         "Which ground the flavor composes on; surfaces and the validator learn polarity from this instead of guessing from luminance.",
       ),
-    tokens,
+    tokens: flavorTokensSchema,
     density,
     gap: z
       .number()
@@ -141,6 +142,7 @@ export const flavorSchema = z
 
 export type Flavor = z.infer<typeof flavorSchema>;
 export type FlavorTokens = Flavor["tokens"];
+export type FlavorTokenOverrides = z.infer<typeof flavorTokenOverridesSchema>;
 export type FlavorInkToken = z.infer<typeof inkToken>;
 export type FlavorGroundToken = "background" | "panel" | "panelLift";
 export type FlavorReadableToken = FlavorInkToken | "border";
