@@ -116,6 +116,7 @@ export interface AppSnapshot {
   overlay: OverlayKind | undefined;
   paletteQuery: string;
   leaderArmed: boolean;
+  costsShown: boolean;
   lastKey: string;
   notice: string;
 }
@@ -135,6 +136,7 @@ export class AppCore implements ActionTarget {
     paneHeld: (id) => this.paneHeld(id),
   };
   leaderArmed = false;
+  costsShown = false;
   lastKey = "";
   notice = "";
   private readonly held = new Set<string>();
@@ -189,6 +191,7 @@ export class AppCore implements ActionTarget {
       overlay: this.overlay?.kind,
       paletteQuery: this.paletteQuery,
       leaderArmed: this.leaderArmed,
+      costsShown: this.costsShown,
       lastKey: this.lastKey,
       notice: this.notice,
     };
@@ -417,6 +420,11 @@ export class AppCore implements ActionTarget {
 
   draggingPane(): string | undefined {
     return this.pointer.draggingPane();
+  }
+
+  toggleCosts(): void {
+    this.costsShown = !this.costsShown;
+    this.postNotice(this.costsShown ? "spend shown in pane headers" : "spend hidden");
   }
 
   toggleHelp(): void {

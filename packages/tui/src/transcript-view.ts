@@ -165,12 +165,23 @@ export function transcriptLines(
 ): TranscriptLine[] {
   return entries.flatMap((entry) => {
     const failed = entry.kind === "tool" && entry.failed;
-    const prefixed = entry.kind === "user" ? `› ${entry.text}` : entry.text;
-    return prefixed
-      .split("\n")
-      .flatMap((line) => wrap(line, width))
-      .map((text) => ({ kind: entry.kind, failed, text }));
+    const lines =
+      entry.kind === "user" ? promptedLines(entry.text, width) : plainLines(entry.text, width);
+    return lines.map((text) => ({ kind: entry.kind, failed, text }));
   });
+}
+
+const promptMark = "› ";
+const promptHang = " ".repeat(promptMark.length);
+
+function plainLines(text: string, width: number): string[] {
+  return text.split("\n").flatMap((line) => wrap(line, width));
+}
+
+function promptedLines(text: string, width: number): string[] {
+  return plainLines(text, Math.max(1, width - promptMark.length)).map((line, index) =>
+    index === 0 ? `${promptMark}${line}` : `${promptHang}${line}`,
+  );
 }
 
 const railWidth = 2;

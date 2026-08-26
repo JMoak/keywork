@@ -6,11 +6,15 @@ import type { Theme } from "./theme.ts";
 
 export type PaneView = ReturnType<typeof Box>;
 
+export type ChromeWeight = Flavor["chromeWeight"];
+
 export interface PaneContext {
   theme: Theme;
   focused: boolean;
   width: number;
   height: number;
+  chrome?: ChromeWeight;
+  costs?: boolean;
   borderColor?: string;
   instruments?: Flavor["instruments"];
   pinMark?: string;

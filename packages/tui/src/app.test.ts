@@ -175,3 +175,16 @@ describe("closing a pane mid-animation", () => {
     expect(animator.moving).toBe(false);
   });
 });
+
+describe("showing costs", () => {
+  it("stays off until /show-costs toggles it, and reports each flip", () => {
+    const probe = new AppProbe();
+    expect(probe.snapshot().costsShown).toBe(false);
+    probe.command("show-costs");
+    expect(probe.snapshot().costsShown).toBe(true);
+    expect(probe.snapshot().notice).toBe("spend shown in pane headers");
+    probe.command("costs");
+    expect(probe.snapshot().costsShown).toBe(false);
+    expect(probe.snapshot().notice).toBe("spend hidden");
+  });
+});

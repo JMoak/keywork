@@ -19,7 +19,7 @@ import {
   PromptEditor,
 } from "./prompt-editor.ts";
 import { SessionLedger } from "./session-ledger.ts";
-import { type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
+import { type ToolRun, type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
 import { TranscriptNavigation } from "./transcript-navigation.ts";
 import { type TranscriptLine, TranscriptView } from "./transcript-view.ts";
 
@@ -139,6 +139,14 @@ export class ConversationModel {
 
   contextReading(): ContextReading | undefined {
     return this.ledger.contextReading(this.agent);
+  }
+
+  activeTool(): ToolRun | undefined {
+    return this.feed.activeTool();
+  }
+
+  turnElapsedMs(): number | undefined {
+    return this.feed.turnElapsedMs();
   }
 
   backtracking(): boolean {

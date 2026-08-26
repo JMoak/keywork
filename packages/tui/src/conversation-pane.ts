@@ -38,6 +38,7 @@ import { clip, padEnd, width } from "./width.ts";
 
 const askDiffRows = 10;
 const mastheadStatusRows = 1;
+const clockTickMs = 1000;
 
 const lifecycleRamps = {
   pulse: { tier1: ["▓", "█"], tier0: ["+", "#"] },
@@ -80,6 +81,8 @@ export class ConversationPane implements Pane {
   private pulsing = false;
   private drainInk: number | undefined;
   private arrivalInk: number | undefined;
+  private readonly wake: () => void;
+  private clock: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     readonly id: string,
@@ -89,6 +92,7 @@ export class ConversationPane implements Pane {
     commands?: CommandsPort,
     options?: ConversationPaneOptions,
   ) {
+    this.wake = notify;
     this.model = new ConversationModel(agent, notify, titler, commands, options?.ports);
     this.pageThresholds = options?.page ?? pageTierThresholds;
     this.glyphs = options?.glyphs ?? assumedGlyphs;
@@ -175,13 +179,33 @@ export class ConversationPane implements Pane {
     this.model.postNotice(text);
   }
 
-  telemetry(instruments: InstrumentTier = "calm"): string {
+  liveStatus(context: Pick<PaneContext, "instruments" | "costs">): string {
+    return [
+      this.workSegment(),
+      this.model.pendingAsk === undefined ? "" : "needs you",
+      queuedSegment(this.model.queued().length),
+      this.contextSegment(context.instruments ?? "calm"),
+      context.costs === true ? this.model.usageSummary() : "",
+      this.unseen === "failed" ? "failed" : "",
+    ]
+      .filter((segment) => segment !== "")
+      .join(" · ");
+  }
+
+  private workSegment(): string {
+    if (!this.model.busy) return "";
+    const tool = this.model.activeTool();
+    const elapsed = this.model.turnElapsedMs();
+    const doing = tool === undefined ? "thinking" : tool.name;
+    return elapsed === undefined ? doing : `${doing} · ${elapsedLabel(elapsed)}`;
+  }
+
+  private contextSegment(instruments: InstrumentTier): string {
     const reading = this.model.contextReading();
-    const gauge =
-      reading === undefined
-        ? ""
-        : contextGauge(reading, { style: gaugeStyleFor(instruments), glyphs: this.glyphs });
-    return [gauge, this.model.usageSummary()].filter((part) => part !== "").join(" · ");
+    if (reading === undefined) return "";
+    const significant = instruments === "cockpit" || reading.used * 2 >= reading.flushAt;
+    if (!significant) return "";
+    return contextGauge(reading, { style: gaugeStyleFor(instruments), glyphs: this.glyphs });
   }
 
   submitPrompt(text: string): void {
@@ -212,8 +236,23 @@ export class ConversationPane implements Pane {
     this.model.discloseRetrieval(text);
   }
 
+  private syncClock(): void {
+    if (this.model.busy && this.clock === undefined) {
+      this.clock = setInterval(this.wake, clockTickMs);
+      this.clock.unref?.();
+    } else if (!this.model.busy) {
+      this.stopClock();
+    }
+  }
+
+  private stopClock(): void {
+    if (this.clock !== undefined) clearInterval(this.clock);
+    this.clock = undefined;
+  }
+
   dispose(): void {
     this.closed = true;
+    this.stopClock();
     this.animator?.settleRegion(`stamp:${this.id}`);
     this.animator?.settleRegion(`pulse:${this.id}`);
     this.animator?.settleRegion(`arrive:${this.id}`);
@@ -258,6 +297,7 @@ export class ConversationPane implements Pane {
   view(context: PaneContext): PaneView {
     this.lastFocused = context.focused;
     this.syncStamp(context.focused);
+    this.syncClock();
     const page = resolvePage(context.width, this.pageThresholds);
     const framed = this.framedThroughArrival(context);
     return this.wearsMasthead(page) ? this.mastheadView(framed) : this.transcriptView(framed, page);
@@ -276,7 +316,7 @@ export class ConversationPane implements Pane {
         name: this.model.title ?? this.id,
         stamp: this.stampGlyph(),
         arc: this.arc,
-        telemetry: this.telemetry(context.instruments) || undefined,
+        telemetry: this.liveStatus(context) || undefined,
         siblings: this.siblingTitles?.(),
       },
       context.width,
@@ -355,12 +395,12 @@ export class ConversationPane implements Pane {
   }
 
   private mastheadView(context: PaneContext): PaneView {
-    const { theme, focused, width, height } = context;
-    const innerWidth = paneContentWidth(width);
+    const { theme, focused } = context;
+    const innerWidth = paneContentWidth(context);
     const prompt = promptLines(this.model.editor.buffer, focused);
     const head = headline(this.model.title ?? this.id, {
       width: innerWidth,
-      rows: Math.max(0, paneContentHeight(height) - mastheadStatusRows - prompt.length),
+      rows: Math.max(0, paneContentHeight(context) - mastheadStatusRows - prompt.length),
       glyphs: this.glyphs,
       siblings: this.siblingTitles?.(),
     });
@@ -371,9 +411,11 @@ export class ConversationPane implements Pane {
       this.composedTitle(context),
       Box(
         { flexGrow: 1, flexDirection: "column", overflow: "hidden" },
-        ...head.lines.map((line) => Text({ content: line || " ", fg: theme.text })),
+        ...head.lines.map((line, row) =>
+          Text({ content: line || " ", fg: mastheadInk(context, row, head.lines.length) }),
+        ),
         Text({
-          content: clip(this.mastheadStatus(context.instruments), innerWidth),
+          content: clip(this.mastheadStatus(context), innerWidth),
           fg: theme.textMid,
         }),
       ),
@@ -381,19 +423,19 @@ export class ConversationPane implements Pane {
     );
   }
 
-  private mastheadStatus(instruments: PaneContext["instruments"]): string {
+  private mastheadStatus(context: PaneContext): string {
     const state = this.model.busy
       ? "working"
       : this.model.entries.at(-1)?.kind === "error"
         ? "failed"
         : "idle";
-    const telemetry = this.telemetry(instruments);
-    return telemetry === "" ? state : `${state} · ${telemetry}`;
+    const live = this.liveStatus(context);
+    return live === "" ? state : `${state} · ${live}`;
   }
 
   private transcriptView(context: PaneContext, page: PageGrammar): PaneView {
-    const { theme, focused, width, height } = context;
-    const innerWidth = paneContentWidth(width);
+    const { theme, focused } = context;
+    const innerWidth = paneContentWidth(context);
     const suggestions = focused ? this.model.suggestions() : [];
     const prompt = promptLines(this.model.editor.buffer, focused);
     const queued = this.model.queued();
@@ -409,7 +451,7 @@ export class ConversationPane implements Pane {
       keyHint.length +
       (ask === undefined ? 0 : 1) +
       (this.model.scrollBack > 0 ? 1 : 0);
-    const maxRows = Math.max(0, paneContentHeight(height) - reservedRows);
+    const maxRows = Math.max(0, paneContentHeight(context) - reservedRows);
     const lines = this.model.visibleTranscript(innerWidth, maxRows, page, this.marks);
     this.lastLines = lines;
     this.lastMaxRows = maxRows;
@@ -584,4 +626,22 @@ function lineColor(line: TranscriptLine, theme: Theme): string {
     case "info":
       return theme.textDim;
   }
+}
+
+function mastheadInk(context: PaneContext, row: number, rows: number): string {
+  const hue = context.borderColor ?? context.theme.borderFocus;
+  const depth = rows <= 1 ? 1 : row / (rows - 1);
+  return rampColor([hue, context.theme.text], depth);
+}
+
+function queuedSegment(count: number): string {
+  return count === 0 ? "" : `${count} queued`;
+}
+
+export function elapsedLabel(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }

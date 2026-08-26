@@ -128,9 +128,9 @@ export const flavorSchema = z
         "Breathing room in cells between panes (C50 renders it); composition taste that travels with the flavor, and 0 keeps today's seam-to-seam layout byte-identical.",
       ),
     chromeWeight: z
-      .enum(["regular", "borderless"])
+      .enum(["regular", "seams", "borderless"])
       .describe(
-        "regular draws the rounded pane border; borderless reserves the luminance-focus treatment (C50); chrome heft is flavor taste, not layout truth.",
+        "regular boxes every pane in its own rounded border; seams draws one shared hairline per split with a header row inside each pane; borderless reserves the luminance-focus treatment (C50); chrome heft is flavor taste, not layout truth.",
       ),
     instruments: z
       .enum(["calm", "cockpit"])

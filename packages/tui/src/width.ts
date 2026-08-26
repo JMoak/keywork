@@ -36,19 +36,45 @@ export function wrap(text: string, cells: number): string[] {
   if (cells < 1) return [text];
   if (text === "") return [""];
   const pieces: string[] = [];
-  let piece = "";
+  let piece: Segment[] = [];
   let used = 0;
   for (const segment of segments(text)) {
     if (used > 0 && used + segment.width > cells) {
-      pieces.push(piece);
-      piece = "";
-      used = 0;
+      const [line, carried] = brokenAtLastSpace(piece);
+      pieces.push(joined(line));
+      piece = carried;
+      used = widthOf(carried);
+      if (isSpace(segment) && used === 0) continue;
     }
-    piece += segment.text;
+    piece.push(segment);
     used += segment.width;
   }
-  pieces.push(piece);
+  pieces.push(joined(piece));
   return pieces;
+}
+
+function brokenAtLastSpace(piece: Segment[]): [Segment[], Segment[]] {
+  const cut = piece.findLastIndex(isSpace);
+  if (cut <= 0) return [piece, []];
+  return [withoutTrailingSpaces(piece.slice(0, cut)), piece.slice(cut + 1)];
+}
+
+function withoutTrailingSpaces(piece: Segment[]): Segment[] {
+  let end = piece.length;
+  while (end > 0 && isSpace(piece[end - 1] as Segment)) end -= 1;
+  return piece.slice(0, end);
+}
+
+function isSpace(segment: Segment): boolean {
+  return segment.text === " ";
+}
+
+function joined(piece: readonly Segment[]): string {
+  return piece.map((segment) => segment.text).join("");
+}
+
+function widthOf(piece: readonly Segment[]): number {
+  return piece.reduce((total, segment) => total + segment.width, 0);
 }
 
 export function clipSpans<Span extends { text: string }>(

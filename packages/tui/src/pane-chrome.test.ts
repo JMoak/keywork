@@ -3,6 +3,8 @@ import { paneBorder, rampPositions } from "./chroma.ts";
 import type { PaneContext } from "./pane.ts";
 import {
   paneChrome,
+  paneContentHeight,
+  paneContentWidth,
   paneLine,
   rowsView,
   selectedLine,
@@ -57,6 +59,46 @@ describe("paneChrome border color", () => {
         expect(borderOf(chroma)).toBe(borderOf(today));
       }
     }
+  });
+});
+
+describe("paneChrome in the seams weight", () => {
+  function headerOf(view: unknown): { content?: string; fg?: string } {
+    const [header] = (view as { children: Array<{ props: { content?: string; fg?: string } }> })
+      .children;
+    return header?.props ?? {};
+  }
+
+  it("draws no border and puts the trimmed title on a header row", () => {
+    const view = paneChrome(contextWith({ chrome: "seams" }), " session-1 · idle ");
+    expect(borderOf(view)).toBeUndefined();
+    expect((view as { props: { border?: boolean } }).props.border).toBeUndefined();
+    expect(headerOf(view).content).toBe("session-1 · idle");
+  });
+
+  it("inks the header in the pane's hue when focused and in mid ink otherwise", () => {
+    const focused = paneChrome(
+      contextWith({ chrome: "seams", focused: true, borderColor: "#123456" }),
+      " t ",
+    );
+    expect(headerOf(focused).fg).toBe("#123456");
+    expect(headerOf(paneChrome(contextWith({ chrome: "seams" }), " t ")).fg).toBe(
+      keyworkNight.textMid,
+    );
+  });
+
+  it("leads the header with the pin mark and clips it to the content width", () => {
+    const pinned = paneChrome(contextWith({ chrome: "seams", pinMark: "★", width: 8 }), " tail ");
+    expect(headerOf(pinned).content).toBe("★ tail");
+    const tight = paneChrome(contextWith({ chrome: "seams", width: 6 }), " long-title ");
+    expect(headerOf(tight).content).toBe("long");
+  });
+
+  it("charges two columns and one row of chrome instead of four and two", () => {
+    expect(paneContentWidth({ width: 20, chrome: "seams" })).toBe(18);
+    expect(paneContentHeight({ height: 10, chrome: "seams" })).toBe(9);
+    expect(paneContentWidth({ width: 20, chrome: "regular" })).toBe(16);
+    expect(paneContentHeight({ height: 10 })).toBe(8);
   });
 });
 

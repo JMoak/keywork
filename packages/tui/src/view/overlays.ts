@@ -5,6 +5,7 @@ import type { ArcOrdinals } from "../arcs.ts";
 import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
 import type { Keymap } from "../keymap.ts";
 import type { OverlayFrame } from "../overlays/index.ts";
+import type { ChromeWeight } from "../pane.ts";
 import type { Theme } from "../theme.ts";
 import { type TrayChild, trayRows } from "../tray.ts";
 import { clip, clipSpans, padEnd, width } from "../width.ts";
@@ -16,9 +17,11 @@ import {
   type OverlayPlacement,
   workspacePickerSpec,
 } from "./filter-overlay.ts";
+import { frameInset } from "./frame.ts";
 
 export interface OverlayInputs {
   theme: Theme;
+  chrome: ChromeWeight;
   arcOrdinal: ArcOrdinals;
 }
 
@@ -26,7 +29,7 @@ export function overlayView(core: AppCore, inputs: OverlayInputs) {
   const frame = core.overlayFrame();
   if (frame === undefined) return undefined;
   const { theme } = inputs;
-  const placement = overlayPosition(frame);
+  const placement = overlayPosition(frame, frameInset(inputs.chrome));
   if (core.helpVisible) return helpOverlay(core.keymap, theme, placement);
   if (core.paletteOpen) return paletteOverlay(core, theme, placement);
   const preset = presetRows(core, theme);
@@ -58,11 +61,11 @@ function setupRows(readiness: WorkspaceReadiness, theme: Theme) {
   ];
 }
 
-export function overlayPosition(frame: OverlayFrame): OverlayPlacement {
+export function overlayPosition(frame: OverlayFrame, inset = 0): OverlayPlacement {
   return {
     position: "absolute",
-    left: frame.x,
-    top: frame.y,
+    left: frame.x + inset,
+    top: frame.y + inset,
     width: frame.width,
     height: frame.height,
   };

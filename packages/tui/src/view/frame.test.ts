@@ -50,11 +50,16 @@ describe("discardFrame", () => {
 });
 
 describe("screenWithin", () => {
-  it("leaves room for the status row", () => {
-    expect(screenWithin({ width: 120, height: 40 })).toEqual({ width: 120, height: 39 });
+  it("leaves room for the status row in the boxed weight", () => {
+    expect(screenWithin({ width: 120, height: 40 }, "regular")).toEqual({ width: 120, height: 39 });
+  });
+
+  it("keeps a one-cell ring for the anchor in the seams weight", () => {
+    expect(screenWithin({ width: 120, height: 40 }, "seams")).toEqual({ width: 118, height: 37 });
   });
 
   it("never goes negative on a tiny terminal", () => {
-    expect(screenWithin({ width: 1, height: 1 })).toEqual({ width: 1, height: 0 });
+    expect(screenWithin({ width: 1, height: 1 }, "regular")).toEqual({ width: 1, height: 0 });
+    expect(screenWithin({ width: 1, height: 1 }, "seams")).toEqual({ width: 0, height: 0 });
   });
 });

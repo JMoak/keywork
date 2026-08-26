@@ -146,13 +146,13 @@ export class ArcsPane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
-    const { theme, focused, height, width } = context;
-    const innerWidth = paneContentWidth(width);
+    const { theme, focused } = context;
+    const innerWidth = paneContentWidth(context);
     const nameLine = this.nameLine(theme, focused);
     const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
     this.lastPageRows = Math.max(
       0,
-      paneContentHeight(height) - (nameLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
+      paneContentHeight(context) - (nameLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
     );
     return paneChrome(
       context,

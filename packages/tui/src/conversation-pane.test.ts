@@ -20,7 +20,7 @@ function modelOf(pane: ConversationPane): ConversationModel {
   return (pane as unknown as { model: ConversationModel }).model;
 }
 
-const settledTitle = (stamp = "") => new RegExp(`^ ${stamp}session-1 · ░ \\d+ $`);
+const settledTitle = (stamp = "", tail = "") => new RegExp(`^ ${stamp}session-1${tail} $`);
 
 function manualScheduler(): { schedule: Scheduler; runAll: () => void } {
   const queue: Array<() => void> = [];
@@ -73,6 +73,7 @@ describe("the lifecycle stamp", () => {
     await Promise.resolve();
     const working = titleOf(pane, true);
     expect(working).toMatch(/^ [░▒▓] session-1/);
+    expect(working).toMatch(/ · (?:thinking|slow) · \d+s $/);
 
     release();
     await modelOf(pane).lastSend;
@@ -150,7 +151,7 @@ describe("the lifecycle stamp", () => {
     titleOf(pane, false);
     await modelOf(pane).lastSend;
 
-    expect(titleOf(pane, false)).toMatch(settledTitle("▛ "));
+    expect(titleOf(pane, false)).toMatch(settledTitle("▛ ", " · failed"));
     expect(titleOf(pane, true)).toMatch(settledTitle());
   });
 
@@ -207,7 +208,7 @@ describe("the masthead tile", () => {
     const rows = frame(pane, true, 36);
     expect(rows.join("\n")).toMatch(/[▀▄]/);
     expect(rows.some((row) => row.includes("a long enough reply"))).toBe(false);
-    expect(rows.find((row) => row.startsWith("idle"))).toMatch(/^idle · ░ \d+$/);
+    expect(rows.find((row) => row.startsWith("idle"))).toBe("idle");
     expect(rows.at(-1)).toBe("› ▌");
   });
 
@@ -271,8 +272,8 @@ describe("the masthead tile", () => {
     await modelOf(pane).lastSend;
 
     expect(frame(pane, false, 36)).toContain("AUTH RETRY FIX");
-    expect(titleOf(pane, false)).toMatch(/^ # auth-retry-fix · \. \d+ $/);
-    expect(titleOf(pane, true)).toMatch(/^ [.:+#] auth-retry-fix | auth-retry-fix · \. \d+ $/);
+    expect(titleOf(pane, false)).toBe(" # auth-retry-fix ");
+    expect(titleOf(pane, true)).toMatch(/^ (?:[.:+#] )?auth-retry-fix $/);
     const rows = frame(pane, true, 132);
     for (const row of rows) expect(row).toMatch(/^[\x20-\x7e▌›]*$/);
   });
@@ -341,3 +342,49 @@ function frameRows(view: ReturnType<ConversationPane["view"]>): string[] {
   visit(view);
   return rows;
 }
+
+describe("the live header", () => {
+  it("keeps spend out of the header until costs are shown", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("reply", { inputTokens: 12, outputTokens: 3 })]),
+    });
+    const pane = new ConversationPane("session-1", agent, () => {});
+    modelOf(pane).submitText("go");
+    await modelOf(pane).lastSend;
+    expect(titleOf(pane, true)).toBe(" session-1 ");
+    const shown = pane.view({ ...context(true), costs: true }) as { props?: { title?: string } };
+    expect(shown.props?.title).toMatch(/^ session-1 · \d+▸\d+ $/);
+  });
+
+  it("shows the context gauge only once it is significant, or always in the cockpit", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
+    const pane = new ConversationPane("session-1", agent, () => {});
+    modelOf(pane).submitText("go");
+    await modelOf(pane).lastSend;
+    expect(pane.liveStatus({ instruments: "calm" })).toBe("");
+    expect(pane.liveStatus({ instruments: "cockpit" })).toMatch(/^[░▒▓█]+ \d+\/\d+k$/);
+  });
+
+  it("names the running tool with its elapsed time and counts queued prompts", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "c1", name: "slow", arguments: {} }),
+        textTurn("after"),
+        textTurn("queued reply"),
+      ]),
+      tools: [gatedTool(gate)],
+    });
+    const pane = new ConversationPane("session-1", agent, () => {});
+    modelOf(pane).submitText("go");
+    while (modelOf(pane).activeTool() === undefined) await new Promise((r) => setTimeout(r, 0));
+    modelOf(pane).submitText("later");
+    expect(pane.liveStatus({})).toMatch(/^slow · \d+s · 1 queued$/);
+    release();
+    await modelOf(pane).lastSend;
+    pane.dispose();
+  });
+});

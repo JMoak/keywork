@@ -1,6 +1,6 @@
 import { Box, Text } from "@opentui/core";
 import { type Chord, parseChord } from "./keys.ts";
-import type { PaneContext, PaneView } from "./pane.ts";
+import type { ChromeWeight, PaneContext, PaneView } from "./pane.ts";
 import type { TrayCommand } from "./pane-tray.ts";
 import type { RowCursor } from "./row-cursor.ts";
 import type { Theme, ThemeColorToken } from "./theme.ts";
@@ -24,19 +24,42 @@ export interface KeyedTrayCommand {
 }
 
 const borderCells = 1;
+const headerRows = 1;
 const paddingCells = { left: 1, right: 1 };
 
-export const paneChromeCost = {
-  columns: 2 * borderCells + paddingCells.left + paddingCells.right,
-  rows: 2 * borderCells,
-} as const;
-
-export function paneContentWidth(paneWidth: number): number {
-  return Math.max(0, paneWidth - paneChromeCost.columns);
+interface ChromeCost {
+  readonly columns: number;
+  readonly rows: number;
 }
 
-export function paneContentHeight(paneHeight: number): number {
-  return Math.max(0, paneHeight - paneChromeCost.rows);
+const boxedCost: ChromeCost = {
+  columns: 2 * borderCells + paddingCells.left + paddingCells.right,
+  rows: 2 * borderCells,
+};
+
+const seamedCost: ChromeCost = {
+  columns: paddingCells.left + paddingCells.right,
+  rows: headerRows,
+};
+
+export const paneChromeCost = boxedCost;
+
+export interface ChromeExtent {
+  width: number;
+  height: number;
+  chrome?: ChromeWeight;
+}
+
+export function paneContentWidth(extent: Pick<ChromeExtent, "width" | "chrome">): number {
+  return Math.max(0, extent.width - chromeCostOf(extent.chrome).columns);
+}
+
+export function paneContentHeight(extent: Pick<ChromeExtent, "height" | "chrome">): number {
+  return Math.max(0, extent.height - chromeCostOf(extent.chrome).rows);
+}
+
+export function isSeamed(chrome: ChromeWeight | undefined): boolean {
+  return chrome === "seams";
 }
 
 export function paneChrome(
@@ -44,6 +67,16 @@ export function paneChrome(
   title: string,
   ...children: PaneChild[]
 ): PaneView {
+  return isSeamed(context.chrome)
+    ? seamedChrome(context, title, children)
+    : boxedChrome(context, title, children);
+}
+
+function chromeCostOf(chrome: ChromeWeight | undefined): ChromeCost {
+  return isSeamed(chrome) ? seamedCost : boxedCost;
+}
+
+function boxedChrome(context: PaneContext, title: string, children: PaneChild[]): PaneView {
   const { theme, focused, width, height, borderColor, pinMark } = context;
   return Box(
     {
@@ -59,6 +92,26 @@ export function paneChrome(
       paddingLeft: paddingCells.left,
       paddingRight: paddingCells.right,
     },
+    ...children,
+  );
+}
+
+function seamedChrome(context: PaneContext, title: string, children: PaneChild[]): PaneView {
+  const { theme, focused, width, height, borderColor, pinMark } = context;
+  const label = pinMark === undefined ? title.trim() : `${pinMark} ${title.trim()}`;
+  return Box(
+    {
+      width,
+      height,
+      flexDirection: "column",
+      overflow: "hidden",
+      paddingLeft: paddingCells.left,
+      paddingRight: paddingCells.right,
+    },
+    Text({
+      content: take(label, paneContentWidth(context)) || " ",
+      fg: focused ? (borderColor ?? theme.borderFocus) : theme.textMid,
+    }),
     ...children,
   );
 }

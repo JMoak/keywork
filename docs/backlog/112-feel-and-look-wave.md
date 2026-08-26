@@ -276,6 +276,63 @@ grew `lens`, `note`, `query` and the workspace revives all three.
   cleared by `a`/`d` like any inbox card (J18's triage surface is the real home); `user` layer
   is modelled (`MemoryLayerKind`) but no store feeds it.
 
+### L7 · C50 part 1, seams: one hairline per split (landed 2026-08-25)
+
+Jordan's read of the frame: the outer app border plus a rounded border per pane made every
+internal edge two lines thick and cost four columns and two rows per pane. Decision: the
+outer frame is gone (the terminal edge is the frame), and `chromeWeight` grew a third value,
+`seams`, which `keywork-night` now wears; `regular` still renders the boxed look byte for
+byte, so the flavor gallery (C49) keeps both. All `OWN`.
+
+- **Geometry.** Layout rects stay the truth. In `seams` a pane keeps a one-cell right edge
+  and bottom edge only where a neighbour exists (`innerRect`), and `view/seams.ts` draws
+  those cells once per split with junctions computed from the tiling (`├ ┤ ┬ ┴ ┼`, lines run
+  off the screen edge). A perfect tiling never produces a corner glyph, so the rounded turns
+  in the table exist only for robustness. Tier 0 degrades to `| - +`.
+- **Ink.** A seam cell touching the focused pane wears that pane's focus-lifted arc hue; any
+  other cell wears its owner's resting hue (the pane on its left or above); the empty main
+  region between docks wears `border`.
+- **Pane chrome.** No border; a one-row header carries the trimmed title (pin mark first) in
+  the pane's hue when focused and `textMid` otherwise; one cell of padding each side. Chrome
+  cost is two columns and one row against boxed's four and two; `paneContentWidth/Height`
+  now take the context so every pane sizes for the weight it is drawn in, and the geometry
+  harness runs every pane at every size in both weights.
+- **Typography.** `wrap` breaks at the last space that fits and never opens a line with one;
+  user transcript lines wrap under a hanging `› ` so the prompt mark stays on one edge.
+- **Not touched.** Gap cells, the borderless luminance-focus mode, tier-gated corners in the
+  boxed weight, and the prose gutter (C52) all stay as scoped in C50/C52.
+- **Outer ring (Jordan, 2026-08-25 afternoon, revised evening).** With no outer frame a lone
+  pane had no focus cue and a focused pane lost its outline on the viewport side. The `seams`
+  weight now draws a true outermost border (`frameInset` reserves the cell): rounded corners,
+  `border` ink at rest and `accent` while the leader is armed (the old navigation-mode cue on
+  the real edge), with seams joining it through `┬ ┴ ├ ┤`. The focused pane's outline band
+  (its own right and bottom seam, the seam or ring one cell outside its top and left, the
+  ring outside its right and bottom when it sits on the field edge) lights in its focus hue;
+  the band is geometric, so nothing past a corner ever lights. A first cut lit any seam cell
+  whose 3×3 neighbourhood touched the focused pane, which overshot by one cell past corners.
+  Mouse and overlay coordinates shift by the inset; `regular` has no ring.
+- **Stroke masthead.** `stroke-face.ts` rasterizes each letter from a few polylines on a
+  7-unit grid with a square brush at scale 1, 2, or 3 (4, 7, or 11 rows) into `█ ▀ ▄`, giving
+  the moak.dev letterforms (arched M, rounded bowls, 3-cell strokes) without a hand-drawn
+  font. `headline` prefers, among block faces, the setting with the most words and breaks
+  ties toward the larger brush; caps stays the fallback. Masthead rows fade from the pane's
+  arc hue to `text`.
+- **Flicker at tiny sizes (scoped, not fixed).** Twelve consecutive captures at 34×7 on the
+  test renderer are byte-identical, so the header row is stable in keywork's own frames; the
+  flicker is the terminal repainting during full-row rewrites. Candidates if it persists:
+  confirm OpenTUI emits synchronized-output brackets (mode 2026) under WT_SESSION, and lower
+  repaint pressure by skipping `render()` on pointer moves that change nothing.
+- **The live header (Jordan, 2026-08-25 evening).** Spend is off by default: `/show-costs`
+  (aliases `costs`, `hide-costs`) toggles `AppCore.costsShown`, which reaches panes as
+  `PaneContext.costs`. The header's tail is now `liveStatus`, segments that appear only when
+  they say something: the running tool's name with the turn's elapsed time (`bash · 14s`,
+  `thinking · 3s`; a one-second unref'd clock ticks only while busy), `needs you` on a
+  pending ask, `n queued`, the context gauge once `used` reaches half the flush reserve
+  (cockpit instruments always show it), spend when toggled on, and `failed` for an unseen
+  failure. `TranscriptFeed` learned `activeTool()` and `turnElapsedMs()` to feed it.
+
+
+
 ## Scoping (options-first, per the 98/100 rules; nothing below is built)
 
 ### C70 · the arc pane · 3pt + 1pt captures · `OWN` (design final 2026-08-22, three rounds) · landed 2026-08-23 in two parts (L4 and L5 above)

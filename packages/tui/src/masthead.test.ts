@@ -5,6 +5,20 @@ import { width as cells } from "./width.ts";
 const tier = (glyphTier: 0 | 1 | 2) => ({ glyphTier, nerdFont: false });
 
 describe("the masthead headline", () => {
+  it("sets a short slug in the largest stroke brush a tall pane holds", () => {
+    const result = headline("moak", { width: 70, rows: 14, glyphs: tier(2) });
+    expect(result.face).toBe("stroke");
+    expect(result.lines).toHaveLength(11);
+    expect(cells(result.lines[0] ?? "")).toBeLessThanOrEqual(63);
+  });
+
+  it("prefers the whole title in a smaller brush over a cut title in a bigger one", () => {
+    const result = headline("moak", { width: 70, rows: 8, glyphs: tier(2) });
+    expect(result.face).toBe("stroke");
+    expect(result.words).toBe("moak");
+    expect(result.lines).toHaveLength(7);
+  });
+
   it("sets every word of a short slug in the half-block face", () => {
     const result = headline("auth-retry-fix", { width: 28, rows: 12, glyphs: tier(2) });
     expect(result.face).toBe("half-block");
@@ -67,7 +81,7 @@ describe("the masthead headline", () => {
     const result = headline("session-1", { width: 26, rows: 12, glyphs: tier(2) });
     expect(result.face).toBe("caps");
     expect(result.lines).toEqual(["SESSION 1"]);
-    expect(headline("session-1", { width: 34, rows: 12, glyphs: tier(2) }).face).toBe("half-block");
+    expect(headline("session-1", { width: 34, rows: 12, glyphs: tier(2) }).face).toBe("stroke");
   });
 
   it("ellipsizes a caps word the line cannot hold rather than overflowing", () => {

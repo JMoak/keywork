@@ -100,10 +100,10 @@ export class McpPane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
-    const { theme, height, width } = context;
-    const innerWidth = paneContentWidth(width);
+    const { theme } = context;
+    const innerWidth = paneContentWidth(context);
     const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
-    this.lastPageRows = Math.max(0, paneContentHeight(height) - (tray?.rows ?? 0));
+    this.lastPageRows = Math.max(0, paneContentHeight(context) - (tray?.rows ?? 0));
     return paneChrome(
       context,
       this.title(),

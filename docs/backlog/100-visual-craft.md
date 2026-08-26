@@ -151,6 +151,7 @@ borderless/luminance-focus mode as a flavor option.
 overlap-free at every ratio; hit-testing exact through gaps; borderless mode keeps
 focus legible in monochrome capture; gap 0 is byte-identical to today.
 **Strategy:** `OWN`. After C35/C38.
+**Landed in part 2026-08-25:** the `seams` chrome weight (one shared hairline per split, header row inside the pane) is in, see 112 L7; gap cells, borderless, and tier-gated corners remain open here.
 
 ### C51 (1pt): Depth: dimming & scrims (item 3; testable, configurable)
 Unfocused-pane content dimming (luminance step, token-driven) and overlay scrims

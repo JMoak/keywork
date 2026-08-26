@@ -115,6 +115,12 @@ function builtinCommands(core: AppCore): CommandSpec[] {
     }),
     ...undoCommands(core),
     {
+      name: "show-costs",
+      aliases: ["costs", "hide-costs"],
+      description: "toggle spend and token counts in pane headers: /show-costs",
+      run: () => core.toggleCosts(),
+    },
+    {
       name: "exit",
       description: "close this pane · quits keywork if it's the last",
       run: () => core.closePane(),

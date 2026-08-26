@@ -5,8 +5,8 @@ import { ConversationPane } from "./conversation-pane.ts";
 import { McpPane } from "./mcp-pane.ts";
 import { MemoryPane } from "./memory-pane.ts";
 import { emptyMemoryInputs } from "./memory-pane-model.ts";
-import type { Pane, PaneIntents, PaneView } from "./pane.ts";
-import { paneContentHeight, paneContentWidth } from "./pane-chrome.ts";
+import type { ChromeWeight, Pane, PaneIntents, PaneView } from "./pane.ts";
+import { type ChromeExtent, paneContentHeight, paneContentWidth } from "./pane-chrome.ts";
 import { SessionTreePane } from "./session-tree-pane.ts";
 import { resolveTheme } from "./theme.ts";
 
@@ -135,8 +135,10 @@ describe("pane content stays inside the chrome at every drawable size", () => {
 
   it("conversation transcript wraps to the pane with the width floor removed", () => {
     const pane = new ConversationPane("session-1", undefined, () => {});
-    for (const size of paneSizes.filter((candidate) => candidate.width >= 8)) {
-      assertTextsFit(pane, size.width, size.height);
+    for (const chrome of chromeWeights) {
+      for (const size of paneSizes.filter((candidate) => candidate.width >= 8)) {
+        assertTextsFit(pane, { ...size, chrome });
+      }
     }
   });
 });
@@ -155,19 +157,28 @@ function treeNode(id: string, text: string, children: SessionTreeNode[] = []): S
   };
 }
 
+const chromeWeights: ChromeWeight[] = ["regular", "seams"];
+
 function assertFitsAtEverySize(pane: Pane): void {
-  for (const size of paneSizes) assertTextsFit(pane, size.width, size.height);
+  for (const chrome of chromeWeights) {
+    for (const size of paneSizes) assertTextsFit(pane, { ...size, chrome });
+  }
 }
 
-function assertTextsFit(pane: Pane, width: number, height: number): void {
-  const view = pane.view({ theme: resolveTheme(), focused: true, width, height });
+function assertTextsFit(pane: Pane, extent: Required<ChromeExtent>): void {
+  const { width, height, chrome } = extent;
+  const view = pane.view({ theme: resolveTheme(), focused: true, width, height, chrome });
   const texts = collectTexts(view);
-  const contentWidth = paneContentWidth(width);
-  const place = `${pane.id} at ${width}x${height}`;
+  const contentWidth = paneContentWidth(extent);
+  const place = `${pane.id} at ${width}x${height} (${chrome})`;
   for (const text of texts) {
     expect([...text].length, `"${text}" overflows ${place}`).toBeLessThanOrEqual(contentWidth);
   }
-  expect(texts.length, place).toBeLessThanOrEqual(paneContentHeight(height));
+  expect(texts.length, place).toBeLessThanOrEqual(paneContentHeight(extent) + headerRowsOf(chrome));
+}
+
+function headerRowsOf(chrome: ChromeWeight | undefined): number {
+  return chrome === "seams" ? 1 : 0;
 }
 
 function collectTexts(view: PaneView): string[] {

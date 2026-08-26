@@ -1,9 +1,10 @@
 import { fitTitle } from "@keywork/engine";
 import type { GlyphSupport } from "./capability.ts";
 import { slugWords } from "./slug.ts";
+import { strokeMeasure, strokeRasterize, strokeRows, strokeSupports } from "./stroke-face.ts";
 import { width } from "./width.ts";
 
-export type HeadlineFace = "half-block" | "block" | "caps";
+export type HeadlineFace = "stroke" | "half-block" | "block" | "caps";
 
 export interface HeadlineFrame {
   readonly width: number;
@@ -20,17 +21,49 @@ export interface Headline {
 
 export function headline(slug: string, frame: HeadlineFrame): Headline {
   const local = withoutArc(slug);
-  const words = wordsOf(local);
-  const blockFace = frame.glyphs.glyphTier >= 2 ? halfBlockFace : fullBlockFace;
-  const setsEveryWord = words.every(
-    (word) => blockFace.supports(word) && blockFace.measure(word) <= frame.width,
+  return (
+    mostWordsSet(local, frame, blockFacesFor(wordsOf(local), frame)) ??
+    mostWordsSet(local, frame, [capsFace]) ?? { face: "caps", words: "", lines: [] }
   );
-  const faces = frame.glyphs.glyphTier >= 1 && setsEveryWord ? [blockFace, capsFace] : [capsFace];
-  for (const face of faces) {
-    const fitted = fitRows(local, frame, face);
-    if (fitted !== undefined) return fitted;
+}
+
+function mostWordsSet(
+  slug: string,
+  frame: HeadlineFrame,
+  largestFirst: readonly Face[],
+): Headline | undefined {
+  for (let budget = slug.length; budget >= 1; budget -= 1) {
+    const fitted = wordsOf(fitTitle(slug, budget, frame.siblings ?? []));
+    if (fitted.length === 0) continue;
+    for (const face of largestFirst) {
+      const set = setWords(fitted, frame, face);
+      if (set !== undefined) return set;
+    }
   }
-  return { face: "caps", words: "", lines: [] };
+  return undefined;
+}
+
+function blockFacesFor(words: readonly string[], frame: HeadlineFrame): Face[] {
+  const { glyphTier } = frame.glyphs;
+  if (glyphTier < 1) return [];
+  const bitmapFace = glyphTier >= 2 ? halfBlockFace : fullBlockFace;
+  const strokeFaces = glyphTier >= 2 ? strokeScales.map(strokeFace) : [];
+  return [...strokeFaces, bitmapFace].filter((face) =>
+    words.every((word) => face.supports(word) && face.measure(word) <= frame.width),
+  );
+}
+
+const strokeScales = [3, 2, 1] as const;
+
+function strokeFace(scale: number): Face {
+  return {
+    name: "stroke",
+    rowsPerLine: strokeRows(scale),
+    wordGap: 3 * scale,
+    supports: strokeSupports,
+    measure: (word) => strokeMeasure(word, scale),
+    rasterize: (words) => strokeRasterize(words, scale),
+  };
 }
 
 interface Face {
@@ -45,24 +78,23 @@ interface Face {
 const glyphGap = 1;
 const bitmapRows = 5;
 
-function fitRows(slug: string, frame: HeadlineFrame, face: Face): Headline | undefined {
+function setWords(
+  words: readonly string[],
+  frame: HeadlineFrame,
+  face: Face,
+): Headline | undefined {
   if (frame.width < 1 || frame.rows < face.rowsPerLine) return undefined;
-  for (let budget = slug.length; budget >= 1; budget -= 1) {
-    const words = wordsOf(fitTitle(slug, budget, frame.siblings ?? []));
-    if (words.length === 0) continue;
-    const lines = packLines(words, frame.width, face);
-    if (lines === undefined) continue;
-    const gaps = face.rowsPerLine > 1 ? lines.length - 1 : 0;
-    if (lines.length * face.rowsPerLine + gaps > frame.rows) continue;
-    return {
-      face: face.name,
-      words: words.join(" "),
-      lines: lines.flatMap((line, index) =>
-        index === 0 || gaps === 0 ? face.rasterize(line) : ["", ...face.rasterize(line)],
-      ),
-    };
-  }
-  return undefined;
+  const lines = packLines(words, frame.width, face);
+  if (lines === undefined) return undefined;
+  const gaps = face.rowsPerLine > 1 ? lines.length - 1 : 0;
+  if (lines.length * face.rowsPerLine + gaps > frame.rows) return undefined;
+  return {
+    face: face.name,
+    words: words.join(" "),
+    lines: lines.flatMap((line, index) =>
+      index === 0 || gaps === 0 ? face.rasterize(line) : ["", ...face.rasterize(line)],
+    ),
+  };
 }
 
 function withoutArc(slug: string): string {

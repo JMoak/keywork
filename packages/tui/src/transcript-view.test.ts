@@ -43,7 +43,7 @@ describe("transcriptLines", () => {
       ],
       5,
     );
-    expect(lines.map((line) => line.text)).toEqual(["› abc", "defgh", "12345"]);
+    expect(lines.map((line) => line.text)).toEqual(["› abc", "  def", "  gh", "12345"]);
   });
 
   it("splits embedded newlines", () => {

@@ -56,13 +56,16 @@ export class BrowserPane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
-    const { theme, focused, height, width } = context;
+    const { theme, focused } = context;
     const filterLine = this.filterLine(theme, focused);
-    this.lastPageRows = Math.max(0, paneContentHeight(height) - (filterLine === undefined ? 0 : 1));
+    this.lastPageRows = Math.max(
+      0,
+      paneContentHeight(context) - (filterLine === undefined ? 0 : 1),
+    );
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(width)),
+      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(context)),
       ...(filterLine === undefined ? [] : [filterLine]),
     );
   }

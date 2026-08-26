@@ -168,13 +168,13 @@ export class SessionTreePane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
-    const { theme, focused, height, width } = context;
-    const innerWidth = paneContentWidth(width);
+    const { theme, focused } = context;
+    const innerWidth = paneContentWidth(context);
     const labelLine = this.labelLine(theme, focused);
     const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
     this.lastPageRows = Math.max(
       0,
-      paneContentHeight(height) - (labelLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
+      paneContentHeight(context) - (labelLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
     );
     return paneChrome(
       context,

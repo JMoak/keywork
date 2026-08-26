@@ -60,6 +60,7 @@ import {
   appFrame,
   discardFrame,
   type FrameInputs,
+  frameInset,
   pointerPlane,
   screenWithin,
 } from "./view/frame.ts";
@@ -144,7 +145,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const unsubscribeMcp = options.mcp?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
   let releaseFatalGuards: () => void = () => {};
   const core: AppCore = new AppCore({
-    screen: () => screenWithin(renderer),
+    screen: () => screenWithin(renderer, flavors.active.chromeWeight),
     ...paneFactories(options, sessions, trees, paneSessions, arcIndex),
     ...hostPorts(options, sessions),
     ...(restore.kind === "restore" && { restoreWorkspace: restore.state }),
@@ -179,7 +180,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     try {
       paintFrame(renderer, core, {
         theme: flavors.theme,
-        screen: screenWithin(renderer),
+        screen: screenWithin(renderer, flavors.active.chromeWeight),
+        chrome: flavors.active.chromeWeight,
         instruments: flavors.active.instruments,
         glyphs,
         arcOrdinal: arcIndex.ordinalOf,
@@ -202,7 +204,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   };
   registerHostCommands(core, options, sessions, flavors, render);
   renderer.root.add(pointerPlane());
-  wireInput(renderer, core, contain, render);
+  wireInput(renderer, core, contain, render, () => frameInset(flavors.active.chromeWeight));
   releaseFatalGuards = installFatalGuards({
     recover: () => {
       core.postNotice(recoveredNotice);
@@ -352,6 +354,7 @@ function wireInput(
   core: AppCore,
   contain: (scope: string, work: () => void) => void,
   render: () => void,
+  inset: () => number,
 ): void {
   renderer.keyInput.on("keypress", (key: KeyEvent) => {
     contain("key", () => {
@@ -369,7 +372,7 @@ function wireInput(
     contain("mouse", () => {
       const pointer = pointerEventOf(event);
       if (pointer === undefined) return;
-      core.handleMouse(pointer);
+      core.handleMouse({ ...pointer, x: pointer.x - inset(), y: pointer.y - inset() });
       if (pointer.type !== "move" || core.overlayOpen || core.draggingPane() !== undefined) {
         render();
       }
