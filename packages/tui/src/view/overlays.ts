@@ -16,7 +16,6 @@ import {
   type OverlayPlacement,
   workspacePickerSpec,
 } from "./filter-overlay.ts";
-import { frameChrome } from "./frame.ts";
 
 export interface OverlayInputs {
   theme: Theme;
@@ -62,8 +61,8 @@ function setupRows(readiness: WorkspaceReadiness, theme: Theme) {
 export function overlayPosition(frame: OverlayFrame): OverlayPlacement {
   return {
     position: "absolute",
-    left: frame.x + frameChrome.border,
-    top: frame.y + frameChrome.border,
+    left: frame.x,
+    top: frame.y,
     width: frame.width,
     height: frame.height,
   };

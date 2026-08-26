@@ -50,11 +50,11 @@ describe("discardFrame", () => {
 });
 
 describe("screenWithin", () => {
-  it("leaves room for the frame border and the status row", () => {
-    expect(screenWithin({ width: 120, height: 40 })).toEqual({ width: 118, height: 37 });
+  it("leaves room for the status row", () => {
+    expect(screenWithin({ width: 120, height: 40 })).toEqual({ width: 120, height: 39 });
   });
 
   it("never goes negative on a tiny terminal", () => {
-    expect(screenWithin({ width: 1, height: 1 })).toEqual({ width: 0, height: 0 });
+    expect(screenWithin({ width: 1, height: 1 })).toEqual({ width: 1, height: 0 });
   });
 });

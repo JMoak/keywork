@@ -10,7 +10,7 @@ import type { PaneView } from "../pane.ts";
 import type { Theme } from "../theme.ts";
 import { type StatusBarInputs, statusBar } from "./status-bar.ts";
 
-export const frameChrome = { border: 1, statusRows: 1 } as const;
+export const frameChrome = { statusRows: 1 } as const;
 export const pointerPlaneId = "pointer-plane";
 const pointerPlaneZIndex = 1000;
 
@@ -23,8 +23,8 @@ export interface FrameInputs extends StatusBarInputs {
 
 export function screenWithin(renderer: { width: number; height: number }): Screen {
   return {
-    width: Math.max(0, renderer.width - 2 * frameChrome.border),
-    height: Math.max(0, renderer.height - 2 * frameChrome.border - frameChrome.statusRows),
+    width: renderer.width,
+    height: Math.max(0, renderer.height - frameChrome.statusRows),
   };
 }
 
@@ -65,9 +65,6 @@ export function appFrame(core: AppCore, inputs: FrameInputs) {
       width: "100%",
       height: "100%",
       backgroundColor: theme.background,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: core.leaderArmed ? theme.accent : theme.border,
     },
     body(core, inputs),
     statusBar(core, inputs),

@@ -60,7 +60,6 @@ import {
   appFrame,
   discardFrame,
   type FrameInputs,
-  frameChrome,
   pointerPlane,
   screenWithin,
 } from "./view/frame.ts";
@@ -370,11 +369,7 @@ function wireInput(
     contain("mouse", () => {
       const pointer = pointerEventOf(event);
       if (pointer === undefined) return;
-      core.handleMouse({
-        ...pointer,
-        x: pointer.x - frameChrome.border,
-        y: pointer.y - frameChrome.border,
-      });
+      core.handleMouse(pointer);
       if (pointer.type !== "move" || core.overlayOpen || core.draggingPane() !== undefined) {
         render();
       }
