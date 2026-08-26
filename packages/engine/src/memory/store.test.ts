@@ -7,6 +7,7 @@ import { contentHash } from "./ledger.ts";
 import { InvalidTitleError } from "./naming.ts";
 import { InvalidDailyDateError, type Provenance } from "./notes.ts";
 import {
+  describeStaged,
   isStagedWrite,
   MalformedStagedItemError,
   type StagedItem,
@@ -495,6 +496,15 @@ describe("staged reviews (the human inbox)", () => {
     for (const [, content] of await diskFiles(root)) expect(content).not.toContain("hunter2secret");
     const [item] = await store.listStaged();
     expect(item?.kind === "borderline-promotion" && item.body).toBe("key ‹redacted:TOKEN›");
+  });
+
+  it("lists same-instant staged items in a stable subject order", async () => {
+    const { store } = await vault();
+    await store.writeNote({ title: "Zeta Note", body: "z\n", provenance: "untrusted" });
+    await store.propose([{ ...promotion, title: "Alpha" }]);
+    await store.writeNote({ title: "Beta Note", body: "b\n", provenance: "untrusted" });
+    const listed = (await store.listStaged()).map(describeStaged);
+    expect(listed).toEqual(["note → Beta Note.md", "note → Zeta Note.md", "promotion:alpha"]);
   });
 
   it("ignores foreign json in .staging and refuses non-uuid ids", async () => {

@@ -112,7 +112,7 @@ export class StagingArea {
       const item = id === undefined ? undefined : await this.find(id);
       if (item !== undefined) items.push(item);
     }
-    return items.sort((a, b) => a.created.localeCompare(b.created));
+    return items.sort(byCreationThenSubject);
   }
 
   async find(id: string): Promise<StagedItem | undefined> {
@@ -215,6 +215,14 @@ export function isStagedWrite<T extends StagedMeta>(item: T): item is Extract<T,
 
 export function describeStaged(item: StagedItem): string {
   return isStagedWrite(item) ? `${item.kind} → ${item.target}` : item.key;
+}
+
+function byCreationThenSubject(a: StagedItem, b: StagedItem): number {
+  return (
+    a.created.localeCompare(b.created) ||
+    describeStaged(a).localeCompare(describeStaged(b)) ||
+    a.id.localeCompare(b.id)
+  );
 }
 
 export function stagedSubjectPath(item: StagedItem): string {

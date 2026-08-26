@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StagedItemNotFoundError } from "@keywork/engine";
+import { type MemoryStore, StagedItemNotFoundError } from "@keywork/engine";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   memoryPanePort,
@@ -47,6 +47,10 @@ describe("openWorkspaceMemory", () => {
 });
 
 describe("memoryPanePort", () => {
+  async function stagedWrite(seed: { store: MemoryStore }) {
+    return (await seed.store.listStaged()).find((item) => item.kind === "note");
+  }
+
   async function populatedMemory(trusted = true) {
     const cwd = await declaredWorkspace();
     const seed = openWorkspaceMemory(cwd, true);
@@ -95,7 +99,7 @@ describe("memoryPanePort", () => {
     expect(curing.get("Fresh Guess")).toBe(0);
     expect(curing.get("Proven Rule")).toBe(3);
     const staged = inputs.inbox.filter((item) => item.kind === "staged");
-    const [stagedItem] = await seed.store.listStaged();
+    const stagedItem = await stagedWrite(seed);
     expect(staged).toEqual([
       {
         id: stagedItem?.id,
@@ -181,7 +185,7 @@ describe("memoryPanePort", () => {
   it("routes approve to the store for staged writes and reviews alike", async () => {
     const { memory, seed, reviewId } = await populatedMemory();
     const port = memoryPanePort(() => memory);
-    const [stagedItem] = await seed.store.listStaged();
+    const stagedItem = await stagedWrite(seed);
     await port.approve(stagedItem?.id ?? "");
     expect((await seed.store.listNotes()).map((note) => note.title)).toContain("Web Claim");
     await port.approve(reviewId);
@@ -190,7 +194,7 @@ describe("memoryPanePort", () => {
 
   it("discard drops a staged item without landing it", async () => {
     const { memory, seed } = await populatedMemory();
-    const [stagedItem] = await seed.store.listStaged();
+    const stagedItem = await stagedWrite(seed);
     await memoryPanePort(() => memory).discard(stagedItem?.id ?? "");
     expect((await seed.store.listStaged()).map((item) => item.kind)).toEqual(["contradiction"]);
     expect((await seed.store.listNotes()).map((note) => note.title)).not.toContain("Web Claim");
