@@ -543,6 +543,10 @@ export class AppCore implements ActionTarget {
     return this.overlay?.kind === "help";
   }
 
+  helpOverlay(): HelpOverlay | undefined {
+    return this.overlay?.kind === "help" ? this.overlay : undefined;
+  }
+
   get paletteOpen(): boolean {
     return this.overlay?.kind === "palette";
   }
@@ -618,6 +622,7 @@ export class AppCore implements ActionTarget {
     dismiss: (): void => {
       this.overlay = undefined;
     },
+    screen: (): Screen => this.screen(),
     notice: (text: string): void => this.postNotice(text),
   };
 

@@ -4,7 +4,7 @@ import type { AppCore } from "../app-core.ts";
 import type { ArcOrdinals } from "../arcs.ts";
 import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
 import type { Keymap } from "../keymap.ts";
-import type { OverlayFrame } from "../overlays/index.ts";
+import type { HelpPage, OverlayFrame } from "../overlays/index.ts";
 import type { ChromeWeight } from "../pane.ts";
 import type { Theme } from "../theme.ts";
 import { type TrayChild, trayRows } from "../tray.ts";
@@ -30,7 +30,10 @@ export function overlayView(core: AppCore, inputs: OverlayInputs) {
   if (frame === undefined) return undefined;
   const { theme } = inputs;
   const placement = overlayPosition(frame, frameInset(inputs.chrome));
-  if (core.helpVisible) return helpOverlay(core.keymap, theme, placement);
+  const help = core.helpOverlay();
+  if (help !== undefined) {
+    return helpOverlay(help.page(core.screen()), core.keymap, theme, placement);
+  }
   if (core.paletteOpen) return paletteOverlay(core, theme, placement);
   const preset = presetRows(core, theme);
   if (preset !== undefined) return panel(" permissions ", theme, placement, preset);
@@ -118,17 +121,15 @@ function paletteOverlay(core: AppCore, theme: Theme, placement: OverlayPlacement
   ]);
 }
 
-function helpOverlay(keymap: Keymap, theme: Theme, placement: OverlayPlacement) {
+function helpOverlay(page: HelpPage, keymap: Keymap, theme: Theme, placement: OverlayPlacement) {
   const room = innerWidth(placement);
-  const rows = keymap
-    .actions()
-    .map((action) =>
-      splitRow(
-        { content: ` ${keymap.describe(action) ?? ""}`, fg: theme.accent },
-        { content: `${bindingHelp[action] ?? action} `, fg: theme.text },
-        room,
-      ),
-    );
+  const rows = page.actions.map((action) =>
+    splitRow(
+      { content: ` ${keymap.describe(action) ?? ""}`, fg: theme.accent },
+      { content: `${bindingHelp[action] ?? action} `, fg: theme.text },
+      room,
+    ),
+  );
   return panel(
     " keywork keys ",
     theme,
@@ -137,11 +138,20 @@ function helpOverlay(keymap: Keymap, theme: Theme, placement: OverlayPlacement) 
       ...rows,
       Box(
         { flexDirection: "row", justifyContent: "center" },
-        Text({ content: "esc closes", fg: theme.textDim }),
+        Text({ content: helpFooter(page), fg: theme.textDim }),
       ),
     ],
     theme.accentSoft,
   );
+}
+
+function helpFooter(page: HelpPage): string {
+  const hidden = [
+    ...(page.above > 0 ? [`${page.above} above`] : []),
+    ...(page.below > 0 ? [`${page.below} below`] : []),
+  ];
+  const scrolling = hidden.length > 0 ? ["↑↓ scroll", ...hidden] : [];
+  return [...scrolling, "esc closes"].join(" · ");
 }
 
 function splitRow(

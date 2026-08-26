@@ -7,6 +7,7 @@ import {
   innerRect,
   onOutline,
   type SeamCell,
+  type StrokeWeight,
   seamCells,
   seamGlyph,
   seamsView,
@@ -143,6 +144,16 @@ describe("seamCells", () => {
   });
 });
 
+function runsOf(view: unknown): Array<{ left: number; top: number; content: string; fg: string }> {
+  const children = (view as { children?: Array<{ props: Record<string, unknown> }> }).children;
+  return (children ?? []).map(({ props }) => ({
+    left: props.left as number,
+    top: props.top as number,
+    content: props.content as string,
+    fg: props.fg as string,
+  }));
+}
+
 describe("the outer ring", () => {
   function ringPicture(rects: Map<string, Rect>, screen: Screen, anchored?: Rect): string[] {
     const rows = Array.from({ length: screen.height }, () => Array(screen.width).fill(" "));
@@ -168,6 +179,40 @@ describe("the outer ring", () => {
       "│  │   │",
       "╰──┴───╯",
     ]);
+  });
+
+  it("thickens into heavy strokes on request, joining the light seams with mixed tees", () => {
+    const pair = new Map([
+      ["a", rect(1, 1, 3, 3)],
+      ["b", rect(4, 1, 3, 3)],
+    ]);
+    const heavyRing = (cell: SeamCell): StrokeWeight => (cell.ring ? "heavy" : "light");
+    const view = seamsView(
+      seamCells(pair, fieldOf({ width: 8, height: 5 }, 1)),
+      () => "#",
+      tier1,
+      heavyRing,
+    );
+    expect(runsOf(view).map((run) => run.content)).toEqual([
+      "┏━━┯━━━┓",
+      "┃",
+      "│",
+      "┃",
+      "┃",
+      "│",
+      "┃",
+      "┃",
+      "│",
+      "┃",
+      "┗━━┷━━━┛",
+    ]);
+    const ascii = seamsView(
+      seamCells(pair, fieldOf({ width: 8, height: 5 }, 1)),
+      () => "#",
+      tier0,
+      heavyRing,
+    );
+    expect(runsOf(ascii).map((run) => run.content)[0]).toBe("+==+===+");
   });
 
   it("lights exactly the focused pane's outline, corners in, nothing past them", () => {
@@ -197,18 +242,6 @@ describe("the outer ring", () => {
 });
 
 describe("seamsView", () => {
-  function runsOf(
-    view: unknown,
-  ): Array<{ left: number; top: number; content: string; fg: string }> {
-    const children = (view as { children?: Array<{ props: Record<string, unknown> }> }).children;
-    return (children ?? []).map(({ props }) => ({
-      left: props.left as number,
-      top: props.top as number,
-      content: props.content as string,
-      fg: props.fg as string,
-    }));
-  }
-
   it("merges same-ink neighbours on a row into one run and splits at ink changes", () => {
     const grid = new Map([
       ["tl", rect(0, 0, 3, 2)],

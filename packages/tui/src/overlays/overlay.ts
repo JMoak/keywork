@@ -71,9 +71,11 @@ export function helpFrame(screen: Screen, rowCount: number): OverlayFrame {
   return panelFrame(screen, rowCount, 52);
 }
 
+const panelChromeRows = 5;
+
 export function panelFrame(screen: Screen, rowCount: number, widest: number): OverlayFrame {
   const width = Math.min(widest, screen.width - 4);
-  const height = rowCount + 5;
+  const height = Math.min(rowCount + panelChromeRows, screen.height - 2);
   const y = Math.max(1, Math.floor((screen.height - height) / 2));
   return {
     x: Math.max(2, Math.floor((screen.width - width) / 2)),
@@ -82,6 +84,10 @@ export function panelFrame(screen: Screen, rowCount: number, widest: number): Ov
     height,
     firstRowY: y + 2,
   };
+}
+
+export function panelRowRoom(frame: OverlayFrame): number {
+  return Math.max(1, frame.height - panelChromeRows);
 }
 
 export function pastedLine(text: string): string {

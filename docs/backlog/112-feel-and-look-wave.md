@@ -311,6 +311,14 @@ byte, so the flavor gallery (C49) keeps both. All `OWN`.
   the band is geometric, so nothing past a corner ever lights. A first cut lit any seam cell
   whose 3×3 neighbourhood touched the focused pane, which overshot by one cell past corners.
   Mouse and overlay coordinates shift by the inset; `regular` has no ring.
+- **Armed ring (Jordan, 2026-08-25 night).** `borderFocus`, `accent` and `ramp[0]` are the
+  same purple, so once the ring doubled as the focus outline the armed cue vanished for any
+  pane at ramp position 0 (a lone pane, a zoomed pane): its outline was already accent and
+  arming changed nothing. While the leader is armed the ring now wins over the outline
+  (`accent` ink) and draws in heavy strokes (`┏ ━ ┓ ┃`, seams joining through `┯ ┷ ┠ ┨`;
+  tier 0 thickens horizontals to `=`), so nav mode reads on the real edge whatever hue the
+  focused pane wears; `seams.ts` carries a `SeamStroke` beside `SeamInk` and a weighted glyph
+  table. At rest nothing changed: the focused outline still lights the ring on its edges.
 - **Stroke masthead.** `stroke-face.ts` rasterizes each letter from a few polylines on a
   7-unit grid with a square brush at scale 1, 2, or 3 (4, 7, or 11 rows) into `█ ▀ ▄`, giving
   the moak.dev letterforms (arched M, rounded bowls, 3-cell strokes) without a hand-drawn
@@ -520,11 +528,13 @@ superseded by the note here until the section is rewritten.
   legacy console path cannot tell `ctrl+shift+p` from `ctrl+p` without the kitty keyboard
   protocol, so on win32 the help overlay should lead with `leader i` (rides C71) and the
   README's keys section should say so. Decision: not worth fighting beyond that.
-- **Help overlay height.** The hotkeys overlay is 27 rows plus chrome and does not clamp to
-  the screen; the e2e discovery screen is 30 rows tall, so its golden shows the bottom
-  border clipped by one row (it was clipped by one row before C71 too, by the pin row now).
-  Real terminals at 40+ rows are unaffected. Paging or a two-column layout is a small
-  follow-up; not taken here.
+- **Help overlay height (landed 2026-08-25).** The hotkeys overlay no longer runs off the
+  screen: `panelFrame` clamps every help-framed panel to the screen height with a row to
+  spare above and below, and `HelpOverlay` pages the action list inside that room
+  (`up`/`down` one row, `pageup`/`pagedown` a page, the wheel too; clamped at both ends).
+  The footer says what is hidden (`↑↓ scroll · 4 below · esc closes`) and stays `esc closes`
+  when everything fits. The discovery goldens were recaptured, which also brought them up to
+  the seams chrome they had drifted from since 2cb1891.
 - **Pin mark ink.** The `▪` mark renders in the border ink, not dim: the OpenTUI Box title is
   one string until C69's span-composed title row lands, which is where the dim ink goes.
 - **The `>` prefix in quick-open.** `ctrl+p` opens quick-open (jump to a pane); typing `>`

@@ -1,5 +1,6 @@
 import type { ActivePreset } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
+import { appBindings } from "../app-actions.ts";
 import { CommandRegistry } from "../commands.ts";
 import type { Screen } from "../geometry.ts";
 import { Keymap } from "../keymap.ts";
@@ -9,6 +10,7 @@ import {
   helpFrame,
   type OverlayFrame,
   paletteFrame,
+  panelRowRoom,
   pastedLine,
   RowOverlay,
   steppedIndex,
@@ -75,6 +77,15 @@ describe("overlay frames", () => {
 
   it("keeps at least one row of height for an empty palette", () => {
     expect(paletteFrame(screen, 0).height).toBe(6);
+  });
+
+  it("clamps a tall panel to the screen and leaves a row above and below", () => {
+    const short: Screen = { width: 120, height: 30 };
+    const help = helpFrame(short, 27);
+    expect(help.height).toBe(28);
+    expect(help.y).toBe(1);
+    expect(panelRowRoom(help)).toBe(23);
+    expect(panelRowRoom(helpFrame(screen, 10))).toBe(10);
   });
 });
 
@@ -188,14 +199,66 @@ describe("PresetOverlay", () => {
 });
 
 describe("HelpOverlay", () => {
+  const short: Screen = { width: 120, height: 30 };
+
+  function help(closed: string[] = [], at: Screen = short): HelpOverlay {
+    const keymap = new Keymap({ leader: "ctrl+k", bindings: appBindings });
+    return new HelpOverlay(keymap, { dismiss: () => closed.push("x"), screen: () => at });
+  }
+
   it("closes on escape or f1 and on a click outside", () => {
     const closed: string[] = [];
-    const keymap = new Keymap({ leader: "ctrl+k", bindings: { "pane.zoom": "leader z" } });
-    const overlay = new HelpOverlay(keymap, { dismiss: () => closed.push("x") });
+    const overlay = help(closed);
     overlay.handleKey(parseChord("escape"));
     overlay.handleKey(parseChord("f1"));
     overlay.handleKey(parseChord("a"));
     overlay.handleMouse({ type: "down", x: 0, y: 0, button: 0 }, screen);
     expect(closed).toEqual(["x", "x", "x"]);
+  });
+
+  it("shows every action with nothing hidden when the screen has room", () => {
+    const overlay = help([], screen);
+    const page = overlay.page(screen);
+    expect(page.actions.length).toBe(overlay.rowCount());
+    expect(page).toMatchObject({ above: 0, below: 0 });
+    overlay.handleKey(parseChord("down"));
+    expect(overlay.page(screen).above).toBe(0);
+  });
+
+  it("pages a long list on a short screen and clamps at both ends", () => {
+    const overlay = help();
+    const total = overlay.rowCount();
+    const room = panelRowRoom(overlay.frame(short));
+    expect(room).toBeLessThan(total);
+    expect(overlay.page(short)).toMatchObject({ above: 0, below: total - room });
+    expect(overlay.page(short).actions).toEqual(overlay.page(short).actions.slice(0, room));
+
+    overlay.handleKey(parseChord("up"));
+    expect(overlay.page(short).above).toBe(0);
+    overlay.handleKey(parseChord("down"));
+    expect(overlay.page(short)).toMatchObject({ above: 1, below: total - room - 1 });
+    overlay.handleKey(parseChord("pagedown"));
+    expect(overlay.page(short)).toMatchObject({ above: total - room, below: 0 });
+    expect(overlay.page(short).actions.length).toBe(room);
+    overlay.handleKey(parseChord("pageup"));
+    expect(overlay.page(short)).toMatchObject({ above: 0, below: total - room });
+  });
+
+  it("scrolls with the wheel and still dismisses on a click outside", () => {
+    const closed: string[] = [];
+    const overlay = help(closed);
+    overlay.handleMouse(
+      { type: "scroll", x: 40, y: 10, scroll: { direction: "down", delta: 3 } },
+      short,
+    );
+    expect(overlay.page(short).above).toBe(3);
+    overlay.handleMouse(
+      { type: "scroll", x: 40, y: 10, scroll: { direction: "up", delta: 9 } },
+      short,
+    );
+    expect(overlay.page(short).above).toBe(0);
+    expect(closed).toEqual([]);
+    overlay.handleMouse({ type: "down", x: 0, y: 0, button: 0 }, short);
+    expect(closed).toEqual(["x"]);
   });
 });

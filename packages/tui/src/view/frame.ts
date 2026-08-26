@@ -15,6 +15,7 @@ import {
   onOutline,
   type SeamCell,
   type SeamField,
+  type StrokeWeight,
   seamCells,
   seamsView,
 } from "./seams.ts";
@@ -147,14 +148,16 @@ function seamsLayer(
   const anchored = focused === undefined ? undefined : framed.get(focused);
   const outline = anchored === undefined ? undefined : anchorOutline(anchored, field.field);
   const ink = (cell: SeamCell): string => {
+    if (navigating && cell.ring) return theme.accent;
     if (focused !== undefined && outline !== undefined && onOutline(cell, outline)) {
       return paneBorder(theme, sweep.get(focused) ?? 0, true);
     }
-    if (cell.ring) return navigating ? theme.accent : theme.border;
+    if (cell.ring) return theme.border;
     const hue = cell.owner === undefined ? undefined : sweep.get(cell.owner);
     return hue === undefined ? theme.border : paneBorder(theme, hue, false);
   };
-  return seamsView(seamCells(framed, field), ink, inputs.glyphs);
+  const stroke = (cell: SeamCell): StrokeWeight => (navigating && cell.ring ? "heavy" : "light");
+  return seamsView(seamCells(framed, field), ink, inputs.glyphs, stroke);
 }
 
 function shifted(rect: Rect, inset: number): Rect {

@@ -24,13 +24,14 @@ export type Overlay =
   | SetupConfirmOverlay;
 
 export { ConnectOverlay } from "./connect.ts";
-export { HelpOverlay } from "./help.ts";
+export { HelpOverlay, type HelpPage } from "./help.ts";
 export {
   helpFrame,
   type OverlayFrame,
   type OverlayKind,
   paletteFrame,
   panelFrame,
+  panelRowRoom,
   pastedLine,
   RowOverlay,
   routeRows,

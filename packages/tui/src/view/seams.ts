@@ -19,6 +19,10 @@ export interface SeamCell {
 
 export type SeamInk = (cell: SeamCell) => string;
 
+export type StrokeWeight = "light" | "heavy";
+
+export type SeamStroke = (cell: SeamCell) => StrokeWeight;
+
 export function anchorOutline(anchored: Rect, field: Rect): Rect {
   const right =
     rightEdge(anchored) === rightEdge(field) ? rightEdge(field) + 1 : rightEdge(anchored);
@@ -87,15 +91,23 @@ export function fieldOf(screen: Screen, inset: number): SeamField {
   };
 }
 
-export function seamGlyph(joints: Joints, glyphs: GlyphSupport): string {
+export function seamGlyph(joints: Joints, glyphs: GlyphSupport, heavy: Joints = noJoints): string {
   const shape = shapeOf(joints);
-  return glyphs.glyphTier >= 1 ? roundedGlyphs[shape] : asciiGlyphs[shape];
+  const heavyAcross = heavy.left || heavy.right;
+  const heavyAlong = heavy.up || heavy.down;
+  if (glyphs.glyphTier < 1) return asciiGlyph(shape, heavyAcross);
+  return weightedGlyphs[shape][weightIndex(heavyAcross, heavyAlong)];
 }
 
-export function seamsView(cells: readonly SeamCell[], ink: SeamInk, glyphs: GlyphSupport) {
+export function seamsView(
+  cells: readonly SeamCell[],
+  ink: SeamInk,
+  glyphs: GlyphSupport,
+  stroke: SeamStroke = lightStroke,
+) {
   return Box(
     { position: "absolute", left: 0, top: 0, width: "100%", height: "100%", zIndex: seamZIndex },
-    ...seamRuns(cells, ink, glyphs).map((run) =>
+    ...seamRuns(cells, ink, glyphs, stroke).map((run) =>
       Text({
         position: "absolute",
         left: run.x,
@@ -108,6 +120,8 @@ export function seamsView(cells: readonly SeamCell[], ink: SeamInk, glyphs: Glyp
 }
 
 const seamZIndex = 2;
+const noJoints: Joints = { up: false, down: false, left: false, right: false };
+const lightStroke: SeamStroke = () => "light";
 
 type Shape =
   | "vertical"
@@ -127,23 +141,25 @@ type Shape =
   | "stubRight"
   | "none";
 
-const roundedGlyphs: Record<Shape, string> = {
-  vertical: "│",
-  horizontal: "─",
-  cross: "┼",
-  teeRight: "├",
-  teeLeft: "┤",
-  teeDown: "┬",
-  teeUp: "┴",
-  turnDownRight: "╭",
-  turnDownLeft: "╮",
-  turnUpRight: "╰",
-  turnUpLeft: "╯",
-  stubUp: "╵",
-  stubDown: "╷",
-  stubLeft: "╴",
-  stubRight: "╶",
-  none: " ",
+type WeightedGlyphs = readonly [light: string, across: string, along: string, both: string];
+
+const weightedGlyphs: Record<Shape, WeightedGlyphs> = {
+  vertical: ["│", "│", "┃", "┃"],
+  horizontal: ["─", "━", "─", "━"],
+  cross: ["┼", "┿", "╂", "╋"],
+  teeRight: ["├", "┝", "┠", "┣"],
+  teeLeft: ["┤", "┥", "┨", "┫"],
+  teeDown: ["┬", "┯", "┰", "┳"],
+  teeUp: ["┴", "┷", "┸", "┻"],
+  turnDownRight: ["╭", "┍", "┎", "┏"],
+  turnDownLeft: ["╮", "┑", "┒", "┓"],
+  turnUpRight: ["╰", "┕", "┖", "┗"],
+  turnUpLeft: ["╯", "┙", "┚", "┛"],
+  stubUp: ["╵", "╵", "╹", "╹"],
+  stubDown: ["╷", "╷", "╻", "╻"],
+  stubLeft: ["╴", "╸", "╴", "╸"],
+  stubRight: ["╶", "╺", "╶", "╺"],
+  none: [" ", " ", " ", " "],
 };
 
 const asciiGlyphs: Record<Shape, string> = {
@@ -164,6 +180,20 @@ const asciiGlyphs: Record<Shape, string> = {
   stubRight: "-",
   none: " ",
 };
+
+const asciiHeavyAcross: Partial<Record<Shape, string>> = {
+  horizontal: "=",
+  stubLeft: "=",
+  stubRight: "=",
+};
+
+function weightIndex(across: boolean, along: boolean): 0 | 1 | 2 | 3 {
+  return across && along ? 3 : along ? 2 : across ? 1 : 0;
+}
+
+function asciiGlyph(shape: Shape, heavyAcross: boolean): string {
+  return (heavyAcross ? asciiHeavyAcross[shape] : undefined) ?? asciiGlyphs[shape];
+}
 
 function shapeOf({ up, down, left, right }: Joints): Shape {
   if (up && down) {
@@ -290,11 +320,19 @@ interface SeamRun {
   readonly ink: string;
 }
 
-function seamRuns(cells: readonly SeamCell[], ink: SeamInk, glyphs: GlyphSupport): SeamRun[] {
+function seamRuns(
+  cells: readonly SeamCell[],
+  ink: SeamInk,
+  glyphs: GlyphSupport,
+  stroke: SeamStroke,
+): SeamRun[] {
+  const heavy = new Set(
+    cells.filter((cell) => stroke(cell) === "heavy").map((cell) => key(cell.x, cell.y)),
+  );
   const runs: SeamRun[] = [];
   for (const cell of cells) {
     const cellInk = ink(cell);
-    const glyph = seamGlyph(cell.joints, glyphs);
+    const glyph = seamGlyph(cell.joints, glyphs, heavyJoints(cell, heavy));
     const last = runs.at(-1);
     if (last !== undefined && extendsRun(last, cell, cellInk)) {
       runs[runs.length - 1] = { ...last, content: last.content + glyph };
@@ -303,6 +341,16 @@ function seamRuns(cells: readonly SeamCell[], ink: SeamInk, glyphs: GlyphSupport
     }
   }
   return runs;
+}
+
+function heavyJoints({ x, y, joints }: SeamCell, heavy: ReadonlySet<string>): Joints {
+  if (!heavy.has(key(x, y))) return noJoints;
+  return {
+    up: joints.up && heavy.has(key(x, y - 1)),
+    down: joints.down && heavy.has(key(x, y + 1)),
+    left: joints.left && heavy.has(key(x - 1, y)),
+    right: joints.right && heavy.has(key(x + 1, y)),
+  };
 }
 
 function extendsRun(run: SeamRun, cell: SeamCell, ink: string): boolean {
