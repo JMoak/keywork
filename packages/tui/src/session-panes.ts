@@ -59,6 +59,7 @@ export interface SessionControls {
   switchAgent(agentName: string | undefined): boolean;
   switchModel(reference: string): Promise<string>;
   bindArc(slug: string | undefined): Promise<void>;
+  resyncArc(): void;
 }
 
 export interface FocusedSessionPane {
@@ -99,6 +100,19 @@ export class SessionPanes {
   arcOf(paneId: string): string | undefined {
     const pane = this.deps.core().panes.get(paneId);
     return pane instanceof ConversationPane ? pane.arc : undefined;
+  }
+
+  resyncArcs(): void {
+    for (const controls of this.controls.values()) controls.resyncArc();
+  }
+
+  busyCount(): number {
+    let busy = 0;
+    for (const id of this.controls.keys()) {
+      const pane = this.deps.core().panes.get(id);
+      if (pane instanceof ConversationPane && pane.model.busy) busy += 1;
+    }
+    return busy;
   }
 
   currentModel(): string | undefined {
@@ -253,6 +267,13 @@ class PaneSession implements SessionControls {
     await session.bindArc?.(slug);
     this.pane.arc = slug;
     this.deps.arcIndex.changed();
+    this.notify();
+  }
+
+  resyncArc(): void {
+    const arc = this.live?.arc;
+    if (this.live === undefined || this.pane.arc === arc) return;
+    this.pane.arc = arc;
     this.notify();
   }
 

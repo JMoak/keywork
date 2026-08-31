@@ -5,7 +5,7 @@ export const defaultMasks: readonly MaskRule[] = [
   { pattern: /(?<!\d)\d{13}(?!\d)/g, replacement: "<EPOCH-MS>" },
   { pattern: /(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)/g, replacement: "<DATE>" },
   { pattern: /(?<!\d)\d{2}:\d{2}(?::\d{2})?(?!\d)/g, replacement: "<T>" },
-  { pattern: /\b\d+[smhdw](?: ago)?\b/g, replacement: "~" },
+  { pattern: /\b\d+(?:ms|[smhdw])(?: ago)?\b/g, replacement: "~" },
 ];
 
 export function applyMasks(text: string, rules: readonly MaskRule[]): string {

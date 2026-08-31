@@ -225,7 +225,9 @@ async function composeMockApp(
     ...(scenario.provider !== "none" && { agentFactory: mockAgentFactory(scenario, paths) }),
     ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
     ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
-    glyphs: assumedGlyphs,
+    ...scenario.app,
+    glyphs: scenario.glyphs ?? assumedGlyphs,
+    ...(scenario.focusOutline !== undefined && { focusOutline: scenario.focusOutline }),
     statusLabel: "keywork e2e",
     ...seams,
   });
@@ -309,6 +311,7 @@ function buildStage(context: StageContext): Stage {
       }
       return frame;
     },
+    spans: () => app.setup.captureSpans() as CapturedFrame,
     evidence: (fileName, content) => {
       const path = join(artifactDir, fileName);
       writeFileSync(path, content);
@@ -342,13 +345,13 @@ async function settle(setup: TestSetup): Promise<void> {
 
 async function frameContaining(
   setup: TestSetup,
-  marker: string,
+  marker: string | RegExp,
   timeoutMs: number,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const frame = setup.captureCharFrame();
-    if (frame.includes(marker)) return frame;
+    if (typeof marker === "string" ? frame.includes(marker) : marker.test(frame)) return frame;
     if (Date.now() >= deadline) {
       throw new Error(`marker never appeared: "${marker}"\nlast frame:\n${frame}`);
     }

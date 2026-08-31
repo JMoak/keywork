@@ -130,7 +130,7 @@ export const flavorSchema = z
     chromeWeight: z
       .enum(["regular", "seams", "borderless"])
       .describe(
-        "regular boxes every pane in its own rounded border; seams draws one shared hairline per split with a header row inside each pane; borderless reserves the luminance-focus treatment (C50); chrome heft is flavor taste, not layout truth.",
+        "regular boxes every pane in its own border (rounded from glyph tier 1, square ascii at tier 0); seams draws one shared hairline per split with a header row inside each pane; borderless draws no lines at all and lifts the focused pane's ground to panel with a density focus mark so focus survives monochrome (C50); chrome heft is flavor taste, not layout truth.",
       ),
     instruments: z
       .enum(["calm", "cockpit"])

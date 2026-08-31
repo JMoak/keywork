@@ -82,6 +82,7 @@ export interface UndoPort {
 
 export interface AppCoreOptions extends PaneFactories {
   screen: () => Screen;
+  drawnRect?: (rect: Rect, screen: Screen) => Rect;
   isDirectory?: (path: string) => boolean;
   undo?: UndoPort;
   presets?: PresetsPort;
@@ -146,6 +147,7 @@ export class AppCore implements ActionTarget {
     screen: () => this.screen(),
     paneAt: (id) => this.panes.get(id),
     changed: () => this.touch(),
+    drawnRect: (rect, screen) => this.options.drawnRect?.(rect, screen) ?? rect,
   });
   private readonly ids = new PaneIds();
   private readonly described = new Map<string, string>();

@@ -12,6 +12,7 @@ import {
   type Provider,
   renderCommand,
   replaySession,
+  type SendBehavior,
   type SessionStore,
   settleTurn,
   type ToolGuard,
@@ -111,6 +112,11 @@ export async function persistNewMessages(
 
 type SlashHandler = (repl: Repl, args: string) => Promise<void>;
 
+const promptBehaviors: Readonly<Record<string, SendBehavior>> = {
+  queue: "queue",
+  steer: "steer",
+};
+
 const builtinCommands: Readonly<Record<string, SlashHandler>> = {
   session: async (repl) => printSessionInfo(repl),
   undo: (repl) => timeTravel(repl, "undo"),
@@ -122,6 +128,8 @@ const builtinCommands: Readonly<Record<string, SlashHandler>> = {
     ),
   compact: (repl, args) => compactSession(repl, args),
   agent: async (repl, args) => switchAgent(repl, args),
+  steer: (repl, args) => submitPrompt(repl, args, "steer"),
+  queue: (repl, args) => submitPrompt(repl, args, "queue"),
 };
 
 const builtinCommandNames: readonly string[] = Object.keys(builtinCommands);
@@ -132,6 +140,8 @@ class Repl {
   agent: Agent;
   activeAgent: AgentDefinition | undefined;
   persisted: number;
+  private builtWith: AgentDefinition | undefined;
+  private turns: Promise<unknown> = Promise.resolve();
 
   constructor(
     readonly options: ChatOptions,
@@ -164,16 +174,68 @@ class Repl {
       sessionId: this.store.header.id,
     });
     wireStreamingOutput(agent, this.io);
+    agent.settleTurnsWith(() => this.afterTurn(agent));
     return agent;
   }
 
-  rebuild(history: readonly Message[]): void {
-    this.agent = this.buildAgent(this.activeAgent, history);
+  adopt(definition: AgentDefinition | undefined, history: readonly Message[]): void {
+    const previous = this.agent;
+    this.agent = this.buildAgent(definition, history);
+    this.builtWith = definition;
     this.persisted = history.length;
+    this.agent.adoptQueue(previous);
+  }
+
+  rebuild(history: readonly Message[]): void {
+    this.adopt(this.activeAgent, history);
+  }
+
+  dispatch(prompt: string, behavior: SendBehavior): Promise<void> {
+    if (this.agent.busy()) this.io.print(behavior === "steer" ? "  · steering" : "  · queued");
+    const turn = this.agent.send(prompt, { behavior }).then(
+      () => undefined,
+      (cause: unknown) => this.io.printError(`\nerror: ${toError(cause).message}`),
+    );
+    this.turns = this.turns.then(() => turn);
+    return turn;
+  }
+
+  drained(): Promise<void> {
+    return this.turns.then(() => undefined);
+  }
+
+  interrupt(): void {
+    this.agent.interrupt();
   }
 
   flush(): MemoryFlush | undefined {
     return this.agents.flushFor(this.store.header.id, this.options.provider);
+  }
+
+  private async afterTurn(agent: Agent): Promise<void> {
+    if (agent !== this.agent) return;
+    try {
+      printUsageLine(agent, this.io);
+      this.persisted = await persistNewMessages(
+        this.store,
+        agent.history(),
+        this.persisted,
+        this.checkpoints,
+      );
+      const settlement = await settleTurn({
+        store: this.store,
+        provider: agent.provider,
+        history: agent.history(),
+        budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+        flush: this.flush(),
+      });
+      reportSettlement(settlement, this.io);
+      if (this.builtWith !== this.activeAgent || settlement.history !== undefined) {
+        this.rebuild(settlement.history ?? agent.history());
+      }
+    } catch (cause) {
+      this.io.printError(`settling the turn failed: ${toError(cause).message}`);
+    }
   }
 
   async close(): Promise<void> {
@@ -228,17 +290,26 @@ async function runRepl(repl: Repl): Promise<void> {
     ...builtinCommandNames,
     ...repl.extensions.commands.map((command) => command.name),
   ]);
-  while (true) {
-    const line = (await repl.io.readLine("\n› ", { complete }))?.trim();
-    if (line === undefined || exitWords.has(line)) return;
-    if (line !== "") await handleLine(repl, line);
+  const stopListening = repl.io.onKey((key) => {
+    if (key.name === "escape" || (key.ctrl && key.name === "c")) repl.interrupt();
+  });
+  try {
+    while (true) {
+      const line = (await repl.io.readLine("\n› ", { complete }))?.trim();
+      if (line === undefined || exitWords.has(line)) break;
+      if (line !== "") await handleLine(repl, line);
+    }
+    await repl.drained();
+  } finally {
+    stopListening();
   }
 }
 
 async function handleLine(repl: Repl, line: string): Promise<void> {
   const slash = parseSlashLine(line);
-  if (slash === undefined) return submitPrompt(repl, line);
+  if (slash === undefined) return submitPrompt(repl, line, "queue");
   if (Object.hasOwn(builtinCommands, slash.name)) {
+    if (promptBehaviors[slash.name] === undefined) await repl.drained();
     return builtinCommands[slash.name]?.(repl, slash.args);
   }
   const invoked = resolveSlashCommand(repl.extensions.commands, line);
@@ -254,50 +325,25 @@ async function handleLine(repl: Repl, line: string): Promise<void> {
   );
   if (prompt === undefined) return;
   const definition = repl.extensions.agents.find((agent) => agent.name === invoked.command.agent);
-  await submitPrompt(repl, prompt, definition);
+  await submitPrompt(repl, prompt, "queue", definition);
 }
 
 async function submitPrompt(
   repl: Repl,
   prompt: string,
+  behavior: SendBehavior,
   definition: AgentDefinition | undefined = repl.activeAgent,
 ): Promise<void> {
-  const turnAgent =
-    definition === repl.activeAgent
-      ? repl.agent
-      : repl.buildAgent(definition, repl.agent.history());
-  await runTurn(turnAgent, prompt, repl.io);
-  printUsageLine(turnAgent, repl.io);
-  repl.persisted = await persistNewMessages(
-    repl.store,
-    turnAgent.history(),
-    repl.persisted,
-    repl.checkpoints,
-  );
-  const settlement = await settleTurn({
-    store: repl.store,
-    provider: turnAgent.provider,
-    history: turnAgent.history(),
-    budget: contextBudgetFor(declaredContextWindow(turnAgent.provider)),
-    flush: repl.flush(),
-  });
-  reportSettlement(settlement, repl.io);
-  if (turnAgent !== repl.agent || settlement.history !== undefined) {
-    repl.rebuild(settlement.history ?? turnAgent.history());
+  const text = prompt.trim();
+  if (text === "") {
+    repl.io.print(`usage: /${behavior} <prompt>`);
+    return;
   }
-}
-
-async function runTurn(agent: Agent, prompt: string, io: ChatIo): Promise<void> {
-  const stopListening = io.onKey((key) => {
-    if (key.name === "escape" || (key.ctrl && key.name === "c")) agent.interrupt();
-  });
-  try {
-    await agent.send(prompt);
-  } catch (cause) {
-    io.printError(`\nerror: ${toError(cause).message}`);
-  } finally {
-    stopListening();
+  if (definition !== repl.activeAgent) {
+    await repl.drained();
+    repl.adopt(definition, repl.agent.history());
   }
+  void repl.dispatch(text, behavior);
 }
 
 async function compactSession(repl: Repl, instructions: string): Promise<void> {
@@ -430,7 +476,7 @@ function greet(repl: Repl, seededCount: number): void {
   io.print(`session → ${store.file}`);
   if (seededCount > 0) io.print(`resumed ${seededCount} messages`);
   io.print(
-    `Type to start · Esc stops a turn · "exit" quits · /session stats · /undo takes back the last change · /compact shrinks old context · /label <name> bookmarks here · /preset switches permissions`,
+    `Type to start · a line typed mid-turn queues · /steer <text> interrupts and sends now · Esc stops a turn · "exit" quits · /session stats · /undo takes back the last change · /compact shrinks old context · /label <name> bookmarks here · /preset switches permissions`,
   );
   if (extensions.commands.length > 0) {
     io.print(`commands: ${extensions.commands.map((command) => `/${command.name}`).join(" ")}`);

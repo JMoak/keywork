@@ -32,6 +32,7 @@ describe("applyMasks", () => {
     expect(mask("· 3m ·")).toBe("· ~· ·");
     expect(mask("· 12h · 5d · 3w")).toBe("· ~·· · ~· · ~·");
     expect(mask("took 5s total")).toBe("took ~· total");
+    expect(mask("write · 380ms · failed")).toBe("write · ~···· · failed");
   });
 
   it("preserves the length of a realistic frame line", () => {

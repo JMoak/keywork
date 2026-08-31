@@ -27,11 +27,18 @@ import { assumedGlyphs, type PageMarks, pageMarks } from "./marks.ts";
 import { headline } from "./masthead.ts";
 import { type Animator, inkAt } from "./motion.ts";
 import { type PageGrammar, type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
-import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
-import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
+import type { LifecycleState, Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
+import {
+  type PaneTitle,
+  paneChrome,
+  paneContentHeight,
+  paneContentWidth,
+  paneInks,
+  paneTitle,
+} from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
-import { titleBar } from "./title-bar.ts";
+import { titleSpans } from "./title-bar.ts";
 import type { TranscriptLine } from "./transcript-view.ts";
 import { trayBox, trayRows } from "./tray.ts";
 import { clip, padEnd, width } from "./width.ts";
@@ -68,7 +75,7 @@ export class ConversationPane implements Pane {
   private readonly pageThresholds: PageThresholds;
   private readonly glyphs: GlyphSupport;
   private readonly marks: PageMarks;
-  private readonly lifecycle: LifecycleGlyphs;
+  private readonly stampGlyphs: LifecycleGlyphs;
   private closed = false;
   private lastLines: readonly TranscriptLine[] = [];
   private lastMaxRows = 0;
@@ -81,6 +88,8 @@ export class ConversationPane implements Pane {
   private pulsing = false;
   private drainInk: number | undefined;
   private arrivalInk: number | undefined;
+  private groundInk: number | undefined;
+  private grounded = false;
   private readonly wake: () => void;
   private clock: ReturnType<typeof setInterval> | undefined;
 
@@ -97,7 +106,7 @@ export class ConversationPane implements Pane {
     this.pageThresholds = options?.page ?? pageTierThresholds;
     this.glyphs = options?.glyphs ?? assumedGlyphs;
     this.marks = pageMarks(this.glyphs);
-    this.lifecycle = lifecycleGlyphs(this.glyphs);
+    this.stampGlyphs = lifecycleGlyphs(this.glyphs);
     this.animator = options?.animator;
     this.siblingTitles = options?.siblingTitles;
     this.model.onSettled((outcome) => {
@@ -256,6 +265,7 @@ export class ConversationPane implements Pane {
     this.animator?.settleRegion(`stamp:${this.id}`);
     this.animator?.settleRegion(`pulse:${this.id}`);
     this.animator?.settleRegion(`arrive:${this.id}`);
+    this.animator?.settleRegion(`ground:${this.id}`);
     this.model.dispose();
   }
 
@@ -265,6 +275,14 @@ export class ConversationPane implements Pane {
 
   awaitingYou(): boolean {
     return this.model.pendingAsk !== undefined;
+  }
+
+  lifecycle(): LifecycleState {
+    if (this.model.pendingAsk !== undefined) return "needs-you";
+    if (this.model.busy) return "working";
+    if (this.unseen === "failed") return "failed";
+    if (this.unseen === "finished") return "finished-unseen";
+    return "idle";
   }
 
   revealed(): void {
@@ -299,19 +317,13 @@ export class ConversationPane implements Pane {
     this.syncStamp(context.focused);
     this.syncClock();
     const page = resolvePage(context.width, this.pageThresholds);
-    const framed = this.framedThroughArrival(context);
-    return this.wearsMasthead(page) ? this.mastheadView(framed) : this.transcriptView(framed, page);
+    return this.wearsMasthead(page)
+      ? this.mastheadView(context)
+      : this.transcriptView(context, page);
   }
 
-  private framedThroughArrival(context: PaneContext): PaneContext {
-    const ink = this.arrivalInk;
-    if (ink === undefined || context.borderColor === undefined) return context;
-    const risen = rampColor([context.theme.border, context.borderColor], ink);
-    return { ...context, borderColor: risen };
-  }
-
-  private composedTitle(context: PaneContext): string {
-    return titleBar(
+  private composedTitle(context: PaneContext): PaneTitle {
+    const spans = titleSpans(
       {
         name: this.model.title ?? this.id,
         stamp: this.stampGlyph(),
@@ -323,11 +335,43 @@ export class ConversationPane implements Pane {
       context.focused,
       this.pageThresholds,
     );
+    return {
+      spans,
+      state: this.lifecycle(),
+      arrival: this.arrivalInk,
+      groundArrival: this.groundInk,
+    };
   }
 
   private syncStamp(focused: boolean): void {
     if (this.unseen !== undefined && focused && this.drainInk === undefined) this.beginDrain();
     this.syncPulse();
+    this.syncGround();
+  }
+
+  private syncGround(): void {
+    if (this.model.pendingAsk === undefined) {
+      if (this.grounded) this.animator?.settleRegion(`ground:${this.id}`);
+      this.grounded = false;
+      this.groundInk = undefined;
+      return;
+    }
+    if (this.grounded) return;
+    this.grounded = true;
+    const animator = this.animator;
+    if (animator === undefined) return;
+    this.groundInk = 0;
+    animator.play({
+      region: `ground:${this.id}`,
+      tempo: "quick",
+      shape: "arrival",
+      apply: (ink) => {
+        this.groundInk = ink;
+      },
+      onSettled: () => {
+        this.groundInk = undefined;
+      },
+    });
   }
 
   private beginDrain(): void {
@@ -375,7 +419,7 @@ export class ConversationPane implements Pane {
   }
 
   private stampGlyph(): string | undefined {
-    const glyphs = this.lifecycle;
+    const glyphs = this.stampGlyphs;
     if (this.model.pendingAsk !== undefined) return inkAt(glyphs.pulse, this.pulseInk);
     if (this.model.busy) return glyphs.work[this.model.activity % glyphs.work.length];
     if (this.drainInk !== undefined) return inkAt(glyphs.drain, this.drainInk);
@@ -412,7 +456,10 @@ export class ConversationPane implements Pane {
       Box(
         { flexGrow: 1, flexDirection: "column", overflow: "hidden" },
         ...head.lines.map((line, row) =>
-          Text({ content: line || " ", fg: mastheadInk(context, row, head.lines.length) }),
+          Text({
+            content: line || " ",
+            fg: mastheadInk(context, this.lifecycle(), row, head.lines.length),
+          }),
         ),
         Text({
           content: clip(this.mastheadStatus(context), innerWidth),
@@ -505,6 +552,9 @@ export class ConversationPane implements Pane {
           fg: theme.accent,
         }),
       ];
+    }
+    if (this.model.busy && !this.model.editor.isEmpty()) {
+      return [Text({ content: busyPromptHint, fg: theme.textDim })];
     }
     return [];
   }
@@ -628,11 +678,18 @@ function lineColor(line: TranscriptLine, theme: Theme): string {
   }
 }
 
-function mastheadInk(context: PaneContext, row: number, rows: number): string {
-  const hue = context.borderColor ?? context.theme.borderFocus;
+function mastheadInk(
+  context: PaneContext,
+  state: LifecycleState,
+  row: number,
+  rows: number,
+): string {
+  const hue = paneInks(context, { state }).borderColor;
   const depth = rows <= 1 ? 1 : row / (rows - 1);
   return rampColor([hue, context.theme.text], depth);
 }
+
+const busyPromptHint = "enter queues · alt+enter steers · esc interrupts";
 
 function queuedSegment(count: number): string {
   return count === 0 ? "" : `${count} queued`;

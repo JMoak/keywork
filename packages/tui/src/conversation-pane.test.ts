@@ -1,19 +1,65 @@
 import { Agent, MockProvider, type Tool, textTurn, toolCallTurn } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
+import { lifecycleChrome, rampColor } from "./chroma.ts";
 import type { ConversationModel } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
-import { Animator, type Scheduler } from "./motion.ts";
+import { Animator, type Scheduler, tempos } from "./motion.ts";
 import type { PaneContext } from "./pane.ts";
 import { keyworkNight } from "./theme.ts";
+
+const hue = rampColor(keyworkNight.ramp, 0.5);
+
+function groundOf(pane: ConversationPane, focused: boolean): string | undefined {
+  return titleRowOf(pane.view({ ...context(focused), hue })).find((cell) => cell.text === "session")
+    ?.bg;
+}
+
+function borderOf(pane: ConversationPane, focused: boolean): string | undefined {
+  const view = pane.view({ ...context(focused), hue }) as {
+    children?: Array<{ props?: { border?: boolean; borderColor?: string } }>;
+  };
+  return view.children?.find((child) => child.props?.border === true)?.props?.borderColor;
+}
 
 function context(focused: boolean, width = 132): PaneContext {
   return { theme: keyworkNight, focused, width, height: 20 };
 }
 
-function titleOf(pane: ConversationPane, focused: boolean): string {
-  const view = pane.view(context(focused));
-  return (view as { props?: { title?: string } }).props?.title ?? "";
+function titleOf(
+  pane: ConversationPane,
+  focused: boolean,
+  extra: Partial<PaneContext> = {},
+): string {
+  return titleRowOf(pane.view({ ...context(focused), ...extra }))
+    .map((cell) => cell.text)
+    .join("");
+}
+
+interface TitleCell {
+  readonly text: string;
+  readonly bg: string | undefined;
+}
+
+function titleRowOf(view: unknown): TitleCell[] {
+  const children = (view as { children?: Array<{ props?: { content?: unknown } }> }).children ?? [];
+  const row = children.find((child) => typeof child.props?.content === "object");
+  const chunks =
+    (
+      row?.props?.content as {
+        chunks?: Array<{ text: string; bg?: { r: number; g: number; b: number } }>;
+      }
+    )?.chunks ?? [];
+  return chunks.map((chunk) => ({ text: chunk.text, bg: hexOf(chunk.bg) }));
+}
+
+function hexOf(color: { r: number; g: number; b: number } | undefined): string | undefined {
+  if (color === undefined) return undefined;
+  const byte = (channel: number) =>
+    Math.round(channel * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${byte(color.r)}${byte(color.g)}${byte(color.b)}`;
 }
 
 function modelOf(pane: ConversationPane): ConversationModel {
@@ -21,8 +67,9 @@ function modelOf(pane: ConversationPane): ConversationModel {
 }
 
 const settledTitle = (stamp = "", tail = "") => new RegExp(`^ ${stamp}session-1${tail} $`);
+const restingBorder = lifecycleChrome("idle", false, hue, keyworkNight).borderColor;
 
-function manualScheduler(): { schedule: Scheduler; runAll: () => void } {
+function manualScheduler(): { schedule: Scheduler; runAll: () => void; runOne: () => void } {
   const queue: Array<() => void> = [];
   return {
     schedule: (run) => {
@@ -34,6 +81,9 @@ function manualScheduler(): { schedule: Scheduler; runAll: () => void } {
     },
     runAll: () => {
       while (queue.length > 0) queue.shift()?.();
+    },
+    runOne: () => {
+      queue.shift()?.();
     },
   };
 }
@@ -91,10 +141,61 @@ describe("the lifecycle stamp", () => {
       arguments: { path: "a.txt" },
     });
     expect(titleOf(pane, true)).toContain("█ session-1");
+    expect(pane.lifecycle()).toBe("needs-you");
+    expect(groundOf(pane, true)).toBe(hue);
+    expect(groundOf(pane, false)).toBe(hue);
+    expect(borderOf(pane, false)).not.toBe(restingBorder);
 
     pane.handleKey(parseChord("n"), undefined);
     expect(await decision).toBe(false);
     expect(titleOf(pane, true)).not.toContain("█");
+    expect(pane.lifecycle()).toBe("idle");
+    expect(groundOf(pane, true)).not.toBe(hue);
+    expect(borderOf(pane, false)).toBe(restingBorder);
+  });
+
+  it("never inverts or warms the border for finished-unseen or failed", async () => {
+    const finished = new ConversationPane(
+      "session-1",
+      new Agent({ provider: new MockProvider([textTurn("reply")]) }),
+      () => {},
+    );
+    modelOf(finished).submitText("go");
+    await finished.settled();
+    expect(finished.lifecycle()).toBe("finished-unseen");
+    expect(groundOf(finished, false)).not.toBe(hue);
+    expect(borderOf(finished, false)).toBe(restingBorder);
+
+    const failed = new ConversationPane(
+      "session-1",
+      new Agent({ provider: new MockProvider([]) }),
+      () => {},
+    );
+    modelOf(failed).submitText("go");
+    await failed.settled();
+    expect(failed.lifecycle()).toBe("failed");
+    expect(groundOf(failed, false)).not.toBe(hue);
+    expect(borderOf(failed, false)).toBe(restingBorder);
+  });
+
+  it("fades the inverted ground up at quick tempo and drops it on the answering keystroke", () => {
+    const { schedule, runOne } = manualScheduler();
+    const animator = new Animator({ schedule });
+    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
+      animator,
+    });
+    void pane.confirmMutation({ type: "tool-call", callId: "c1", name: "write", arguments: {} });
+    const grounds: string[] = [];
+    for (let frame = 0; frame < 6; frame += 1) {
+      grounds.push(groundOf(pane, true) ?? "none");
+      runOne();
+    }
+    expect(grounds[0]).not.toBe(hue);
+    expect(grounds.at(-1)).toBe(hue);
+    expect(new Set(grounds).size).toBe(tempos.quick.steps);
+
+    pane.handleKey(parseChord("n"), undefined);
+    expect(groundOf(pane, true)).not.toBe(hue);
   });
 
   it("latches an unseen finish even when no frame was built while the turn ran", async () => {
@@ -330,7 +431,8 @@ function frameRows(view: ReturnType<ConversationPane["view"]>): string[] {
   const rows: string[] = [];
   const visit = (node: unknown): void => {
     if (node === null || typeof node !== "object") return;
-    const props = (node as { props?: { content?: unknown } }).props;
+    const props = (node as { props?: { content?: unknown; position?: string } }).props;
+    if (props?.position === "absolute") return;
     const content = props?.content;
     if (typeof content === "string") rows.push(content);
     else if (content !== undefined && typeof content === "object") {
@@ -352,8 +454,7 @@ describe("the live header", () => {
     modelOf(pane).submitText("go");
     await modelOf(pane).lastSend;
     expect(titleOf(pane, true)).toBe(" session-1 ");
-    const shown = pane.view({ ...context(true), costs: true }) as { props?: { title?: string } };
-    expect(shown.props?.title).toMatch(/^ session-1 · \d+▸\d+ $/);
+    expect(titleOf(pane, true, { costs: true })).toMatch(/^ session-1 · \d+▸\d+ $/);
   });
 
   it("shows the context gauge only once it is significant, or always in the cockpit", async () => {

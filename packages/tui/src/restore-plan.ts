@@ -74,6 +74,7 @@ async function restorable(
     case "arc":
     case "memory":
     case "mcp":
+    case "workspaces":
       return true;
   }
 }

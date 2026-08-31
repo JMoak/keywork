@@ -38,9 +38,9 @@ export const arcFold: Scenario = {
     await stage.settle();
     await stage.type("/arc new fold-v1");
     await stage.press("enter");
-    await stage.until("╭─ #fold-v1 · 1 session ");
+    await stage.until("│ #fold-v1 · 1 session ");
     await stage.press("ctrl+k", "s", "escape");
-    await stage.until("╭─ #fold-v1 · 2 sessions ");
+    await stage.until("│ #fold-v1 · 2 sessions ");
     await stage.type("please shout the middle line of notes.txt");
     await stage.press("enter");
     await stage.until(askRowMarker);
@@ -48,29 +48,35 @@ export const arcFold: Scenario = {
 
     await stage.press("ctrl+p");
     await stage.type("#fold-v1");
+    const quickOpen = await stage.until("#fold-v1  ");
+    assert.ok(
+      quickOpen.includes("2 sessions"),
+      "quick-open lists the arc with its member count as the hint",
+    );
+    await stage.capture("quick-open-arc");
     await stage.press("enter");
     await stage.press("space");
-    const oneFolded = await stage.until("╭─ #fold-v1 · 2 sessions · 1 folded ");
+    const oneFolded = await stage.until("│ #fold-v1 · 2 sessions · 1 folded ");
     assert.equal(paneTitleCount(oneFolded), 1, "folding a member takes its tile off the screen");
     assert.ok(oneFolded.includes(foldedRow), "the folded member's row wears the fold mark");
     await stage.capture("member-folded");
 
     await stage.press("a");
-    const allFolded = await stage.until("╭─ █ #fold-v1 · 2 sessions · 2 folded ");
+    const allFolded = await stage.until("│ █ #fold-v1 · 2 sessions · 2 folded ");
     assert.equal(paneTitleCount(allFolded), 0, "a folds every shown member");
     assert.ok(allFolded.includes(waitingRow), "a folded member that asks reads needs you");
     await stage.capture("all-folded-one-waiting");
 
     await stage.press("a");
-    const allShown = await stage.until("╭─ #fold-v1 · 2 sessions ");
+    const allShown = await stage.until("│ #fold-v1 · 2 sessions ");
     assert.equal(paneTitleCount(allShown), 2, "a unfolds them all when none is shown");
     assert.ok(allShown.includes(askRowMarker), "the unfolded member still holds its ask");
     await stage.capture("all-unfolded");
 
     await stage.press("space", "j", "space");
-    await stage.until("╭─ █ #fold-v1 · 2 sessions · 2 folded ");
+    await stage.until("│ █ #fold-v1 · 2 sessions · 2 folded ");
     await stage.press("enter");
-    const unfolded = await stage.until("╭─ #fold-v1 · 2 sessions · 1 folded ");
+    const unfolded = await stage.until("│ #fold-v1 · 2 sessions · 1 folded ");
     assert.equal(paneTitleCount(unfolded), 1, "enter unfolds only the member it names");
     assert.ok(unfolded.includes(askRowMarker), "enter lands on the member that needs you");
     await stage.capture("enter-unfolds-and-focuses");
@@ -79,7 +85,7 @@ export const arcFold: Scenario = {
     await stage.settle();
 
     await stage.relaunch();
-    const restored = await stage.until("╭─ #fold-v1 · 2 sessions · 1 folded ");
+    const restored = await stage.until("│ #fold-v1 · 2 sessions · 1 folded ");
     assert.equal(paneTitleCount(restored), 1, "the fold survives a relaunch: one tile, one held");
     assert.ok(restored.includes(foldedRow), "the held member is still reported as folded");
     await stage.capture("relaunched-fold-restored");

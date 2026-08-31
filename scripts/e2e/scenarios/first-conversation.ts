@@ -6,6 +6,7 @@ import type { Scenario, Stage } from "../scenario.ts";
 import { notesAfter, notesBefore } from "./fixtures.ts";
 
 const askRowMarker = "[y] allow  [a] always  [n] deny";
+const calmHeader = /│ session-1 +│/;
 
 export const firstConversation: Scenario = {
   name: "first-conversation",
@@ -45,7 +46,7 @@ export const firstConversation: Scenario = {
     assert.ok(settled.includes("write notes.txt"), "the tool row names its verb and subject");
     assert.ok(settled.includes("· done"), "the tool row settles to its outcome word");
     assert.equal(workspaceRead(stage, "notes.txt"), notesAfter);
-    await stage.until("─ session-1 · ░");
+    await stage.until(calmHeader);
     await stage.capture("turn-complete");
 
     await stage.type("/undo");

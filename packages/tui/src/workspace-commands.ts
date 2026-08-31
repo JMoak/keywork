@@ -51,8 +51,8 @@ async function createWorkspace(
   await switchWorkspace(seams, slug);
 }
 
-async function switchWorkspace(
-  seams: WorkspaceCommandSeams,
+export async function switchWorkspace(
+  seams: Pick<WorkspaceCommandSeams, "workspaces" | "notice" | "shutdown">,
   slug: string | undefined,
 ): Promise<void> {
   await seams.workspaces.use(slug);

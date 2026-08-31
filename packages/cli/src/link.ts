@@ -1,8 +1,10 @@
 import { statSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { scopeContains, toolScope } from "@keywork/engine";
 import {
   canonicalPath,
+  openWorkspace,
+  resolveAnchor,
   type TrustStore,
   updateWorkspaceDeclaration,
   type Workspace,
@@ -48,6 +50,56 @@ export async function linkCommand(
   }));
   print(`linked ${dir}. tools and memory now cover it`);
   return 0;
+}
+
+export function linkFocusDir(cwd: string, slug: string | undefined, target: string): string {
+  const root = resolveAnchor(cwd).root;
+  const workspace = declaredWorkspace(cwd, slug);
+  const focus = focusDirWithin(root, target);
+  if (workspace.focusDirs.includes(focus)) throw new Error(`${focus} is already a focus dir`);
+  updateWorkspaceDeclaration(
+    root,
+    (declaration) => ({ ...declaration, focusDirs: [...(declaration.focusDirs ?? []), focus] }),
+    slug,
+  );
+  return focus;
+}
+
+export function unlinkFocusDir(cwd: string, slug: string | undefined, focus: string): void {
+  const root = resolveAnchor(cwd).root;
+  const workspace = declaredWorkspace(cwd, slug);
+  if (!workspace.focusDirs.includes(focus)) throw new Error(`${focus} isn't a focus dir here`);
+  updateWorkspaceDeclaration(
+    root,
+    (declaration) => ({
+      ...declaration,
+      focusDirs: (declaration.focusDirs ?? []).filter((dir) => dir !== focus),
+    }),
+    slug,
+  );
+}
+
+function declaredWorkspace(cwd: string, slug: string | undefined): Workspace {
+  const workspace = openWorkspace(cwd, slug);
+  if (workspace !== undefined) return workspace;
+  throw new Error(
+    slug === undefined
+      ? "this workspace isn't set up yet · /init declares it"
+      : `no workspace named ${slug} here`,
+  );
+}
+
+function focusDirWithin(root: string, target: string): string {
+  const dir = resolve(root, target);
+  if (!isDirectory(dir)) throw new Error(`${target} isn't a directory`);
+  const inside = relative(root, dir);
+  if (inside === "") throw new Error("the whole root is already the workspace · pick a subtree");
+  if (inside.startsWith("..") || resolve(root, inside) !== dir) {
+    throw new Error(
+      `${target} is outside the workspace root · keywork link widens the jail instead`,
+    );
+  }
+  return inside.split(sep).join("/");
 }
 
 function linkRefusal(

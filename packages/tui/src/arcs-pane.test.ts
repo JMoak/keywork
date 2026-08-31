@@ -226,7 +226,8 @@ describe("ArcsPane two levels", () => {
     await pane.settled();
     expect(pane.title()).toBe(" #dock-v2 · 2 sessions ");
     expect(pane.describe()).toEqual({ kind: "arcs", arc: "dock-v2" });
-    const sessionsLevel = JSON.stringify(describeTree(pane.view(context())).children);
+    const [body] = describeTree(pane.view(context())).children ?? [];
+    const sessionsLevel = JSON.stringify(body);
     expect(sessionsLevel).toContain("title-s1");
     expect(sessionsLevel).not.toContain("#dock-v2");
     press(pane, "escape");

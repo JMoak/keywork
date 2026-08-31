@@ -100,6 +100,8 @@ function parsePane(value: unknown): WorkspacePane | undefined {
       return parseMemoryPane(value);
     case "mcp":
       return { id: value.id, kind: "mcp" };
+    case "workspaces":
+      return { id: value.id, kind: "workspaces" };
     default:
       return undefined;
   }

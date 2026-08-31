@@ -9,6 +9,7 @@ export {
   type ToolGuard,
   type ToolPermission,
   type ToolSource,
+  type TurnSettler,
 } from "./agent.ts";
 export { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
 export {
@@ -134,9 +135,11 @@ export {
   type ArcCloseCandidate,
   type ArcCloseDigest,
   type ArcDelivery,
+  type ArcReview,
   ArcStillActiveError,
   type CandidateTriage,
   type CloseDecisions,
+  deliveryRecordTitle,
   IneligibleDeliveryError,
   MissingSuccessorError,
   type PrepareCloseOptions,
@@ -151,6 +154,7 @@ export {
   type ArcBindingListener,
   ArcBindings,
 } from "./memory/arcs/bindings.ts";
+export { ArcCloseDraft } from "./memory/arcs/draft.ts";
 export {
   ArcOpenQuestions,
   type ArcOpenQuestionsOptions,

@@ -46,6 +46,29 @@ export function onOutline(cell: { x: number; y: number }, outline: Rect): boolea
   );
 }
 
+export function outlineJoints(cell: { x: number; y: number }, outline: Rect): Joints {
+  const onColumn = cell.x === outline.x || cell.x === rightEdge(outline);
+  const onRow = cell.y === outline.y || cell.y === bottomEdge(outline);
+  return {
+    up: onColumn && cell.y > outline.y,
+    down: onColumn && cell.y < bottomEdge(outline),
+    left: onRow && cell.x > outline.x,
+    right: onRow && cell.x < rightEdge(outline),
+  };
+}
+
+export function framedByOutline(
+  cells: readonly SeamCell[],
+  outline: Rect,
+  claims: (cell: SeamCell) => boolean = () => true,
+): SeamCell[] {
+  return cells.map((cell) =>
+    onOutline(cell, outline) && claims(cell)
+      ? { ...cell, joints: outlineJoints(cell, outline) }
+      : cell,
+  );
+}
+
 export function innerRect(rect: Rect, field: Rect): Rect {
   return {
     x: rect.x,
@@ -92,11 +115,8 @@ export function fieldOf(screen: Screen, inset: number): SeamField {
 }
 
 export function seamGlyph(joints: Joints, glyphs: GlyphSupport, heavy: Joints = noJoints): string {
-  const shape = shapeOf(joints);
-  const heavyAcross = heavy.left || heavy.right;
-  const heavyAlong = heavy.up || heavy.down;
-  if (glyphs.glyphTier < 1) return asciiGlyph(shape, heavyAcross);
-  return weightedGlyphs[shape][weightIndex(heavyAcross, heavyAlong)];
+  if (glyphs.glyphTier < 1) return asciiGlyph(shapeOf(joints), heavy.left || heavy.right);
+  return boxGlyphs.get(armsOf(joints, heavy)) ?? " ";
 }
 
 export function seamsView(
@@ -141,26 +161,35 @@ type Shape =
   | "stubRight"
   | "none";
 
-type WeightedGlyphs = readonly [light: string, across: string, along: string, both: string];
+type ArmWeight = "." | "l" | "h";
 
-const weightedGlyphs: Record<Shape, WeightedGlyphs> = {
-  vertical: ["│", "│", "┃", "┃"],
-  horizontal: ["─", "━", "─", "━"],
-  cross: ["┼", "┿", "╂", "╋"],
-  teeRight: ["├", "┝", "┠", "┣"],
-  teeLeft: ["┤", "┥", "┨", "┫"],
-  teeDown: ["┬", "┯", "┰", "┳"],
-  teeUp: ["┴", "┷", "┸", "┻"],
-  turnDownRight: ["╭", "┍", "┎", "┏"],
-  turnDownLeft: ["╮", "┑", "┒", "┓"],
-  turnUpRight: ["╰", "┕", "┖", "┗"],
-  turnUpLeft: ["╯", "┙", "┚", "┛"],
-  stubUp: ["╵", "╵", "╹", "╹"],
-  stubDown: ["╷", "╷", "╻", "╻"],
-  stubLeft: ["╴", "╸", "╴", "╸"],
-  stubRight: ["╶", "╺", "╶", "╺"],
-  none: [" ", " ", " ", " "],
-};
+const armGlyphs = `
+─ ..ll  ━ ..hh  │ ll..  ┃ hh..
+╭ .l.l  ┍ .l.h  ┎ .h.l  ┏ .h.h
+╮ .ll.  ┑ .lh.  ┒ .hl.  ┓ .hh.
+╰ l..l  ┕ l..h  ┖ h..l  ┗ h..h
+╯ l.l.  ┙ l.h.  ┚ h.l.  ┛ h.h.
+├ ll.l  ┝ ll.h  ┞ hl.l  ┟ lh.l  ┠ hh.l  ┡ hl.h  ┢ lh.h  ┣ hh.h
+┤ lll.  ┥ llh.  ┦ hll.  ┧ lhl.  ┨ hhl.  ┩ hlh.  ┪ lhh.  ┫ hhh.
+┬ .lll  ┭ .lhl  ┮ .llh  ┯ .lhh  ┰ .hll  ┱ .hhl  ┲ .hlh  ┳ .hhh
+┴ l.ll  ┵ l.hl  ┶ l.lh  ┷ l.hh  ┸ h.ll  ┹ h.hl  ┺ h.lh  ┻ h.hh
+┼ llll  ┽ llhl  ┾ lllh  ┿ llhh  ╀ hlll  ╁ lhll  ╂ hhll  ╃ hlhl
+╄ hllh  ╅ lhhl  ╆ lhlh  ╇ hlhh  ╈ lhhh  ╉ hhhl  ╊ hhlh  ╋ hhhh
+╴ ..l.  ╵ l...  ╶ ...l  ╷ .l..  ╸ ..h.  ╹ h...  ╺ ...h  ╻ .h..
+╼ ..lh  ╽ lh..  ╾ ..hl  ╿ hl..
+`;
+
+const boxGlyphs: ReadonlyMap<string, string> = new Map(
+  [...armGlyphs.matchAll(/(\S) ([.lh]{4})/g)].map(([, glyph, arms]) => [
+    arms as string,
+    glyph as string,
+  ]),
+);
+
+function armsOf(joints: Joints, heavy: Joints): string {
+  const arm = (joined: boolean, thick: boolean): ArmWeight => (joined ? (thick ? "h" : "l") : ".");
+  return `${arm(joints.up, heavy.up)}${arm(joints.down, heavy.down)}${arm(joints.left, heavy.left)}${arm(joints.right, heavy.right)}`;
+}
 
 const asciiGlyphs: Record<Shape, string> = {
   vertical: "|",
@@ -186,10 +215,6 @@ const asciiHeavyAcross: Partial<Record<Shape, string>> = {
   stubLeft: "=",
   stubRight: "=",
 };
-
-function weightIndex(across: boolean, along: boolean): 0 | 1 | 2 | 3 {
-  return across && along ? 3 : along ? 2 : across ? 1 : 0;
-}
 
 function asciiGlyph(shape: Shape, heavyAcross: boolean): string {
   return (heavyAcross ? asciiHeavyAcross[shape] : undefined) ?? asciiGlyphs[shape];

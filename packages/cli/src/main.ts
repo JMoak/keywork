@@ -27,7 +27,12 @@ import { isPresetName, permissionsResolver, presetResolver, userPresetSwitch } f
 import { conclude, exitCodeOf, runHeadless } from "./run.ts";
 import { terminalConfirm } from "./terminal-input.ts";
 import { versionLine } from "./version.ts";
-import { fileWorkspaceRecall, selectWorkspace, type WorkspaceRecall } from "./workspaces.ts";
+import {
+  fileWorkspaceRecall,
+  selectWorkspace,
+  unknownWorkspaceProblem,
+  type WorkspaceRecall,
+} from "./workspaces.ts";
 
 export interface MainSeams {
   cwd?: string;
@@ -55,7 +60,12 @@ export async function main(argv: readonly string[], seams: MainSeams = {}): Prom
   }
   const invocation = parseInvocation(decision.rest);
   if (!invocation.ok) return refuseInvocation(decision, invocation.problem, io);
-  const context = await openCommandContext(io, invocation.values.workspace);
+  const requestedWorkspace = invocation.values.workspace;
+  const workspaceProblem = strictWorkspaceCommands.has(decision.command)
+    ? unknownWorkspaceProblem(io.cwd, requestedWorkspace)
+    : undefined;
+  if (workspaceProblem !== undefined) return refuseInvocation(decision, workspaceProblem, io);
+  const context = await openCommandContext(io, requestedWorkspace);
   return commands[decision.command](context, invocation);
 }
 
@@ -107,6 +117,8 @@ interface CommandContext {
 }
 
 type Command = (context: CommandContext, invocation: ParsedInvocation) => Promise<number>;
+
+const strictWorkspaceCommands: ReadonlySet<CommandName> = new Set(["run", "chat"]);
 
 const commands: Record<CommandName, Command> = {
   panes: runPanes,

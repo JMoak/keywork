@@ -1,4 +1,9 @@
-import { arcTag } from "./arcs.ts";
+import {
+  type AirlockCandidateView,
+  type AirlockDigestView,
+  type AirlockQuestionView,
+  arcTag,
+} from "./arcs.ts";
 import { type MarkdownRow, markdownRowText, renderMarkdown } from "./markdown.ts";
 import type {
   CuringStage,
@@ -24,6 +29,7 @@ export type MemoryRowKind =
   | "layer"
   | "section"
   | "inbox"
+  | "airlock"
   | "note"
   | "strip"
   | "body"
@@ -53,14 +59,27 @@ export interface MemoryRow {
   ledgerId?: string;
   file?: string;
   arc?: string;
+  airlock?: AirlockRowRef;
   spans?: RowSpan[];
   markdown?: MarkdownRow;
   rail?: boolean;
 }
 
+export type DigestTreatment = "tail" | "stamp";
+
+export type AirlockRowKind = "candidate" | "question" | "fold" | "finish";
+
+export interface AirlockRowRef {
+  arc: string;
+  kind: AirlockRowKind;
+  key: string;
+}
+
 export interface GardenOptions {
   focusedArc: string | undefined;
   now: number;
+  treatment?: DigestTreatment;
+  unfolded?: (arc: string) => boolean;
 }
 
 export interface NoteLensOptions {
@@ -175,6 +194,7 @@ const inboxKindWords: Record<InboxKind, string> = {
   promotion: "promote",
   contradiction: "conflict",
   proposal: "proposal",
+  airlock: "airlock",
 };
 const tileFill = ["▌", "▌▀", "▌▀▗", "█"] as const;
 const askHint = "what do you know about … · enter opens a hit · esc closes";
@@ -209,13 +229,15 @@ function stateFacts(inputs: MemoryPaneInputs, now: number): string[] {
   const curing = inputs.notes.filter((note) => note.curing < 3).length;
   const staged = inputs.inbox.filter((item) => item.kind === "staged").length;
   const conflicts = inputs.inbox.filter((item) => item.kind === "contradiction").length;
-  const proposals = inputs.inbox.length - staged - conflicts;
+  const airlock = inputs.inbox.filter((item) => item.kind === "airlock").length;
+  const proposals = inputs.inbox.length - staged - conflicts - airlock;
   return [
     pluralize(inputs.notes.length, "note"),
     ...(curing === 0 ? [] : [`${curing} curing`]),
     ...(staged === 0 ? [] : [`░${staged}`]),
     ...(conflicts === 0 ? [] : [pluralize(conflicts, "conflict")]),
     ...(proposals === 0 ? [] : [pluralize(proposals, "proposal")]),
+    ...(airlock === 0 ? [] : [`airlock ░${airlock}`]),
     ...sweepFact(inputs, now),
   ];
 }
@@ -252,14 +274,186 @@ function layerRows(
   options: GardenOptions,
 ): MemoryRow[] {
   const notes = inputs.notes.filter((note) => note.layer === layer.id);
-  const inbox = inputs.inbox.filter((item) => inboxLayerOf(item, inputs.layers) === layer.id);
+  const digest = digestOf(layer, inputs);
+  const inbox = inputs.inbox.filter(
+    (item) =>
+      inboxLayerOf(item, inputs.layers) === layer.id &&
+      (digest === undefined || item.kind !== "airlock"),
+  );
   const focused = layer.kind === "arc" && layer.arc === options.focusedArc;
-  if (notes.length === 0 && inbox.length === 0 && !focused) return [];
+  if (notes.length === 0 && inbox.length === 0 && digest === undefined && !focused) return [];
+  const waiting = inbox.length + (digest === undefined ? 0 : digestSize(digest));
   return [
-    layerHeader(layer, notes.length, inbox.length),
+    layerHeader(layer, notes.length, waiting, digest?.sweep),
+    ...(digest === undefined ? [] : digestRows(digest, options)),
     ...sortedInbox(inbox).map((item) => inboxRow(item, options.now)),
     ...noteSectionRows(layer, notes, options.now),
   ];
+}
+
+function digestOf(layer: MemoryLayerView, inputs: MemoryPaneInputs): AirlockDigestView | undefined {
+  if (layer.kind !== "arc") return undefined;
+  return inputs.airlocks?.find((digest) => digest.arc === layer.arc);
+}
+
+function digestSize(digest: AirlockDigestView): number {
+  return digest.candidates.length + digest.questions.length;
+}
+
+function digestRows(digest: AirlockDigestView, options: GardenOptions): MemoryRow[] {
+  const treatment = options.treatment ?? "tail";
+  const eligible = digest.candidates.filter((candidate) => candidate.eligible);
+  const belowBar = digest.candidates.filter((candidate) => !candidate.eligible);
+  const unfolded = options.unfolded?.(digest.arc) === true;
+  return [
+    ...eligible.map((candidate) => candidateRow(digest.arc, candidate, treatment, options.now)),
+    ...digest.questions.map((question) =>
+      questionRow(digest.arc, question, digest.successor, treatment, options.now),
+    ),
+    ...(belowBar.length === 0 ? [] : [foldRow(digest.arc, belowBar, unfolded)]),
+    ...(unfolded ? belowBar.map((candidate) => belowBarRow(digest.arc, candidate)) : []),
+    finishRow(digest),
+  ];
+}
+
+function candidateRow(
+  arc: string,
+  candidate: AirlockCandidateView,
+  treatment: DigestTreatment,
+  now: number,
+): MemoryRow {
+  const facts = candidate.created === undefined ? [] : [ageOf(now, candidate.created)];
+  return decisionRow(
+    { arc, kind: "candidate", key: candidate.note },
+    treatment,
+    provenanceGlyph(candidate.provenance),
+    candidate.title,
+    facts,
+    candidate.choice,
+    candidate.note,
+  );
+}
+
+function questionRow(
+  arc: string,
+  question: AirlockQuestionView,
+  successor: string | undefined,
+  treatment: DigestTreatment,
+  now: number,
+): MemoryRow {
+  const facts = [
+    "question",
+    ...(question.created === undefined ? [] : [ageOf(now, question.created)]),
+  ];
+  const choice =
+    question.choice === "carry" && successor !== undefined
+      ? `carry to ${arcTag(successor)}`
+      : question.choice;
+  return decisionRow(
+    { arc, kind: "question", key: question.title },
+    treatment,
+    provenanceGlyph(question.provenance),
+    question.title,
+    facts,
+    choice,
+  );
+}
+
+function decisionRow(
+  ref: AirlockRowRef,
+  treatment: DigestTreatment,
+  provenance: string,
+  title: string,
+  facts: string[],
+  choice: string | undefined,
+  note?: string,
+): MemoryRow {
+  const tail = facts.length === 0 ? "" : ` · ${facts.join(" · ")}`;
+  const spans: RowSpan[] =
+    treatment === "stamp"
+      ? [
+          { text: `${choice === undefined ? "░" : "█"}${provenance} `, ink: "text" },
+          ...(choice === undefined ? [] : [{ text: `${choice} · `, ink: "accent" as const }]),
+          { text: title, ink: "text" },
+          { text: tail, ink: "dim" },
+        ]
+      : [
+          { text: `${provenance} `, ink: "text" },
+          { text: title, ink: "text" },
+          { text: tail, ink: "dim" },
+          choice === undefined
+            ? { text: " · undecided", ink: "dim" }
+            : { text: ` → ${choice}`, ink: "accent" },
+        ];
+  return {
+    id: `airlock:${ref.arc}:${ref.kind}:${ref.key}`,
+    kind: "airlock",
+    text: spans.map((span) => span.text).join(""),
+    tone: "normal",
+    selectable: true,
+    airlock: ref,
+    ...(note !== undefined && { note }),
+    spans,
+  };
+}
+
+function foldRow(arc: string, belowBar: AirlockCandidateView[], unfolded: boolean): MemoryRow {
+  const shortfalls = [...new Set(belowBar.flatMap((candidate) => candidate.shortfalls))];
+  const lead = unfolded ? "▒ " : "░ ";
+  const text = `${lead}${belowBar.length} below the bar · ${shortfalls.join(", ")} · archived, searchable`;
+  return {
+    id: `airlock:${arc}:fold`,
+    kind: "airlock",
+    text,
+    tone: "dim",
+    selectable: true,
+    airlock: { arc, kind: "fold", key: "fold" },
+  };
+}
+
+function belowBarRow(arc: string, candidate: AirlockCandidateView): MemoryRow {
+  return {
+    id: `airlock:${arc}:below:${candidate.note}`,
+    kind: "airlock",
+    text: `  ${provenanceGlyph(candidate.provenance)} ${candidate.title} · ${candidate.shortfalls.join(", ")}`,
+    tone: "dim",
+    selectable: true,
+    note: candidate.note,
+  };
+}
+
+function finishRow(digest: AirlockDigestView): MemoryRow {
+  const undecided = [
+    ...digest.candidates.filter(
+      (candidate) => candidate.eligible && candidate.choice === undefined,
+    ),
+    ...digest.questions.filter((question) => question.choice === undefined),
+  ].length;
+  const wedged = digest.sweep?.wedged ?? 0;
+  const lead = undecided === 0 ? "█ close " : "░ close ";
+  const facts = [
+    ...(undecided === 0
+      ? ["enter closes"]
+      : [`${undecided} to decide`, "a here delivers all eligible"]),
+    ...(wedged === 0
+      ? []
+      : [`${wedged} ${wedged === 1 ? "session" : "sessions"} didn't flush · f forces`]),
+  ];
+  const tail = ` · ${facts.join(" · ")}`;
+  return {
+    id: `airlock:${digest.arc}:finish`,
+    kind: "airlock",
+    text: `${lead}${arcTag(digest.arc)}${tail}`,
+    tone: "normal",
+    selectable: true,
+    arc: digest.arc,
+    airlock: { arc: digest.arc, kind: "finish", key: "finish" },
+    spans: [
+      { text: lead, ink: "text" },
+      { text: arcTag(digest.arc), ink: "arc" },
+      { text: tail, ink: "dim" },
+    ],
+  };
 }
 
 function inboxLayerOf(item: InboxItemView, layers: readonly MemoryLayerView[]): string {
@@ -270,12 +464,18 @@ function inboxLayerOf(item: InboxItemView, layers: readonly MemoryLayerView[]): 
   return arcLayer?.id ?? layers.find((layer) => layer.kind === "workspace")?.id ?? "workspace";
 }
 
-function layerHeader(layer: MemoryLayerView, notes: number, inbox: number): MemoryRow {
+function layerHeader(
+  layer: MemoryLayerView,
+  notes: number,
+  inbox: number,
+  sweep: AirlockDigestView["sweep"],
+): MemoryRow {
   const label = layerLabel(layer);
   const queue = layer.kind === "arc" ? "airlock" : "inbox";
   const facts = [
     notes === 0 ? "no notes yet" : pluralize(notes, "note"),
     ...(inbox === 0 ? [] : [`${queue} ░${inbox}`]),
+    ...sweepFacts(sweep),
   ];
   const tail = ` · ${facts.join(" · ")}`;
   return {
@@ -290,6 +490,14 @@ function layerHeader(layer: MemoryLayerView, notes: number, inbox: number): Memo
       { text: tail, ink: "dim" },
     ],
   };
+}
+
+function sweepFacts(sweep: AirlockDigestView["sweep"]): string[] {
+  if (sweep === undefined) return [];
+  return [
+    ...(sweep.acked === 0 ? [] : [`${sweep.acked} flushed`]),
+    ...(sweep.wedged === 0 ? [] : [`${sweep.wedged} didn't flush`]),
+  ];
 }
 
 function layerLabel(layer: MemoryLayerView): string {
@@ -346,7 +554,7 @@ function inboxRow(item: InboxItemView, now: number): MemoryRow {
     text: `${lead}${item.title}${facts}`,
     tone: "normal",
     selectable: true,
-    inboxId: item.id,
+    ...(item.kind !== "airlock" && { inboxId: item.id }),
     ...(item.note !== undefined && { note: item.note }),
     spans: [
       { text: lead, ink: "text" },

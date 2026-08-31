@@ -86,6 +86,19 @@ describe("MemoryFlush", () => {
     expect(recall).toContain("Split ratios were decided 60/40");
   });
 
+  it("flushes on demand for the arc airlock, ignoring the budget, and skips an empty conversation", async () => {
+    const { store, root } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn("The dock keeps a third of the width.")]),
+      store,
+    });
+    expect(await flush.flushNow([])).toMatchObject({ flushed: false, persisted: false });
+    const outcome = await flush.flushNow(longConversation.slice(0, 2));
+    expect(outcome).toMatchObject({ flushed: true, persisted: true });
+    const daily = await readFile(join(root, "daily", "2026-08-10.md"), "utf8");
+    expect(daily).toContain("The dock keeps a third of the width.");
+  });
+
   it("asks about wrongness and instructs a NO_REPLY escape in the flush prompt", () => {
     expect(memoryFlushPrompt).toContain("proved wrong");
     expect(memoryFlushPrompt).toContain("supersedes");

@@ -24,7 +24,7 @@ export type Overlay =
   | SetupConfirmOverlay;
 
 export { ConnectOverlay } from "./connect.ts";
-export { HelpOverlay, type HelpPage } from "./help.ts";
+export { HelpOverlay, type HelpPage, type HelpRow, promptKeys } from "./help.ts";
 export {
   helpFrame,
   type OverlayFrame,

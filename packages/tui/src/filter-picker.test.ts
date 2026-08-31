@@ -211,9 +211,36 @@ describe("arc picker", () => {
 
 describe("workspace picker", () => {
   const choices: WorkspaceChoice[] = [
-    { slug: undefined, name: "keywork", declared: true, current: false, notes: 12 },
-    { slug: "frontend", name: "Frontend revamp", declared: true, current: true, notes: 0 },
-    { slug: "infra", name: "infra", declared: true, current: false, notes: 1 },
+    {
+      slug: undefined,
+      name: "keywork",
+      declared: true,
+      current: false,
+      notes: 12,
+      focusDirs: [],
+      sessions: 0,
+      lastUsed: undefined,
+    },
+    {
+      slug: "frontend",
+      name: "Frontend revamp",
+      declared: true,
+      current: true,
+      notes: 0,
+      focusDirs: [],
+      sessions: 0,
+      lastUsed: undefined,
+    },
+    {
+      slug: "infra",
+      name: "infra",
+      declared: true,
+      current: false,
+      notes: 1,
+      focusDirs: [],
+      sessions: 0,
+      lastUsed: undefined,
+    },
   ];
   const chosen = (picker: ReturnType<typeof workspacePickerOver>) => {
     const row = picker.selected();
@@ -232,7 +259,16 @@ describe("workspace picker", () => {
 
   it("says when the default workspace is not set up yet", () => {
     const picker = workspacePickerOver([
-      { slug: undefined, name: "default", declared: false, current: true, notes: 0 },
+      {
+        slug: undefined,
+        name: "default",
+        declared: false,
+        current: true,
+        notes: 0,
+        focusDirs: [],
+        sessions: 0,
+        lastUsed: undefined,
+      },
     ]);
     expect(picker.rows().map(describeWorkspaceRow)).toEqual(["default · not set up yet · current"]);
     expect(chosen(picker)).toEqual({ kind: "use", slug: undefined });

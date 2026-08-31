@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolvePage, resolvePageThresholds } from "./page.ts";
-import { titleBar } from "./title-bar.ts";
+import { isLabelZone, titleBar, titleSpans, titleText } from "./title-bar.ts";
 
 describe("the title-bar grammar", () => {
   const full = {
@@ -97,5 +97,45 @@ describe("the title-bar grammar", () => {
       true,
     );
     expect(fitted).toContain("scroll");
+  });
+});
+
+describe("the title-bar spans", () => {
+  const full = {
+    name: "auth-retry-fix",
+    stamp: "█",
+    telemetry: "$0.012",
+    modeWord: "plan",
+    arc: "dock-v2",
+  };
+
+  it("tags every zone so the chrome can ink each on its own", () => {
+    expect(titleSpans(full, 132, true).map((span) => [span.zone, span.text])).toEqual([
+      ["stamp", "█"],
+      ["joint", " "],
+      ["slug", "auth-retry-fix"],
+      ["joint", " "],
+      ["arc", "#dock-v2"],
+      ["joint", " · "],
+      ["telemetry", "$0.012"],
+      ["joint", " · "],
+      ["mode", "plan"],
+    ]);
+  });
+
+  it("is the one path the string title bar renders through", () => {
+    for (const width of [8, 20, 44, 84, 132]) {
+      for (const focused of [true, false]) {
+        expect(titleBar(full, width, focused)).toBe(
+          ` ${titleText(titleSpans(full, width, focused))} `,
+        );
+      }
+    }
+  });
+
+  it("ends the label at the last stamp or slug span", () => {
+    const spans = titleSpans(full, 132, true);
+    const label = spans.slice(0, spans.findLastIndex((span) => isLabelZone(span.zone)) + 1);
+    expect(titleText(label)).toBe("█ auth-retry-fix");
   });
 });

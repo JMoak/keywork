@@ -3,7 +3,12 @@ import { arcTag } from "./arcs.ts";
 import { type PageThresholds, type PageTier, pageTierThresholds, resolvePage } from "./page.ts";
 import { width } from "./width.ts";
 
-export type LifecycleState = "idle" | "working" | "needs-you" | "finished-unseen" | "failed";
+export type TitleZone = "stamp" | "slug" | "name" | "arc" | "telemetry" | "mode" | "joint";
+
+export interface TitleSpan {
+  readonly text: string;
+  readonly zone: TitleZone;
+}
 
 export interface TitleBarState {
   readonly name: string;
@@ -14,19 +19,37 @@ export interface TitleBarState {
   readonly siblings?: readonly string[] | undefined;
 }
 
+export function titleSpans(
+  state: TitleBarState,
+  paneWidth: number,
+  focused: boolean,
+  thresholds: PageThresholds = pageTierThresholds,
+): TitleSpan[] {
+  const tier = resolvePage(paneWidth, thresholds).tier;
+  const zones = zonesAt(tier, focused, state);
+  const room = Math.max(1, paneWidth - frameCells);
+  return fitZones(zones, room, state.siblings ?? []);
+}
+
 export function titleBar(
   state: TitleBarState,
   paneWidth: number,
   focused: boolean,
   thresholds: PageThresholds = pageTierThresholds,
 ): string {
-  const tier = resolvePage(paneWidth, thresholds).tier;
-  const zones = zonesAt(tier, focused, state);
-  const room = Math.max(1, paneWidth - frameCells);
-  return ` ${fitZones(zones, room, state.siblings ?? [])} `;
+  return ` ${titleText(titleSpans(state, paneWidth, focused, thresholds))} `;
+}
+
+export function titleText(spans: readonly TitleSpan[]): string {
+  return spans.map((span) => span.text).join("");
+}
+
+export function isLabelZone(zone: TitleZone): boolean {
+  return zone === "stamp" || zone === "slug" || zone === "name";
 }
 
 const frameCells = 4;
+const joint = " · ";
 
 interface Zones {
   stamp: string | undefined;
@@ -49,24 +72,39 @@ function zonesAt(tier: PageTier, focused: boolean, state: TitleBarState): Zones 
   };
 }
 
-function fitZones(zones: Zones, room: number, siblings: readonly string[]): string {
-  const stamp = zones.stamp;
-  const stampCells = stamp === undefined ? 0 : width(stamp) + 1;
+function fitZones(zones: Zones, room: number, siblings: readonly string[]): TitleSpan[] {
+  const stampCells = zones.stamp === undefined ? 0 : width(zones.stamp) + 1;
   for (const attempt of trims(zones)) {
-    const arc = attempt.arc === undefined ? "" : ` ${arcTag(attempt.arc)}`;
-    const tail = [attempt.telemetry, attempt.modeWord]
-      .filter((part) => part !== undefined)
-      .map((part) => ` · ${part}`)
-      .join("");
-    const nameRoom = room - stampCells - width(arc) - width(tail);
+    const tail = tailSpans(attempt);
+    const arc =
+      attempt.arc === undefined ? [] : [span(" ", "joint"), span(arcTag(attempt.arc), "arc")];
+    const nameRoom = room - stampCells - cells(arc) - cells(tail);
     if (nameRoom < 1) continue;
-    if (arc !== "" && width(attempt.name) > nameRoom) continue;
-    const name = fitTitle(attempt.name, nameRoom, siblings);
-    const composed = `${stamp === undefined ? "" : `${stamp} `}${name}${arc}${tail}`;
-    if (width(composed) <= room) return composed;
+    if (arc.length > 0 && width(attempt.name) > nameRoom) continue;
+    const composed = [
+      ...stampSpans(zones.stamp),
+      span(fitTitle(attempt.name, nameRoom, siblings), "slug"),
+      ...arc,
+      ...tail,
+    ];
+    if (cells(composed) <= room) return composed;
   }
-  const floor = fitTitle(zones.name, Math.max(1, room - stampCells), siblings);
-  return stamp === undefined ? floor : `${stamp} ${floor}`;
+  return [
+    ...stampSpans(zones.stamp),
+    span(fitTitle(zones.name, Math.max(1, room - stampCells), siblings), "slug"),
+  ];
+}
+
+function stampSpans(stamp: string | undefined): TitleSpan[] {
+  return stamp === undefined ? [] : [span(stamp, "stamp"), span(" ", "joint")];
+}
+
+function tailSpans(zones: Zones): TitleSpan[] {
+  const tail: TitleSpan[] = [];
+  if (zones.telemetry !== undefined)
+    tail.push(span(joint, "joint"), span(zones.telemetry, "telemetry"));
+  if (zones.modeWord !== undefined) tail.push(span(joint, "joint"), span(zones.modeWord, "mode"));
+  return tail;
 }
 
 function trims(zones: Zones): Zones[] {
@@ -79,6 +117,14 @@ function trims(zones: Zones): Zones[] {
   shed("modeWord");
   shed("telemetry");
   return attempts;
+}
+
+function span(text: string, zone: TitleZone): TitleSpan {
+  return { text, zone };
+}
+
+function cells(spans: readonly TitleSpan[]): number {
+  return width(titleText(spans));
 }
 
 function emptyToUndefined(text: string | undefined): string | undefined {

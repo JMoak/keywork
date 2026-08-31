@@ -1,4 +1,5 @@
 import { canonicalHex, hexChannels } from "@keywork/shared";
+import type { LifecycleState } from "./pane.ts";
 import type { Theme } from "./theme.ts";
 
 export interface Oklch {
@@ -9,9 +10,52 @@ export interface Oklch {
 
 export type PaneBorderTheme = Pick<Theme, "border" | "borderFocus" | "ramp">;
 
+export type LifecycleTheme = PaneBorderTheme &
+  Pick<Theme, "background" | "text" | "textMid" | "error">;
+
+export interface LifecycleChrome {
+  readonly labelInk: string;
+  readonly labelGround: string | undefined;
+  readonly borderColor: string;
+}
+
 export function paneBorder(theme: PaneBorderTheme, position: number, focused: boolean): string {
-  const hue = rampColor(theme.ramp, position);
-  return focused ? focusLift(hue, theme.borderFocus) : borderCarryingHue(theme, hue);
+  return borderOfHue(theme, rampColor(theme.ramp, position), focused);
+}
+
+export function lifecycleChrome(
+  state: LifecycleState,
+  focused: boolean,
+  hue: string,
+  theme: LifecycleTheme,
+): LifecycleChrome {
+  const border = borderOfHue(theme, hue, focused);
+  const resting = focused ? border : theme.textMid;
+  switch (state) {
+    case "idle":
+    case "working":
+      return { labelInk: resting, labelGround: undefined, borderColor: border };
+    case "needs-you":
+      return {
+        labelInk: theme.background,
+        labelGround: hue,
+        borderColor: saturationLift(border, hue),
+      };
+    case "finished-unseen":
+      return {
+        labelInk: focused ? border : theme.text,
+        labelGround: undefined,
+        borderColor: border,
+      };
+    case "failed":
+      return { labelInk: theme.error, labelGround: undefined, borderColor: border };
+  }
+}
+
+export function saturationLift(hex: string, targetHex: string): string {
+  const { l, c } = hexToOklch(hex);
+  const target = hexToOklch(targetHex);
+  return oklchToHex({ l, c: Math.max(c, target.c), h: target.h });
 }
 
 export function rampPositions(
@@ -94,6 +138,10 @@ const neutralChroma = 1e-4;
 const gamutSlack = 1e-6;
 
 type Triple = readonly [number, number, number];
+
+function borderOfHue(theme: PaneBorderTheme, hue: string, focused: boolean): string {
+  return focused ? focusLift(hue, theme.borderFocus) : borderCarryingHue(theme, hue);
+}
 
 function borderCarryingHue(theme: PaneBorderTheme, hue: string): string {
   const swing = hueSwing(rampColor(theme.ramp, 0), hue);

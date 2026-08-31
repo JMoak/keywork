@@ -24,6 +24,8 @@ import {
 } from "@keywork/engine";
 import { resolveVaultPath, toError } from "@keywork/shared";
 import type {
+  AirlockDigestView,
+  ArcAirlockPort,
   CuringStage,
   InboxItemView,
   LedgerEventView,
@@ -162,7 +164,11 @@ export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise
 
 export type ArcRegistryAccess = () => ArcRegistry | undefined;
 
-export function memoryPanePort(memory: MemoryAccess, arcs?: ArcRegistryAccess): MemoryPanePort {
+export function memoryPanePort(
+  memory: MemoryAccess,
+  arcs?: ArcRegistryAccess,
+  airlock?: ArcAirlockPort,
+): MemoryPanePort {
   const store = (): MemoryStore => {
     const opened = memory();
     if (opened === undefined) throw new Error("memory isn't set up here yet · /init sets it up");
@@ -170,13 +176,14 @@ export function memoryPanePort(memory: MemoryAccess, arcs?: ArcRegistryAccess): 
   };
   const recalls = new WeakMap<ArcRegistry, ArcRecall>();
   return {
-    load: () => loadInputs(memory(), arcs?.()),
+    load: () => loadInputs(memory(), arcs?.(), airlock),
     approve: async (id) => {
       await store().approve(id);
     },
     discard: (id) => store().discard(id),
     revert: (ledgerId) => store().revert(ledgerId),
     query: (text, arc) => askMemory(memory(), arcs?.(), recalls, text, arc),
+    ...(airlock !== undefined && { airlock }),
   };
 }
 
@@ -205,6 +212,7 @@ interface LoadedLayer {
 async function loadInputs(
   memory: WorkspaceMemory | undefined,
   registry: ArcRegistry | undefined,
+  airlock: ArcAirlockPort | undefined,
 ): Promise<MemoryPaneInputs> {
   if (memory === undefined || !memory.store.trusted) return emptyMemoryPane;
   const recalls = memory.gardener.recallsSinceSweep();
@@ -218,7 +226,24 @@ async function loadInputs(
     inbox: (await memory.store.listStaged()).map(inboxView),
     ledger: [...memory.store.ledger().map(ledgerOpView), ...audit.map(auditView)],
     gardener: { state: "idle", ...lastSweep(audit) },
+    airlocks: await waitingDigests(
+      airlock,
+      arcLayers.flatMap((loaded) => loaded.layer.arc ?? []),
+    ),
   };
+}
+
+async function waitingDigests(
+  airlock: ArcAirlockPort | undefined,
+  arcs: readonly string[],
+): Promise<AirlockDigestView[]> {
+  if (airlock === undefined) return [];
+  const digests: AirlockDigestView[] = [];
+  for (const slug of arcs) {
+    const digest = await airlock.digest(slug);
+    if (digest !== undefined) digests.push(digest);
+  }
+  return digests;
 }
 
 async function workspaceLayer(
@@ -354,7 +379,7 @@ function inboxView(item: StagedItem): InboxItemView {
     case "arc-distillation":
       return {
         ...base,
-        kind: "proposal",
+        kind: "airlock",
         title: `deliver ${item.note}`,
         provenance: "agent",
         detail: item.eligible ? "eligible" : "below bar",
@@ -364,7 +389,7 @@ function inboxView(item: StagedItem): InboxItemView {
     case "arc-question":
       return {
         ...base,
-        kind: "proposal",
+        kind: "airlock",
         title: `triage ${item.note}`,
         provenance: "agent",
         arc: item.arc,

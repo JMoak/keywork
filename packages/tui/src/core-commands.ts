@@ -1,7 +1,7 @@
 import { actionCovering, appActions } from "./app-actions.ts";
 import type { AppCore } from "./app-core.ts";
 import type { CommandSpec } from "./commands.ts";
-import { type PaneKind, paneKindAvailable } from "./pane-kinds.ts";
+import { type PaneKind, paneKindAvailable, paneKindOf } from "./pane-kinds.ts";
 
 export function registerCoreCommands(core: AppCore): void {
   const shortcut = (action: string | undefined): Pick<CommandSpec, "shortcut"> => {
@@ -71,6 +71,11 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       description: "open the arcs node: /arcs",
       run: () => core.summon("arcs"),
     }),
+    ...when(available("workspaces"), {
+      name: "workspaces",
+      description: "open the workspaces node: /workspaces",
+      run: () => core.summon("workspaces"),
+    }),
     ...when(available("mcp"), {
       name: "mcp",
       description: "open the MCP status pane: /mcp",
@@ -78,7 +83,6 @@ function builtinCommands(core: AppCore): CommandSpec[] {
     }),
     ...when(options.workspaces !== undefined, {
       name: "workspace",
-      aliases: ["workspaces"],
       description:
         "switch or create a workspace over this root: /workspace [slug | new <slug> | default]",
       run: (args) => core.openWorkspaceCommand(args),
@@ -178,7 +182,7 @@ function jumpCommands(core: AppCore): CommandSpec[] {
   const focused = core.layout.focused();
   const targets = core.layout
     .panes()
-    .filter((id) => id !== focused)
+    .filter((id) => id !== focused && paneKindOf(id) !== "arc")
     .map((id) => ({ id, title: core.panes.get(id)?.title().trim().split(" ·")[0] ?? id }));
   const titleCounts = new Map<string, number>();
   for (const { title } of targets) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);

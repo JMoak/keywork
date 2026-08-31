@@ -9,6 +9,7 @@ export interface PointerSurface {
   screen(): Screen;
   paneAt(id: string): Pane | undefined;
   changed(): void;
+  drawnRect?(rect: Rect, screen: Screen): Rect;
 }
 
 interface PaneDrag {
@@ -91,7 +92,9 @@ export class PanePointer {
   }
 
   private paneUnder(x: number, y: number): { id: string; rect: Rect } | undefined {
-    for (const [id, rect] of this.surface.layout.rects(this.surface.screen())) {
+    const screen = this.surface.screen();
+    for (const [id, laidOut] of this.surface.layout.rects(screen)) {
+      const rect = this.surface.drawnRect?.(laidOut, screen) ?? laidOut;
       if (contains(rect, x, y)) return { id, rect };
     }
     return undefined;

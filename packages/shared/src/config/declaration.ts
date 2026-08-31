@@ -20,6 +20,13 @@ export const workspaceDeclarationSchema = z
         "Additional directories, relative to the primary root or absolute, that join the workspace's working set: the tool jail and the memory taint boundary cover them once the workspace is trusted (PD11.4); exists because J-D1 defines a workspace as a declared working set in the VS Code sense: a primary root plus extra directories. Entries that do not exist are skipped with a warning, never a failure, and an untrusted clone's entries stay inert.",
       )
       .optional(),
+    focusDirs: z
+      .array(z.string().min(1).max(1024))
+      .max(64)
+      .describe(
+        "Subtrees of the primary root, relative to it, that this workspace is about (PD11.3): retrieval, bootstrap, and the sessions overview bias to them while the tool jail stays repo-wide; exists because a monorepo workspace needs to say which packages it lives in without narrowing what tools may touch. Order is the order they were linked; entries outside the root are refused at write time.",
+      )
+      .optional(),
   })
   .strict()
   .describe(
@@ -35,6 +42,7 @@ export interface Workspace {
   name: string;
   contextDirs: string[];
   missingContextDirs: string[];
+  focusDirs: string[];
   vaultPath: string;
 }
 
@@ -71,6 +79,7 @@ export function workspaceAt(
     name: declaration.name,
     contextDirs: existing,
     missingContextDirs: missing,
+    focusDirs: [...(declaration.focusDirs ?? [])],
     vaultPath,
   };
 }

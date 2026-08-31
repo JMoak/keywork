@@ -143,8 +143,26 @@ describe("filterOverlay", () => {
 
   it("renders workspace rows plain, the selected one accent", () => {
     const picker = workspacePickerOver([
-      { slug: undefined, name: "keywork", declared: true, current: false, notes: 2 },
-      { slug: "infra", name: "infra", declared: false, current: true, notes: 0 },
+      {
+        slug: undefined,
+        name: "keywork",
+        declared: true,
+        current: false,
+        notes: 2,
+        focusDirs: [],
+        sessions: 0,
+        lastUsed: undefined,
+      },
+      {
+        slug: "infra",
+        name: "infra",
+        declared: false,
+        current: true,
+        notes: 0,
+        focusDirs: [],
+        sessions: 0,
+        lastUsed: undefined,
+      },
     ]);
     const rows = renderedRows(filterOverlay(workspacePickerSpec(picker), theme, placement));
     expect(rows.map((row) => row.text)).toEqual([

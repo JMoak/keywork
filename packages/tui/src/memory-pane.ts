@@ -1,5 +1,5 @@
 import { fg, StyledText, Text, type TextChunk } from "@opentui/core";
-import { type ArcOrdinals, arcInk } from "./arcs.ts";
+import { type ArcAirlockPort, type ArcOrdinals, arcInk, describeFinishOutcome } from "./arcs.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
 import { markdownChunk } from "./markdown-ink.ts";
@@ -9,7 +9,7 @@ import {
   MemoryPaneModel,
   type MemoryQueryOutcome,
 } from "./memory-pane-model.ts";
-import type { MemoryRow, SpanInk } from "./memory-rows.ts";
+import type { DigestTreatment, MemoryRow, SpanInk } from "./memory-rows.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type KeyedTrayCommand,
@@ -39,12 +39,15 @@ export interface MemoryPanePort {
   discard(id: string): Promise<void>;
   revert?(ledgerId: string): Promise<RevertOutcome>;
   query?(text: string, arc?: string): Promise<MemoryQueryOutcome>;
+  airlock?: ArcAirlockPort;
 }
 
 export interface MemoryPaneOptions {
   intents?: Pick<PaneIntents, "openFile" | "notice">;
   focusedArc?: () => string | undefined;
   arcOrdinal?: ArcOrdinals;
+  digestTreatment?: DigestTreatment;
+  subscribe?: (listener: () => void) => () => void;
   now?: () => number;
   scheduleFrame?: FrameScheduler;
   revival?: MemoryLensState;
@@ -55,6 +58,8 @@ export class MemoryPane implements Pane {
   readonly tray: PaneTrayModel;
   private readonly tasks: PaneTasks;
   private readonly pendingAsk: FrameCoalescer;
+  private readonly pendingRefresh: FrameCoalescer;
+  private readonly unsubscribe: (() => void) | undefined;
   private askText = "";
   private revival: MemoryLensState | undefined;
   private lastPageRows = 20;
@@ -67,7 +72,9 @@ export class MemoryPane implements Pane {
   ) {
     this.tasks = new PaneTasks(notify);
     this.revival = options.revival;
-    this.pendingAsk = new FrameCoalescer(options.scheduleFrame ?? nextFrame, () => this.ask());
+    const schedule = options.scheduleFrame ?? nextFrame;
+    this.pendingAsk = new FrameCoalescer(schedule, () => this.ask());
+    this.pendingRefresh = new FrameCoalescer(schedule, () => this.refresh());
     this.model = new MemoryPaneModel(
       () => this.tasks.emit(),
       {
@@ -81,22 +88,34 @@ export class MemoryPane implements Pane {
           this.pendingAsk.request();
         },
         notice: (text) => this.notice(text),
+        triageCandidate: (arc, note, choice) =>
+          this.airlockAct((airlock) => airlock.triageCandidate(arc, note, choice)),
+        triageQuestion: (arc, title, choice) =>
+          this.airlockAct((airlock) => airlock.triageQuestion(arc, title, choice)),
+        deliverEligible: (arc) => this.deliverEligible(arc),
+        finishClose: (arc, force) => this.finishClose(arc, force),
       },
       {
         ...(options.focusedArc !== undefined && { focusedArc: options.focusedArc }),
         ...(options.now !== undefined && { now: options.now }),
+        ...(options.digestTreatment !== undefined && {
+          digestTreatment: options.digestTreatment,
+        }),
       },
     );
     this.tray = new PaneTrayModel(
       () => this.tasks.emit(),
       () => this.trayCommands(),
     );
+    this.unsubscribe = options.subscribe?.(() => this.pendingRefresh.request());
     this.refresh();
   }
 
   dispose(): void {
     this.tasks.dispose();
     this.pendingAsk.dispose();
+    this.pendingRefresh.dispose();
+    this.unsubscribe?.();
   }
 
   title(): string {
@@ -187,6 +206,38 @@ export class MemoryPane implements Pane {
         : "couldn't revert · the file changed since that write",
     );
     await this.drain(async () => {});
+  }
+
+  private airlockAct(act: (airlock: ArcAirlockPort) => Promise<unknown>): void {
+    const airlock = this.port.airlock;
+    if (airlock === undefined) {
+      this.notice("the airlock isn't available here");
+      return;
+    }
+    this.tasks.track(() =>
+      this.drain(async () => {
+        try {
+          await act(airlock);
+        } catch (cause) {
+          this.notice(cause instanceof Error ? cause.message : String(cause));
+        }
+      }),
+    );
+  }
+
+  private deliverEligible(arc: string): void {
+    this.airlockAct(async (airlock) => {
+      const delivered = await airlock.deliverEligible(arc);
+      this.notice(
+        `${pluralize(delivered, "eligible note")} marked deliver · the rest stay archived`,
+      );
+    });
+  }
+
+  private finishClose(arc: string, force: boolean): void {
+    this.airlockAct(async (airlock) => {
+      this.notice(describeFinishOutcome(arc, await airlock.finish(arc, { force })));
+    });
   }
 
   private ask(): void {
@@ -305,8 +356,19 @@ const memoryTray: readonly KeyedTrayCommand[] = [
   { name: "ledger", description: "the event ledger, filtered to the open note", key: "l" },
   { name: "open file", description: "open the note's file in a file pane", key: "o" },
   { name: "revert", description: "revert the note's last write from this run", key: "u" },
-  { name: "approve", description: "approve the selected inbox item", key: "a" },
-  { name: "discard", description: "discard the selected inbox item", key: "d" },
+  {
+    name: "approve",
+    description: "approve the selected inbox item · deliver or resolve an airlock item",
+    key: "a",
+  },
+  {
+    name: "discard",
+    description: "discard the selected inbox item · leave or drop an airlock item",
+    key: "d",
+  },
+  { name: "carry", description: "carry the selected open question into the newest arc", key: "c" },
+  { name: "unfold", description: "show or hide the notes below the delivery bar", key: "space" },
+  { name: "force close", description: "close the arc past sessions that didn't flush", key: "f" },
   { name: "inbox", description: "jump to the review inbox", key: "i" },
   { name: "refresh", description: "reload the vault", key: "r" },
 ];

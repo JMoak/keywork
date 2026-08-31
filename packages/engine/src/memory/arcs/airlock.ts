@@ -29,11 +29,14 @@ export interface AckSweep {
   forced: boolean;
 }
 
-export interface ArcCloseDigest {
-  arc: string;
-  sweep: AckSweep;
+export interface ArcReview {
   candidates: ArcCloseCandidate[];
   questions: OpenQuestion[];
+}
+
+export interface ArcCloseDigest extends ArcReview {
+  arc: string;
+  sweep: AckSweep;
   capEvents: CapEvents;
   inboxKeys: string[];
 }
@@ -154,10 +157,16 @@ export class ArcAirlock {
     return { arc: slug, sweep, candidates, questions, capEvents, inboxKeys };
   }
 
-  async completeClose(slug: string, decisions: CloseDecisions): Promise<ArcDelivery> {
+  async review(slug: string): Promise<ArcReview> {
     await this.registry.requireActive(slug);
-    const candidates = await this.gatherCandidates(slug);
-    const questions = await this.registry.openQuestions(slug).open();
+    return {
+      candidates: await this.gatherCandidates(slug),
+      questions: await this.registry.openQuestions(slug).open(),
+    };
+  }
+
+  async completeClose(slug: string, decisions: CloseDecisions): Promise<ArcDelivery> {
+    const { candidates, questions } = await this.review(slug);
     this.validateCoverage(slug, candidates, questions, decisions);
     await this.validateSuccessor(slug, decisions);
     const deliveryTime = this.now().toISOString();
@@ -352,7 +361,7 @@ export class ArcAirlock {
         throw new IneligibleDeliveryError(slug, candidate.note.name, candidate.shortfalls);
       const result = await this.workspace.writeNote({
         ...noteWriteTarget(candidate.note.path),
-        body: candidate.note.body,
+        body: bodyLinkedToRecord(candidate.note.body, slug),
         provenance: candidate.note.provenance,
         ...(candidate.note.confidence !== undefined && { confidence: candidate.note.confidence }),
         delivered: deliveryTime,
@@ -399,7 +408,7 @@ export class ArcAirlock {
     deliveryTime: string,
   ): Promise<string> {
     const result = await this.workspace.writeNote({
-      title: `arc ${slug} delivery`,
+      title: deliveryRecordTitle(slug),
       body: deliveryRecordBody(slug, delivered, left, decisions, sessions, deliveryTime),
       provenance: "agent",
       delivered: deliveryTime,
@@ -427,6 +436,14 @@ export class ArcAirlock {
       "untrusted",
     );
   }
+}
+
+export function deliveryRecordTitle(slug: string): string {
+  return `arc ${slug} delivery`;
+}
+
+function bodyLinkedToRecord(body: string, slug: string): string {
+  return `${body.trimEnd()}\n\ndelivered in [[${deliveryRecordTitle(slug)}]]\n`;
 }
 
 function stragglerText(slug: string, item: StagedWrite): string {

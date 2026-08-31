@@ -11,12 +11,59 @@ export type ArcCloseOutcome =
   | { kind: "closed"; delivered: number; released: number }
   | { kind: "pending"; candidates: number; questions: number; wedged: number };
 
+export type AirlockFinishOutcome =
+  | ArcCloseOutcome
+  | { kind: "undecided"; items: string[] }
+  | { kind: "wedged"; sessions: string[] };
+
+export type CandidateChoice = "deliver" | "leave";
+export type QuestionChoice = "resolve" | "carry" | "drop";
+
+export interface AirlockCandidateView {
+  note: string;
+  title: string;
+  provenance: "user" | "agent" | "untrusted";
+  eligible: boolean;
+  shortfalls: string[];
+  created?: string;
+  choice?: CandidateChoice;
+}
+
+export interface AirlockQuestionView {
+  title: string;
+  provenance: "user" | "agent" | "untrusted";
+  created?: string;
+  choice?: QuestionChoice;
+}
+
+export interface AirlockSweepView {
+  acked: number;
+  wedged: number;
+}
+
+export interface AirlockDigestView {
+  arc: string;
+  candidates: AirlockCandidateView[];
+  questions: AirlockQuestionView[];
+  successor?: string;
+  sweep?: AirlockSweepView;
+}
+
+export interface ArcAirlockPort {
+  digest(slug: string): Promise<AirlockDigestView | undefined>;
+  triageCandidate(slug: string, note: string, choice: CandidateChoice): Promise<void>;
+  triageQuestion(slug: string, title: string, choice: QuestionChoice): Promise<void>;
+  deliverEligible(slug: string): Promise<number>;
+  finish(slug: string, options?: { force?: boolean }): Promise<AirlockFinishOutcome>;
+}
+
 export interface ArcsPort {
   list(): Promise<ArcSummary[]>;
   create(slug: string): Promise<ArcSummary>;
   close(slug: string): Promise<ArcCloseOutcome>;
   abandon(slug: string): Promise<void>;
   subscribe?(listener: () => void): () => void;
+  airlock?: ArcAirlockPort;
 }
 
 export type ArcOrdinals = (slug: string) => number | undefined;
@@ -81,6 +128,18 @@ export function describeCloseOutcome(slug: string, outcome: ArcCloseOutcome): st
       ? ""
       : ` · ${outcome.wedged} live ${outcome.wedged === 1 ? "session" : "sessions"} didn't flush`;
   return `arc ${slug} is waiting at the airlock · ${pending} to triage in the memory pane${wedged} · /arc abandon ${slug} archives without distilling`;
+}
+
+export function describeFinishOutcome(slug: string, outcome: AirlockFinishOutcome): string {
+  switch (outcome.kind) {
+    case "closed":
+    case "pending":
+      return describeCloseOutcome(slug, outcome);
+    case "undecided":
+      return `arc ${slug} still has ${pluralize(outcome.items.length, "item")} to decide · a d c on each row`;
+    case "wedged":
+      return `${pluralize(outcome.sessions.length, "session")} didn't flush · f forces the close past them`;
+  }
 }
 
 function byCreation(left: ArcSummary, right: ArcSummary): number {

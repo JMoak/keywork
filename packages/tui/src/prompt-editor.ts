@@ -1,3 +1,4 @@
+import type { SendBehavior } from "@keywork/engine";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import { isPrintable } from "./picker-keys.ts";
@@ -16,7 +17,7 @@ export interface CommandsPort {
 export type EditorOutcome =
   | "handled"
   | "pass"
-  | { submit: string }
+  | { submit: string; behavior: SendBehavior }
   | { command: string; chosen: string | undefined };
 
 export class PromptEditor {
@@ -85,7 +86,8 @@ export class PromptEditor {
       case "enter": {
         if (chord.shift) return this.edit(() => this.buffer.newline());
         const text = this.value.trim();
-        return text === "" ? "handled" : { submit: text };
+        if (text === "") return "handled";
+        return { submit: text, behavior: chord.meta ? "steer" : "queue" };
       }
       case "backspace":
         return this.edit(() => this.buffer.backspace());

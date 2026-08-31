@@ -25,6 +25,7 @@ interface LongSessionScript {
 
 const script = longSessionScript();
 const cockpit = parseFlavor({ ...keyworkNightFlavor, name: "cockpit", instruments: "cockpit" });
+const calmHeader = /│ session-1 +│/;
 
 export const longSession: Scenario = {
   name: "long-session",
@@ -45,14 +46,9 @@ export const longSession: Scenario = {
       return stage.capture(`turn-${String(turn).padStart(2, "0")}`);
     };
 
-    const early = await step(1);
-    assert.match(
-      early,
-      / session-1 · ░ [\d.]+k? /,
-      "the calm gauge is one ramp cell plus the count",
-    );
+    let frame = await step(1);
+    await stage.until(calmHeader);
 
-    let frame = early;
     for (let turn = 2; turn < script.compactingTurn; turn += 1) frame = await step(turn);
     assert.match(frame, / session-1 · [▒▓] [\d.]+k? /, "the cell darkens as the flush mark nears");
 
@@ -62,7 +58,7 @@ export const longSession: Scenario = {
       compacted.includes("into a summary · context now"),
       "the notice states the new reading",
     );
-    assert.match(compacted, / session-1 · ░ [\d.]+k? /, "the gauge drops back to the light cell");
+    await stage.until(calmHeader);
 
     await stage.type("/context");
     await stage.press("enter");
@@ -70,18 +66,23 @@ export const longSession: Scenario = {
     assert.ok(readout.includes("window declared"), "the readout names the declared window");
     await stage.capture("context-readout");
 
-    const grown = await step(script.compactingTurn + 1);
+    await step(script.compactingTurn + 1);
+    await stage.type("/context");
+    await stage.press("enter");
+    await stage.settle();
+    const before = usedFromReadout(await stage.capture("context-before-compact"));
     await stage.type("/compact focus on decisions");
     await stage.press("enter");
     await stage.settle();
     const folded = await stage.capture("manual-compact");
     assert.ok(
-      gaugeCount(folded) < gaugeCount(grown),
-      "/compact folds again on request and the gauge drops",
+      usedFromNotice(folded) < before,
+      "/compact folds again on request and the notice reports a smaller context",
     );
-    assert.ok(
-      occurrences(folded, "compacted ") >= 1,
-      "the manual fold posts its notice in the transcript",
+    assert.equal(
+      occurrences(folded, "compacted "),
+      2,
+      "the manual fold posts its own notice in the transcript",
     );
 
     await stage.type("/flavor-cockpit");
@@ -117,8 +118,16 @@ function longSessionScript(): LongSessionScript {
   }
 }
 
-function gaugeCount(frame: string): number {
-  const match = / session-1 · [░▒▓█] ([\d.]+)(k?) /.exec(frame);
-  assert.ok(match !== null, "the calm gauge is present in the title");
-  return Number(match[1]) * (match[2] === "k" ? 1000 : 1);
+function usedFromReadout(frame: string): number {
+  const readings = [...frame.matchAll(/context (\d+) of \d+ tokens/g)];
+  const last = readings.at(-1);
+  assert.ok(last !== undefined, "the readout states the context in use");
+  return Number(last[1]);
+}
+
+function usedFromNotice(frame: string): number {
+  const notices = [...frame.matchAll(/context now ([\d.]+)(k?) of/g)];
+  const last = notices.at(-1);
+  assert.ok(last !== undefined, "the fold notice states the new reading");
+  return Number(last[1]) * (last[2] === "k" ? 1000 : 1);
 }

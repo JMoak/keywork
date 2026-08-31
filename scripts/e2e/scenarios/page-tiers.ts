@@ -108,7 +108,12 @@ export const pageTiers: Scenario = {
     await stage.until("idle");
 
     await stage.resize(32, 36);
-    const caps = await stage.capture("masthead-32");
+    const stacked = await stage.capture("masthead-32");
+    assert.ok(/[▀▄]/.test(stacked), "the stroke face still sets both words, one per line");
+    assert.ok(!stacked.includes("SESSION 1"), "no caps fallback while every word sets in the face");
+
+    await stage.resize(26, 36);
+    const caps = await stage.capture("masthead-26");
     assert.ok(caps.includes("SESSION 1"), "a word too wide for the face falls to caps");
     assert.ok(!/[▀▄]/.test(caps), "caps fallback sets no half-blocks");
 

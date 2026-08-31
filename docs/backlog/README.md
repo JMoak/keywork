@@ -38,6 +38,7 @@ file that currently owns each topic; the file itself says what it amends.
 | Trust and permissions | [`50-trust.md`](50-trust.md), amended by [`97`](97-product-direction.md) E7 and [`99`](99-workspace-and-modes.md) PD12 (per-pane permission mode), [`103`](103-dsh-influence.md) E8/E9 (sandbox, secrets), [`108`](108-survivability-and-launch-rail.md) A19/A20 (gates as entries, headless `ask` answers no) |
 | Code audit and its waves | [`111`](111-code-audit.md) |
 | Workspace readiness and `/init`, the `/connect` surface, the arc pane and its fold primitive, dock pins, memory browser scoping | [`112`](112-feel-and-look-wave.md) |
+| The own title row and needs-you chrome, gap / borderless / corner chrome, the arc airlock digest, arc jump rows, the verified e2e baseline | [`113`](113-arcs-and-chrome-wave.md) |
 
 ## Workstreams
 
@@ -78,6 +79,7 @@ Each row says what the file decides and when it binds; the detail lives in the f
 | [`110-arcs-on-screen.md`](110-arcs-on-screen.md) | Implementation + ledger (2026-08-21) for stream 5; cited records win | Arcs and workspaces visible and drivable: binding entries, CLI arc service, `/arc` and PD13 splits, arc hue, arcs node, workspace multiplicity. 6 tasks, +14. |
 | [`111-code-audit.md`](111-code-audit.md) | Audit + work plan (2026-08-22); names defects and tasks, changes no decision | Whole-tree audit: P0/P1/P2 findings, structure and redundancy items, docs and em-dash ledger, waves A–D with Jordan's decisions; waves A + B landed 2026-08-22. ~60 tasks. |
 | [`112-feel-and-look-wave.md`](112-feel-and-look-wave.md) | Ledger + scoping (2026-08-22); wins where it speaks | Landed: workspace readiness + `/init` (arcs-initiation root cause), lazy memory, `/connect` connections screen, C71 dock pins, C70 the arc pane in two parts (docked node, then the fold primitive: held panes, `space` / `a`, folded-and-waiting rows, held restore), C72 the memory browser (garden / note / ledger lenses, the `?` question box with why-lines, prompt cut, one-key revert) (2026-08-23); open: C72-c heat candidates; decisions ledger at the end. 3 tasks, +11. |
+| [`113-arcs-and-chrome-wave.md`](113-arcs-and-chrome-wave.md) | Plan + ledger (2026-08-30); wins where it speaks | Lanes W1 to W5 over the fully specified leftovers; W2 (C69 own title row, C66 rung, C50 remainder) and W3 (J18 digest surface, arc jump rows) landed 2026-08-30; e2e baseline corrected (11 of 13 scenarios were red at `bccb058`); open decisions and reversible assumptions listed. |
 
 ### Archived
 

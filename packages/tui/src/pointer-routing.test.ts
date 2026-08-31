@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { Screen } from "./geometry.ts";
+import { fullRect, type Screen } from "./geometry.ts";
 import type { Chord } from "./keys.ts";
 import { Layout } from "./layout.ts";
 import type { Pane } from "./pane.ts";
+import { drawnRect } from "./pane-geometry.ts";
 import { PanePointer } from "./pointer-routing.ts";
 
 const screen: Screen = { width: 120, height: 40 };
 
-function surfaceWith(ids: string[], panes = new Map<string, Pane>()) {
+function surfaceWith(ids: string[], panes = new Map<string, Pane>(), gap = 0) {
   const layout = new Layout();
   for (const id of ids) layout.open(id, screen);
   const changes: number[] = [];
@@ -16,6 +17,7 @@ function surfaceWith(ids: string[], panes = new Map<string, Pane>()) {
     screen: () => screen,
     paneAt: (id) => panes.get(id),
     changed: () => changes.push(changes.length),
+    drawnRect: (rect, on) => drawnRect(rect, fullRect(on), { chrome: "regular", gap }),
   });
   return { layout, pointer, changes, rect: (id: string) => layout.rects(screen).get(id) };
 }
@@ -87,5 +89,30 @@ describe("PanePointer", () => {
     pointer.route({ type: "drag", x: edge + 10, y: 5, button: 0 });
     pointer.route({ type: "up", x: edge + 10, y: 5, button: 0 });
     expect(layout.dock("left")?.ratio ?? 0).toBeGreaterThan(before);
+  });
+});
+
+describe("PanePointer through gap cells", () => {
+  it("hits nothing in the gap and measures local coordinates from the drawn rect", () => {
+    const seen: Array<{ x: number; y: number }> = [];
+    const pane: Pane = {
+      id: "b",
+      title: () => "b",
+      view: () => ({}) as never,
+      handleMouse: (local) => {
+        seen.push(local);
+        return true;
+      },
+    };
+    const { layout, pointer, rect } = surfaceWith(["a", "b"], new Map([["b", pane]]), 2);
+    const laid = rect("b");
+    if (laid === undefined) throw new Error("no rect");
+    layout.focus("a");
+    pointer.route({ type: "down", x: laid.x, y: laid.y + 5, button: 0 });
+    expect(layout.focused()).toBe("a");
+    expect(seen).toEqual([]);
+    pointer.route({ type: "down", x: laid.x + 2, y: laid.y + 5, button: 0 });
+    expect(layout.focused()).toBe("b");
+    expect(seen).toEqual([{ x: 0, y: 5 }]);
   });
 });

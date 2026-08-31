@@ -137,6 +137,22 @@ describe("the digest", () => {
     ]);
   });
 
+  it("reviews an open arc without sweeping, distilling, or staging anything", async () => {
+    const f = await fixture();
+    await seededArc(f);
+    await f.registry
+      .openQuestions("dock-v2")
+      .add({ title: "Tie order", body: "Who wins focus ties?", provenance: "user" });
+    const review = await f.airlock.review("dock-v2");
+    expect(review.candidates.map((c) => [c.note.name, c.eligible])).toEqual([
+      ["Dock Ratio Finding", true],
+    ]);
+    expect(review.questions.map((q) => q.title)).toEqual(["Tie order"]);
+    expect(await f.workspace.listStaged()).toEqual([]);
+    await f.airlock.abandon("dock-v2");
+    await expect(f.airlock.review("dock-v2")).rejects.toThrow(ArcNotActiveError);
+  });
+
   it("marks contradicted and superseded notes below the bar", async () => {
     const f = await fixture();
     await seededArc(f);
@@ -194,6 +210,7 @@ describe("completing the close", () => {
     expect(note?.delivered).toBe("2026-08-16T09:00:00.000Z");
     expect(note?.distilledFrom).toBe("arcs/dock-v2/MOC");
     expect(note?.frontmatter.valid_from).toBe("2026-08-16T09:00:00.000Z");
+    expect(note?.links).toContain("arc dock-v2 delivery");
     const record = await f.workspace.readNote("arc dock-v2 delivery");
     expect(record?.links).toContain("Dock Ratio Finding");
     expect(record?.links).toContain("arcs/dock-v2/MOC");

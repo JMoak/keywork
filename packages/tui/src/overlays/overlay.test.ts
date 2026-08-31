@@ -219,7 +219,11 @@ describe("HelpOverlay", () => {
   it("shows every action with nothing hidden when the screen has room", () => {
     const overlay = help([], screen);
     const page = overlay.page(screen);
-    expect(page.actions.length).toBe(overlay.rowCount());
+    expect(page.rows.length).toBe(overlay.rowCount());
+    expect(page.rows.map((row) => row.keys)).toEqual(
+      expect.arrayContaining(["ctrl+k s", "enter", "alt+enter"]),
+    );
+    expect(page.rows.find((row) => row.keys === "alt+enter")?.help).toContain("steer");
     expect(page).toMatchObject({ above: 0, below: 0 });
     overlay.handleKey(parseChord("down"));
     expect(overlay.page(screen).above).toBe(0);
@@ -231,7 +235,7 @@ describe("HelpOverlay", () => {
     const room = panelRowRoom(overlay.frame(short));
     expect(room).toBeLessThan(total);
     expect(overlay.page(short)).toMatchObject({ above: 0, below: total - room });
-    expect(overlay.page(short).actions).toEqual(overlay.page(short).actions.slice(0, room));
+    expect(overlay.page(short).rows).toEqual(overlay.page(short).rows.slice(0, room));
 
     overlay.handleKey(parseChord("up"));
     expect(overlay.page(short).above).toBe(0);
@@ -239,7 +243,7 @@ describe("HelpOverlay", () => {
     expect(overlay.page(short)).toMatchObject({ above: 1, below: total - room - 1 });
     overlay.handleKey(parseChord("pagedown"));
     expect(overlay.page(short)).toMatchObject({ above: total - room, below: 0 });
-    expect(overlay.page(short).actions.length).toBe(room);
+    expect(overlay.page(short).rows.length).toBe(room);
     overlay.handleKey(parseChord("pageup"));
     expect(overlay.page(short)).toMatchObject({ above: 0, below: total - room });
   });

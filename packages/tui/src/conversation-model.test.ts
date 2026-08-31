@@ -395,7 +395,7 @@ describe("the engine-owned turn queue", () => {
     ]);
   });
 
-  it("runs the after-turn hook once the queue drains, not between queued turns", async () => {
+  it("runs the after-turn hook after every turn, before the next queued prompt starts", async () => {
     const { open, opened } = gate();
     const agent = new Agent({ provider: gatedProvider(opened, ["re: a", "re: b"]) });
     const model = new ConversationModel(agent, () => {});
@@ -407,10 +407,10 @@ describe("the engine-owned turn queue", () => {
     model.submitText("b");
     open();
     await drained(model);
-    expect(seen).toEqual([4]);
+    expect(seen).toEqual([2, 4]);
   });
 
-  it("holds a prompt typed while the after-turn hook settles and sends it afterwards", async () => {
+  it("queues a prompt typed while the after-turn hook settles in the engine, never in the model", async () => {
     const { open, opened } = gate();
     const agent = new Agent({
       provider: new MockProvider([textTurn("re: one"), textTurn("re: held")]),
@@ -423,10 +423,11 @@ describe("the engine-owned turn queue", () => {
     });
     model.submitText("one");
     await hook.opened;
-    expect(agent.busy()).toBe(false);
+    expect(agent.busy()).toBe(true);
     expect(model.busy).toBe(true);
 
     model.submitText("held");
+    expect(agent.queued().map((prompt) => prompt.text)).toEqual(["held"]);
     expect(model.queued()).toEqual(["held"]);
     expect(agent.history()).toHaveLength(2);
 
@@ -439,6 +440,72 @@ describe("the engine-owned turn queue", () => {
       "re: held",
     ]);
     expect(model.queued()).toEqual([]);
+  });
+
+  it("a failing after-turn hook is reported and the queued prompt still runs", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("re: one"), textTurn("re: two")]),
+    });
+    const model = new ConversationModel(agent, () => {});
+    let settles = 0;
+    model.bindAfterTurn(async () => {
+      settles += 1;
+      if (settles === 1) throw new Error("journal write failed");
+    });
+    model.submitText("one");
+    model.submitText("two");
+    await drained(model);
+    expect(model.entries.map((entry) => `${entry.kind}:${entry.text}`)).toEqual([
+      "user:one",
+      "assistant:re: one",
+      "error:journal write failed",
+      "user:two",
+      "assistant:re: two",
+    ]);
+    expect(settles).toBe(2);
+  });
+
+  it("swapping agents mid-settlement carries the queued prompts to the new agent", async () => {
+    const { open, opened } = gate();
+    const stale = new Agent({ provider: gatedProvider(opened, ["re: one"]) });
+    const fresh = new Agent({ provider: new MockProvider([textTurn("re: two")]) });
+    const model = new ConversationModel(stale, () => {});
+    model.bindAfterTurn(async () => {
+      model.swapAgent(fresh);
+    });
+    model.submitText("one");
+    model.submitText("two");
+    open();
+    await drained(model);
+    expect(model.currentAgent()).toBe(fresh);
+    expect(stale.history().map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(fresh.history().map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(model.entries.map((entry) => entry.text)).toEqual(["one", "re: one", "two", "re: two"]);
+  });
+
+  it("alt+enter steers and plain enter queues", async () => {
+    const { opened } = gate();
+    const agent = new Agent({ provider: gatedProvider(opened, ["never", "steered"]) });
+    const model = new ConversationModel(agent, () => {});
+    model.submitText("slow one");
+    type(model, "queued");
+    model.handleKey(parseChord("return"), undefined);
+    expect(agent.queued().map((prompt) => prompt.behavior)).toEqual(["queue"]);
+    type(model, "now");
+    model.handleKey(parseChord("alt+return"), undefined);
+    expect(agent.queued().map((prompt) => `${prompt.behavior}:${prompt.text}`)).toEqual([
+      "steer:now",
+      "queue:queued",
+    ]);
+    await drained(model);
+    expect(model.entries.map((entry) => entry.text)).toEqual([
+      "slow one",
+      "· interrupted",
+      "now",
+      "steered",
+      "queued",
+      "",
+    ]);
   });
 
   it("dispose mid-turn interrupts the agent and silences every bus listener", async () => {

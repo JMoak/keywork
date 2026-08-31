@@ -36,7 +36,8 @@ describe("PromptEditor", () => {
     type(prompt, "hi there!");
     expect(press(prompt, "backspace")).toBe("handled");
     expect(prompt.value).toBe("hi there");
-    expect(press(prompt, "return")).toEqual({ submit: "hi there" });
+    expect(press(prompt, "return")).toEqual({ submit: "hi there", behavior: "queue" });
+    expect(press(prompt, "alt+return")).toEqual({ submit: "hi there", behavior: "steer" });
     prompt.clear();
     expect(prompt.value).toBe("");
   });

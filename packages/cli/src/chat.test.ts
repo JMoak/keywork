@@ -382,3 +382,89 @@ describe("persistNewMessages", () => {
     expect(store.entries()[0]).not.toHaveProperty("checkpoint");
   });
 });
+
+describe("chat turn queue", () => {
+  function gatedProvider(replies: string[]): { provider: Provider; open: () => void } {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let turn = 0;
+    const provider: Provider = {
+      name: "gated",
+      async *stream(request) {
+        const reply = replies[turn] ?? "";
+        turn += 1;
+        if (turn === 1) {
+          await Promise.race([
+            gate,
+            new Promise<void>((resolve) =>
+              request.signal?.addEventListener("abort", () => resolve(), { once: true }),
+            ),
+          ]);
+          if (request.signal?.aborted) throw new Error("aborted");
+        }
+        yield* textTurn(reply);
+      },
+    };
+    return { provider, open };
+  }
+
+  it("a line typed mid-turn queues in the engine and runs after settlement, in order", async () => {
+    const { options, sessionDir } = await world();
+    const { provider, open } = gatedProvider(["re: one", "re: two"]);
+    const io = scriptedIo({ lines: ["one", "two", "/session"] });
+    const originalReadLine = io.readLine;
+    io.readLine = async (prompt, readOptions) => {
+      const line = await originalReadLine(prompt, readOptions);
+      if (line === "/session") open();
+      return line;
+    };
+
+    await chat(options(provider), io);
+
+    expect(io.out).toContain("  · queued");
+    expect(io.streamed.join("")).toBe("re: onere: two");
+    const usageLines = io.out.filter((line) => line.startsWith("  · session "));
+    expect(usageLines).toHaveLength(2);
+    const messages = await savedMessages(sessionDir);
+    expect(messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(io.out.some((line) => line.startsWith("file      "))).toBe(true);
+  });
+
+  it("/steer interrupts the running turn and sends now; /queue waits its turn", async () => {
+    const { options, sessionDir } = await world();
+    const { provider } = gatedProvider(["never", "steered", "later"]);
+    const io = scriptedIo({ lines: ["slow", "/queue later", "/steer now"] });
+
+    await chat(options(provider), io);
+
+    expect(io.out).toContain("  · queued");
+    expect(io.out).toContain("  · steering");
+    expect(io.out).toContain("\n(interrupted)");
+    expect(io.streamed.join("")).toBe("steeredlater");
+    const messages = await savedMessages(sessionDir);
+    expect(messages.map((message) => `${message.role}:${message.parts.length}`)).toEqual([
+      "user:1",
+      "user:1",
+      "assistant:1",
+      "user:1",
+      "assistant:1",
+    ]);
+  });
+
+  it("/steer and /queue without text explain themselves", async () => {
+    const { options } = await world();
+    const io = scriptedIo({ lines: ["/steer", "/queue  "] });
+
+    await chat(options(new MockProvider([])), io);
+
+    expect(io.out).toContain("usage: /steer <prompt>");
+    expect(io.out).toContain("usage: /queue <prompt>");
+  });
+});

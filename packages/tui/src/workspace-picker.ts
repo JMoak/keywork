@@ -9,12 +9,17 @@ export interface WorkspaceChoice {
   declared: boolean;
   current: boolean;
   notes: number;
+  focusDirs: readonly string[];
+  sessions: number;
+  lastUsed: number | undefined;
 }
 
 export interface WorkspacesPort {
   list(): Promise<WorkspaceChoice[]>;
   create(slug: string): Promise<void>;
   use(slug: string | undefined): Promise<void>;
+  linkFocusDir(slug: string | undefined, dir: string): Promise<string>;
+  unlinkFocusDir(slug: string | undefined, dir: string): Promise<void>;
 }
 
 export type WorkspacePickerRow =

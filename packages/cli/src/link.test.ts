@@ -2,11 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { confinedPath } from "@keywork/engine";
-import { openWorkspace, TrustStore } from "@keywork/shared";
+import { openWorkspace, TrustStore, writeNamedWorkspaceDeclaration } from "@keywork/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AnchorMemory } from "./anchor.ts";
 import { workspaceToolScope } from "./compose.ts";
-import { linkCommand } from "./link.ts";
+import { linkCommand, linkFocusDir, unlinkFocusDir } from "./link.ts";
 import { materializeWorkspace } from "./materialize.ts";
 
 let scratch: string;
@@ -157,5 +157,48 @@ describe("linkCommand", () => {
 
     expect(await linkCommand(ghost, repo, store, io, answering(true), memory)).toBe(1);
     expect(errors.join("\n")).toContain("directory");
+  });
+});
+
+describe("focus dirs", () => {
+  it("links a subtree of the root relative with forward slashes, in order, once", () => {
+    materializeWorkspace(repo);
+    mkdirSync(join(repo, "packages", "web"), { recursive: true });
+    mkdirSync(join(repo, "packages", "api"), { recursive: true });
+
+    expect(linkFocusDir(repo, undefined, "packages/web")).toBe("packages/web");
+    expect(linkFocusDir(join(repo, "packages"), undefined, join(repo, "packages", "api"))).toBe(
+      "packages/api",
+    );
+    expect(openWorkspace(repo)?.focusDirs).toEqual(["packages/web", "packages/api"]);
+    expect(() => linkFocusDir(repo, undefined, "packages/web")).toThrow("already a focus dir");
+  });
+
+  it("refuses the root itself, folders outside it, and paths that are not directories", () => {
+    materializeWorkspace(repo);
+    expect(() => linkFocusDir(repo, undefined, ".")).toThrow("pick a subtree");
+    expect(() => linkFocusDir(repo, undefined, linked)).toThrow("outside the workspace root");
+    expect(() => linkFocusDir(repo, undefined, "missing")).toThrow("isn't a directory");
+    expect(openWorkspace(repo)?.focusDirs).toEqual([]);
+  });
+
+  it("refuses an undeclared default workspace and an unknown named one", () => {
+    expect(() => linkFocusDir(repo, undefined, "x")).toThrow("isn't set up yet");
+    materializeWorkspace(repo);
+    expect(() => linkFocusDir(repo, "ghost", "x")).toThrow("no workspace named ghost");
+  });
+
+  it("links and unlinks on a named workspace's own declaration", () => {
+    materializeWorkspace(repo);
+    writeNamedWorkspaceDeclaration(repo, "front", { name: "Front" });
+    mkdirSync(join(repo, "apps", "site"), { recursive: true });
+
+    linkFocusDir(repo, "front", "apps/site");
+    expect(openWorkspace(repo, "front")?.focusDirs).toEqual(["apps/site"]);
+    expect(openWorkspace(repo)?.focusDirs).toEqual([]);
+
+    unlinkFocusDir(repo, "front", "apps/site");
+    expect(openWorkspace(repo, "front")?.focusDirs).toEqual([]);
+    expect(() => unlinkFocusDir(repo, "front", "apps/site")).toThrow("isn't a focus dir here");
   });
 });

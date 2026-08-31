@@ -9,6 +9,12 @@ export {
   describeArcRow,
 } from "./arc-picker.ts";
 export {
+  type AirlockCandidateView,
+  type AirlockDigestView,
+  type AirlockFinishOutcome,
+  type AirlockQuestionView,
+  type AirlockSweepView,
+  type ArcAirlockPort,
   type ArcCloseOutcome,
   type ArcOrdinals,
   type ArcStatus,
@@ -19,8 +25,11 @@ export {
   arcOrdinalsOf,
   arcSlugProblem,
   arcTag,
+  type CandidateChoice,
   describeCloseOutcome,
+  describeFinishOutcome,
   isArcSlug,
+  type QuestionChoice,
   suggestArcSlug,
 } from "./arcs.ts";
 export { ArcsPane, type ArcsPaneOptions } from "./arcs-pane.ts";
@@ -158,6 +167,7 @@ export {
   resolvePage,
   resolvePageThresholds,
 } from "./page.ts";
+export type { LifecycleState } from "./pane.ts";
 export type { ArcOrigin, PaneOrigin } from "./pane-kinds.ts";
 export type { WorkspacePort } from "./restore-plan.ts";
 export type {
@@ -187,7 +197,8 @@ export {
   slugWords,
 } from "./slug.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
-export { type LifecycleState, type TitleBarState, titleBar } from "./title-bar.ts";
+export { type TitleBarState, type TitleSpan, titleBar, titleSpans } from "./title-bar.ts";
+export type { FocusOutline } from "./view/frame.ts";
 export {
   describeWorkspaceRow,
   type WorkspaceChoice,
@@ -206,3 +217,9 @@ export {
   type WorkspaceSetupReceipt,
 } from "./workspace-setup.ts";
 export type { WorkspaceState } from "./workspace-state.ts";
+export { WorkspacesPane, type WorkspacesPaneOptions } from "./workspaces-pane.ts";
+export type {
+  FocusDirRow,
+  WorkspaceRow,
+  WorkspacesLevel,
+} from "./workspaces-pane-model.ts";

@@ -138,7 +138,13 @@ describe("composePanes", () => {
   });
 
   it("passes the workspaces port and the config's theme and page through", async () => {
-    const workspaces = { list: async () => [], create: async () => {}, use: async () => {} };
+    const workspaces = {
+      list: async () => [],
+      create: async () => {},
+      use: async () => {},
+      linkFocusDir: async () => "",
+      unlinkFocusDir: async () => {},
+    };
     const { app } = await composedIn(await tempDir(), {
       workspaces,
       config: { theme: { accent: "#ff0000" }, page: { columnAt: 90 } },

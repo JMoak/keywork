@@ -121,7 +121,6 @@ function attachmentOf(
 ): SessionAttachment {
   const name = store.name();
   const selection = store.modelSelection();
-  const arc = store.arcBinding();
   const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
@@ -129,7 +128,9 @@ function attachmentOf(
     ...(selection !== undefined && {
       modelReference: `${selection.provider}/${selection.modelId}`,
     }),
-    ...(arc !== undefined && { arc }),
+    get arc() {
+      return store.arcBinding();
+    },
     history: store.messages(),
     replay: (bus) => {
       replaySession(store, bus);

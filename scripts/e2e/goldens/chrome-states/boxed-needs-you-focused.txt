@@ -1,0 +1,24 @@
+╭─ session tree · 1 session ────╮╭─ █ session-1 ───────────────────────────────────────────────────╮
+│ █ shout the middle line · now ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││ █ shout the middle line                                         │
+│                               ││ ▓ Shouting the middle line of notes.txt now.                    │
+│                               ││ ░ write notes.txt · ~···· · failed · declined by user           │
+│                               ││ ▓ Left it alone.                                                │
+│                               ││ █ shout the middle line                                         │
+│                               ││ ▓ Shouting the middle line of notes.txt now.                    │
+│                               ││ ░ write notes.txt · running                                     │
+│                               ││ @@ -1,3 +1,3 @@                                                 │
+│                               ││   alpha                                                         │
+│                               ││ - beta                                                          │
+│                               ││ + BETA                                                          │
+│                               ││   gamma                                                         │
+│                               ││ ? write {"path":"notes.txt","…  [y] allow  [a] always  [n] deny │
+│                               ││ › ▌                                                             │
+╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
+ keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · > commands                                 return 

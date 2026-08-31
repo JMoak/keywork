@@ -33,6 +33,8 @@ export interface SendOptions {
   signal?: AbortSignal;
 }
 
+export type TurnSettler = () => Promise<void>;
+
 export class QueuedPromptCancelledError extends Error {
   constructor(id: string) {
     super(`queued prompt ${id} was cancelled before its turn`);
@@ -66,6 +68,8 @@ export class Agent {
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
   private costTotals: CostRollup = emptyCostRollup();
   private active: AbortController | undefined;
+  private holding = false;
+  private settler: TurnSettler | undefined;
   private checkpointed = false;
 
   constructor(options: AgentOptions) {
@@ -96,7 +100,7 @@ export class Agent {
   }
 
   busy(): boolean {
-    return this.active !== undefined || this.pending.length > 0;
+    return !this.idle() || this.pending.length > 0;
   }
 
   queued(): readonly QueuedPrompt[] {
@@ -108,11 +112,30 @@ export class Agent {
   }
 
   send(userText: string, options: SendOptions = {}): Promise<Message> {
-    if (this.active === undefined) return this.runTurn(userText, options.signal);
+    if (this.idle()) return this.runTurn(userText, options.signal);
     const behavior = options.behavior ?? "queue";
     const settled = this.enqueue(userText, behavior, options.signal);
-    if (behavior === "steer") this.active.abort();
+    if (behavior === "steer") this.active?.abort();
     return settled;
+  }
+
+  settleTurnsWith(settler: TurnSettler | undefined): void {
+    this.settler = settler;
+  }
+
+  hold(work: () => Promise<void>): Promise<void> {
+    if (!this.idle()) return Promise.reject(new Error("agent busy · finish the turn first"));
+    return this.holdThenDrain(work);
+  }
+
+  adoptQueue(from: Agent): void {
+    if (from === this) return;
+    const moved = from.pending.splice(0);
+    if (moved.length === 0) return;
+    from.announceQueue();
+    this.pending.push(...moved);
+    this.announceQueue();
+    if (this.idle()) this.startNextQueued();
   }
 
   cancelQueued(id: string): boolean {
@@ -149,11 +172,35 @@ export class Agent {
     return this.pending.findLastIndex((prompt) => prompt.behavior === "steer") + 1;
   }
 
+  private idle(): boolean {
+    return this.active === undefined && !this.holding;
+  }
+
   private startNextQueued(): void {
     const next = this.pending.shift();
     if (next === undefined) return;
     this.announceQueue();
     void this.runTurn(next.text, next.signal).then(next.resolve, next.reject);
+  }
+
+  private async holdThenDrain(work: () => Promise<void>): Promise<void> {
+    this.holding = true;
+    try {
+      await work();
+    } finally {
+      this.holding = false;
+      this.startNextQueued();
+    }
+  }
+
+  private settleThenDrain(): Promise<void> {
+    return this.holdThenDrain(async () => {
+      try {
+        await this.settler?.();
+      } catch (cause) {
+        this.bus.emit("engine.error", { error: errorOf(cause) });
+      }
+    });
   }
 
   private announceQueue(): void {
@@ -173,13 +220,13 @@ export class Agent {
       this.bus.emit("turn.started", { userText });
       return await this.runUntilFinalMessage(controller.signal);
     } catch (cause) {
-      const error = cause instanceof Error ? cause : new Error(String(cause));
+      const error = errorOf(cause);
       this.bus.emit("engine.error", { error });
       throw error;
     } finally {
       signal?.removeEventListener("abort", forwardAbort);
       this.active = undefined;
-      this.startNextQueued();
+      await this.settleThenDrain();
     }
   }
 
@@ -271,8 +318,7 @@ export class Agent {
       }
     } catch (cause) {
       if (signal.aborted) return { message, usage, interrupted: true };
-      const failure = cause instanceof Error ? cause : new Error(String(cause));
-      return { message, usage, interrupted: false, failure };
+      return { message, usage, interrupted: false, failure: errorOf(cause) };
     }
     return { message, usage, interrupted: false };
   }
@@ -345,6 +391,10 @@ export class Agent {
     this.checkpointed = true;
     await this.guard?.beforeMutation?.();
   }
+}
+
+function errorOf(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error(String(cause));
 }
 
 function toolSource(tools: readonly Tool[] | ToolSource | undefined): ToolSource {

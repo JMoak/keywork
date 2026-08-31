@@ -81,7 +81,50 @@ const files: Record<string, string> = {
     { provenance: "agent", created: "2026-08-18T09:00:00.000Z" },
     "Folding the dock members keeps the main area calm. It leans on [[Dock Rule]].\n",
   ),
+  [`${vault}/arcs/dock-v2/Fold Habit.md`]: note(
+    { provenance: "agent", created: "2026-08-19T09:00:00.000Z", usefulness: 0.3 },
+    "Members come back in creation order after a fold.\n",
+  ),
+  [`${vault}/arcs/dock-v2/questions/Tie order.md`]: note(
+    {
+      type: "open-question",
+      status: "open",
+      provenance: "user",
+      created: "2026-08-20T09:00:00.000Z",
+    },
+    "Who wins focus ties between two folded members?\n",
+  ),
+  [`${vault}/arcs/next-arc/MOC.md`]: note(
+    { arc: "next-arc", status: "active", created: "2026-08-21T08:00:00.000Z" },
+    "arc next-arc\n",
+  ),
 };
+
+const frozenClock = (): number => Date.parse("2026-08-22T12:00:00.000Z");
+
+const digestRows = {
+  candidate: "▓ Fold Habit · 3d",
+  question: "█ Tie order · question · 2d",
+  fold: "░ 1 below the bar · uncited · archived, searchable",
+  close: "░ close #dock-v2 · 2 to decide",
+};
+
+function occurrences(frame: string, marker: string): number {
+  return frame.split(marker).length - 1;
+}
+
+async function closeArcAtTheAirlock(stage: Parameters<Scenario["run"]>[0]): Promise<string> {
+  await stage.press("ctrl+p");
+  await stage.type("session-1");
+  await stage.press("enter");
+  await stage.type("/arc close dock-v2");
+  await stage.press("enter");
+  await stage.until("arc dock-v2 is waiting at the airlock · 2 notes and 1 question");
+  await stage.press("ctrl+p");
+  await stage.type("memory");
+  await stage.press("enter");
+  return stage.until(digestRows.close);
+}
 
 export const memoryBrowser: Scenario = {
   name: "memory-browser",
@@ -90,6 +133,7 @@ export const memoryBrowser: Scenario = {
   size: { width: 160, height: 40 },
   files,
   turns: [textTurn("noted.")],
+  app: { clock: frozenClock },
   run: async (stage) => {
     await stage.settle();
     await stage.type("/arc dock-v2");
@@ -98,8 +142,8 @@ export const memoryBrowser: Scenario = {
 
     await stage.type("/memory");
     await stage.press("enter");
-    const garden = await stage.until("╭─ memory · 5 notes · ░1 ");
-    assert.ok(garden.includes("#dock-v2 · 1 note"), "the focused arc's layer leads the garden");
+    const garden = await stage.until("│ memory · 6 notes · ░1 ");
+    assert.ok(garden.includes("#dock-v2 · 2 notes"), "the focused arc's layer leads the garden");
     assert.ok(garden.includes("in prompt · "), "the workspace layer shows its prompt budget");
     assert.ok(garden.includes("by search only"), "notes beyond the prompt are labelled");
     assert.ok(garden.includes("░ staged · Web Claim.md"), "the staged write sits in the inbox");
@@ -109,7 +153,7 @@ export const memoryBrowser: Scenario = {
     await stage.capture("garden");
 
     await stage.press("i", "a");
-    await stage.until("╭─ memory · 6 notes ");
+    await stage.until("│ memory · 7 notes ");
 
     await stage.press("?");
     await stage.type("dock");
@@ -145,17 +189,78 @@ export const memoryBrowser: Scenario = {
     assert.ok(ledger.includes("gardener sweep"), "the persisted audit joins the feed");
     await stage.press("u");
     await stage.until("reverted · the previous text is back");
-    await stage.until("╭─ memory · 5 notes · ░1 ");
+    await stage.until("│ memory · 6 notes · ░1 ");
     await stage.settle();
     await stage.capture("ledger-revert");
 
     await stage.press("escape", "g", "enter");
-    await stage.until("agent · fresh · 4d · #dock-v2");
+    await stage.until("agent · cured · 3d · #dock-v2");
     await stage.relaunch();
-    const revived = await stage.until("agent · fresh · 4d · #dock-v2");
-    assert.ok(revived.includes("╭─ memory · 5 notes · ░1 "), "the pane revives in its note lens");
+    const revived = await stage.until("agent · cured · 3d · #dock-v2");
+    assert.ok(revived.includes("│ memory · 6 notes · ░1 "), "the pane revives in its note lens");
     await stage.settle();
     await stage.capture("relaunched-note-lens");
+
+    await stage.press("escape");
+    const digest = await closeArcAtTheAirlock(stage);
+    assert.ok(
+      digest.includes("#dock-v2 · 2 notes · airlock ░3 · 1 flushed"),
+      "the header counts the sweep",
+    );
+    assert.ok(digest.includes(digestRows.candidate), "the eligible candidate waits");
+    assert.ok(digest.includes(digestRows.question), "the open question waits");
+    assert.ok(digest.includes(digestRows.fold), "below-bar notes fold into one dim row");
+    assert.equal(occurrences(digest, " · undecided"), 2, "both decisions are still open");
+    await stage.settle();
+    await stage.capture("airlock-digest");
+
+    await stage.press("i", "a", "j", "c");
+    const triaged = await stage.until("→ carry to #next-arc");
+    assert.ok(triaged.includes(" → deliver"), "a marks the candidate deliver");
+    assert.ok(
+      triaged.includes("█ close #dock-v2 · enter closes"),
+      "every item decided reads enter closes",
+    );
+    await stage.press("j", "space");
+    const unfolded = await stage.until("▒ 1 below the bar");
+    assert.ok(unfolded.includes("▓ Dock Lesson · uncited"), "space unfolds the below-bar note");
+    await stage.settle();
+    await stage.capture("airlock-triaged");
+
+    await stage.press("j", "j", "enter");
+    await stage.until("arc dock-v2 closed · delivered 1 note · 1 session released");
+    const delivered = await stage.until("arc dock-v2 delivery");
+    assert.ok(delivered.includes("Fold Habit"), "the delivered note lands in the workspace layer");
+    const released = await stage.until("(untitled session) · now · 2e");
+    assert.ok(!released.includes("#dock-v2 · "), "the archived arc leaves the garden and the tree");
+    await stage.settle();
+    await stage.capture("arc-delivered");
+    await stage.quit();
+  },
+};
+
+export const memoryAirlockStamp: Scenario = {
+  name: "memory-airlock-stamp",
+  description:
+    "the alternative digest treatment: decisions stamped into the row lead instead of trailing the title",
+  size: { width: 160, height: 40 },
+  files,
+  turns: [textTurn("noted.")],
+  app: { memoryDigest: "stamp", clock: frozenClock },
+  run: async (stage) => {
+    await stage.settle();
+    await stage.type("/arc dock-v2");
+    await stage.press("enter");
+    await stage.until("arc → dock-v2");
+    await stage.type("/memory");
+    await stage.press("enter");
+    await stage.until("│ memory · 6 notes · ░1 ");
+    await closeArcAtTheAirlock(stage);
+    await stage.press("i", "a", "j", "c");
+    const stamped = await stage.until("██ carry to #next-arc · Tie order");
+    assert.ok(stamped.includes("█▓ deliver · Fold Habit"), "the decision stamps the lead");
+    await stage.settle();
+    await stage.capture("airlock-digest-stamp");
     await stage.quit();
   },
 };

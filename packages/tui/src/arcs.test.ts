@@ -7,6 +7,7 @@ import {
   arcSlugProblem,
   arcTag,
   describeCloseOutcome,
+  describeFinishOutcome,
   isArcSlug,
   suggestArcSlug,
 } from "./arcs.ts";
@@ -87,5 +88,19 @@ describe("describeCloseOutcome", () => {
     expect(
       describeCloseOutcome("dock", { kind: "pending", candidates: 0, questions: 0, wedged: 1 }),
     ).toContain(" · 1 live session didn't flush · ");
+  });
+});
+
+describe("describeFinishOutcome", () => {
+  it("passes closed and pending through and explains undecided items and wedged sessions", () => {
+    expect(describeFinishOutcome("dock", { kind: "closed", delivered: 2, released: 1 })).toBe(
+      "arc dock closed · delivered 2 notes · 1 session released",
+    );
+    expect(
+      describeFinishOutcome("dock", { kind: "undecided", items: ["Tie order", "Dock Rule"] }),
+    ).toBe("arc dock still has 2 items to decide · a d c on each row");
+    expect(describeFinishOutcome("dock", { kind: "wedged", sessions: ["s2"] })).toBe(
+      "1 session didn't flush · f forces the close past them",
+    );
   });
 });

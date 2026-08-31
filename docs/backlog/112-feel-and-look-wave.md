@@ -535,8 +535,8 @@ superseded by the note here until the section is rewritten.
   The footer says what is hidden (`↑↓ scroll · 4 below · esc closes`) and stays `esc closes`
   when everything fits. The discovery goldens were recaptured, which also brought them up to
   the seams chrome they had drifted from since 2cb1891.
-- **Pin mark ink.** The `▪` mark renders in the border ink, not dim: the OpenTUI Box title is
-  one string until C69's span-composed title row lands, which is where the dim ink goes.
+- **Pin mark ink.** Closed 2026-08-30: C69's span-composed title row landed (113 W2) and the
+  `▪` mark renders in `textDim`.
 - **The `>` prefix in quick-open.** `ctrl+p` opens quick-open (jump to a pane); typing `>`
   flips it to commands (`overlays/palette.ts paletteModeOf`). That is VS Code's convention
   verbatim, and it is the only place in keywork where `>` means anything; everywhere else a

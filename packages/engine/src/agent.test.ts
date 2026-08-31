@@ -900,3 +900,202 @@ describe("Agent turn queue", () => {
     expect(agent.history().map((message) => message.role)).toEqual(["user", "user", "assistant"]);
   });
 });
+
+describe("Agent settlement seam", () => {
+  function gate(): { open: () => void; opened: Promise<void> } {
+    let open: () => void = () => {};
+    const opened = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { open, opened };
+  }
+
+  function replyingProvider(prompts: string[]): Provider {
+    return {
+      name: "replying",
+      stream: (request) => {
+        prompts.push(lastUserText(request.messages));
+        return streamOf(textTurn(`re: ${prompts.at(-1)}`));
+      },
+    };
+  }
+
+  it("settles after every turn, before the next queued prompt starts, in order", async () => {
+    const trace: string[] = [];
+    const prompts: string[] = [];
+    const agent = new Agent({ provider: replyingProvider(prompts) });
+    agent.bus.on("turn.started", ({ userText }) => trace.push(`start ${userText}`));
+    agent.settleTurnsWith(async () => {
+      trace.push(`settle after ${agent.history().length}`);
+      await Promise.resolve();
+      trace.push("settled");
+    });
+
+    const first = agent.send("one");
+    const second = agent.send("two", { behavior: "queue" });
+    await Promise.all([first, second]);
+
+    expect(trace).toEqual([
+      "start one",
+      "settle after 2",
+      "settled",
+      "start two",
+      "settle after 4",
+      "settled",
+    ]);
+    expect(agent.busy()).toBe(false);
+  });
+
+  it("stays busy while settling so a prompt sent then queues instead of racing", async () => {
+    const settling = gate();
+    const release = gate();
+    const prompts: string[] = [];
+    const agent = new Agent({ provider: replyingProvider(prompts) });
+    agent.settleTurnsWith(() => {
+      settling.open();
+      return release.opened;
+    });
+
+    const first = agent.send("one");
+    await settling.opened;
+    expect(agent.busy()).toBe(true);
+    const late = agent.send("late");
+    expect(agent.queued().map((prompt) => prompt.text)).toEqual(["late"]);
+    expect(prompts).toEqual(["one"]);
+
+    release.open();
+    await first;
+    expect(messageText(await late)).toBe("re: late");
+    expect(prompts).toEqual(["one", "late"]);
+  });
+
+  it("loses nothing when the settler throws: the failure is announced and the queue drains", async () => {
+    const prompts: string[] = [];
+    const agent = new Agent({ provider: replyingProvider(prompts) });
+    const errors: string[] = [];
+    agent.bus.on("engine.error", ({ error }) => errors.push(error.message));
+    let settles = 0;
+    agent.settleTurnsWith(async () => {
+      settles += 1;
+      if (settles === 1) throw new Error("disk full");
+    });
+
+    const first = agent.send("one");
+    const second = agent.send("two");
+    expect(messageText(await first)).toBe("re: one");
+    expect(messageText(await second)).toBe("re: two");
+
+    expect(errors).toEqual(["disk full"]);
+    expect(prompts).toEqual(["one", "two"]);
+    expect(settles).toBe(2);
+  });
+
+  it("keeps queued prompts across an interrupted turn and its settlement", async () => {
+    let calls = 0;
+    const prompts: string[] = [];
+    const provider: Provider = {
+      name: "interruptible",
+      stream: (request) => {
+        prompts.push(lastUserText(request.messages));
+        return calls++ === 0 ? hangUntilAborted(request.signal) : streamOf(textTurn("ok"));
+      },
+    };
+    const agent = new Agent({ provider });
+    const settledAfter: number[] = [];
+    agent.settleTurnsWith(async () => {
+      settledAfter.push(agent.history().length);
+    });
+
+    const first = agent.send("hang");
+    const kept = agent.send("kept");
+    agent.interrupt();
+    await first;
+    expect(messageText(await kept)).toBe("ok");
+
+    expect(prompts).toEqual(["hang", "kept"]);
+    expect(settledAfter).toEqual([1, 3]);
+  });
+
+  it("a turn started while settling is interruptible", async () => {
+    let calls = 0;
+    const provider: Provider = {
+      name: "two-phase",
+      stream: (request) =>
+        calls++ === 0 ? streamOf(textTurn("first")) : hangUntilAborted(request.signal),
+    };
+    const agent = new Agent({ provider });
+    let queued: Promise<unknown> | undefined;
+    agent.settleTurnsWith(async () => {
+      queued ??= agent.send("queued");
+    });
+    const events: string[] = [];
+    agent.bus.on("turn.interrupted", () => events.push("interrupted"));
+
+    await agent.send("go");
+    expect(agent.busy()).toBe(true);
+    agent.interrupt();
+    await queued;
+
+    expect(events).toEqual(["interrupted"]);
+    expect(agent.busy()).toBe(false);
+  });
+
+  it("hold occupies an idle agent, queues prompts behind the work, and refuses while busy", async () => {
+    const prompts: string[] = [];
+    const agent = new Agent({ provider: replyingProvider(prompts) });
+    const work = gate();
+    const held = agent.hold(() => work.opened);
+    expect(agent.busy()).toBe(true);
+    await expect(agent.hold(async () => {})).rejects.toThrow("agent busy");
+
+    const during = agent.send("during");
+    expect(agent.queued().map((prompt) => prompt.text)).toEqual(["during"]);
+    expect(prompts).toEqual([]);
+
+    work.open();
+    await held;
+    expect(messageText(await during)).toBe("re: during");
+  });
+
+  it("hold surfaces the work's failure to its caller and still drains", async () => {
+    const prompts: string[] = [];
+    const agent = new Agent({ provider: replyingProvider(prompts) });
+    const held = agent.hold(async () => {
+      throw new Error("compaction failed");
+    });
+    const after = agent.send("after");
+
+    await expect(held).rejects.toThrow("compaction failed");
+    expect(messageText(await after)).toBe("re: after");
+  });
+
+  it("adoptQueue moves waiting prompts onto another agent with their promises and order intact", async () => {
+    const stale: string[] = [];
+    const fresh: string[] = [];
+    const settling = gate();
+    const release = gate();
+    const previous = new Agent({ provider: replyingProvider(stale) });
+    previous.settleTurnsWith(() => {
+      settling.open();
+      return release.opened;
+    });
+    const next = new Agent({ provider: replyingProvider(fresh) });
+
+    const first = previous.send("one");
+    const two = previous.send("two");
+    const three = previous.send("three");
+    await settling.opened;
+
+    next.adoptQueue(previous);
+    expect(previous.queued()).toEqual([]);
+    release.open();
+    await first;
+
+    expect(messageText(await two)).toBe("re: two");
+    expect(messageText(await three)).toBe("re: three");
+    expect(stale).toEqual(["one"]);
+    expect(fresh).toEqual(["two", "three"]);
+    expect(previous.busy()).toBe(false);
+    expect(next.busy()).toBe(false);
+  });
+});

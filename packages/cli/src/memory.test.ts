@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type MemoryStore, StagedItemNotFoundError } from "@keywork/engine";
+import { ArcRegistry, type MemoryStore, StagedItemNotFoundError } from "@keywork/engine";
+import type { AirlockDigestView, ArcAirlockPort } from "@keywork/tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   memoryPanePort,
@@ -117,6 +118,45 @@ describe("memoryPanePort", () => {
     const fact = inputs.notes.find((note) => note.title === "User Fact");
     expect(fact?.file).toBe(join(memory.vaultRoot, "User Fact.md"));
     expect(fact?.body).toBe("typed by hand\n");
+  });
+
+  it("shows arc review cards as airlock items and loads each waiting digest through the airlock port", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    const registry = new ArcRegistry({ vaultRoot: memory.vaultRoot, trusted: true });
+    await registry.createArc("dock-v2");
+    await registry.createArc("quiet-arc");
+    await memory.store.propose([
+      { kind: "arc-distillation", arc: "dock-v2", note: "Dock Lesson", eligible: true },
+      { kind: "arc-question", arc: "dock-v2", note: "Tie order" },
+    ]);
+    const digest: AirlockDigestView = { arc: "dock-v2", candidates: [], questions: [] };
+    const asked: string[] = [];
+    const airlock: ArcAirlockPort = {
+      digest: async (slug) => {
+        asked.push(slug);
+        return slug === "dock-v2" ? digest : undefined;
+      },
+      triageCandidate: async () => {},
+      triageQuestion: async () => {},
+      deliverEligible: async () => 0,
+      finish: async () => ({ kind: "closed", delivered: 0, released: 0 }),
+    };
+    const port = memoryPanePort(
+      () => memory,
+      () => registry,
+      airlock,
+    );
+    const inputs = await port.load();
+    expect(inputs.inbox.map((item) => [item.kind, item.title, item.arc, item.detail])).toEqual([
+      ["airlock", "deliver Dock Lesson", "dock-v2", "eligible"],
+      ["airlock", "triage Tie order", "dock-v2", undefined],
+    ]);
+    expect(asked.sort()).toEqual(["dock-v2", "quiet-arc"]);
+    expect(inputs.airlocks).toEqual([digest]);
+    expect(port.airlock).toBe(airlock);
+    expect(memoryPanePort(() => memory).airlock).toBeUndefined();
   });
 
   it("marks the notes the prompt carries, in bootstrap order, and shows the budget used", async () => {

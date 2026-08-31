@@ -44,8 +44,8 @@ export const pointerTour: Scenario = {
     await stage.press("escape");
 
     const before = await stage.settle().then(() => stage.capture("before-dock-drag"));
-    const junction = frameLine(before, 1).indexOf("╮╭");
-    assert.ok(junction > 0, "the dock boundary junction is visible on the top border row");
+    const junction = frameLine(before, 1).indexOf("│", 1);
+    assert.ok(junction > 0, "a seam separates the dock from the main area");
     await stage.drag({ x: junction, y: 15 }, { x: junction + 6, y: 15 });
     await stage.settle();
     const dragged = await stage.capture("dock-dragged");

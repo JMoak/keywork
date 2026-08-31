@@ -1,9 +1,7 @@
 import { Box, fg, StyledText, Text } from "@opentui/core";
-import { bindingHelp } from "../app-actions.ts";
 import type { AppCore } from "../app-core.ts";
 import type { ArcOrdinals } from "../arcs.ts";
 import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
-import type { Keymap } from "../keymap.ts";
 import type { HelpPage, OverlayFrame } from "../overlays/index.ts";
 import type { ChromeWeight } from "../pane.ts";
 import type { Theme } from "../theme.ts";
@@ -32,7 +30,7 @@ export function overlayView(core: AppCore, inputs: OverlayInputs) {
   const placement = overlayPosition(frame, frameInset(inputs.chrome));
   const help = core.helpOverlay();
   if (help !== undefined) {
-    return helpOverlay(help.page(core.screen()), core.keymap, theme, placement);
+    return helpOverlay(help.page(core.screen()), theme, placement);
   }
   if (core.paletteOpen) return paletteOverlay(core, theme, placement);
   const preset = presetRows(core, theme);
@@ -121,12 +119,12 @@ function paletteOverlay(core: AppCore, theme: Theme, placement: OverlayPlacement
   ]);
 }
 
-function helpOverlay(page: HelpPage, keymap: Keymap, theme: Theme, placement: OverlayPlacement) {
+function helpOverlay(page: HelpPage, theme: Theme, placement: OverlayPlacement) {
   const room = innerWidth(placement);
-  const rows = page.actions.map((action) =>
+  const rows = page.rows.map((row) =>
     splitRow(
-      { content: ` ${keymap.describe(action) ?? ""}`, fg: theme.accent },
-      { content: `${bindingHelp[action] ?? action} `, fg: theme.text },
+      { content: ` ${row.keys}`, fg: theme.accent },
+      { content: `${row.help} `, fg: theme.text },
       room,
     ),
   );

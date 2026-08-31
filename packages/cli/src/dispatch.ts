@@ -3,6 +3,7 @@ export const usage = `keywork: a coding agent you drive from the keyboard
 Usage:
   keywork [panes] [--fresh] [--workspace <slug>]            tiled multi-session workspace
   keywork run "<prompt>" [--model <model>] [--json] [--debug]
+              [--workspace <slug>]
               [--preset careful|standard|open]
               [--session-dir <dir>]                         one-shot headless run
   keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
@@ -15,7 +16,7 @@ Usage:
   keywork doctor                                            show what your terminal supports
   keywork --version                                         print the version and exit
   keywork --help                                            print this usage and exit
-  keywork chat [--model <model>] [--continue]
+  keywork chat [--model <model>] [--continue] [--workspace <slug>]
                [--resume <session-id>]                      engine smoke REPL (debug)
 
 Exit codes (keywork run): 0 completed · 1 failed · 2 usage · 3 unresolved · 4 denied · 130 interrupted

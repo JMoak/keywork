@@ -4,6 +4,7 @@ import {
   compactNow,
   contextBudgetFor,
   declaredContextWindow,
+  type MemoryFlush,
   renderCommand,
   type SessionStore,
   scanTemplate,
@@ -74,11 +75,12 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
   const requestReopen = (slug: string | undefined): void => {
     pendingReopen = { slug };
   };
+  const sessionDir = launch.sessionDir ?? defaultSessionDir(cwd, workspaceSlug);
   const app = await composePanes({
     cwd,
     projectTrusted,
     workspaceSlug,
-    sessionDir: launch.sessionDir ?? defaultSessionDir(cwd, workspaceSlug),
+    sessionDir,
     workspace: workspaceStateStore(cwd, workspaceSlug, launch.fresh === true),
     config: launch.inference.current().config,
     inference: launch.inference,
@@ -90,6 +92,7 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
       current: workspaceSlug,
       recall: launch.workspaceRecall,
       requestSwitch: requestReopen,
+      sessionDirFor: (slug) => (slug === workspaceSlug ? sessionDir : defaultSessionDir(cwd, slug)),
     }),
     workspaceSetup: workspaceSetupPort({
       cwd,
@@ -143,25 +146,27 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
   });
   const { checkpoints, extensions, mcp, memory } = composition;
   const setup = options.workspaceSetup;
+  const stores = new Map<string, SessionStore>();
+  const changes = sessionChangeFeed();
   const arcs = arcService({
     cwd,
     trusted: projectTrusted,
     workspaceSlug,
     memory,
     boundSessionCounts: () => boundSessionCounts(options.sessionDir),
+    flushFor: (sessionId) => airlockFlushFor(stores.get(sessionId), agents.flushOf(sessionId)),
+    onReleased: (sessionId) => changes.emit(sessionId),
     unavailable:
       setup === undefined ? undefined : () => readinessNotice(setup.readiness()) ?? arcsUnavailable,
   });
   const agents = composeAgents(composition, { permissions: presets?.resolver, arcs });
-  const stores = new Map<string, SessionStore>();
-  const changes = sessionChangeFeed();
   return {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
       checkpointTag: () => checkpoints?.takeTurnTag(),
       onAttach: (store) => {
         stores.set(store.header.id, store);
-        arcs.attached(store);
+        void arcs.attached(store);
       },
       onRelease: (sessionId) => {
         stores.delete(sessionId);
@@ -180,7 +185,9 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
-    ...(projectTrusted && { memory: memoryPanePort(memory, arcs.registry) }),
+    ...(projectTrusted && {
+      memory: memoryPanePort(memory, arcs.registry, arcs.port.airlock),
+    }),
     ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
     ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
     ...(setup !== undefined && { workspaceSetup: setup }),
@@ -278,6 +285,15 @@ function compactOnRequest(
     if (settlement.history !== undefined) changed(sessionId);
     return settlement;
   };
+}
+
+function airlockFlushFor(
+  store: SessionStore | undefined,
+  flush: MemoryFlush | undefined,
+): (() => Promise<unknown>) | undefined {
+  if (store === undefined) return undefined;
+  if (flush === undefined) return async () => undefined;
+  return () => flush.flushNow(store.messages());
 }
 
 function budgetOf(agent: Agent): ContextBudget {

@@ -4,7 +4,7 @@ import type { FileOpenOptions, MemoryLens, Pane, PaneDescriptor, PaneIntents } f
 
 export type PaneKind = PaneDescriptor["kind"];
 export type PaneHome = "main" | DockSide;
-export type SummonableKind = "browser" | "session-tree" | "arcs" | "memory" | "mcp";
+export type SummonableKind = "browser" | "session-tree" | "arcs" | "workspaces" | "memory" | "mcp";
 
 export type ArcOrigin = "inherit" | "new";
 
@@ -67,6 +67,7 @@ export type MemoryPaneFactory = (
   revival?: MemoryPaneRevival,
 ) => Pane;
 export type McpPaneFactory = (id: string, notify: () => void) => Pane;
+export type WorkspacesPaneFactory = (id: string, notify: () => void, intents: PaneIntents) => Pane;
 
 export interface PaneFactories {
   createPane: PaneFactory;
@@ -77,6 +78,7 @@ export interface PaneFactories {
   createArcPane?: ArcPaneFactory;
   createMemoryPane?: MemoryPaneFactory;
   createMcpPane?: McpPaneFactory;
+  createWorkspacesPane?: WorkspacesPaneFactory;
 }
 
 export type PaneRequest =
@@ -87,7 +89,8 @@ export type PaneRequest =
   | { kind: "arcs"; arc?: string }
   | { kind: "arc"; arc: string }
   | ({ kind: "memory" } & MemoryPaneRevival)
-  | { kind: "mcp" };
+  | { kind: "mcp" }
+  | { kind: "workspaces" };
 
 export interface PaneKindSpec {
   readonly idPrefix: string;
@@ -105,6 +108,7 @@ export const paneKinds: Readonly<Record<PaneKind, PaneKindSpec>> = {
   arc: { idPrefix: "arc", home: "right", factory: "createArcPane", dockWeight: 0.5 },
   memory: { idPrefix: "memory", home: "left", factory: "createMemoryPane" },
   mcp: { idPrefix: "mcp", home: "right", factory: "createMcpPane" },
+  workspaces: { idPrefix: "workspaces", home: "left", factory: "createWorkspacesPane" },
 };
 
 export function dockWeightOf(id: string): number {
@@ -116,6 +120,7 @@ export const summonRequests: Readonly<Record<SummonableKind, PaneRequest>> = {
   browser: { kind: "browser", root: "." },
   "session-tree": { kind: "session-tree" },
   arcs: { kind: "arcs" },
+  workspaces: { kind: "workspaces" },
   memory: { kind: "memory" },
   mcp: { kind: "mcp" },
 };
@@ -189,6 +194,8 @@ export function buildPane(
       });
     case "mcp":
       return factories.createMcpPane?.(id, notify);
+    case "workspaces":
+      return factories.createWorkspacesPane?.(id, notify, seams.intents);
   }
 }
 

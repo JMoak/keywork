@@ -6,12 +6,15 @@ import {
   arcMemberPositions,
   focusLift,
   hexToOklch,
+  lifecycleChrome,
   oklchToHex,
   paneBorder,
   rampColor,
   rampPositions,
+  saturationLift,
   spawnRankPositions,
 } from "./chroma.ts";
+import type { LifecycleState } from "./pane.ts";
 import { keyworkNight } from "./theme.ts";
 
 const ramp = keyworkNight.ramp;
@@ -306,5 +309,87 @@ describe("arcAnchorPosition", () => {
     for (let k = 0; k < 8; k++) {
       expect(arcAnchor(ramp, k)).toBe(rampColor(ramp, arcAnchorPosition(k)));
     }
+  });
+});
+
+describe("lifecycleChrome", () => {
+  const states: LifecycleState[] = ["idle", "working", "needs-you", "finished-unseen", "failed"];
+  const positions = [0, 0.25, 0.5, 0.75, 1];
+
+  it("agrees with paneBorder for the quiet states at every rank", () => {
+    for (const t of positions) {
+      const hue = rampColor(ramp, t);
+      for (const focused of [true, false]) {
+        for (const state of ["idle", "working", "finished-unseen", "failed"] as const) {
+          expect(lifecycleChrome(state, focused, hue, keyworkNight).borderColor).toBe(
+            paneBorder(keyworkNight, t, focused),
+          );
+        }
+      }
+    }
+  });
+
+  it("grounds only needs-you, in the pane's own hue with background ink", () => {
+    for (const state of states) {
+      const chrome = lifecycleChrome(state, false, ramp[1] as string, keyworkNight);
+      if (state === "needs-you") {
+        expect(chrome.labelGround).toBe(ramp[1]);
+        expect(chrome.labelInk).toBe(keyworkNight.background);
+      } else {
+        expect(chrome.labelGround).toBeUndefined();
+      }
+    }
+  });
+
+  it("lifts saturation only on needs-you, holding luminance so focus stays unambiguous", () => {
+    for (const t of positions) {
+      const hue = rampColor(ramp, t);
+      for (const focused of [true, false]) {
+        const rested = hexToOklch(lifecycleChrome("idle", focused, hue, keyworkNight).borderColor);
+        const warmed = hexToOklch(
+          lifecycleChrome("needs-you", focused, hue, keyworkNight).borderColor,
+        );
+        expect(Math.abs(warmed.l - rested.l)).toBeLessThan(0.02);
+        expect(warmed.c).toBeGreaterThanOrEqual(rested.c - 0.005);
+        if (!focused) expect(warmed.c - rested.c).toBeGreaterThan(0.02);
+      }
+    }
+  });
+
+  it("steps the quiet states' name ink and leaves failed in outcome ink", () => {
+    const hue = ramp[2] as string;
+    expect(lifecycleChrome("idle", false, hue, keyworkNight).labelInk).toBe(keyworkNight.textMid);
+    expect(lifecycleChrome("idle", true, hue, keyworkNight).labelInk).toBe(
+      paneBorder(keyworkNight, 1, true),
+    );
+    expect(lifecycleChrome("finished-unseen", false, hue, keyworkNight).labelInk).toBe(
+      keyworkNight.text,
+    );
+    expect(lifecycleChrome("failed", false, hue, keyworkNight).labelInk).toBe(keyworkNight.error);
+  });
+
+  it("keeps the inverted label readable on both grounds", () => {
+    for (const theme of [keyworkNight, firstLight]) {
+      for (const t of positions) {
+        const chrome = lifecycleChrome("needs-you", false, rampColor(theme.ramp, t), theme);
+        expect(Math.abs(apcaLc(chrome.labelInk, chrome.labelGround as string))).toBeGreaterThan(40);
+      }
+    }
+  });
+});
+
+describe("saturationLift", () => {
+  it("keeps luminance and takes the target hue with at least the target chroma", () => {
+    const lifted = hexToOklch(saturationLift(keyworkNight.border, keyworkNight.ramp[2] as string));
+    const from = hexToOklch(keyworkNight.border);
+    const target = hexToOklch(keyworkNight.ramp[2] as string);
+    expect(Math.abs(lifted.l - from.l)).toBeLessThan(0.02);
+    expect(lifted.c).toBeGreaterThanOrEqual(Math.min(target.c, lifted.c));
+    expect(Math.abs(lifted.h - target.h)).toBeLessThan(2);
+  });
+
+  it("leaves an already saturated color where it stands", () => {
+    const hue = keyworkNight.ramp[0] as string;
+    expect(saturationLift(hue, hue)).toBe(hue);
   });
 });

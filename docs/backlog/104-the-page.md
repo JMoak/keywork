@@ -140,10 +140,9 @@
   as scroll map) as C40 renders for Jordan's pick.
 - **C66 (1pt): slug display grammar**, partial ✅ 2026-08-21: `tui/slug.ts` is the one
   renderer (`slugParts` → lit words, `textDim` separators, `accentSoft` colon;
-  `slugWords` → human words), applied to overview rows and the masthead. **Constraint of
-  record:** OpenTUI's border `title` is a single-color string, so the title-bar rung
-  waits on keywork drawing its own top border (or an upstream styled title); left
-  honest rather than faked.
+  `slugWords` → human words), applied to overview rows and the masthead. **Constraint of record** (closed 2026-08-30, 113 W2): OpenTUI's border `title` was a
+  single-color string; keywork now composes its own title row through C69, and the
+  title-bar rung renders through `slugParts` there.
 - **C55** gauge half ✅ 2026-08-21: the title-bar telemetry zone now carries the context gauge
   beside cost (`session-1 · ▒ 1.6k · $0.01`), the masthead status line carries it too; see
   [`109-long-session-survivability.md`](109-long-session-survivability.md) for the ledger and the open options round.

@@ -1,17 +1,18 @@
 import { Box, Text } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
 import { type GlyphSupport, resolveMark } from "../capability.ts";
-import { paneBorder, rampPositions } from "../chroma.ts";
+import { lifecycleChrome, rampColor, rampPositions } from "../chroma.ts";
 import type { Flavor } from "../flavor.ts";
 import { fullRect, type Rect, type Screen } from "../geometry.ts";
 import { pinMark } from "../marks.ts";
-import type { ChromeWeight, PaneView } from "../pane.ts";
-import { isSeamed, paneContentHeight, paneContentWidth } from "../pane-chrome.ts";
+import type { ChromeWeight, LifecycleState, PaneView } from "../pane.ts";
+import { hasHeaderRow, isSeamed, paneContentHeight, paneContentWidth } from "../pane-chrome.ts";
+import { drawnRect } from "../pane-geometry.ts";
 import type { Theme } from "../theme.ts";
 import {
   anchorOutline,
   fieldOf,
-  innerRect,
+  framedByOutline,
   onOutline,
   type SeamCell,
   type SeamField,
@@ -26,9 +27,13 @@ export const pointerPlaneId = "pointer-plane";
 export const idleMainId = "idle-main";
 const pointerPlaneZIndex = 1000;
 
+export type FocusOutline = "frame" | "grid";
+
 export interface FrameInputs extends StatusBarInputs {
   screen: Screen;
   chrome: ChromeWeight;
+  gap: number;
+  focusOutline?: FocusOutline;
   instruments: Flavor["instruments"];
   glyphs: GlyphSupport;
   arcOf(paneId: string): string | undefined;
@@ -111,29 +116,30 @@ function body(core: AppCore, inputs: FrameInputs) {
   const seamed = isSeamed(inputs.chrome);
   const inset = frameInset(inputs.chrome);
   const layoutField = fullRect(screen);
-  const drawn = (rect: Rect): Rect => shifted(seamed ? innerRect(rect, layoutField) : rect, inset);
+  const drawn = (rect: Rect): Rect => shifted(drawnRect(rect, layoutField, inputs), inset);
+  const hueOf = (id: string): string => rampColor(theme.ramp, sweep.get(id) ?? 0);
   return Box(
     { width: screen.width + 2 * inset, height: screen.height + 2 * inset },
     ...[...rects].map(([id, rect]) =>
-      placedBox(
-        drawn(rect),
-        paneViewFor(core, inputs, id, drawn(rect), id === focused, sweep.get(id) ?? 0),
-      ),
+      placedBox(drawn(rect), paneViewFor(core, inputs, id, drawn(rect), id === focused, hueOf(id))),
     ),
-    ...(idleMain === undefined ? [] : [placedBox(drawn(idleMain), idleMainView(theme, seamed))]),
+    ...(idleMain === undefined
+      ? []
+      : [placedBox(drawn(idleMain), idleMainView(theme, hasHeaderRow(inputs.chrome)))]),
     ...(seamed
-      ? [seamsLayer(inputs, rects, idleMain, focused, sweep, inset, core.leaderArmed)]
+      ? [seamsLayer(core, inputs, rects, idleMain, focused, hueOf, inset, core.leaderArmed)]
       : []),
     ...(dropPreview === undefined ? [] : [dropPreviewBox(shifted(dropPreview, inset), theme)]),
   );
 }
 
 function seamsLayer(
+  core: AppCore,
   inputs: FrameInputs,
   rects: ReadonlyMap<string, Rect>,
   idleMain: Rect | undefined,
   focused: string | undefined,
-  sweep: ReadonlyMap<string, number>,
+  hueOf: (id: string) => string,
   inset: number,
   navigating: boolean,
 ) {
@@ -147,17 +153,29 @@ function seamsLayer(
   const field: SeamField = fieldOf(viewport, inset);
   const anchored = focused === undefined ? undefined : framed.get(focused);
   const outline = anchored === undefined ? undefined : anchorOutline(anchored, field.field);
+  const outlineOf = (id: string, isFocused: boolean): string =>
+    lifecycleChrome(lifecycleOf(core, id), isFocused, hueOf(id), theme).borderColor;
   const ink = (cell: SeamCell): string => {
     if (navigating && cell.ring) return theme.accent;
     if (focused !== undefined && outline !== undefined && onOutline(cell, outline)) {
-      return paneBorder(theme, sweep.get(focused) ?? 0, true);
+      return outlineOf(focused, true);
     }
     if (cell.ring) return theme.border;
-    const hue = cell.owner === undefined ? undefined : sweep.get(cell.owner);
-    return hue === undefined ? theme.border : paneBorder(theme, hue, false);
+    return cell.owner === undefined || !rects.has(cell.owner)
+      ? theme.border
+      : outlineOf(cell.owner, false);
   };
   const stroke = (cell: SeamCell): StrokeWeight => (navigating && cell.ring ? "heavy" : "light");
-  return seamsView(seamCells(framed, field), ink, inputs.glyphs, stroke);
+  const cells = seamCells(framed, field);
+  const framedCells =
+    outline === undefined || inputs.focusOutline === "grid"
+      ? cells
+      : framedByOutline(cells, outline, (cell) => !(navigating && cell.ring));
+  return seamsView(framedCells, ink, inputs.glyphs, stroke);
+}
+
+function lifecycleOf(core: AppCore, id: string): LifecycleState {
+  return core.panes.get(id)?.lifecycle?.() ?? "idle";
 }
 
 function shifted(rect: Rect, inset: number): Rect {
@@ -170,7 +188,7 @@ function paneViewFor(
   id: string,
   rect: Rect,
   focused: boolean,
-  rampPosition: number,
+  hue: string,
 ): PaneView {
   const { theme, chrome } = inputs;
   if (paneContentWidth({ ...rect, chrome }) < 1 || paneContentHeight({ ...rect, chrome }) < 1) {
@@ -183,7 +201,8 @@ function paneViewFor(
     height: rect.height,
     chrome: inputs.chrome,
     costs: core.costsShown,
-    borderColor: paneBorder(theme, rampPosition, focused),
+    hue,
+    glyphs: inputs.glyphs,
     instruments: inputs.instruments,
     ...(core.layout.pinned(id) && { pinMark: resolveMark(pinMark, inputs.glyphs) }),
   });
@@ -220,14 +239,14 @@ function dropPreviewBox(rect: Rect, theme: Theme) {
   });
 }
 
-function idleMainView(theme: Theme, seamed: boolean) {
+function idleMainView(theme: Theme, bare: boolean) {
   return Box(
     {
       flexGrow: 1,
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      ...(!seamed && { border: true, borderStyle: "rounded", borderColor: theme.border }),
+      ...(!bare && { border: true, borderStyle: "rounded", borderColor: theme.border }),
       overflow: "hidden",
     },
     Text({ content: "· main ·", fg: theme.textDim }),

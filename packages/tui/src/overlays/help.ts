@@ -1,3 +1,4 @@
+import { bindingHelp } from "../app-actions.ts";
 import { clampScroll } from "../clamp.ts";
 import type { Screen } from "../geometry.ts";
 import type { Keymap } from "../keymap.ts";
@@ -10,11 +11,23 @@ export interface HelpSeams {
   screen(): Screen;
 }
 
+export interface HelpRow {
+  readonly keys: string;
+  readonly help: string;
+}
+
 export interface HelpPage {
-  actions: readonly string[];
+  rows: readonly HelpRow[];
   above: number;
   below: number;
 }
+
+export const promptKeys: readonly HelpRow[] = [
+  { keys: "enter", help: "send · queues behind a running turn" },
+  { keys: "alt+enter", help: "steer · interrupts the turn and sends now" },
+  { keys: "shift+enter", help: "newline in the prompt" },
+  { keys: "esc", help: "interrupt the running turn" },
+];
 
 export class HelpOverlay extends RowOverlay {
   readonly kind = "help" as const;
@@ -32,17 +45,25 @@ export class HelpOverlay extends RowOverlay {
   }
 
   rowCount(): number {
-    return this.keymap.actions().length;
+    return this.rows().length;
+  }
+
+  rows(): HelpRow[] {
+    const bound = this.keymap.actions().map((action) => ({
+      keys: this.keymap.describe(action) ?? "",
+      help: bindingHelp[action] ?? action,
+    }));
+    return [...bound, ...promptKeys];
   }
 
   page(screen: Screen): HelpPage {
-    const actions = this.keymap.actions();
+    const rows = this.rows();
     const room = panelRowRoom(this.frame(screen));
-    const top = clampScroll(this.top, actions.length, room);
+    const top = clampScroll(this.top, rows.length, room);
     return {
-      actions: actions.slice(top, top + room),
+      rows: rows.slice(top, top + room),
       above: top,
-      below: Math.max(0, actions.length - top - room),
+      below: Math.max(0, rows.length - top - room),
     };
   }
 
@@ -61,7 +82,7 @@ export class HelpOverlay extends RowOverlay {
       this.scrollBy(direction === "down" ? delta : -delta);
       return;
     }
-    routeRows(event, this.frame(screen), this.page(screen).actions.length, this);
+    routeRows(event, this.frame(screen), this.page(screen).rows.length, this);
   }
 
   click(): void {}

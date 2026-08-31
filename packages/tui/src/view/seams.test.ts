@@ -4,8 +4,10 @@ import type { Rect, Screen } from "../geometry.ts";
 import {
   anchorOutline,
   fieldOf,
+  framedByOutline,
   innerRect,
   onOutline,
+  outlineJoints,
   type SeamCell,
   type StrokeWeight,
   seamCells,
@@ -260,5 +262,167 @@ describe("seamsView", () => {
       { left: 2, top: 2, content: "│", fg: "#focus" },
       { left: 2, top: 3, content: "│", fg: "#focus" },
     ]);
+  });
+});
+
+describe("the focus outline drawn as a frame", () => {
+  const grid = new Map([
+    ["tl", rect(1, 1, 3, 2)],
+    ["tr", rect(4, 1, 3, 2)],
+    ["bl", rect(1, 3, 3, 2)],
+    ["br", rect(4, 3, 3, 2)],
+  ]);
+  const screen = { width: 8, height: 6 };
+
+  function framedPicture(anchored: Rect, glyphs = tier1, navigating = false): string[] {
+    const rows = Array.from({ length: screen.height }, () => Array(screen.width).fill(" "));
+    const field = fieldOf(screen, 1);
+    const outline = anchorOutline(anchored, field.field);
+    const cells = framedByOutline(
+      seamCells(grid, field),
+      outline,
+      (cell) => !(navigating && cell.ring),
+    );
+    const ring = new Set(cells.filter((cell) => cell.ring).map((cell) => `${cell.x},${cell.y}`));
+    const ringAt = (x: number, y: number) => ring.has(`${x},${y}`);
+    for (const { x, y, joints, ring: onRing } of cells) {
+      const heavy =
+        navigating && onRing
+          ? {
+              up: joints.up && ringAt(x, y - 1),
+              down: joints.down && ringAt(x, y + 1),
+              left: joints.left && ringAt(x - 1, y),
+              right: joints.right && ringAt(x + 1, y),
+            }
+          : undefined;
+      (rows[y] as string[])[x] = seamGlyph(joints, glyphs, heavy);
+    }
+    return rows.map((row) => row.join(""));
+  }
+
+  it("closes the outline with its own corners and lets the grid stop flush against it", () => {
+    expect(framedPicture(rect(1, 1, 3, 2))).toEqual([
+      "╭──╮───╮",
+      "│  │   │",
+      "╰──╯───┤",
+      "│  │   │",
+      "│  │   │",
+      "╰──┴───╯",
+    ]);
+    expect(framedPicture(rect(4, 3, 3, 2))).toEqual([
+      "╭──┬───╮",
+      "│  │   │",
+      "├──╭───╮",
+      "│  │   │",
+      "│  │   │",
+      "╰──╰───╯",
+    ]);
+  });
+
+  it("gives every outline cell only the outline's joints", () => {
+    const outline = rect(2, 2, 4, 3);
+    const joints = (up: boolean, down: boolean, left: boolean, right: boolean) => ({
+      up,
+      down,
+      left,
+      right,
+    });
+    expect(outlineJoints({ x: 2, y: 2 }, outline)).toEqual(joints(false, true, false, true));
+    expect(outlineJoints({ x: 5, y: 4 }, outline)).toEqual(joints(true, false, true, false));
+    expect(outlineJoints({ x: 3, y: 2 }, outline)).toEqual(joints(false, false, true, true));
+    expect(outlineJoints({ x: 2, y: 3 }, outline)).toEqual(joints(true, true, false, false));
+  });
+
+  it("never draws an arm toward a cell that holds no line", () => {
+    const field = fieldOf(screen, 1);
+    for (const anchored of grid.values()) {
+      const outline = anchorOutline(anchored, field.field);
+      const cells = framedByOutline(seamCells(grid, field), outline);
+      const lined = new Set(cells.map((cell) => `${cell.x},${cell.y}`));
+      const onScreen = (x: number, y: number) =>
+        x >= 0 && y >= 0 && x < screen.width && y < screen.height;
+      for (const { x, y, joints } of cells) {
+        if (joints.up && onScreen(x, y - 1)) expect(lined.has(`${x},${y - 1}`)).toBe(true);
+        if (joints.down && onScreen(x, y + 1)) expect(lined.has(`${x},${y + 1}`)).toBe(true);
+        if (joints.left && onScreen(x - 1, y)) expect(lined.has(`${x - 1},${y}`)).toBe(true);
+        if (joints.right && onScreen(x + 1, y)) expect(lined.has(`${x + 1},${y}`)).toBe(true);
+      }
+    }
+  });
+
+  it("lets the armed ring keep its grid joints and heavy stroke where the outline meets it", () => {
+    expect(framedPicture(rect(1, 1, 3, 2), tier1, true)).toEqual([
+      "┏━━┯━━━┓",
+      "┃  │   ┃",
+      "┠──╯───┨",
+      "┃  │   ┃",
+      "┃  │   ┃",
+      "┗━━┷━━━┛",
+    ]);
+  });
+
+  it("degrades to ascii corners and keeps the plus junctions at tier 0", () => {
+    expect(framedPicture(rect(1, 1, 3, 2), tier0)).toEqual([
+      "+--+---+",
+      "|  |   |",
+      "+--+---+",
+      "|  |   |",
+      "|  |   |",
+      "+--+---+",
+    ]);
+  });
+});
+
+describe("per-arm stroke weights", () => {
+  const arms = (up: boolean, down: boolean, left: boolean, right: boolean) => ({
+    up,
+    down,
+    left,
+    right,
+  });
+  const none = arms(false, false, false, false);
+
+  it("thickens only the arms that carry a heavy line", () => {
+    const cross = arms(true, true, true, true);
+    expect(seamGlyph(cross, tier1, arms(false, false, true, true))).toBe("┿");
+    expect(seamGlyph(cross, tier1, arms(false, false, true, false))).toBe("┽");
+    expect(seamGlyph(arms(false, true, true, true), tier1, arms(false, false, true, true))).toBe(
+      "┯",
+    );
+    expect(seamGlyph(arms(false, true, true, true), tier1, arms(false, true, false, false))).toBe(
+      "┰",
+    );
+    expect(seamGlyph(arms(false, false, true, true), tier1, arms(false, false, true, false))).toBe(
+      "╾",
+    );
+    expect(seamGlyph(arms(false, true, false, true), tier1, arms(false, false, false, true))).toBe(
+      "┍",
+    );
+    expect(seamGlyph(arms(false, true, false, true), tier1, none)).toBe("╭");
+  });
+
+  it("covers every light and heavy arm combination", () => {
+    const bits = [false, true];
+    for (const up of bits) {
+      for (const down of bits) {
+        for (const left of bits) {
+          for (const right of bits) {
+            for (const heavyMask of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
+              const joints = arms(up, down, left, right);
+              const heavy = arms(
+                up && (heavyMask & 1) !== 0,
+                down && (heavyMask & 2) !== 0,
+                left && (heavyMask & 4) !== 0,
+                right && (heavyMask & 8) !== 0,
+              );
+              const glyph = seamGlyph(joints, tier1, heavy);
+              if (up || down || left || right) {
+                expect(glyph, JSON.stringify({ joints, heavy })).not.toBe(" ");
+              }
+            }
+          }
+        }
+      }
+    }
   });
 });

@@ -8,7 +8,7 @@ import {
   type PasteEvent,
 } from "@opentui/core";
 import { AppCore, type AppCoreOptions } from "./app-core.ts";
-import { arcIndexOf, firstArcIntroducer } from "./arc-index.ts";
+import { arcIndexOf, arcJumpCommands, firstArcIntroducer } from "./arc-index.ts";
 import { ArcPane } from "./arc-pane.ts";
 import type { ArcsPort } from "./arcs.ts";
 import { ArcsPane } from "./arcs-pane.ts";
@@ -33,14 +33,18 @@ import { FilePane } from "./file-pane.ts";
 import { type Flavor, FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
 import type { CheckpointsPort } from "./fork.ts";
 import { FrameCoalescer, type FrameScheduler } from "./frame-scheduler.ts";
+import { fullRect, type Rect, type Screen } from "./geometry.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import { chordOf } from "./keys.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+import type { DigestTreatment } from "./memory-rows.ts";
 import { Animator } from "./motion.ts";
 import type { PresetsPort } from "./overlays/index.ts";
 import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
+import type { PaneIntents } from "./pane.ts";
+import { drawnRect } from "./pane-geometry.ts";
 import type { PaneFactories } from "./pane-kinds.ts";
 import { pointerEventOf } from "./pointer.ts";
 import { loadRestorePlan, statKind, type WorkspacePort } from "./restore-plan.ts";
@@ -59,21 +63,25 @@ import type { ThemeOverrides } from "./theme.ts";
 import {
   appFrame,
   discardFrame,
+  type FocusOutline,
   type FrameInputs,
   frameInset,
   pointerPlane,
   screenWithin,
 } from "./view/frame.ts";
 import { overlayView } from "./view/overlays.ts";
+import { switchWorkspace } from "./workspace-commands.ts";
 import type { WorkspacesPort } from "./workspace-picker.ts";
 import { readinessNotice, type WorkspaceSetupPort } from "./workspace-setup.ts";
 import type { WorkspaceState } from "./workspace-state.ts";
+import { WorkspacesPane } from "./workspaces-pane.ts";
 
 export interface AppOptions {
   themeOverrides?: ThemeOverrides;
   flavors?: readonly Flavor[];
   page?: PageThresholdOverrides;
   glyphs?: GlyphSupport;
+  focusOutline?: FocusOutline;
   agentFactory?: AgentFactory;
   afterTurn?: AfterTurn;
   compact?: Compactor;
@@ -94,6 +102,8 @@ export interface AppOptions {
   workspaces?: WorkspacesPort;
   workspaceSetup?: WorkspaceSetupPort;
   memory?: MemoryPanePort;
+  memoryDigest?: DigestTreatment;
+  clock?: () => number;
   mcp?: McpPanePort;
   extensions?: ExtensionsPort;
 }
@@ -114,6 +124,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const introduceFirstArc = firstArcIntroducer((slug) => core.introduceArcPane(slug));
   const arcIndex = arcIndexOf(options.arcs, (listed) => {
     introduceFirstArc(listed);
+    sessions.resyncArcs();
     render();
   });
   const paneSessions = paneSessionIndex(options.sessions);
@@ -146,7 +157,12 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   let releaseFatalGuards: () => void = () => {};
   const core: AppCore = new AppCore({
     screen: () => screenWithin(renderer, flavors.active.chromeWeight),
-    ...paneFactories(options, sessions, trees, paneSessions, arcIndex),
+    drawnRect: (rect: Rect, screen: Screen) =>
+      drawnRect(rect, fullRect(screen), {
+        chrome: flavors.active.chromeWeight,
+        gap: flavors.active.gap,
+      }),
+    ...paneFactories(options, sessions, trees, paneSessions, arcIndex, () => core),
     ...hostPorts(options, sessions),
     ...(restore.kind === "restore" && { restoreWorkspace: restore.state }),
     ...(options.workspace !== undefined && {
@@ -182,8 +198,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         theme: flavors.theme,
         screen: screenWithin(renderer, flavors.active.chromeWeight),
         chrome: flavors.active.chromeWeight,
+        gap: flavors.active.gap,
         instruments: flavors.active.instruments,
         glyphs,
+        ...(options.focusOutline !== undefined && { focusOutline: options.focusOutline }),
         arcOrdinal: arcIndex.ordinalOf,
         arcOf: (id) => sessions.arcOf(id),
         label:
@@ -203,6 +221,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     }
   };
   registerHostCommands(core, options, sessions, flavors, render);
+  core.registry.addSource(() => arcJumpCommands(core, arcIndex.listed()));
   renderer.root.add(pointerPlane());
   wireInput(renderer, core, contain, render, () => frameInset(flavors.active.chromeWeight));
   releaseFatalGuards = installFatalGuards({
@@ -237,8 +256,9 @@ function paneFactories(
   trees: SessionTreePort | undefined,
   paneSessions: ReturnType<typeof paneSessionIndex>,
   arcIndex: ReturnType<typeof arcIndexOf>,
+  core: () => AppCore,
 ): PaneFactories {
-  const { arcs, memory, mcp } = options;
+  const { arcs, memory, mcp, workspaces } = options;
   return {
     createPane: sessions.createPane,
     createFilePane: (id, path, notify, fileOptions) =>
@@ -279,11 +299,31 @@ function paneFactories(
           intents,
           focusedArc: () => sessions.focused()?.pane.arc,
           arcOrdinal: arcIndex.ordinalOf,
+          ...(options.memoryDigest !== undefined && { digestTreatment: options.memoryDigest }),
+          ...(options.clock !== undefined && { now: options.clock }),
+          ...(options.arcs?.subscribe !== undefined && { subscribe: options.arcs.subscribe }),
           ...(revival !== undefined && { revival: { lens: "garden", ...revival } }),
         }),
     }),
     ...(mcp !== undefined && {
       createMcpPane: (id: string, notify: () => void) => new McpPane(id, notify, mcp),
+    }),
+    ...(workspaces !== undefined && {
+      createWorkspacesPane: (id: string, notify: () => void, intents: PaneIntents) =>
+        new WorkspacesPane(id, notify, intents, {
+          workspaces,
+          liveTurns: () => sessions.busyCount(),
+          switchTo: (slug) =>
+            switchWorkspace(
+              {
+                workspaces,
+                notice: (text) => core().postNotice(text),
+                shutdown: () => core().shutdown(),
+              },
+              slug,
+            ),
+          ...(options.clock !== undefined && { now: options.clock }),
+        }),
     }),
   };
 }

@@ -139,6 +139,7 @@ describe("sessionPort", () => {
     await created?.bindArc?.("dock-v2");
     await created?.bindArc?.("dock-v2");
     expect(bound).toEqual([[created?.id, "dock-v2"]]);
+    expect(created?.arc).toBe("dock-v2");
 
     const reopened = await port.open(created?.id ?? "");
     expect(reopened?.arc).toBe("dock-v2");

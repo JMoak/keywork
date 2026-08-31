@@ -58,6 +58,13 @@ describe("screenWithin", () => {
     expect(screenWithin({ width: 120, height: 40 }, "seams")).toEqual({ width: 118, height: 37 });
   });
 
+  it("draws no ring in the borderless weight", () => {
+    expect(screenWithin({ width: 120, height: 40 }, "borderless")).toEqual({
+      width: 120,
+      height: 39,
+    });
+  });
+
   it("never goes negative on a tiny terminal", () => {
     expect(screenWithin({ width: 1, height: 1 }, "regular")).toEqual({ width: 1, height: 0 });
     expect(screenWithin({ width: 1, height: 1 }, "seams")).toEqual({ width: 0, height: 0 });

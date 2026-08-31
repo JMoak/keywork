@@ -126,6 +126,7 @@ export interface AgentBuildSpec {
 export interface AgentComposition {
   build(spec: AgentBuildSpec): Agent;
   flushFor(sessionId: string, provider: Provider): MemoryFlush | undefined;
+  flushOf(sessionId: string): MemoryFlush | undefined;
   release(sessionId: string): void;
 }
 
@@ -153,6 +154,7 @@ export function composeAgents(
       flushes.set(sessionId, flush);
       return flush;
     },
+    flushOf: (sessionId) => flushes.get(sessionId),
     release: (sessionId) => {
       flushes.delete(sessionId);
       providers.delete(sessionId);

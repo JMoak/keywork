@@ -11,9 +11,22 @@ const frame = [
   "╰──────────────────────────────────────────╯",
 ].join("\n");
 
+const seamed = [
+  "╭───────────────────┬──────────────────────╮",
+  "│ session tree      │ ▪ session-1          │",
+  "│ ░ no sessions yet │ › session-2 said hi  │",
+  "├───────────────────┼──────────────────────┤",
+  "│ ░ session-2       │ █ session-12         │",
+  "╰───────────────────┴──────────────────────╯",
+].join("\n");
+
 describe("paneTitleCount", () => {
   it("counts session pane title rows, with or without a gauge glyph", () => {
     expect(paneTitleCount(frame)).toBe(3);
+  });
+
+  it("counts seams header rows the same way, pin mark and stamp included", () => {
+    expect(paneTitleCount(seamed)).toBe(3);
   });
 
   it("ignores session names mentioned in transcript text and the tree title", () => {

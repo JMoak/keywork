@@ -17,7 +17,7 @@ export interface SessionAttachment {
   id: string;
   name?: string;
   modelReference?: string;
-  arc?: string;
+  arc?: string | undefined;
   history: readonly Message[];
   replay(bus: Agent["bus"]): void;
   append(message: Message): Promise<AppendReceipt | undefined>;
