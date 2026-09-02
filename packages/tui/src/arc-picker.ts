@@ -1,7 +1,7 @@
 import { type ArcSummary, activeFirst, isArcSlug } from "./arcs.ts";
 import { FilterPicker } from "./filter-picker.ts";
 import { rankByFuzzy } from "./picker-keys.ts";
-import { pluralize } from "./pluralize.ts";
+import { sessionsFact } from "./pluralize.ts";
 
 export type ArcPickerRow = { kind: "release" } | ArcRow | { kind: "create"; slug: string };
 
@@ -79,8 +79,4 @@ function createRow(arcs: readonly ArcSummary[], needle: string): ArcPickerRow[] 
   if (needle === "" || !isArcSlug(needle)) return [];
   if (arcs.some((arc) => arc.slug === needle)) return [];
   return [{ kind: "create", slug: needle }];
-}
-
-function sessionsFact(count: number): string {
-  return count === 0 ? "no sessions" : pluralize(count, "session");
 }

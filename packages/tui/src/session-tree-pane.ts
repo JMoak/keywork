@@ -32,7 +32,7 @@ import {
   type SessionPresence,
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
-import { slugChunks, slugInk } from "./slug.ts";
+import { slugChunks, slugInk } from "./slug-ink.ts";
 import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
 

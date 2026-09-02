@@ -78,7 +78,7 @@ export interface ConversationPaneOptions {
   elevation?: TranscriptElevation;
 }
 
-export type TranscriptElevation = "arc-stamps" | "turn-age" | "scroll-map";
+export type TranscriptElevation = "arc-stamps" | "turn-age" | "scroll-map" | "chrome";
 
 export class ConversationPane implements Pane {
   readonly model: ConversationModel;
@@ -219,12 +219,12 @@ export class ConversationPane implements Pane {
     this.model.postNotice(text);
   }
 
-  liveStatus(context: Pick<PaneContext, "instruments" | "costs">): string {
+  liveStatus(context: Partial<Pick<PaneContext, "instruments" | "costs" | "focused">>): string {
     return [
       this.workSegment(),
       this.model.pendingAsk === undefined ? "" : "needs you",
       queuedSegment(this.model.queued().length),
-      this.contextSegment(context.instruments ?? "calm"),
+      this.contextSegment(context.instruments ?? "calm", context.focused !== false),
       context.costs === true ? this.model.usageSummary() : "",
       this.unseen === "failed" ? "failed" : "",
     ]
@@ -240,7 +240,7 @@ export class ConversationPane implements Pane {
     return elapsed === undefined ? doing : `${doing} · ${elapsedLabel(elapsed)}`;
   }
 
-  private contextSegment(instruments: InstrumentTier): string {
+  private contextSegment(instruments: InstrumentTier, focused: boolean): string {
     const reading = this.model.contextReading();
     if (reading === undefined) return "";
     const significant =
@@ -249,7 +249,7 @@ export class ConversationPane implements Pane {
       reading.used * 2 >= reading.flushAt;
     if (!significant) return "";
     return contextGauge(reading, {
-      style: this.gaugeOverride ?? gaugeStyleFor(instruments),
+      style: this.gaugeOverride ?? gaugeStyleFor(instruments, focused),
       glyphs: this.glyphs,
     });
   }
@@ -377,6 +377,7 @@ export class ConversationPane implements Pane {
       state: this.lifecycle(),
       arrival: this.arrivalInk,
       groundArrival: this.groundInk,
+      depth: this.chromeDepth(),
     };
   }
 
@@ -495,12 +496,13 @@ export class ConversationPane implements Pane {
       this.composedTitle(context),
       Box(
         { flexGrow: 1, flexDirection: "column", overflow: "hidden" },
-        ...head.lines.map((line, row) =>
-          Text({
-            content: line || " ",
-            fg: mastheadInk(context, this.lifecycle(), row, head.lines.length),
-          }),
-        ),
+        ...head.lines.map((line, row) => {
+          const ink = mastheadInk(context, this.lifecycle(), row, head.lines.length);
+          const spans = head.dim[row] ?? [];
+          return spans.length === 0
+            ? Text({ content: line || " ", fg: ink })
+            : Text({ content: alternatedLetters(line, spans, ink, theme.background) });
+        }),
         Text({
           content: clip(this.mastheadStatus(context), innerWidth),
           fg: theme.textMid,
@@ -622,7 +624,16 @@ export class ConversationPane implements Pane {
         return { bodyInk: this.agedInk(context.theme, line) };
       case "scroll-map":
         return this.scrollMapTint(context.theme, lines.length, row);
+      case "chrome":
+        return undefined;
     }
+  }
+
+  private chromeDepth(): number | undefined {
+    if (this.elevation !== "chrome") return undefined;
+    const reading = this.model.contextReading();
+    if (reading === undefined || reading.window === 0) return undefined;
+    return Math.min(1, reading.used / reading.window);
   }
 
   private agedInk(theme: Theme, line: TranscriptLine): string {
@@ -789,6 +800,28 @@ function mastheadInk(
   const hue = paneInks(context, { state }).borderColor;
   const depth = rows <= 1 ? 1 : row / (rows - 1);
   return rampColor([hue, context.theme.text], depth);
+}
+
+const alternatedDimBlend = 0.35;
+
+function alternatedLetters(
+  line: string,
+  spans: ReadonlyArray<readonly [number, number]>,
+  ink: string,
+  ground: string,
+): StyledText {
+  const dim = rampColor([ink, ground], alternatedDimBlend);
+  const chunks: TextChunk[] = [];
+  let at = 0;
+  for (const [from, to] of spans) {
+    const start = Math.min(from, line.length);
+    const end = Math.min(to, line.length);
+    if (start > at) chunks.push(fg(ink)(line.slice(at, start)));
+    if (end > start) chunks.push(fg(dim)(line.slice(start, end)));
+    at = Math.max(at, end);
+  }
+  if (at < line.length) chunks.push(fg(ink)(line.slice(at)));
+  return new StyledText(chunks.length === 0 ? [fg(ink)(" ")] : chunks);
 }
 
 const busyPromptHint = "enter queues · alt+enter steers · esc interrupts";

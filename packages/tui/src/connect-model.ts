@@ -1,4 +1,5 @@
 import { isLoopbackEndpoint } from "@keywork/engine";
+import { toError } from "@keywork/shared";
 import type {
   ConnectionDraft,
   ConnectionsPort,
@@ -345,7 +346,7 @@ export class ConnectModel {
           this.stage = { kind: "removed", receipt };
           this.hooks.notice(`removed ${receipt.removed.join(" and ")}`);
         })
-        .catch((cause: unknown) => this.hooks.notice((cause as Error).message))
+        .catch((cause: unknown) => this.hooks.notice(toError(cause).message))
         .finally(() => this.hooks.notify());
       return "stay";
     }
@@ -492,7 +493,7 @@ export class ConnectModel {
       this.stage = { kind: "receipt", draft, models: verification.models, at: verification.at };
     } catch (cause) {
       if (!abandoned()) this.stage = stage;
-      this.hooks.notice((cause as Error).message);
+      this.hooks.notice(toError(cause).message);
     } finally {
       this.hooks.notify();
     }

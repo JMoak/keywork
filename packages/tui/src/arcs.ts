@@ -1,4 +1,5 @@
 import { type ArcRecord, type ArcStatus, kebabTitle, validateArcSlug } from "@keywork/engine";
+import { toError } from "@keywork/shared";
 import { arcAnchor } from "./chroma.ts";
 import { pluralize } from "./pluralize.ts";
 import type { Theme } from "./theme.ts";
@@ -93,7 +94,7 @@ export function arcSlugProblem(candidate: string): string | undefined {
     validateArcSlug(candidate);
     return undefined;
   } catch (cause) {
-    return (cause as Error).message;
+    return toError(cause).message;
   }
 }
 

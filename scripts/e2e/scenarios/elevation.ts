@@ -12,7 +12,7 @@ const firstReply = [
 
 const secondReply = "Zooming holds the ratios; the tile returns exactly where it left.";
 
-type Candidate = "arc-stamps" | "turn-age" | "scroll-map";
+type Candidate = "arc-stamps" | "turn-age" | "scroll-map" | "chrome";
 
 function elevationScenario(candidate: Candidate): Scenario {
   return {
@@ -45,5 +45,6 @@ function elevationScenario(candidate: Candidate): Scenario {
 }
 
 export const elevationArcStamps = elevationScenario("arc-stamps");
+export const elevationChrome = elevationScenario("chrome");
 export const elevationTurnAge = elevationScenario("turn-age");
 export const elevationScrollMap = elevationScenario("scroll-map");

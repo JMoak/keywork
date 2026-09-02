@@ -42,7 +42,7 @@ export {
   type PromptOverride,
   type PromptsConfig,
 } from "./schema.ts";
-export { isSlug, slugGrammar, slugProblem } from "./slug.ts";
+export { isReservedDeviceName, isSlug, slugGrammar, slugProblem } from "./slug.ts";
 export {
   openWorkspace,
   resolveAnchor,

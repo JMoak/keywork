@@ -221,3 +221,26 @@ describe("workspace doctor rows", () => {
     expect(facts.trusted).toBe(false);
   });
 });
+
+describe("crash log section", () => {
+  it("renders the recorded crashes with their path", () => {
+    const { rows } = doctorReport(
+      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
+      undefined,
+      { crashLog: { path: "C:/logs/tui-crash.log", entries: 2, lastAt: "2026-09-01T00:00:00Z" } },
+    );
+    expect(rows.slice(-2)).toEqual([
+      { label: "crash log", value: "2 crashes recorded · last 2026-09-01T00:00:00Z" },
+      { label: "", value: "C:/logs/tui-crash.log" },
+    ]);
+  });
+
+  it("says none recorded for an empty log", () => {
+    const { rows } = doctorReport(
+      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
+      undefined,
+      { crashLog: { path: "C:/logs/tui-crash.log", entries: 0 } },
+    );
+    expect(rows.at(-1)).toEqual({ label: "crash log", value: "none recorded" });
+  });
+});

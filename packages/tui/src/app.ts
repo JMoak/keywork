@@ -19,7 +19,7 @@ import type { Titler } from "./conversation-model.ts";
 import type { TranscriptElevation } from "./conversation-pane.ts";
 import {
   crashLogFile,
-  doctorCommand,
+  doctorCommands,
   installFatalGuards,
   recordCrash,
   recoveredNotice,
@@ -88,6 +88,7 @@ export interface AppOptions {
   dim?: "on" | "off";
   gauge?: GaugeStyle;
   elevation?: TranscriptElevation;
+  doctorReport?: () => Promise<string>;
   gardenHeat?: GardenHeat;
   flavors?: readonly Flavor[];
   page?: PageThresholdOverrides;
@@ -398,14 +399,16 @@ function registerHostCommands(
   render: () => void,
 ): void {
   const notice = (text: string): void => core.postNotice(text);
-  core.registry.register(
-    doctorCommand({
-      logFile: crashLogFile,
-      exists: (path) => statKind(path)?.isFile() === true,
-      openFile: core.intents.openFile,
-      notice,
-    }),
-  );
+  for (const command of doctorCommands({
+    logFile: crashLogFile,
+    exists: (path) => statKind(path)?.isFile() === true,
+    openFile: core.intents.openFile,
+    notice,
+    ...(options.doctorReport !== undefined && { report: options.doctorReport }),
+    post: (text) => sessions.postNotice(text),
+  })) {
+    core.registry.register(command);
+  }
   registerFlavorCommands(core.registry, flavors, { repaint: render, notice });
   const extensions = options.extensions;
   if (extensions === undefined) return;

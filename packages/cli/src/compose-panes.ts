@@ -21,6 +21,9 @@ import {
   type AgentFactory,
   type AppOptions,
   type Compactor,
+  crashLogFacts,
+  crashLogFile,
+  detectCapabilities,
   type ExtensionsPort,
   readinessNotice,
   runApp,
@@ -221,6 +224,18 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     ...(config.tips !== undefined && { tips: config.tips }),
     ...(config.scrim !== undefined && { scrim: config.scrim }),
     ...(config.dim !== undefined && { dim: config.dim }),
+    doctorReport: async () => {
+      const { doctorReport, renderDoctorReport, workspaceDoctorFacts } = await import(
+        "./doctor.ts"
+      );
+      const facts = await workspaceDoctorFacts(cwd, projectTrusted, config);
+      return renderDoctorReport(
+        doctorReport(detectCapabilities(), options.inference?.current().runtime.registry, {
+          ...facts,
+          crashLog: crashLogFacts(crashLogFile),
+        }),
+      );
+    },
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
     ...(projectTrusted && {

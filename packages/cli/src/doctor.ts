@@ -9,6 +9,7 @@ import type { KeyworkConfig, McpServerConfig } from "@keywork/shared";
 import {
   border,
   type CapabilityProfile,
+  type CrashLogFacts,
   density,
   detectCapabilities,
   resolveMark,
@@ -33,6 +34,7 @@ export interface DoctorFacts {
   repoMap?: RepoMapFacts;
   trusted?: boolean;
   mcpServers?: Record<string, McpServerConfig>;
+  crashLog?: CrashLogFacts;
 }
 
 export async function doctorCommand(
@@ -88,7 +90,19 @@ export function renderDoctorReport(report: DoctorReport): string {
 }
 
 function workspaceRows(facts: DoctorFacts): DoctorRow[] {
-  return [...repoMapRows(facts), ...mcpServerRows(facts.mcpServers)];
+  return [...repoMapRows(facts), ...mcpServerRows(facts.mcpServers), ...crashRows(facts.crashLog)];
+}
+
+function crashRows(crashLog: CrashLogFacts | undefined): DoctorRow[] {
+  if (crashLog === undefined) return [];
+  if (crashLog.entries === 0) return [{ label: "crash log", value: "none recorded" }];
+  const count =
+    crashLog.entries === 1 ? "1 crash recorded" : `${crashLog.entries} crashes recorded`;
+  const last = crashLog.lastAt === undefined ? "" : ` · last ${crashLog.lastAt}`;
+  return [
+    { label: "crash log", value: `${count}${last}` },
+    { label: "", value: crashLog.path },
+  ];
 }
 
 function repoMapRows(facts: DoctorFacts): DoctorRow[] {

@@ -1,3 +1,5 @@
+import { countOccurrences, toUnixEol } from "@keywork/shared";
+
 export interface DiffLine {
   kind: "add" | "del" | "context" | "hunk" | "note";
   text: string;
@@ -181,22 +183,6 @@ function splitLines(text: string): string[] {
   const lines = unix.split("\n");
   if (lines.at(-1) === "") lines.pop();
   return lines;
-}
-
-function toUnixEol(text: string): string {
-  return text.replaceAll("\r\n", "\n");
-}
-
-function countOccurrences(content: string, search: string): number {
-  let count = 0;
-  for (
-    let at = content.indexOf(search);
-    at !== -1;
-    at = content.indexOf(search, at + search.length)
-  ) {
-    count += 1;
-  }
-  return count;
 }
 
 function same(text: string): DiffOp {

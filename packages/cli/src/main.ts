@@ -352,13 +352,15 @@ async function runTrust(action: "trust" | "untrust", context: CommandContext): P
 
 async function runDoctor(context: CommandContext): Promise<number> {
   const { doctorCommand, workspaceDoctorFacts } = await import("./doctor.ts");
+  const { crashLogFacts, crashLogFile } = await import("@keywork/tui");
   return doctorCommand(
     { env: context.io.env, platform: process.platform },
     context.io.print,
     async () => (await context.openInference()).current().runtime.registry,
     async () => {
       const { config } = (await context.openInference()).current();
-      return workspaceDoctorFacts(context.cwd, context.projectTrusted, config);
+      const facts = await workspaceDoctorFacts(context.cwd, context.projectTrusted, config);
+      return { ...facts, crashLog: crashLogFacts(crashLogFile) };
     },
   );
 }

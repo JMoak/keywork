@@ -1,17 +1,25 @@
 import { fitTitle } from "@keywork/engine";
 import type { GlyphSupport } from "./capability.ts";
 import type { PageTier } from "./page.ts";
-import { slugWords } from "./slug.ts";
+import {
+  quadrantMeasure,
+  quadrantRasterize,
+  quadrantRowsPerLine,
+  quadrantSupports,
+} from "./quadrant-face.ts";
+import { slugWords } from "./slug-ink.ts";
 import { strokeMeasure, strokeRasterize, strokeRows, strokeSupports } from "./stroke-face.ts";
 import { width } from "./width.ts";
 
 export type HeadlineFace =
   | "stroke"
   | "half-block"
-  | "half-block-condensed"
+  | "quadrant"
   | "block"
   | "block-condensed"
   | "caps";
+
+export type DimSpan = readonly [number, number];
 
 export interface MastheadMoment {
   readonly tier: PageTier;
@@ -46,13 +54,14 @@ export interface Headline {
   readonly face: HeadlineFace;
   readonly words: string;
   readonly lines: readonly string[];
+  readonly dim: ReadonlyArray<readonly DimSpan[]>;
 }
 
 export function headline(slug: string, frame: HeadlineFrame): Headline {
   const local = withoutArc(slug);
   return (
     mostWordsSet(local, frame, blockFacesFor(wordsOf(local), frame)) ??
-    mostWordsSet(local, frame, [capsFace]) ?? { face: "caps", words: "", lines: [] }
+    mostWordsSet(local, frame, [capsFace]) ?? { face: "caps", words: "", lines: [], dim: [] }
   );
 }
 
@@ -73,14 +82,15 @@ function mostWordsSet(
 }
 
 function blockFacesFor(words: readonly string[], frame: HeadlineFrame): Face[] {
-  const { glyphTier } = frame.glyphs;
-  if (glyphTier < 1) return [];
-  const bitmapFaces =
-    glyphTier >= 2 ? [halfBlockFace, condensedHalfBlockFace] : [fullBlockFace, condensedBlockFace];
-  const strokeFaces = glyphTier >= 2 ? strokeScales.map(strokeFace) : [];
-  return [...strokeFaces, ...bitmapFaces].filter((face) =>
+  return facesAt(frame.glyphs).filter((face) =>
     words.every((word) => face.supports(word) && face.measure(word) <= frame.width),
   );
+}
+
+function facesAt(glyphs: GlyphSupport): Face[] {
+  if (glyphs.glyphTier < 1) return [];
+  if (glyphs.glyphTier >= 2) return [...strokeScales.map(strokeFace), halfBlockFace, quadrantFace];
+  return glyphs.colorDepth === "mono" ? [fullBlockFace] : [fullBlockFace, condensedBlockFace];
 }
 
 const strokeScales = [3, 2, 1] as const;
@@ -103,9 +113,20 @@ interface Face {
   supports(word: string): boolean;
   measure(word: string): number;
   rasterize(words: readonly string[]): string[];
+  dimSpans?(words: readonly string[]): readonly DimSpan[];
 }
 
+const quadrantFace: Face = {
+  name: "quadrant",
+  rowsPerLine: quadrantRowsPerLine,
+  wordGap: 3,
+  supports: quadrantSupports,
+  measure: quadrantMeasure,
+  rasterize: (words) => quadrantRasterize(words),
+};
+
 const bitmapRows = 5;
+const bitmapWordGap = 3;
 
 function setWords(
   words: readonly string[],
@@ -117,13 +138,20 @@ function setWords(
   if (lines === undefined) return undefined;
   const gaps = face.rowsPerLine > 1 ? lines.length - 1 : 0;
   if (lines.length * face.rowsPerLine + gaps > frame.rows) return undefined;
-  return {
-    face: face.name,
-    words: words.join(" "),
-    lines: lines.flatMap((line, index) =>
-      index === 0 || gaps === 0 ? face.rasterize(line) : ["", ...face.rasterize(line)],
-    ),
-  };
+  const rendered: string[] = [];
+  const dim: (readonly DimSpan[])[] = [];
+  lines.forEach((line, index) => {
+    if (index > 0 && gaps > 0) {
+      rendered.push("");
+      dim.push([]);
+    }
+    const spans = face.dimSpans?.(line) ?? [];
+    for (const row of face.rasterize(line)) {
+      rendered.push(row);
+      dim.push(spans);
+    }
+  });
+  return { face: face.name, words: words.join(" "), lines: rendered, dim };
 }
 
 function withoutArc(slug: string): string {
@@ -185,15 +213,12 @@ function renderHalfBlocks(rows: readonly string[]): string[] {
   return lines;
 }
 
-const halfBlockRows = Math.ceil(bitmapRows / 2);
-
 const fullBlockFace: Face = bitmapFace("block", bitmapRows, 1, renderFullBlocks);
 const condensedBlockFace: Face = bitmapFace("block-condensed", bitmapRows, 0, renderFullBlocks);
-const halfBlockFace: Face = bitmapFace("half-block", halfBlockRows, 1, renderHalfBlocks);
-const condensedHalfBlockFace: Face = bitmapFace(
-  "half-block-condensed",
-  halfBlockRows,
-  0,
+const halfBlockFace: Face = bitmapFace(
+  "half-block",
+  Math.ceil(bitmapRows / 2),
+  1,
   renderHalfBlocks,
 );
 
@@ -213,7 +238,7 @@ function bitmapFace(
   return {
     name,
     rowsPerLine,
-    wordGap: 3,
+    wordGap: bitmapWordGap,
     supports: (word) => Array.from(word.toUpperCase()).every((glyph) => glyph in bitmaps),
     measure: (word) => {
       const glyphs = Array.from(word.toUpperCase());
@@ -222,11 +247,26 @@ function bitmapFace(
     },
     rasterize: (words) => {
       const rows = Array.from({ length: bitmapRows }, (_, row) =>
-        words.map((word) => wordRow(word, row, glyphGap)).join(" ".repeat(3)),
+        words.map((word) => wordRow(word, row, glyphGap)).join(" ".repeat(bitmapWordGap)),
       );
       return render(rows).map((line) => line.trimEnd());
     },
+    ...(glyphGap === 0 && { dimSpans: alternateLetterSpans }),
   };
+}
+
+function alternateLetterSpans(words: readonly string[]): readonly DimSpan[] {
+  const spans: DimSpan[] = [];
+  let offset = 0;
+  words.forEach((word, index) => {
+    if (index > 0) offset += bitmapWordGap;
+    Array.from(word.toUpperCase()).forEach((glyph, at) => {
+      const cells = bitmapWidth(glyph);
+      if (at % 2 === 1) spans.push([offset, offset + cells]);
+      offset += cells;
+    });
+  });
+  return spans;
 }
 
 function wordRow(word: string, row: number, glyphGap: number): string {

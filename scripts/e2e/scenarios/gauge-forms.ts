@@ -19,7 +19,7 @@ function gaugeScenario(style: GaugeStyle, fills: readonly number[]): Scenario {
     app: { gauge: style, afterTurn: async () => undefined },
     goldens: fills.map((fill) => `fill-${fill}`),
     run: async (stage) => {
-      const gaugeLeadsTheHeader = / session-1 · [░▒▓█▖▌▙·]/;
+      const gaugeLeadsTheHeader = / session-1 · [░▒▓█▖▌▙·⡀-⣿]/;
       await stage.settle();
       await stage.press("ctrl+p");
       await stage.type("session tree");

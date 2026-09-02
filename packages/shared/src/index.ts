@@ -29,4 +29,5 @@ export {
   type PathKeyedStringStore,
   pathKeyedStringStore,
 } from "./json-file-store.ts";
+export { countOccurrences, toUnixEol } from "./text.ts";
 export * from "./trust/index.ts";

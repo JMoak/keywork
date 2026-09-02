@@ -391,6 +391,11 @@ Follow-up of record: unfocused-pane dimming and the idle-main tip slot, both one
 - **Tests.** +9; e2e +2 scenarios (`chrome-states-dim-{on,off}`, idle-main tip leg); zero
   pre-existing goldens recaptured.
 
+**CI flake fix (2026-09-02):** the first PowerShell shell-session test timed out at 20s on a
+cold `windows-latest` runner (Windows PowerShell 5.1 cold start under CI contention, not a
+hang; the suite passes locally in about 5s). A `beforeAll` warmup session now pays the cold
+start once, outside any assertion, so the per-test timeouts stay meaningful.
+
 **Wave-final gate (lead-run):** check clean, vitest 3204 passed / 1 skipped, e2e all scenarios
 green, zero comments and zero `any` across the wave's diffs.
 
@@ -520,3 +525,113 @@ W12 assumptions Jordan may reverse:
 2. Outcome inks (`success` / `error`) dim with everything else; needs-you stays loud.
 3. The tip shows on both idle surfaces.
 4. `dim` is app-level config like `scrim`, not flavor-carried, honored from any layer.
+
+### W13 · the medium rung remade · landed 2026-09-02 (uncommitted)
+
+Jordan's live read: the condensed masthead rung was borderline fuzzy. The defect was
+segmentation, not resolution: gap 0 fused adjacent 3-wide bitmaps into false ligatures.
+Two fixes landed, picked from rendered candidates.
+
+- **The quadrant face, the new tier-2 medium.** `quadrant-face.ts`: a purpose-drawn
+  5x6-subpixel font (`I` and `1` narrow at 3) rendered through the full 2x2 quadrant set,
+  one subpixel between letters, words joined at the cell level so every letter carves
+  identically at any position. `session` sets at 20 cells across 3 rows with real letter
+  gaps intact. Ladder of record at tier 2: stroke → half-block → quadrant → caps;
+  `half-block-condensed` is retired (the quadrant face is never wider, so the rung was
+  unreachable).
+- **Condensed ink alternation, the tier-1 medium.** `block-condensed` stays for tier 1:
+  `Headline` carries `dim` spans (every second letter), and the masthead view steps those
+  letters toward the ground (`alternatedDimBlend` 0.35), restoring boundaries at zero width
+  cost. Monochrome gate: `GlyphSupport` gains optional `colorDepth`; at `mono` the
+  condensed rung leaves the ladder entirely, since ink cannot separate what geometry fused.
+- **Goldens.** `masthead-ladder/ladder-condensed` became `ladder-quadrant`;
+  `focus-corners-{frame,grid}/{mid-edge-seam,nav-ring}` recaptured: the narrow panes'
+  digits recarve in quadrant, frames and seams byte-identical.
+
+W13 assumptions Jordan may reverse:
+
+1. Quadrant glyph coverage matches the bitmap faces (A-Z, 0-9); unsupported words still
+   fall to caps.
+2. The alternation blend is one constant (0.35 toward the ground); no config option.
+3. Quadrant charset (U+2596..259F) is assumed renderable wherever glyph tier 2 is detected;
+   if a live terminal draws them poorly, the reversal is one line in `facesAt`.
+
+**Gate after W13 (lead-run):** check clean, vitest 3211 passed / 1 skipped (222 files),
+e2e 36/36.
+
+### W13 follow-up · the gauge decided, elevation redirected · 2026-09-02 (uncommitted)
+
+- **Gauge picks (Jordan, 2026-09-02).** Round-two renders decided it: the rising steps are
+  the focused-pane gauge, and the twin tile becomes the unfocused-pane gauge as one combined
+  ladder (each cell climbs the braille dots, goes solid, and only then does the next cell
+  start; 18 sub-steps). The picks are now what `steps` and `tile` mean; `gaugeStyleFor`
+  resolves cockpit → `bar`, focused → `steps`, unfocused → `tile`, and `liveStatus` reads
+  focus from the pane context. Retired: the darkening steps, the zone tile, and the
+  `steps-rise` / `tile-quad` / `tile-fine` candidate styles, scenarios, and goldens;
+  `gauge-steps` and `gauge-tile` recaptured as the picked forms. The 109 options round on
+  C55 is closed.
+- **Quadrant face kept (Jordan, 2026-09-02):** confirmed from the round-one renders.
+- **Elevation redirected (Jordan, 2026-09-02):** the transcript-tint candidates step back;
+  the direction is coloring on the borders and title cells, arc-relative within the theme's
+  gradients. Candidate landed: `elevation: "chrome"` steps the calm resting label and border
+  along `[theme → arc hue]` by context fill (asks, failures, and finished-unseen outrank it);
+  scenario `elevation-chrome`, judged in the SVG artifact. Open dials if it ships: depth
+  source (context fill vs turn count) and how far toward the hue the ink may travel.
+
+W13 follow-up assumptions Jordan may reverse:
+
+1. Unfocused panes always wear the twin tile; width pressure was not made a separate trigger
+   (the tile is already the narrow form at 2 cells).
+2. A pane with no focus signal in `liveStatus` reads as focused (steps).
+3. The twin tile needs glyph tier 2 (braille); below it, the old single tile-fill glyph.
+
+### W1 · audit phase 3 · in progress 2026-09-02
+
+- **Release gate.** `release.yml`'s check job runs `bun run e2e` (decision of 2026-08-30; the
+  runner already reported all failures).
+- **C16 slug rename.** `tui/slug.ts` → `slug-ink.ts` with its test and eight importers; the
+  same-filename clash with `shared/slug.ts` is gone.
+- **C16 doctor unification (decision 10).** One report, both surfaces: `DoctorFacts` gains a
+  `crashLog` section (`crashLogFacts` reader in `crash-log.ts`, exported for the CLI), and
+  `keywork doctor` prints it. The TUI `/doctor` posts the same rendered report into the
+  focused conversation through a new `AppOptions.doctorReport` port that `composePanes`
+  implements over `doctorReport` + `workspaceDoctorFacts`; `/crashlog` remains as its own
+  command opening the raw log, and a bare App without the port keeps the old open-the-log
+  behavior. `SessionPanes.postNotice` is the one new TUI seam.
+- Gate at this point: check clean, vitest 3221 passed / 1 skipped, e2e all green.
+
+### W1 · the R-15 sweep · landed 2026-09-02 (uncommitted)
+
+One pass over the surviving duplicates (earlier waves had already retired several of the
+listed items):
+
+- **Hoisted.** `shared/text.ts` gains `toUnixEol` + `countOccurrences` (the edit tool and the
+  TUI diff preview now share one implementation, so the preview cannot lie);
+  `isReservedDeviceName` joins `shared/config/slug.ts` and replaces the twin regexes in
+  `memory/naming.ts` and the slug grammar; `sessionsFact` joins `pluralize.ts` (three copies
+  gone); `isRecord` joins `defined.ts` (two copies, unified on the array-excluding form);
+  `chroma.ts` uses `clamp.ts`.
+- **Converted.** The five remaining `(cause as Error).message` casts read through shared
+  `toError`; `markdown-commands.ts` uses `isMissingFileError`; `mcp-pane-model` clips through
+  the cell-aware `width.ts` clip; `probe.ts` reads `ConversationPane.model` directly (the
+  cast was never needed, the field is public); `cli/mcp.ts` `serverView` is a spread;
+  `presetsPortFor` drops its redundant `isPresetName` guards (the port types already narrow).
+- **Deliberate keeps.** `excerpt` x3 (three different semantics: response body, one-line
+  flatten, cell text), the two engine `truncate`s (different notice strings are part of tool
+  output and compaction records), `firstLine` pair (limit-parameterized vs fixed-80),
+  `megabytes` (single site). Named here so the next audit does not re-litigate them.
+
+### W1 follow-up · the long-session compaction race · fixed 2026-09-02
+
+The W4-era "compaction-notice flake" turned reproducible and got diagnosed: `stage.settle()`
+waits for visual idle, the thinking spinner never goes visually idle while the after-turn
+settler runs, so the capture could land before the compaction notice posted; the assertion
+then read a frame the notice had not reached. The scenario now waits for the notice itself
+(`into a summary · context now` after the auto-fold; a two-notice pattern before the manual
+fold capture), per the standing rule that markers name something visible. Three consecutive
+solo runs green; no product change was involved.
+
+**Gate after W1 C16 + R-15 (lead-run):** check clean, vitest 3224 passed / 1 skipped
+(223 files), e2e 38/38 twice. Remaining in W1: C15 only (`testing/` module per package, the
+52-file migration, the `workflows.test.ts` split); it lands cleanest on a fresh commit
+boundary given the size of the tree already waiting.

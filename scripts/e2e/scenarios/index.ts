@@ -16,7 +16,12 @@ import {
 import { coldStart } from "./cold-start.ts";
 import { defectRepros } from "./defect-repros.ts";
 import { discovery } from "./discovery.ts";
-import { elevationArcStamps, elevationScrollMap, elevationTurnAge } from "./elevation.ts";
+import {
+  elevationArcStamps,
+  elevationChrome,
+  elevationScrollMap,
+  elevationTurnAge,
+} from "./elevation.ts";
 import { firstConversation } from "./first-conversation.ts";
 import { gardenHeatInk, gardenHeatLead } from "./garden-heat.ts";
 import { gaugeBar, gaugeBare, gaugeRamp, gaugeSteps, gaugeTile } from "./gauge-forms.ts";
@@ -58,6 +63,7 @@ export const scenarios: readonly Scenario[] = [
   elevationArcStamps,
   elevationTurnAge,
   elevationScrollMap,
+  elevationChrome,
   arcsOnScreen,
   arcFold,
   memoryBrowser,

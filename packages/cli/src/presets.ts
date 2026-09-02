@@ -64,11 +64,8 @@ export function presetsPortFor(presets: PresetPort): PresetsPort {
   return {
     names: () => presetOrder,
     active: () => presets.active(),
-    requiresConfirmation: (name) =>
-      isPresetName(name) && requiresConfirmation(presets.active(), name),
-    apply: async (name) => {
-      if (isPresetName(name)) await presets.apply(name);
-    },
+    requiresConfirmation: (name) => requiresConfirmation(presets.active(), name),
+    apply: (name) => presets.apply(name),
   };
 }
 

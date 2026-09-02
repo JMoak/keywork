@@ -1,4 +1,5 @@
 import { canonicalHex, hexChannels } from "@keywork/shared";
+import { clamp } from "./clamp.ts";
 import type { LifecycleState } from "./pane.ts";
 import type { Theme } from "./theme.ts";
 
@@ -28,13 +29,20 @@ export function lifecycleChrome(
   focused: boolean,
   hue: string,
   theme: LifecycleTheme,
+  depth?: number,
 ): LifecycleChrome {
   const border = borderOfHue(theme, hue, focused);
   const resting = focused ? border : theme.textMid;
   switch (state) {
     case "idle":
     case "working":
-      return { labelInk: resting, labelGround: undefined, borderColor: border };
+      return depth === undefined
+        ? { labelInk: resting, labelGround: undefined, borderColor: border }
+        : {
+            labelInk: rampColor([resting, hue], depth),
+            labelGround: undefined,
+            borderColor: rampColor([border, hue], depth),
+          };
     case "needs-you":
       return {
         labelInk: theme.background,
@@ -287,8 +295,4 @@ function normalizedHue(degrees: number): number {
 
 function lerp(from: number, to: number, blend: number): number {
   return from + (to - from) * blend;
-}
-
-function clamp(value: number, low: number, high: number): number {
-  return Math.min(Math.max(value, low), high);
 }

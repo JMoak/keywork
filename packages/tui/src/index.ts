@@ -62,6 +62,7 @@ export {
 } from "./context-gauge.ts";
 export type { CompactionHook, ForkOutcome, Titler } from "./conversation-model.ts";
 export type { TranscriptElevation } from "./conversation-pane.ts";
+export { type CrashLogFacts, crashLogFacts, crashLogFile } from "./crash-log.ts";
 export type {
   ConversationTarget,
   ExtensionAgentEntry,
@@ -199,7 +200,7 @@ export {
   slugInk,
   slugParts,
   slugWords,
-} from "./slug.ts";
+} from "./slug-ink.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
 export { curatedTips, rotatingTip, type Tip, type TipSignals, tipRotationMs } from "./tips.ts";
 export { type TitleBarState, type TitleSpan, titleBar, titleSpans } from "./title-bar.ts";

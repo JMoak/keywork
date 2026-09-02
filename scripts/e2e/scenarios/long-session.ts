@@ -30,7 +30,7 @@ const calmHeader = /│ session-1 +│/;
 export const longSession: Scenario = {
   name: "long-session",
   description:
-    "C55/IR-10 fixture: a 2k-token window filled turn by turn → gauge climbs the ramp → compaction fires and re-arms → /context readout → cockpit bar → manual /compact",
+    "C55/IR-10 fixture: a 2k-token window filled turn by turn → the steps light zone by zone → compaction fires and re-arms → /context readout → cockpit bar → manual /compact",
   size: { width: 120, height: 32 },
   script: "shared",
   contextWindow: longSessionWindow,
@@ -50,14 +50,15 @@ export const longSession: Scenario = {
     await stage.until(calmHeader);
 
     for (let turn = 2; turn < script.compactingTurn; turn += 1) frame = await step(turn);
-    assert.match(frame, / session-1 · [▒▓] [\d.]+k? /, "the cell darkens as the flush mark nears");
-
-    const compacted = await step(script.compactingTurn);
-    assert.ok(compacted.includes("compacted "), "compaction posts its notice in the transcript");
-    assert.ok(
-      compacted.includes("into a summary · context now"),
-      "the notice states the new reading",
+    assert.match(
+      frame,
+      / session-1 · ░▒[▓·][█·] [\d.]+k? /,
+      "the steps light zone by zone as the marks pass",
     );
+
+    await step(script.compactingTurn);
+    const compacted = await stage.until("into a summary · context now");
+    assert.ok(compacted.includes("compacted "), "compaction posts its notice in the transcript");
     await stage.until(calmHeader);
 
     await stage.type("/context");
@@ -73,6 +74,7 @@ export const longSession: Scenario = {
     const before = usedFromReadout(await stage.capture("context-before-compact"));
     await stage.type("/compact focus on decisions");
     await stage.press("enter");
+    await stage.until(/compacted [\s\S]*compacted /);
     await stage.settle();
     const folded = await stage.capture("manual-compact");
     assert.ok(

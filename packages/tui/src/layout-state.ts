@@ -1,4 +1,5 @@
 import { clamp } from "./clamp.ts";
+import { isRecord } from "./defined.ts";
 import {
   type Arrangement,
   type DockState,
@@ -145,8 +146,4 @@ function parseRatio(value: unknown, bounds: { min: number; max: number }): numbe
 
 function isPaneId(value: unknown): value is PaneId {
   return typeof value === "string" && value !== "";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

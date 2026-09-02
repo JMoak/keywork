@@ -142,6 +142,13 @@ export class SessionPanes {
     };
   }
 
+  postNotice(text: string): boolean {
+    const found = this.focused();
+    if (found === undefined) return false;
+    found.pane.postNotice(text);
+    return true;
+  }
+
   conversationTarget(): ConversationTarget | undefined {
     const found = this.focused();
     if (found === undefined) return undefined;

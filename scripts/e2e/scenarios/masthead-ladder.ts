@@ -12,7 +12,7 @@ function rungLine(width: number): { face: string; line: string } {
 const rungs = [
   { screen: 75, width: 34, face: "stroke", step: "ladder-stroke" },
   { screen: 63, width: 28, face: "half-block", step: "ladder-half-block" },
-  { screen: 55, width: 24, face: "half-block-condensed", step: "ladder-condensed" },
+  { screen: 55, width: 24, face: "quadrant", step: "ladder-quadrant" },
   { screen: 43, width: 18, face: "caps", step: "ladder-caps" },
 ] as const;
 

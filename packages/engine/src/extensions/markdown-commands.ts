@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { isMissingFileError } from "../memory/vault-files.ts";
 import { confinedPath, toolScope } from "../tools/confine.ts";
 import {
   definitionString,
@@ -60,7 +61,7 @@ export function fileEmbedder(root: string): (path: string) => Promise<string | u
     try {
       return await readFile(confined, "utf8");
     } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      if (isMissingFileError(cause)) return undefined;
       throw cause;
     }
   };

@@ -18,7 +18,7 @@ import { failureMessage, PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
-import { slugChunks, slugInk } from "./slug.ts";
+import { slugChunks, slugInk } from "./slug-ink.ts";
 import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
 import type { WorkspacesPort } from "./workspace-picker.ts";

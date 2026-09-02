@@ -34,7 +34,7 @@ import {
   toolScope,
 } from "@keywork/engine";
 import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
-import { mostSpecificMatch, openWorkspace, resolveAnchor } from "@keywork/shared";
+import { mostSpecificMatch, openWorkspace, resolveAnchor, toError } from "@keywork/shared";
 import type { ArcService } from "./arcs.ts";
 import { loadWorkspaceExtensions, type WorkspaceExtensions } from "./commands.ts";
 import {
@@ -201,7 +201,7 @@ function openCheckpoints(options: CompositionOptions): Promise<Checkpoints | und
     worktree: options.cwd,
     gitDir: options.checkpointsGitDir ?? snapshotGitDir(options.cwd, options.workspaceSlug),
   }).catch((cause: unknown) => {
-    options.reportCheckpointsUnavailable?.((cause as Error).message);
+    options.reportCheckpointsUnavailable?.(toError(cause).message);
     return undefined;
   });
 }

@@ -1,3 +1,4 @@
+import { toError } from "@keywork/shared";
 import { type Chord, parseChord } from "./keys.ts";
 import { type McpAction, McpPaneModel, type McpServerView, stateGlyph } from "./mcp-pane-model.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
@@ -149,7 +150,7 @@ export class McpPane implements Pane {
     try {
       this.model.setTools(name, { tools: await this.port.listTools(name) });
     } catch (cause: unknown) {
-      this.model.setTools(name, { error: (cause as Error).message });
+      this.model.setTools(name, { error: toError(cause).message });
     }
   }
 

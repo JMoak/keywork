@@ -20,7 +20,7 @@ import { assumedGlyphs } from "./marks.ts";
 import type { ChromeWeight, LifecycleState, PaneContext, PaneView } from "./pane.ts";
 import type { TrayCommand } from "./pane-tray.ts";
 import type { RowCursor } from "./row-cursor.ts";
-import { slugInk, slugParts } from "./slug.ts";
+import { slugInk, slugParts } from "./slug-ink.ts";
 import type { Theme, ThemeColorToken } from "./theme.ts";
 import { isLabelZone, type TitleSpan } from "./title-bar.ts";
 import { clipSpans, padEnd, take, width } from "./width.ts";
@@ -47,6 +47,7 @@ export interface PaneTitle {
   readonly state: LifecycleState;
   readonly arrival?: number | undefined;
   readonly groundArrival?: number | undefined;
+  readonly depth?: number | undefined;
 }
 
 const borderCells = 1;
@@ -109,10 +110,13 @@ export function paneChrome(
     : boxedChrome(context, composed, inks, children);
 }
 
-export function paneInks(context: PaneContext, title: Pick<PaneTitle, "state">): LifecycleChrome {
+export function paneInks(
+  context: PaneContext,
+  title: Pick<PaneTitle, "state" | "depth">,
+): LifecycleChrome {
   const { theme, focused } = context;
   const hue = context.hue ?? rampColor(theme.ramp, 0);
-  return lifecycleChrome(title.state, focused, hue, theme);
+  return lifecycleChrome(title.state, focused, hue, theme, title.depth);
 }
 
 export function paneTitle(name: string, detail?: string): string {

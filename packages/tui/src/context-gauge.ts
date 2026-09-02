@@ -13,8 +13,9 @@ export interface GaugeOptions {
 
 export const barCells = 10;
 
-export function gaugeStyleFor(instruments: InstrumentTier): GaugeStyle {
-  return instruments === "cockpit" ? "bar" : "ramp";
+export function gaugeStyleFor(instruments: InstrumentTier, focused: boolean): GaugeStyle {
+  if (instruments === "cockpit") return "bar";
+  return focused ? "steps" : "tile";
 }
 
 export function contextGauge(reading: ContextReading, options: GaugeOptions): string {
@@ -28,7 +29,7 @@ export function contextGauge(reading: ContextReading, options: GaugeOptions): st
     case "steps":
       return `${stepsGauge(reading, ramp, options.glyphs)} ${formatTokenCount(reading.used)}`;
     case "tile":
-      return `${stopGlyph(reading, resolveRamp(tile.fill, options.glyphs))} ${formatTokenCount(reading.used)}`;
+      return `${twinTile(reading, options.glyphs)} ${formatTokenCount(reading.used)}`;
     case "ramp":
       return `${stopGlyph(reading, ramp)} ${formatTokenCount(reading.used)}`;
   }
@@ -54,6 +55,7 @@ function stopGlyph(reading: ContextReading, ramp: readonly string[]): string {
 }
 
 const emptyStepMark = { tier1: "·", tier0: "." };
+const tileLadder = ["⡀", "⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿", "█"] as const;
 
 function stepsGauge(
   reading: ContextReading,
@@ -61,15 +63,17 @@ function stepsGauge(
   glyphs: GlyphSupport,
 ): string {
   const empty = resolveMark(emptyStepMark, glyphs);
-  const bounds = [0, reading.flushAt / 2, reading.flushAt, reading.compactAt, reading.window];
-  return Array.from({ length: 4 }, (_, zone) => {
-    const from = bounds[zone] ?? 0;
-    const to = bounds[zone + 1] ?? from;
-    if (reading.used <= from) return empty;
-    if (to <= from) return ramp.at(-1) ?? "#";
-    const fill = Math.min(1, (reading.used - from) / (to - from));
-    return ramp[Math.min(ramp.length - 1, Math.ceil(fill * ramp.length) - 1)] ?? "#";
-  }).join("");
+  const bounds = [0, reading.flushAt / 2, reading.flushAt, reading.compactAt];
+  return bounds.map((from, zone) => (reading.used > from ? (ramp[zone] ?? "#") : empty)).join("");
+}
+
+function twinTile(reading: ContextReading, glyphs: GlyphSupport): string {
+  if (glyphs.glyphTier < 2) return stopGlyph(reading, resolveRamp(tile.fill, glyphs));
+  const steps = tileLadder.length * 2;
+  const lit = Math.max(1, Math.min(steps, Math.ceil((reading.used / reading.window) * steps)));
+  const first = tileLadder[Math.min(tileLadder.length, lit) - 1] ?? "█";
+  const second = lit <= tileLadder.length ? "·" : (tileLadder[lit - tileLadder.length - 1] ?? "█");
+  return `${first}${second}`;
 }
 
 function barGauge(reading: ContextReading, ramp: readonly string[]): string {

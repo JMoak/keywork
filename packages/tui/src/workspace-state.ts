@@ -1,3 +1,4 @@
+import { isRecord } from "./defined.ts";
 import { Layout, type LayoutState, layoutStateIds } from "./layout.ts";
 import type { Pane, PaneDescriptor } from "./pane.ts";
 
@@ -122,8 +123,4 @@ function parseMemoryPane(value: Record<string, unknown>): WorkspacePane | undefi
     ...(typeof value.note === "string" && { note: value.note }),
     ...(typeof value.query === "string" && { query: value.query }),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

@@ -1,6 +1,6 @@
 import { RGBA } from "@opentui/core";
 import { describe, expect, it } from "vitest";
-import { slugChunks, slugInk, slugParts, slugWords } from "./slug.ts";
+import { slugChunks, slugInk, slugParts, slugWords } from "./slug-ink.ts";
 import { keyworkNight } from "./theme.ts";
 
 describe("the slug display grammar", () => {

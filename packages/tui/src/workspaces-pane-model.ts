@@ -1,7 +1,7 @@
 import { isSlug } from "@keywork/shared";
 import type { Chord } from "./keys.ts";
 import { isPrintable } from "./picker-keys.ts";
-import { pluralize } from "./pluralize.ts";
+import { pluralize, sessionsFact } from "./pluralize.ts";
 import { RowCursor } from "./row-cursor.ts";
 import { livenessMark, relativeAge, type SessionLiveness } from "./sessions-overview-model.ts";
 import type { WorkspaceChoice } from "./workspace-picker.ts";
@@ -360,8 +360,4 @@ export function workspaceParts(row: WorkspaceRow): WorkspaceParts {
 export function describeSwitch(pending: PendingSwitch): string {
   const running = pluralize(pending.liveTurns, "turn");
   return `switch to ${pending.label}? ${running} still running here · enter switches · esc keeps`;
-}
-
-function sessionsFact(count: number): string {
-  return count === 0 ? "no sessions" : pluralize(count, "session");
 }

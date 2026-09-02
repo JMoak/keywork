@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
 import { persistentBashTool, ShellSession } from "./shell-session.ts";
 
@@ -185,6 +185,12 @@ const powershell = {
 };
 
 describe.skipIf(process.platform !== "win32")("ShellSession over PowerShell", () => {
+  beforeAll(async () => {
+    const warmup = new ShellSession(await tempDir(), powershell);
+    await warmup.run("Write-Output warm", { timeoutMs: 110_000 });
+    await warmup.close();
+  }, 120_000);
+
   async function openPowerShell(): Promise<ShellSession> {
     const session = new ShellSession(await tempDir(), powershell);
     sessions.push(session);

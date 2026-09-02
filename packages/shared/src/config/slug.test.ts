@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSlug, slugProblem } from "./slug.ts";
+import { isReservedDeviceName, isSlug, slugProblem } from "./slug.ts";
 
 describe("the slug grammar shared by arcs and workspaces", () => {
   it("accepts lowercase words, digits, and inner hyphens", () => {
@@ -18,5 +18,15 @@ describe("the slug grammar shared by arcs and workspaces", () => {
     expect(slugProblem("con")).toBe("reserved device name");
     expect(slugProblem("com1")).toBe("reserved device name");
     expect(isSlug("console")).toBe(true);
+  });
+});
+
+describe("isReservedDeviceName", () => {
+  it("catches device names bare, uppercased, and with extensions", () => {
+    expect(isReservedDeviceName("con")).toBe(true);
+    expect(isReservedDeviceName("CON")).toBe(true);
+    expect(isReservedDeviceName("com3.txt")).toBe(true);
+    expect(isReservedDeviceName("console")).toBe(false);
+    expect(isReservedDeviceName("nul.tar.gz")).toBe(true);
   });
 });

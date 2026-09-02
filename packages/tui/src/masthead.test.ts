@@ -85,20 +85,43 @@ describe("the masthead headline", () => {
     expect(headline("session-1", { width: 34, rows: 12, glyphs: tier(2) }).face).toBe("stroke");
   });
 
-  it("degrades through the condensed rung before caps", () => {
+  it("degrades through the quadrant rung before caps", () => {
     const faceAt = (width: number) =>
       headline("session-1", { width, rows: 12, glyphs: tier(2) }).face;
     expect(faceAt(34)).toBe("stroke");
     expect(faceAt(28)).toBe("half-block");
-    expect(faceAt(24)).toBe("half-block-condensed");
+    expect(faceAt(24)).toBe("quadrant");
     expect(faceAt(18)).toBe("caps");
   });
 
-  it("keeps every word set in the condensed face within the frame", () => {
+  it("keeps every word set in the quadrant face within the frame", () => {
     const result = headline("session-1", { width: 24, rows: 12, glyphs: tier(2) });
     expect(result.words).toBe("session 1");
     expect(result.lines.every((line) => cells(line) <= 24)).toBe(true);
-    expect(result.lines.join("")).toMatch(/[▀▄█]/);
+    expect(result.lines.join("")).toMatch(/[▘▝▖▗▀▄█▌▐▚▞▛▜▙▟]/);
+    expect(result.dim.every((spans) => spans.length === 0)).toBe(true);
+  });
+
+  it("dims alternate letters in the condensed rung so boundaries survive gap zero", () => {
+    const result = headline("session", { width: 24, rows: 5, glyphs: tier(1) });
+    expect(result.face).toBe("block-condensed");
+    expect(result.dim).toHaveLength(result.lines.length);
+    for (const spans of result.dim) {
+      expect(spans).toEqual([
+        [3, 6],
+        [9, 12],
+        [15, 18],
+      ]);
+    }
+  });
+
+  it("keeps the condensed rung away from monochrome ink", () => {
+    const result = headline("session", {
+      width: 24,
+      rows: 5,
+      glyphs: { glyphTier: 1, nerdFont: false, colorDepth: "mono" },
+    });
+    expect(result.face).toBe("caps");
   });
 
   it("gains a condensed block rung at glyph tier 1", () => {

@@ -602,6 +602,6 @@ describe("the gauge override", () => {
     });
     modelOf(pane).submitText("go");
     await modelOf(pane).lastSend;
-    expect(pane.liveStatus({ instruments: "calm" })).toMatch(/^[▖▌▙█] \d/);
+    expect(pane.liveStatus({ instruments: "calm" })).toMatch(/^[⡀-⣿█][⡀-⣿█·] \d/);
   });
 });

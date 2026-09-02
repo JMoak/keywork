@@ -477,3 +477,28 @@ describe("saturationLift", () => {
     expect(saturationLift(hue, hue)).toBe(hue);
   });
 });
+
+describe("chrome elevation depth", () => {
+  it("steps resting label and border toward the arc hue as depth climbs", () => {
+    const hue = "#cc6644";
+    const shallow = lifecycleChrome("idle", false, hue, keyworkNight, 0);
+    const deep = lifecycleChrome("idle", false, hue, keyworkNight, 1);
+    const rest = lifecycleChrome("idle", false, hue, keyworkNight);
+    expect(shallow.labelInk).toBe(rest.labelInk);
+    expect(shallow.borderColor).toBe(rest.borderColor);
+    expect(deep.labelInk).toBe(hue);
+    expect(deep.borderColor).toBe(hue);
+    const half = lifecycleChrome("idle", false, hue, keyworkNight, 0.5);
+    expect(half.labelInk).not.toBe(rest.labelInk);
+    expect(half.labelInk).not.toBe(hue);
+  });
+
+  it("leaves every lifecycle state above idle untouched by depth", () => {
+    const hue = "#cc6644";
+    for (const state of ["needs-you", "finished-unseen", "failed"] as const) {
+      expect(lifecycleChrome(state, false, hue, keyworkNight, 1)).toEqual(
+        lifecycleChrome(state, false, hue, keyworkNight),
+      );
+    }
+  });
+});

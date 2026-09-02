@@ -138,7 +138,7 @@ export class AppProbe {
 
   model(id = this.core.snapshot().focused): ConversationModel | undefined {
     const pane = id === undefined ? undefined : this.core.panes.get(id);
-    return pane instanceof ConversationPane ? modelOf(pane) : undefined;
+    return pane instanceof ConversationPane ? pane.model : undefined;
   }
 
   async settled(): Promise<this> {
@@ -173,8 +173,4 @@ function printableChord(character: string): Chord {
     shift: false,
     meta: false,
   };
-}
-
-function modelOf(pane: ConversationPane): ConversationModel {
-  return (pane as unknown as { model: ConversationModel }).model;
 }
