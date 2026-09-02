@@ -9,7 +9,7 @@ import {
   MemoryPaneModel,
   type MemoryQueryOutcome,
 } from "./memory-pane-model.ts";
-import type { DigestTreatment, MemoryRow, SpanInk } from "./memory-rows.ts";
+import type { DigestTreatment, GardenHeat, MemoryRow, SpanInk } from "./memory-rows.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type KeyedTrayCommand,
@@ -25,7 +25,7 @@ import {
   trayCommandsPressing,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
-import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
@@ -47,6 +47,7 @@ export interface MemoryPaneOptions {
   focusedArc?: () => string | undefined;
   arcOrdinal?: ArcOrdinals;
   digestTreatment?: DigestTreatment;
+  gardenHeat?: GardenHeat;
   subscribe?: (listener: () => void) => () => void;
   now?: () => number;
   scheduleFrame?: FrameScheduler;
@@ -63,6 +64,7 @@ export class MemoryPane implements Pane {
   private askText = "";
   private revival: MemoryLensState | undefined;
   private lastPageRows = 20;
+  private trayFirstRow = 0;
 
   constructor(
     readonly id: string,
@@ -101,6 +103,7 @@ export class MemoryPane implements Pane {
         ...(options.digestTreatment !== undefined && {
           digestTreatment: options.digestTreatment,
         }),
+        ...(options.gardenHeat !== undefined && { gardenHeat: options.gardenHeat }),
       },
     );
     this.tray = new PaneTrayModel(
@@ -148,6 +151,7 @@ export class MemoryPane implements Pane {
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (this.tray.open) return paneTrayMouse(this.tray, this.trayFirstRow, local, event);
     if (event.type !== "down" || this.tasks.failure() !== undefined) return false;
     const row = local.y - 1;
     if (row < 0 || row >= this.lastPageRows) return false;
@@ -169,15 +173,14 @@ export class MemoryPane implements Pane {
   view(context: PaneContext): PaneView {
     const { theme } = context;
     const innerWidth = paneContentWidth(context);
-    const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
+    const tray = this.tray.open
+      ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
+      : undefined;
     this.lastPageRows = Math.max(0, paneContentHeight(context) - (tray?.rows ?? 0));
     this.model.setBodyWidth(Math.max(1, innerWidth - railWidth));
-    return paneChrome(
-      context,
-      this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, innerWidth),
-      ...(tray?.children ?? []),
-    );
+    const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
+    this.trayFirstRow = 2 + body.length;
+    return paneChrome(context, this.title(), ...body, ...(tray?.children ?? []));
   }
 
   private reviveOnce(): void {
@@ -344,7 +347,7 @@ const restingRail = "  ";
 const hintGap = 2;
 const minimumFactsRoom = 12;
 
-const memoryTray: readonly KeyedTrayCommand[] = [
+export const memoryTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "open the selected note, hit, or ledger subject", key: "enter" },
   { name: "back", description: "leave the note or ledger lens", key: "escape" },
   {

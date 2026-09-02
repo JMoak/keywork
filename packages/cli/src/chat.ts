@@ -6,6 +6,7 @@ import {
   compactNow,
   contextBudgetFor,
   declaredContextWindow,
+  gatherReturnDelta,
   type MemoryFlush,
   type Message,
   type PermissionResolver,
@@ -18,7 +19,12 @@ import {
   type ToolGuard,
   type TurnSettlement,
 } from "@keywork/engine";
-import { type McpServerConfig, type PromptsConfig, toError } from "@keywork/shared";
+import {
+  type McpServerConfig,
+  type ModelCapabilitiesConfig,
+  type PromptsConfig,
+  toError,
+} from "@keywork/shared";
 import {
   commandRuntime,
   parseSlashLine,
@@ -32,7 +38,7 @@ import {
   composeAgents,
   composeWorkspace,
 } from "./compose.ts";
-import { sweepOnClose } from "./memory.ts";
+import { citationTrail, sweepOnClose } from "./memory.ts";
 import { defaultSessionDir } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
 import { openOrResumeSession } from "./sessions/store.ts";
@@ -58,6 +64,8 @@ export interface ChatOptions {
   permissions?: PermissionResolver;
   presets?: PresetPort;
   mcpServers?: Record<string, McpServerConfig>;
+  repoMap?: "auto" | "off";
+  models?: ModelCapabilitiesConfig;
   userRoot?: string;
   checkpointsGitDir?: string;
 }
@@ -262,6 +270,8 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     workspaceSlug: options.workspaceSlug,
     prompts: options.prompts,
     mcpServers: options.mcpServers,
+    repoMap: options.repoMap,
+    models: options.models,
     reportCheckpointsUnavailable: (message) => io.print(`can't undo: ${message}`),
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
     ...(options.checkpointsGitDir !== undefined && {
@@ -270,19 +280,30 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
   });
   reportExtensionFailures(composition.extensions, io);
   const guard = mutationGuard(io, composition.checkpoints);
+  const citations = citationTrail(composition.memory, () => composition.bootstrap);
+  citations.forSession(opened.store.header.id);
   const repl = new Repl(
     options,
     io,
     opened.store,
     composition,
-    composeAgents(composition, { permissions: options.permissions }),
+    composeAgents(composition, { permissions: options.permissions, citations }),
     guard,
     commandRuntime(options.cwd, guard),
     opened.seeded,
   );
   replaySession(opened.store, repl.agent.bus);
   greet(repl, opened.seeded.length);
+  if (opened.seeded.length > 0) await printReturnDelta(repl);
   return repl;
+}
+
+async function printReturnDelta(repl: Repl): Promise<void> {
+  const memory = repl.composition.memory();
+  if (memory === undefined) return;
+  const since = repl.store.stats().lastActivityAt;
+  const lines = await gatherReturnDelta({ since, workspace: memory.store }).catch(() => []);
+  if (lines.length > 0) repl.io.print(`since you were here: ${lines.join(" · ")}`);
 }
 
 async function runRepl(repl: Repl): Promise<void> {

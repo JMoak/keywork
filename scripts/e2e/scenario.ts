@@ -25,8 +25,11 @@ export interface Stage {
   press(...chords: readonly string[]): Promise<void>;
   type(text: string): Promise<void>;
   click(x: number, y: number): Promise<void>;
+  hover(x: number, y: number): Promise<void>;
   scroll(x: number, y: number, direction: "up" | "down", times?: number): Promise<void>;
   drag(from: Point, to: Point): Promise<void>;
+  dragHold(from: Point, to: Point): Promise<void>;
+  release(at: Point): Promise<void>;
   settle(): Promise<void>;
   until(marker: string | RegExp, timeoutMs?: number): Promise<string>;
   capture(stepName: string): Promise<string>;

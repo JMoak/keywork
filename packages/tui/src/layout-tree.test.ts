@@ -14,6 +14,7 @@ import {
   retainLeaves,
   splitLeaf,
   splitRatioBounds,
+  steppedRatio,
   swapLeaves,
 } from "./layout-tree.ts";
 
@@ -87,5 +88,14 @@ describe("node algebra", () => {
     expect(rects.get("a")).toEqual({ x: 0, y: 0, width: 11, height: 6 });
     expect(rects.get("b")).toEqual({ x: 11, y: 0, width: 5, height: 3 });
     expect(rects.get("c")).toEqual({ x: 11, y: 3, width: 5, height: 3 });
+  });
+});
+
+describe("steppedRatio", () => {
+  it("quantizes onto the shared keyboard lattice inside the bounds", () => {
+    expect(steppedRatio(0.5583)).toBe(0.55);
+    expect(steppedRatio(0.03)).toBe(splitRatioBounds.min);
+    expect(steppedRatio(0.97)).toBe(splitRatioBounds.max);
+    expect(steppedRatio(0.7000000001)).toBe(0.7);
   });
 });

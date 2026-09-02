@@ -14,6 +14,40 @@ function bar(used: number, glyphs = assumedGlyphs): string {
   return contextGauge(readContext(used, budget), { style: "bar", glyphs });
 }
 
+describe("contextGauge render candidates", () => {
+  const gaugeOf = (style: "bare" | "steps" | "tile", used: number, glyphs = assumedGlyphs) =>
+    contextGauge(readContext(used, budget), { style, glyphs });
+
+  it("bare is the ramp cell without the count", () => {
+    expect(gaugeOf("bare", 0)).toBe("");
+    expect(gaugeOf("bare", 1_000)).toBe("░");
+    expect(gaugeOf("bare", 3_600)).toBe("▒");
+    expect(gaugeOf("bare", 7_600)).toBe("█");
+  });
+
+  it("tile climbs the tile-fill stages at the same honest stops", () => {
+    expect(gaugeOf("tile", 0)).toBe("");
+    expect(gaugeOf("tile", 1_000)).toBe("▖ 1k");
+    expect(gaugeOf("tile", 3_600)).toBe("▌ 3.6k");
+    expect(gaugeOf("tile", 7_200)).toBe("▙ 7.2k");
+    expect(gaugeOf("tile", 7_600)).toBe("█ 7.6k");
+  });
+
+  it("steps brightens segment by segment across the four zones", () => {
+    expect(gaugeOf("steps", 0)).toBe("");
+    expect(gaugeOf("steps", 1_000)).toMatch(/^[░▒▓█]··· 1k$/);
+    expect(gaugeOf("steps", 3_600)).toMatch(/^█[░▒▓█]·· 3\.6k$/);
+    expect(gaugeOf("steps", 7_200)).toMatch(/^██[░▒▓█]· 7\.2k$/);
+    expect(gaugeOf("steps", 7_600)).toMatch(/^███[░▒▓█] 7\.6k$/);
+  });
+
+  it("keeps every candidate at plain ascii on tier 0", () => {
+    for (const style of ["bare", "steps", "tile"] as const) {
+      expect(gaugeOf(style, 7_600, tier0)).toMatch(/^[.:+#\d/k. ]+$/);
+    }
+  });
+});
+
 describe("contextGauge ramp", () => {
   it("is absent until something has been measured", () => {
     expect(ramp(0)).toBe("");

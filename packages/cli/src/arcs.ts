@@ -5,7 +5,9 @@ import {
   ArcRecall,
   ArcRegistry,
   type ArcReview,
+  type CurationJudgmentPort,
   type EmbeddingsPort,
+  gatherReturnDelta,
   IneligibleDeliveryError,
   isStagedWrite,
   type MemorySearch,
@@ -28,6 +30,12 @@ import type { SessionKey, WorkspaceMemory } from "./memory.ts";
 
 export type SessionFlush = () => Promise<unknown>;
 
+export interface ClosingRequest {
+  arc: string;
+  direction?: string | undefined;
+  onDegrade(reason: string): void;
+}
+
 export interface ArcServiceOptions {
   cwd: string;
   trusted: boolean;
@@ -35,6 +43,9 @@ export interface ArcServiceOptions {
   memory: () => WorkspaceMemory | undefined;
   boundSessionCounts: () => Promise<ReadonlyMap<string, number>>;
   flushFor?: ((sessionId: string) => SessionFlush | undefined) | undefined;
+  closing?: ((request: ClosingRequest) => CurationJudgmentPort | undefined) | undefined;
+  citedNotes?: ((slug: string) => Promise<string[]>) | undefined;
+  lastActivity?: ((slug: string) => Promise<string | undefined>) | undefined;
   onReleased?: ((sessionId: string) => void) | undefined;
   unavailable?: (() => string) | undefined;
   now?: () => Date;
@@ -93,17 +104,25 @@ export function arcService(options: ArcServiceOptions): ArcService {
     if (memory === undefined) throw unavailable();
     return memory;
   };
-  const airlock = (): ArcAirlock => {
+  const airlock = (judgment?: CurationJudgmentPort): ArcAirlock => {
     const memory = requireMemory();
     const found = requireRegistry();
     return new ArcAirlock({
       registry: found,
       bindings,
       workspace: memory.store,
-      citedNotes: (slug) => recalledArcNotes(memory, found, slug),
+      citedNotes: async (slug) => (await options.citedNotes?.(slug)) ?? [],
+      ...(judgment !== undefined && { judgment }),
       ...(options.now !== undefined && { now: options.now }),
     });
   };
+  const closingFor = (slug: string, notices: string[]): CurationJudgmentPort | undefined =>
+    options.closing?.({
+      arc: slug,
+      direction: draftFor(slug).direction(),
+      onDegrade: (reason) =>
+        notices.push(`closing agent didn't run (${reason}) · swept without it`),
+    });
   const draftFor = (slug: string): ArcCloseDraft => {
     const existing = drafts.get(slug);
     if (existing !== undefined) return existing;
@@ -156,7 +175,11 @@ export function arcService(options: ArcServiceOptions): ArcService {
   const finishClose = async (slug: string, force: boolean): Promise<AirlockFinishOutcome> => {
     const draft = draftFor(slug);
     const acked = draft.lastSweep()?.acked ?? [];
-    const digest = await airlock().prepareClose(slug, { flushes: flushesFor(slug, acked), force });
+    const notices: string[] = [];
+    const digest = await airlock(closingFor(slug, notices)).prepareClose(slug, {
+      flushes: flushesFor(slug, acked),
+      force,
+    });
     draft.recordSweep(digest.sweep);
     draft.leaveBelowBar(digest.candidates);
     const undecided = draft.undecided(digest);
@@ -172,6 +195,7 @@ export function arcService(options: ArcServiceOptions): ArcService {
       kind: "closed",
       delivered: delivery.delivered.length,
       released: delivery.releasedSessions.length,
+      ...(notices[0] !== undefined && { notice: notices[0] }),
     };
   };
   const airlockPort: ArcAirlockPort = {
@@ -234,18 +258,27 @@ export function arcService(options: ArcServiceOptions): ArcService {
       changed();
       return { slug: record.slug, status: record.status, created: record.created, sessions: 0 };
     },
-    close: async (slug) => {
+    close: async (slug, direction) => {
       const draft = draftFor(slug);
-      const digest = await airlock().prepareClose(slug, {
+      draft.steer(direction);
+      const notices: string[] = [];
+      const digest = await airlock(closingFor(slug, notices)).prepareClose(slug, {
         flushes: flushesFor(slug, draft.lastSweep()?.acked ?? []),
         force: true,
       });
       draft.recordSweep(digest.sweep);
       if (digest.candidates.length > 0 || digest.questions.length > 0) {
         changed();
-        return pendingOutcome(digest.candidates.length, digest.questions.length, digest.sweep);
+        return {
+          ...pendingOutcome(digest.candidates.length, digest.questions.length, digest.sweep),
+          ...(notices[0] !== undefined && { notice: notices[0] }),
+        };
       }
-      const delivery = await airlock().completeClose(slug, { candidates: {}, questions: {} });
+      const delivery = await airlock().completeClose(slug, {
+        candidates: {},
+        questions: {},
+        ...(direction !== undefined && { direction }),
+      });
       drafts.delete(slug);
       await persistRelease(delivery.releasedSessions);
       changed();
@@ -253,6 +286,7 @@ export function arcService(options: ArcServiceOptions): ArcService {
         kind: "closed",
         delivered: delivery.delivered.length,
         released: delivery.releasedSessions.length,
+        ...(notices[0] !== undefined && { notice: notices[0] }),
       };
     },
     abandon: async (slug) => {
@@ -265,6 +299,14 @@ export function arcService(options: ArcServiceOptions): ArcService {
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    returnDelta: async (slug) => {
+      const memory = options.memory();
+      const found = registry();
+      if (memory === undefined || found === undefined) return [];
+      const since = await options.lastActivity?.(slug);
+      if (since === undefined) return [];
+      return gatherReturnDelta({ since, workspace: memory.store, registry: found, arc: slug });
     },
     airlock: airlockPort,
   };
@@ -325,7 +367,9 @@ function pendingOutcome(
 function digestView(slug: string, review: ArcReview, draft: ArcCloseDraft): AirlockDigestView {
   const sweep = draft.lastSweep();
   const successor = draft.successorArc();
+  const direction = draft.direction();
   return {
+    ...(direction !== undefined && { direction }),
     arc: slug,
     candidates: review.candidates.map((candidate) => {
       const choice = draft.candidateDecision(candidate.note.name);
@@ -358,18 +402,6 @@ function digestView(slug: string, review: ArcReview, draft: ArcCloseDraft): Airl
 function isArcReviewFor(item: StagedItem, slug: string): boolean {
   if (isStagedWrite(item)) return false;
   return (item.kind === "arc-distillation" || item.kind === "arc-question") && item.arc === slug;
-}
-
-async function recalledArcNotes(
-  memory: WorkspaceMemory,
-  registry: ArcRegistry,
-  slug: string,
-): Promise<string[]> {
-  const recalled = [...memory.gardener.recallsSinceSweep().keys()];
-  const useful = (await registry.arcStore(slug).listNotes())
-    .filter((note) => (note.usefulness ?? 0) > 0)
-    .map((note) => note.name);
-  return [...recalled, ...useful];
 }
 
 function recallOver(

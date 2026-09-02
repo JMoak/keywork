@@ -282,6 +282,48 @@ describe("chat REPL", () => {
   });
 });
 
+describe("chat return delta", () => {
+  async function trustedVault(cwd: string): Promise<string> {
+    const vault = join(cwd, ".keywork", "memory");
+    await mkdir(vault, { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "fixture" }));
+    return vault;
+  }
+
+  it("tells a resumed session what changed while it was away, then stays quiet", async () => {
+    const { options, cwd } = await world();
+    const vault = await trustedVault(cwd);
+    await chat(
+      options(new MockProvider([textTurn("first")]), { projectTrusted: true }),
+      scriptedIo({ lines: ["one"] }),
+    );
+    await writeFile(
+      join(vault, "Fresh Rule.md"),
+      "---\ncreated: 2099-01-01T00:00:00.000Z\nprovenance: agent\n---\nnew\n",
+    );
+
+    const io = scriptedIo({ lines: [] });
+    await chat(options(new MockProvider([]), { projectTrusted: true, resume: true }), io);
+    expect(io.out).toContain("since you were here: 1 new in the workspace: [[Fresh Rule]]");
+  });
+
+  it("says nothing on resume when nothing changed, and nothing on a fresh session", async () => {
+    const { options, cwd } = await world();
+    await trustedVault(cwd);
+    const fresh = scriptedIo({ lines: [] });
+    await chat(options(new MockProvider([]), { projectTrusted: true }), fresh);
+    expect(fresh.out.some((line) => line.startsWith("since you were here"))).toBe(false);
+
+    await chat(
+      options(new MockProvider([textTurn("first")]), { projectTrusted: true }),
+      scriptedIo({ lines: ["one"] }),
+    );
+    const resumed = scriptedIo({ lines: [] });
+    await chat(options(new MockProvider([]), { projectTrusted: true, resume: true }), resumed);
+    expect(resumed.out.some((line) => line.startsWith("since you were here"))).toBe(false);
+  });
+});
+
 describe("chat mutation guard", () => {
   it("refuses asks without a terminal, like headless, instead of approving them", async () => {
     const { options, cwd } = await world();

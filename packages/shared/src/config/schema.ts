@@ -48,6 +48,12 @@ const mcpHttpServer = z
     url: z
       .url()
       .describe("Endpoint the server listens on; exists because HTTP transport needs an address."),
+    headers: z
+      .record(z.string(), z.string())
+      .describe(
+        "Static HTTP headers sent verbatim on every request to the server, typically Authorization; treated as secrets: never logged, never echoed in errors, never readable from the project layer. Static values only; keywork runs no OAuth flow of any kind.",
+      )
+      .optional(),
     trusted: mcpTrusted.optional(),
   })
   .strict();
@@ -191,10 +197,50 @@ export const configSchema = z
       .describe(
         "Provider/model reference for new sessions; exists so a first prompt works with zero ceremony. Honored from the user config layer only; a checked-in project file cannot steer model routing until an explicit trust gate exists.",
       ),
+    roles: z
+      .record(z.string(), z.string().min(1))
+      .describe(
+        'Named auxiliary roles (105/IR-14) to provider/model references, e.g. {"closing": "openrouter/gpt-5-mini"}: background inference such as the arc-closing distiller resolves its model here first and falls back to the session\'s provider when the role is unset; exists so cheap auxiliary work can run on a cheaper model without touching session routing. Honored from the user config layer only.',
+      ),
     models: z
       .record(z.string(), modelCapabilities)
       .describe(
         "Model-id glob patterns (`*` wildcard) to declared capabilities; exists because keywork never probes endpoints for what a model can do: capability is declared config (D9), the most specific matching pattern wins, and anything undeclared stays at the text-only floor.",
+      ),
+    repoMap: z
+      .enum(["auto", "off"])
+      .describe(
+        "Repo map injection switch (F2/F3): auto builds a ranked file-and-symbol map of the trusted workspace at session start and injects it into the system prompt within a small budget carved from the declared context window, refreshing after tool writes; off skips the scan and the injection entirely; exists because the map spends prompt tokens on every turn and some workspaces or tastes want none of that.",
+      ),
+    pointer: z
+      .enum(["on", "off"])
+      .describe(
+        "Mouse capture switch; off skips SGR mouse reporting entirely so the terminal's native text selection and scrollback keep working; exists because some terminals and tmux setups report mouse events badly, and turning capture off must cost zero (94/H6).",
+      ),
+    masthead: z
+      .enum(["on", "off"])
+      .describe(
+        "Block-glyph masthead switch for narrow unfocused idle panes; off renders the plain transcript with its title row instead; exists because the ceremony cannot earn its rows in every terminal or for every taste (104/C63, 113/C74).",
+      ),
+    motion: z
+      .enum(["full", "reduced"])
+      .describe(
+        "Motion floor; reduced renders every animation's final frame immediately with no intermediate steps; exists because reduced motion is the grammar's floor and must be reachable as declared config, never sniffed (100/PD16).",
+      ),
+    tips: z
+      .enum(["on", "off"])
+      .describe(
+        "Rotating one-line tips in the status bar keyed to features the workspace has not used yet; off removes them entirely; exists as the kill switch FR5.15 requires so guidance can never become noise.",
+      ),
+    scrim: z
+      .enum(["on", "off"])
+      .describe(
+        "Translucent scrim behind overlays such as the palette, pushing the workspace back while the overlay is up; exists because depth cues are taste and 100/C51 makes them opt-in; unset keeps today's render untouched.",
+      ),
+    dim: z
+      .enum(["on", "off"])
+      .describe(
+        "Unfocused-pane dimming: on steps every unfocused pane's content ink one subtle luminance step toward the ground so the focused page reads first; exists because depth cues are taste and 100/C51 makes them opt-in; unset keeps today's render untouched, and monochrome terminals see no change because focus never rides color alone.",
       ),
     keybindings: z
       .record(z.string(), keybinding)

@@ -13,6 +13,15 @@ export {
   mostSpecificRule,
 } from "./glob.ts";
 export {
+  type IgnoreFile,
+  type IgnoreLayer,
+  type IgnorePattern,
+  type IgnoreProblem,
+  ignoresPath,
+  ignoreVerdict,
+  parseIgnoreFile,
+} from "./ignore.ts";
+export {
   type Disk,
   type JsonFileStore,
   type JsonFileStoreOptions,

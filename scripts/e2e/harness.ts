@@ -225,6 +225,7 @@ async function composeMockApp(
     ...(scenario.provider !== "none" && { agentFactory: mockAgentFactory(scenario, paths) }),
     ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
     ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
+    tips: "off",
     ...scenario.app,
     glyphs: scenario.glyphs ?? assumedGlyphs,
     ...(scenario.focusOutline !== undefined && { focusOutline: scenario.focusOutline }),
@@ -281,6 +282,10 @@ function buildStage(context: StageContext): Stage {
       await app.setup.mockMouse.click(x, y);
       await sleep(0);
     },
+    hover: async (x, y) => {
+      await app.setup.mockMouse.moveTo(x, y);
+      await sleep(0);
+    },
     scroll: async (x, y, direction, times = 1) => {
       for (let step = 0; step < times; step += 1) {
         await app.setup.mockMouse.scroll(x, y, direction);
@@ -289,6 +294,15 @@ function buildStage(context: StageContext): Stage {
     },
     drag: async (from, to) => {
       await app.setup.mockMouse.drag(from.x, from.y, to.x, to.y);
+      await sleep(0);
+    },
+    dragHold: async (from, to) => {
+      await app.setup.mockMouse.pressDown(from.x, from.y);
+      await app.setup.mockMouse.moveTo(to.x, to.y);
+      await sleep(0);
+    },
+    release: async (at) => {
+      await app.setup.mockMouse.release(at.x, at.y);
       await sleep(0);
     },
     settle: () => settle(app.setup),

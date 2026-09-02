@@ -188,3 +188,38 @@ describe("showing costs", () => {
     expect(probe.snapshot().notice).toBe("spend hidden");
   });
 });
+
+describe("dragging a pane by its title row", () => {
+  function twoMainPanes() {
+    const probe = new AppProbe();
+    probe.keys("ctrl+k", "s");
+    const [first, second] = probe.snapshot().panes.map((pane) => pane.id) as [string, string];
+    return { probe, first, second, from: probe.rect(first), onto: probe.rect(second) };
+  }
+
+  it("lifts on drag, previews the landing rect, and esc cancels the commit", () => {
+    const { probe, first, from, onto } = twoMainPanes();
+    probe.dragHold({ x: from.x + 2, y: from.y }, { x: onto.x + 3, y: onto.y + 3 });
+    expect(probe.core.draggingPane()).toBe(first);
+    expect(probe.core.dragPreview()).toEqual(onto);
+    probe.keys("escape");
+    expect(probe.core.draggingPane()).toBeUndefined();
+    expect(probe.core.dragPreview()).toBeUndefined();
+    probe.release({ x: onto.x + 3, y: onto.y + 3 });
+    expect(probe.rect(first)).toEqual(from);
+  });
+
+  it("commits the swap on release when nothing cancelled it", () => {
+    const { probe, first, second, from, onto } = twoMainPanes();
+    probe.drag({ x: from.x + 2, y: from.y }, { x: onto.x + 3, y: onto.y + 3 });
+    expect(probe.rect(first)).toEqual(onto);
+    expect(probe.rect(second)).toEqual(from);
+    expect(probe.snapshot().focused).toBe(first);
+  });
+
+  it("esc without a lifted drag still reaches the focused pane", () => {
+    const { probe } = twoMainPanes();
+    probe.keys("escape");
+    expect(probe.core.draggingPane()).toBeUndefined();
+  });
+});

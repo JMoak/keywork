@@ -8,8 +8,10 @@ export type PaletteMode = "go" | "commands";
 export const paletteRowLimit = 10;
 
 export function paletteModeOf(query: string): PaletteMode {
-  return query.startsWith(">") ? "commands" : "go";
+  return commandPrefixes.some((prefix) => query.startsWith(prefix)) ? "commands" : "go";
 }
+
+const commandPrefixes = ["/", ">"] as const;
 
 export interface PaletteSeams {
   dismiss(): void;

@@ -17,6 +17,8 @@ export type ToolPermission = "allow" | "ask" | "deny";
 export type PermissionResolver = (call: ToolCallPart) => ToolPermission | undefined;
 export type ToolSource = () => readonly Tool[];
 
+export type ActionRecall = (call: ToolCallPart) => Promise<string | undefined>;
+
 export interface AgentOptions {
   provider: Provider;
   systemPrompt?: string;
@@ -26,6 +28,7 @@ export interface AgentOptions {
   guard?: ToolGuard;
   permissions?: PermissionResolver;
   standingInjections?: readonly ContextInjection[];
+  actionRecall?: ActionRecall;
 }
 
 export interface SendOptions {
@@ -63,6 +66,7 @@ export class Agent {
   private readonly messages: Message[];
   private readonly guard: ToolGuard | undefined;
   private readonly permissions: PermissionResolver | undefined;
+  private readonly actionRecall: ActionRecall | undefined;
   private readonly pending: PendingPrompt[] = [];
   private unannouncedInjections: readonly ContextInjection[];
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
@@ -80,6 +84,7 @@ export class Agent {
     this.messages = [...(options.history ?? [])];
     this.guard = options.guard;
     this.permissions = options.permissions;
+    this.actionRecall = options.actionRecall;
     this.unannouncedInjections = options.standingInjections ?? [];
   }
 
@@ -364,8 +369,13 @@ export class Agent {
         this.emitPermissionDecision(call, "granted", gate);
       }
       if (tool.mutates === true) await this.checkpointOnce();
+      const remembered = tool.mutates === true ? await this.actionRecall?.(call) : undefined;
       const output = await tool.execute(call.arguments, signal);
-      return { callId: call.callId, output, isError: false };
+      return {
+        callId: call.callId,
+        output: remembered === undefined ? output : `${output}\n\n${remembered}`,
+        isError: false,
+      };
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause);
       return { callId: call.callId, output: reason, isError: true };

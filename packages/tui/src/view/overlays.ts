@@ -1,6 +1,7 @@
 import { Box, fg, StyledText, Text } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
 import type { ArcOrdinals } from "../arcs.ts";
+import type { GlyphSupport } from "../capability.ts";
 import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
 import type { HelpPage, OverlayFrame } from "../overlays/index.ts";
 import type { ChromeWeight } from "../pane.ts";
@@ -21,9 +22,32 @@ export interface OverlayInputs {
   theme: Theme;
   chrome: ChromeWeight;
   arcOrdinal: ArcOrdinals;
+  glyphs?: GlyphSupport;
+  scrim?: boolean;
 }
 
 export function overlayView(core: AppCore, inputs: OverlayInputs) {
+  const panel = composedOverlay(core, inputs);
+  if (panel === undefined || inputs.scrim !== true) return panel;
+  return Box(
+    { position: "absolute", left: 0, top: 0, width: "100%", height: "100%", zIndex: 15 },
+    Box({
+      position: "absolute",
+      left: 0,
+      top: 0,
+      width: "100%",
+      height: "100%",
+      backgroundColor: scrimInk(inputs.theme),
+    }),
+    panel,
+  );
+}
+
+export function scrimInk(theme: Theme): string {
+  return `${theme.background}99`;
+}
+
+function composedOverlay(core: AppCore, inputs: OverlayInputs) {
   const frame = core.overlayFrame();
   if (frame === undefined) return undefined;
   const { theme } = inputs;
@@ -32,7 +56,7 @@ export function overlayView(core: AppCore, inputs: OverlayInputs) {
   if (help !== undefined) {
     return helpOverlay(help.page(core.screen()), theme, placement);
   }
-  if (core.paletteOpen) return paletteOverlay(core, theme, placement);
+  if (core.paletteOpen) return paletteOverlay(core, theme, placement, inputs.glyphs);
   const preset = presetRows(core, theme);
   if (preset !== undefined) return panel(" permissions ", theme, placement, preset);
   const model = core.modelPicker();
@@ -102,7 +126,12 @@ function innerWidth(placement: OverlayPlacement): number {
   return Math.max(0, placement.width - 2);
 }
 
-function paletteOverlay(core: AppCore, theme: Theme, placement: OverlayPlacement) {
+function paletteOverlay(
+  core: AppCore,
+  theme: Theme,
+  placement: OverlayPlacement,
+  glyphs?: GlyphSupport,
+) {
   const matches = core.paletteMatches();
   const room = innerWidth(placement);
   const commandMode = core.paletteMode === "commands";
@@ -111,6 +140,7 @@ function paletteOverlay(core: AppCore, theme: Theme, placement: OverlayPlacement
     core.paletteIndex,
     room,
     theme,
+    glyphs === undefined ? {} : { glyphs },
   );
   const empty = commandMode ? "  no matching commands" : "  nowhere to jump · type > for commands";
   return panel(commandMode ? " commands " : " go ", theme, placement, [

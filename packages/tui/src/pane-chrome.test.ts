@@ -493,7 +493,7 @@ describe("trayCommandsPressing", () => {
         { name: "refresh", description: "reload", key: "r" },
       ],
     );
-    expect(commands.map((command) => command.shortcut)).toEqual(["⏎", "esc", "L", "r"]);
+    expect(commands.map((command) => command.shortcut)).toEqual(["enter", "esc", "L", "r"]);
     for (const command of commands) command.run();
     expect(pressed).toEqual(["enter", "escape", "shift+l", "r"]);
   });

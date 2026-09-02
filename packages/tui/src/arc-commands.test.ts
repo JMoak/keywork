@@ -3,11 +3,13 @@ import type { FocusedArcPort } from "./arc-commands.ts";
 import type { ArcCloseOutcome, ArcSummary, ArcsPort } from "./arcs.ts";
 import type { Pane, PaneDescriptor } from "./pane.ts";
 import { AppProbe, type AppProbeOptions } from "./probe.ts";
+import type { WorkspacesPort } from "./workspace-picker.ts";
 
 interface ArcWorld {
   arcs: ArcSummary[];
   bound: Array<string | undefined>;
   closed: string[];
+  directions: Array<string | undefined>;
   abandoned: string[];
   closeOutcome: ArcCloseOutcome;
   current: string | undefined;
@@ -21,6 +23,7 @@ function worldOf(): ArcWorld {
     ],
     bound: [],
     closed: [],
+    directions: [],
     abandoned: [],
     closeOutcome: { kind: "closed", delivered: 0, released: 2 },
     current: undefined,
@@ -41,8 +44,9 @@ function portsOver(world: ArcWorld): { arcs: ArcsPort; focusedArc: FocusedArcPor
         world.arcs.push(created);
         return created;
       },
-      close: async (slug) => {
+      close: async (slug, direction) => {
         world.closed.push(slug);
+        world.directions.push(direction);
         return world.closeOutcome;
       },
       abandon: async (slug) => {
@@ -86,10 +90,10 @@ describe("/arc command grammar", () => {
     probe.command("arc old-login");
     await flush();
     expect(world.bound).toEqual([]);
-    expect(probe.snapshot().notice).toBe("arc old-login is archived · /arc new starts another");
+    expect(probe.snapshot().notice).toBe("arc old-login is archived · /arc-new starts another");
     probe.command("arc ghost");
     await flush();
-    expect(probe.snapshot().notice).toBe("no arc named ghost · /arc new ghost creates it");
+    expect(probe.snapshot().notice).toBe("no arc named ghost · /arc-new ghost creates it");
   });
 
   it("creates and binds on new, naming from the pane title when no slug is given", async () => {
@@ -141,7 +145,7 @@ describe("/arc command grammar", () => {
     probe.command("arc close dock-v2");
     await flush();
     expect(probe.snapshot().notice).toBe(
-      "arc dock-v2 is waiting at the airlock · 2 notes and 1 question to triage in the memory pane · 1 live session didn't flush · /arc abandon dock-v2 archives without distilling",
+      "arc dock-v2 is waiting at the airlock · 2 notes and 1 question to triage in the memory pane · 1 live session didn't flush · /arc-abandon dock-v2 archives without distilling",
     );
   });
 
@@ -239,10 +243,10 @@ describe("arc panes", () => {
     const probe = arcPaneProbe(world);
     probe.command("arc open ghost");
     await flush();
-    expect(probe.snapshot().notice).toBe("no arc named ghost · /arc new ghost creates it");
+    expect(probe.snapshot().notice).toBe("no arc named ghost · /arc-new ghost creates it");
     probe.command("arc open");
     await flush();
-    expect(probe.snapshot().notice).toBe("no arc here · /arc open <slug> names one");
+    expect(probe.snapshot().notice).toBe("no arc here · /arc-open <slug> names one");
     world.current = "dock-v2";
     probe.command("arc open");
     await flush();
@@ -306,5 +310,89 @@ describe("splits and arcs", () => {
     probe.command("split");
     probe.command("split-arc");
     expect(origins).toEqual([undefined, "inherit:session-1", "new:session-2"]);
+  });
+});
+
+describe("flat verb commands (C73)", () => {
+  function workspacesOver(uses: Array<string | undefined>, created: string[]): WorkspacesPort {
+    return {
+      list: async () => [],
+      create: async (slug) => {
+        created.push(slug);
+      },
+      use: async (slug) => {
+        uses.push(slug);
+      },
+      linkFocusDir: async () => "",
+      unlinkFocusDir: async () => {},
+    };
+  }
+
+  it("lists every arc verb through the registry under the /arc- prefix", async () => {
+    const probe = await probeOver(worldOf());
+    const names = probe.core.registry.search("arc-").map((command) => command.name);
+    for (const name of ["arc-new", "arc-close", "arc-abandon", "arc-release", "arc-open"]) {
+      expect(names).toContain(name);
+    }
+  });
+
+  it("/arc-new and /arc-release run the same handlers as the old verb forms", async () => {
+    const world = worldOf();
+    const probe = await probeOver(world);
+    probe.command("arc-new checkout-flow");
+    await flush();
+    expect(world.bound).toEqual(["checkout-flow"]);
+    probe.command("arc-release");
+    await flush();
+    expect(world.bound).toEqual(["checkout-flow", undefined]);
+    expect(probe.snapshot().notice).toBe("arc released");
+  });
+
+  it("/arc-close closes the focused arc and hands the free-text direction to the distiller", async () => {
+    const world = worldOf();
+    world.current = "dock-v2";
+    const probe = await probeOver(world);
+    probe.command("arc-close focus on the dock rules");
+    await flush();
+    expect(world.closed).toEqual(["dock-v2"]);
+    expect(world.directions).toEqual(["focus on the dock rules"]);
+  });
+
+  it("the old /arc close <slug> alias still names the arc and carries no direction", async () => {
+    const world = worldOf();
+    const probe = await probeOver(world);
+    probe.command("arc close dock-v2");
+    await flush();
+    expect(world.closed).toEqual(["dock-v2"]);
+    expect(world.directions).toEqual([undefined]);
+  });
+
+  it("/arc-abandon wants a name and abandons when given one", async () => {
+    const world = worldOf();
+    const probe = await probeOver(world);
+    probe.command("arc-abandon");
+    await flush();
+    expect(world.abandoned).toEqual([]);
+    expect(probe.snapshot().notice).toBe("abandon needs a name · /arc-abandon <slug>");
+    probe.command("arc-abandon dock-v2");
+    await flush();
+    expect(world.abandoned).toEqual(["dock-v2"]);
+  });
+
+  it("workspace verbs run flat and through the old alias alike", async () => {
+    const runs: Array<[string, Array<string | undefined>, string[]]> = [
+      ["workspace-new infra", ["infra"], ["infra"]],
+      ["workspace new infra", ["infra"], ["infra"]],
+      ["workspace-default", [undefined], []],
+    ];
+    for (const [command, uses, created] of runs) {
+      const usedSlugs: Array<string | undefined> = [];
+      const createdSlugs: string[] = [];
+      const probe = new AppProbe({ workspaces: workspacesOver(usedSlugs, createdSlugs) });
+      probe.command(command);
+      await flush();
+      expect(usedSlugs).toEqual(uses);
+      expect(createdSlugs).toEqual(created);
+    }
   });
 });

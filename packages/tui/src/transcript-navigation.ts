@@ -11,6 +11,7 @@ export interface NavigableFeed {
 
 export class TranscriptNavigation {
   scrollBack = 0;
+  private framedTotal: number | undefined;
   private backtrackAt: number | undefined;
   private foldCursor: number | undefined;
   private revealAt: number | undefined;
@@ -24,14 +25,17 @@ export class TranscriptNavigation {
   viewport(): Viewport {
     return {
       scrollBack: this.scrollBack,
+      ...(this.scrollBack > 0 &&
+        this.framedTotal !== undefined && { anchorTotal: this.framedTotal }),
       ...(this.revealAt !== undefined && { revealAt: this.revealAt }),
       ...(this.backtrackAt !== undefined && { backtrackAt: this.backtrackAt }),
       ...(this.foldCursor !== undefined && { foldCursor: this.foldCursor }),
     };
   }
 
-  framed(scrollBack: number): void {
+  framed(scrollBack: number, total: number): void {
     this.scrollBack = scrollBack;
+    this.framedTotal = total;
     this.revealAt = undefined;
   }
 
@@ -119,6 +123,7 @@ export class TranscriptNavigation {
     this.backtrackAt = undefined;
     this.foldCursor = undefined;
     this.revealAt = undefined;
+    this.framedTotal = undefined;
     this.escapePrimed = false;
   }
 

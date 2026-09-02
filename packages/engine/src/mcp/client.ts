@@ -1,7 +1,15 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { killTree, within } from "../proc.ts";
+import {
+  asRecord,
+  collectToolPages,
+  initializeParams,
+  McpProtocolError,
+  readServerName,
+  toolCallResult,
+} from "./wire.ts";
 
-export const mcpProtocolVersion = "2025-06-18";
+export { McpProtocolError, mcpProtocolVersion } from "./wire.ts";
 
 const closeGraceMs = 500;
 const maxLineChars = 4 * 1024 * 1024;
@@ -56,13 +64,6 @@ export class McpServerExitedError extends Error {
   constructor(reason: string) {
     super(reason);
     this.name = "McpServerExitedError";
-  }
-}
-
-export class McpProtocolError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "McpProtocolError";
   }
 }
 
@@ -132,33 +133,19 @@ class StdioChannel implements McpConnection {
   }
 
   async handshake(): Promise<void> {
-    const result = asRecord(
-      await this.request("initialize", {
-        protocolVersion: mcpProtocolVersion,
-        capabilities: {},
-        clientInfo: { name: "keywork", version: "0.0.1" },
-      }),
-    );
+    const result = asRecord(await this.request("initialize", initializeParams()));
     this.serverName = readServerName(result);
     this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
   }
 
-  async listTools(): Promise<McpTool[]> {
-    const tools: McpTool[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = asRecord(
-        await this.request("tools/list", cursor === undefined ? {} : { cursor }),
-      );
-      for (const entry of asArray(page.tools)) tools.push(readTool(entry));
-      cursor = typeof page.nextCursor === "string" ? page.nextCursor : undefined;
-    } while (cursor !== undefined);
-    return tools;
+  listTools(): Promise<McpTool[]> {
+    return collectToolPages((method, params) => this.request(method, params));
   }
 
   async callTool(name: string, args: unknown): Promise<McpToolResult> {
-    const result = asRecord(await this.request("tools/call", { name, arguments: args ?? {} }));
-    return { text: renderContent(result.content), isError: result.isError === true };
+    return toolCallResult(
+      asRecord(await this.request("tools/call", { name, arguments: args ?? {} })),
+    );
   }
 
   onClose(handler: (error?: Error) => void): void {
@@ -287,42 +274,4 @@ class StdioChannel implements McpConnection {
     const base = `server exited (code ${code ?? "unknown"})`;
     return detail.length > 0 ? `${base}: ${detail}` : base;
   }
-}
-
-function readServerName(initializeResult: Record<string, unknown>): string {
-  const info = asRecord(initializeResult.serverInfo);
-  return typeof info.name === "string" ? info.name : "unknown";
-}
-
-function readTool(entry: unknown): McpTool {
-  const record = asRecord(entry);
-  if (typeof record.name !== "string" || record.name.length === 0) {
-    throw new McpProtocolError("server listed a tool without a name");
-  }
-  return {
-    name: record.name,
-    description: typeof record.description === "string" ? record.description : "",
-    inputSchema: asRecord(record.inputSchema ?? { type: "object" }),
-  };
-}
-
-function renderContent(content: unknown): string {
-  return asArray(content)
-    .map((block) => {
-      const record = asRecord(block);
-      if (record.type === "text" && typeof record.text === "string") return record.text;
-      return JSON.stringify(record);
-    })
-    .join("\n");
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }

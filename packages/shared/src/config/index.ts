@@ -36,6 +36,7 @@ export {
   defaultConfig,
   type KeyworkConfig,
   type McpServerConfig,
+  type ModelCapabilitiesConfig,
   type PermissionAction,
   type PermissionsConfig,
   type PromptOverride,

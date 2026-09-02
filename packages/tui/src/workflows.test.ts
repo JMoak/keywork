@@ -383,7 +383,7 @@ describe("command palette", () => {
     const probe = new AppProbe().keys("ctrl+shift+p");
     expect(probe.snapshot().overlay).toBe("palette");
     expect(probe.core.paletteMode).toBe("commands");
-    expect(probe.snapshot().paletteQuery).toBe(">");
+    expect(probe.snapshot().paletteQuery).toBe("/");
     expect(probe.core.paletteMatches().some((entry) => entry.name === "split")).toBe(true);
     expect(probe.core.paletteMatches().every((entry) => entry.jump !== true)).toBe(true);
   });
@@ -1163,11 +1163,25 @@ describe("pane resize", () => {
     probe.command("split");
     probe.command("grow");
     const shrunk = probe.rect("session-1");
-    probe.click(shrunk.x + shrunk.width - 1, shrunk.y + 1);
+    probe.click(shrunk.x + shrunk.width - 2, shrunk.y + 1);
     expect(probe.snapshot().focused).toBe("session-1");
     const grown = probe.rect("session-2");
-    probe.click(grown.x, grown.y + 1);
+    probe.click(grown.x + 1, grown.y + 1);
     expect(probe.snapshot().focused).toBe("session-2");
+  });
+
+  it("keeps the shared border as a resize grip, never a focus target", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    const first = probe.rect("session-1");
+    probe.click(first.x + first.width - 1, first.y + 1);
+    expect(probe.snapshot().focused).toBe("session-2");
+    const before = probe.rect("session-1").width;
+    probe.drag(
+      { x: first.x + first.width - 1, y: first.y + 1 },
+      { x: first.x + first.width + 5, y: first.y + 1 },
+    );
+    expect(probe.rect("session-1").width).toBeGreaterThan(before);
   });
 });
 
@@ -2869,3 +2883,50 @@ function describePaneTree(node: unknown): unknown {
     ...(Array.isArray(record.children) && { children: record.children.map(describePaneTree) }),
   };
 }
+
+describe("entity tray pointer", () => {
+  const emptyTreePort: SessionTreePort = {
+    load: async () => undefined,
+    setLabel: async () => {},
+    fork: async () => undefined,
+    overview: async () => [],
+  };
+
+  function probeWithTree() {
+    const trees = new Map<string, SessionTreePane>();
+    const probe = new AppProbe({
+      createSessionTreePane: (id, notify, intents, targetSession) => {
+        const pane = new SessionTreePane(id, notify, intents, emptyTreePort, targetSession);
+        trees.set(id, pane);
+        return pane;
+      },
+    });
+    probe.command("tree");
+    const pane = trees.get("tree-1");
+    if (pane === undefined) throw new Error("no tree pane");
+    return { probe, pane };
+  }
+
+  function renderTree(probe: AppProbe, pane: SessionTreePane) {
+    const rect = probe.rect("tree-1");
+    pane.view({ theme: resolveTheme(), focused: true, width: rect.width, height: rect.height });
+    return rect;
+  }
+
+  it("hovers, clicks, and dismisses the tray through the handleMouse spine", async () => {
+    const { probe, pane } = probeWithTree();
+    await probe.settled();
+    probe.keys("/");
+    expect(pane.tray.open).toBe(true);
+    const rect = renderTree(probe, pane);
+    const firstRow = rect.y + 3;
+    probe.hover(rect.x + 2, firstRow + 2);
+    expect(pane.tray.selected()).toBe(2);
+    probe.click(rect.x + 2, firstRow + 2);
+    expect(pane.tray.open).toBe(false);
+    probe.keys("/");
+    renderTree(probe, pane);
+    probe.click(rect.x + 2, rect.y + 1);
+    expect(pane.tray.open).toBe(false);
+  });
+});

@@ -82,6 +82,15 @@ describe("loadConfig", () => {
     await expect(loadConfig({ userDir: hostileDir })).rejects.toThrow(/us-east-1/);
   });
 
+  it("takes auxiliary role bindings from the user layer only", async () => {
+    const userDir = await dirWithConfig({ roles: { closing: "openrouter/cheap-model" } });
+    const projectDir = await dirWithConfig({ roles: { closing: "evil/exfiltrator" } });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.roles).toEqual({ closing: "openrouter/cheap-model" });
+  });
+
   it("ignores bedrockRegion from the project layer even when trusted", async () => {
     const userDir = await dirWithConfig({});
     const projectDir = await dirWithConfig({ bedrockRegion: "eu-west-1" });

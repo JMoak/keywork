@@ -8,8 +8,8 @@ export type { ArcStatus };
 export type ArcSummary = Pick<ArcRecord, "slug" | "status" | "created"> & { sessions: number };
 
 export type ArcCloseOutcome =
-  | { kind: "closed"; delivered: number; released: number }
-  | { kind: "pending"; candidates: number; questions: number; wedged: number };
+  | { kind: "closed"; delivered: number; released: number; notice?: string }
+  | { kind: "pending"; candidates: number; questions: number; wedged: number; notice?: string };
 
 export type AirlockFinishOutcome =
   | ArcCloseOutcome
@@ -47,6 +47,7 @@ export interface AirlockDigestView {
   questions: AirlockQuestionView[];
   successor?: string;
   sweep?: AirlockSweepView;
+  direction?: string;
 }
 
 export interface ArcAirlockPort {
@@ -60,9 +61,10 @@ export interface ArcAirlockPort {
 export interface ArcsPort {
   list(): Promise<ArcSummary[]>;
   create(slug: string): Promise<ArcSummary>;
-  close(slug: string): Promise<ArcCloseOutcome>;
+  close(slug: string, direction?: string): Promise<ArcCloseOutcome>;
   abandon(slug: string): Promise<void>;
   subscribe?(listener: () => void): () => void;
+  returnDelta?(slug: string): Promise<string[]>;
   airlock?: ArcAirlockPort;
 }
 
@@ -114,10 +116,14 @@ export function activeFirst(arcs: readonly ArcSummary[]): ArcSummary[] {
 }
 
 export function describeCloseOutcome(slug: string, outcome: ArcCloseOutcome): string {
+  const noted = (text: string): string =>
+    outcome.notice === undefined ? text : `${text} · ${outcome.notice}`;
   if (outcome.kind === "closed") {
     const released =
       outcome.released === 0 ? "" : ` · ${pluralize(outcome.released, "session")} released`;
-    return `arc ${slug} closed · delivered ${pluralize(outcome.delivered, "note")}${released}`;
+    return noted(
+      `arc ${slug} closed · delivered ${pluralize(outcome.delivered, "note")}${released}`,
+    );
   }
   const pending = [
     pluralize(outcome.candidates, "note"),
@@ -127,7 +133,9 @@ export function describeCloseOutcome(slug: string, outcome: ArcCloseOutcome): st
     outcome.wedged === 0
       ? ""
       : ` · ${outcome.wedged} live ${outcome.wedged === 1 ? "session" : "sessions"} didn't flush`;
-  return `arc ${slug} is waiting at the airlock · ${pending} to triage in the memory pane${wedged} · /arc abandon ${slug} archives without distilling`;
+  return noted(
+    `arc ${slug} is waiting at the airlock · ${pending} to triage in the memory pane${wedged} · /arc-abandon ${slug} archives without distilling`,
+  );
 }
 
 export function describeFinishOutcome(slug: string, outcome: AirlockFinishOutcome): string {

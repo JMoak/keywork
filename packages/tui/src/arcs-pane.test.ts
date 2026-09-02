@@ -473,7 +473,7 @@ describe("ArcsPane command tray", () => {
       "refresh",
     ]);
     expect(pane.tray.matches().map((command) => command.shortcut)).toEqual([
-      "⏎",
+      "enter",
       "n",
       "c",
       "A",

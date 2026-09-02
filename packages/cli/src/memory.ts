@@ -5,7 +5,11 @@ import {
   type ArcSearchHit,
   AskGateLedger,
   type AuditEntry,
+  type BootstrapInjection,
   bootstrapMemory,
+  CitationLedger,
+  citationAuditEvent,
+  citationUsefulnessFeed,
   type EmbeddingsPort,
   Gardener,
   type LedgerEntry,
@@ -16,6 +20,8 @@ import {
   type Note,
   noteName,
   type Provenance,
+  parseCitationEvents,
+  type RecallTap,
   type RetrievalSource,
   type SearchHit,
   type StagedItem,
@@ -93,10 +99,83 @@ export function memoryRecall(
     arcs === undefined || sessionId === undefined
       ? workspace
       : arcs.searcher(workspace, sessionId, memory.embeddings);
+  return { store: memory.store, search };
+}
+
+export function resolveSessionKey(key: SessionKey | undefined): string | undefined {
+  return typeof key === "function" ? key() : key;
+}
+
+export interface CitationTrail {
+  forSession(sessionId: string): CitationLedger;
+  tapFor(sessionKey: SessionKey | undefined): RecallTap;
+  recordReply(sessionId: string, replyText: string): void;
+  citedNotes(arc: string): Promise<string[]>;
+  release(sessionId: string): void;
+}
+
+export function citationTrail(
+  memory: MemoryAccess,
+  bootstrap?: () => BootstrapInjection | undefined,
+): CitationTrail {
+  const ledgers = new Map<string, CitationLedger>();
+  const persist = (line: string): void => {
+    const opened = memory();
+    if (opened === undefined || !opened.store.trusted) return;
+    void opened.store.recordAudit(line).catch(() => undefined);
+  };
+  const forSession = (sessionId: string): CitationLedger => {
+    const existing = ledgers.get(sessionId);
+    if (existing !== undefined) return existing;
+    const created = new CitationLedger({
+      session: sessionId,
+      onEvent: (event) => persist(citationAuditEvent(event)),
+      onCitation: (event) => {
+        const opened = memory();
+        if (opened !== undefined) citationUsefulnessFeed(opened.gardener, sessionId)(event);
+      },
+    });
+    const injection = bootstrap?.();
+    if (injection !== undefined) created.recordBootstrap(injection);
+    ledgers.set(sessionId, created);
+    return created;
+  };
+  const liveCitations = (layer: string): string[] =>
+    [...ledgers.values()].flatMap((ledger) =>
+      ledger
+        .citations()
+        .filter((event) => event.layer === layer)
+        .map((event) => event.note),
+    );
+  const persistedCitations = async (layer: string): Promise<string[]> => {
+    const opened = memory();
+    if (opened === undefined) return [];
+    return parseCitationEvents(await opened.store.readAudit())
+      .filter((event) => event.kind === "citation" && event.layer === layer)
+      .map((event) => event.note);
+  };
   return {
-    store: memory.store,
-    search,
-    onRecall: recallTap(memory, sessionId),
+    forSession,
+    tapFor: (sessionKey) => ({
+      recordRecall: (note, surface, layer) => {
+        const id = resolveSessionKey(sessionKey);
+        if (id !== undefined) forSession(id).recordRecall(note, surface, layer);
+      },
+      recordLatency: (surface, milliseconds) => {
+        const id = resolveSessionKey(sessionKey);
+        if (id !== undefined) forSession(id).recordLatency(surface, milliseconds);
+      },
+    }),
+    recordReply: (sessionId, replyText) => {
+      forSession(sessionId).recordReply(replyText);
+    },
+    citedNotes: async (arc) => {
+      const layer = arcLayerId(arc);
+      return [...new Set([...liveCitations(layer), ...(await persistedCitations(layer))])];
+    },
+    release: (sessionId) => {
+      ledgers.delete(sessionId);
+    },
   };
 }
 
@@ -122,20 +201,13 @@ function recallSearch(
   });
 }
 
-function recallTap(memory: WorkspaceMemory, sessionId?: SessionKey): (noteName: string) => void {
-  const resolveSession = typeof sessionId === "function" ? sessionId : () => sessionId;
-  return (noteName) => {
-    const id = resolveSession();
-    if (id !== undefined) memory.gardener.recordRecall(noteName, id);
-  };
-}
-
-export async function bootstrapInjection(memory: WorkspaceMemory | undefined): Promise<string> {
-  if (memory === undefined) return "";
-  const injection = await bootstrapMemory([
-    { name: "workspace", store: memory.store, budget: memoryBootstrapBudget },
+export async function bootstrapInjection(
+  memory: WorkspaceMemory | undefined,
+): Promise<BootstrapInjection | undefined> {
+  if (memory === undefined) return undefined;
+  return bootstrapMemory([
+    { name: workspaceLayerId, store: memory.store, budget: memoryBootstrapBudget },
   ]);
-  return injection.text;
 }
 
 export function withMemoryPrompt(systemPrompt: string, injection: string): string {

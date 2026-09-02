@@ -1,10 +1,39 @@
 import { fitTitle } from "@keywork/engine";
 import type { GlyphSupport } from "./capability.ts";
+import type { PageTier } from "./page.ts";
 import { slugWords } from "./slug.ts";
 import { strokeMeasure, strokeRasterize, strokeRows, strokeSupports } from "./stroke-face.ts";
 import { width } from "./width.ts";
 
-export type HeadlineFace = "stroke" | "half-block" | "block" | "caps";
+export type HeadlineFace =
+  | "stroke"
+  | "half-block"
+  | "half-block-condensed"
+  | "block"
+  | "block-condensed"
+  | "caps";
+
+export interface MastheadMoment {
+  readonly tier: PageTier;
+  readonly focused: boolean;
+  readonly asking: boolean;
+  readonly backtracking: boolean;
+  readonly disclosing: boolean;
+  readonly failedUnseen: boolean;
+  readonly enabled: boolean;
+}
+
+export function wearsMasthead(moment: MastheadMoment): boolean {
+  return (
+    moment.enabled &&
+    moment.tier === "masthead" &&
+    !moment.focused &&
+    !moment.asking &&
+    !moment.backtracking &&
+    !moment.disclosing &&
+    !moment.failedUnseen
+  );
+}
 
 export interface HeadlineFrame {
   readonly width: number;
@@ -46,9 +75,10 @@ function mostWordsSet(
 function blockFacesFor(words: readonly string[], frame: HeadlineFrame): Face[] {
   const { glyphTier } = frame.glyphs;
   if (glyphTier < 1) return [];
-  const bitmapFace = glyphTier >= 2 ? halfBlockFace : fullBlockFace;
+  const bitmapFaces =
+    glyphTier >= 2 ? [halfBlockFace, condensedHalfBlockFace] : [fullBlockFace, condensedBlockFace];
   const strokeFaces = glyphTier >= 2 ? strokeScales.map(strokeFace) : [];
-  return [...strokeFaces, bitmapFace].filter((face) =>
+  return [...strokeFaces, ...bitmapFaces].filter((face) =>
     words.every((word) => face.supports(word) && face.measure(word) <= frame.width),
   );
 }
@@ -75,7 +105,6 @@ interface Face {
   rasterize(words: readonly string[]): string[];
 }
 
-const glyphGap = 1;
 const bitmapRows = 5;
 
 function setWords(
@@ -138,11 +167,11 @@ const capsFace: Face = {
   rasterize: (words) => [words.map((word) => word.toUpperCase()).join(" ")],
 };
 
-const fullBlockFace: Face = bitmapFace("block", bitmapRows, (rows) =>
-  rows.map((row) => row.replace(/#/g, "█").replace(/\./g, " ")),
-);
+function renderFullBlocks(rows: readonly string[]): string[] {
+  return rows.map((row) => row.replace(/#/g, "█").replace(/\./g, " "));
+}
 
-const halfBlockFace: Face = bitmapFace("half-block", Math.ceil(bitmapRows / 2), (rows) => {
+function renderHalfBlocks(rows: readonly string[]): string[] {
   const lines: string[] = [];
   for (let top = 0; top < rows.length; top += 2) {
     const upper = rows[top] ?? "";
@@ -154,7 +183,19 @@ const halfBlockFace: Face = bitmapFace("half-block", Math.ceil(bitmapRows / 2), 
     );
   }
   return lines;
-});
+}
+
+const halfBlockRows = Math.ceil(bitmapRows / 2);
+
+const fullBlockFace: Face = bitmapFace("block", bitmapRows, 1, renderFullBlocks);
+const condensedBlockFace: Face = bitmapFace("block-condensed", bitmapRows, 0, renderFullBlocks);
+const halfBlockFace: Face = bitmapFace("half-block", halfBlockRows, 1, renderHalfBlocks);
+const condensedHalfBlockFace: Face = bitmapFace(
+  "half-block-condensed",
+  halfBlockRows,
+  0,
+  renderHalfBlocks,
+);
 
 function halfBlock(upper: boolean, lower: boolean): string {
   if (upper && lower) return "█";
@@ -166,6 +207,7 @@ function halfBlock(upper: boolean, lower: boolean): string {
 function bitmapFace(
   name: HeadlineFace,
   rowsPerLine: number,
+  glyphGap: number,
   render: (rows: readonly string[]) => string[],
 ): Face {
   return {
@@ -180,14 +222,14 @@ function bitmapFace(
     },
     rasterize: (words) => {
       const rows = Array.from({ length: bitmapRows }, (_, row) =>
-        words.map((word) => wordRow(word, row)).join(" ".repeat(3)),
+        words.map((word) => wordRow(word, row, glyphGap)).join(" ".repeat(3)),
       );
       return render(rows).map((line) => line.trimEnd());
     },
   };
 }
 
-function wordRow(word: string, row: number): string {
+function wordRow(word: string, row: number, glyphGap: number): string {
   return Array.from(word.toUpperCase())
     .map((glyph) => bitmaps[glyph]?.[row] ?? "")
     .join(" ".repeat(glyphGap));

@@ -48,6 +48,7 @@ export interface CloseDecisions {
   candidates: Record<string, CandidateTriage>;
   questions: Record<string, QuestionTriage>;
   successor?: string;
+  direction?: string;
 }
 
 export interface ArcDelivery {
@@ -471,6 +472,7 @@ function deliveryRecordBody(
     delivered.length > 0 ? delivered.map((name) => `- [[${name}]]`).join("\n") : "- none";
   return [
     `arc ${slug} closed ${deliveryTime}; distilled ${delivered.length} notes into the workspace garden.`,
+    ...(decisions.direction === undefined ? [] : [`direction: ${decisions.direction}`]),
     "",
     "delivered:",
     deliveredLines,

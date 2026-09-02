@@ -29,4 +29,4 @@
 │                                      │   no model bound · /connect adds a provider · /model picks one                │
 │                                      │ › ▌                                                                           │
 ╰──────────────────────────────────────╰───────────────────────────────────────────────────────────────────────────────╯
- keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · > commands                                                            
+ keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · / commands                                                            

@@ -4,6 +4,7 @@ import {
   type AirlockRowRef,
   type DigestTreatment,
   findNote,
+  type GardenHeat,
   gardenRows,
   ledgerRows,
   type MemoryRow,
@@ -148,6 +149,7 @@ export interface MemoryPaneSeams {
   focusedArc?: () => string | undefined;
   now?: () => number;
   digestTreatment?: DigestTreatment;
+  gardenHeat?: GardenHeat;
 }
 
 export const emptyMemoryInputs: MemoryPaneInputs = {
@@ -270,7 +272,8 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
     return gardenRows(this.inputs, {
       focusedArc: this.seams.focusedArc?.(),
       now,
-      treatment: this.seams.digestTreatment ?? "tail",
+      treatment: this.seams.digestTreatment ?? "stamp",
+      ...(this.seams.gardenHeat !== undefined && { heat: this.seams.gardenHeat }),
       unfolded: (arc) => this.unfoldedArcs.has(arc),
     });
   }

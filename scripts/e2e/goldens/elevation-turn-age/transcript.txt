@@ -1,0 +1,26 @@
+╭────────────────────────────╭───────────────────────────────────────────────────────────╮
+│ session tree · 1 session   │ session-1                                                 │
+│ ▓ how does the dock behave │                                                           │
+│                            │                                                           │
+│                            │                                                           │
+│                            │                                                           │
+│                            │                                                           │
+│                            │                                                           │
+│                            │                                                           │
+│                            │                                                           │
+│                            │                                                           │
+│                            │                                                           │
+│                            │ █ how does the dock behave                                │
+│                            │ ▓ The dock keeps 0.3 of the width; panes inside it stack  │
+│                            │   by weight.                                              │
+│                            │                                                           │
+├────────────────────────────│   • the main area takes the rest                          │
+│ #demo · 1 session          │   • split ratios rebalance with ctrl+k r                  │
+│ ▓ how does the dock behave │                                                           │
+│                            │   That covers the resting layout.                         │
+│                            │ █ and zooming                                             │
+│                            │ ▓ Zooming holds the ratios; the tile returns exactly      │
+│                            │   where it left.                                          │
+│                            │ › ▌                                                       │
+╰────────────────────────────╰───────────────────────────────────────────────────────────╯
+ keywork e2e · #demo · 3 panes · ctrl+k nav · ctrl+p go · / commands               return 

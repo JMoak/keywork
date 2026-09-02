@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
-import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { resolveTheme } from "./theme.ts";
 
 function trayOver(names: string[] = ["fork", "label", "refresh"]) {
@@ -111,5 +111,36 @@ describe("PaneTrayModel", () => {
     expect(paneTrayView(tray, 60, theme).rows).toBe(6);
     press(tray, "z");
     expect(paneTrayView(tray, 60, theme).rows).toBe(4);
+  });
+});
+
+describe("paneTrayMouse", () => {
+  const at = (y: number) => ({ x: 4, y });
+  const move = (y: number) => ({ type: "move", x: 4, y }) as const;
+  const down = (y: number) => ({ type: "down", x: 4, y, button: 0 }) as const;
+
+  it("hovers to move the selection and clicks to run the row", () => {
+    const { tray, ran } = trayOver();
+    tray.openTray();
+    expect(paneTrayMouse(tray, 3, at(4), move(4))).toBe(true);
+    expect(tray.selected()).toBe(1);
+    expect(paneTrayMouse(tray, 3, at(5), down(5))).toBe(true);
+    expect(ran).toEqual(["refresh"]);
+    expect(tray.open).toBe(false);
+  });
+
+  it("dismisses on an outside press and ignores outside hovers", () => {
+    const { tray, ran } = trayOver();
+    tray.openTray();
+    expect(paneTrayMouse(tray, 3, at(1), move(1))).toBe(false);
+    expect(tray.selected()).toBe(0);
+    expect(paneTrayMouse(tray, 3, at(1), down(1))).toBe(true);
+    expect(tray.open).toBe(false);
+    expect(ran).toEqual([]);
+  });
+
+  it("does nothing while closed", () => {
+    const { tray } = trayOver();
+    expect(paneTrayMouse(tray, 3, at(3), down(3))).toBe(false);
   });
 });

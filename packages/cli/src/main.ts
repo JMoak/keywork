@@ -221,6 +221,8 @@ async function runChat(context: CommandContext, { values }: ParsedInvocation): P
     ...(workspaceSlug !== undefined && { workspaceSlug }),
     ...(config.prompts !== undefined && { prompts: config.prompts }),
     ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
+    ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
+    ...(config.models !== undefined && { models: config.models }),
     ...(values.resume !== undefined && { resumeId: values.resume }),
     ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
   });
@@ -261,6 +263,8 @@ async function runHeadlessPrompt(
       ...(workspaceSlug !== undefined && { workspaceSlug }),
       ...(config.prompts !== undefined && { prompts: config.prompts }),
       ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
+      ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
+      ...(config.models !== undefined && { models: config.models }),
       ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
     });
     return exitCodeOf(outcome);
@@ -347,11 +351,15 @@ async function runTrust(action: "trust" | "untrust", context: CommandContext): P
 }
 
 async function runDoctor(context: CommandContext): Promise<number> {
-  const { doctorCommand } = await import("./doctor.ts");
+  const { doctorCommand, workspaceDoctorFacts } = await import("./doctor.ts");
   return doctorCommand(
     { env: context.io.env, platform: process.platform },
     context.io.print,
     async () => (await context.openInference()).current().runtime.registry,
+    async () => {
+      const { config } = (await context.openInference()).current();
+      return workspaceDoctorFacts(context.cwd, context.projectTrusted, config);
+    },
   );
 }
 

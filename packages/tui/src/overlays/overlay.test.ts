@@ -151,6 +151,14 @@ describe("PaletteOverlay", () => {
       new PaletteOverlay(registry, ">", { dismiss: () => {} }).entries.map((e) => e.name),
     ).toEqual(["zoom"]);
   });
+
+  it("treats / as the commands prefix, matching the slash vocabulary", () => {
+    const { registry } = registryWith("zoom");
+    const slashed = new PaletteOverlay(registry, "/zo", { dismiss: () => {} });
+    expect(slashed.mode).toBe("commands");
+    expect(slashed.entries.map((entry) => entry.name)).toEqual(["zoom"]);
+    expect(new PaletteOverlay(registry, ">zo", { dismiss: () => {} }).mode).toBe("commands");
+  });
 });
 
 describe("PresetOverlay", () => {

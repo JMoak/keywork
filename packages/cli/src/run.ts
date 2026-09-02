@@ -18,7 +18,7 @@ import {
   type ToolGuard,
   tapJournal,
 } from "@keywork/engine";
-import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
+import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
 import type { WorkspaceExtensions } from "./commands.ts";
 import { composeAgents, composeWorkspace } from "./compose.ts";
 import { type ExitClass, exitCodes } from "./dispatch.ts";
@@ -40,6 +40,8 @@ export interface RunOptions {
   prompts?: PromptsConfig;
   permissions?: PermissionResolver;
   mcpServers?: Record<string, McpServerConfig>;
+  repoMap?: "auto" | "off";
+  models?: ModelCapabilitiesConfig;
   signal?: AbortSignal;
   print?: (line: string) => void;
   printError?: (line: string) => void;
@@ -111,6 +113,8 @@ async function openRun(
     workspaceSlug: options.workspaceSlug,
     prompts: options.prompts,
     mcpServers: options.mcpServers,
+    repoMap: options.repoMap,
+    models: options.models,
     checkpoints: "off",
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
   });

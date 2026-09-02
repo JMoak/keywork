@@ -22,7 +22,7 @@ import {
   trayCommandsPressing,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
-import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { focusOrOpenSession, overviewRowView, type SessionTreePort } from "./session-tree-pane.ts";
@@ -49,6 +49,7 @@ export class ArcsPane implements Pane {
   private readonly unsubscribes: Array<() => void> = [];
   private readonly pendingRefresh: FrameCoalescer;
   private lastPageRows = 20;
+  private trayFirstRow = 0;
 
   constructor(
     readonly id: string,
@@ -124,6 +125,7 @@ export class ArcsPane implements Pane {
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (this.tray.open) return paneTrayMouse(this.tray, this.trayFirstRow, local, event);
     if (event.type !== "down" || this.tasks.failure() !== undefined) return false;
     const row = local.y - 1;
     if (row < 0 || row >= this.lastPageRows) return false;
@@ -149,15 +151,19 @@ export class ArcsPane implements Pane {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
     const nameLine = this.nameLine(theme, focused);
-    const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
+    const tray = this.tray.open
+      ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
+      : undefined;
     this.lastPageRows = Math.max(
       0,
       paneContentHeight(context) - (nameLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
     );
+    const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
+    this.trayFirstRow = 2 + body.length + (nameLine === undefined ? 0 : 1);
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, innerWidth),
+      ...body,
       ...(nameLine === undefined ? [] : [nameLine]),
       ...(tray?.children ?? []),
     );
@@ -232,7 +238,7 @@ export class ArcsPane implements Pane {
   }
 }
 
-const arcsTray: readonly KeyedTrayCommand[] = [
+export const arcsTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "list this arc's sessions", key: "enter" },
   { name: "new", description: "name a new arc", key: "n" },
   { name: "close", description: "close the selected arc through the airlock", key: "c" },
@@ -240,7 +246,7 @@ const arcsTray: readonly KeyedTrayCommand[] = [
   { name: "refresh", description: "reload arcs and sessions", key: "r" },
 ];
 
-const arcSessionsTray: readonly KeyedTrayCommand[] = [
+export const arcSessionsTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "open the selected session", key: "enter" },
   { name: "back", description: "return to the arcs list", key: "escape" },
   { name: "refresh", description: "reload arcs and sessions", key: "r" },

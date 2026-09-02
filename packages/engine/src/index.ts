@@ -107,7 +107,17 @@ export {
   type StdioConnectOptions,
   type StdioServerSpec,
 } from "./mcp/client.ts";
-export type { ConnectServer, McpServerState, McpServerStatus } from "./mcp/reconciler.ts";
+export {
+  connectHttpServer,
+  type HttpConnectOptions,
+  type HttpServerSpec,
+} from "./mcp/http.ts";
+export type {
+  ConnectServer,
+  McpServerState,
+  McpServerStatus,
+  McpTransport,
+} from "./mcp/reconciler.ts";
 export {
   defaultRestartDelaysMs,
   isMcpBackedTool,
@@ -154,6 +164,7 @@ export {
   type ArcBindingListener,
   ArcBindings,
 } from "./memory/arcs/bindings.ts";
+export { type ClosingAgentOptions, closingJudgment } from "./memory/arcs/closing.ts";
 export { ArcCloseDraft } from "./memory/arcs/draft.ts";
 export {
   ArcOpenQuestions,
@@ -173,8 +184,11 @@ export {
   type ArcRecallOutcome,
   type ArcSearchHit,
   arcBootstrapLayer,
+  arcLayer,
   defaultArcBoost,
   type MemoryLayerRef,
+  searchHitLayer,
+  workspaceLayer,
 } from "./memory/arcs/recall.ts";
 export {
   ArcExistsError,
@@ -215,11 +229,14 @@ export {
   type CitationLedgerEvent,
   type CitationLedgerOptions,
   type CitationOutcome,
+  citationAuditEvent,
   citationChain,
   citationUsefulnessFeed,
   type LatencyEvent,
+  parseCitationEvents,
   type RecallEvent,
   type RecallSurface,
+  type RecallTap,
   type UsefulnessSink,
 } from "./memory/citations.ts";
 export {
@@ -292,12 +309,25 @@ export {
   wikilinkTarget,
 } from "./memory/notes.ts";
 export {
+  type ActionRecallOptions,
+  actionRecallBudget,
+  actionRecallDefaults,
+  actionSubject,
+  pointOfActionRecall,
+} from "./memory/point-of-action.ts";
+export {
   memoryGetTool,
   memoryRecallTools,
   memorySearchTool,
   type RecallListener,
 } from "./memory/recall-tools.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
+export {
+  type GatherReturnDeltaOptions,
+  gatherReturnDelta,
+  type ReturnDeltaInputs,
+  returnDelta,
+} from "./memory/return-delta.ts";
 export type { NoteRelations } from "./memory/search.ts";
 export {
   type EmbeddingsPort,
@@ -424,6 +454,14 @@ export {
   postForStream,
   type StreamingPost,
 } from "./providers/transport.ts";
+export {
+  RepoMap,
+  type RepoMapFacts,
+  type RepoMapOptions,
+  repoMapTokenBudget,
+  repoMapTokenCap,
+} from "./repomap/map.ts";
+export { type IgnoreFileProblem, scanWorkspace, type WorkspaceScan } from "./repomap/scan.ts";
 export {
   type CompactionOptions,
   type CompactionPlan,

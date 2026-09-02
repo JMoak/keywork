@@ -67,6 +67,15 @@ export interface MemoryRow {
 
 export type DigestTreatment = "tail" | "stamp";
 
+export type GardenHeat = "lead" | "ink";
+
+export function noteHeat(note: MemoryNoteView): number {
+  if (note.supersededBy !== undefined) return 0;
+  const usefulness = Math.min(1, Math.max(0, note.usefulness ?? 0));
+  const recalled = Math.min(3, note.recalls ?? 0) / 3;
+  return usefulness * 0.7 + recalled * 0.3;
+}
+
 export type AirlockRowKind = "candidate" | "question" | "fold" | "finish";
 
 export interface AirlockRowRef {
@@ -79,6 +88,7 @@ export interface GardenOptions {
   focusedArc: string | undefined;
   now: number;
   treatment?: DigestTreatment;
+  heat?: GardenHeat;
   unfolded?: (arc: string) => boolean;
 }
 
@@ -284,10 +294,10 @@ function layerRows(
   if (notes.length === 0 && inbox.length === 0 && digest === undefined && !focused) return [];
   const waiting = inbox.length + (digest === undefined ? 0 : digestSize(digest));
   return [
-    layerHeader(layer, notes.length, waiting, digest?.sweep),
+    layerHeader(layer, notes.length, waiting, digest),
     ...(digest === undefined ? [] : digestRows(digest, options)),
     ...sortedInbox(inbox).map((item) => inboxRow(item, options.now)),
-    ...noteSectionRows(layer, notes, options.now),
+    ...noteSectionRows(layer, notes, options),
   ];
 }
 
@@ -301,7 +311,7 @@ function digestSize(digest: AirlockDigestView): number {
 }
 
 function digestRows(digest: AirlockDigestView, options: GardenOptions): MemoryRow[] {
-  const treatment = options.treatment ?? "tail";
+  const treatment = options.treatment ?? "stamp";
   const eligible = digest.candidates.filter((candidate) => candidate.eligible);
   const belowBar = digest.candidates.filter((candidate) => !candidate.eligible);
   const unfolded = options.unfolded?.(digest.arc) === true;
@@ -468,14 +478,15 @@ function layerHeader(
   layer: MemoryLayerView,
   notes: number,
   inbox: number,
-  sweep: AirlockDigestView["sweep"],
+  digest: AirlockDigestView | undefined,
 ): MemoryRow {
   const label = layerLabel(layer);
   const queue = layer.kind === "arc" ? "airlock" : "inbox";
   const facts = [
     notes === 0 ? "no notes yet" : pluralize(notes, "note"),
     ...(inbox === 0 ? [] : [`${queue} ░${inbox}`]),
-    ...sweepFacts(sweep),
+    ...sweepFacts(digest?.sweep),
+    ...(digest?.direction === undefined ? [] : [`steered: ${digest.direction}`]),
   ];
   const tail = ` · ${facts.join(" · ")}`;
   return {
@@ -507,12 +518,13 @@ function layerLabel(layer: MemoryLayerView): string {
 function noteSectionRows(
   layer: MemoryLayerView,
   notes: readonly MemoryNoteView[],
-  now: number,
+  options: Pick<GardenOptions, "now" | "heat">,
 ): MemoryRow[] {
+  const { now } = options;
   const live = notes.filter((note) => note.supersededBy === undefined);
   const superseded = notes.filter((note) => note.supersededBy !== undefined);
   const row = (note: MemoryNoteView): MemoryRow =>
-    noteRow(note, `note:${layer.id}:${note.name}`, 0, now);
+    noteRow(note, `note:${layer.id}:${note.name}`, 0, now, options.heat);
   if (layer.prompt === undefined) {
     return [...mostUsefulFirst(live).map(row), ...byTitle(superseded).map(row)];
   }
@@ -564,8 +576,15 @@ function inboxRow(item: InboxItemView, now: number): MemoryRow {
   };
 }
 
-function noteRow(note: MemoryNoteView, id: string, indent: number, now: number): MemoryRow {
-  const lead = `${"  ".repeat(indent)}${curingGlyph(note.curing)}${provenanceGlyph(note.provenance)} `;
+function noteRow(
+  note: MemoryNoteView,
+  id: string,
+  indent: number,
+  now: number,
+  heat?: GardenHeat,
+): MemoryRow {
+  const heatLead = heat === "lead" ? `${heatGlyph(noteHeat(note))} ` : "";
+  const lead = `${"  ".repeat(indent)}${heatLead}${curingGlyph(note.curing)}${provenanceGlyph(note.provenance)} `;
   const successor = note.supersededBy === undefined ? "" : ` → ${note.supersededBy}`;
   const facts = noteRowFacts(note, now);
   const tail = facts.length === 0 ? "" : ` · ${facts.join(" · ")}`;
@@ -581,10 +600,24 @@ function noteRow(note: MemoryNoteView, id: string, indent: number, now: number):
     ...(note.file !== undefined && { file: note.file }),
     spans: [
       { text: lead, ink: dimmed ? "dim" : "text" },
-      { text: note.title, ink: dimmed ? "dim" : "text" },
+      { text: note.title, ink: titleInk(note, dimmed, heat) },
       { text: `${successor}${tail}`, ink: "dim" },
     ],
   };
+}
+
+function heatGlyph(heat: number): string {
+  if (heat <= 0) return "·";
+  return densityRamp[Math.min(3, Math.floor(heat * 4))] ?? "░";
+}
+
+function titleInk(note: MemoryNoteView, dimmed: boolean, heat: GardenHeat | undefined): SpanInk {
+  if (dimmed) return "dim";
+  if (heat !== "ink") return "text";
+  const warmth = noteHeat(note);
+  if (warmth >= 0.66) return "accent";
+  if (warmth >= 0.33) return "text";
+  return "dim";
 }
 
 function noteRowFacts(note: MemoryNoteView, now: number): string[] {

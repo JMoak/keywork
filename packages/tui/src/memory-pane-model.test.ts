@@ -498,7 +498,7 @@ describe("MemoryPaneModel airlock digest", () => {
 
   it("a and d decide the cursored candidate, never touching the inbox approve path", () => {
     const { model, recorded, triaged } = digestModel();
-    expect(texts(model)[2]).toBe("▓ Arc Lesson · undecided");
+    expect(texts(model)[2]).toBe("░▓ Arc Lesson");
     press(model, "a");
     press(model, "d");
     expect(triaged).toEqual(["dock-v2:Arc Lesson:deliver", "dock-v2:Arc Lesson:leave"]);

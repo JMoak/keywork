@@ -131,6 +131,16 @@ export class ConversationModel {
     return this.editor.suggestions();
   }
 
+  traySelect(at: number): void {
+    this.editor.selectSuggestion(at);
+  }
+
+  trayAccept(at: number): boolean {
+    const outcome = this.editor.acceptSuggestion(at);
+    if (outcome === "pass") return false;
+    return this.applyEdit(outcome);
+  }
+
   usageSummary(): string {
     return this.ledger.usageSummary(this.agent);
   }
@@ -166,7 +176,7 @@ export class ConversationModel {
       { width, rows, page, marks },
       this.navigation.viewport(),
     );
-    this.navigation.framed(frame.scrollBack);
+    this.navigation.framed(frame.scrollBack, frame.total);
     return frame.lines;
   }
 

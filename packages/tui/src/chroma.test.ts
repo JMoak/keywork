@@ -4,6 +4,8 @@ import {
   arcAnchor,
   arcAnchorPosition,
   arcMemberPositions,
+  dimmedTheme,
+  dimStep,
   focusLift,
   hexToOklch,
   lifecycleChrome,
@@ -308,6 +310,88 @@ describe("arcAnchorPosition", () => {
   it("agrees with arcAnchor on every ramp", () => {
     for (let k = 0; k < 8; k++) {
       expect(arcAnchor(ramp, k)).toBe(rampColor(ramp, arcAnchorPosition(k)));
+    }
+  });
+});
+
+describe("dimStep", () => {
+  const themes = [keyworkNight, firstLight];
+
+  it("moves ink toward the ground in lightness on both polarities", () => {
+    for (const theme of themes) {
+      const ink = hexToOklch(theme.text);
+      const ground = hexToOklch(theme.background);
+      const dimmed = hexToOklch(dimStep(theme.text, theme.background));
+      expect(Math.abs(dimmed.l - ground.l)).toBeLessThan(Math.abs(ink.l - ground.l));
+    }
+  });
+
+  it("keeps the ink's hue while it recedes", () => {
+    for (const theme of themes) {
+      const dimmed = hexToOklch(dimStep(theme.accent, theme.background));
+      expect(hueDelta(dimStep(theme.accent, theme.background), theme.accent)).toBeLessThan(15);
+      expect(dimmed.c).toBeGreaterThan(0);
+    }
+  });
+
+  it("steps subtly, never a plunge", () => {
+    for (const theme of themes) {
+      const ink = hexToOklch(theme.text);
+      const dimmed = hexToOklch(dimStep(theme.text, theme.background));
+      const delta = Math.abs(ink.l - dimmed.l);
+      expect(delta).toBeGreaterThan(0.02);
+      expect(delta).toBeLessThan(0.2);
+    }
+  });
+});
+
+describe("dimmedTheme", () => {
+  const themes = [keyworkNight, firstLight];
+  const inkTokens = [
+    "text",
+    "textMid",
+    "textDim",
+    "accent",
+    "accentSoft",
+    "success",
+    "error",
+  ] as const;
+
+  it("recedes every content ink token", () => {
+    for (const theme of themes) {
+      const dimmed = dimmedTheme(theme);
+      for (const token of inkTokens) {
+        expect(Math.abs(apcaLc(dimmed[token], theme.background))).toBeLessThan(
+          Math.abs(apcaLc(theme[token], theme.background)),
+        );
+      }
+    }
+  });
+
+  it("leaves grounds, borders, and the ramp untouched", () => {
+    for (const theme of themes) {
+      const dimmed = dimmedTheme(theme);
+      expect(dimmed.background).toBe(theme.background);
+      expect(dimmed.panel).toBe(theme.panel);
+      expect(dimmed.panelLift).toBe(theme.panelLift);
+      expect(dimmed.border).toBe(theme.border);
+      expect(dimmed.borderFocus).toBe(theme.borderFocus);
+      expect(dimmed.ramp).toEqual(theme.ramp);
+    }
+  });
+
+  it("keeps the tonal ladder ordered so hierarchy survives the dim", () => {
+    for (const theme of themes) {
+      const dimmed = dimmedTheme(theme);
+      const contrast = (hex: string): number => Math.abs(apcaLc(hex, theme.background));
+      expect(contrast(dimmed.text)).toBeGreaterThan(contrast(dimmed.textMid));
+      expect(contrast(dimmed.textMid)).toBeGreaterThan(contrast(dimmed.textDim));
+    }
+  });
+
+  it("keeps the primary reading ink legible", () => {
+    for (const theme of themes) {
+      expect(Math.abs(apcaLc(dimmedTheme(theme).text, theme.background))).toBeGreaterThan(45);
     }
   });
 });

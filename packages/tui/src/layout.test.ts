@@ -1081,3 +1081,170 @@ describe("Layout focus trail and placed opens", () => {
     assertExactTiling(layout);
   });
 });
+
+describe("interior split borders", () => {
+  it("finds a handle on the boundary cells and drags the split onto the ratio lattice", () => {
+    const layout = layoutWith("a", "b");
+    expect(layout.splitHandleAt(60, 5, screen)).toEqual({ path: [] });
+    expect(layout.splitHandleAt(59, 5, screen)).toEqual({ path: [] });
+    expect(layout.splitHandleAt(58, 5, screen)).toBeUndefined();
+    layout.dragSplitHandle({ path: [] }, 71, 5, screen);
+    expect(layout.rects(screen).get("a")?.width).toBe(72);
+    assertExactTiling(layout);
+  });
+
+  it("resolves nested handles and leaves the lower pane's title row for pane gestures", () => {
+    const layout = layoutWith("a", "b", "c");
+    expect(layout.splitHandleAt(70, 19, screen)).toEqual({ path: ["second"] });
+    expect(layout.splitHandleAt(70, 20, screen)).toBeUndefined();
+    layout.dragSplitHandle({ path: ["second"] }, 70, 23, screen);
+    expect(layout.rects(screen).get("b")?.height).toBe(24);
+    assertExactTiling(layout);
+  });
+
+  it("reaches the same widths by drag and by keyboard, in both directions", () => {
+    const dragged = new Set<number>();
+    for (let x = 10; x < 110; x += 1) {
+      const layout = layoutWith("a", "b");
+      layout.dragSplitHandle({ path: [] }, x, 5, screen);
+      dragged.add(layout.rects(screen).get("a")?.width ?? 0);
+    }
+    const keyed = new Set<number>();
+    for (let steps = -20; steps <= 20; steps += 1) {
+      const layout = layoutWith("a", "b");
+      layout.focus("a");
+      for (let i = 0; i < Math.abs(steps); i += 1) {
+        layout.resizeFocused(steps > 0 ? 0.05 : -0.05);
+      }
+      keyed.add(layout.rects(screen).get("a")?.width ?? 0);
+    }
+    expect([...dragged].sort((l, r) => l - r)).toEqual([...keyed].sort((l, r) => l - r));
+  });
+});
+
+describe("Layout drag commits are keyboard-reachable", () => {
+  const directions = ["left", "right", "up", "down"] as const;
+  const sides = ["left", "right"] as const;
+
+  function cloned(layout: Layout): Layout {
+    const state = Layout.parse(JSON.parse(JSON.stringify(layout.toJSON())));
+    if (state === undefined) throw new Error("layout state did not round-trip");
+    const copy = new Layout();
+    copy.load(state);
+    return copy;
+  }
+
+  function keyOf(layout: Layout): string {
+    return JSON.stringify(layout.toJSON());
+  }
+
+  function keyboardSteps(layout: Layout): ((on: Layout) => void)[] {
+    return [
+      ...layout.panes().map((id) => (on: Layout) => on.focus(id)),
+      ...directions.map((direction) => (on: Layout) => void on.move(direction, screen)),
+      ...sides.map((side) => (on: Layout) => void on.dockFocused(side, screen)),
+      (on: Layout) => void on.undockFocused(screen),
+      (on: Layout) => void on.cycleFocused(screen),
+    ];
+  }
+
+  function keyboardReaches(start: Layout, goal: string): boolean {
+    const seen = new Set([keyOf(start)]);
+    let frontier = [start];
+    while (frontier.length > 0 && seen.size < 6000) {
+      const next: Layout[] = [];
+      for (const state of frontier) {
+        for (const step of keyboardSteps(state)) {
+          const candidate = cloned(state);
+          step(candidate);
+          const key = keyOf(candidate);
+          if (key === goal) return true;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          next.push(candidate);
+        }
+      }
+      frontier = next;
+    }
+    return false;
+  }
+
+  function expectParity(layout: Layout, dragged: string, x: number, y: number): string | undefined {
+    const target = layout.dropTargetAt(dragged, x, y, screen);
+    if (target === undefined) return undefined;
+    const landed = cloned(layout);
+    expect(landed.applyDrop(dragged, target, screen)).toBe(true);
+    expect(keyboardReaches(cloned(layout), keyOf(landed))).toBe(true);
+    return target.kind;
+  }
+
+  it("matches the keyboard tree for each drop kind on hand-built layouts", () => {
+    const swap = layoutWith("a", "b", "c");
+    expect(expectParity(swap, "a", 90, 5)).toBe("swap");
+
+    const dockInsert = layoutWith("a", "b", "c");
+    dockInsert.focus("c");
+    dockInsert.dockFocused("left", screen);
+    const slot = dockInsert.rects(screen).get("c") as Rect;
+    expect(expectParity(dockInsert, "a", slot.x + 1, slot.y + slot.height - 1)).toBe("dock");
+
+    const reorder = layoutWith("a", "b", "c");
+    for (const id of ["b", "c"]) {
+      reorder.focus(id);
+      reorder.dockFocused("left", screen);
+    }
+    expect(expectParity(reorder, "b", 1, screen.height - 1)).toBe("dock");
+
+    const crossSwap = layoutWith("a", "b", "c");
+    crossSwap.focus("c");
+    crossSwap.dockFocused("left", screen);
+    const mainRect = crossSwap.rects(screen).get("b") as Rect;
+    expect(expectParity(crossSwap, "c", mainRect.x + 1, mainRect.y + 1)).toBe("swap");
+
+    const emptyMain = layoutWith("a");
+    emptyMain.dockFocused("left", screen);
+    const main = emptyMain.emptyMainRect(screen) as Rect;
+    expect(expectParity(emptyMain, "a", main.x + 5, main.y + 5)).toBe("main");
+  });
+
+  it("matches the keyboard tree for random drags over random arrangements", () => {
+    let seed = 7;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed / 2 ** 31;
+    };
+    const kindsSeen = new Set<string>();
+    let commits = 0;
+    for (let round = 0; round < 30; round += 1) {
+      const layout = new Layout();
+      const count = 2 + Math.floor(random() * 3);
+      const panes = Array.from({ length: count }, (_, at) => `p${at}`);
+      for (const id of panes) expect(layout.open(id, screen)).toBe(true);
+      for (let shuffle = 0; shuffle < 5; shuffle += 1) {
+        layout.focus(panes[Math.floor(random() * count)] as string);
+        const roll = random();
+        if (roll < 0.4) layout.dockFocused(sides[Math.floor(random() * 2)] ?? "left", screen);
+        else if (roll < 0.7) {
+          layout.move(directions[Math.floor(random() * 4)] ?? "left", screen);
+        } else layout.undockFocused(screen);
+      }
+      const dragged = panes[Math.floor(random() * count)] as string;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const kind = expectParity(
+          layout,
+          dragged,
+          Math.floor(random() * screen.width),
+          Math.floor(random() * screen.height),
+        );
+        if (kind !== undefined) {
+          kindsSeen.add(kind);
+          commits += 1;
+          break;
+        }
+      }
+    }
+    expect(commits).toBeGreaterThanOrEqual(20);
+    expect(kindsSeen).toContain("swap");
+    expect(kindsSeen).toContain("dock");
+  });
+});

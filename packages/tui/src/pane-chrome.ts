@@ -403,7 +403,7 @@ const toneTokens: Record<RowTone, ThemeColorToken> = {
 };
 
 function shortcutGlyph(key: string): string {
-  if (key === "enter") return "⏎";
+  if (key === "enter") return "enter";
   if (key === "escape") return "esc";
   return key.startsWith("shift+") ? key.slice("shift+".length).toUpperCase() : key;
 }

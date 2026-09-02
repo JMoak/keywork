@@ -14,7 +14,9 @@ import type { ArcsPort } from "./arcs.ts";
 import { ArcsPane } from "./arcs-pane.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
+import type { GaugeStyle } from "./context-gauge.ts";
 import type { Titler } from "./conversation-model.ts";
+import type { TranscriptElevation } from "./conversation-pane.ts";
 import {
   crashLogFile,
   doctorCommand,
@@ -39,7 +41,7 @@ import { chordOf } from "./keys.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
-import type { DigestTreatment } from "./memory-rows.ts";
+import type { DigestTreatment, GardenHeat } from "./memory-rows.ts";
 import { Animator } from "./motion.ts";
 import type { PresetsPort } from "./overlays/index.ts";
 import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
@@ -78,6 +80,15 @@ import { WorkspacesPane } from "./workspaces-pane.ts";
 
 export interface AppOptions {
   themeOverrides?: ThemeOverrides;
+  pointer?: "on" | "off";
+  masthead?: "on" | "off";
+  motion?: "full" | "reduced";
+  tips?: "on" | "off";
+  scrim?: "on" | "off";
+  dim?: "on" | "off";
+  gauge?: GaugeStyle;
+  elevation?: TranscriptElevation;
+  gardenHeat?: GardenHeat;
   flavors?: readonly Flavor[];
   page?: PageThresholdOverrides;
   glyphs?: GlyphSupport;
@@ -116,11 +127,15 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const escrow = sessionEscrow(options.sessions);
   const restore = await loadRestorePlan(options, escrow);
   if (restore.kind === "failed") recordCrash("restore", restore.cause);
-  const renderer = await (options.createRenderer ?? defaultRenderer)();
+  const pointerOn = options.pointer !== "off";
+  const renderer = await (options.createRenderer ?? (() => defaultRenderer(pointerOn)))();
   const exit = options.exit ?? ((code: number) => process.exit(code));
   const frames = new FrameCoalescer(microtaskFrame, () => paint());
   const render = (): void => frames.request();
-  const animator = new Animator({ onFrame: render });
+  const animator = new Animator({
+    onFrame: render,
+    reducedMotion: options.motion === "reduced",
+  });
   const introduceFirstArc = firstArcIntroducer((slug) => core.introduceArcPane(slug));
   const arcIndex = arcIndexOf(options.arcs, (listed) => {
     introduceFirstArc(listed);
@@ -150,6 +165,9 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       afterTurn: options.afterTurn,
       compact: options.compact,
       arcs: options.arcs,
+      masthead: options.masthead,
+      gauge: options.gauge,
+      elevation: options.elevation,
     }),
   });
   const armed = armedExpiryWatch(() => core, render);
@@ -194,20 +212,26 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const paint = (): void => {
     armed.watch();
     try {
-      paintFrame(renderer, core, {
-        theme: flavors.theme,
-        screen: screenWithin(renderer, flavors.active.chromeWeight),
-        chrome: flavors.active.chromeWeight,
-        gap: flavors.active.gap,
-        instruments: flavors.active.instruments,
-        glyphs,
-        ...(options.focusOutline !== undefined && { focusOutline: options.focusOutline }),
-        arcOrdinal: arcIndex.ordinalOf,
-        arcOf: (id) => sessions.arcOf(id),
-        label:
-          typeof options.statusLabel === "function" ? options.statusLabel() : options.statusLabel,
-        focusedArc: sessions.focused()?.pane.arc,
-      });
+      paintFrame(
+        renderer,
+        core,
+        {
+          theme: flavors.theme,
+          screen: screenWithin(renderer, flavors.active.chromeWeight),
+          chrome: flavors.active.chromeWeight,
+          gap: flavors.active.gap,
+          dim: options.dim === "on",
+          instruments: flavors.active.instruments,
+          glyphs,
+          ...(options.focusOutline !== undefined && { focusOutline: options.focusOutline }),
+          arcOrdinal: arcIndex.ordinalOf,
+          arcOf: (id) => sessions.arcOf(id),
+          label:
+            typeof options.statusLabel === "function" ? options.statusLabel() : options.statusLabel,
+          focusedArc: sessions.focused()?.pane.arc,
+        },
+        options.scrim === "on",
+      );
     } catch (cause) {
       recordCrash("render", cause);
     }
@@ -222,8 +246,16 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   };
   registerHostCommands(core, options, sessions, flavors, render);
   core.registry.addSource(() => arcJumpCommands(core, arcIndex.listed()));
-  renderer.root.add(pointerPlane());
-  wireInput(renderer, core, contain, render, () => frameInset(flavors.active.chromeWeight));
+  if (pointerOn) renderer.root.add(pointerPlane());
+  wireInput(
+    renderer,
+    core,
+    contain,
+    render,
+    () => frameInset(flavors.active.chromeWeight),
+    pointerOn,
+    () => animator.settleAll(),
+  );
   releaseFatalGuards = installFatalGuards({
     recover: () => {
       core.postNotice(recoveredNotice);
@@ -284,14 +316,17 @@ function paneFactories(
             arcOrdinal: arcIndex.ordinalOf,
             ...(arc !== undefined && { drilled: { kind: "arc", slug: arc } }),
           }),
-        createArcPane: (id, notify, intents, targetSession, slug) =>
-          new ArcPane(id, notify, intents, {
+        createArcPane: (id, notify, intents, targetSession, slug) => {
+          const returnDelta = arcs.returnDelta?.bind(arcs);
+          return new ArcPane(id, notify, intents, {
             slug,
             sessions: trees,
             currentSession: targetSession,
             presence: paneSessions,
             arcOrdinal: arcIndex.ordinalOf,
-          }),
+            ...(returnDelta !== undefined && { returnDelta: () => returnDelta(slug) }),
+          });
+        },
       }),
     ...(memory !== undefined && {
       createMemoryPane: (id, notify, intents, _targetSession, revival) =>
@@ -300,6 +335,7 @@ function paneFactories(
           focusedArc: () => sessions.focused()?.pane.arc,
           arcOrdinal: arcIndex.ordinalOf,
           ...(options.memoryDigest !== undefined && { digestTreatment: options.memoryDigest }),
+          ...(options.gardenHeat !== undefined && { gardenHeat: options.gardenHeat }),
           ...(options.clock !== undefined && { now: options.clock }),
           ...(options.arcs?.subscribe !== undefined && { subscribe: options.arcs.subscribe }),
           ...(revival !== undefined && { revival: { lens: "garden", ...revival } }),
@@ -347,6 +383,10 @@ function hostPorts(
       arcs: options.arcs,
     }),
     ...(options.arcs !== undefined && { focusedArc: sessions.focusedArcPort() }),
+    tips: {
+      enabled: options.tips !== "off",
+      ...(options.clock !== undefined && { now: options.clock }),
+    },
   };
 }
 
@@ -381,10 +421,15 @@ function registerHostCommands(
   }
 }
 
-function paintFrame(renderer: CliRenderer, core: AppCore, inputs: FrameInputs): void {
+function paintFrame(
+  renderer: CliRenderer,
+  core: AppCore,
+  inputs: FrameInputs,
+  scrim: boolean,
+): void {
   discardFrame(renderer.root);
   renderer.root.add(appFrame(core, inputs));
-  const overlay = overlayView(core, inputs);
+  const overlay = overlayView(core, { ...inputs, scrim });
   if (overlay !== undefined) renderer.root.add(overlay);
   renderer.requestRender();
 }
@@ -395,9 +440,12 @@ function wireInput(
   contain: (scope: string, work: () => void) => void,
   render: () => void,
   inset: () => number,
+  pointerOn: boolean,
+  settleMotion: () => void,
 ): void {
   renderer.keyInput.on("keypress", (key: KeyEvent) => {
     contain("key", () => {
+      settleMotion();
       const chord = chordOf(key);
       if (chord === undefined) return;
       core.handleKey(chord, key.sequence, performance.now(), key.eventType === "repeat");
@@ -408,16 +456,20 @@ function wireInput(
     contain("paste", () => core.handlePaste(new TextDecoder().decode(event.bytes)));
     render();
   });
-  renderer.root.onMouse = (event: MouseEvent) => {
-    contain("mouse", () => {
-      const pointer = pointerEventOf(event);
-      if (pointer === undefined) return;
-      core.handleMouse({ ...pointer, x: pointer.x - inset(), y: pointer.y - inset() });
-      if (pointer.type !== "move" || core.overlayOpen || core.draggingPane() !== undefined) {
-        render();
-      }
-    });
-  };
+  if (pointerOn) {
+    renderer.root.onMouse = (event: MouseEvent) => {
+      contain("mouse", () => {
+        const pointer = pointerEventOf(event);
+        if (pointer === undefined) return;
+        const handled = core.handleMouse({
+          ...pointer,
+          x: pointer.x - inset(),
+          y: pointer.y - inset(),
+        });
+        if (pointer.type !== "move" || handled || core.overlayOpen) render();
+      });
+    };
+  }
   renderer.on("resize", render);
 }
 
@@ -451,6 +503,10 @@ const microtaskFrame: FrameScheduler = (run) => {
   };
 };
 
-function defaultRenderer(): Promise<CliRenderer> {
-  return createCliRenderer({ exitOnCtrlC: false, enableMouseMovement: true });
+function defaultRenderer(pointerOn: boolean): Promise<CliRenderer> {
+  return createCliRenderer({
+    exitOnCtrlC: false,
+    useMouse: pointerOn,
+    enableMouseMovement: pointerOn,
+  });
 }

@@ -26,6 +26,7 @@ function serverView(status: McpServerStatus): McpServerView {
     state: status.state,
     toolCount: status.toolCount,
     enabled: status.enabled,
+    ...(status.transport !== undefined && { transport: status.transport }),
     ...(status.lastError !== undefined && { lastError: status.lastError }),
   };
 }

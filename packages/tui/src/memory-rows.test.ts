@@ -14,6 +14,7 @@ import {
   findNote,
   gardenRows,
   ledgerRows,
+  noteHeat,
   noteRows,
   provenanceGlyph,
   queryRows,
@@ -533,6 +534,15 @@ describe("the airlock digest under the arc layer", () => {
     ]);
   });
 
+  it("shows the steering direction in the layer header", () => {
+    const steered: AirlockDigestView = { ...digest, direction: "keep the dock rules" };
+    const rows = gardenRows(
+      inputsOf({ layers: [workspace, arc], inbox: cards, airlocks: [steered] }),
+      { focusedArc: "dock-v2", now },
+    );
+    expect(texts(rows)[1]).toContain("steered: keep the dock rules");
+  });
+
   it("unfolds the below-bar notes dim, each with its shortfall, and they drill into the note", () => {
     const rows = gardenRows(
       inputsOf({ layers: [workspace, arc], inbox: cards, airlocks: [digest] }),
@@ -571,5 +581,39 @@ describe("the airlock digest under the arc layer", () => {
     expect(texts(rows)[2]).toBe("▓ airlock · deliver Dock Ratio Finding · 2h");
     expect(rows[2]?.inboxId).toBeUndefined();
     expect(rows[2]?.selectable).toBe(true);
+  });
+});
+
+describe("garden heat candidates", () => {
+  const hot = note({ name: "Hot Rule", usefulness: 0.9, recalls: 4 });
+  const mild = note({ name: "Mild Fact", usefulness: 0.5 });
+  const cold = note({ name: "Cold Guess" });
+  const rowsWith = (heat: "lead" | "ink") =>
+    gardenRows(inputsOf({ notes: [hot, mild, cold] }), { focusedArc: undefined, now, heat });
+
+  it("scores heat from usefulness and recalls, zeroing superseded notes", () => {
+    expect(noteHeat(hot)).toBeCloseTo(0.93);
+    expect(noteHeat(cold)).toBe(0);
+    expect(noteHeat(note({ name: "Old", usefulness: 1, supersededBy: "New" }))).toBe(0);
+  });
+
+  it("carries heat in the lead cell by density under the lead treatment", () => {
+    const lines = texts(rowsWith("lead"));
+    expect(lines.find((line) => line.includes("Hot Rule"))?.startsWith("█")).toBe(true);
+    expect(lines.find((line) => line.includes("Mild Fact"))?.startsWith("▒")).toBe(true);
+    expect(lines.find((line) => line.includes("Cold Guess"))?.startsWith("·")).toBe(true);
+  });
+
+  it("warms the title ink under the ink treatment and stays plain without one", () => {
+    const inkOf = (rows: ReturnType<typeof rowsWith>, title: string) =>
+      rows.find((row) => row.text.includes(title))?.spans?.[1]?.ink;
+    const warmed = rowsWith("ink");
+    expect(inkOf(warmed, "Hot Rule")).toBe("accent");
+    expect(inkOf(warmed, "Mild Fact")).toBe("text");
+    expect(inkOf(warmed, "Cold Guess")).toBe("dim");
+    const plain = gardenRows(inputsOf({ notes: [hot, cold] }), { focusedArc: undefined, now });
+    expect(inkOf(plain, "Hot Rule")).toBe("text");
+    expect(inkOf(plain, "Cold Guess")).toBe("text");
+    expect(texts(plain).some((line) => line.startsWith("·"))).toBe(false);
   });
 });

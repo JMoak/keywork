@@ -1,3 +1,4 @@
+import { verbAndOperand } from "./commands.ts";
 import {
   type WorkspacePicker,
   type WorkspacePickerChoice,
@@ -12,21 +13,38 @@ export interface WorkspaceCommandSeams {
   shutdown(): void;
 }
 
+export type WorkspaceInvocation =
+  | { verb: "pick"; slug?: string | undefined }
+  | { verb: "new"; slug?: string | undefined }
+  | { verb: "default" };
+
 export async function runWorkspaceCommand(
   seams: WorkspaceCommandSeams,
-  argument: string,
+  invocation: WorkspaceInvocation,
 ): Promise<void> {
-  const [verb = "", operand] = argument.split(/\s+/).filter((word) => word !== "");
-  switch (verb) {
-    case "":
+  switch (invocation.verb) {
+    case "pick":
+      if (invocation.slug !== undefined) return switchWorkspace(seams, invocation.slug);
       seams.showPicker(workspacePickerOver(await seams.workspaces.list()));
       return;
     case "new":
-      return createWorkspace(seams, operand);
+      return createWorkspace(seams, invocation.slug);
     case "default":
       return switchWorkspace(seams, undefined);
+  }
+}
+
+export function legacyWorkspaceInvocation(argument: string): WorkspaceInvocation {
+  const [verb, operand] = verbAndOperand(argument);
+  switch (verb) {
+    case "":
+      return { verb: "pick" };
+    case "new":
+      return { verb: "new", slug: operand };
+    case "default":
+      return { verb: "default" };
     default:
-      return switchWorkspace(seams, verb);
+      return { verb: "pick", slug: verb };
   }
 }
 
@@ -44,7 +62,7 @@ async function createWorkspace(
   slug: string | undefined,
 ): Promise<void> {
   if (slug === undefined) {
-    seams.notice("new needs a name · /workspace new <slug>");
+    seams.notice("new needs a name · /workspace-new <slug>");
     return;
   }
   await seams.workspaces.create(slug);

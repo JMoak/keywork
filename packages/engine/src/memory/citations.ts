@@ -1,21 +1,26 @@
+import type { AuditEntry } from "./audit.ts";
 import type { BootstrapInjection } from "./bootstrap.ts";
 import { titleKey } from "./naming.ts";
 import { extractWikilinks, type Provenance } from "./notes.ts";
 import type { MemoryStore } from "./store.ts";
 
-export type RecallSurface = "bootstrap" | "search" | "get";
+export type RecallSurface = "bootstrap" | "search" | "get" | "action";
 
 export interface RecallEvent {
   kind: "recall";
   note: string;
   surface: RecallSurface;
   timestamp: string;
+  layer?: string;
+  session?: string;
 }
 
 export interface CitationEvent {
   kind: "citation";
   note: string;
   timestamp: string;
+  layer?: string;
+  session?: string;
 }
 
 export interface LatencyEvent {
@@ -32,31 +37,59 @@ export interface CitationOutcome {
   rejected: string[];
 }
 
-export interface CitationLedgerOptions {
-  now?: () => Date;
-  onCitation?: (event: CitationEvent) => void;
+export interface RecallTap {
+  recordRecall(note: string, surface: RecallSurface, layer?: string): void;
+  recordLatency(surface: RecallSurface, milliseconds: number): void;
 }
 
-export class CitationLedger {
+export interface CitationLedgerOptions {
+  now?: () => Date;
+  session?: string;
+  onCitation?: (event: CitationEvent) => void;
+  onEvent?: (event: RecallEvent | CitationEvent) => void;
+}
+
+export class CitationLedger implements RecallTap {
   private readonly log: CitationLedgerEvent[] = [];
-  private readonly recalledByKey = new Map<string, string>();
+  private readonly recalledByKey = new Map<string, { note: string; layer?: string }>();
+  private readonly surfacesByKey = new Map<string, Set<RecallSurface>>();
   private readonly citedKeys = new Set<string>();
+  private readonly reReadKeys = new Set<string>();
   private readonly now: () => Date;
+  private readonly session: string | undefined;
   private readonly onCitation: ((event: CitationEvent) => void) | undefined;
+  private readonly onEvent: ((event: RecallEvent | CitationEvent) => void) | undefined;
 
   constructor(options: CitationLedgerOptions = {}) {
     this.now = options.now ?? (() => new Date());
+    this.session = options.session;
     this.onCitation = options.onCitation;
+    this.onEvent = options.onEvent;
   }
 
-  recordRecall(note: string, surface: RecallSurface): void {
-    this.recalledByKey.set(titleKey(note), note);
-    this.log.push({ kind: "recall", note, surface, timestamp: this.timestamp() });
+  recordRecall(note: string, surface: RecallSurface, layer?: string): void {
+    const key = titleKey(note);
+    const knownLayer = layer ?? this.recalledByKey.get(key)?.layer;
+    this.recalledByKey.set(key, { note, ...(knownLayer !== undefined && { layer: knownLayer }) });
+    const event: RecallEvent = {
+      kind: "recall",
+      note,
+      surface,
+      timestamp: this.timestamp(),
+      ...(layer !== undefined && { layer }),
+      ...(this.session !== undefined && { session: this.session }),
+    };
+    this.log.push(event);
+    this.onEvent?.(event);
+    if (surface === "get") this.creditReRead(key);
+    this.surfacesOf(key).add(surface);
   }
 
   recordBootstrap(injection: BootstrapInjection): void {
     for (const layer of injection.layers) {
-      for (const note of layer.selection.notes) this.recordRecall(note.name, "bootstrap");
+      for (const note of layer.selection.notes) {
+        this.recordRecall(note.name, "bootstrap", layer.name);
+      }
     }
   }
 
@@ -69,16 +102,9 @@ export class CitationLedger {
         rejected.push(link);
         continue;
       }
-      if (cited.includes(recalled)) continue;
-      cited.push(recalled);
-      this.citedKeys.add(titleKey(recalled));
-      const event: CitationEvent = {
-        kind: "citation",
-        note: recalled,
-        timestamp: this.timestamp(),
-      };
-      this.log.push(event);
-      this.onCitation?.(event);
+      if (cited.includes(recalled.note)) continue;
+      cited.push(recalled.note);
+      this.cite(recalled.note, recalled.layer);
     }
     return { cited, rejected };
   }
@@ -105,6 +131,10 @@ export class CitationLedger {
     return this.log;
   }
 
+  citations(): CitationEvent[] {
+    return this.log.filter((event): event is CitationEvent => event.kind === "citation");
+  }
+
   citedRecalls(): string[] {
     return this.recalledNotes().filter((note) => this.citedKeys.has(titleKey(note)));
   }
@@ -113,8 +143,39 @@ export class CitationLedger {
     return this.recalledNotes().filter((note) => !this.citedKeys.has(titleKey(note)));
   }
 
+  private cite(note: string, layer: string | undefined): void {
+    this.citedKeys.add(titleKey(note));
+    const event: CitationEvent = {
+      kind: "citation",
+      note,
+      timestamp: this.timestamp(),
+      ...(layer !== undefined && { layer }),
+      ...(this.session !== undefined && { session: this.session }),
+    };
+    this.log.push(event);
+    this.onEvent?.(event);
+    this.onCitation?.(event);
+  }
+
+  private creditReRead(key: string): void {
+    const surfaces = this.surfacesOf(key);
+    const surfacedElsewhere = [...surfaces].some((surface) => surface !== "get");
+    if (!surfacedElsewhere || this.reReadKeys.has(key)) return;
+    this.reReadKeys.add(key);
+    const recalled = this.recalledByKey.get(key);
+    if (recalled !== undefined) this.cite(recalled.note, recalled.layer);
+  }
+
+  private surfacesOf(key: string): Set<RecallSurface> {
+    const existing = this.surfacesByKey.get(key);
+    if (existing !== undefined) return existing;
+    const created = new Set<RecallSurface>();
+    this.surfacesByKey.set(key, created);
+    return created;
+  }
+
   private recalledNotes(): string[] {
-    return [...this.recalledByKey.values()];
+    return [...this.recalledByKey.values()].map((recalled) => recalled.note);
   }
 
   private timestamp(): string {
@@ -135,6 +196,29 @@ export function citationUsefulnessFeed(
     const id = resolveSession();
     if (id !== undefined) sink.recordRecall(event.note, id);
   };
+}
+
+export function citationAuditEvent(event: RecallEvent | CitationEvent): string {
+  const trail = [
+    ...(event.layer !== undefined ? [`in ${event.layer}`] : []),
+    ...(event.session !== undefined ? [`by session ${event.session}`] : []),
+  ];
+  const head =
+    event.kind === "recall"
+      ? `recall [[${event.note}]] via ${event.surface}`
+      : `citation [[${event.note}]]`;
+  return [head, ...trail].join(" ");
+}
+
+export function parseCitationEvents(
+  entries: readonly AuditEntry[],
+): (RecallEvent | CitationEvent)[] {
+  const events: (RecallEvent | CitationEvent)[] = [];
+  for (const entry of entries) {
+    const parsed = parseCitationAuditLine(entry.event, entry.timestamp);
+    if (parsed !== undefined) events.push(parsed);
+  }
+  return events;
 }
 
 export interface CitationChainHop {
@@ -179,3 +263,36 @@ export async function citationChain(
 }
 
 const latencyWindow = 64;
+
+const citationLinePattern =
+  /^(recall|citation) \[\[([^\]]+)\]\](?: via (bootstrap|search|get|action))?(?: in (\S+))?(?: by session (\S+))?$/;
+
+function parseCitationAuditLine(
+  line: string,
+  timestamp: string,
+): RecallEvent | CitationEvent | undefined {
+  const match = citationLinePattern.exec(line);
+  const note = match?.[2];
+  if (match === null || note === undefined) return undefined;
+  const [, kind, , rawSurface, layer, session] = match;
+  const trail = {
+    ...(layer !== undefined && { layer }),
+    ...(session !== undefined && { session }),
+  };
+  if (kind === "citation") return { kind: "citation", note, timestamp, ...trail };
+  const surface = asRecallSurface(rawSurface);
+  if (surface === undefined) return undefined;
+  return { kind: "recall", note, surface, timestamp, ...trail };
+}
+
+function asRecallSurface(value: string | undefined): RecallSurface | undefined {
+  switch (value) {
+    case "bootstrap":
+    case "search":
+    case "get":
+    case "action":
+      return value;
+    default:
+      return undefined;
+  }
+}

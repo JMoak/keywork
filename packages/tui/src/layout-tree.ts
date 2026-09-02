@@ -15,9 +15,12 @@ export type LayoutNode =
       second: LayoutNode;
     };
 
-type SplitNode = Extract<LayoutNode, { kind: "split" }>;
+export type SplitNode = Extract<LayoutNode, { kind: "split" }>;
 
 export const splitRatioBounds = { min: 0.1, max: 0.9 };
+export const splitRatioStep = 0.05;
+
+const ratioStepsPerUnit = 1 / splitRatioStep;
 
 const minContentCell = 1;
 
@@ -25,6 +28,11 @@ export const minPaneSize = {
   width: paneChromeCost.columns + minContentCell,
   height: paneChromeCost.rows + minContentCell,
 } as const;
+
+export function steppedRatio(preferred: number): number {
+  const stepped = Math.round(preferred * ratioStepsPerUnit) / ratioStepsPerUnit;
+  return clamp(stepped, splitRatioBounds.min, splitRatioBounds.max);
+}
 
 export function leaf(id: PaneId): LayoutNode {
   return { kind: "leaf", id };
@@ -134,20 +142,12 @@ export function collectRects(node: LayoutNode, rect: Rect, into: Map<PaneId, Rec
     into.set(node.id, rect);
     return;
   }
-  const [first, second] = divide(rect, node);
+  const [first, second] = splitRects(rect, node);
   collectRects(node.first, first, into);
   collectRects(node.second, second, into);
 }
 
-function isLeaf(node: LayoutNode, id: PaneId): boolean {
-  return node.kind === "leaf" && node.id === id;
-}
-
-function withRatio(split: SplitNode, ratio: number): SplitNode {
-  return { ...split, ratio: clamp(ratio, splitRatioBounds.min, splitRatioBounds.max) };
-}
-
-function divide(rect: Rect, split: SplitNode): [Rect, Rect] {
+export function splitRects(rect: Rect, split: SplitNode): [Rect, Rect] {
   if (split.orientation === "row") {
     const width = divideExtent(
       rect.width,
@@ -170,6 +170,14 @@ function divide(rect: Rect, split: SplitNode): [Rect, Rect] {
     { ...rect, height },
     { ...rect, y: rect.y + height, height: rect.height - height },
   ];
+}
+
+function isLeaf(node: LayoutNode, id: PaneId): boolean {
+  return node.kind === "leaf" && node.id === id;
+}
+
+function withRatio(split: SplitNode, ratio: number): SplitNode {
+  return { ...split, ratio: steppedRatio(ratio) };
 }
 
 function divideExtent(total: number, ratio: number, minFirst: number, minSecond: number): number {

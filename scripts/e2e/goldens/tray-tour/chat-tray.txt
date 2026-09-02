@@ -1,0 +1,32 @@
+╭──────────────────────────────────────╭───────────────────────────────────────────────────────────────────────────────╮
+│ session tree                         │ session-1                                                                     │
+│ ░ no sessions yet                    │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │ ╭───────────────────────────────────────────────────────────────────────────╮ │
+│                                      │ │ ▸ /keys                  show the hotkeys overlay                ctrl+k / │ │
+│                                      │ │   /flavor-keywork-night  repaint every surface in the keywork-night flav… │ │
+│                                      │ │   /dock-left             dock this pane to the left edge                  │ │
+│                                      │ │   /dock-cycle            move this pane to its next home: main →…ctrl+k c │ │
+│                                      │ │   /dock-wider            widen this pane's dock                  ctrl+k . │ │
+│                                      │ ╰───────────────────────────────────────────────────────────────────────────╯ │
+│                                      │ › /ke▌                                                                        │
+╰──────────────────────────────────────╰───────────────────────────────────────────────────────────────────────────────╯
+ keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · / commands                                                          e 

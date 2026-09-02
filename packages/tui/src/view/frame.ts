@@ -1,7 +1,7 @@
 import { Box, Text } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
 import { type GlyphSupport, resolveMark } from "../capability.ts";
-import { lifecycleChrome, rampColor, rampPositions } from "../chroma.ts";
+import { dimmedTheme, lifecycleChrome, rampColor, rampPositions } from "../chroma.ts";
 import type { Flavor } from "../flavor.ts";
 import { fullRect, type Rect, type Screen } from "../geometry.ts";
 import { pinMark } from "../marks.ts";
@@ -33,6 +33,7 @@ export interface FrameInputs extends StatusBarInputs {
   screen: Screen;
   chrome: ChromeWeight;
   gap: number;
+  dim?: boolean;
   focusOutline?: FocusOutline;
   instruments: Flavor["instruments"];
   glyphs: GlyphSupport;
@@ -41,6 +42,20 @@ export interface FrameInputs extends StatusBarInputs {
 
 export function frameInset(chrome: ChromeWeight): number {
   return isSeamed(chrome) ? 1 : 0;
+}
+
+export function idleMainLines(tip: string | undefined): readonly string[] {
+  return withTip(
+    ["· main ·", "ctrl+k s starts a session here", "ctrl+k shift+l/h pushes a docked pane in"],
+    tip,
+  );
+}
+
+export function noSessionsLines(tip: string | undefined): readonly string[] {
+  return withTip(
+    ["no sessions open", "ctrl+k s starts one · ctrl+p go · / commands · ctrl+q quits"],
+    tip,
+  );
 }
 
 export function screenWithin(
@@ -104,7 +119,7 @@ function body(core: AppCore, inputs: FrameInputs) {
   if (rects.size === 0) {
     return Box(
       { width: screen.width, height: screen.height, flexDirection: "row" },
-      emptyView(theme),
+      emptyView(theme, core.tip()),
     );
   }
   const idleMain = core.layout.emptyMainRect(screen);
@@ -118,14 +133,18 @@ function body(core: AppCore, inputs: FrameInputs) {
   const layoutField = fullRect(screen);
   const drawn = (rect: Rect): Rect => shifted(drawnRect(rect, layoutField, inputs), inset);
   const hueOf = (id: string): string => rampColor(theme.ramp, sweep.get(id) ?? 0);
+  const unfocusedTheme = inputs.dim === true ? dimmedTheme(theme) : theme;
   return Box(
     { width: screen.width + 2 * inset, height: screen.height + 2 * inset },
     ...[...rects].map(([id, rect]) =>
-      placedBox(drawn(rect), paneViewFor(core, inputs, id, drawn(rect), id === focused, hueOf(id))),
+      placedBox(
+        drawn(rect),
+        paneViewFor(core, inputs, id, drawn(rect), id === focused, hueOf(id), unfocusedTheme),
+      ),
     ),
     ...(idleMain === undefined
       ? []
-      : [placedBox(drawn(idleMain), idleMainView(theme, hasHeaderRow(inputs.chrome)))]),
+      : [placedBox(drawn(idleMain), idleMainView(theme, hasHeaderRow(inputs.chrome), core.tip()))]),
     ...(seamed
       ? [seamsLayer(core, inputs, rects, idleMain, focused, hueOf, inset, core.leaderArmed)]
       : []),
@@ -189,8 +208,10 @@ function paneViewFor(
   rect: Rect,
   focused: boolean,
   hue: string,
+  unfocusedTheme: Theme,
 ): PaneView {
-  const { theme, chrome } = inputs;
+  const { chrome } = inputs;
+  const theme = focused ? inputs.theme : unfocusedTheme;
   if (paneContentWidth({ ...rect, chrome }) < 1 || paneContentHeight({ ...rect, chrome }) < 1) {
     return overflowedView(theme);
   }
@@ -239,7 +260,7 @@ function dropPreviewBox(rect: Rect, theme: Theme) {
   });
 }
 
-function idleMainView(theme: Theme, bare: boolean) {
+function idleMainView(theme: Theme, bare: boolean, tip: string | undefined) {
   return Box(
     {
       flexGrow: 1,
@@ -249,9 +270,7 @@ function idleMainView(theme: Theme, bare: boolean) {
       ...(!bare && { border: true, borderStyle: "rounded", borderColor: theme.border }),
       overflow: "hidden",
     },
-    Text({ content: "· main ·", fg: theme.textDim }),
-    Text({ content: "ctrl+k s starts a session here", fg: theme.textDim }),
-    Text({ content: "ctrl+k shift+l/h pushes a docked pane in", fg: theme.textDim }),
+    ...idleMainLines(tip).map((line) => Text({ content: line, fg: theme.textDim })),
   );
 }
 
@@ -268,13 +287,13 @@ function overflowedView(theme: Theme) {
   );
 }
 
-function emptyView(theme: Theme) {
+function emptyView(theme: Theme, tip?: string) {
   return Box(
     { flexGrow: 1, flexDirection: "column", alignItems: "center", justifyContent: "center" },
-    Text({ content: "no sessions open", fg: theme.textDim }),
-    Text({
-      content: "ctrl+k s starts one · ctrl+p go · > commands · ctrl+q quits",
-      fg: theme.textDim,
-    }),
+    ...noSessionsLines(tip).map((line) => Text({ content: line, fg: theme.textDim })),
   );
+}
+
+function withTip(hints: readonly string[], tip: string | undefined): readonly string[] {
+  return tip === undefined ? hints : [...hints, tip];
 }

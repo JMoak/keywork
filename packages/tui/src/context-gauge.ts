@@ -1,8 +1,8 @@
 import { type ContextReading, formatTokenCount } from "@keywork/engine";
 import type { Flavor } from "@keywork/shared";
-import { density, type GlyphSupport, resolveRamp } from "./capability.ts";
+import { density, type GlyphSupport, resolveMark, resolveRamp, tile } from "./capability.ts";
 
-export type GaugeStyle = "ramp" | "bar";
+export type GaugeStyle = "ramp" | "bar" | "bare" | "steps" | "tile";
 
 export type InstrumentTier = Flavor["instruments"];
 
@@ -20,7 +20,18 @@ export function gaugeStyleFor(instruments: InstrumentTier): GaugeStyle {
 export function contextGauge(reading: ContextReading, options: GaugeOptions): string {
   if (reading.used === 0) return "";
   const ramp = resolveRamp(density, options.glyphs);
-  return options.style === "bar" ? barGauge(reading, ramp) : rampGauge(reading, ramp);
+  switch (options.style) {
+    case "bar":
+      return barGauge(reading, ramp);
+    case "bare":
+      return stopGlyph(reading, ramp);
+    case "steps":
+      return `${stepsGauge(reading, ramp, options.glyphs)} ${formatTokenCount(reading.used)}`;
+    case "tile":
+      return `${stopGlyph(reading, resolveRamp(tile.fill, options.glyphs))} ${formatTokenCount(reading.used)}`;
+    case "ramp":
+      return `${stopGlyph(reading, ramp)} ${formatTokenCount(reading.used)}`;
+  }
 }
 
 export function contextReadout(reading: ContextReading): string[] {
@@ -34,17 +45,31 @@ export function contextReadout(reading: ContextReading): string[] {
   ];
 }
 
-function rampGauge(reading: ContextReading, ramp: readonly string[]): string {
+function stopGlyph(reading: ContextReading, ramp: readonly string[]): string {
   const [light = ".", medium = ":", heavy = "+", full = "#"] = ramp;
-  const cell =
-    reading.used > reading.compactAt
-      ? full
-      : reading.used > reading.flushAt
-        ? heavy
-        : reading.used > reading.flushAt / 2
-          ? medium
-          : light;
-  return `${cell} ${formatTokenCount(reading.used)}`;
+  if (reading.used > reading.compactAt) return full;
+  if (reading.used > reading.flushAt) return heavy;
+  if (reading.used > reading.flushAt / 2) return medium;
+  return light;
+}
+
+const emptyStepMark = { tier1: "·", tier0: "." };
+
+function stepsGauge(
+  reading: ContextReading,
+  ramp: readonly string[],
+  glyphs: GlyphSupport,
+): string {
+  const empty = resolveMark(emptyStepMark, glyphs);
+  const bounds = [0, reading.flushAt / 2, reading.flushAt, reading.compactAt, reading.window];
+  return Array.from({ length: 4 }, (_, zone) => {
+    const from = bounds[zone] ?? 0;
+    const to = bounds[zone + 1] ?? from;
+    if (reading.used <= from) return empty;
+    if (to <= from) return ramp.at(-1) ?? "#";
+    const fill = Math.min(1, (reading.used - from) / (to - from));
+    return ramp[Math.min(ramp.length - 1, Math.ceil(fill * ramp.length) - 1)] ?? "#";
+  }).join("");
 }
 
 function barGauge(reading: ContextReading, ramp: readonly string[]): string {

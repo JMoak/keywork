@@ -1,7 +1,7 @@
 +=========================+=========================+==========================+
 | session tree            | session-1               | session-2                |
-| ░ no sessions yet       | SESSION 1               | SESSION 2                |
-|                         | idle                    | idle                     |
+| ░ no sessions yet       |                         | SESSION 2                |
+|                         |                         | idle                     |
 |                         |                         |                          |
 |                         |                         |                          |
 |                         |                         |                          |

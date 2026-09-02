@@ -52,6 +52,24 @@ export function lifecycleChrome(
   }
 }
 
+export function dimStep(hex: string, groundHex: string): string {
+  return oklchToHex(mixOklch(hexToOklch(hex), hexToOklch(groundHex), dimBlend));
+}
+
+export function dimmedTheme(theme: Theme): Theme {
+  const recede = (hex: string): string => dimStep(hex, theme.background);
+  return {
+    ...theme,
+    text: recede(theme.text),
+    textMid: recede(theme.textMid),
+    textDim: recede(theme.textDim),
+    accent: recede(theme.accent),
+    accentSoft: recede(theme.accentSoft),
+    success: recede(theme.success),
+    error: recede(theme.error),
+  };
+}
+
 export function saturationLift(hex: string, targetHex: string): string {
   const { l, c } = hexToOklch(hex);
   const target = hexToOklch(targetHex);
@@ -134,6 +152,7 @@ export function oklchToHex(color: Oklch): string {
 
 const goldenRatioConjugate = 0.618033988749895;
 const microGradientSpan = 0.08;
+const dimBlend = 0.22;
 const neutralChroma = 1e-4;
 const gamutSlack = 1e-6;
 

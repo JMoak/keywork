@@ -79,11 +79,24 @@ describe("describeCloseOutcome", () => {
     );
   });
 
+  it("appends the closing agent notice when the sweep degraded", () => {
+    expect(
+      describeCloseOutcome("dock", {
+        kind: "closed",
+        delivered: 0,
+        released: 0,
+        notice: "closing agent didn't run (boom) · swept without it",
+      }),
+    ).toBe(
+      "arc dock closed · delivered 0 notes · closing agent didn't run (boom) · swept without it",
+    );
+  });
+
   it("explains a close waiting at the airlock, naming wedged sessions only when there are any", () => {
     expect(
       describeCloseOutcome("dock", { kind: "pending", candidates: 2, questions: 1, wedged: 0 }),
     ).toBe(
-      "arc dock is waiting at the airlock · 2 notes and 1 question to triage in the memory pane · /arc abandon dock archives without distilling",
+      "arc dock is waiting at the airlock · 2 notes and 1 question to triage in the memory pane · /arc-abandon dock archives without distilling",
     );
     expect(
       describeCloseOutcome("dock", { kind: "pending", candidates: 0, questions: 0, wedged: 1 }),

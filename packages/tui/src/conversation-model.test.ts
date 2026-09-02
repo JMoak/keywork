@@ -812,3 +812,38 @@ describe("tool rows through the model", () => {
     });
   });
 });
+
+describe("suggestion tray pointer", () => {
+  function trayModel(onRun: (name: string) => void) {
+    const names = ["exit", "exit-all"];
+    return new ConversationModel(undefined, () => {}, undefined, {
+      search: (query) =>
+        names
+          .filter((name) => name.startsWith(query.toLowerCase()))
+          .map((name) => ({ name, description: name })),
+      run: (name) => {
+        if (!names.includes(name)) return false;
+        onRun(name);
+        return true;
+      },
+    });
+  }
+
+  it("hover selects a row and click accepts it, one path with enter", () => {
+    const ran: string[] = [];
+    const model = trayModel((name) => ran.push(name));
+    type(model, "/ex");
+    model.traySelect(1);
+    expect(model.selectedSuggestion).toBe(1);
+    expect(model.trayAccept(1)).toBe(true);
+    expect(ran).toEqual(["exit-all"]);
+    expect(model.input).toBe("");
+  });
+
+  it("stays inert without a slash query", () => {
+    const model = trayModel(() => {});
+    expect(model.trayAccept(0)).toBe(false);
+    model.traySelect(2);
+    expect(model.selectedSuggestion).toBe(0);
+  });
+});

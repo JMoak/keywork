@@ -36,7 +36,7 @@ export const arcFold: Scenario = {
   ],
   run: async (stage) => {
     await stage.settle();
-    await stage.type("/arc new fold-v1");
+    await stage.type("/arc-new fold-v1");
     await stage.press("enter");
     await stage.until("│ #fold-v1 · 1 session ");
     await stage.press("ctrl+k", "s", "escape");

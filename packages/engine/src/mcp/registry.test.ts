@@ -261,7 +261,7 @@ describe("server lifecycle", () => {
 
     expect(seen).toEqual(["connecting", "connected"]);
     expect(registry.status()).toEqual([
-      { name: "alpha", state: "connected", enabled: true, toolCount: 2 },
+      { name: "alpha", state: "connected", enabled: true, toolCount: 2, transport: "stdio" },
     ]);
     expect(registry.listTools("alpha").map((tool) => tool.name)).toEqual(["echo", "add"]);
   });
@@ -363,14 +363,17 @@ describe("server lifecycle", () => {
     expect(toolNames(registry)).toContain("alpha__echo");
   });
 
-  it("marks http servers down until D9 lands", async () => {
+  it("marks an unreachable http server down with its transport reported", async () => {
     const registry = makeRegistry({
-      servers: { remote: { transport: "http", url: "https://example.com/mcp" } },
+      servers: { remote: { transport: "http", url: "http://127.0.0.1:9/mcp" } },
       restartDelaysMs: [],
+      requestTimeoutMs: 500,
     });
     registry.start();
     await waitFor(() => stateOf(registry, "remote") === "down");
-    expect(registry.status()[0]?.lastError).toContain("D9");
+    const status = registry.status()[0];
+    expect(status?.transport).toBe("http");
+    expect(status?.lastError).toContain("retry limit reached");
   });
 
   it("throws for unknown server names on control verbs", () => {

@@ -262,8 +262,8 @@ describe("TranscriptNavigation viewport", () => {
     navigation.scrollBy(5);
     navigation.enterBacktrack();
     expect(navigation.viewport()).toEqual({ scrollBack: 5, revealAt: 1, backtrackAt: 1 });
-    navigation.framed(3);
-    expect(navigation.viewport()).toEqual({ scrollBack: 3, backtrackAt: 1 });
+    navigation.framed(3, 40);
+    expect(navigation.viewport()).toEqual({ scrollBack: 3, anchorTotal: 40, backtrackAt: 1 });
     expect(navigation.selectedPrompt()).toEqual({ kind: "user", text: "b" });
     navigation.reset();
     expect(navigation.viewport()).toEqual({ scrollBack: 3 });

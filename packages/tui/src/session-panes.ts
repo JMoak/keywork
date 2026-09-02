@@ -14,8 +14,9 @@ import { type ArcIndex, seedArcFromOrigin } from "./arc-index.ts";
 import type { ArcsPort } from "./arcs.ts";
 import type { GlyphSupport } from "./capability.ts";
 import type { CommandRegistry } from "./commands.ts";
+import type { GaugeStyle } from "./context-gauge.ts";
 import type { ConversationPorts, Titler } from "./conversation-model.ts";
-import { ConversationPane } from "./conversation-pane.ts";
+import { ConversationPane, type TranscriptElevation } from "./conversation-pane.ts";
 import type { ConversationTarget } from "./extension-commands.ts";
 import { type CheckpointsPort, forkAtPrompt } from "./fork.ts";
 import type { Animator } from "./motion.ts";
@@ -45,6 +46,9 @@ export interface SessionPaneDeps {
   animator: Animator;
   page: PageThresholds;
   glyphs: GlyphSupport;
+  masthead?: "on" | "off";
+  gauge?: GaugeStyle;
+  elevation?: TranscriptElevation;
   agentFactory?: AgentFactory;
   sessions?: SessionPort;
   trees?: SessionTreePort;
@@ -212,6 +216,9 @@ class PaneSession implements SessionControls {
         glyphs: deps.glyphs,
         animator: deps.animator,
         siblingTitles: () => siblingTitles(deps.core(), id),
+        ...(deps.masthead !== undefined && { masthead: deps.masthead }),
+        ...(deps.gauge !== undefined && { gauge: deps.gauge }),
+        ...(deps.elevation !== undefined && { elevation: deps.elevation }),
         ...(draft !== undefined && { initialDraft: draft }),
       },
     );

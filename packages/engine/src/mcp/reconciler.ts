@@ -1,17 +1,22 @@
 import type { McpServerConfig } from "@keywork/shared";
-import type { McpConnection, McpTool, StdioServerSpec } from "./client.ts";
+import type { McpConnection, McpTool } from "./client.ts";
 
 export type McpServerState = "connected" | "connecting" | "down";
+export type McpTransport = McpServerConfig["transport"];
 
 export interface McpServerStatus {
   name: string;
   state: McpServerState;
   enabled: boolean;
   toolCount: number;
+  transport?: McpTransport;
   lastError?: string;
 }
 
-export type ConnectServer = (spec: StdioServerSpec, signal: AbortSignal) => Promise<McpConnection>;
+export type ConnectServer = (
+  config: McpServerConfig,
+  signal: AbortSignal,
+) => Promise<McpConnection>;
 
 export interface ServerTransition {
   enabled: boolean;
@@ -68,6 +73,7 @@ export class ServerReconciler {
       state: this.state,
       enabled: this.desired.enabled,
       toolCount: this.catalog.length,
+      transport: this.config.transport,
       ...(this.lastError !== undefined && { lastError: this.lastError }),
     };
   }
@@ -178,7 +184,7 @@ export class ServerReconciler {
   }
 
   private async openConnection(signal: AbortSignal): Promise<LiveServer> {
-    const connection = await this.connect(stdioSpec(this.config), signal);
+    const connection = await this.connect(this.config, signal);
     try {
       return { connection, catalog: await connection.listTools() };
     } catch (cause) {
@@ -314,17 +320,6 @@ class Wakeup {
       };
     });
   }
-}
-
-function stdioSpec(config: McpServerConfig): StdioServerSpec {
-  if (config.transport !== "stdio") {
-    throw new Error("http MCP transport is not supported yet (arrives with D9)");
-  }
-  return {
-    command: config.command,
-    ...(config.args !== undefined && { args: config.args }),
-    ...(config.env !== undefined && { env: config.env }),
-  };
 }
 
 function errorMessage(cause: unknown): string {

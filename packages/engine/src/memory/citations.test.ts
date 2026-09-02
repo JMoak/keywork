@@ -2,8 +2,17 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { auditLine, parseAuditLog } from "./audit.ts";
 import { bootstrapMemory } from "./bootstrap.ts";
-import { CitationLedger, citationChain, citationUsefulnessFeed } from "./citations.ts";
+import {
+  type CitationEvent,
+  CitationLedger,
+  citationAuditEvent,
+  citationChain,
+  citationUsefulnessFeed,
+  parseCitationEvents,
+  type RecallEvent,
+} from "./citations.ts";
 import { Gardener } from "./gardener.ts";
 import { MemoryStore } from "./store.ts";
 
@@ -102,6 +111,58 @@ describe("CitationLedger", () => {
     expect(recorded).toEqual([]);
   });
 
+  it("tags recalls and citations with their source layer and session", () => {
+    const ledger = new CitationLedger({
+      now: () => new Date("2026-08-31T09:00:00.000Z"),
+      session: "s1",
+    });
+    ledger.recordRecall("Arc Finding", "search", "arc:dock-v2");
+    const outcome = ledger.recordReply("see [[Arc Finding]]");
+    expect(outcome.cited).toEqual(["Arc Finding"]);
+    expect(ledger.events()).toEqual([
+      {
+        kind: "recall",
+        note: "Arc Finding",
+        surface: "search",
+        layer: "arc:dock-v2",
+        session: "s1",
+        timestamp: "2026-08-31T09:00:00.000Z",
+      },
+      {
+        kind: "citation",
+        note: "Arc Finding",
+        layer: "arc:dock-v2",
+        session: "s1",
+        timestamp: "2026-08-31T09:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("counts a memory_get re-read of an already surfaced note as one citation", () => {
+    const ledger = ledgerAt();
+    ledger.recordRecall("Convention", "search");
+    ledger.recordRecall("Convention", "get");
+    ledger.recordRecall("Convention", "get");
+    expect(ledger.citations().map((event) => event.note)).toEqual(["Convention"]);
+  });
+
+  it("never treats a bare memory_get as a usefulness signal", () => {
+    const ledger = ledgerAt();
+    ledger.recordRecall("Looked Up", "get");
+    ledger.recordRecall("Looked Up", "get");
+    expect(ledger.citations()).toEqual([]);
+    expect(ledger.uncitedRecalls()).toEqual(["Looked Up"]);
+  });
+
+  it("hands recall and citation events to onEvent, latency stays out", () => {
+    const seen: string[] = [];
+    const ledger = new CitationLedger({ onEvent: (event) => seen.push(event.kind) });
+    ledger.recordRecall("A Note", "bootstrap");
+    ledger.recordLatency("search", 5);
+    ledger.recordReply("[[A Note]]");
+    expect(seen).toEqual(["recall", "citation"]);
+  });
+
   it("keeps a rolling median of recall latency per surface", () => {
     const ledger = ledgerAt();
     expect(ledger.medianLatencyMs("search")).toBeUndefined();
@@ -112,6 +173,45 @@ describe("CitationLedger", () => {
     expect(ledger.medianLatencyMs("search")).toBe(25);
     for (let i = 0; i < 64; i += 1) ledger.recordLatency("search", 100);
     expect(ledger.medianLatencyMs("search")).toBe(100);
+  });
+});
+
+describe("the citation audit codec", () => {
+  const stamp = "2026-08-31T09:00:00.000Z";
+
+  it("round-trips every event shape through the append-only audit reader", () => {
+    const events: (RecallEvent | CitationEvent)[] = [
+      { kind: "recall", note: "Plain Note", surface: "bootstrap", timestamp: stamp },
+      {
+        kind: "recall",
+        note: "Arc Finding",
+        surface: "action",
+        layer: "arc:dock-v2",
+        session: "s1",
+        timestamp: stamp,
+      },
+      { kind: "citation", note: "Plain Note", timestamp: stamp },
+      {
+        kind: "citation",
+        note: "Arc Finding",
+        layer: "arc:dock-v2",
+        session: "s1",
+        timestamp: stamp,
+      },
+    ];
+    const log = events.map((event) => auditLine(stamp, citationAuditEvent(event))).join("");
+    expect(parseCitationEvents(parseAuditLog(log))).toEqual(events);
+  });
+
+  it("skips audit lines that are not citation events", () => {
+    const log = [
+      auditLine(stamp, "gardener sweep: promoted 1, merged 0, superseded 0, flagged 0, rejected 0"),
+      auditLine(stamp, "recall [[Kept]] via search"),
+      auditLine(stamp, "arc dock-v2 closed: delivered 1, left 0 archived, questions 0"),
+    ].join("");
+    expect(parseCitationEvents(parseAuditLog(log))).toEqual([
+      { kind: "recall", note: "Kept", surface: "search", timestamp: stamp },
+    ]);
   });
 });
 

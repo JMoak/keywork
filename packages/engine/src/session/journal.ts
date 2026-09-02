@@ -15,8 +15,10 @@ export interface PermissionDecision {
 export type InjectionSource =
   | "memory-bootstrap"
   | "memory-recall"
+  | "memory-action"
   | "skill"
   | "project-instructions"
+  | "repo-map"
   | "subagent";
 
 export interface ContextInjection {

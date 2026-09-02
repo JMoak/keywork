@@ -6,7 +6,7 @@ import {
   writeTool,
 } from "../../../packages/engine/src/index.ts";
 import { parseFlavor } from "../../../packages/shared/src/index.ts";
-import { paneBorder } from "../../../packages/tui/src/chroma.ts";
+import { dimStep, paneBorder } from "../../../packages/tui/src/chroma.ts";
 import {
   type FocusOutline,
   keyworkNight,
@@ -115,6 +115,43 @@ export const chromeStatesTiered: Scenario = chromeStates(
     "gapped-idle",
   ],
 );
+
+function dimmedPanes(setting: "on" | "off"): Scenario {
+  const expectedInk =
+    setting === "on"
+      ? dimStep(keyworkNight.textDim, keyworkNight.background)
+      : keyworkNight.textDim;
+  return {
+    name: `chrome-states-dim-${setting}`,
+    description: `C51 second half with dim ${setting}: unfocused pane content ink beside the focused page`,
+    size: { width: 100, height: 24 },
+    app: { dim: setting },
+    goldens: ["unfocused-pane"],
+    run: async (stage) => {
+      await stage.settle();
+      const frame = await stage.capture("unfocused-pane");
+      assert.ok(frame.includes("no sessions yet"), "the unfocused tree pane is on screen");
+      assert.equal(
+        inkOf(stage.spans(), "no sessions yet"),
+        expectedInk,
+        `dim ${setting} renders the unfocused pane's chrome ink as ${expectedInk}`,
+      );
+      await stage.quit();
+    },
+  };
+}
+
+function inkOf(frame: CapturedFrame, needle: string): string {
+  for (const line of frame.lines) {
+    for (const span of line.spans) {
+      if (span.text.includes(needle)) return hexOf(span.fg);
+    }
+  }
+  return "";
+}
+
+export const chromeStatesDimOn: Scenario = dimmedPanes("on");
+export const chromeStatesDimOff: Scenario = dimmedPanes("off");
 
 export const chromeStatesAscii: Scenario = chromeStates(
   "chrome-states-ascii",

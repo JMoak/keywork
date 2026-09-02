@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { discardFrame, pointerPlaneId, screenWithin } from "./frame.ts";
+import {
+  discardFrame,
+  idleMainLines,
+  noSessionsLines,
+  pointerPlaneId,
+  screenWithin,
+} from "./frame.ts";
 
 describe("discardFrame", () => {
   function mountedFrame(childCount: number) {
@@ -46,6 +52,34 @@ describe("discardFrame", () => {
 
     expect(planeDestroyed).toBe(false);
     expect(frame.destroyed).toEqual(["renderable-0", "renderable-1"]);
+  });
+});
+
+describe("idle-main tip slot", () => {
+  const mainHints = [
+    "· main ·",
+    "ctrl+k s starts a session here",
+    "ctrl+k shift+l/h pushes a docked pane in",
+  ];
+  const noSessionsHints = [
+    "no sessions open",
+    "ctrl+k s starts one · ctrl+p go · / commands · ctrl+q quits",
+  ];
+
+  it("shows only the hints when no tip is eligible", () => {
+    expect(idleMainLines(undefined)).toEqual(mainHints);
+    expect(noSessionsLines(undefined)).toEqual(noSessionsHints);
+  });
+
+  it("adds an eligible tip as one extra line, never replacing a hint", () => {
+    expect(idleMainLines("/memory opens the garden")).toEqual([
+      ...mainHints,
+      "/memory opens the garden",
+    ]);
+    expect(noSessionsLines("/memory opens the garden")).toEqual([
+      ...noSessionsHints,
+      "/memory opens the garden",
+    ]);
   });
 });
 

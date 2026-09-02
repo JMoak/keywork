@@ -16,7 +16,7 @@ import {
   trayCommandsPressing,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
-import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import {
@@ -67,6 +67,7 @@ export class SessionTreePane implements Pane {
   private readonly unsubscribe: (() => void) | undefined;
   private readonly pendingRefresh: FrameCoalescer;
   private lastPageRows = 20;
+  private trayFirstRow = 0;
 
   constructor(
     readonly id: string,
@@ -150,6 +151,7 @@ export class SessionTreePane implements Pane {
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (this.tray.open) return paneTrayMouse(this.tray, this.trayFirstRow, local, event);
     if (event.type !== "down" || this.tasks.failure() !== undefined) return false;
     const row = local.y - 1;
     if (row < 0 || row >= this.lastPageRows) return false;
@@ -171,15 +173,19 @@ export class SessionTreePane implements Pane {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
     const labelLine = this.labelLine(theme, focused);
-    const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
+    const tray = this.tray.open
+      ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
+      : undefined;
     this.lastPageRows = Math.max(
       0,
       paneContentHeight(context) - (labelLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
     );
+    const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
+    this.trayFirstRow = 2 + body.length + (labelLine === undefined ? 0 : 1);
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, innerWidth),
+      ...body,
       ...(labelLine === undefined ? [] : [labelLine]),
       ...(tray?.children ?? []),
     );
@@ -304,13 +310,13 @@ export function overviewRowView(
   return Text({ content: new StyledText(clipSpans(chunks, width)) });
 }
 
-const overviewTray: readonly KeyedTrayCommand[] = [
+export const overviewTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "open the selected session", key: "enter" },
   { name: "entries", description: "browse the selected session's entries", key: "l" },
   { name: "refresh", description: "reload the sessions list", key: "r" },
 ];
 
-const entriesTray: readonly KeyedTrayCommand[] = [
+export const entriesTray: readonly KeyedTrayCommand[] = [
   { name: "fork", description: "fork at the selected entry", key: "f" },
   { name: "label", description: "label the selected entry", key: "shift+l" },
   { name: "toggle", description: "collapse or expand the selected entry", key: "enter" },

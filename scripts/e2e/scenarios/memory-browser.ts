@@ -58,7 +58,7 @@ const files: Record<string, string> = {
   [`${vault}/daily/2026-08-20.md`]:
     "- 09:12 [prov: user] decided the dock ratio stays 0.3\n- 10:40 [prov: agent] split ratios rebalanced after a resize\n",
   [`${vault}/curation.md`]:
-    "- 2026-08-21T10:00:00.000Z gardener sweep: promoted 1, merged 0, superseded 1, flagged 1, rejected 0\n- 2026-08-21T10:00:01.000Z approved note → Split Ratios.md\n",
+    "- 2026-08-21T10:00:00.000Z gardener sweep: promoted 1, merged 0, superseded 1, flagged 1, rejected 0\n- 2026-08-21T10:00:01.000Z approved note → Split Ratios.md\n- 2026-08-21T10:00:02.000Z recall [[Fold Habit]] via search in arc:dock-v2 by session session-0\n- 2026-08-21T10:00:03.000Z citation [[Fold Habit]] in arc:dock-v2 by session session-0\n",
   [`${vault}/.staging/${stagedNoteId}.json`]: `${JSON.stringify({
     kind: "note",
     target: "Web Claim.md",
@@ -103,15 +103,11 @@ const files: Record<string, string> = {
 const frozenClock = (): number => Date.parse("2026-08-22T12:00:00.000Z");
 
 const digestRows = {
-  candidate: "▓ Fold Habit · 3d",
-  question: "█ Tie order · question · 2d",
+  candidate: "░▓ Fold Habit · 3d",
+  question: "░█ Tie order · question · 2d",
   fold: "░ 1 below the bar · uncited · archived, searchable",
   close: "░ close #dock-v2 · 2 to decide",
 };
-
-function occurrences(frame: string, marker: string): number {
-  return frame.split(marker).length - 1;
-}
 
 async function closeArcAtTheAirlock(stage: Parameters<Scenario["run"]>[0]): Promise<string> {
   await stage.press("ctrl+p");
@@ -210,13 +206,14 @@ export const memoryBrowser: Scenario = {
     assert.ok(digest.includes(digestRows.candidate), "the eligible candidate waits");
     assert.ok(digest.includes(digestRows.question), "the open question waits");
     assert.ok(digest.includes(digestRows.fold), "below-bar notes fold into one dim row");
-    assert.equal(occurrences(digest, " · undecided"), 2, "both decisions are still open");
+    assert.ok(!digest.includes(" · undecided"), "the stamp treatment carries no undecided tail");
+    assert.ok(!digest.includes(" → deliver"), "no decision is made yet");
     await stage.settle();
     await stage.capture("airlock-digest");
 
     await stage.press("i", "a", "j", "c");
-    const triaged = await stage.until("→ carry to #next-arc");
-    assert.ok(triaged.includes(" → deliver"), "a marks the candidate deliver");
+    const triaged = await stage.until("██ carry to #next-arc · Tie order");
+    assert.ok(triaged.includes("█▓ deliver · Fold Habit"), "a stamps the candidate deliver");
     assert.ok(
       triaged.includes("█ close #dock-v2 · enter closes"),
       "every item decided reads enter closes",
@@ -239,14 +236,14 @@ export const memoryBrowser: Scenario = {
   },
 };
 
-export const memoryAirlockStamp: Scenario = {
-  name: "memory-airlock-stamp",
+export const memoryAirlockTail: Scenario = {
+  name: "memory-airlock-tail",
   description:
-    "the alternative digest treatment: decisions stamped into the row lead instead of trailing the title",
+    "the alternative digest treatment: decisions trailing the title instead of stamped into the row lead",
   size: { width: 160, height: 40 },
   files,
   turns: [textTurn("noted.")],
-  app: { memoryDigest: "stamp", clock: frozenClock },
+  app: { memoryDigest: "tail", clock: frozenClock },
   run: async (stage) => {
     await stage.settle();
     await stage.type("/arc dock-v2");
@@ -257,10 +254,10 @@ export const memoryAirlockStamp: Scenario = {
     await stage.until("│ memory · 6 notes · ░1 ");
     await closeArcAtTheAirlock(stage);
     await stage.press("i", "a", "j", "c");
-    const stamped = await stage.until("██ carry to #next-arc · Tie order");
-    assert.ok(stamped.includes("█▓ deliver · Fold Habit"), "the decision stamps the lead");
+    const tailed = await stage.until("█ Tie order · question · 2d → carry to #next-arc");
+    assert.ok(tailed.includes("▓ Fold Habit · 3d → deliver"), "the decision trails the title");
     await stage.settle();
-    await stage.capture("airlock-digest-stamp");
+    await stage.capture("airlock-digest-tail");
     await stage.quit();
   },
 };

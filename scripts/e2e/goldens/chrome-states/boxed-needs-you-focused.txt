@@ -21,4 +21,4 @@
 │                               ││ ? write {"path":"notes.txt","…  [y] allow  [a] always  [n] deny │
 │                               ││ › ▌                                                             │
 ╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
- keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · > commands                                 return 
+ keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · / commands                                 return 

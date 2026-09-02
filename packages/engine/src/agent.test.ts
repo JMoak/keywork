@@ -113,6 +113,89 @@ describe("Agent end-to-end with mock provider", () => {
     expect(toolResult).toMatchObject({ isError: true, output: "Unknown tool: missing" });
   });
 
+  it("runs point-of-action recall on mutating calls and appends it to the result", async () => {
+    const mutatingEcho: Tool = { ...echoTool, mutates: true };
+    const provider = new MockProvider([
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-1",
+        name: "echo",
+        arguments: { text: "hi" },
+      }),
+      textTurn("done"),
+    ]);
+    const recalled: string[] = [];
+    const agent = new Agent({
+      provider,
+      tools: [mutatingEcho],
+      guard: { confirm: async () => true },
+      actionRecall: async (call) => {
+        recalled.push(call.name);
+        return "## memory for hi\n\n### [[Echo Rule]]\n\nkeep echoes short\n\nretrieval: lexical";
+      },
+    });
+
+    await agent.send("echo please");
+
+    expect(recalled).toEqual(["echo"]);
+    const toolResult = agent.history()[2]?.parts[0];
+    expect(toolResult).toMatchObject({
+      type: "tool-result",
+      output:
+        "echo: hi\n\n## memory for hi\n\n### [[Echo Rule]]\n\nkeep echoes short\n\nretrieval: lexical",
+      isError: false,
+    });
+  });
+
+  it("leaves non-mutating calls and silent recalls untouched", async () => {
+    const provider = new MockProvider([
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-1",
+        name: "echo",
+        arguments: { text: "hi" },
+      }),
+      textTurn("done"),
+    ]);
+    let consulted = 0;
+    const agent = new Agent({
+      provider,
+      tools: [echoTool],
+      actionRecall: async () => {
+        consulted += 1;
+        return undefined;
+      },
+    });
+
+    await agent.send("echo please");
+
+    expect(consulted).toBe(0);
+    expect(agent.history()[2]?.parts[0]).toMatchObject({ output: "echo: hi" });
+  });
+
+  it("appends nothing when the recall stays silent on a mutating call", async () => {
+    const mutatingEcho: Tool = { ...echoTool, mutates: true };
+    const provider = new MockProvider([
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-1",
+        name: "echo",
+        arguments: { text: "hi" },
+      }),
+      textTurn("done"),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingEcho],
+      guard: { confirm: async () => true },
+      actionRecall: async () => undefined,
+    });
+
+    await agent.send("echo please");
+
+    expect(agent.history()[2]?.parts[0]).toMatchObject({ output: "echo: hi" });
+  });
+
   it("resolves an already-aborted send as an interrupted turn", async () => {
     const provider = new MockProvider([textTurn("this streams")]);
     const agent = new Agent({ provider });

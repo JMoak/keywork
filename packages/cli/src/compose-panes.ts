@@ -1,10 +1,13 @@
 import {
   type Agent,
   type ContextBudget,
+  type CurationJudgmentPort,
+  closingJudgment,
   compactNow,
   contextBudgetFor,
   declaredContextWindow,
   type MemoryFlush,
+  type Provider,
   renderCommand,
   type SessionStore,
   scanTemplate,
@@ -25,7 +28,7 @@ import {
   type WorkspaceSetupPort,
   type WorkspacesPort,
 } from "@keywork/tui";
-import { arcService, arcsUnavailable } from "./arcs.ts";
+import { arcService, arcsUnavailable, type ClosingRequest } from "./arcs.ts";
 import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
 import {
   type AgentComposition,
@@ -34,10 +37,11 @@ import {
   composeWorkspace,
 } from "./compose.ts";
 import { inferencePort } from "./inference/port.ts";
+import { closingRole, roleProvider } from "./inference/roles.ts";
 import type { LiveInference } from "./inference-state.ts";
 import { type DeferredMaterialization, deferredMaterialization } from "./materialize.ts";
 import { mcpPanePort } from "./mcp.ts";
-import { memoryPanePort, sweepOnClose } from "./memory.ts";
+import { citationTrail, memoryPanePort, sweepOnClose } from "./memory.ts";
 import { defaultSessionDir, workspaceIdentity, workspaceStateFile } from "./paths.ts";
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
 import {
@@ -46,6 +50,7 @@ import {
   sessionPort,
   sessionTreePort,
 } from "./sessions/ports.ts";
+import { listSessions } from "./sessions/store.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
 import { workspaceSetupPort } from "./workspace-setup.ts";
 import { type WorkspaceRecall, workspacesPort } from "./workspaces.ts";
@@ -139,12 +144,15 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     workspaceSlug,
     prompts: config.prompts,
     mcpServers: config.mcpServers,
+    repoMap: config.repoMap,
+    models: config.models,
     onFileSaved: materialize === undefined ? undefined : (path) => materialize.fileSaved(path),
     userRoot: options.userRoot,
     checkpointsGitDir: options.checkpointsGitDir,
     reportCheckpointsUnavailable: options.reportCheckpointsUnavailable,
   });
   const { checkpoints, extensions, mcp, memory } = composition;
+  const citations = citationTrail(memory, () => composition.bootstrap);
   const setup = options.workspaceSetup;
   const stores = new Map<string, SessionStore>();
   const changes = sessionChangeFeed();
@@ -155,23 +163,47 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     memory,
     boundSessionCounts: () => boundSessionCounts(options.sessionDir),
     flushFor: (sessionId) => airlockFlushFor(stores.get(sessionId), agents.flushOf(sessionId)),
+    closing: (request) => closingSeam(request),
+    citedNotes: (slug) => citations.citedNotes(slug),
+    lastActivity: (slug) => latestArcActivity(options.sessionDir, slug),
     onReleased: (sessionId) => changes.emit(sessionId),
     unavailable:
       setup === undefined ? undefined : () => readinessNotice(setup.readiness()) ?? arcsUnavailable,
   });
-  const agents = composeAgents(composition, { permissions: presets?.resolver, arcs });
+  const agents = composeAgents(composition, { permissions: presets?.resolver, arcs, citations });
+  const closingProviderFor = (arc: string): Provider | undefined => {
+    const state = options.inference?.current();
+    const fromRole =
+      state === undefined ? undefined : roleProvider(state.runtime, state.config, closingRole);
+    if (fromRole !== undefined) return fromRole;
+    return arcs.bindings
+      .sessionsBoundTo(arc)
+      .map((sessionId) => agents.providerOf(sessionId))
+      .find((provider) => provider !== undefined);
+  };
+  const closingSeam = (request: ClosingRequest): CurationJudgmentPort | undefined => {
+    const provider = closingProviderFor(request.arc);
+    if (provider === undefined) return undefined;
+    return closingJudgment({
+      provider,
+      ...(request.direction !== undefined && { direction: request.direction }),
+      onDegrade: request.onDegrade,
+    });
+  };
   return {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
       checkpointTag: () => checkpoints?.takeTurnTag(),
       onAttach: (store) => {
         stores.set(store.header.id, store);
+        citations.forSession(store.header.id);
         void arcs.attached(store);
       },
       onRelease: (sessionId) => {
         stores.delete(sessionId);
         agents.release(sessionId);
         arcs.released(sessionId);
+        citations.release(sessionId);
       },
       onChange: (sessionId) => changes.emit(sessionId),
       onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
@@ -183,6 +215,12 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     closers: [() => sweepOnClose(memory()), ...(mcp === undefined ? [] : [() => mcp.stop()])],
     extensions: extensionsView(extensions, cwd),
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
+    ...(config.pointer !== undefined && { pointer: config.pointer }),
+    ...(config.masthead !== undefined && { masthead: config.masthead }),
+    ...(config.motion !== undefined && { motion: config.motion }),
+    ...(config.tips !== undefined && { tips: config.tips }),
+    ...(config.scrim !== undefined && { scrim: config.scrim }),
+    ...(config.dim !== undefined && { dim: config.dim }),
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
     ...(projectTrusted && {
@@ -198,6 +236,15 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     ...(options.inference !== undefined &&
       inferenceSeams(options.inference, options, composition, agents, stores)),
   };
+}
+
+async function latestArcActivity(sessionDir: string, slug: string): Promise<string | undefined> {
+  const { sessions } = await listSessions(sessionDir);
+  return sessions
+    .filter((session) => session.arc === slug)
+    .map((session) => session.lastActivityAt)
+    .sort()
+    .at(-1);
 }
 
 function workspaceStateStore(cwd: string, slug: string | undefined, fresh: boolean): WorkspacePort {

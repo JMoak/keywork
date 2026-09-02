@@ -61,6 +61,7 @@ export {
   type InstrumentTier,
 } from "./context-gauge.ts";
 export type { CompactionHook, ForkOutcome, Titler } from "./conversation-model.ts";
+export type { TranscriptElevation } from "./conversation-pane.ts";
 export type {
   ConversationTarget,
   ExtensionAgentEntry,
@@ -116,6 +117,8 @@ export {
   type HeadlineFace,
   type HeadlineFrame,
   headline,
+  type MastheadMoment,
+  wearsMasthead,
 } from "./masthead.ts";
 export { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 export type {
@@ -143,6 +146,7 @@ export type {
   QueryLeg,
   QuerySource,
 } from "./memory-pane-model.ts";
+export { type DigestTreatment, type GardenHeat, noteHeat } from "./memory-rows.ts";
 export {
   Animator,
   type AnimatorOptions,
@@ -197,6 +201,7 @@ export {
   slugWords,
 } from "./slug.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
+export { curatedTips, rotatingTip, type Tip, type TipSignals, tipRotationMs } from "./tips.ts";
 export { type TitleBarState, type TitleSpan, titleBar, titleSpans } from "./title-bar.ts";
 export type { FocusOutline } from "./view/frame.ts";
 export {

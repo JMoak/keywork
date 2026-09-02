@@ -81,24 +81,14 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       description: "open the MCP status pane: /mcp",
       run: () => core.summon("mcp"),
     }),
-    ...when(options.workspaces !== undefined, {
-      name: "workspace",
-      description:
-        "switch or create a workspace over this root: /workspace [slug | new <slug> | default]",
-      run: (args) => core.openWorkspaceCommand(args),
-    }),
+    ...(options.workspaces === undefined ? [] : workspaceCommands(core)),
     ...when(options.workspaceSetup !== undefined, {
       name: "init",
       aliases: ["trust"],
       description: "trust this folder and set up its workspace, memory and arcs included: /init",
       run: () => core.openWorkspaceSetup(),
     }),
-    ...when(options.arcs !== undefined, {
-      name: "arc",
-      description:
-        "bind this session to an arc: /arc [slug | new [slug] | none | close | abandon <slug>]",
-      run: (args) => core.openArcCommand(args),
-    }),
+    ...(options.arcs === undefined ? [] : arcCommands(core)),
     ...when(options.presets !== undefined, {
       name: "preset",
       aliases: ["presets"],
@@ -136,6 +126,67 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       run: () => core.shutdown(),
     },
   ];
+}
+
+function arcCommands(core: AppCore): CommandSpec[] {
+  return [
+    {
+      name: "arc",
+      description: "bind this session to an arc, or pick from a list: /arc [slug]",
+      run: (args) => core.openArcCommand(args),
+    },
+    {
+      name: "arc-new",
+      description: "start an arc and bind this session to it: /arc-new [slug]",
+      run: (args) => core.arcCommand({ verb: "new", slug: operandOf(args) }),
+    },
+    {
+      name: "arc-close",
+      description:
+        "close the focused arc, with optional direction for the distiller: /arc-close [direction]",
+      run: (args) => core.arcCommand({ verb: "close", direction: operandOf(args) }),
+    },
+    {
+      name: "arc-abandon",
+      description: "archive an arc without distilling, nothing deleted: /arc-abandon <slug>",
+      run: (args) => core.arcCommand({ verb: "abandon", slug: operandOf(args) }),
+    },
+    {
+      name: "arc-release",
+      description: "unbind this session from its arc: /arc-release",
+      run: () => core.arcCommand({ verb: "release" }),
+    },
+    {
+      name: "arc-open",
+      description: "open an arc pane, the focused session's arc by default: /arc-open [slug]",
+      run: (args) => core.arcCommand({ verb: "open", slug: operandOf(args) }),
+    },
+  ];
+}
+
+function workspaceCommands(core: AppCore): CommandSpec[] {
+  return [
+    {
+      name: "workspace",
+      description: "switch workspaces over this root, or pick from a list: /workspace [slug]",
+      run: (args) => core.openWorkspaceCommand(args),
+    },
+    {
+      name: "workspace-new",
+      description: "create a workspace over this root and switch to it: /workspace-new <slug>",
+      run: (args) => core.workspaceCommand({ verb: "new", slug: operandOf(args) }),
+    },
+    {
+      name: "workspace-default",
+      description: "switch back to the default workspace: /workspace-default",
+      run: () => core.workspaceCommand({ verb: "default" }),
+    },
+  ];
+}
+
+function operandOf(args: string | undefined): string | undefined {
+  const trimmed = args?.trim() ?? "";
+  return trimmed === "" ? undefined : trimmed;
 }
 
 function dockCommands(core: AppCore): CommandSpec[] {

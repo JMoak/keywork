@@ -299,33 +299,34 @@ describe("the masthead tile", () => {
   const frame = (pane: ConversationPane, focused: boolean, width: number, height = 24) =>
     frameRows(pane.view({ theme: keyworkNight, focused, width, height }));
 
-  it("replaces the transcript with a block headline and one status line below the threshold", async () => {
+  it("replaces the transcript with a block headline and one status line on an unfocused pane", async () => {
     const agent = new Agent({ provider: new MockProvider([textTurn("a long enough reply")]) });
     const pane = new ConversationPane("session-1", agent, () => {});
     pane.adoptTitle("auth-retry-fix");
     modelOf(pane).submitText("go");
     await modelOf(pane).lastSend;
 
-    const rows = frame(pane, true, 36);
+    const rows = frame(pane, false, 36);
     expect(rows.join("\n")).toMatch(/[▀▄]/);
     expect(rows.some((row) => row.includes("a long enough reply"))).toBe(false);
     expect(rows.find((row) => row.startsWith("idle"))).toBe("idle");
-    expect(rows.at(-1)).toBe("› ▌");
+    expect(rows.at(-1)).toBe("› ");
   });
 
-  it("yields to input: a draft brings the transcript back, clearing it restores the tile", async () => {
+  it("follows focus: the focused pane is the working page, a draft rides under the tile", async () => {
     const agent = new Agent({ provider: new MockProvider([textTurn("reply text")]) });
     const pane = new ConversationPane("session-1", agent, () => {});
     modelOf(pane).submitText("go");
     await modelOf(pane).lastSend;
 
-    pane.handleKey(parseChord("x"), "x");
-    const typing = frame(pane, true, 36);
-    expect(typing.some((row) => row.includes("reply text"))).toBe(true);
-    expect(typing.join("\n")).not.toMatch(/[▀▄]/);
+    const focusedRows = frame(pane, true, 36);
+    expect(focusedRows.some((row) => row.includes("reply text"))).toBe(true);
+    expect(focusedRows.join("\n")).not.toMatch(/[▀▄]/);
 
-    pane.handleKey(parseChord("backspace"), undefined);
-    expect(frame(pane, true, 36).join("\n")).toMatch(/[▀▄]/);
+    pane.handleKey(parseChord("x"), "x");
+    const drafting = frame(pane, false, 36);
+    expect(drafting.join("\n")).toMatch(/[▀▄]/);
+    expect(drafting.at(-1)).toBe("› x");
   });
 
   it("never wears the masthead while an ask is pending", () => {
@@ -336,9 +337,34 @@ describe("the masthead tile", () => {
       name: "write",
       arguments: { path: "a.txt" },
     });
+    expect(frame(pane, false, 36).join("\n")).toContain("[y] allow");
     expect(frame(pane, true, 36).join("\n")).toContain("[y] allow");
     pane.handleKey(parseChord("n"), undefined);
     return decision;
+  });
+
+  it("shows the page for an unseen failure instead of ceremony", async () => {
+    const pane = new ConversationPane(
+      "session-1",
+      new Agent({ provider: new MockProvider([]) }),
+      () => {},
+    );
+    modelOf(pane).submitText("go");
+    await pane.settled();
+    expect(pane.lifecycle()).toBe("failed");
+    expect(frame(pane, false, 36).join("\n")).not.toMatch(/[▀▄]/);
+  });
+
+  it("renders the plain page when the masthead is switched off", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("reply text")]) });
+    const pane = new ConversationPane("session-1", agent, () => {}, undefined, undefined, {
+      masthead: "off",
+    });
+    modelOf(pane).submitText("go");
+    await modelOf(pane).lastSend;
+    const rows = frame(pane, false, 36);
+    expect(rows.some((row) => row.includes("reply text"))).toBe(true);
+    expect(rows.join("\n")).not.toMatch(/[▀▄]/);
   });
 
   it("reports working and failed states on the status line", async () => {
@@ -487,5 +513,95 @@ describe("the live header", () => {
     release();
     await modelOf(pane).lastSend;
     pane.dispose();
+  });
+});
+
+describe("slash tray pointer geometry", () => {
+  function paneWithCommands(ran: string[]): ConversationPane {
+    const names = ["exit", "exit-all"];
+    return new ConversationPane(
+      "session-1",
+      undefined,
+      () => {},
+      undefined,
+      {
+        search: (query) =>
+          names
+            .filter((name) => name.startsWith(query.toLowerCase()))
+            .map((name) => ({ name, description: name })),
+        run: (name) => {
+          if (!names.includes(name)) return false;
+          ran.push(name);
+          return true;
+        },
+      },
+      {},
+    );
+  }
+
+  function typeSlash(pane: ConversationPane, text: string): void {
+    for (const character of text) pane.handleKey(parseChord(character), character);
+  }
+
+  it("hovers and clicks the rendered suggestion rows, dead outside them", () => {
+    const ran: string[] = [];
+    const pane = paneWithCommands(ran);
+    typeSlash(pane, "/ex");
+    pane.view(context(true));
+    const contentHeight = 18;
+    const reserved = 2 + 2 + 1;
+    const firstRow = 2 + (contentHeight - reserved);
+    expect(pane.handleMouse({ x: 3, y: firstRow - 1 }, { type: "move", x: 3, y: 0 })).toBe(false);
+    expect(pane.handleMouse({ x: 3, y: firstRow + 1 }, { type: "move", x: 3, y: 0 })).toBe(true);
+    expect(modelOf(pane).selectedSuggestion).toBe(1);
+    expect(
+      pane.handleMouse({ x: 3, y: firstRow + 1 }, { type: "down", x: 3, y: 0, button: 0 }),
+    ).toBe(true);
+    expect(ran).toEqual(["exit-all"]);
+    expect(modelOf(pane).input).toBe("");
+  });
+});
+
+describe("transcript elevation candidates", () => {
+  function paneShowing(elevation?: "scroll-map" | "turn-age"): ConversationPane {
+    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
+      ...(elevation !== undefined && { elevation }),
+    });
+    const feed = modelOf(pane).feed;
+    feed.entries.length = 0;
+    feed.entries.push(
+      { kind: "user", text: "one" },
+      { kind: "assistant", text: "first reply\nwith a second line\nand a third" },
+      { kind: "user", text: "two" },
+      { kind: "assistant", text: "second reply" },
+    );
+    return pane;
+  }
+
+  const stampedRows = (pane: ConversationPane) =>
+    frameRows(pane.view(context(true, 80))).filter((row) => /^[█▓░] /.test(row));
+
+  it("scroll-map turns the whole stamp column into a minimap of the transcript", () => {
+    const mapped = stampedRows(paneShowing("scroll-map"));
+    expect(mapped.length).toBeGreaterThan(stampedRows(paneShowing()).length);
+    expect(mapped[0]?.startsWith("█")).toBe(true);
+  });
+
+  it("turn-age keeps the words identical and shifts only the ink", () => {
+    expect(frameRows(paneShowing("turn-age").view(context(true, 80)))).toEqual(
+      frameRows(paneShowing().view(context(true, 80))),
+    );
+  });
+});
+
+describe("the gauge override", () => {
+  it("renders the chosen form even while the reading is calm-insignificant", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
+    const pane = new ConversationPane("session-1", agent, () => {}, undefined, undefined, {
+      gauge: "tile",
+    });
+    modelOf(pane).submitText("go");
+    await modelOf(pane).lastSend;
+    expect(pane.liveStatus({ instruments: "calm" })).toMatch(/^[▖▌▙█] \d/);
   });
 });

@@ -12,6 +12,15 @@ export class ArcCloseDraft {
   private readonly questions = new Map<string, QuestionTriage>();
   private successor: string | undefined;
   private sweep: AckSweep | undefined;
+  private steered: string | undefined;
+
+  steer(direction: string | undefined): void {
+    this.steered = direction;
+  }
+
+  direction(): string | undefined {
+    return this.steered;
+  }
 
   decideCandidate(name: string, triage: CandidateTriage): void {
     this.candidates.set(name, triage);
@@ -75,6 +84,7 @@ export class ArcCloseDraft {
       candidates: Object.fromEntries([...this.candidates].filter(([name]) => named.has(name))),
       questions: Object.fromEntries([...this.questions].filter(([title]) => titled.has(title))),
       ...(this.successor !== undefined && { successor: this.successor }),
+      ...(this.steered !== undefined && { direction: this.steered }),
     };
   }
 }

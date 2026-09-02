@@ -8,8 +8,10 @@ import {
 } from "./app-actions.ts";
 import {
   type ArcCommandSeams,
+  type ArcInvocation,
   applyArcChoice,
   type FocusedArcPort,
+  legacyArcInvocation,
   runArcCommand,
 } from "./arc-commands.ts";
 import { arcChoiceOf } from "./arc-picker.ts";
@@ -60,10 +62,13 @@ import {
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { PanePointer } from "./pointer-routing.ts";
+import { rotatingTip, type TipSignals } from "./tips.ts";
 import {
   applyWorkspaceChoice,
+  legacyWorkspaceInvocation,
   runWorkspaceCommand,
   type WorkspaceCommandSeams,
+  type WorkspaceInvocation,
 } from "./workspace-commands.ts";
 import { type WorkspacesPort, workspaceChoiceOf } from "./workspace-picker.ts";
 import {
@@ -80,6 +85,11 @@ export interface UndoPort {
   redo(): Promise<boolean>;
 }
 
+export interface TipsOption {
+  enabled: boolean;
+  now?: () => number;
+}
+
 export interface AppCoreOptions extends PaneFactories {
   screen: () => Screen;
   drawnRect?: (rect: Rect, screen: Screen) => Rect;
@@ -94,6 +104,7 @@ export interface AppCoreOptions extends PaneFactories {
   workspaceSetup?: WorkspaceSetupPort;
   currentModel?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;
+  tips?: TipsOption;
   restoreWorkspace?: WorkspaceState;
   initialWorkspace?: readonly InitialPane[];
   saveWorkspace?: (state: WorkspaceState) => void;
@@ -212,7 +223,8 @@ export class AppCore implements ActionTarget {
       this.shutdown();
       return;
     }
-    if (this.overlay !== undefined) this.overlay.handleKey(chord, sequence);
+    if (chord.name === "escape" && this.pointer.cancelDrag()) this.touch();
+    else if (this.overlay !== undefined) this.overlay.handleKey(chord, sequence);
     else this.handleAppKey(chord, sequence, nowMs, repeat);
     this.persistWorkspace();
   }
@@ -226,10 +238,12 @@ export class AppCore implements ActionTarget {
     if (id !== undefined) this.panes.get(id)?.handlePaste?.(text);
   }
 
-  handleMouse(event: PointerEvent): void {
+  handleMouse(event: PointerEvent): boolean {
+    let handled = true;
     if (this.overlay !== undefined) this.overlay.handleMouse(event, this.screen());
-    else this.pointer.route(event);
+    else handled = this.pointer.route(event);
     this.persistWorkspace();
+    return handled;
   }
 
   runCommand(name: string): boolean {
@@ -467,6 +481,10 @@ export class AppCore implements ActionTarget {
   }
 
   openArcCommand(argument = ""): void {
+    this.arcCommand(legacyArcInvocation(argument));
+  }
+
+  arcCommand(invocation: ArcInvocation): void {
     const arcs = this.options.arcs;
     if (arcs === undefined) return;
     const blocker = this.workspaceBlocker();
@@ -486,10 +504,14 @@ export class AppCore implements ActionTarget {
         });
       },
     };
-    this.settle(runArcCommand(seams, argument.trim()));
+    this.settle(runArcCommand(seams, invocation));
   }
 
   openWorkspaceCommand(argument = ""): void {
+    this.workspaceCommand(legacyWorkspaceInvocation(argument));
+  }
+
+  workspaceCommand(invocation: WorkspaceInvocation): void {
     const workspaces = this.options.workspaces;
     if (workspaces === undefined) return;
     const seams: WorkspaceCommandSeams = {
@@ -503,7 +525,7 @@ export class AppCore implements ActionTarget {
         });
       },
     };
-    this.settle(runWorkspaceCommand(seams, argument.trim()));
+    this.settle(runWorkspaceCommand(seams, invocation));
   }
 
   openWorkspaceSetup(): void {
@@ -605,6 +627,22 @@ export class AppCore implements ActionTarget {
   postNotice(text: string): void {
     this.notice = text;
     this.notify();
+  }
+
+  tip(): string | undefined {
+    const tips = this.options.tips;
+    if (tips === undefined || !tips.enabled) return undefined;
+    return rotatingTip(this.tipSignals(), (tips.now ?? Date.now)());
+  }
+
+  private tipSignals(): TipSignals {
+    const kinds = new Set([...this.panes.keys()].map(paneKindOf));
+    return {
+      paneCount: this.layout.panes().length,
+      costsShown: this.costsShown,
+      memoryUntouched: this.options.createMemoryPane !== undefined && !kinds.has("memory"),
+      arcsUntouched: this.options.arcs !== undefined && !kinds.has("arc") && !kinds.has("arcs"),
+    };
   }
 
   settle(work: Promise<unknown>): void {

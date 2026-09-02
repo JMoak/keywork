@@ -9,7 +9,12 @@ import {
   tile,
 } from "./capability.ts";
 import { rampColor } from "./chroma.ts";
-import { contextGauge, gaugeStyleFor, type InstrumentTier } from "./context-gauge.ts";
+import {
+  contextGauge,
+  type GaugeStyle,
+  gaugeStyleFor,
+  type InstrumentTier,
+} from "./context-gauge.ts";
 import {
   type CommandsPort,
   type CompactionHook,
@@ -24,7 +29,7 @@ import type { Chord } from "./keys.ts";
 import type { MarkdownSpan } from "./markdown.ts";
 import { markdownChunk } from "./markdown-ink.ts";
 import { assumedGlyphs, type PageMarks, pageMarks } from "./marks.ts";
-import { headline } from "./masthead.ts";
+import { headline, wearsMasthead } from "./masthead.ts";
 import { type Animator, inkAt } from "./motion.ts";
 import { type PageGrammar, type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
 import type { LifecycleState, Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
@@ -68,7 +73,12 @@ export interface ConversationPaneOptions {
   glyphs?: GlyphSupport;
   animator?: Animator;
   siblingTitles?: () => readonly string[];
+  masthead?: "on" | "off";
+  gauge?: GaugeStyle;
+  elevation?: TranscriptElevation;
 }
+
+export type TranscriptElevation = "arc-stamps" | "turn-age" | "scroll-map";
 
 export class ConversationPane implements Pane {
   readonly model: ConversationModel;
@@ -79,10 +89,15 @@ export class ConversationPane implements Pane {
   private closed = false;
   private lastLines: readonly TranscriptLine[] = [];
   private lastMaxRows = 0;
+  private lastSuggestionCount = 0;
+  private suggestionFirstRow = 0;
   private lastFocused = false;
 
   private readonly animator: Animator | undefined;
   private readonly siblingTitles: (() => readonly string[]) | undefined;
+  private readonly mastheadEnabled: boolean;
+  private readonly gaugeOverride: GaugeStyle | undefined;
+  private readonly elevation: TranscriptElevation | undefined;
   private unseen: SettledOutcome | undefined;
   private pulseInk = 1;
   private pulsing = false;
@@ -109,6 +124,9 @@ export class ConversationPane implements Pane {
     this.stampGlyphs = lifecycleGlyphs(this.glyphs);
     this.animator = options?.animator;
     this.siblingTitles = options?.siblingTitles;
+    this.mastheadEnabled = options?.masthead !== "off";
+    this.gaugeOverride = options?.gauge;
+    this.elevation = options?.elevation;
     this.model.onSettled((outcome) => {
       if (!this.lastFocused) this.unseen = outcome;
     });
@@ -157,6 +175,7 @@ export class ConversationPane implements Pane {
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (this.suggestionTrayMouse(local, event)) return true;
     if (event.type === "scroll" && event.scroll !== undefined) {
       const steps = wheelSteps(event.scroll.delta);
       return this.model.scrollBy(event.scroll.direction === "up" ? steps : -steps);
@@ -164,6 +183,18 @@ export class ConversationPane implements Pane {
     if (event.type !== "down") return false;
     const entry = this.entryAtRow(local.y - 1)?.source;
     return entry === undefined ? false : this.model.toggleToolFold(entry);
+  }
+
+  private suggestionTrayMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (this.lastSuggestionCount === 0) return false;
+    const row = local.y - this.suggestionFirstRow;
+    if (row < 0 || row >= this.lastSuggestionCount) return false;
+    if (event.type === "move" || event.type === "drag") {
+      this.model.traySelect(row);
+      return true;
+    }
+    if (event.type !== "down") return false;
+    return this.model.trayAccept(row);
   }
 
   private entryAtRow(contentRow: number): TranscriptLine | undefined {
@@ -212,9 +243,15 @@ export class ConversationPane implements Pane {
   private contextSegment(instruments: InstrumentTier): string {
     const reading = this.model.contextReading();
     if (reading === undefined) return "";
-    const significant = instruments === "cockpit" || reading.used * 2 >= reading.flushAt;
+    const significant =
+      this.gaugeOverride !== undefined ||
+      instruments === "cockpit" ||
+      reading.used * 2 >= reading.flushAt;
     if (!significant) return "";
-    return contextGauge(reading, { style: gaugeStyleFor(instruments), glyphs: this.glyphs });
+    return contextGauge(reading, {
+      style: this.gaugeOverride ?? gaugeStyleFor(instruments),
+      glyphs: this.glyphs,
+    });
   }
 
   submitPrompt(text: string): void {
@@ -317,7 +354,7 @@ export class ConversationPane implements Pane {
     this.syncStamp(context.focused);
     this.syncClock();
     const page = resolvePage(context.width, this.pageThresholds);
-    return this.wearsMasthead(page)
+    return this.wearsMasthead(page, context.focused)
       ? this.mastheadView(context)
       : this.transcriptView(context, page);
   }
@@ -428,14 +465,16 @@ export class ConversationPane implements Pane {
     return undefined;
   }
 
-  private wearsMasthead(page: PageGrammar): boolean {
-    return (
-      page.masthead &&
-      this.model.editor.isEmpty() &&
-      this.model.pendingAsk === undefined &&
-      !this.model.backtracking() &&
-      !this.model.disclosing()
-    );
+  private wearsMasthead(page: PageGrammar, focused: boolean): boolean {
+    return wearsMasthead({
+      tier: page.tier,
+      focused,
+      asking: this.model.pendingAsk !== undefined,
+      backtracking: this.model.backtracking(),
+      disclosing: this.model.disclosing(),
+      failedUnseen: this.unseen === "failed",
+      enabled: this.mastheadEnabled,
+    });
   }
 
   private mastheadView(context: PaneContext): PaneView {
@@ -450,6 +489,7 @@ export class ConversationPane implements Pane {
     });
     this.lastLines = [];
     this.lastMaxRows = 0;
+    this.lastSuggestionCount = 0;
     return paneChrome(
       context,
       this.composedTitle(context),
@@ -503,14 +543,19 @@ export class ConversationPane implements Pane {
     this.lastLines = lines;
     this.lastMaxRows = maxRows;
     const scrollBack = this.model.scrollBack;
+    const scrollNoticeRows = scrollBack > 0 && !this.model.backtracking() ? 1 : 0;
+    this.lastSuggestionCount = suggestions.length;
+    this.suggestionFirstRow = 2 + maxRows + scrollNoticeRows + queued.length;
     return paneChrome(
       context,
       this.composedTitle(context),
       Box(
         { flexGrow: 1, flexDirection: "column", justifyContent: "flex-end", overflow: "hidden" },
-        ...lines.map((line) => transcriptRow(line, innerWidth, theme)),
+        ...lines.map((line, row) =>
+          transcriptRow(line, innerWidth, theme, this.rowTint(context, lines, line, row)),
+        ),
       ),
-      ...(scrollBack > 0 && !this.model.backtracking()
+      ...(scrollNoticeRows > 0
         ? [
             Text({
               content: `↓ ${scrollBack} more · esc returns to live`,
@@ -526,6 +571,7 @@ export class ConversationPane implements Pane {
               theme,
               trayRows(suggestions, this.model.selectedSuggestion, innerWidth - 2, theme, {
                 namePrefix: "/",
+                glyphs: this.glyphs,
               }),
             ),
           ]),
@@ -559,6 +605,47 @@ export class ConversationPane implements Pane {
     return [];
   }
 
+  private rowTint(
+    context: PaneContext,
+    lines: readonly TranscriptLine[],
+    line: TranscriptLine,
+    row: number,
+  ): RowTint | undefined {
+    switch (this.elevation) {
+      case undefined:
+        return undefined;
+      case "arc-stamps":
+        return line.kind === "user" && line.stamp !== undefined && context.hue !== undefined
+          ? { stampInk: context.hue }
+          : undefined;
+      case "turn-age":
+        return { bodyInk: this.agedInk(context.theme, line) };
+      case "scroll-map":
+        return this.scrollMapTint(context.theme, lines.length, row);
+    }
+  }
+
+  private agedInk(theme: Theme, line: TranscriptLine): string {
+    const entries = this.model.entries;
+    const at = line.source === undefined ? entries.length - 1 : entries.indexOf(line.source);
+    const age = entries.length <= 1 ? 1 : Math.max(0, at) / (entries.length - 1);
+    return rampColor([theme.textDim, lineColor(line, theme)], 0.35 + 0.65 * age);
+  }
+
+  private scrollMapTint(theme: Theme, rows: number, row: number): RowTint | undefined {
+    const entries = this.model.entries;
+    if (entries.length === 0 || rows === 0) return undefined;
+    const entry = entries[Math.min(entries.length - 1, Math.floor((row / rows) * entries.length))];
+    if (entry === undefined) return undefined;
+    const voice = this.marks.voice;
+    const glyph =
+      entry.kind === "user" ? voice.user : entry.kind === "assistant" ? voice.agent : voice.machine;
+    return {
+      stampText: `${glyph} `,
+      stampInk: entry.kind === "user" ? theme.accent : theme.textDim,
+    };
+  }
+
   private askDiffRows(theme: Theme) {
     const window = this.model.askDiffWindow(askDiffRows);
     return [
@@ -576,8 +663,14 @@ function askRow(summary: string, paneWidth: number, theme: Theme) {
   return Text({ content: `? ${clip(summary, room)}${askControls}`, fg: theme.accent });
 }
 
-function transcriptRow(line: TranscriptLine, paneWidth: number, theme: Theme) {
-  const stamp = line.stamp ?? "";
+interface RowTint {
+  readonly stampText?: string;
+  readonly stampInk?: string;
+  readonly bodyInk?: string;
+}
+
+function transcriptRow(line: TranscriptLine, paneWidth: number, theme: Theme, tint?: RowTint) {
+  const stamp = tint?.stampText ?? line.stamp ?? "";
   if (line.selected === true) {
     return Text({
       content: padEnd(`${stamp}${line.text || " "}`, paneWidth),
@@ -585,14 +678,23 @@ function transcriptRow(line: TranscriptLine, paneWidth: number, theme: Theme) {
       bg: theme.accent,
     });
   }
-  const lead = stamp === "" ? [] : [fg(stampColor(line, theme))(stamp)];
+  const lead = stamp === "" ? [] : [fg(tint?.stampInk ?? stampColor(line, theme))(stamp)];
   const bodyWidth = paneWidth - width(stamp);
   if (line.spans !== undefined) {
+    if (tint?.bodyInk !== undefined) {
+      return Text({
+        content: new StyledText([
+          ...lead,
+          ...line.spans.map((span) => fg(tint.bodyInk as string)(span.text)),
+        ]),
+      });
+    }
     return styledRow(lead, line.spans, line.panel === true, bodyWidth, theme);
   }
-  if (lead.length === 0) return Text({ content: line.text || " ", fg: lineColor(line, theme) });
+  const bodyInk = tint?.bodyInk ?? lineColor(line, theme);
+  if (lead.length === 0) return Text({ content: line.text || " ", fg: bodyInk });
   return Text({
-    content: new StyledText([...lead, fg(lineColor(line, theme))(line.text || " ")]),
+    content: new StyledText([...lead, fg(bodyInk)(line.text || " ")]),
   });
 }
 

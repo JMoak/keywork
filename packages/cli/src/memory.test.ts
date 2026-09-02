@@ -1,10 +1,14 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ArcRegistry, type MemoryStore, StagedItemNotFoundError } from "@keywork/engine";
+import { ArcRegistry, type MemoryStore, type Note, StagedItemNotFoundError } from "@keywork/engine";
 import type { AirlockDigestView, ArcAirlockPort } from "@keywork/tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  arcLayerId,
+  bootstrapInjection,
+  citationTrail,
+  curingStage,
   memoryPanePort,
   memoryRecall,
   openWorkspaceMemory,
@@ -258,40 +262,113 @@ describe("memoryPanePort", () => {
   });
 });
 
-describe("memoryRecall", () => {
-  it("feeds recalls into the gardener under the session id", async () => {
+describe("citationTrail", () => {
+  async function trailWorld() {
     const memory = openWorkspaceMemory(await declaredWorkspace(), true);
     if (memory === undefined) throw new Error("expected a workspace memory");
     await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
-    const recall = memoryRecall(memory, "session-1");
-    recall?.onRecall?.("Ratio Rule");
+    return { memory, trail: citationTrail(() => memory) };
+  }
+
+  it("feeds a cited recall into the curation score, deterministically", async () => {
+    const { memory, trail } = await trailWorld();
+    trail.forSession("session-1").recordRecall("Ratio Rule", "search");
+    trail.recordReply("session-1", "the split is 60/40 per [[Ratio Rule]]");
     const report = await memory.gardener.sweep();
-    expect(report.usefulness["Ratio Rule"]).toBeGreaterThan(0);
+    expect(report.usefulness["Ratio Rule"]).toBe(0.3);
+    const stamped = await memory.store.readNote("Ratio Rule");
+    expect(curingStage(stamped as Note)).toBe(2);
   });
 
-  it("records nothing while the session id is still unknown", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
-    expect(memoryRecall(undefined)).toBeUndefined();
-    memoryRecall(memory)?.onRecall?.("Ratio Rule");
+  it("leaves an uncited recall out of the usefulness fold", async () => {
+    const { memory, trail } = await trailWorld();
+    trail.forSession("session-1").recordRecall("Ratio Rule", "search");
     const report = await memory.gardener.sweep();
-    expect(report.usefulness["Ratio Rule"] ?? 0).toBe(0);
+    expect(report.usefulness["Ratio Rule"]).toBeUndefined();
   });
 
-  it("resolves a late-bound session key at recall time", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
+  it("rejects a hallucinated citation: no event, no audit line, nothing cited (R6)", async () => {
+    const { memory, trail } = await trailWorld();
+    trail.forSession("session-1").recordRecall("Ratio Rule", "search");
+    const outcome = trail.forSession("session-1").recordReply("see [[Invented Note]]");
+    expect(outcome).toEqual({ cited: [], rejected: ["Invented Note"] });
+    const report = await memory.gardener.sweep();
+    expect(report.usefulness).toEqual({});
+    const audit = await memory.store.readAudit();
+    expect(audit.some((entry) => entry.event.includes("Invented Note"))).toBe(false);
+  });
+
+  it("persists events through the audit ledger and reads arc citations back across runs", async () => {
+    const { memory, trail } = await trailWorld();
+    const ledger = trail.forSession("s1");
+    ledger.recordRecall("Arc Finding", "search", arcLayerId("dock-v2"));
+    ledger.recordReply("per [[Arc Finding]]");
+    await memory.store.recordAudit("settle");
+    const audit = await memory.store.readAudit();
+    expect(audit.map((entry) => entry.event)).toEqual([
+      "recall [[Arc Finding]] via search in arc:dock-v2 by session s1",
+      "citation [[Arc Finding]] in arc:dock-v2 by session s1",
+      "settle",
+    ]);
+    const relaunched = citationTrail(() => memory);
+    expect(await relaunched.citedNotes("dock-v2")).toEqual(["Arc Finding"]);
+    expect(await relaunched.citedNotes("other-arc")).toEqual([]);
+  });
+
+  it("unions live and persisted citations without duplicates", async () => {
+    const { memory, trail } = await trailWorld();
+    const first = trail.forSession("s1");
+    first.recordRecall("Arc Finding", "get", arcLayerId("dock-v2"));
+    first.recordRecall("Arc Finding", "get", arcLayerId("dock-v2"));
+    first.recordReply("per [[Arc Finding]]");
+    await memory.store.recordAudit("settle");
+    expect(await trail.citedNotes("dock-v2")).toEqual(["Arc Finding"]);
+  });
+
+  it("records bootstrap injections so the reply can cite them", async () => {
+    const { memory } = await trailWorld();
+    await memory.store.writeNote({
+      title: "Pinned Fact",
+      body: "f\n",
+      provenance: "user",
+      pinned: true,
+    });
+    await memory.store.writeMoc(["Pinned Fact"], "user");
+    const injection = await bootstrapInjection(memory);
+    const trail = citationTrail(
+      () => memory,
+      () => injection,
+    );
+    const outcome = trail.forSession("s1").recordReply("per [[Pinned Fact]]");
+    expect(outcome.cited).toEqual(["Pinned Fact"]);
+    await memory.store.recordAudit("settle");
+  });
+
+  it("drops tap events while the session key is unresolved, then records once it binds", async () => {
+    const { memory, trail } = await trailWorld();
     let sessionId: string | undefined;
-    const recall = memoryRecall(memory, () => sessionId);
-    recall?.onRecall?.("Ratio Rule");
+    const tap = trail.tapFor(() => sessionId);
+    tap.recordRecall("Ratio Rule", "search");
     sessionId = "sess-late";
-    recall?.onRecall?.("Ratio Rule");
+    tap.recordRecall("Ratio Rule", "search");
+    trail.recordReply("sess-late", "[[Ratio Rule]]");
     const report = await memory.gardener.sweep();
-    expect(report.usefulness["Ratio Rule"]).toBeGreaterThan(0);
+    expect(report.usefulness["Ratio Rule"]).toBe(0.3);
   });
 
+  it("stays inert for an untrusted workspace: no audit writes attempted", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, false);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    const trail = citationTrail(() => memory);
+    const ledger = trail.forSession("s1");
+    ledger.recordRecall("Ratio Rule", "search");
+    ledger.recordReply("[[Ratio Rule]]");
+    expect(await memory.store.readAudit()).toEqual([]);
+  });
+});
+
+describe("memoryRecall", () => {
   it("stays silent about retrieval for lexical-only search", async () => {
     const memory = openWorkspaceMemory(await declaredWorkspace(), true);
     if (memory === undefined) throw new Error("expected a workspace memory");
