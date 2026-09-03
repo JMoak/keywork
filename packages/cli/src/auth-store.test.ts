@@ -1,7 +1,7 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import {
   type Credential,
   deleteCredential,
@@ -10,17 +10,7 @@ import {
   saveCredential,
 } from "./auth-store.ts";
 
-const tempDirs: string[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-auth-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
+const tempDir = scratchDirs("keywork-auth-");
 
 describe("credential store", () => {
   it("round-trips api_key and oauth credentials", async () => {

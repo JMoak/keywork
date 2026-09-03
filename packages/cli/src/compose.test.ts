@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -9,15 +8,15 @@ import {
   MockProvider,
   messageText,
   type Provider,
-  type ProviderRequest,
   SessionStore,
   ShellSession,
-  type TurnDelta,
   tapJournal,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { recordingProvider } from "@keywork/engine/testing";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { type Composition, composeAgents, composeWorkspace, startMcpRegistry } from "./compose.ts";
 import { citationTrail } from "./memory.ts";
 
@@ -25,17 +24,7 @@ const fixtureServerPath = fileURLToPath(
   new URL("../../engine/src/testing/mcp-fixture-server.ts", import.meta.url),
 );
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-compose-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-compose-");
 
 async function composedIn(
   cwd: string,
@@ -55,17 +44,6 @@ async function declaredWorkspace(): Promise<string> {
   await mkdir(join(cwd, ".keywork"), { recursive: true });
   await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "compose" }));
   return cwd;
-}
-
-class RecordingProvider implements Provider {
-  readonly name = "recording";
-  readonly requests: ProviderRequest[] = [];
-
-  async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
-    this.requests.push(request);
-    yield { type: "text", text: "ok" };
-    yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
-  }
 }
 
 const briefAgent: AgentDefinition = {
@@ -182,7 +160,7 @@ describe("composeAgents", () => {
 
   it("gives default agents the composed system prompt for their model and definitions their own", async () => {
     const composition = await composedIn(await tempDir());
-    const provider = new RecordingProvider();
+    const provider = recordingProvider();
     const agents = composeAgents(composition);
 
     await agents.build({ provider, guard: {} }).send("hello");

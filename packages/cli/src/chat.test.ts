@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type Message,
@@ -12,22 +11,13 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { type ChatIo, type ChatOptions, chat, persistNewMessages } from "./chat.ts";
 import type { PresetPort } from "./presets.ts";
 import { latestSessionFile } from "./sessions/store.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-chat-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-chat-");
 
 interface ScriptedIo extends ChatIo {
   out: string[];

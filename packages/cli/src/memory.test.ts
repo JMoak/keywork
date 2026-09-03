@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ArcRegistry, type MemoryStore, type Note, StagedItemNotFoundError } from "@keywork/engine";
+import { scratchDirs } from "@keywork/shared/testing";
 import type { AirlockDigestView, ArcAirlockPort } from "@keywork/tui";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   arcLayerId,
   bootstrapInjection,
@@ -17,17 +17,7 @@ import {
   withMemoryPrompt,
 } from "./memory.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-cli-memory-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-cli-memory-");
 
 async function declaredWorkspace(): Promise<string> {
   const cwd = await tempDir();

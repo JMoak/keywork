@@ -8,6 +8,7 @@ import {
   type SessionPresence,
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
+import { pressModel as press } from "./testing/index.ts";
 
 interface Recorded {
   refreshes: number;
@@ -46,10 +47,6 @@ function modelOver(
   );
   model.setItems(items);
   return { model, recorded };
-}
-
-function press(model: SessionsOverviewModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5);
 }
 
 describe("SessionsOverviewModel rows", () => {

@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Agent } from "../agent.ts";
 import { type EngineEvents, EventBus } from "../bus.ts";
@@ -18,17 +18,7 @@ import {
 import { replaySession } from "./replay.ts";
 import { SessionStore } from "./store.ts";
 
-const tempDirs: string[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-journal-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
+const tempDir = scratchDirs("keywork-journal-");
 
 function emptyState(): ExtensionState {
   return { preset: undefined, mode: undefined, injections: [], decisions: [], shellResets: 0 };

@@ -1,5 +1,5 @@
 import { mkdtempSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,26 +15,18 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { recordingProvider } from "@keywork/engine/testing";
+import { scratchDirs } from "@keywork/shared/testing";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { composeAgents, composeWorkspace } from "./compose.ts";
 import { conclude, exitCodeOf, type HeadlessOutcome, type RunOptions, runHeadless } from "./run.ts";
 
-const tempDirs: string[] = [];
+const tempDir = scratchDirs("keywork-cli-");
 const emptyUserRoot = mkdtempSync(join(tmpdir(), "keywork-cli-user-"));
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-cli-"));
-  tempDirs.push(dir);
-  return dir;
-}
 
 function headless(options: Omit<RunOptions, "userRoot">): Promise<HeadlessOutcome> {
   return runHeadless({ userRoot: emptyUserRoot, ...options });
 }
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
 
 afterAll(() => rm(emptyUserRoot, { recursive: true, force: true }));
 
@@ -258,19 +250,6 @@ describe("runHeadless", () => {
 });
 
 describe("composition parity with panes", () => {
-  class RecordingProvider implements Provider {
-    readonly name = "recording";
-    readonly modelId = "recorded-model";
-    readonly requests: ProviderRequest[] = [];
-
-    constructor(private readonly inner: MockProvider) {}
-
-    stream(request: ProviderRequest) {
-      this.requests.push(request);
-      return this.inner.stream(request);
-    }
-  }
-
   async function trustedWorkspace(): Promise<string> {
     const cwd = await tempDir();
     await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
@@ -298,8 +277,8 @@ describe("composition parity with panes", () => {
   it("hands the agent the tools and system prompt a pane would get", async () => {
     const cwd = await trustedWorkspace();
     await skillAt(cwd, "greet", "Say hello warmly.");
-    const viaHeadless = new RecordingProvider(new MockProvider([textTurn("ok")]));
-    const viaPanes = new RecordingProvider(new MockProvider([textTurn("ok")]));
+    const viaHeadless = recordingProvider([textTurn("ok")], { modelId: "recorded-model" });
+    const viaPanes = recordingProvider([textTurn("ok")], { modelId: "recorded-model" });
 
     await headless({
       prompt: "hi",
@@ -400,7 +379,7 @@ describe("composition parity with panes", () => {
       join(named, "Side Fact.md"),
       "---\nprovenance: user\npinned: true\n---\nThe side workspace is in force.\n",
     );
-    const provider = new RecordingProvider(new MockProvider([textTurn("ok")]));
+    const provider = recordingProvider([textTurn("ok")], { modelId: "recorded-model" });
 
     await headless({
       prompt: "hi",

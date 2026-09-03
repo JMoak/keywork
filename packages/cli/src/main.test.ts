@@ -3,21 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MockProvider, type Provider, textTurn } from "@keywork/engine";
 import { TrustStore, writeNamedWorkspaceDeclaration } from "@keywork/shared";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { usage } from "./dispatch.ts";
 import { composeInference } from "./inference/runtime.ts";
 import { type MainSeams, main, runUntilSwitch } from "./main.ts";
 import { defaultSessionDir } from "./paths.ts";
 
-const tempDirs: string[] = [];
+const tempDir = scratchDirs("keywork-main-");
 const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 let home = "";
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-main-"));
-  tempDirs.push(dir);
-  return dir;
-}
 
 beforeAll(async () => {
   home = await mkdtemp(join(tmpdir(), "keywork-main-home-"));
@@ -29,10 +24,6 @@ afterAll(async () => {
   process.env.HOME = savedHome.HOME;
   process.env.USERPROFILE = savedHome.USERPROFILE;
   await rm(home, { recursive: true, force: true });
-});
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 interface Invocation {

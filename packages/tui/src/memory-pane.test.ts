@@ -2,11 +2,20 @@ import { describe, expect, it } from "vitest";
 import { type AirlockDigestView, type ArcAirlockPort, arcInk } from "./arcs.ts";
 import { parseChord } from "./keys.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+import type { InboxItemView } from "./memory-pane-model.ts";
 import {
   emptyMemoryInputs,
   type MemoryPaneInputs,
   type MemoryQueryOutcome,
 } from "./memory-pane-model.ts";
+import { AppProbe } from "./probe.ts";
+import {
+  describePaneTree,
+  dockedIds,
+  mustParse,
+  paneContext,
+  paneIds,
+} from "./testing/workflow-probe.ts";
 import { resolveTheme } from "./theme.ts";
 
 interface World {
@@ -517,5 +526,146 @@ describe("MemoryPane airlock digest", () => {
       `"text":"#dock-v2","fg":${paintedRgb(theme.textDim)}`,
     );
     expect(JSON.stringify(describeTree(plain.view(wide)))).toContain(header);
+  });
+});
+
+describe("memory pane", () => {
+  interface MemoryWorld {
+    inbox: InboxItemView[];
+    approved: string[];
+    discarded: string[];
+  }
+
+  function memoryProbe(inputs?: Partial<MemoryPaneInputs>) {
+    const world: MemoryWorld = {
+      inbox: [
+        {
+          id: "staged-1",
+          kind: "staged",
+          title: "config change",
+          provenance: "untrusted",
+          created: "2026-08-10T01:00:00Z",
+        },
+      ],
+      approved: [],
+      discarded: [],
+    };
+    const port: MemoryPanePort = {
+      load: async () => ({
+        layers: [{ id: "workspace", kind: "workspace" as const, label: "workspace" }],
+        notes: [
+          {
+            name: "ratio-rule",
+            title: "ratio-rule",
+            layer: "workspace",
+            provenance: "agent" as const,
+            curing: 3 as const,
+            links: [],
+            aliases: [],
+          },
+        ],
+        inbox: world.inbox,
+        ledger: [],
+        ...inputs,
+      }),
+      approve: async (id) => {
+        const found = world.inbox.find((item) => item.id === id);
+        if (found === undefined) throw new Error(`no review item with id ${id}`);
+        world.inbox = world.inbox.filter((item) => item.id !== id);
+        world.approved.push(id);
+      },
+      discard: async (id) => {
+        world.inbox = world.inbox.filter((item) => item.id !== id);
+        world.discarded.push(id);
+      },
+    };
+    const probe = new AppProbe({
+      createMemoryPane: (id, notify) => new MemoryPane(id, notify, port),
+    });
+    return { probe, world, port };
+  }
+
+  function memoryPane(probe: AppProbe, id = "memory-1"): MemoryPane {
+    const pane = probe.core.panes.get(id);
+    if (!(pane instanceof MemoryPane)) throw new Error(`no memory pane "${id}"`);
+    return pane;
+  }
+
+  it("/memory opens the pane docked and focused with counts in the title", async () => {
+    const { probe } = memoryProbe();
+    probe.type("/memory").keys("enter");
+    expect(paneIds(probe)).toEqual(["memory-1", "session-1"]);
+    expect(dockedIds(probe)).toEqual(["memory-1"]);
+    expect(probe.snapshot().focused).toBe("memory-1");
+    await probe.settled();
+    expect(probe.snapshot().panes.find((pane) => pane.id === "memory-1")?.title).toContain(
+      "1 note",
+    );
+  });
+
+  it("leader m summons the memory pane and refocuses instead of duplicating", () => {
+    const { probe } = memoryProbe();
+    probe.keys("ctrl+k", "m");
+    expect(paneIds(probe)).toEqual(["memory-1", "session-1"]);
+    expect(probe.snapshot().focused).toBe("memory-1");
+    probe.keys("ctrl+k", "l");
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.keys("m");
+    expect(probe.snapshot().focused).toBe("memory-1");
+    expect(paneIds(probe)).toEqual(["memory-1", "session-1"]);
+  });
+
+  it("i jumps to the inbox and a approves the staged item through the port", async () => {
+    const { probe, world } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    probe.keys("i", "a");
+    await probe.settled();
+    expect(world.approved).toEqual(["staged-1"]);
+    expect(memoryPane(probe).model.stagedCount()).toBe(0);
+  });
+
+  it("approving an already-resolved item shows a calm failure and r recovers", async () => {
+    const { probe, world } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    const pane = memoryPane(probe);
+    world.inbox = [];
+    probe.keys("i", "a");
+    await probe.settled();
+    expect(world.approved).toEqual([]);
+    const failed = JSON.stringify(describePaneTree(pane.view(paneContext())));
+    expect(failed).toContain("no review item with id staged-1");
+    probe.keys("r");
+    await probe.settled();
+    const recovered = JSON.stringify(describePaneTree(pane.view(paneContext())));
+    expect(recovered).not.toContain("no review item");
+  });
+
+  it("persists as a memory pane and revives from workspace state", async () => {
+    const { probe, port } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    const state = mustParse(probe.workspaceState());
+    expect(state.panes).toContainEqual({ id: "memory-1", kind: "memory" });
+    const restored = new AppProbe({
+      createMemoryPane: (id, notify) => new MemoryPane(id, notify, port),
+      restoreWorkspace: state,
+    });
+    await restored.settled();
+    expect(paneIds(restored)).toEqual(["memory-1", "session-1"]);
+    expect(memoryPane(restored).model.noteCount()).toBe(1);
+  });
+
+  it("an empty vault renders the calm invitation, not a dashboard of zeros", async () => {
+    const { probe } = memoryProbe({ layers: [], notes: [], inbox: [], ledger: [] });
+    probe.command("memory");
+    await probe.settled();
+    const rows = memoryPane(probe).model.rows();
+    expect(rows.map((row) => row.text)).toEqual(["nothing remembered yet"]);
+  });
+
+  it("memory is absent when no memory factory is wired", () => {
+    expect(new AppProbe().command("memory")).toBe(false);
   });
 });

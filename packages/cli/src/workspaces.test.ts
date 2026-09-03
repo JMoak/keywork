@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SessionStore, textMessage } from "@keywork/engine";
 import { listWorkspaces, openWorkspace } from "@keywork/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import {
   fileWorkspaceRecall,
   nameFromSlug,
@@ -15,17 +15,7 @@ import {
   workspacesPort,
 } from "./workspaces.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-workspaces-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-workspaces-");
 
 async function declaredRoot(): Promise<string> {
   const root = await tempDir();

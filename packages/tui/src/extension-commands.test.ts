@@ -10,6 +10,7 @@ import {
   shadowedExtensionNotice,
 } from "./extension-commands.ts";
 import { AppProbe } from "./probe.ts";
+import { waitFor } from "./testing/index.ts";
 
 interface Recorded {
   notices: string[];
@@ -67,19 +68,6 @@ function shellCommand(name: string, template: string, ran: string[] = []): Exten
         embedFile: async () => undefined,
       }),
   };
-}
-
-async function waitFor(assertion: () => void): Promise<void> {
-  const deadline = Date.now() + 1000;
-  for (;;) {
-    try {
-      assertion();
-      return;
-    } catch (cause) {
-      if (Date.now() > deadline) throw cause;
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-  }
 }
 
 describe("palette-surfaced workspace commands", () => {

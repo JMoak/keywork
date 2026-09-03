@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { auditLine, parseAuditLog } from "./audit.ts";
 import { bootstrapMemory } from "./bootstrap.ts";
 import {
@@ -16,18 +16,10 @@ import {
 import { Gardener } from "./gardener.ts";
 import { MemoryStore } from "./store.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-citations-");
 
 async function vaultRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-citations-"));
-  cleanups.push(root);
+  const root = await scratch();
   return root;
 }
 

@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { Agent } from "../agent.ts";
 import type { ToolCallPart } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
-import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
+import { recordingProvider } from "../testing/index.ts";
 import type { Tool } from "../tools.ts";
 import {
   type AgentDefinition,
@@ -14,18 +14,10 @@ import {
   restrictTools,
 } from "./markdown-agents.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-agents-");
 
 async function projectWithAgents(files: Record<string, string>): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-agents-"));
-  cleanups.push(root);
+  const root = await scratch();
   const dir = join(root, ".keywork", "agents");
   await mkdir(dir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
@@ -57,21 +49,6 @@ function definition(overrides: Partial<AgentDefinition>): AgentDefinition {
     source: "project",
     ...overrides,
   };
-}
-
-class CapturingProvider implements Provider {
-  readonly name = "capturing";
-  requests: ProviderRequest[] = [];
-  private readonly inner: MockProvider;
-
-  constructor(turns: TurnDelta[][]) {
-    this.inner = new MockProvider(turns);
-  }
-
-  stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
-    this.requests.push(request);
-    return this.inner.stream(request);
-  }
 }
 
 describe("loadAgents", () => {
@@ -164,7 +141,7 @@ describe("a markdown agent in a mock conversation", () => {
     const scout = agents[0];
     if (scout === undefined) throw new Error("fixture agent missing");
 
-    const provider = new CapturingProvider([textTurn("scouted")]);
+    const provider = recordingProvider([textTurn("scouted")]);
     const allTools = [stubTool("read"), stubTool("write", true), stubTool("bash", true)];
     const agent = new Agent({
       provider,

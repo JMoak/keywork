@@ -53,8 +53,8 @@ notes for the 113 ledger; do not fix drive-by in the same session unless it is a
 | `ubuntu-24.04-arm` and `macos-15-intel` runner labels | assumed in `release.yml`, unverified against the repo's runner set | whoever runs the first tag |
 | npm package name | `keywork` availability on the registry unchecked; decide name before `NPM_PUBLISH` flips | Jordan |
 | README one-liner | feel-led, Jordan wordsmiths; the draft slot is the first line under the title | Jordan |
-| Keys section: win32 note | help leads with `leader i` on Windows (ctrl+shift+p reality); README should say so | doc pass |
-| Public-repo sweep | NOTICE current, no secrets in history, `docs/` coherent from a stranger's seat | doc pass |
+| Keys section: win32 note | landed 2026-09-02: the README keyboard bullet names the Windows Terminal reality and the `leader i` chord | done |
+| Public-repo sweep | swept 2026-09-02: NOTICE reviewed current, every local doc link resolves, prose check green, tree and history secret scans clean (only the redaction test's documented EXAMPLE fixtures) | done |
 
 ## The bar, restated
 

@@ -1,28 +1,18 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { MemorySearch } from "../search.ts";
 import { MemoryStore } from "../store.ts";
 import { ArcRecall, arcBootstrapLayer } from "./recall.ts";
 import { ArcRegistry, MissingArcError } from "./registry.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-recall-");
 
 async function fixture(trusted = true): Promise<{
   recall: ArcRecall;
   registry: ArcRegistry;
   workspace: MemoryStore;
 }> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-recall-"));
-  cleanups.push(root);
+  const root = await scratch();
   const workspace = new MemoryStore({ vaultRoot: root, trusted });
   const registry = new ArcRegistry({ vaultRoot: root, trusted });
   const recall = new ArcRecall({ workspace: new MemorySearch(workspace), registry });

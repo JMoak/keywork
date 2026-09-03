@@ -1,7 +1,7 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import {
   type CurationJudgmentPort,
   type DailyEntryCandidate,
@@ -12,21 +12,13 @@ import {
 import type { Note } from "./notes.ts";
 import { MemoryStore } from "./store.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-gardener-");
 
 const clock = () => new Date("2026-08-10T14:30:00.000Z");
 const today = "2026-08-10";
 
 async function vault(trusted = true): Promise<{ store: MemoryStore; root: string }> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-gardener-"));
-  cleanups.push(root);
+  const root = await scratch();
   return { store: new MemoryStore({ vaultRoot: root, trusted, now: clock }), root };
 }
 

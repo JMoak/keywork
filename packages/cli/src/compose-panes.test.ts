@@ -1,25 +1,15 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolGuard } from "@keywork/engine";
+import { scratchDirs } from "@keywork/shared/testing";
 import type { AppOptions, ConnectionsPort, WorkspacePort } from "@keywork/tui";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { composePanes, type PanesOptions } from "./compose-panes.ts";
 import { composeInference } from "./inference/runtime.ts";
 import type { LiveInference } from "./inference-state.ts";
 import { createPresetSwitch } from "./presets.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-panes-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-panes-");
 
 const stateStore: WorkspacePort = { load: async () => undefined, save: () => {}, seal: () => {} };
 

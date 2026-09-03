@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { InvalidTitleError } from "../naming.ts";
 import { MemoryInertError, MemoryStore } from "../store.ts";
 import {
@@ -12,21 +12,13 @@ import {
   InvalidArcSlugError,
 } from "./registry.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-arcs-");
 
 async function vault(options: Partial<ArcRegistryOptions> = {}): Promise<{
   registry: ArcRegistry;
   root: string;
 }> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-arcs-"));
-  cleanups.push(root);
+  const root = await scratch();
   const registry = new ArcRegistry({
     vaultRoot: root,
     trusted: true,

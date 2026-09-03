@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { messageText, textMessage } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
 import {
@@ -24,14 +24,7 @@ import { memorySearchTool } from "./recall-tools.ts";
 import { MemorySearch } from "./search.ts";
 import { MemoryStore } from "./store.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-flush-");
 
 const contextWindow = 200_000;
 const budget = contextBudgetFor(contextWindow);
@@ -39,8 +32,7 @@ const overThreshold = contextWindow - budget.flushReserve + 1;
 const readingAt = (used: number) => readContext(used, budget);
 
 async function openVault(trusted = true): Promise<{ store: MemoryStore; root: string }> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-flush-"));
-  cleanups.push(root);
+  const root = await scratch();
   const store = new MemoryStore({
     vaultRoot: root,
     trusted,

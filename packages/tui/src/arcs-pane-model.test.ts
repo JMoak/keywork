@@ -3,6 +3,7 @@ import type { ArcSummary } from "./arcs.ts";
 import { type ArcGroupRow, ArcsPaneModel, arcGroupLine } from "./arcs-pane-model.ts";
 import { parseChord } from "./keys.ts";
 import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
+import { pressModel as press } from "./testing/index.ts";
 
 interface Recorded {
   refreshes: number;
@@ -86,15 +87,6 @@ function modelOver(
   );
   model.setInputs(inputs.arcs ?? arcs, inputs.items ?? items);
   return { model, recorded };
-}
-
-function press(model: ArcsPaneModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5, typedSequence(spec));
-}
-
-function typedSequence(spec: string): string | undefined {
-  if (spec === "space") return " ";
-  return spec.length === 1 ? spec : undefined;
 }
 
 function lines(rows: ArcGroupRow[], cursor = -1): string[] {

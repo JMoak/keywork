@@ -1,22 +1,14 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { type EmbeddingsPort, lexicalRanking, MemorySearch, tokenize } from "./search.ts";
 import { MemoryStore, type NoteInput } from "./store.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-search-");
 
 async function vault(trusted = true): Promise<MemoryStore> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-search-"));
-  cleanups.push(root);
+  const root = await scratch();
   return new MemoryStore({
     vaultRoot: root,
     trusted,
@@ -298,8 +290,7 @@ describe("graph leg", () => {
   });
 
   it("always attaches supersedes and contradicts relations to hits", async () => {
-    const root = await mkdtemp(join(tmpdir(), "keywork-search-"));
-    cleanups.push(root);
+    const root = await scratch();
     const store = new MemoryStore({ vaultRoot: root, trusted: true });
     await seeded(store, [{ title: "Old ratio", body: "50/50" }]);
     await store.writeNote({

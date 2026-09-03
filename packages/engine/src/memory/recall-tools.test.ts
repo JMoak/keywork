@@ -1,7 +1,7 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { Agent } from "../agent.ts";
 import type { ToolResultPart } from "../messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "../mock-provider.ts";
@@ -12,18 +12,10 @@ import { memoryGetTool, memoryRecallTools, memorySearchTool } from "./recall-too
 import { MemorySearch } from "./search.ts";
 import { MemoryStore } from "./store.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-recall-");
 
 async function vaultRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-recall-"));
-  cleanups.push(root);
+  const root = await scratch();
   return root;
 }
 

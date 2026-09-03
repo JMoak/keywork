@@ -1,18 +1,12 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { scratchDirs } from "@keywork/shared/testing";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
 import { persistentBashTool, ShellSession } from "./shell-session.ts";
 
-const tempDirs: string[] = [];
+const tempDir = scratchDirs("keywork-shell-");
 const sessions: ShellSession[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-shell-"));
-  tempDirs.push(dir);
-  return dir;
-}
 
 async function openSession(): Promise<ShellSession> {
   const session = new ShellSession(await tempDir());
@@ -40,7 +34,6 @@ function expectMissingExecutable(outcome: unknown, executable: string): void {
 
 afterEach(async () => {
   await Promise.all(sessions.splice(0).map((session) => session.close()));
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe("ShellSession", () => {

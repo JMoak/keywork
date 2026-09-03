@@ -1,26 +1,16 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { FetchLike } from "@keywork/engine";
 import { ConfigError, type KeyworkConfig } from "@keywork/shared";
+import { scratchDirs } from "@keywork/shared/testing";
 import type { ConnectionDraft, ConnectionsPort } from "@keywork/tui";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { type CredentialMap, readCredentials } from "../auth-store.ts";
 import { readUserConfig, updateUserConfig } from "../user-config.ts";
 import { type ConnectionsDeps, connectionsPort } from "./connections.ts";
 import { type ObservationMap, readObservations } from "./observations.ts";
 
-const tempDirs: string[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-connections-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
+const tempDir = scratchDirs("keywork-connections-");
 
 const now = () => new Date("2026-08-21T12:00:00.000Z");
 

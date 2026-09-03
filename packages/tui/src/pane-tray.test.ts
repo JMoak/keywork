@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { press } from "./testing/index.ts";
 import { resolveTheme } from "./theme.ts";
 
 function trayOver(names: string[] = ["fork", "label", "refresh"]) {
@@ -18,12 +19,6 @@ function trayOver(names: string[] = ["fork", "label", "refresh"]) {
     () => commands,
   );
   return { tray, ran, notifiedSoFar: () => notified };
-}
-
-function press(tray: PaneTrayModel, ...specs: string[]): void {
-  for (const spec of specs) {
-    tray.handleKey(parseChord(spec), spec.length === 1 ? spec : undefined);
-  }
 }
 
 describe("PaneTrayModel", () => {

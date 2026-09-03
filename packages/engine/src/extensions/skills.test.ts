@@ -1,22 +1,15 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { discoverSkills, skillTool } from "./skills.ts";
 
-const cleanups: string[] = [];
+const scratch = scratchDirs("keywork-skills-");
 const directoryLinksSupported = await probeDirectoryLinkSupport();
 
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
-
 async function scratchRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-skills-"));
-  cleanups.push(root);
+  const root = await scratch();
   return root;
 }
 

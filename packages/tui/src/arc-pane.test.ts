@@ -4,6 +4,7 @@ import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { PointerEvent } from "./pointer.ts";
 import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
+import { press } from "./testing/index.ts";
 import { resolveTheme } from "./theme.ts";
 
 const minute = 60_000;
@@ -130,10 +131,6 @@ function paneOver(world: World, presence?: SessionPresence, extra: Partial<ArcPa
   };
   const pane = new ArcPane("arc-1", () => {}, recorded.intents, options);
   return { pane, recorded };
-}
-
-function press(pane: ArcPane, ...specs: string[]): void {
-  for (const spec of specs) pane.handleKey(parseChord(spec), spec.length === 1 ? spec : undefined);
 }
 
 function rowLines(pane: ArcPane): string[] {

@@ -28,7 +28,9 @@ a config file. What the agent is allowed to do is always on screen.
 - **Everything is on the keyboard.** There's a leader key, and the palette doubles as live
   documentation, so you find things by looking instead of memorizing a cheat sheet. The
   moves you make constantly are single keystrokes. When an agent is mid-run, `Enter`
-  steers it and `Alt+Enter` queues your next thought behind it.
+  queues your next thought behind it and `Alt+Enter` steers it mid-stride. On Windows
+  Terminal, `ctrl+shift+p` ships bound to the terminal's own palette, so keywork's
+  palette also answers to `leader i` and the help overlay leads with that chord there.
 - **Tiling is built in.** Split, rotate, zoom, focus. No tmux underneath, and Windows gets
   the real thing instead of an afterthought. Every pane is a live view onto the same event
   stream, whether it's showing the conversation, your files, the session tree, or MCP

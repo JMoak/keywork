@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { ArcCloseOutcome, ArcSummary, ArcsPort } from "./arcs.ts";
 import { ArcsPane, type ArcsPaneOptions } from "./arcs-pane.ts";
 import type { FrameScheduler } from "./frame-scheduler.ts";
-import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
+import { press } from "./testing/index.ts";
 import { resolveTheme } from "./theme.ts";
 
 const minute = 60_000;
@@ -174,15 +174,6 @@ function paneOver(world: World, setup: PaneSetup = {}) {
     ...(setup.drilled !== undefined && { drilled: setup.drilled }),
   });
   return { pane, recorded };
-}
-
-function press(pane: ArcsPane, ...specs: string[]): void {
-  for (const spec of specs) pane.handleKey(parseChord(spec), typedSequence(spec));
-}
-
-function typedSequence(spec: string): string | undefined {
-  if (spec === "space") return " ";
-  return spec.length === 1 ? spec : undefined;
 }
 
 function context() {

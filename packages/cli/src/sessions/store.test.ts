@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { textMessage } from "@keywork/engine";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it, vi } from "vitest";
 import {
   findSession,
   latestSessionFile,
@@ -12,18 +12,7 @@ import {
   scanSessions,
 } from "./store.ts";
 
-const tempDirs: string[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-sessions-store-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  vi.restoreAllMocks();
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
+const tempDir = scratchDirs("keywork-sessions-store-");
 
 async function corruptFile(dir: string): Promise<string> {
   const file = join(dir, "0000000000001-0001-1.jsonl");

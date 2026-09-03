@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   closingJudgment,
@@ -12,7 +11,8 @@ import {
   type TurnDelta,
   textMessage,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import {
   type ArcService,
   type ArcServiceOptions,
@@ -29,17 +29,7 @@ import {
 } from "./memory.ts";
 import { boundSessionCounts, sessionPort } from "./sessions/ports.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-cli-arcs-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-cli-arcs-");
 
 async function declaredWorkspace(): Promise<string> {
   const cwd = await tempDir();

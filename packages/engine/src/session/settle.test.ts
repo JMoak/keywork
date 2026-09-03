@@ -1,7 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { MemoryFlush } from "../memory/flush.ts";
 import { MemoryStore } from "../memory/store.ts";
 import { messageText, textMessage } from "../messages.ts";
@@ -10,17 +9,7 @@ import { contextBudgetFor } from "./context-budget.ts";
 import { compactNow, readStore, settleTurn } from "./settle.ts";
 import { SessionStore } from "./store.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-settle-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-settle-");
 
 async function sessionOf(turns: number, width = 200): Promise<SessionStore> {
   const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), ".");

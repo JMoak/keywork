@@ -10,6 +10,7 @@ import {
   MemoryPaneModel,
   type MemoryQueryOutcome,
 } from "./memory-pane-model.ts";
+import { pressModel as press } from "./testing/index.ts";
 
 const now = Date.parse("2026-08-22T12:00:00Z");
 const workspace: MemoryLayerView = {
@@ -85,10 +86,6 @@ function modelOver(
   );
   model.setInputs({ ...emptyMemoryInputs, layers: [workspace], ...inputs });
   return { model, recorded };
-}
-
-function press(model: MemoryPaneModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5);
 }
 
 function type(model: MemoryPaneModel, text: string): void {

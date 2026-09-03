@@ -635,3 +635,47 @@ solo runs green; no product change was involved.
 (223 files), e2e 38/38 twice. Remaining in W1: C15 only (`testing/` module per package, the
 52-file migration, the `workflows.test.ts` split); it lands cleanest on a fresh commit
 boundary given the size of the tree already waiting.
+
+### W1 · C15, the testing modules · landed 2026-09-02 (uncommitted)
+
+The audit's last phase-3 item, run as three slices with the full suite green between each:
+
+- **The modules.** `@keywork/shared/testing` (new subpath export beside `./config`):
+  `scratchDirs(prefix)` (a scratch-dir maker with one registered afterEach sweep),
+  `useTempDir(prefix)` (per-test dir accessor), `tick()`. `@keywork/engine/testing`:
+  `recordingProvider(script?, identity?)`, which records every `ProviderRequest` and answers
+  "ok" forever when unscripted (matching the four retired ad-hoc fakes exactly).
+  `tui/src/testing/` (package-internal): `press` / `pressModel` (the two honest keypress
+  shapes), `typedSequence`, `waitFor`, and `workflow-probe.ts` with the probe query helpers.
+- **The migration.** 45 test files moved onto the canonical helpers: 23 temp-dir idioms, 22
+  cleanups-array idioms (memory, arcs, extensions, checkpoints), 4 provider fakes, 10 press
+  duplicates, 5 `typedSequence` copies, 1 `waitFor`. `pricing.test.ts`'s leaked temp dirs
+  are cleaned with everything else. Kept local on purpose: `mcp-pane`'s settling press,
+  `prompt-editor`'s outcome-returning press, `transcript-navigation`'s option-taking press,
+  the two workspaces-pane presses (return values and width 10), and the domain vault
+  fixtures (they differ in registry/clock/secrets, so only their scratch-root mechanics
+  were canonicalized; a forced `openVault` would have been over-fitting). `steppingClock`
+  from the audit list no longer had a surviving duplicate to hoist.
+- **The split.** `workflows.test.ts` (2,932 lines, 36 describes) became seven files:
+  `workflows-{layout,palette,pointer,panes,conversation,session,preset}.test.ts`, mapped by
+  feature area; the memory-pane and mcp-wiring blocks moved into `memory-pane.test.ts` and
+  `mcp-pane.test.ts` per the S-12 row. Shared fixtures live in `testing/workflow-probe.ts`.
+- **Found and fixed along the way:** the migration exposed that `shell-session.test.ts`'s
+  afterEach was doing double duty (dirs and live shells); the shell half now stands alone.
+- **Real-timer sleeps:** reviewed against the 28 sites; the remaining ones are bounded
+  polls on real processes and timers with no settle promise to await, so none were blind
+  converts. `tick()` exists for the zero-delay flushes when files migrate naturally.
+
+### W1 wave 2 · the launch doc pass · landed 2026-09-02 (uncommitted)
+
+- README's mid-run keys bullet said `Enter` steers and `Alt+Enter` queues, the inverse of
+  the decided C17 keybinding; fixed, and the Windows Terminal `ctrl+shift+p` reality plus
+  the `leader i` chord are now stated where a Windows reader will see them.
+- Public-repo sweep: NOTICE reviewed current, every local link in `README.md` and
+  `docs/README.md` resolves, tree and history secret scans clean (the only pattern hits are
+  the redaction test's documented EXAMPLE fixtures), prose check green. Both doc-pass rows
+  in `docs/launch-runway.md` are closed; the remaining runway items are Jordan's (first
+  tag, npm name, one-liner, the Linux walk) plus the runner-label check at first tag.
+
+**Gate after C15 + the doc pass (lead-run):** check clean, vitest 3224 passed / 1 skipped
+(229 files), e2e 38/38.
