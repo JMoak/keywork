@@ -8,21 +8,16 @@ export interface ExtensionCommandEntry {
   render(args: string, confirmShell: (command: string) => Promise<boolean>): Promise<string>;
 }
 
-export interface ExtensionAgentEntry {
-  name: string;
-  description?: string;
-}
-
 export interface ExtensionsPort {
   commands: readonly ExtensionCommandEntry[];
-  agents: readonly ExtensionAgentEntry[];
   failures: readonly string[];
 }
 
 export interface ConversationTarget {
   confirmShell(command: string): Promise<boolean>;
   submitPrompt(text: string): void;
-  switchAgent(name: string | undefined): boolean;
+  bot(): string | undefined;
+  switchBot(name: string | undefined): boolean;
 }
 
 export interface ExtensionSeams {
@@ -40,12 +35,8 @@ export function registerExtensions(
   extensions: ExtensionsPort,
   seams: ExtensionSeams,
 ): ShadowedExtension[] {
-  const specs = [
-    ...extensions.commands.map((command) => extensionCommand(command, seams)),
-    ...agentCommands(extensions.agents, seams),
-  ];
-  return specs.flatMap((spec) => {
-    const outcome = registry.register(spec);
+  return extensions.commands.flatMap((command) => {
+    const outcome = registry.register(extensionCommand(command, seams));
     return outcome.kind === "collision"
       ? [{ name: outcome.name, claimedBy: outcome.claimedBy }]
       : [];
@@ -76,38 +67,6 @@ function extensionCommand(command: ExtensionCommandEntry, seams: ExtensionSeams)
     ...(command.needsArgs && { needsArgs: true as const }),
     run: (args) => runExtensionCommand(command, args ?? "", seams),
   };
-}
-
-function agentCommands(
-  agents: readonly ExtensionAgentEntry[],
-  seams: ExtensionSeams,
-): CommandSpec[] {
-  if (agents.length === 0) return [];
-  return [
-    {
-      name: "agent-none",
-      description: "switch this pane back to the default agent",
-      run: () => switchAgent(undefined, seams),
-    },
-    ...agents.map((agent) => ({
-      name: `agent-${agent.name}`,
-      description: agent.description ?? `switch this pane to the ${agent.name} agent`,
-      run: () => switchAgent(agent.name, seams),
-    })),
-  ];
-}
-
-function switchAgent(name: string | undefined, seams: ExtensionSeams): void {
-  const target = seams.conversation();
-  if (target === undefined) {
-    seams.notice("no conversation pane here");
-    return;
-  }
-  if (!target.switchAgent(name)) {
-    seams.notice("agent busy · finish the turn first");
-    return;
-  }
-  seams.notice(name === undefined ? "agent → default" : `agent → ${name}`);
 }
 
 function runExtensionCommand(

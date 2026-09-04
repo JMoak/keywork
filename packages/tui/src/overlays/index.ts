@@ -1,6 +1,8 @@
 import type { ArcPickerRow } from "../arc-picker.ts";
+import type { BotPickerRow } from "../bot-picker.ts";
 import type { ModelPickerRow } from "../model-picker.ts";
 import type { WorkspacePickerRow } from "../workspace-picker.ts";
+import type { BotCreateOverlay } from "./bot-create.ts";
 import type { ConnectOverlay } from "./connect.ts";
 import type { HelpOverlay } from "./help.ts";
 import type { PaletteOverlay } from "./palette.ts";
@@ -11,6 +13,7 @@ import type { SetupConfirmOverlay } from "./setup.ts";
 export type ModelOverlay = PickerOverlay<"model", ModelPickerRow>;
 export type ArcOverlay = PickerOverlay<"arc", ArcPickerRow>;
 export type WorkspaceOverlay = PickerOverlay<"workspace", WorkspacePickerRow>;
+export type BotOverlay = PickerOverlay<"bot", BotPickerRow>;
 
 export type Overlay =
   | PaletteOverlay
@@ -20,9 +23,12 @@ export type Overlay =
   | ModelOverlay
   | ArcOverlay
   | WorkspaceOverlay
+  | BotOverlay
+  | BotCreateOverlay
   | ConnectOverlay
   | SetupConfirmOverlay;
 
+export { BotCreateOverlay, type BotCreateSeams } from "./bot-create.ts";
 export { ConnectOverlay } from "./connect.ts";
 export { HelpOverlay, type HelpPage, type HelpRow, promptKeys } from "./help.ts";
 export {

@@ -30,18 +30,23 @@ export {
   debugLogFile,
   redactSecrets,
 } from "./diagnostics.ts";
+export {
+  type BotDefinition,
+  type BotLoad,
+  botFileName,
+  botsDir,
+  defaultSigil,
+  type LearningLevel,
+  learningLevels,
+  loadBots,
+  narrowedPermissions,
+  restrictTools,
+} from "./extensions/bots.ts";
 export type {
   ExtensionLoadFailure,
   LayerRoots,
   LayerSource,
 } from "./extensions/layers.ts";
-export {
-  type AgentDefinition,
-  type AgentLoad,
-  loadAgents,
-  narrowedPermissions,
-  restrictTools,
-} from "./extensions/markdown-agents.ts";
 export {
   type CommandDefinition,
   type CommandLoad,
@@ -198,7 +203,6 @@ export {
   type ArcRegistryOptions,
   type ArcStatus,
   arcMocLink,
-  InvalidArcSlugError,
   MissingArcError,
   validateArcSlug,
 } from "./memory/arcs/registry.ts";
@@ -255,6 +259,7 @@ export {
   type Frontmatter,
   type FrontmatterValue,
   MalformedFrontmatterError,
+  serializeDocument,
 } from "./memory/frontmatter.ts";
 export {
   type CurationJudgmentPort,
@@ -424,6 +429,14 @@ export {
   type TurnDelta,
 } from "./provider.ts";
 export {
+  AnthropicApiError,
+  type AnthropicOptions,
+  AnthropicProvider,
+  anthropicHeaders,
+  anthropicVersion,
+  defaultMaxOutputTokens,
+} from "./providers/anthropic.ts";
+export {
   BedrockExceptionError,
   type BedrockOptions,
   BedrockProvider,
@@ -484,18 +497,21 @@ export {
   reserveCaps,
 } from "./session/context-budget.ts";
 export {
-  type ArcBindingEntry,
+  type BindingEntry,
   type BranchSummaryEntry,
   type CompactionEntry,
   type CustomEntry,
   type CustomMessageEntry,
   checkpointForPrompt,
+  describeBinding,
   type FileEntry,
   type FileTrackingDetails,
+  foldBinding,
   type LabelEntry,
   type MessageEntry,
   type ModelChangeEntry,
   type PromptCheckpoint,
+  type SessionBinding,
   type SessionEntry,
   type SessionHeader,
   type SessionInfoEntry,
@@ -533,7 +549,13 @@ export {
   type SessionStats,
   SessionStore,
 } from "./session/store.ts";
-export { fitTitle, kebabTitle, suggestTitle, type TitleContext } from "./titles.ts";
+export {
+  fitTitle,
+  kebabTitle,
+  suggestBotName,
+  suggestTitle,
+  type TitleContext,
+} from "./titles.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
 export { confinedPath, scopeContains, type ToolScope, toolScope } from "./tools/confine.ts";
 export { type CoreToolOptions, coreTools, type MemoryRecall } from "./tools/core.ts";

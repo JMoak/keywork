@@ -1,12 +1,13 @@
-# Bots: Proposal Overlay (2026-08-21, awaiting Jordan's decisions)
+# Bots: Overlay + Ledger (proposed 2026-08-21, adopted in part 2026-09-03)
 
-> **Status: proposal, not adopted; it builds nothing until Jordan adopts it.** Decided so far
-> (2026-08-21, recorded inline as **⟨J⟩**): the entity merge (Q-B1, PD21.1) and the scope
-> layout (PD21.2). The rest (PD21.3–5, PD22–PD24) is recommendation written in the binding
-> voice so it can be adopted by striking one word; Q-B2–Q-B8 are open, and Q-B8 (process
-> discipline) gates PD22/PD23. Once adopted this file wins over
-> [`105`](105-inference-resolution.md) and below where it speaks. Claims about landed code
-> cite the tree as of 2026-08-21.
+> **Status: adopted in part (D16, B9, C67 landed 2026-09-03); PD22/PD23 adopted under the
+> policy-row model (Q-B8, Jordan 2026-09-03) but not yet built.** Decided by Jordan, recorded
+> inline as **⟨J⟩**: the entity merge (Q-B1, PD21.1), the scope layout (PD21.2), the
+> group-by toggle (Q-B2), the `notes` default (Q-B5), and the two-verb policy-row model
+> (Q-B8). Q-B3 is set aside, Q-B6 stays open for discussion, Q-B4 and Q-B7 stand as
+> reversible assumptions of the 2026-09-03 round. This file wins over
+> [`105`](105-inference-resolution.md) and below where it speaks; the ledger at the end
+> records what the tree actually does.
 >
 > **Standing guardrails (unchanged):** Anthropic is API-key / Agent-SDK only, nothing before
 > workstream G; Pi/OpenCode are MIT, adapt with attribution in `NOTICE`; Crush is FSL,
@@ -149,7 +150,7 @@ where a hosted bot run would live later.
    `tools` allowlist, `allow/ask/deny` narrowings (never widen, D6 rule), `sigil`,
    `learning` (PD23). No other keys.
 
-## PD22: The bot layer on the ladder (proposed)
+## PD22: The bot layer on the ladder (adopted 2026-09-03 under the policy-row model; not built)
 
 The funding ladder gains a *who* stratum beside the arc rung, not above it:
 
@@ -178,7 +179,7 @@ session ledger ─► { arc layer · bot layer } ─► workspace vault ─► u
 5. **The digest is the existing door.** Bot-layer staged items surface in the session-end
    digest (P3 door 1/2) tagged with the bot's sigil. No new door, no new counter.
 
-## PD23: The learning policy (proposed)
+## PD23: The learning policy (adopted 2026-09-03 under the policy-row model; `learning` parsed, only `off` acts)
 
 One frontmatter key, named cumulative levels, omakase default:
 
@@ -253,7 +254,7 @@ more (flush clause, bot micro-sweep, digest tagging, bootstrap slice, bot return
 That is the drift Jordan is pointing at: layers growing their own *processes* when they
 should only own *policy*.
 
-**Candidate (for discussion, not adopted):** every layer (session · arc · bot · workspace ·
+**Adopted (⟨J⟩ 2026-09-03, Q-B8):** two verbs, learn (in) and recall (out); every layer (session · arc · bot · workspace ·
 user) learns and recalls the same way; the only per-layer thing is a small policy row
 (what it remembers, when it cures, where it promotes, which inbox door; what it recalls
 and how big its bootstrap slice is), schema-validated per D9, readable in `/policy`. A
@@ -261,7 +262,9 @@ bot's "distillation methodology" is then its policy row, `learning:` is a preset
 that row, and no bot-specific process names exist. The landed arc code already has the
 shape in miniature (arc store = `MemoryStore` over a sub-vault, arc recall = composition
 over the one search API). If Jordan's better path is different it replaces this
-paragraph; PD22/PD23 wait on the outcome (Q-B8).
+paragraph. Jordan adopted it as written on 2026-09-03: PD22/PD23 are binding under this
+model, `learning:` is a preset over the policy row, and no bot-specific process names may
+be introduced when J26/J27 build them.
 
 ## Non-goals (v1)
 
@@ -276,22 +279,27 @@ paragraph; PD22/PD23 wait on the outcome (Q-B8).
 
 - ~~**Q-B1** Absorb D6 agents into bots, or keep "agent" as a stateless role beside
   "bot"?~~ **Decided (Jordan, 2026-08-21): merged, bots lead.** PD21.1 is binding.
-- **Q-B2** Sessions overview group-by toggle (recommended) vs a separate bots node in
-  FR2's family?
-- **Q-B3** (narrowed 2026-08-21) Scope layout is decided (PD21.2: project default,
+- ~~**Q-B2** Sessions overview group-by toggle (recommended) vs a separate bots node in
+  FR2's family?~~ **Decided (Jordan, 2026-09-03): the group-by toggle (none · arc · bot), no
+  separate bots node.** Jordan wants that surface world-class when C68 builds it.
+- **Q-B3** (narrowed 2026-08-21; set aside 2026-09-03, still open) Scope layout is decided (PD21.2: project default,
   global opt-in). Remaining: does a *global* bot's memory live once in the user vault and
   follow the user (recommended; that is what "interested users" want from a global bot),
   or partition per workspace? The content rule applies either way.
 - **Q-B4** Mid-session bot switch: keep D6's rebuild-and-record behavior (recommended), or
-  forbid and require a new session so grouping stays unambiguous?
-- **Q-B5** Default `learning` level: `notes` (recommended) or `off` until the layer proves
-  itself in dogfooding?
+  forbid and require a new session so grouping stays unambiguous? **Not decided.** The
+  2026-09-03 round builds rebuild-and-record as a reversible assumption; Jordan asked for
+  Grok Bot's switching model to be looked at first.
+- ~~**Q-B5** Default `learning` level: `notes` (recommended) or `off` until the layer proves
+  itself in dogfooding?~~ **Decided (Jordan, 2026-09-03): `notes`.** The D16 schema default.
 - **Q-B6** Is the bot briefing (return delta + bot MOC) worth its own spec-first task, or
   does it fold into J21's arc briefing as one composition with two sources?
-- **Q-B8** Process discipline: see the section below. Jordan flagged a better path to
-  discuss before PD22/PD23 are adopted.
+- ~~**Q-B8** Process discipline: see the section below. Jordan flagged a better path to
+  discuss before PD22/PD23 are adopted.~~ **Decided (Jordan, 2026-09-03): the policy-row
+  candidate as written.**
 - **Q-B7** Self-naming trigger: at creation from the purpose line (recommended, one cheap
-  call) or on the bot's first turn via a `name_bot` tool (zero extra calls, later)?
+  call) or on the bot's first turn via a `name_bot` tool (zero extra calls, later)? Built as
+  the recommendation on 2026-09-03 (an assumption, Jordan has not weighed in).
 
 ## Tasks (sized; IDs continue existing schemes)
 
@@ -392,3 +400,91 @@ forgets, nothing else moves.
   identity is typographic (sigil + name); hue remains arc/pane identity only.
 - `docs/modes.md` ⟨PR-1⟩ ("mode is orthogonal to D6 agents"): **reads unchanged with
   "bot" for "agent"**; the composition law (preset ∘ bot narrowing ∘ mode narrowing) holds.
+
+## Ledger
+
+### D16 · bot definitions absorb agents · landed 2026-09-03
+
+- **The module.** `engine/extensions/bots.ts` replaces `markdown-agents.ts`. A bot is
+  `bots/<slug>/bot.md` under `.keywork/` in the project (trusted only) or the user root,
+  discovered directory by directory through the existing layered walk (project wins over
+  user, untrusted repo contributes zero). The slug is the directory name and goes through the
+  shared `validateSlug("bot", …)` that arcs now use too (`InvalidArcSlugError` retired for
+  `InvalidSlugError` in `@keywork/shared`). Frontmatter is a strict zod schema, every key
+  `.describe()`-justified: `description`, `model`, `tools`, `allow` / `ask` / `deny`,
+  `sigil` (one glyph, default the slug's first letter), `learning` (`off` · `notes` · `skills`
+  · `self`, default `notes`; only `off` has behavior until J26/J27). An unknown key, a wide
+  sigil, a bad level, or a non-slug directory quarantines that bot and keeps the rest.
+- **Composition.** `AgentBuildSpec.bot` replaces `definition`; the D6 swap semantics are
+  unchanged (a bot with a body replaces the system prompt, `tools` narrows, permissions never
+  widen). `keywork run --bot <slug>` runs the persona headless, refuses an unknown slug as a
+  usage failure (exit 2) naming the bots here, and writes the binding into the session when a
+  session dir is given. Command files name a persona with `bot:` instead of `agent:`.
+- **Surfaces.** `/agent-*` and `/agent-none` are gone. The chat REPL has `/bot [slug|none]`.
+  The panes app has the `/bot` family below (C67). Old `.keywork/agents/*.md` files are not
+  read; one concept, no alias.
+- **Evidence.** `bots.test` (schema, layering, quarantine, `learning: off` byte-identical to
+  the old agent fixture), `commands.test`, `compose.test`, `run.test` (`--bot` persona and
+  refusal), `chat.test` (`/bot` verbs, binding survives resume), `slug.test`.
+
+### B9 · binding entries · landed 2026-09-03
+
+- The `arc_binding` entry became one `binding` entry carrying deltas on two axes,
+  `{ arc?: string | null, bot?: string | null }` (`null` releases, absent leaves the axis
+  alone). `SessionStore.binding()` folds the active path, so a branch before a binding still
+  reverts it and clones carry it into forks; `arcBinding()` / `botBinding()` read the axes,
+  `appendArcBinding` / `appendBotBinding` write one delta each. Legacy `arc_binding` lines
+  migrate at parse time, so sessions written before this round keep their arc. Unbound
+  sessions write nothing. Tree rows and `keywork sessions tree` render `arc → x`,
+  `bot → y`, `arc released`, `bot released` through one `describeBinding`.
+- **TUI.** `SessionAttachment.bot` / `bindBot`; `PaneSession.switchBot` rebuilds the agent as
+  the bot, applies the bot's `model:` as an ordinary `model_change` seed (a later `/model`
+  wins and keeps the bot), persists the binding, and refuses mid-turn; a resumed session
+  builds its agent as the persisted bot from the first frame; splits inherit the source
+  pane's bot; `PaneOrigin.bot` names one explicitly.
+- **Evidence.** `store-binding.test` (deltas, fold, forks, legacy migration), the Pi-format
+  fixture unchanged, `session-panes.test` (seed, `/model` wins, release, resume, inherit).
+
+### C67 · `/bot` surfaces · landed 2026-09-03
+
+- **Grammar.** `/bot` opens the picker; `/bot <slug>` opens a new session pane bound to the
+  bot (arc inherited from the focused pane); `/bot-switch <slug>` rebinds the focused pane
+  between turns; `/bot none` and `/bot-release` unbind; `/bot-new [slug]` starts the creation
+  flow. Notices read in the page grammar: `bot → ⚖ reviewer`, `bot released`,
+  `still working · switch bots between turns`, `no bot named x · bots · S scout · /bot-new x
+  creates it`.
+- **Picker.** Rows are `sigil name · purpose · global? · n sessions · current`, most recently
+  used first (from the session store's bindings), fuzzy on name and purpose; typing a fresh
+  slug offers `new bot <slug>`, an empty query ends with `+ new bot`.
+- **Creation flow.** Three rows, purpose · name · scope, plus a footer that says what enter
+  does. An empty name asks the naming role for a slug from the purpose line (`suggestBotName`
+  in the engine, `roles.naming` in config, falling back to the session's default model) and
+  shows it as `proposed · edit or enter`; a proposal that is not a slug is dropped silently.
+  The slug problem shows in place and enter refuses until it is fixed. Scope defaults to
+  project (`← →` or tab flips to global). Enter writes `bots/<slug>/bot.md` with
+  `description` and `learning: notes`, reloads the roster, opens a pane bound to the new bot,
+  and says `bot → T test-hawk · new`.
+- **CLI.** `keywork bot list|new|rm` (`new <slug> [purpose] [--global]`; `rm` asks, and
+  without a terminal refuses rather than assumes).
+- **Go overlay.** `bot-<slug>` jump rows focus a pane bound to the bot or open one.
+- **Evidence.** `bot-commands.test`, `bot-picker.test`, `bot-create-model.test`,
+  `cli/bots.test`; e2e `bots-tour` and `bots-tour-ascii` (picker, bound pane, switch notice,
+  creation flow, written file).
+
+**Gate (lead-run):** `bun run check` clean, vitest 3321 passed / 1 skipped (237 files),
+e2e 40/40.
+
+### Assumptions Jordan may reverse (2026-09-03)
+
+1. Q-B4 stays rebuild-and-record; the refusal notice is `still working · switch bots between
+   turns`.
+2. Q-B7 self-naming happens at creation from the purpose line, one cheap call.
+3. A bot created through the flow gets `description` only and an empty body, so it runs the
+   composed prompt (project instructions, memory) with its identity carried by sigil and name;
+   a hand-written body keeps the D6 swap. How purpose reaches the model is J26/J27's call.
+4. Picker recency comes from scanning the session dir's bindings; per-bot cost and the group-by
+   toggle stay with C68.
+5. The e2e capture ships in the default theme plus a glyph-tier-0 variant; the harness has no
+   theme or NO_COLOR knob yet, so those two captures wait on one.
+6. `agent:` in command frontmatter became `bot:` with no alias.
+7. Pane-tray rows for bots were not added; the palette and go overlay carry the family.

@@ -69,7 +69,18 @@ describe("ratesFor", () => {
     expect(ratesFor("us.amazon.nova-lite-v1:0")).toEqual(ratesFor("amazon.nova-lite-v1:0"));
   });
 
-  it("covers no anthropic models before workstream G", () => {
+  it("prices claude models by family, through dated ids and bedrock vendor prefixes", () => {
+    const sonnet = ratesFor("claude-sonnet-5");
+    expect(sonnet).toEqual({
+      inputNanosPerToken: 2000,
+      outputNanosPerToken: 10_000,
+      cacheReadNanosPerToken: 200,
+      cacheWriteNanosPerToken: 2500,
+    });
+    expect(ratesFor("anthropic/claude-sonnet-5")).toEqual(sonnet);
+    expect(ratesFor("claude-haiku-4-5-20251001")).toEqual(ratesFor("claude-haiku-4-5"));
+    expect(ratesFor("us.anthropic.claude-opus-5")).toEqual(ratesFor("claude-opus-5"));
+    expect(ratesFor("claude-fable-5-1")?.cacheReadNanosPerToken).toBe(250);
     expect(ratesFor("claude-anything")).toBeUndefined();
   });
 });

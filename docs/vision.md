@@ -9,8 +9,9 @@
 > **Standing guardrails (restated everywhere on purpose):** Pi and OpenCode are MIT: lift with
 > attribution. Crush is FSL-1.1-MIT and is never a source: no code ever, and since 2026-08-10 no
 > design credits either (formerly Crush-credited features are original designs). Anthropic access is
-> **API-key / Agent-SDK only**; no subscription-OAuth, ever, and no Anthropic provider wiring at
-> all until the dedicated API-key milestone.
+> **API-key / Agent-SDK only**; no subscription-OAuth, ever. The provider that landed with G1
+> (2026-09-03) speaks the public Messages API with an API key and is reviewed against
+> [`compliance/anthropic-review.md`](compliance/anthropic-review.md).
 
 ## The one-liner
 

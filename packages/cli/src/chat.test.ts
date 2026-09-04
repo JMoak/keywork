@@ -11,6 +11,7 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
+import { recordingProvider } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { type ChatIo, type ChatOptions, chat, persistNewMessages } from "./chat.ts";
@@ -83,6 +84,12 @@ async function world(): Promise<World> {
       ...overrides,
     }),
   };
+}
+
+async function seedHelperBot(cwd: string): Promise<void> {
+  const dir = join(cwd, ".keywork", "bots", "helper");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "bot.md"), "---\ndescription: Helps out\n---\nBe helpful.");
 }
 
 async function savedMessages(sessionDir: string): Promise<Message[]> {
@@ -192,31 +199,47 @@ describe("chat REPL", () => {
     expect(io.out.some((line) => line.includes("nothing to compact yet"))).toBe(true);
   });
 
-  it("/agent explains when no agents are defined", async () => {
+  it("/bot explains when no bots are defined", async () => {
     const { options } = await world();
-    const io = scriptedIo({ lines: ["/agent"] });
+    const io = scriptedIo({ lines: ["/bot"] });
 
     await chat(options(new MockProvider([])), io);
 
-    expect(io.out).toContain("no agents yet, add one at .keywork/agents/<name>.md");
+    expect(io.out).toContain("no bots yet, add one at .keywork/bots/<slug>/bot.md");
   });
 
-  it("/agent lists, switches, rejects unknown names, and clears", async () => {
+  it("/bot lists, switches, rejects unknown names, and releases", async () => {
     const { options, cwd } = await world();
-    await mkdir(join(cwd, ".keywork", "agents"), { recursive: true });
-    await writeFile(
-      join(cwd, ".keywork", "agents", "helper.md"),
-      "---\ndescription: Helps out\n---\nBe helpful.",
-    );
-    const io = scriptedIo({ lines: ["/agent", "/agent helper", "/agent ghost", "/agent none"] });
+    await seedHelperBot(cwd);
+    const io = scriptedIo({ lines: ["/bot", "/bot helper", "/bot ghost", "/bot none"] });
 
     await chat(options(new MockProvider([]), { projectTrusted: true }), io);
 
-    expect(io.out).toContain("/agent <name> to switch · /agent none to clear");
-    expect(io.out).toContain("  helper · Helps out");
-    expect(io.out).toContain("agent → helper");
-    expect(io.out).toContain('unknown agent "ghost"');
-    expect(io.out).toContain("back to the default agent");
+    expect(io.out).toContain("/bot <slug> to switch · /bot none to release");
+    expect(io.out).toContain("  H helper · Helps out");
+    expect(io.out).toContain("bot → H helper");
+    expect(io.out).toContain("no bot named ghost");
+    expect(io.out).toContain("bot released");
+  });
+
+  it("a bot binding survives exit and resume, and the resumed turn runs as the bot", async () => {
+    const { options, cwd, sessionDir } = await world();
+    await seedHelperBot(cwd);
+
+    await chat(
+      options(new MockProvider([]), { projectTrusted: true }),
+      scriptedIo({ lines: ["/bot helper"] }),
+    );
+    const file = await latestSessionFile(sessionDir);
+    if (file === undefined) throw new Error("no session file");
+    expect((await SessionStore.open(file)).botBinding()).toBe("helper");
+
+    const provider = recordingProvider([textTurn("helped")]);
+    await chat(
+      options(provider, { projectTrusted: true, resume: true }),
+      scriptedIo({ lines: ["hello again"] }),
+    );
+    expect(provider.requests[0]?.systemPrompt).toBe("Be helpful.");
   });
 
   it("renders an extension command and sends the rendered prompt", async () => {

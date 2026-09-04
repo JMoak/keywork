@@ -81,6 +81,7 @@ whenever. It's plain API keys, nothing fancier:
 ```
 KEYWORK_OPENROUTER_API_KEY or OPENROUTER_API_KEY         OpenRouter (one key, hundreds of models)
 KEYWORK_OPENAI_API_KEY or OPENAI_API_KEY                 OpenAI (or any compatible endpoint)
+KEYWORK_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY           Anthropic (an API key from the console; never a Claude subscription)
 AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION   Amazon Bedrock
 ```
 
@@ -141,8 +142,10 @@ agents equally.
 keywork borrows gratefully from two MIT projects,
 [Pi](https://github.com/earendil-works/pi) and
 [OpenCode](https://github.com/sst/opencode), and every adapted piece is credited in
-[`NOTICE`](NOTICE). Anthropic models connect through an API key and the Agent SDK, and
-that is the only way they ever will.
+[`NOTICE`](NOTICE). Anthropic models connect through an API key against the public Messages
+API, and that is the only way they ever will: no Claude subscription sign-in, no borrowed
+client identity. [`docs/compliance/anthropic-review.md`](docs/compliance/anthropic-review.md)
+is the checklist that keeps it that way.
 
 The license is [FSL-1.1-MIT](LICENSE.md): use it for anything short of building a
 competitor, and each release converts to plain MIT after two years.

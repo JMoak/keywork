@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import type { Message, Usage } from "../messages.ts";
 import { type CostRollup, sessionCost } from "../pricing.ts";
 import {
-  type ArcBindingEntry,
+  type BindingEntry,
   type BranchSummaryEntry,
   buildTree,
   type CompactionEntry,
@@ -11,11 +11,13 @@ import {
   contextEntriesFor,
   contextMessages,
   type FileTrackingDetails,
+  foldBinding,
   type LabelEntry,
   type MessageEntry,
   type ModelChangeEntry,
   parseFileEntries,
   pathToEntry,
+  type SessionBinding,
   type SessionEntry,
   type SessionHeader,
   type SessionInfoEntry,
@@ -137,14 +139,24 @@ export class SessionStore {
     );
   }
 
-  async appendArcBinding(arc: string | undefined): Promise<ArcBindingEntry> {
-    return this.appendEntry({ type: "arc_binding", ...(arc !== undefined && { arc }) });
+  appendArcBinding(arc: string | undefined): Promise<BindingEntry> {
+    return this.appendEntry({ type: "binding", arc: arc ?? null });
+  }
+
+  appendBotBinding(bot: string | undefined): Promise<BindingEntry> {
+    return this.appendEntry({ type: "binding", bot: bot ?? null });
+  }
+
+  binding(): SessionBinding {
+    return foldBinding(this.activePath());
   }
 
   arcBinding(): string | undefined {
-    return this.activePath().findLast(
-      (entry): entry is ArcBindingEntry => entry.type === "arc_binding",
-    )?.arc;
+    return this.binding().arc;
+  }
+
+  botBinding(): string | undefined {
+    return this.binding().bot;
   }
 
   branch(fromId: string): void {

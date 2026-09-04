@@ -198,6 +198,12 @@ describe("redactSecrets", () => {
       message: "denied for [redacted]",
     });
   });
+
+  it("scrubs anthropic-shaped keys wherever they appear", () => {
+    expect(
+      redactSecrets({ message: "401 with x-api-key sk-ant-api03-EXAMPLEabcdef0123456789" }),
+    ).toEqual({ message: "401 with x-api-key [redacted]" });
+  });
 });
 
 describe("debugEnabled", () => {

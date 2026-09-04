@@ -3,6 +3,7 @@ import type { KeyworkConfig } from "@keywork/shared";
 import type { InferenceRuntime } from "./runtime.ts";
 
 export const closingRole = "closing";
+export const namingRole = "naming";
 
 export function roleProvider(
   runtime: InferenceRuntime,

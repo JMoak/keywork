@@ -1,4 +1,9 @@
-import { messageText, type SessionEntry, type SessionTreeNode } from "@keywork/engine";
+import {
+  describeBinding,
+  messageText,
+  type SessionEntry,
+  type SessionTreeNode,
+} from "@keywork/engine";
 import type { Chord } from "./keys.ts";
 import { isPrintable } from "./picker-keys.ts";
 import { RowCursor } from "./row-cursor.ts";
@@ -201,8 +206,8 @@ function entryText(entry: SessionEntry): string {
       return `thinking → ${entry.thinkingLevel}`;
     case "model_change":
       return `model → ${entry.provider}/${entry.modelId}`;
-    case "arc_binding":
-      return entry.arc === undefined ? "arc released" : `arc → ${entry.arc}`;
+    case "binding":
+      return describeBinding(entry);
     case "custom":
       return entry.customType;
   }

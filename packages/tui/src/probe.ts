@@ -29,6 +29,8 @@ export interface AppProbeOptions
       | "connections"
       | "arcs"
       | "focusedArc"
+      | "bots"
+      | "focusedBot"
       | "workspaces"
       | "workspaceSetup"
       | "currentModel"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { debugEnabled, type PermissionResolver, ResolutionError } from "@keywork/engine";
 import {
@@ -130,6 +131,7 @@ const commands: Record<CommandName, Command> = {
   init: runInit,
   link: runLink,
   workspace: runWorkspace,
+  bot: runBot,
   trust: (context) => runTrust("trust", context),
   untrust: (context) => runTrust("untrust", context),
   doctor: runDoctor,
@@ -254,6 +256,7 @@ async function runHeadlessPrompt(
       cwd,
       json: values.json,
       projectTrusted,
+      ...(values.bot !== undefined && { bot: values.bot }),
       permissions: headlessPermissions(preset, config.permissions),
       debug: values.debug || debugEnabled(io.env),
       provider: runtime.provider(bound.binding),
@@ -345,6 +348,20 @@ async function runWorkspace(
   );
 }
 
+async function runBot(
+  context: CommandContext,
+  { positionals, values }: ParsedInvocation,
+): Promise<number> {
+  const { botCommand } = await import("./bots.ts");
+  return botCommand(
+    positionals,
+    { cwd: context.cwd, projectTrusted: context.projectTrusted, userRoot: homedir() },
+    commandIo(context),
+    terminalConfirm(),
+    { global: values.global },
+  );
+}
+
 async function runTrust(action: "trust" | "untrust", context: CommandContext): Promise<number> {
   const { trustCommand } = await import("./trust.ts");
   return trustCommand(action, context.cwd, context.trustStore, commandIo(context));
@@ -390,6 +407,8 @@ function parseInvocationArgs(args: readonly string[]) {
       debug: { type: "boolean", default: false },
       model: { type: "string" },
       preset: { type: "string" },
+      bot: { type: "string" },
+      global: { type: "boolean", default: false },
       continue: { type: "boolean", default: false },
       fresh: { type: "boolean", default: false },
       resume: { type: "string" },

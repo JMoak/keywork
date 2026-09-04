@@ -29,7 +29,7 @@ describe("loadCommands", () => {
     const root = await scratch();
     await seed(join(root, ".keywork", "commands"), {
       "review.md":
-        "---\ndescription: Review the diff\nagent: reviewer\nmodel: some-model\n---\nReview $ARGUMENTS carefully.\n",
+        "---\ndescription: Review the diff\nbot: reviewer\nmodel: some-model\n---\nReview $ARGUMENTS carefully.\n",
     });
     const { commands, failures } = await loadCommands({ projectRoot: root });
     expect(failures).toEqual([]);
@@ -37,7 +37,7 @@ describe("loadCommands", () => {
     expect(commands[0]).toMatchObject({
       name: "review",
       description: "Review the diff",
-      agent: "reviewer",
+      bot: "reviewer",
       model: "some-model",
       template: "Review $ARGUMENTS carefully.",
       source: "project",

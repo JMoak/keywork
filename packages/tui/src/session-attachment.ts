@@ -18,12 +18,14 @@ export interface SessionAttachment {
   name?: string;
   modelReference?: string;
   arc?: string | undefined;
+  bot?: string | undefined;
   history: readonly Message[];
   replay(bus: Agent["bus"]): void;
   append(message: Message): Promise<AppendReceipt | undefined>;
   rename?(name: string): Promise<void>;
   recordModel?(reference: string): Promise<void>;
   bindArc?(slug: string | undefined): Promise<void>;
+  bindBot?(name: string | undefined): Promise<void>;
 }
 
 export interface SessionPort {
@@ -43,7 +45,7 @@ export type AgentFactory = (
   guard: ToolGuard,
   history?: readonly Message[],
   seams?: AgentSeams,
-  agentName?: string,
+  botName?: string,
 ) => Agent;
 
 export interface SessionTurn {
@@ -186,6 +188,7 @@ export function adoptSession(
 ): void {
   pane.sessionId = attachment.id;
   pane.arc = attachment.arc;
+  pane.bot = attachment.bot;
   reconcileTitle(pane, attachment);
   if (agent === undefined) return;
   attachment.replay(agent.bus);

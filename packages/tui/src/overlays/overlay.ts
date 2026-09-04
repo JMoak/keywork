@@ -11,7 +11,9 @@ export type OverlayKind =
   | "arc"
   | "workspace"
   | "connect"
-  | "setup";
+  | "setup"
+  | "bot"
+  | "bot-new";
 
 export interface OverlayFrame extends Rect {
   firstRowY: number;

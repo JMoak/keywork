@@ -968,3 +968,61 @@ describe("headless exit contract", () => {
     expect(store.messages().map((message) => message.role)).toEqual(["user"]);
   });
 });
+
+describe("keywork run --bot", () => {
+  async function seedScout(cwd: string): Promise<void> {
+    const dir = join(cwd, ".keywork", "bots", "scout");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "bot.md"), "---\ntools: [read]\n---\nYou are the scout.\n");
+  }
+
+  it("runs the named persona: prompt swapped, tools narrowed, binding persisted", async () => {
+    const cwd = await tempDir();
+    const sessionDir = await tempDir();
+    await seedScout(cwd);
+    const provider = recordingProvider([textTurn("scouted")]);
+
+    const outcome = await headless({
+      prompt: "look around",
+      cwd,
+      json: false,
+      projectTrusted: true,
+      sessionDir,
+      provider,
+      bot: "scout",
+      print: () => {},
+      printError: () => {},
+    });
+
+    expect(outcome.outcome).toBe("completed");
+    expect(provider.requests[0]?.systemPrompt).toBe("You are the scout.");
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toEqual(["read"]);
+    const [file] = (await readdir(sessionDir)).filter((name) => name.endsWith(".jsonl"));
+    if (file === undefined) throw new Error("no session file");
+    expect((await SessionStore.open(join(sessionDir, file))).botBinding()).toBe("scout");
+  });
+
+  it("refuses an unknown bot as a usage failure, exit 2, naming the bots here", async () => {
+    const cwd = await tempDir();
+    await seedScout(cwd);
+    const lines: string[] = [];
+
+    const outcome = await headless({
+      prompt: "look around",
+      cwd,
+      json: true,
+      projectTrusted: true,
+      provider: new MockProvider([textTurn("never")]),
+      bot: "ghost",
+      print: (line) => lines.push(line),
+      printError: () => {},
+    });
+
+    expect(outcome).toEqual({
+      outcome: "usage",
+      error: 'keywork run: no bot named "ghost" (bots here: scout)',
+    });
+    expect(exitCodeOf(outcome)).toBe(2);
+    expect(lines.map((line) => JSON.parse(line).type)).toEqual(["run.finished"]);
+  });
+});

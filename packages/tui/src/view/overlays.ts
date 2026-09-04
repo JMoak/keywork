@@ -1,6 +1,7 @@
 import { Box, fg, StyledText, Text } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
 import type { ArcOrdinals } from "../arcs.ts";
+import type { BotCreateModel } from "../bot-create-model.ts";
 import type { GlyphSupport } from "../capability.ts";
 import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
 import type { HelpPage, OverlayFrame } from "../overlays/index.ts";
@@ -11,6 +12,7 @@ import { clip, clipSpans, padEnd, width } from "../width.ts";
 import { setupPrompt, type WorkspaceReadiness } from "../workspace-setup.ts";
 import {
   arcPickerSpec,
+  botPickerSpec,
   filterOverlay,
   modelPickerSpec,
   type OverlayPlacement,
@@ -68,6 +70,17 @@ function composedOverlay(core: AppCore, inputs: OverlayInputs) {
   const workspace = core.workspacePicker();
   if (workspace !== undefined) {
     return filterOverlay(workspacePickerSpec(workspace), theme, placement);
+  }
+  const bot = core.botPicker();
+  if (bot !== undefined) return filterOverlay(botPickerSpec(bot), theme, placement);
+  const botCreate = core.botCreate();
+  if (botCreate !== undefined) {
+    return panel(
+      " new bot ",
+      theme,
+      placement,
+      botCreateRows(botCreate, theme, innerWidth(placement)),
+    );
   }
   const connect = core.connectModel();
   if (connect !== undefined) {
@@ -218,6 +231,10 @@ function presetRows(core: AppCore, theme: Theme) {
     rows.push(Text({ content: `  ${picker.active} · active (edited config)`, fg: theme.textDim }));
   }
   return rows;
+}
+
+function botCreateRows(model: BotCreateModel, theme: Theme, room: number) {
+  return model.rows().map((row) => connectRowView(row, theme, room));
 }
 
 function connectRows(model: ConnectModel, theme: Theme, room: number) {

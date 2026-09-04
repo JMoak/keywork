@@ -1,6 +1,6 @@
 import {
   type Agent,
-  type AgentDefinition,
+  type BotDefinition,
   type Checkpoints,
   type CommandRuntime,
   compactNow,
@@ -135,7 +135,7 @@ const builtinCommands: Readonly<Record<string, SlashHandler>> = {
       repl.io.confirm(question),
     ),
   compact: (repl, args) => compactSession(repl, args),
-  agent: async (repl, args) => switchAgent(repl, args),
+  bot: (repl, args) => switchBot(repl, args),
   steer: (repl, args) => submitPrompt(repl, args, "steer"),
   queue: (repl, args) => submitPrompt(repl, args, "queue"),
 };
@@ -146,9 +146,9 @@ const exitWords = new Set(["exit", "quit"]);
 
 class Repl {
   agent: Agent;
-  activeAgent: AgentDefinition | undefined;
+  activeBot: BotDefinition | undefined;
   persisted: number;
-  private builtWith: AgentDefinition | undefined;
+  private builtWith: BotDefinition | undefined;
   private turns: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -161,8 +161,14 @@ class Repl {
     readonly runtime: CommandRuntime,
     seeded: readonly Message[],
   ) {
-    this.agent = this.buildAgent(undefined, seeded);
+    this.activeBot = this.botNamed(store.botBinding());
+    this.builtWith = this.activeBot;
+    this.agent = this.buildAgent(this.activeBot, seeded);
     this.persisted = seeded.length;
+  }
+
+  botNamed(name: string | undefined): BotDefinition | undefined {
+    return this.extensions.bots.find((bot) => bot.name === name);
   }
 
   get checkpoints(): Checkpoints | undefined {
@@ -173,11 +179,11 @@ class Repl {
     return this.composition.extensions;
   }
 
-  buildAgent(definition: AgentDefinition | undefined, history: readonly Message[]): Agent {
+  buildAgent(bot: BotDefinition | undefined, history: readonly Message[]): Agent {
     const agent = this.agents.build({
       provider: this.options.provider,
       guard: this.guard,
-      definition,
+      bot,
       history,
       sessionId: this.store.header.id,
     });
@@ -186,16 +192,16 @@ class Repl {
     return agent;
   }
 
-  adopt(definition: AgentDefinition | undefined, history: readonly Message[]): void {
+  adopt(bot: BotDefinition | undefined, history: readonly Message[]): void {
     const previous = this.agent;
-    this.agent = this.buildAgent(definition, history);
-    this.builtWith = definition;
+    this.agent = this.buildAgent(bot, history);
+    this.builtWith = bot;
     this.persisted = history.length;
     this.agent.adoptQueue(previous);
   }
 
   rebuild(history: readonly Message[]): void {
-    this.adopt(this.activeAgent, history);
+    this.adopt(this.activeBot, history);
   }
 
   dispatch(prompt: string, behavior: SendBehavior): Promise<void> {
@@ -238,7 +244,7 @@ class Repl {
         flush: this.flush(),
       });
       reportSettlement(settlement, this.io);
-      if (this.builtWith !== this.activeAgent || settlement.history !== undefined) {
+      if (this.builtWith !== this.activeBot || settlement.history !== undefined) {
         this.rebuild(settlement.history ?? agent.history());
       }
     } catch (cause) {
@@ -345,24 +351,23 @@ async function handleLine(repl: Repl, line: string): Promise<void> {
     },
   );
   if (prompt === undefined) return;
-  const definition = repl.extensions.agents.find((agent) => agent.name === invoked.command.agent);
-  await submitPrompt(repl, prompt, "queue", definition);
+  await submitPrompt(repl, prompt, "queue", repl.botNamed(invoked.command.bot));
 }
 
 async function submitPrompt(
   repl: Repl,
   prompt: string,
   behavior: SendBehavior,
-  definition: AgentDefinition | undefined = repl.activeAgent,
+  bot: BotDefinition | undefined = repl.activeBot,
 ): Promise<void> {
   const text = prompt.trim();
   if (text === "") {
     repl.io.print(`usage: /${behavior} <prompt>`);
     return;
   }
-  if (definition !== repl.activeAgent) {
+  if (bot !== repl.activeBot) {
     await repl.drained();
-    repl.adopt(definition, repl.agent.history());
+    repl.adopt(bot, repl.agent.history());
   }
   void repl.dispatch(text, behavior);
 }
@@ -379,32 +384,37 @@ async function compactSession(repl: Repl, instructions: string): Promise<void> {
   if (settlement.history !== undefined) repl.rebuild(settlement.history);
 }
 
-function switchAgent(repl: Repl, name: string): void {
-  const { agents } = repl.extensions;
+async function switchBot(repl: Repl, name: string): Promise<void> {
+  const { bots } = repl.extensions;
   if (name === "") {
-    listAgents(agents, repl.io);
+    listBots(bots, repl.io);
     return;
   }
-  const definition = agents.find((candidate) => candidate.name === name);
-  if (name !== "none" && definition === undefined) {
-    listAgents(agents, repl.io, `unknown agent "${name}"`);
+  const bot = repl.botNamed(name);
+  if (name !== "none" && bot === undefined) {
+    listBots(bots, repl.io, `no bot named ${name}`);
     return;
   }
-  repl.io.print(definition === undefined ? "back to the default agent" : `agent → ${name}`);
-  repl.activeAgent = definition;
+  repl.io.print(bot === undefined ? "bot released" : `bot → ${botLabel(bot)}`);
+  repl.activeBot = bot;
+  await repl.store.appendBotBinding(bot?.name);
   repl.rebuild(repl.agent.history());
 }
 
-function listAgents(agents: readonly AgentDefinition[], io: ChatIo, prefix?: string): void {
-  if (agents.length === 0) {
-    io.print("no agents yet, add one at .keywork/agents/<name>.md");
+function listBots(bots: readonly BotDefinition[], io: ChatIo, prefix?: string): void {
+  if (bots.length === 0) {
+    io.print("no bots yet, add one at .keywork/bots/<slug>/bot.md");
     return;
   }
   if (prefix !== undefined) io.print(prefix);
-  io.print("/agent <name> to switch · /agent none to clear");
-  for (const agent of agents) {
-    io.print(`  ${agent.name}${agent.description === undefined ? "" : ` · ${agent.description}`}`);
+  io.print("/bot <slug> to switch · /bot none to release");
+  for (const bot of bots) {
+    io.print(`  ${botLabel(bot)}${bot.description === undefined ? "" : ` · ${bot.description}`}`);
   }
+}
+
+function botLabel(bot: BotDefinition): string {
+  return `${bot.sigil} ${bot.name}`;
 }
 
 async function labelLeaf(repl: Repl, name: string): Promise<void> {
@@ -502,8 +512,8 @@ function greet(repl: Repl, seededCount: number): void {
   if (extensions.commands.length > 0) {
     io.print(`commands: ${extensions.commands.map((command) => `/${command.name}`).join(" ")}`);
   }
-  if (extensions.agents.length > 0) {
-    io.print(`agents (/agent <name>): ${extensions.agents.map((agent) => agent.name).join(", ")}`);
+  if (extensions.bots.length > 0) {
+    io.print(`bots (/bot <slug>): ${extensions.bots.map(botLabel).join(", ")}`);
   }
   if (extensions.skills.length > 0) {
     io.print(`skills: ${extensions.skills.map((skill) => skill.name).join(", ")}`);

@@ -12,6 +12,8 @@ import type { AppCore } from "./app-core.ts";
 import type { FocusedArcPort } from "./arc-commands.ts";
 import { type ArcIndex, seedArcFromOrigin } from "./arc-index.ts";
 import type { ArcsPort } from "./arcs.ts";
+import type { FocusedBotPort } from "./bot-commands.ts";
+import type { BotEntry } from "./bots.ts";
 import type { GlyphSupport } from "./capability.ts";
 import type { CommandRegistry } from "./commands.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
@@ -57,10 +59,11 @@ export interface SessionPaneDeps {
   afterTurn?: AfterTurn;
   compact?: Compactor;
   arcs?: ArcsPort;
+  botOf?: (name: string) => BotEntry | undefined;
 }
 
 export interface SessionControls {
-  switchAgent(agentName: string | undefined): boolean;
+  switchBot(name: string | undefined): boolean;
   switchModel(reference: string): Promise<string>;
   bindArc(slug: string | undefined): Promise<void>;
   resyncArc(): void;
@@ -142,6 +145,13 @@ export class SessionPanes {
     };
   }
 
+  focusedBotPort(): FocusedBotPort {
+    return {
+      current: () => this.focused()?.pane.bot,
+      switch: (name) => this.focused()?.controls.switchBot(name) ?? false,
+    };
+  }
+
   postNotice(text: string): boolean {
     const found = this.focused();
     if (found === undefined) return false;
@@ -155,7 +165,8 @@ export class SessionPanes {
     return {
       confirmShell: (command) => found.pane.confirmMutation(this.shellConfirmCall(command)),
       submitPrompt: (text) => found.pane.submitPrompt(text),
-      switchAgent: (agentName) => found.controls.switchAgent(agentName),
+      bot: () => found.pane.bot,
+      switchBot: (name) => found.controls.switchBot(name),
     };
   }
 
@@ -196,6 +207,7 @@ class PaneSession implements SessionControls {
       this.guard,
       attachment?.history,
       this.seamsFor(undefined, this.selectedModel),
+      attachment?.bot,
     );
     const ports: ConversationPorts = {
       readFile: readWorkspaceFile,
@@ -243,23 +255,24 @@ class PaneSession implements SessionControls {
       (fresh) => {
         this.wire(fresh, initial.agent);
         this.seedArc(origin);
+        this.seedBot(origin);
       },
       () => !this.pane.disposed(),
     );
   }
 
-  switchAgent(agentName: string | undefined): boolean {
+  switchBot(name: string | undefined): boolean {
     const factory = this.deps.agentFactory;
     const current = this.pane.currentAgent();
     if (factory === undefined || current === undefined || current.busy()) return false;
+    const seed = name === undefined ? undefined : this.deps.botOf?.(name)?.model;
+    const reference = seed ?? this.modelInForce();
     this.pane.swapAgent(
-      factory(
-        this.guard,
-        current.history(),
-        this.seamsFor(current.bus, this.modelInForce()),
-        agentName,
-      ),
+      factory(this.guard, current.history(), this.seamsFor(current.bus, reference), name),
     );
+    this.pane.bot = name;
+    if (seed !== undefined) this.selectedModel = seed;
+    void this.persistBot(name, seed);
     return true;
   }
 
@@ -268,7 +281,12 @@ class PaneSession implements SessionControls {
     if (factory === undefined) throw new Error("no inference runtime in this session");
     const current = this.pane.currentAgent();
     if (current?.busy() === true) throw new Error("agent busy · finish the turn first");
-    const next = factory(this.guard, current?.history(), this.seamsFor(current?.bus, reference));
+    const next = factory(
+      this.guard,
+      current?.history(),
+      this.seamsFor(current?.bus, reference),
+      this.pane.bot,
+    );
     await this.live?.recordModel?.(reference);
     this.selectedModel = reference;
     this.pane.swapAgent(next);
@@ -293,7 +311,12 @@ class PaneSession implements SessionControls {
 
   private wire(attachment: SessionAttachment, agent: Agent | undefined): void {
     this.live = attachment;
+    const chosen = this.pane.bot;
     adoptSession(this.pane, agent, attachment);
+    if (chosen !== undefined && attachment.bot === undefined) {
+      this.pane.bot = chosen;
+      void this.persistBot(chosen, undefined);
+    }
     bindSessionLifecycle({
       pane: this.pane,
       attachment,
@@ -305,8 +328,25 @@ class PaneSession implements SessionControls {
           this.guard,
           history,
           this.seamsFor(current.bus, this.modelInForce()),
+          this.pane.bot,
         ),
     });
+  }
+
+  private seedBot(origin: PaneOrigin | undefined): void {
+    const inherited = inheritedBot(origin, this.deps.core());
+    if (inherited === undefined) return;
+    if (!this.switchBot(inherited)) this.pane.postNotice(`bot ${inherited} could not bind here`);
+  }
+
+  private async persistBot(name: string | undefined, seed: string | undefined): Promise<void> {
+    try {
+      if (seed !== undefined) await this.live?.recordModel?.(seed);
+      await this.live?.bindBot?.(name);
+      this.notify();
+    } catch (cause) {
+      this.pane.postNotice(toError(cause).message);
+    }
   }
 
   private seedArc(origin: PaneOrigin | undefined): void {
@@ -335,15 +375,24 @@ class PaneSession implements SessionControls {
   }
 }
 
+function inheritedBot(origin: PaneOrigin | undefined, core: AppCore): string | undefined {
+  if (origin === undefined) return undefined;
+  if (origin.bot !== undefined) return origin.bot;
+  const source =
+    origin.sourcePaneId === undefined ? undefined : core.panes.get(origin.sourcePaneId);
+  return source instanceof ConversationPane ? source.bot : undefined;
+}
+
 function buildAgent(
   factory: AgentFactory | undefined,
   guard: ToolGuard,
   history: readonly Message[] | undefined,
   seams: AgentSeams,
+  bot: string | undefined,
 ): { agent?: Agent; failure?: string } {
   if (factory === undefined) return {};
   try {
-    return { agent: factory(guard, history, seams) };
+    return { agent: factory(guard, history, seams, bot) };
   } catch (cause) {
     return { failure: toError(cause).message };
   }

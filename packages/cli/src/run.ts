@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
   type Agent,
+  type BotDefinition,
   DiagnosticsLog,
   debugLogFile,
   type EngineEvents,
@@ -31,6 +32,7 @@ export interface RunOptions {
   prompt: string;
   cwd: string;
   json: boolean;
+  bot?: string;
   workspaceSlug?: string;
   projectTrusted?: boolean;
   debug?: boolean;
@@ -75,7 +77,13 @@ export function conclude(outcome: HeadlessOutcome, io: HeadlessIo): number {
 export async function runHeadless(options: RunOptions): Promise<HeadlessOutcome> {
   const provider = options.provider ?? refuseWithoutProvider(options);
   const io = headlessIo(options);
-  const run = await openRun(options, provider, io);
+  const opened = await openRun(options, provider, io);
+  if ("refused" in opened) {
+    const settled: HeadlessOutcome = { outcome: "usage", error: opened.refused };
+    conclude(settled, io);
+    return settled;
+  }
+  const run = opened;
   const trace = traceTurn(run.agent.bus, io);
   trace.emit("run.started", {
     cwd: options.cwd,
@@ -106,7 +114,7 @@ async function openRun(
   options: RunOptions,
   provider: Provider,
   io: HeadlessIo,
-): Promise<HeadlessRun> {
+): Promise<HeadlessRun | { refused: string }> {
   const composition = await composeWorkspace({
     cwd: options.cwd,
     projectTrusted: options.projectTrusted === true,
@@ -119,12 +127,16 @@ async function openRun(
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
   });
   reportExtensionFailures(composition.extensions, io);
+  const bot = botFor(options.bot, composition.extensions);
+  if (typeof bot === "string") return { refused: bot };
   const store = await openSessionStore(options);
+  if (bot !== undefined) await store?.appendBotBinding(bot.name);
   const shell = new ShellSession(options.cwd);
   const agent = composeAgents(composition, { permissions: options.permissions }).build({
     provider,
     guard: headlessGuard,
     shell,
+    bot,
     sessionId: store?.header.id,
   });
   const journal = store === undefined ? undefined : tapJournal(agent.bus, store);
@@ -294,6 +306,19 @@ function refusalNotice(refused: readonly PermissionDecision[]): string {
   const tools = [...new Set(refused.map((decision) => decision.tool))].join(", ");
   const calls = refused.length === 1 ? "1 tool call" : `${refused.length} tool calls`;
   return `keywork run: ${calls} needed an approval no one could give (${tools}) · rerun with --preset open to allow them`;
+}
+
+function botFor(
+  requested: string | undefined,
+  extensions: WorkspaceExtensions,
+): BotDefinition | string | undefined {
+  if (requested === undefined) return undefined;
+  const found = extensions.bots.find((bot) => bot.name === requested);
+  if (found !== undefined) return found;
+  const known = extensions.bots.map((bot) => bot.name);
+  const available =
+    known.length === 0 ? "no bots are defined here" : `bots here: ${known.join(", ")}`;
+  return `keywork run: no bot named "${requested}" (${available})`;
 }
 
 function reportExtensionFailures(extensions: WorkspaceExtensions, io: HeadlessIo): void {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { isReservedDeviceName, isSlug, slugProblem } from "./slug.ts";
+import {
+  InvalidSlugError,
+  isReservedDeviceName,
+  isSlug,
+  slugProblem,
+  validateSlug,
+} from "./slug.ts";
 
 describe("the slug grammar shared by arcs and workspaces", () => {
   it("accepts lowercase words, digits, and inner hyphens", () => {
@@ -28,5 +34,23 @@ describe("isReservedDeviceName", () => {
     expect(isReservedDeviceName("com3.txt")).toBe(true);
     expect(isReservedDeviceName("console")).toBe(false);
     expect(isReservedDeviceName("nul.tar.gz")).toBe(true);
+  });
+});
+
+describe("validateSlug", () => {
+  it("names the kind and the problem so arcs and bots refuse in one voice", () => {
+    expect(() => validateSlug("bot", "Test Hawk")).toThrow(
+      'invalid bot slug "Test Hawk": use lowercase letters, digits, and inner hyphens',
+    );
+    expect(() => validateSlug("arc", "dock-v2")).not.toThrow();
+  });
+
+  it("throws a typed error carrying kind, slug, and problem", () => {
+    try {
+      validateSlug("bot", "con");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(InvalidSlugError);
+      expect(cause).toMatchObject({ kind: "bot", slug: "con", problem: "reserved device name" });
+    }
   });
 });

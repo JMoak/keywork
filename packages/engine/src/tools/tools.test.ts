@@ -239,6 +239,32 @@ describe("bash", () => {
     );
   }, 10_000);
 
+  it("refuses an already-aborted signal before spawning anything", async () => {
+    const cwd = await workspace();
+    const marker = join(cwd, "spawned");
+    const shell = detectShell();
+    const touch =
+      shell.name === "powershell" ? `New-Item -ItemType File "${marker}"` : `touch "${marker}"`;
+
+    await expect(bashTool(cwd).execute({ command: touch }, AbortSignal.abort())).rejects.toThrow(
+      /abort/i,
+    );
+
+    await expect(readFile(marker)).rejects.toThrow();
+  });
+
+  it("kills the command when the signal aborts mid-run", async () => {
+    const cwd = await workspace();
+    const shell = detectShell();
+    const slow = shell.name === "powershell" ? "Start-Sleep -Seconds 30" : "sleep 30";
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 200);
+
+    await expect(
+      bashTool(cwd).execute({ command: slow, timeoutMs: 20_000 }, controller.signal),
+    ).rejects.toThrow(/Command aborted/);
+  }, 10_000);
+
   it("settles when a backgrounded child keeps the pipes open, leaving that child running", async () => {
     const cwd = await workspace();
     const shell = detectShell();

@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -6,6 +6,7 @@ import { killTree } from "../proc.ts";
 import {
   BoundedOutput,
   CommandRun,
+  childClosed,
   commandAborted,
   commandResult,
   commandTimedOut,
@@ -137,8 +138,4 @@ function execute(
       settleTimer = setTimeout(() => void finish(code), settleAfterExitMs);
     });
   });
-}
-
-function childClosed(child: ChildProcess): Promise<void> {
-  return new Promise((resolvePromise) => child.once("close", () => resolvePromise()));
 }

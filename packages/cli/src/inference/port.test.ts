@@ -23,6 +23,7 @@ describe("inferencePort", () => {
       ["ollama/llama3", true],
       ["ollama/qwen3", true],
       ["openai/gpt-5-mini", true],
+      ["anthropic/claude-haiku-4-5", false],
       ["bedrock/amazon.nova-lite-v1:0", false],
       ["openai-codex/gpt-5.5", false],
       ["openrouter/openai/gpt-5-mini", false],
@@ -30,7 +31,7 @@ describe("inferencePort", () => {
     expect(choices[1]?.facts).toEqual(["chat-completions", "no credential", "declared", "ctx 33k"]);
     expect(choices[0]?.facts).toEqual(["chat-completions", "no credential", "reported"]);
     expect(choices[2]?.facts).toEqual(["chat-completions", "OPENAI_API_KEY", "provider default"]);
-    expect(choices[5]?.facts[1]).toContain("needs KEYWORK_OPENROUTER_API_KEY");
+    expect(choices[6]?.facts[1]).toContain("needs KEYWORK_OPENROUTER_API_KEY");
   });
 
   it("describes a reference without side effects, carrying the typed failure and a next step", () => {
@@ -124,7 +125,8 @@ describe("nextActionFor", () => {
       unknownModelOnProvider: "run /connect closed to refresh its models, or pick one with /model",
       disabled: "enable it with /connect p",
       noCredential: "run /connect openai",
-      protocol: "set it to one of chat-completions, responses, bedrock-converse",
+      protocol:
+        "set it to one of chat-completions, responses, anthropic-messages, bedrock-converse",
       capability: 'declare models["chatty"].toolCalls: true once the model supports it',
       insecure:
         "use an https:// endpoint, or set connections.lan.insecureTransport after reading its risk note",

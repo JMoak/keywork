@@ -69,6 +69,20 @@ export const builtInProviders: readonly BuiltInProvider[] = [
     defaultModel: "amazon.nova-lite-v1:0",
     auth: { kind: "aws-sigv4" },
   },
+  {
+    name: "anthropic",
+    label: "Anthropic",
+    protocol: "anthropic-messages",
+    endpoint: "https://api.anthropic.com/v1",
+    defaultModel: "claude-haiku-4-5",
+    auth: {
+      kind: "api-key",
+      scopedVariable: "KEYWORK_ANTHROPIC_API_KEY",
+      ambientVariable: "ANTHROPIC_API_KEY",
+      keyUrl: "https://platform.claude.com/settings/keys",
+      keyPrefix: "sk-ant-",
+    },
+  },
 ];
 
 export const builtInNames: ReadonlySet<string> = new Set(

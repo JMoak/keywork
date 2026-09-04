@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import {
-  type AgentDefinition,
+  type BotDefinition,
   bashTool,
   type CommandDefinition,
   type CommandRuntime,
@@ -8,7 +8,7 @@ import {
   type ExtensionLoadFailure,
   fileEmbedder,
   type LayerRoots,
-  loadAgents,
+  loadBots,
   loadCommands,
   type SkillDefinition,
   type ToolCallPart,
@@ -17,7 +17,7 @@ import {
 
 export interface WorkspaceExtensions {
   commands: CommandDefinition[];
-  agents: AgentDefinition[];
+  bots: BotDefinition[];
   skills: SkillDefinition[];
   failures: ExtensionLoadFailure[];
 }
@@ -33,16 +33,16 @@ export async function loadWorkspaceExtensions(
   userRoot = homedir(),
 ): Promise<WorkspaceExtensions> {
   const roots: LayerRoots = { userRoot, ...(projectTrusted && { projectRoot: cwd }) };
-  const [commands, agents, skills] = await Promise.all([
+  const [commands, bots, skills] = await Promise.all([
     loadCommands(roots),
-    loadAgents(roots),
+    loadBots(roots),
     discoverSkills(roots),
   ]);
   return {
     commands: commands.commands,
-    agents: agents.agents,
+    bots: bots.bots,
     skills: skills.skills,
-    failures: [...commands.failures, ...agents.failures, ...skills.failures],
+    failures: [...commands.failures, ...bots.failures, ...skills.failures],
   };
 }
 

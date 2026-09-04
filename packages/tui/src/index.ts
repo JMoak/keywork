@@ -34,6 +34,27 @@ export {
 } from "./arcs.ts";
 export { ArcsPane, type ArcsPaneOptions } from "./arcs-pane.ts";
 export type { ArcGroupKey, ArcGroupRow, ArcsLevel } from "./arcs-pane-model.ts";
+export type { FocusedBotPort } from "./bot-commands.ts";
+export {
+  type BotPicker,
+  type BotPickerChoice,
+  type BotPickerRow,
+  botChoiceOf,
+  botPickerOver,
+  describeBotRow,
+} from "./bot-picker.ts";
+export {
+  type BotDraft,
+  type BotEntry,
+  type BotScope,
+  type BotSummary,
+  type BotsPort,
+  botLabel,
+  botSlugProblem,
+  botsHint,
+  describeBots,
+  isBotSlug,
+} from "./bots.ts";
 export {
   border,
   type CapabilityProfile,
@@ -65,7 +86,6 @@ export type { TranscriptElevation } from "./conversation-pane.ts";
 export { type CrashLogFacts, crashLogFacts, crashLogFile } from "./crash-log.ts";
 export type {
   ConversationTarget,
-  ExtensionAgentEntry,
   ExtensionCommandEntry,
   ExtensionsPort,
 } from "./extension-commands.ts";

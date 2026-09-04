@@ -149,6 +149,14 @@ export class ConversationPane implements Pane {
     this.model.ledger.arc = slug;
   }
 
+  get bot(): string | undefined {
+    return this.model.ledger.bot;
+  }
+
+  set bot(name: string | undefined) {
+    this.model.ledger.bot = name;
+  }
+
   describe(): PaneDescriptor {
     return {
       kind: "conversation",

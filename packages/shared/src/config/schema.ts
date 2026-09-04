@@ -117,6 +117,8 @@ const modelCapabilities = z
   .partial()
   .strict();
 
+export const connectionProtocols = ["chat-completions", "responses", "anthropic-messages"] as const;
+
 export const connectionNamePattern = /^[a-z0-9][a-z0-9._-]*$/;
 
 const connectionName = z
@@ -139,9 +141,9 @@ const connection = z
         "Base URL of an OpenAI-compatible server, e.g. http://localhost:11434/v1 for a local model or https://gateway.example/v1 for a broker; exists because every local port or gateway is one registration that differs from the built-ins by data alone (105/IR-15). Plain http is accepted only on loopback unless insecureTransport is set (IR-17).",
       ),
     protocol: z
-      .enum(["chat-completions", "responses"])
+      .enum(connectionProtocols)
       .describe(
-        "Wire protocol the endpoint truthfully speaks; defaults to chat-completions, the compatibility protocol most local servers and brokers implement. Declared, never probed or downgraded (105/IR-08): a mismatch fails naming this field.",
+        "Wire protocol the endpoint truthfully speaks; defaults to chat-completions, the compatibility protocol most local servers and brokers implement, with responses for OpenAI's newer surface and anthropic-messages for the Claude Messages API or a proxy of it. Declared, never probed or downgraded (105/IR-08): a mismatch fails naming this field.",
       )
       .optional(),
     credential: connectionCredential

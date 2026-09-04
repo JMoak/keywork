@@ -12,20 +12,15 @@ import {
 import { AppProbe } from "./probe.ts";
 import { waitFor } from "./testing/index.ts";
 
-interface Recorded {
-  notices: string[];
-  switched: (string | undefined)[];
-}
-
 function wire(
   probe: AppProbe,
   extensions: Partial<ExtensionsPort>,
   overrides: Partial<ConversationTarget> = {},
-): Recorded {
-  const recorded: Recorded = { notices: [], switched: [] };
+): string[] {
+  const notices: string[] = [];
   registerExtensions(
     probe.core.registry,
-    { commands: [], agents: [], failures: [], ...extensions },
+    { commands: [], failures: [], ...extensions },
     {
       conversation: () => {
         const pane = probe.core.panes.get("session-1");
@@ -39,17 +34,15 @@ function wire(
               arguments: { command },
             }),
           submitPrompt: (text) => pane.submitPrompt(text),
-          switchAgent: (name) => {
-            recorded.switched.push(name);
-            return true;
-          },
+          bot: () => undefined,
+          switchBot: () => true,
           ...overrides,
         };
       },
-      notice: (text) => recorded.notices.push(text),
+      notice: (text) => notices.push(text),
     },
   );
-  return recorded;
+  return notices;
 }
 
 function shellCommand(name: string, template: string, ran: string[] = []): ExtensionCommandEntry {
@@ -91,15 +84,13 @@ describe("palette-surfaced workspace commands", () => {
   it("declined shell interpolation fails the render calmly and sends no turn", async () => {
     const probe = new AppProbe({ script: [textTurn("never")] });
     const ran: string[] = [];
-    const recorded = wire(probe, { commands: [shellCommand("ship", "!`rm -rf /`", ran)] });
+    const notices = wire(probe, { commands: [shellCommand("ship", "!`rm -rf /`", ran)] });
 
     expect(probe.command("ship")).toBe(true);
     await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
     probe.keys("n");
     await waitFor(() =>
-      expect(recorded.notices).toEqual([
-        "/ship failed: you declined the shell interpolation: rm -rf /",
-      ]),
+      expect(notices).toEqual(["/ship failed: you declined the shell interpolation: rm -rf /"]),
     );
     expect(ran).toEqual([]);
     expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([]);
@@ -123,41 +114,14 @@ describe("palette-surfaced workspace commands", () => {
 
   it("notices instead of crashing when no conversation pane exists", async () => {
     const probe = new AppProbe();
-    const recorded: Recorded = { notices: [], switched: [] };
+    const notices: string[] = [];
     registerExtensions(
       probe.core.registry,
-      { commands: [shellCommand("ship", "hi")], agents: [], failures: [] },
-      { conversation: () => undefined, notice: (text) => recorded.notices.push(text) },
+      { commands: [shellCommand("ship", "hi")], failures: [] },
+      { conversation: () => undefined, notice: (text) => notices.push(text) },
     );
     expect(probe.command("ship")).toBe(true);
-    expect(recorded.notices).toEqual(["/ship: no conversation pane to run in"]);
-  });
-});
-
-describe("palette-surfaced workspace agents", () => {
-  it("registers one entry per agent plus a reset entry, and switches the focused pane", () => {
-    const probe = new AppProbe({ script: [] });
-    const recorded = wire(probe, {
-      agents: [{ name: "scout", description: "reads before writing" }],
-    });
-
-    expect(probe.command("agent-scout")).toBe(true);
-    expect(probe.command("agent-none")).toBe(true);
-    expect(recorded.switched).toEqual(["scout", undefined]);
-    expect(recorded.notices).toEqual(["agent → scout", "agent → default"]);
-  });
-
-  it("says so when the switch is refused instead of pretending", () => {
-    const probe = new AppProbe({ script: [] });
-    const recorded = wire(probe, { agents: [{ name: "scout" }] }, { switchAgent: () => false });
-    expect(probe.command("agent-scout")).toBe(true);
-    expect(recorded.notices).toEqual(["agent busy · finish the turn first"]);
-  });
-
-  it("registers no agent entries when none are defined", () => {
-    const probe = new AppProbe();
-    wire(probe, {});
-    expect(probe.command("agent-none")).toBe(false);
+    expect(notices).toEqual(["/ship: no conversation pane to run in"]);
   });
 });
 
@@ -205,7 +169,7 @@ describe("extension names that collide with built-ins", () => {
     const probe = new AppProbe();
     const shadowed = registerExtensions(
       probe.core.registry,
-      { commands: [shellCommand("exit", "never runs")], agents: [], failures: [] },
+      { commands: [shellCommand("exit", "never runs")], failures: [] },
       { conversation: () => undefined, notice: () => {} },
     );
     expect(shadowed).toEqual([{ name: "exit", claimedBy: "exit" }]);
@@ -218,19 +182,5 @@ describe("extension names that collide with built-ins", () => {
     probe.command("split");
     expect(probe.command("exit")).toBe(true);
     expect(probe.snapshot().panes.map((pane) => pane.id)).toEqual(["session-1"]);
-  });
-
-  it("an agent literally named none loses to the built-in agent-none and is reported", () => {
-    const probe = new AppProbe();
-    const shadowed = registerExtensions(
-      probe.core.registry,
-      { commands: [], agents: [{ name: "none" }, { name: "scout" }], failures: [] },
-      { conversation: () => undefined, notice: () => {} },
-    );
-    expect(shadowed).toEqual([{ name: "agent-none", claimedBy: "agent-none" }]);
-    expect(probe.core.registry.search("agent-").map((c) => c.name)).toEqual([
-      "agent-none",
-      "agent-scout",
-    ]);
   });
 });

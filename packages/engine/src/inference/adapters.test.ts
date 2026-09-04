@@ -161,6 +161,59 @@ describe("providerFor", () => {
     expect(() => providerFor(bedrock, { vault: keyVault })).toThrow(/SigV4/);
   });
 
+  it("builds an anthropic-messages transport that authenticates with x-api-key only", async () => {
+    const { fetchFn, calls } = recordingFetch();
+    const provider = providerFor(
+      bind(
+        {
+          name: "anthropic",
+          protocol: "anthropic-messages",
+          endpoint: "https://api.anthropic.com/v1",
+          credential: { kind: "present", handle },
+          models: [],
+          openCatalog: true,
+          enabled: true,
+          decorations: { body: { max_tokens: 4096 } },
+        },
+        "claude-sonnet-5",
+      ),
+      { vault: keyVault, fetchFn },
+    );
+    await drain(provider.stream(request));
+
+    expect(modelReferenceOf(provider)).toBe("anthropic/claude-sonnet-5");
+    expect(calls[0]?.url).toBe("https://api.anthropic.com/v1/messages");
+    const headers = calls[0]?.init?.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("secret");
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(headers.authorization).toBeUndefined();
+    expect(JSON.parse(calls[0]?.init?.body as string)).toMatchObject({
+      model: "claude-sonnet-5",
+      max_tokens: 4096,
+    });
+  });
+
+  it("refuses bearer material for anthropic-messages: the protocol takes an API key and nothing else", () => {
+    const anthropic = bind(
+      {
+        name: "anthropic",
+        protocol: "anthropic-messages",
+        endpoint: "https://api.anthropic.com/v1",
+        credential: { kind: "present", handle },
+        models: [],
+        openCatalog: true,
+        enabled: true,
+      },
+      "claude-sonnet-5",
+    );
+    const bearerVault: CredentialVault = {
+      material: () => ({ kind: "bearer", headers: async () => ({ authorization: "Bearer t" }) }),
+    };
+    expect(() => providerFor(anthropic, { vault: bearerVault })).toThrow(
+      /API key and nothing else/,
+    );
+  });
+
   it("gates requests on the binding's declared capabilities", async () => {
     const provider = providerFor(
       bind(

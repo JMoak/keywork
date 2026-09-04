@@ -1,4 +1,4 @@
-import type { SpawnOptions } from "node:child_process";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 
 export const defaultTimeoutMs = 120_000;
 export const maxOutputChars = 30_000;
@@ -14,6 +14,10 @@ export function shellSpawnOptions(cwd: string): SpawnOptions {
 
 export function scrubbedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([name]) => !holdsSecret(name)));
+}
+
+export function childClosed(child: ChildProcess): Promise<void> {
+  return new Promise((resolvePromise) => child.once("close", () => resolvePromise()));
 }
 
 export class BoundedOutput {

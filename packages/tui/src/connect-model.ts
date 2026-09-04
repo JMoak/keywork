@@ -1,5 +1,5 @@
 import { isLoopbackEndpoint } from "@keywork/engine";
-import { toError } from "@keywork/shared";
+import { connectionProtocols, toError } from "@keywork/shared";
 import type {
   ConnectionDraft,
   ConnectionsPort,
@@ -404,10 +404,7 @@ export class ConnectModel {
       case "protocol":
         this.stage = {
           ...stage,
-          draft: {
-            ...draft,
-            protocol: draft.protocol === "chat-completions" ? "responses" : "chat-completions",
-          },
+          draft: { ...draft, protocol: cycled(connectionProtocols, draft.protocol, step) },
         };
         return;
       case "credential": {
@@ -711,7 +708,7 @@ export function connectionFacts(connection: SavedConnection, inUse: boolean): st
     ...(inUse ? ["in use"] : []),
     ...(connection.enabled ? [] : ["disabled"]),
     connection.credential,
-    ...(connection.protocol === "responses" ? ["responses"] : []),
+    ...(connection.protocol === "chat-completions" ? [] : [connection.protocol]),
     ...(connection.modelCount === undefined ? [] : [pluralize(connection.modelCount, "model")]),
     ...(connection.lastFailure === undefined
       ? connection.verifiedAt === undefined
@@ -719,6 +716,11 @@ export function connectionFacts(connection: SavedConnection, inUse: boolean): st
         : [`verified ${clock(connection.verifiedAt)}`]
       : [`failed ${clock(connection.lastFailure.at)} · ${connection.lastFailure.reason}`]),
   ];
+}
+
+function cycled<T>(order: readonly T[], current: T, step: number): T {
+  const at = order.indexOf(current);
+  return order[(at + step + order.length) % order.length] ?? current;
 }
 
 function observationLine(connection: SavedConnection): string {

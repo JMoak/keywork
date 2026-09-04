@@ -6,6 +6,7 @@ import { detectShell, type Shell } from "./bash.ts";
 import {
   BoundedOutput,
   CommandRun,
+  childClosed,
   commandAborted,
   commandResult,
   commandTimedOut,
@@ -168,7 +169,7 @@ interface LiveShell {
 
 function spawnShell(cwd: string, shell: Shell): LiveShell {
   const child = spawn(shell.file, persistentArgs(shell), shellSpawnOptions(cwd));
-  const closed = new Promise<void>((resolvePromise) => child.once("close", () => resolvePromise()));
+  const closed = childClosed(child);
   const failureListeners = new Set<(failure: Error) => void>();
   const broadcastFailure = (failure: Error) => {
     for (const listener of failureListeners) listener(failure);

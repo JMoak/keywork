@@ -86,6 +86,7 @@ describe("connectionsPort targets", () => {
     expect(targets.map((target) => [target.id, target.kind])).toEqual([
       ["openrouter", "built-in"],
       ["openai", "built-in"],
+      ["anthropic", "built-in"],
       ["ollama", "local"],
       ["lmstudio", "local"],
       ["llamacpp", "local"],
@@ -137,6 +138,44 @@ describe("connectionsPort verify and save", () => {
     expect(port.saved().map((row) => [row.name, row.credential, row.modelCount])).toEqual([
       ["ollama", "no credential", 2],
     ]);
+  });
+
+  it("verifies the anthropic target with x-api-key and the version header, never a bearer token", async () => {
+    const { port, calls, dir } = await harness({ models: ["claude-sonnet-5"] });
+    const target = port.targets().find((candidate) => candidate.id === "anthropic");
+    const anthropic = port.draftFor(target as NonNullable<typeof target>);
+    expect(anthropic).toMatchObject({
+      name: "anthropic",
+      endpoint: "https://api.anthropic.com/v1",
+      protocol: "anthropic-messages",
+      credential: "api-key",
+    });
+    const verification = await port.verify({ ...anthropic, apiKey: "sk-ant-typed" });
+    expect(calls).toEqual([
+      {
+        url: "https://api.anthropic.com/v1/models",
+        headers: expect.objectContaining({
+          "x-api-key": "sk-ant-typed",
+          "anthropic-version": "2023-06-01",
+        }),
+      },
+    ]);
+    expect(calls[0]?.headers.authorization).toBeUndefined();
+    if (!verification.ok) return;
+
+    await port.save({ ...anthropic, apiKey: "sk-ant-typed" }, verification);
+
+    expect(await readUserConfig(dir)).toEqual({});
+    expect(await readCredentials(dir)).toEqual({
+      anthropic: { type: "api_key", key: "sk-ant-typed" },
+    });
+    expect(port.saved().map((row) => [row.name, row.protocol, row.credential])).toEqual([
+      ["anthropic", "anthropic-messages", "saved key"],
+    ]);
+    const savedRow = port.saved()[0];
+    expect(port.draftFor(savedRow as NonNullable<typeof savedRow>).protocol).toBe(
+      "anthropic-messages",
+    );
   });
 
   it("sends the typed key as a bearer header and saves it under the connection name, keeping config secret-free", async () => {

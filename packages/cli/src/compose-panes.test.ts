@@ -66,7 +66,7 @@ describe("composePanes", () => {
     expect(app.connections).toBeUndefined();
     expect(app.presets).toBeUndefined();
     expect(app.statusLabel).toBeUndefined();
-    expect(app.extensions).toEqual({ commands: [], agents: [], failures: [] });
+    expect(app.extensions).toEqual({ commands: [], failures: [] });
   });
 
   it("settles turns only for sessions it attached", async () => {

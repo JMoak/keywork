@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  type AgentDefinition,
+  type BotDefinition,
   extensionState,
   MockProvider,
   messageText,
@@ -46,11 +46,14 @@ async function declaredWorkspace(): Promise<string> {
   return cwd;
 }
 
-const briefAgent: AgentDefinition = {
+const briefBot: BotDefinition = {
   name: "brief",
   overrides: {},
+  sigil: "B",
+  learning: "off",
   prompt: "be brief",
-  file: "brief.md",
+  file: "brief/bot.md",
+  dir: "brief",
   source: "project",
 };
 
@@ -61,7 +64,7 @@ describe("composeWorkspace", () => {
     expect(composition.cwd).toBe(cwd);
     expect(composition.memory()).toBeUndefined();
     expect(composition.mcp).toBeUndefined();
-    expect(composition.extensions).toEqual({ commands: [], agents: [], skills: [], failures: [] });
+    expect(composition.extensions).toEqual({ commands: [], bots: [], skills: [], failures: [] });
     expect(composition.systemPromptFor(undefined).length).toBeGreaterThan(0);
   });
 
@@ -158,13 +161,13 @@ describe("composeAgents", () => {
     expect(outputs[0]?.trim().endsWith("nested")).toBe(true);
   });
 
-  it("gives default agents the composed system prompt for their model and definitions their own", async () => {
+  it("gives default agents the composed system prompt for their model and bots their own", async () => {
     const composition = await composedIn(await tempDir());
     const provider = recordingProvider();
     const agents = composeAgents(composition);
 
     await agents.build({ provider, guard: {} }).send("hello");
-    await agents.build({ provider, guard: {}, definition: briefAgent }).send("hello");
+    await agents.build({ provider, guard: {}, bot: briefBot }).send("hello");
 
     expect(provider.requests[0]?.systemPrompt).toBe(composition.systemPromptFor(undefined));
     expect(provider.requests[1]?.systemPrompt).toBe("be brief");
@@ -191,7 +194,7 @@ describe("composeAgents", () => {
     const defined = agents.build({
       provider: new MockProvider([textTurn("ok")]),
       guard: {},
-      definition: briefAgent,
+      bot: briefBot,
     });
     const announced: string[] = [];
     defined.bus.on("context.injected", ({ injection }) => announced.push(injection.source));

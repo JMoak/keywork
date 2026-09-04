@@ -12,6 +12,8 @@ import { arcIndexOf, arcJumpCommands, firstArcIntroducer } from "./arc-index.ts"
 import { ArcPane } from "./arc-pane.ts";
 import type { ArcsPort } from "./arcs.ts";
 import { ArcsPane } from "./arcs-pane.ts";
+import { botJumpCommands } from "./bot-commands.ts";
+import type { BotEntry, BotsPort } from "./bots.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
@@ -111,6 +113,7 @@ export interface AppOptions {
   sessions?: SessionPort;
   sessionTrees?: SessionTreePort;
   arcs?: ArcsPort;
+  bots?: BotsPort;
   workspaces?: WorkspacesPort;
   workspaceSetup?: WorkspaceSetupPort;
   memory?: MemoryPanePort;
@@ -169,6 +172,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       masthead: options.masthead,
       gauge: options.gauge,
       elevation: options.elevation,
+      botOf: botLookup(options.bots),
     }),
   });
   const armed = armedExpiryWatch(() => core, render);
@@ -247,6 +251,8 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   };
   registerHostCommands(core, options, sessions, flavors, render);
   core.registry.addSource(() => arcJumpCommands(core, arcIndex.listed()));
+  const bots = options.bots;
+  if (bots !== undefined) core.registry.addSource(() => botJumpCommands(core, bots));
   if (pointerOn) renderer.root.add(pointerPlane());
   wireInput(
     renderer,
@@ -382,8 +388,10 @@ function hostPorts(
       workspaces: options.workspaces,
       workspaceSetup: options.workspaceSetup,
       arcs: options.arcs,
+      bots: options.bots,
     }),
     ...(options.arcs !== undefined && { focusedArc: sessions.focusedArcPort() }),
+    ...(options.bots !== undefined && { focusedBot: sessions.focusedBotPort() }),
     tips: {
       enabled: options.tips !== "off",
       ...(options.clock !== undefined && { now: options.clock }),
@@ -422,6 +430,13 @@ function registerHostCommands(
   ]) {
     if (text !== undefined) notice(text);
   }
+}
+
+function botLookup(
+  bots: BotsPort | undefined,
+): ((name: string) => BotEntry | undefined) | undefined {
+  if (bots === undefined) return undefined;
+  return (name) => bots.defined().find((bot) => bot.name === name);
 }
 
 function paintFrame(

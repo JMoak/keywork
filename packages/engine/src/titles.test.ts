@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { textMessage } from "./messages.ts";
 import { MockProvider, textTurn } from "./mock-provider.ts";
 import { recordingProvider } from "./testing/index.ts";
-import { fitTitle, kebabTitle, suggestTitle } from "./titles.ts";
+import { fitTitle, kebabTitle, suggestBotName, suggestTitle } from "./titles.ts";
 
 describe("kebabTitle", () => {
   it("normalizes model replies into kebab-case", () => {
@@ -110,5 +110,23 @@ describe("fitTitle", () => {
       }
       previous = new Set(fitTitle(slug, width, siblings).split("-"));
     }
+  });
+});
+
+describe("suggestBotName", () => {
+  it("asks for a name from the purpose line and normalizes the reply to a slug", async () => {
+    const provider = recordingProvider([textTurn("Test Hawk\n")]);
+    expect(await suggestBotName(provider, "Reviews my PRs the way I would, hunts for tests")).toBe(
+      "test-hawk",
+    );
+    expect(provider.requests[0]?.systemPrompt).toContain("kebab-case name for an assistant");
+    expect(provider.requests[0]?.messages.map((message) => message.role)).toEqual(["user"]);
+  });
+
+  it("returns undefined for an empty purpose without asking, and swallows provider failures", async () => {
+    const provider = recordingProvider([textTurn("never")]);
+    expect(await suggestBotName(provider, "   ")).toBeUndefined();
+    expect(provider.requests).toHaveLength(0);
+    expect(await suggestBotName(new MockProvider([]), "anything")).toBeUndefined();
   });
 });

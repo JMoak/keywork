@@ -16,6 +16,18 @@ import {
 } from "./arc-commands.ts";
 import { arcChoiceOf } from "./arc-picker.ts";
 import type { ArcsPort } from "./arcs.ts";
+import {
+  applyBotChoice,
+  type BotCommandSeams,
+  type BotInvocation,
+  botInvocationOf,
+  describeCreatedBot,
+  type FocusedBotPort,
+  runBotCommand,
+} from "./bot-commands.ts";
+import { BotCreateModel, type BotCreateSeed } from "./bot-create-model.ts";
+import { botChoiceOf } from "./bot-picker.ts";
+import type { BotsPort } from "./bots.ts";
 import { CommandRegistry } from "./commands.ts";
 import { ConnectModel } from "./connect-model.ts";
 import { registerCoreCommands } from "./core-commands.ts";
@@ -29,6 +41,8 @@ import { type DockSide, Layout, layoutStateIds } from "./layout.ts";
 import type { ModelPicker } from "./model-picker.ts";
 import {
   type ArcOverlay,
+  BotCreateOverlay,
+  type BotOverlay,
   ConnectOverlay,
   HelpOverlay,
   type Overlay,
@@ -100,6 +114,8 @@ export interface AppCoreOptions extends PaneFactories {
   connections?: ConnectionsPort;
   arcs?: ArcsPort;
   focusedArc?: FocusedArcPort;
+  bots?: BotsPort;
+  focusedBot?: FocusedBotPort;
   workspaces?: WorkspacesPort;
   workspaceSetup?: WorkspaceSetupPort;
   currentModel?: () => string | undefined;
@@ -507,6 +523,38 @@ export class AppCore implements ActionTarget {
     this.settle(runArcCommand(seams, invocation));
   }
 
+  openBotCommand(argument = ""): void {
+    this.botCommand(botInvocationOf(argument));
+  }
+
+  botCommand(invocation: BotInvocation): void {
+    const bots = this.options.bots;
+    if (bots === undefined) return;
+    const seams: BotCommandSeams = {
+      bots,
+      focusedBot: this.options.focusedBot,
+      notice: (text) => this.postNotice(text),
+      openBotPane: (name) => this.openBotPane(name),
+      showCreate: (seed) => this.openBotCreate(bots, seed),
+      showPicker: (picker) => {
+        this.overlay = new PickerOverlay("bot", picker, {
+          ...this.overlaySeams,
+          choose: (row) => this.settle(applyBotChoice(seams, botChoiceOf(row))),
+        });
+      },
+    };
+    this.settle(runBotCommand(seams, invocation));
+  }
+
+  openBotPane(name: string): void {
+    const [sourcePaneId] = this.panesFocusedFirst();
+    this.openPane(undefined, undefined, {
+      ...(sourcePaneId !== undefined && { sourcePaneId }),
+      arc: "inherit",
+      bot: name,
+    });
+  }
+
   openWorkspaceCommand(argument = ""): void {
     this.workspaceCommand(legacyWorkspaceInvocation(argument));
   }
@@ -611,6 +659,14 @@ export class AppCore implements ActionTarget {
     return this.overlay?.kind === "workspace" ? this.overlay.picker : undefined;
   }
 
+  botPicker(): BotOverlay["picker"] | undefined {
+    return this.overlay?.kind === "bot" ? this.overlay.picker : undefined;
+  }
+
+  botCreate(): BotCreateModel | undefined {
+    return this.overlay?.kind === "bot-new" ? this.overlay.model : undefined;
+  }
+
   connectModel(): ConnectModel | undefined {
     return this.overlay?.kind === "connect" ? this.overlay.model : undefined;
   }
@@ -656,6 +712,23 @@ export class AppCore implements ActionTarget {
     this.persistWorkspace();
     for (const pane of this.panes.values()) pane.dispose?.();
     this.options.onExit();
+  }
+
+  private openBotCreate(bots: BotsPort, seed: BotCreateSeed): void {
+    const model = new BotCreateModel(
+      bots,
+      {
+        notify: () => this.notify(),
+        notice: (text) => this.postNotice(text),
+        created: (bot) => {
+          this.overlay = undefined;
+          this.openBotPane(bot.name);
+          this.postNotice(describeCreatedBot(bot));
+        },
+      },
+      seed,
+    );
+    this.overlay = new BotCreateOverlay(model, this.overlaySeams);
   }
 
   private readonly overlaySeams = {

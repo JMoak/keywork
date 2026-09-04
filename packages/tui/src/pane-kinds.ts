@@ -11,6 +11,7 @@ export type ArcOrigin = "inherit" | "new";
 export interface PaneOrigin {
   sourcePaneId?: string;
   arc: ArcOrigin;
+  bot?: string;
 }
 
 export type PaneFactory = (

@@ -1,6 +1,7 @@
 import type { Scenario } from "../scenario.ts";
 import { arcFold } from "./arc-fold.ts";
 import { arcsOnScreen } from "./arcs.ts";
+import { botsTour, botsTourAscii } from "./bots.ts";
 import { chromaSweep } from "./chroma-sweep.ts";
 import {
   chromeStatesAscii,
@@ -66,6 +67,8 @@ export const scenarios: readonly Scenario[] = [
   elevationChrome,
   arcsOnScreen,
   arcFold,
+  botsTour,
+  botsTourAscii,
   memoryBrowser,
   memoryAirlockTail,
   gardenHeatLead,

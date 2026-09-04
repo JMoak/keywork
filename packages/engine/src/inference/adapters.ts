@@ -1,5 +1,6 @@
 import { withDeclaredCapabilities } from "../capabilities.ts";
 import type { Provider } from "../provider.ts";
+import { AnthropicProvider } from "../providers/anthropic.ts";
 import { BedrockProvider } from "../providers/bedrock/bedrock.ts";
 import type { AwsCredentials } from "../providers/bedrock/sigv4.ts";
 import { OpenAiCompatibleProvider } from "../providers/openai.ts";
@@ -87,6 +88,16 @@ function transportFor(
         ...(headers !== undefined && { extraHeaders: headers }),
         ...(fetchFn !== undefined && { fetchFn }),
       });
+    case "anthropic-messages":
+      return new AnthropicProvider({
+        name: registration.name,
+        baseUrl: registration.endpoint,
+        model: reference.model,
+        apiKey: anthropicApiKey(binding, material),
+        ...(headers !== undefined && { extraHeaders: headers }),
+        ...(body !== undefined && { extraBody: body }),
+        ...(fetchFn !== undefined && { fetchFn }),
+      });
     case "bedrock-converse":
       return new BedrockProvider({
         region: registration.endpoint,
@@ -113,6 +124,18 @@ function httpAuthHeaders(
         `${binding.protocol} cannot authenticate with AWS SigV4 credentials`,
       );
   }
+}
+
+function anthropicApiKey(
+  binding: InferenceBinding,
+  material: CredentialMaterial | undefined,
+): string | undefined {
+  if (material === undefined) return undefined;
+  if (material.kind === "api-key") return material.key;
+  throw new CredentialMaterialError(
+    binding.reference,
+    "anthropic-messages authenticates with an API key and nothing else",
+  );
 }
 
 function awsCredentials(

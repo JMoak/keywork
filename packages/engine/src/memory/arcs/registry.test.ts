@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { InvalidSlugError } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { InvalidTitleError } from "../naming.ts";
@@ -9,7 +10,6 @@ import {
   ArcNotActiveError,
   ArcRegistry,
   type ArcRegistryOptions,
-  InvalidArcSlugError,
 } from "./registry.ts";
 
 const scratch = scratchDirs("keywork-arcs-");
@@ -53,7 +53,7 @@ describe("arc lifecycle", () => {
   it("rejects hostile slugs", async () => {
     const { registry } = await vault();
     for (const slug of ["Dock", "dock v2", "-dock", "dock-", "con", "a/../b", ""]) {
-      await expect(registry.createArc(slug)).rejects.toThrow(InvalidArcSlugError);
+      await expect(registry.createArc(slug)).rejects.toThrow(InvalidSlugError);
     }
   });
 

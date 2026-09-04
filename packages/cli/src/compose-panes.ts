@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import {
   type Agent,
   type ContextBudget,
@@ -32,6 +33,7 @@ import {
   type WorkspacesPort,
 } from "@keywork/tui";
 import { arcService, arcsUnavailable, type ClosingRequest } from "./arcs.ts";
+import { botService } from "./bots.ts";
 import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
 import {
   type AgentComposition,
@@ -40,7 +42,7 @@ import {
   composeWorkspace,
 } from "./compose.ts";
 import { inferencePort } from "./inference/port.ts";
-import { closingRole, roleProvider } from "./inference/roles.ts";
+import { closingRole, namingRole, roleProvider } from "./inference/roles.ts";
 import type { LiveInference } from "./inference-state.ts";
 import { type DeferredMaterialization, deferredMaterialization } from "./materialize.ts";
 import { mcpPanePort } from "./mcp.ts";
@@ -174,6 +176,14 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       setup === undefined ? undefined : () => readinessNotice(setup.readiness()) ?? arcsUnavailable,
   });
   const agents = composeAgents(composition, { permissions: presets?.resolver, arcs, citations });
+  const bots = botService({
+    cwd,
+    projectTrusted,
+    userRoot: options.userRoot ?? homedir(),
+    sessionDir: options.sessionDir,
+    roster: extensions.bots,
+    namer: () => namingProvider(options),
+  });
   const closingProviderFor = (arc: string): Provider | undefined => {
     const state = options.inference?.current();
     const fromRole =
@@ -213,6 +223,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     }),
     sessionTrees: sessionTreePort(options.sessionDir, changes),
     arcs: arcs.port,
+    bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
     closers: [() => sweepOnClose(memory()), ...(mcp === undefined ? [] : [() => mcp.stop()])],
@@ -253,6 +264,18 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
   };
 }
 
+function namingProvider(options: PanesOptions): Provider | undefined {
+  const state = options.inference?.current();
+  if (state === undefined) return undefined;
+  const fromRole = roleProvider(state.runtime, state.config, namingRole);
+  if (fromRole !== undefined) return fromRole;
+  const resolution = state.runtime.resolve({
+    override: options.modelOverride,
+    default: state.config.model,
+  });
+  return resolution.ok ? state.runtime.provider(resolution.binding) : undefined;
+}
+
 async function latestArcActivity(sessionDir: string, slug: string): Promise<string | undefined> {
   const { sessions } = await listSessions(sessionDir);
   return sessions
@@ -279,7 +302,7 @@ function inferenceSeams(
   stores: ReadonlyMap<string, SessionStore>,
 ): InferenceSeams {
   const selection = { override: options.modelOverride, default: options.config.model };
-  const agentFactory: AgentFactory = (guard, history, seams, agentName) => {
+  const agentFactory: AgentFactory = (guard, history, seams, botName) => {
     const bound = inference
       .current()
       .runtime.open({ ...selection, selection: seams?.modelReference });
@@ -290,7 +313,7 @@ function inferenceSeams(
       bus: seams?.bus,
       sessionId: () => seams?.sessionId(),
       onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
-      definition: composition.extensions.agents.find((candidate) => candidate.name === agentName),
+      bot: composition.extensions.bots.find((candidate) => candidate.name === botName),
     });
     tapJournal(agent.bus, () => {
       const sessionId = seams?.sessionId();
@@ -376,10 +399,6 @@ function extensionsView(extensions: WorkspaceExtensions, cwd: string): Extension
             confirm: (call) => confirmShell((call.arguments as { command: string }).command),
           }),
         ),
-    })),
-    agents: extensions.agents.map((agent) => ({
-      name: agent.name,
-      ...(agent.description !== undefined && { description: agent.description }),
     })),
     failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
   };

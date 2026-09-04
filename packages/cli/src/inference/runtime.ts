@@ -93,7 +93,7 @@ export function composeInference(inputs: InferenceInputs): InferenceRuntime {
 
 export const connectHint = `No inference provider yet. Pick one:
   keywork connect                       (interactive: local server, API key, or ChatGPT sign-in)
-  KEYWORK_OPENROUTER_API_KEY=…  or  KEYWORK_OPENAI_API_KEY=…   (environment)
+  KEYWORK_OPENROUTER_API_KEY=…  KEYWORK_OPENAI_API_KEY=…  KEYWORK_ANTHROPIC_API_KEY=…   (environment)
 Inside keywork: /connect adds a provider, /model picks the model for a session.`;
 
 function builtInRegistration(

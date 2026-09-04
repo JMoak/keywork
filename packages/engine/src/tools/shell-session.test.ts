@@ -109,6 +109,30 @@ describe("ShellSession", () => {
     expect(echoed.trim()).toBe("[]");
   });
 
+  it("refuses an already-aborted signal without touching the shell", async () => {
+    const session = await openSession();
+
+    await expect(session.run("echo never", { signal: AbortSignal.abort() })).rejects.toThrow(
+      /abort/i,
+    );
+
+    expect(session.running()).toBe(false);
+  });
+
+  it("kills the shell when the signal aborts mid-command and starts fresh next time", async () => {
+    const session = await openSession();
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 200);
+
+    await expect(
+      session.run("sleep 30", { timeoutMs: 20_000, signal: controller.signal }),
+    ).rejects.toThrow(/Command aborted/);
+    await waitUntil(() => !session.running(), 3_000);
+
+    expect(session.running()).toBe(false);
+    expect((await session.run("echo fresh")).trim()).toBe("fresh");
+  }, 10_000);
+
   it("caps a newline-free flood without buffering it whole", async () => {
     const session = await openSession();
 

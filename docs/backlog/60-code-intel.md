@@ -28,6 +28,7 @@ Token-budgeted map injection via D2 context hook: configurable budget, shrink-to
 **Strategy:** `LIFT:aider` policy ideas.
 
 ### F4 (3pt): LSP lifecycle
+**Scoped by [`114`](114-lsp.md) (2026-09-03):** rewritten there as F4a (port lifecycle, 2pt) + F4b (after-save seam and diagnostics block, 1pt); the sizes and acceptance in 114 replace these.
 Blessed extension: spawn/manage `vtsls` (or `typescript-language-server`; pick by eval,
 document): initialize handshake, doc sync driven by file-change events, health monitoring,
 graceful degradation when the server dies (agent falls back to F1/F2 silently and never blocks
@@ -37,6 +38,7 @@ loop continues without it.
 **Strategy:** `OWN` design; consult `LIFT:opencode` MIT LSP layer where useful.
 
 ### F5 (2pt): LSP as agent tools
+**Scoped by [`114`](114-lsp.md) (2026-09-03):** option B there; lands only after F4a / F4b and a dogfooding note.
 Expose `diagnostics` (post-edit errors/warnings, push-after-write as context hint),
 `symbol_lookup` (definition/references/hover) as registered tools; the after-edit diagnostics
 push is the killer feature: the model sees the type error the moment it writes it.

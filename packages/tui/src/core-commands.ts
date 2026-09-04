@@ -89,6 +89,7 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       run: () => core.openWorkspaceSetup(),
     }),
     ...(options.arcs === undefined ? [] : arcCommands(core)),
+    ...(options.bots === undefined ? [] : botCommands(core)),
     ...when(options.presets !== undefined, {
       name: "preset",
       aliases: ["presets"],
@@ -160,6 +161,32 @@ function arcCommands(core: AppCore): CommandSpec[] {
       name: "arc-open",
       description: "open an arc pane, the focused session's arc by default: /arc-open [slug]",
       run: (args) => core.arcCommand({ verb: "open", slug: operandOf(args) }),
+    },
+  ];
+}
+
+function botCommands(core: AppCore): CommandSpec[] {
+  return [
+    {
+      name: "bot",
+      description: "open a session with a bot, or pick from a list: /bot [slug|none]",
+      run: (args) => core.openBotCommand(args),
+    },
+    {
+      name: "bot-new",
+      description: "create a bot: purpose, name, and where it lives: /bot-new [slug]",
+      run: (args) => core.botCommand({ verb: "new", name: operandOf(args) }),
+    },
+    {
+      name: "bot-switch",
+      description: "rebind this session to a bot between turns: /bot-switch <slug>",
+      needsArgs: true,
+      run: (args) => core.botCommand({ verb: "switch", name: operandOf(args) }),
+    },
+    {
+      name: "bot-release",
+      description: "run this session as the default persona again: /bot-release",
+      run: () => core.botCommand({ verb: "switch", name: undefined }),
     },
   ];
 }

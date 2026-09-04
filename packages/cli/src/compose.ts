@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import {
   Agent,
-  type AgentDefinition,
   actionRecallBudget,
   type BootstrapInjection,
+  type BotDefinition,
   buildSystemPrompt,
   Checkpoints,
   type ContextInjection,
@@ -137,7 +137,7 @@ export interface AgentCompositionOptions {
 export interface AgentBuildSpec {
   provider: Provider;
   guard: ToolGuard;
-  definition?: AgentDefinition | undefined;
+  bot?: BotDefinition | undefined;
   history?: readonly Message[] | undefined;
   bus?: EventBus<EngineEvents> | undefined;
   sessionId?: SessionKey | undefined;
@@ -298,18 +298,14 @@ function buildAgent(
   ];
   const tools =
     composition.mcp === undefined ? () => baseTools : composition.mcp.surface(baseTools);
-  const definition = spec.definition;
+  const bot = spec.bot;
   const permissions =
-    definition === undefined
-      ? options.permissions
-      : narrowedPermissions(definition, options.permissions);
-  const composedPrompt = definition === undefined || definition.prompt === "";
+    bot === undefined ? options.permissions : narrowedPermissions(bot, options.permissions);
+  const composedPrompt = bot === undefined || bot.prompt === "";
   const agent = new Agent({
     provider: spec.provider,
-    tools: definition === undefined ? tools : () => restrictTools(tools(), definition),
-    systemPrompt: composedPrompt
-      ? composition.systemPromptFor(spec.provider.modelId)
-      : definition.prompt,
+    tools: bot === undefined ? tools : () => restrictTools(tools(), bot),
+    systemPrompt: composedPrompt ? composition.systemPromptFor(spec.provider.modelId) : bot.prompt,
     standingInjections: composedPrompt ? composition.standingInjections : [],
     guard: spec.guard,
     ...(permissions !== undefined && { permissions }),

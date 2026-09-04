@@ -14,8 +14,9 @@
 > The former `REIMPL:crush` tag is retired (2026-08-10): Crush is not a design source;
 > every task that carried it is now `OWN`, designed from first principles.
 >
-> **Standing guardrails:** no Anthropic wiring of any kind before workstream G; API-key /
-> Agent-SDK only, ever; no subscription-OAuth code paths ported from any source.
+> **Standing guardrails:** Anthropic is API-key / Agent-SDK only, ever; the G1 provider
+> (landed 2026-09-03) speaks the Messages API with an API key and nothing else; no
+> subscription-OAuth code paths ported from any source.
 
 ## Where a topic is decided
 
@@ -32,13 +33,14 @@ file that currently owns each topic; the file itself says what it amends.
 | Inference resolution, `/connect`, `/model`, onboarding | [`105`](105-inference-resolution.md) (IR-01–IR-19, CD-01–CD-10); implementation ledger [`107`](107-inference-implementation.md) |
 | Long-session survivability and the launch rail (compaction, gauge, headless contract, packaging, soak) | [`108`](108-survivability-and-launch-rail.md); stream 3 ledger [`109`](109-long-session-survivability.md) |
 | Arcs and workspaces on screen | [`110`](110-arcs-on-screen.md) |
-| Bots (the *who* axis) | [`106`](106-bots.md), proposal pending Jordan's adoption |
+| Bots (the *who* axis) | [`106`](106-bots.md): PD21 binding, PD22/PD23 adopted under the policy-row model (Q-B8, 2026-09-03); D16, B9, C67 landed 2026-09-03, ledger at the end of the file |
 | Memory and skills (workstream J) | [`95`](95-memory-and-skills.md); the arc rung in [`98`](98-chroma-and-arcs.md) PD9; bot layer in [`106`](106-bots.md) once adopted |
 | File browser and calculated mouse | [`94`](94-file-browser-and-mouse.md) |
 | Trust and permissions | [`50-trust.md`](50-trust.md), amended by [`97`](97-product-direction.md) E7 and [`99`](99-workspace-and-modes.md) PD12 (per-pane permission mode), [`103`](103-dsh-influence.md) E8/E9 (sandbox, secrets), [`108`](108-survivability-and-launch-rail.md) A19/A20 (gates as entries, headless `ask` answers no) |
 | Code audit and its waves | [`111`](111-code-audit.md) |
 | Workspace readiness and `/init`, the `/connect` surface, the arc pane and its fold primitive, dock pins, memory browser scoping | [`112`](112-feel-and-look-wave.md) |
 | The own title row and needs-you chrome, gap / borderless / corner chrome, the arc airlock digest, arc jump rows, the verified e2e baseline | [`113`](113-arcs-and-chrome-wave.md) |
+| LSP: the engine port, the diagnostics-in-tool-result moment, server posture, F4a / F4b / F5 | [`114`](114-lsp.md) (scoping; F4 / F5 in [`60`](60-code-intel.md) superseded) |
 
 ## Workstreams
 
@@ -51,7 +53,7 @@ file that currently owns each topic; the file itself says what it amends.
 | [`40-extensions.md`](40-extensions.md) | D: extensions, commands, MCP | 12 | 24 |
 | [`50-trust.md`](50-trust.md) | E: trust & safety | 5 | 10 |
 | [`60-code-intel.md`](60-code-intel.md) | F: code intelligence | 5 | 10 |
-| [`70-anthropic.md`](70-anthropic.md) | G: Anthropic (late, gated) | 2 | 3 |
+| [`70-anthropic.md`](70-anthropic.md) | G: Anthropic (API-key provider; G1 + G2 landed 2026-09-03, ledger inside) | 2 | 3 |
 | [`80-p2-reach.md`](80-p2-reach.md) | P2: server, attach, workspaces; external-surface posture (2026-08-10) | 7 | 20 |
 
 ## Overlays
@@ -72,7 +74,7 @@ Each row says what the file decides and when it binds; the detail lives in the f
 | [`103-dsh-influence.md`](103-dsh-influence.md) | Scoping overlay (2026-08-16); wins over 101 and below where it speaks | DeepSeek Harness research: A19–A22, E8 sandbox modes, E9 secrets at rest, non-adoptions of record; Q-DSH1–Q-DSH9. 6 tasks, +10. |
 | [`104-the-page.md`](104-the-page.md) | Authoritative (2026-08-16); wins over 103 and below where it speaks | The page pass: PD18 transcript typography, PD19 title-bar grammar, PD20 titling pipeline, PD25 needs-you chrome. 9 tasks, +17. |
 | [`105-inference-resolution.md`](105-inference-resolution.md) | Authoritative decisions (2026-08-20); wins over 104 and below where it speaks | Inference resolution as an engine primitive: the stable IR-01–IR-19 contract and the CD-01–CD-10 connection-surface contract. |
-| [`106-bots.md`](106-bots.md) | Proposal (2026-08-21); not adopted, builds nothing yet | Bots as the *who* axis (PD21–PD24); Q-B1 and the scope layout decided, the rest awaits Jordan. 6 tasks, +12. |
+| [`106-bots.md`](106-bots.md) | Authoritative in part (2026-09-03); wins where it speaks | Bots as the *who* axis (PD21–PD24); D16 bot definitions, B9 binding entries, C67 `/bot` surfaces landed 2026-09-03; J26/J27/C68 queued behind the policy-row model. 6 tasks, +12. |
 | [`107-inference-implementation.md`](107-inference-implementation.md) | Implementation + ledger (2026-08-21) for 105; 105 wins on disagreement | IR-T1–IR-T5 sized and landed, gates IR-G1–G5 green, deviations of record. 5 tasks, +13. |
 | [`108-survivability-and-launch-rail.md`](108-survivability-and-launch-rail.md) | Planning + ledger (2026-08-21); wins over 107 and below where it speaks | Stream 3 long-session survivability (ledger in 109) and stream 4 the launch rail (A19, A20 headless exit contract, G3 packaging, FR1.2 soak), all landed; headless `ask` answers no (flagged). 4 tasks, +9. |
 | [`109-long-session-survivability.md`](109-long-session-survivability.md) | Implementation + ledger (2026-08-21) for 108 stream 3; cited records win | Context budget primitive, after-turn settler, C55 gauge on real marks (options round open), declared windows end to end, cost across model switches. 5 tasks, +9. |
@@ -80,6 +82,7 @@ Each row says what the file decides and when it binds; the detail lives in the f
 | [`111-code-audit.md`](111-code-audit.md) | Audit + work plan (2026-08-22); names defects and tasks, changes no decision | Whole-tree audit: P0/P1/P2 findings, structure and redundancy items, docs and em-dash ledger, waves A–D with Jordan's decisions; waves A + B landed 2026-08-22. ~60 tasks. |
 | [`112-feel-and-look-wave.md`](112-feel-and-look-wave.md) | Ledger + scoping (2026-08-22); wins where it speaks | Landed: workspace readiness + `/init` (arcs-initiation root cause), lazy memory, `/connect` connections screen, C71 dock pins, C70 the arc pane in two parts (docked node, then the fold primitive: held panes, `space` / `a`, folded-and-waiting rows, held restore), C72 the memory browser (garden / note / ledger lenses, the `?` question box with why-lines, prompt cut, one-key revert) (2026-08-23); open: C72-c heat candidates; decisions ledger at the end. 3 tasks, +11. |
 | [`113-arcs-and-chrome-wave.md`](113-arcs-and-chrome-wave.md) | Plan + ledger (2026-08-30); wins where it speaks | Lanes W1 to W5 over the fully specified leftovers; W2 (C69 own title row, C66 rung, C50 remainder) and W3 (J18 digest surface, arc jump rows) landed 2026-08-30; e2e baseline corrected (11 of 13 scenarios were red at `bccb058`); open decisions and reversible assumptions listed. |
+| [`114-lsp.md`](114-lsp.md) | Scoping overlay (2026-09-03); nothing built | LSP behind an engine `LanguagePort`: three options sized (A diagnostics only, recommended and default `off`; B read tools; C OpenCode-shaped, refused for v1), the after-save seam, diagnostics as text in the tool result, PATH-only user-installed servers, cost budgets, F4a / F4b / F5 tasks with a stdio fixture server, Q-L1 to Q-L5 for Jordan. |
 
 ### Archived
 

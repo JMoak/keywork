@@ -1,4 +1,16 @@
 export {
+  type BotDefinition,
+  type BotLoad,
+  botFileName,
+  botsDir,
+  defaultSigil,
+  type LearningLevel,
+  learningLevels,
+  loadBots,
+  narrowedPermissions,
+  restrictTools,
+} from "./bots.ts";
+export {
   type DiscoveredFile,
   type ExtensionConventions,
   type ExtensionLoadFailure,
@@ -9,13 +21,6 @@ export {
   type MarkdownDefinition,
   markdownFilesIn,
 } from "./layers.ts";
-export {
-  type AgentDefinition,
-  type AgentLoad,
-  loadAgents,
-  narrowedPermissions,
-  restrictTools,
-} from "./markdown-agents.ts";
 export {
   type CommandDefinition,
   type CommandLoad,
