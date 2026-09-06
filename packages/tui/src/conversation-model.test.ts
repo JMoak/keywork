@@ -231,6 +231,61 @@ describe("slash commands", () => {
   });
 });
 
+describe("/thinking", () => {
+  it("toggles the agent's request flag, records the switch through the hook, and says what changed", async () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const model = new ConversationModel(agent, () => {});
+    const recorded: string[] = [];
+    model.bindThinkingChange(async (level) => {
+      recorded.push(level);
+    });
+
+    type(model, "/thinking");
+    model.handleKey(parseChord("return"), undefined);
+    await model.lastSend;
+    expect(agent.thinking()).toBe(true);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "thinking shown · tab unfolds it · /thinking hides it again",
+    });
+
+    type(model, "/thinking");
+    model.handleKey(parseChord("return"), undefined);
+    await model.lastSend;
+    expect(agent.thinking()).toBe(false);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "thinking hidden · requests go out as before",
+    });
+
+    type(model, "/thinking on");
+    model.handleKey(parseChord("return"), undefined);
+    await model.lastSend;
+    expect(agent.thinking()).toBe(true);
+    expect(recorded).toEqual(["on", "off", "on"]);
+  });
+
+  it("says so without a model and offers the command in the tray", () => {
+    const idle = new ConversationModel(undefined, () => {});
+    type(idle, "/thinking");
+    idle.handleKey(parseChord("return"), undefined);
+    expect(idle.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "no model bound · nothing to think with",
+    });
+    type(idle, "/think");
+    expect(idle.suggestions().map((suggestion) => suggestion.name)).toContain("thinking");
+  });
+
+  it("carries the switch onto a swapped-in agent", () => {
+    const first = new Agent({ provider: new MockProvider([]), thinking: true });
+    const model = new ConversationModel(first, () => {});
+    const second = new Agent({ provider: new MockProvider([]), bus: new EventBus() });
+    model.swapAgent(second);
+    expect(second.thinking()).toBe(true);
+  });
+});
+
 describe("auto-titling", () => {
   it("requests a title once after the first completed turn", async () => {
     const agent = new Agent({ provider: new MockProvider([textTurn("a"), textTurn("b")]) });
@@ -740,6 +795,41 @@ describe("swapping agents", () => {
         "  mock/gpt-5 · 1 turn · 2000▸100 · $0.0035",
       ].join("\n"),
     });
+  });
+
+  it("adds the bound bot's spend across sessions to /cost when a spend port answers", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("a", { inputTokens: 10_000, outputTokens: 1_000 })], {
+        modelId: "gpt-5-mini",
+      }),
+    });
+    const asked: string[] = [];
+    const model = new ConversationModel(agent, () => {}, undefined, undefined, {
+      botSpend: async (bot) => {
+        asked.push(bot);
+        return {
+          name: bot,
+          sigil: "⚖",
+          source: "project",
+          sessions: 3,
+          costNanos: 12_300_000,
+        };
+      },
+    });
+    model.ledger.bot = "reviewer";
+    type(model, "one");
+    await submit(model);
+    type(model, "/cost");
+    model.handleKey(parseChord("return"), undefined);
+    await drained(model);
+    expect(asked).toEqual(["reviewer"]);
+    expect(model.entries.at(-1)?.text).toBe(
+      [
+        "tokens 10000▸1000",
+        "cost $0.0045 · estimated from gpt-5-mini rates",
+        "bot ⚖ reviewer · $0.0123 across 3 sessions",
+      ].join("\n"),
+    );
   });
 });
 

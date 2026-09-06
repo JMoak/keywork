@@ -29,6 +29,7 @@ export interface AgentOptions {
   permissions?: PermissionResolver;
   standingInjections?: readonly ContextInjection[];
   actionRecall?: ActionRecall;
+  thinking?: boolean;
 }
 
 export interface SendOptions {
@@ -75,6 +76,7 @@ export class Agent {
   private holding = false;
   private settler: TurnSettler | undefined;
   private checkpointed = false;
+  private thinkingRequested: boolean;
 
   constructor(options: AgentOptions) {
     this.provider = options.provider;
@@ -86,6 +88,15 @@ export class Agent {
     this.permissions = options.permissions;
     this.actionRecall = options.actionRecall;
     this.unannouncedInjections = options.standingInjections ?? [];
+    this.thinkingRequested = options.thinking ?? false;
+  }
+
+  thinking(): boolean {
+    return this.thinkingRequested;
+  }
+
+  setThinking(requested: boolean): void {
+    this.thinkingRequested = requested;
   }
 
   history(): readonly Message[] {
@@ -314,6 +325,7 @@ export class Agent {
       systemPrompt: this.systemPrompt,
       messages: [...this.messages],
       tools: this.tools(),
+      ...(this.thinkingRequested && { thinking: true }),
       signal,
     };
     try {
@@ -448,6 +460,9 @@ function applyDelta(message: Message, delta: TurnDelta, usage: Usage): Usage {
     case "redacted-thinking":
       message.parts.push(delta.part);
       return usage;
+    case "visible-thinking":
+      appendVisibleThinking(message, delta.text);
+      return usage;
     case "done":
       return delta.usage;
   }
@@ -460,4 +475,13 @@ function appendText(message: Message, text: string): void {
     return;
   }
   message.parts.push({ type: "text", text });
+}
+
+function appendVisibleThinking(message: Message, text: string): void {
+  const last = message.parts.at(-1);
+  if (last?.type === "visible-thinking") {
+    last.text += text;
+    return;
+  }
+  message.parts.push({ type: "visible-thinking", text });
 }

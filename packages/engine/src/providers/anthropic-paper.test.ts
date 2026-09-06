@@ -188,7 +188,7 @@ function paperResponse(
     type: "message",
     role: "assistant",
     model: envelope.model,
-    content: message.parts.map(paperBlock),
+    content: message.parts.flatMap(paperBlock),
     stop_reason: envelope.stopReason,
     stop_sequence: null,
     usage: paperUsage(usage),
@@ -204,7 +204,7 @@ function neutralMessage(paper: PaperMessage): Message {
 function paperMessage(message: Message): PaperMessage {
   return {
     role: message.role === "assistant" ? "assistant" : "user",
-    content: message.parts.map(paperBlock),
+    content: message.parts.flatMap(paperBlock),
   };
 }
 
@@ -230,28 +230,34 @@ function neutralPart(block: PaperBlock): Part {
   }
 }
 
-function paperBlock(part: Part): PaperBlock {
+function paperBlock(part: Part): PaperBlock[] {
   switch (part.type) {
     case "text":
-      return part;
+      return [part];
     case "image":
-      return {
-        type: "image",
-        source: { type: "base64", media_type: part.mediaType, data: part.data },
-      };
+      return [
+        {
+          type: "image",
+          source: { type: "base64", media_type: part.mediaType, data: part.data },
+        },
+      ];
     case "thinking":
-      return { type: "thinking", thinking: part.thinking, signature: part.signature };
+      return [{ type: "thinking", thinking: part.thinking, signature: part.signature }];
     case "redacted-thinking":
-      return { type: "redacted_thinking", data: part.data };
+      return [{ type: "redacted_thinking", data: part.data }];
+    case "visible-thinking":
+      return [];
     case "tool-call":
-      return { type: "tool_use", id: part.callId, name: part.name, input: part.arguments };
+      return [{ type: "tool_use", id: part.callId, name: part.name, input: part.arguments }];
     case "tool-result":
-      return {
-        type: "tool_result",
-        tool_use_id: part.callId,
-        content: part.output,
-        ...(part.isError && { is_error: true }),
-      };
+      return [
+        {
+          type: "tool_result",
+          tool_use_id: part.callId,
+          content: part.output,
+          ...(part.isError && { is_error: true }),
+        },
+      ];
   }
 }
 

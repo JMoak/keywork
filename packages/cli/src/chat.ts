@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import {
   type Agent,
   type BotDefinition,
@@ -20,11 +21,13 @@ import {
   type TurnSettlement,
 } from "@keywork/engine";
 import {
+  type LspConfig,
   type McpServerConfig,
   type ModelCapabilitiesConfig,
   type PromptsConfig,
   toError,
 } from "@keywork/shared";
+import { botMemory } from "./bot-memory.ts";
 import {
   commandRuntime,
   parseSlashLine,
@@ -65,6 +68,7 @@ export interface ChatOptions {
   presets?: PresetPort;
   mcpServers?: Record<string, McpServerConfig>;
   repoMap?: "auto" | "off";
+  lsp?: LspConfig;
   models?: ModelCapabilitiesConfig;
   userRoot?: string;
   checkpointsGitDir?: string;
@@ -254,6 +258,7 @@ class Repl {
 
   async close(): Promise<void> {
     await this.composition.mcp?.stop();
+    await this.composition.languagePort?.dispose();
     await sweepOnClose(this.composition.memory()).catch((cause: unknown) => {
       this.io.printError(`memory sweep failed: ${toError(cause).message}`);
     });
@@ -279,6 +284,8 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     repoMap: options.repoMap,
     models: options.models,
     reportCheckpointsUnavailable: (message) => io.print(`can't undo: ${message}`),
+    lsp: options.lsp,
+    notice: (text) => io.print(text),
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
     ...(options.checkpointsGitDir !== undefined && {
       checkpointsGitDir: options.checkpointsGitDir,
@@ -288,12 +295,22 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
   const guard = mutationGuard(io, composition.checkpoints);
   const citations = citationTrail(composition.memory, () => composition.bootstrap);
   citations.forSession(opened.store.header.id);
+  const bots = botMemory({
+    cwd: options.cwd,
+    projectTrusted: options.projectTrusted === true,
+    workspaceSlug: options.workspaceSlug,
+    userRoot: options.userRoot ?? homedir(),
+    memory: composition.memory,
+    roster: composition.extensions.bots,
+    bindingOf: () => opened.store.botBinding(),
+  });
+  await bots.prepare();
   const repl = new Repl(
     options,
     io,
     opened.store,
     composition,
-    composeAgents(composition, { permissions: options.permissions, citations }),
+    composeAgents(composition, { permissions: options.permissions, bots, citations }),
     guard,
     commandRuntime(options.cwd, guard),
     opened.seeded,

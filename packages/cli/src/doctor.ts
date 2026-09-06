@@ -1,11 +1,15 @@
 import {
   formatTokenCount,
   type InferenceRegistry,
+  idleLanguageFacts,
+  type LanguageFacts,
+  type LanguageServerFact,
+  languageServersFor,
   type ProviderRegistration,
   RepoMap,
   type RepoMapFacts,
 } from "@keywork/engine";
-import type { KeyworkConfig, McpServerConfig } from "@keywork/shared";
+import type { KeyworkConfig, LspConfig, McpServerConfig } from "@keywork/shared";
 import {
   border,
   type CapabilityProfile,
@@ -34,6 +38,8 @@ export interface DoctorFacts {
   repoMap?: RepoMapFacts;
   trusted?: boolean;
   mcpServers?: Record<string, McpServerConfig>;
+  lspSetting?: LspConfig;
+  languageServers?: LanguageFacts;
   crashLog?: CrashLogFacts;
 }
 
@@ -58,6 +64,11 @@ export async function workspaceDoctorFacts(
     trusted,
     ...(config.repoMap !== undefined && { repoMapSetting: config.repoMap }),
     ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
+    ...(config.lsp !== undefined && { lspSetting: config.lsp }),
+    ...(trusted &&
+      languageServerCount(config.lsp) > 0 && {
+        languageServers: idleLanguageFacts(languageServersFor(config.lsp)),
+      }),
   };
   if (!trusted || config.repoMap === "off") return facts;
   const map = new RepoMap({ root: cwd });
@@ -85,12 +96,52 @@ export function doctorReport(
 }
 
 export function renderDoctorReport(report: DoctorReport): string {
-  const body = report.rows.map(({ label, value }) => `${label.padEnd(13)}${value}`).join("\n");
+  const width = Math.max(13, ...report.rows.map(({ label }) => label.length + 2));
+  const body = report.rows.map(({ label, value }) => `${label.padEnd(width)}${value}`).join("\n");
   return `keywork doctor\n\n${body}`;
 }
 
 function workspaceRows(facts: DoctorFacts): DoctorRow[] {
-  return [...repoMapRows(facts), ...mcpServerRows(facts.mcpServers), ...crashRows(facts.crashLog)];
+  return [
+    ...languageServerRows(facts),
+    ...repoMapRows(facts),
+    ...mcpServerRows(facts.mcpServers),
+    ...crashRows(facts.crashLog),
+  ];
+}
+
+function languageServerCount(setting: LspConfig | undefined): number {
+  return Object.keys(languageServersFor(setting)).length;
+}
+
+function languageServerRows(facts: DoctorFacts): DoctorRow[] {
+  const label = "language servers";
+  if (facts.lspSetting === undefined) {
+    return [{ label, value: 'off · lsp: "auto" in keywork.json turns diagnostics on' }];
+  }
+  if (facts.lspSetting === "off") return [{ label, value: "off in keywork.json" }];
+  if (facts.trusted === false) return [{ label, value: "workspace untrusted, none spawned" }];
+  const servers = facts.languageServers?.servers ?? [];
+  if (servers.length === 0) return [{ label, value: "no servers configured" }];
+  return [...servers]
+    .sort((left, right) => left.language.localeCompare(right.language))
+    .map((server, index) => ({
+      label: index === 0 ? label : "",
+      value: languageServerLine(server),
+    }));
+}
+
+function languageServerLine(server: LanguageServerFact): string {
+  switch (server.state) {
+    case "ready":
+      return `${server.language} · ready${server.pid === undefined ? "" : ` · pid ${server.pid}`}`;
+    case "missing":
+      return `${server.language} · missing · ${server.command} not on PATH`;
+    case "failed":
+      return `${server.language} · failed${server.detail === undefined ? "" : ` · ${server.detail}`}`;
+    default:
+      return `${server.language} · ${server.state} · ${server.command}`;
+  }
 }
 
 function crashRows(crashLog: CrashLogFacts | undefined): DoctorRow[] {

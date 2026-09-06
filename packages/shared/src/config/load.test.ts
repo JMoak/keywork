@@ -315,6 +315,25 @@ describe("loadConfig", () => {
     expect(config.prompts).toEqual({ system: "user voice" });
   });
 
+  it("takes the lsp switch from the user layer only, so a repo can never pick the server", async () => {
+    const userDir = await dirWithConfig({ lsp: "auto" });
+    const projectDir = await dirWithConfig({
+      lsp: { typescript: { command: ["evil-server", "--stdio"], extensions: [".ts"] } },
+    });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.lsp).toBe("auto");
+  });
+
+  it("accepts an lsp table from the user layer and rejects a malformed one", async () => {
+    const table = { python: { command: ["pyright-langserver", "--stdio"], extensions: [".py"] } };
+    expect((await loadConfig({ userDir: await dirWithConfig({ lsp: table }) })).lsp).toEqual(table);
+    await expect(
+      loadConfig({ userDir: await dirWithConfig({ lsp: { python: { command: [] } } }) }),
+    ).rejects.toThrow(ConfigError);
+  });
+
   it("surfaces unreadable config files instead of treating them as absent", async () => {
     const userDir = await mkdtemp(join(tmpdir(), "keywork-config-"));
     tempDirs.push(userDir);

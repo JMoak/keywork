@@ -1,4 +1,6 @@
+import { formatCostNanos } from "@keywork/engine";
 import { toError, validateSlug } from "@keywork/shared";
+import { sessionsFact } from "./pluralize.ts";
 
 export type BotScope = "project" | "user";
 
@@ -13,6 +15,7 @@ export interface BotEntry {
 export interface BotSummary extends BotEntry {
   sessions: number;
   lastUsed?: string;
+  costNanos?: number;
 }
 
 export interface BotDraft {
@@ -45,6 +48,18 @@ export function botSlugProblem(candidate: string): string | undefined {
 
 export function isBotSlug(candidate: string): boolean {
   return botSlugProblem(candidate) === undefined;
+}
+
+export function botSpendFact(bot: Pick<BotSummary, "costNanos">): string | undefined {
+  return bot.costNanos === undefined ? undefined : formatCostNanos(bot.costNanos);
+}
+
+export function describeBotSpend(bot: BotSummary): string {
+  const spend = botSpendFact(bot);
+  const across = sessionsFact(bot.sessions);
+  return spend === undefined
+    ? `bot ${botLabel(bot)} · ${across} · cost unknown`
+    : `bot ${botLabel(bot)} · ${spend} across ${across}`;
 }
 
 export function describeBots(bots: readonly Pick<BotEntry, "sigil" | "name">[]): string {

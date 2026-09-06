@@ -28,6 +28,11 @@ export interface RedactedThinkingPart {
   owner?: ProviderStateOwner;
 }
 
+export interface VisibleThinkingPart {
+  type: "visible-thinking";
+  text: string;
+}
+
 export function ownedBy(
   part: RedactedThinkingPart,
   owner: ProviderStateOwner | undefined,
@@ -59,6 +64,7 @@ export type Part =
   | ImagePart
   | ThinkingPart
   | RedactedThinkingPart
+  | VisibleThinkingPart
   | ToolCallPart
   | ToolResultPart;
 

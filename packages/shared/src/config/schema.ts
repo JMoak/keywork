@@ -192,6 +192,29 @@ const permissions = z
   .partial()
   .strict();
 
+const languageServerSpec = z
+  .object({
+    command: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe(
+        "Server command and arguments, resolved on PATH only; exists because the user, not keywork, installs language servers and keywork never downloads or resolves one through a package manager.",
+      ),
+    extensions: z
+      .array(z.string().regex(/^.[A-Za-z0-9]+$/, "extensions look like .ts"))
+      .min(1)
+      .describe(
+        "File extensions this server owns; exists because detection is per language and the table is the only map from a touched file to a server.",
+      ),
+    initialization: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "initializationOptions handed to the server in initialize; exists because some servers take their settings only there. Never a place for credentials: values travel to a local process, not to keywork.",
+      ),
+  })
+  .strict();
+
 export const configSchema = z
   .object({
     model: z
@@ -214,6 +237,11 @@ export const configSchema = z
       .describe(
         "Repo map injection switch (F2/F3): auto builds a ranked file-and-symbol map of the trusted workspace at session start and injects it into the system prompt within a small budget carved from the declared context window, refreshing after tool writes; off skips the scan and the injection entirely; exists because the map spends prompt tokens on every turn and some workspaces or tastes want none of that.",
       ),
+    lsp: z
+      .union([z.enum(["off", "auto"]), z.record(z.string(), languageServerSpec)])
+      .describe(
+        "Language-server switch (114/F4): off spawns nothing; auto spawns the built-in server for a language the first time a tool edits one of its files, if the server's command is on PATH, and appends that file's diagnostics to the edit result; a table replaces or extends the built-ins per language ({ command, extensions, initialization }). Exists because a language server is a user-installed process with real memory and startup cost, so the decision to run one belongs to the user, and because the built-in table cannot know every project's server. Honored from the user config layer only; a checked-in project file can never pick the server.",
+      ),
     pointer: z
       .enum(["on", "off"])
       .describe(
@@ -228,6 +256,11 @@ export const configSchema = z
       .enum(["full", "reduced"])
       .describe(
         "Motion floor; reduced renders every animation's final frame immediately with no intermediate steps; exists because reduced motion is the grammar's floor and must be reachable as declared config, never sniffed (100/PD16).",
+      ),
+    thinking: z
+      .enum(["on", "off"])
+      .describe(
+        "Visible reasoning switch (70/G4): on asks the model for its reasoning text where the protocol offers it (Anthropic thinking, Responses reasoning summaries) and shows it as a folded thinking part in the conversation; off, the default, leaves requests exactly as they are today; exists because reasoning text costs tokens and screen space and is valued by some and noise to others. /thinking toggles it per session.",
       ),
     tips: z
       .enum(["on", "off"])
@@ -307,6 +340,8 @@ export const configSchema = z
 
 export type KeyworkConfig = z.infer<typeof configSchema>;
 export type McpServerConfig = z.infer<typeof mcpServer>;
+export type LanguageServerConfig = z.infer<typeof languageServerSpec>;
+export type LspConfig = NonNullable<KeyworkConfig["lsp"]>;
 export type PermissionAction = z.infer<typeof permissionAction>;
 export type PermissionsConfig = NonNullable<KeyworkConfig["permissions"]>;
 export type PromptsConfig = NonNullable<KeyworkConfig["prompts"]>;

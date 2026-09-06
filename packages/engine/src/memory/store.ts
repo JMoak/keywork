@@ -28,6 +28,7 @@ import {
   firstString,
   isDailyDate,
   isEntityPath,
+  learnedByLink,
   mocContent,
   type Note,
   noteName,
@@ -63,6 +64,7 @@ export interface MemoryStoreOptions {
   secrets?: Record<string, string>;
   reservedPaths?: readonly string[];
   ledgerCapacity?: number;
+  learnedBy?: string;
 }
 
 export interface NoteInput {
@@ -77,6 +79,7 @@ export interface NoteInput {
   supersedes?: string;
   delivered?: string;
   distilledFrom?: string;
+  learnedBy?: string;
   anchor?: CheckpointAnchor;
 }
 
@@ -131,6 +134,7 @@ export class MemoryStore {
   private readonly now: () => Date;
   private readonly secrets: NamedSecret[];
   private readonly ledgerCapacity: number;
+  private readonly learnedBy: string | undefined;
   private readonly log: LedgerEntry[] = [];
   private turn: Promise<unknown> = Promise.resolve();
 
@@ -141,6 +145,7 @@ export class MemoryStore {
     this.now = options.now ?? (() => new Date());
     this.secrets = Object.entries(options.secrets ?? {}).map(([name, value]) => ({ name, value }));
     this.ledgerCapacity = options.ledgerCapacity ?? defaultLedgerCapacity;
+    this.learnedBy = options.learnedBy;
   }
 
   async listNotes(): Promise<Note[]> {
@@ -412,6 +417,7 @@ export class MemoryStore {
     const existing = await this.files.read(target.path);
     const inherited = existing === null ? {} : parseDocument(existing, target.path).frontmatter;
     const aliases = this.noteAliases(input, target, inherited);
+    const learnedBy = input.learnedBy ?? this.learnedBy;
     return {
       ...inherited,
       provenance: input.provenance,
@@ -426,6 +432,7 @@ export class MemoryStore {
         valid_from: input.delivered,
       }),
       ...(input.distilledFrom !== undefined && { distilled_from: `[[${input.distilledFrom}]]` }),
+      ...(learnedBy !== undefined && { learned_by: learnedByLink(learnedBy) }),
       ...(input.anchor !== undefined && anchorFrontmatter(input.anchor)),
     };
   }

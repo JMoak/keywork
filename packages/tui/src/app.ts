@@ -13,7 +13,7 @@ import { ArcPane } from "./arc-pane.ts";
 import type { ArcsPort } from "./arcs.ts";
 import { ArcsPane } from "./arcs-pane.ts";
 import { botJumpCommands } from "./bot-commands.ts";
-import type { BotEntry, BotsPort } from "./bots.ts";
+import type { BotEntry, BotSummary, BotsPort } from "./bots.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
@@ -120,7 +120,12 @@ export interface AppOptions {
   memoryDigest?: DigestTreatment;
   clock?: () => number;
   mcp?: McpPanePort;
+  notices?: NoticeSource;
   extensions?: ExtensionsPort;
+}
+
+export interface NoticeSource {
+  subscribe(post: (text: string) => void): () => void;
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
@@ -173,10 +178,13 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       gauge: options.gauge,
       elevation: options.elevation,
       botOf: botLookup(options.bots),
+      now: options.clock,
+      botSpend: botSpendLookup(options.bots),
     }),
   });
   const armed = armedExpiryWatch(() => core, render);
   const unsubscribeMcp = options.mcp?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
+  const unsubscribeNotices = options.notices?.subscribe((text) => core.postNotice(text));
   let releaseFatalGuards: () => void = () => {};
   const core: AppCore = new AppCore({
     screen: () => screenWithin(renderer, flavors.active.chromeWeight),
@@ -202,6 +210,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       armed.stop();
       frames.dispose();
       unsubscribeMcp?.();
+      unsubscribeNotices?.();
       arcIndex.dispose();
       paneSessions.closeAll();
       escrow.releaseAll();
@@ -298,6 +307,7 @@ function paneFactories(
   core: () => AppCore,
 ): PaneFactories {
   const { arcs, memory, mcp, workspaces } = options;
+  const botOf = botLookup(options.bots);
   return {
     createPane: sessions.createPane,
     createFilePane: (id, path, notify, fileOptions) =>
@@ -305,9 +315,11 @@ function paneFactories(
     createBrowserPane: (id, root, notify, intents) =>
       new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
     ...(trees !== undefined && {
-      createSessionTreePane: (id, notify, intents, targetSession, sessionId) =>
+      createSessionTreePane: (id, notify, intents, targetSession, sessionId, groupBy) =>
         new SessionTreePane(id, notify, intents, trees, targetSession, {
           ...(sessionId !== undefined && { sessionId }),
+          ...(groupBy !== undefined && { groupBy }),
+          ...(botOf !== undefined && { botSigil: (name: string) => botOf(name)?.sigil }),
           presence: paneSessions,
           arcOrdinal: arcIndex.ordinalOf,
         }),
@@ -437,6 +449,13 @@ function botLookup(
 ): ((name: string) => BotEntry | undefined) | undefined {
   if (bots === undefined) return undefined;
   return (name) => bots.defined().find((bot) => bot.name === name);
+}
+
+function botSpendLookup(
+  bots: BotsPort | undefined,
+): ((name: string) => Promise<BotSummary | undefined>) | undefined {
+  if (bots === undefined) return undefined;
+  return async (name) => (await bots.list()).find((bot) => bot.name === name);
 }
 
 function paintFrame(

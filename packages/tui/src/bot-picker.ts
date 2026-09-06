@@ -1,4 +1,4 @@
-import { type BotSummary, botLabel, isBotSlug } from "./bots.ts";
+import { type BotSummary, botLabel, botSpendFact, isBotSlug } from "./bots.ts";
 import { FilterPicker } from "./filter-picker.ts";
 import { rankByFuzzy } from "./picker-keys.ts";
 import { sessionsFact } from "./pluralize.ts";
@@ -48,10 +48,12 @@ export function describeBotRow(row: BotPickerRow): string {
 
 export function botRowParts(row: BotRow): { label: string; facts: string } {
   const { bot } = row;
+  const spend = botSpendFact(bot);
   const facts = [
     ...(bot.description === undefined ? [] : [bot.description]),
     ...(bot.source === "user" ? ["global"] : []),
     sessionsFact(bot.sessions),
+    ...(spend === undefined ? [] : [spend]),
     ...(row.current ? ["current"] : []),
   ];
   return { label: botLabel(bot), facts: facts.map((fact) => ` · ${fact}`).join("") };

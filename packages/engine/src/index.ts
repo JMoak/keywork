@@ -100,6 +100,34 @@ export {
   type ResolutionRequest,
 } from "./inference/types.ts";
 export {
+  type DiagnosticsObserverOptions,
+  type DiagnosticsPublication,
+  diagnosticsObserver,
+} from "./lsp/after-save.ts";
+export { diagnosticsBlock } from "./lsp/format.ts";
+export { resolveOnPath, type SpawnLike } from "./lsp/path.ts";
+export {
+  type Diagnostic,
+  defaultLanguageBudgets,
+  type IdleScheduler,
+  idleLanguageFacts,
+  type LanguageBudgets,
+  type LanguageFacts,
+  type LanguagePort,
+  type LanguagePortOptions,
+  type LanguageServerFact,
+  languagePort,
+  type ServerState,
+} from "./lsp/port.ts";
+export {
+  builtInLanguageServers,
+  type LanguageServerSetting,
+  type LanguageServerSpec,
+  type LanguageServerTable,
+  languageOf,
+  languageServersFor,
+} from "./lsp/servers.ts";
+export {
   connectStdioServer,
   McpAbortedError,
   type McpConnection,
@@ -190,7 +218,10 @@ export {
   type ArcSearchHit,
   arcBootstrapLayer,
   arcLayer,
+  botLayer,
   defaultArcBoost,
+  isLayeredHit,
+  type LayeredSearchHit,
   type MemoryLayerRef,
   searchHitLayer,
   workspaceLayer,
@@ -226,6 +257,21 @@ export {
   selectWithinBudget,
 } from "./memory/bootstrap.ts";
 export {
+  BotRecall,
+  type BotRecallOptions,
+  type BotRecallOutcome,
+  botBootstrapLayer,
+  defaultBotBoost,
+} from "./memory/bots/recall.ts";
+export {
+  type BotLayerRecord,
+  type BotLayerStatus,
+  BotRegistry,
+  type BotRegistryOptions,
+  MissingBotLayerError,
+  validateBotSlug,
+} from "./memory/bots/registry.ts";
+export {
   type CitationChain,
   type CitationChainHop,
   type CitationEvent,
@@ -244,7 +290,11 @@ export {
   type UsefulnessSink,
 } from "./memory/citations.ts";
 export {
+  type BotFlushTarget,
+  type BotLearnings,
   backtrackFlushClause,
+  botFlushClause,
+  botLinePrefix,
   type FlushOutcome,
   flushPrompt,
   isMemoryFlushPrompt,
@@ -253,6 +303,7 @@ export {
   type MemoryFlushOptions,
   memoryFlushPrompt,
   noReplyToken,
+  partitionBotLines,
   shouldFlush,
 } from "./memory/flush.ts";
 export {
@@ -300,10 +351,14 @@ export {
 } from "./memory/ledger.ts";
 export { canonicalEntityPath, InvalidTitleError, titleKey } from "./memory/naming.ts";
 export {
+  botMocLink,
+  botMocName,
   type DailyEntry,
   extractWikilinks,
   InvalidDailyDateError,
   isEntityPath,
+  learnedByLink,
+  learnedBySlug,
   type Note,
   type NoteWriteTarget,
   noteName,
@@ -394,6 +449,7 @@ export {
   textMessage,
   toolCalls,
   type Usage,
+  type VisibleThinkingPart,
 } from "./messages.ts";
 export {
   MockProvider,
@@ -416,6 +472,7 @@ export {
   sessionCost,
   withTurnCost,
 } from "./pricing.ts";
+export { processExists } from "./proc.ts";
 export {
   buildSystemPrompt,
   loadProjectInstructions,
@@ -556,6 +613,12 @@ export {
   suggestTitle,
   type TitleContext,
 } from "./titles.ts";
+export {
+  type AfterSave,
+  annotatedResult,
+  type ComposeAfterSaveOptions,
+  composeAfterSave,
+} from "./tools/after-save.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
 export { confinedPath, scopeContains, type ToolScope, toolScope } from "./tools/confine.ts";
 export { type CoreToolOptions, coreTools, type MemoryRecall } from "./tools/core.ts";

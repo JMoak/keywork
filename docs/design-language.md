@@ -45,8 +45,12 @@ draws from it:
 Rules: hue is identity, so it travels with its pane/arc, never re-derived from screen
 position; transitions are stepped (reduced-motion honored); every arc-hued surface also
 carries the arc's slug tag, so grouping survives `NO_COLOR` and monochrome as text;
-state stays density's job, so a hue never means fresh/staged/failed. One clarification
-(2026-08-16, 98 addendum): **saturation/luminance of an identity hue may *reinforce* a
+state stays density's job, so a hue never means fresh/staged/failed. A second
+clarification (2026-09-06, 106/PD24): **bot identity is carried by sigil and name, never
+by hue**; the `sigil name` pair renders as text in the title bar's detail zone, as the
+group label in the sessions overview, and as the per-line tag on bot-layer memory items,
+so a bound pane keeps the arc's hue on its border and stays legible in monochrome. One
+clarification (2026-08-16, 98 addendum): **saturation/luminance of an identity hue may *reinforce* a
 density-carried state** (e.g. the garden's distillation *heat* (98/C47) renders as
 density first, warmed by saturation lift within the note's arc hue), but hue itself
 never acquires a state meaning, and density alone must always suffice (monochrome-safe

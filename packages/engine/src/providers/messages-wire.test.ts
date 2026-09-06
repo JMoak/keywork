@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type Message, textMessage } from "../messages.ts";
 import type { ProviderRequest } from "../provider.ts";
 import { toChatRequest } from "./chat-wire.ts";
-import { toMessagesRequest } from "./messages-wire.ts";
+import { thinkingBudgetTokens, thinkingConfig, toMessagesRequest } from "./messages-wire.ts";
 import { toResponsesRequest } from "./responses-wire.ts";
 
 const owner = { provider: "anthropic", model: "claude-test" };
@@ -126,6 +126,49 @@ describe("toMessagesRequest", () => {
     expect(body.max_tokens).toBe(1000);
   });
 
+  it("requests thinking only when asked, in the shape each Claude generation accepts", () => {
+    const messages = [textMessage("user", "hi")];
+    expect("thinking" in wire(messages)).toBe(false);
+    const thinkingFor = (model: string) =>
+      (
+        toMessagesRequest(request(messages, { thinking: true }), model, owner, shape) as {
+          thinking: object;
+        }
+      ).thinking;
+    const budgeted = { type: "enabled", budget_tokens: 999 };
+    const adaptive = { type: "adaptive", display: "summarized" };
+    expect(thinkingFor("claude-haiku-4-5")).toEqual(budgeted);
+    expect(thinkingFor("anthropic/claude-sonnet-4-5-20250929")).toEqual(budgeted);
+    expect(thinkingFor("claude-3-5-sonnet-20241022")).toEqual(budgeted);
+    expect(thinkingFor("claude-sonnet-4-6")).toEqual(adaptive);
+    expect(thinkingFor("claude-opus-5")).toEqual(adaptive);
+    expect(thinkingFor("claude-fable-5-1")).toEqual(adaptive);
+    expect(thinkingFor("claude-test")).toEqual(adaptive);
+  });
+
+  it("caps the thinking budget under a generous output ceiling", () => {
+    expect(thinkingConfig("claude-haiku-4-5", 32_000)).toEqual({
+      type: "enabled",
+      budget_tokens: thinkingBudgetTokens,
+    });
+  });
+
+  it("never sends visible thinking, even to the model that produced it", () => {
+    const body = wire([
+      textMessage("user", "hi"),
+      {
+        role: "assistant",
+        parts: [
+          { type: "visible-thinking", text: "shown reasoning" },
+          { type: "text", text: "answer" },
+        ],
+      },
+      textMessage("user", "more"),
+    ]);
+    expect(JSON.stringify(body)).not.toContain("shown reasoning");
+    expect(body.messages[1]?.content).toEqual([{ type: "text", text: "answer" }]);
+  });
+
   it("drops unparsable owned thinking rather than sending garbage", () => {
     const body = wire([
       textMessage("user", "hi"),
@@ -152,6 +195,7 @@ describe("switching models mid-session through the neutral format", () => {
           data: JSON.stringify({ type: "thinking", thinking: "", signature: "sig" }),
           owner,
         },
+        { type: "visible-thinking", text: "shown reasoning" },
         { type: "tool-call", callId: "toolu_1", name: "bash", arguments: { command: "ls" } },
       ],
     },
@@ -191,6 +235,7 @@ describe("switching models mid-session through the neutral format", () => {
       input: object[];
     };
     expect(body.input).not.toContainEqual(expect.objectContaining({ type: "thinking" }));
+    expect(JSON.stringify(body)).not.toContain("shown reasoning");
     expect(body.input).toContainEqual(
       expect.objectContaining({ type: "function_call", call_id: "toolu_1" }),
     );
@@ -205,6 +250,7 @@ describe("switching models mid-session through the neutral format", () => {
     ) as { messages: { content: object[] }[] };
     const blocks = switched.messages.flatMap((message) => message.content);
     expect(blocks).not.toContainEqual(expect.objectContaining({ type: "thinking" }));
+    expect(JSON.stringify(blocks)).not.toContain("shown reasoning");
     expect(blocks).toContainEqual(expect.objectContaining({ type: "tool_use", id: "toolu_1" }));
   });
 });

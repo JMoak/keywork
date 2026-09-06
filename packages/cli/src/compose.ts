@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import {
+  type AfterSave,
   Agent,
   actionRecallBudget,
   type BootstrapInjection,
@@ -7,11 +8,19 @@ import {
   buildSystemPrompt,
   Checkpoints,
   type ContextInjection,
+  composeAfterSave,
   contextBudgetFor,
   coreTools,
+  type DiagnosticsLog,
+  type DiagnosticsPublication,
   declaredContextWindow,
+  diagnosticsObserver,
   type EngineEvents,
   type EventBus,
+  type LanguagePort,
+  type LanguageServerSetting,
+  languagePort,
+  languageServersFor,
   loadProjectInstructions,
   McpRegistry,
   MemoryFlush,
@@ -36,6 +45,7 @@ import {
 import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
 import { mostSpecificMatch, openWorkspace, resolveAnchor, toError } from "@keywork/shared";
 import type { ArcService } from "./arcs.ts";
+import type { BotLearning, BotMemory } from "./bot-memory.ts";
 import { loadWorkspaceExtensions, type WorkspaceExtensions } from "./commands.ts";
 import {
   bootstrapInjection,
@@ -57,7 +67,10 @@ export interface CompositionOptions {
   mcpServers?: Record<string, McpServerConfig> | undefined;
   repoMap?: "auto" | "off" | undefined;
   models?: ModelCapabilitiesConfig | undefined;
+  lsp?: LanguageServerSetting | undefined;
   onFileSaved?: ((path: string) => void) | undefined;
+  notice?: ((text: string) => void) | undefined;
+  diagnosticsLog?: (() => Pick<DiagnosticsLog, "log"> | undefined) | undefined;
   checkpoints?: "on" | "off";
   reportCheckpointsUnavailable?: ((message: string) => void) | undefined;
   userRoot?: string | undefined;
@@ -68,6 +81,7 @@ export interface Composition {
   cwd: string;
   scope: ToolScope;
   systemPromptFor(modelId: string | undefined): string;
+  systemPromptWith(modelId: string | undefined, memoryInjection: string): string;
   standingInjections: readonly ContextInjection[];
   memory: MemoryAccess;
   bootstrap: BootstrapInjection | undefined;
@@ -75,7 +89,9 @@ export interface Composition {
   extensions: WorkspaceExtensions;
   mcp: McpRegistry | undefined;
   repoMap: RepoMap | undefined;
-  onFileSaved: ((path: string) => void) | undefined;
+  languagePort: LanguagePort | undefined;
+  afterSave: AfterSave | undefined;
+  afterSaveFor(onPublished: (publication: DiagnosticsPublication) => void): AfterSave | undefined;
 }
 
 export async function composeWorkspace(options: CompositionOptions): Promise<Composition> {
@@ -84,7 +100,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   const memory = workspaceMemoryAccess(cwd, projectTrusted, workspaceSlug);
   const bootstrap = await bootstrapInjection(memory());
   const repoMap = await openRepoMap(cwd, projectTrusted, options.repoMap);
-  const systemPromptFor = (modelId: string | undefined): string => {
+  const systemPromptWith = (modelId: string | undefined, memoryInjection: string): string => {
     const map = repoMapPrompt(repoMap, options.models, modelId);
     return withMemoryPrompt(
       buildSystemPrompt({
@@ -93,9 +109,11 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
         ...(modelId !== undefined && { modelId }),
         ...(map !== undefined && { repoMap: map }),
       }),
-      bootstrap?.text ?? "",
+      memoryInjection,
     );
   };
+  const systemPromptFor = (modelId: string | undefined): string =>
+    systemPromptWith(modelId, bootstrap?.text ?? "");
   const checkpoints = options.checkpoints === "off" ? undefined : await openCheckpoints(options);
   const extensions = await loadWorkspaceExtensions(
     cwd,
@@ -103,10 +121,24 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     options.userRoot ?? homedir(),
   );
   const mcp = startMcpRegistry(options.mcpServers);
+  const scope = workspaceToolScope(cwd, projectTrusted, workspaceSlug);
+  const port = openLanguagePort(scope, options);
+  const afterSaveFor = (onPublished: (publication: DiagnosticsPublication) => void) =>
+    composeAfterSave(
+      [
+        refreshingOnSave(repoMap, options.onFileSaved),
+        port === undefined ? undefined : diagnosticsObserver(port, { cwd, onPublished }),
+      ],
+      {
+        onFailure: (error, path) =>
+          options.diagnosticsLog?.()?.log("error", "afterSave.failed", { path, error }),
+      },
+    );
   return {
     cwd,
-    scope: workspaceToolScope(cwd, projectTrusted, workspaceSlug),
+    scope,
     systemPromptFor,
+    systemPromptWith,
     standingInjections: standingInjectionsFor(instructions, bootstrap?.text ?? "", repoMap),
     memory,
     bootstrap,
@@ -114,7 +146,9 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     extensions,
     mcp,
     repoMap,
-    onFileSaved: refreshingOnSave(repoMap, options.onFileSaved),
+    languagePort: port,
+    afterSave: afterSaveFor(() => undefined),
+    afterSaveFor,
   };
 }
 
@@ -131,7 +165,9 @@ export function workspaceToolScope(
 export interface AgentCompositionOptions {
   permissions?: PermissionResolver | undefined;
   arcs?: ArcService | undefined;
+  bots?: BotMemory | undefined;
   citations?: CitationTrail | undefined;
+  thinking?: boolean | undefined;
 }
 
 export interface AgentBuildSpec {
@@ -173,6 +209,7 @@ export function composeAgents(
         provider: followingProvider(() => providers.get(sessionId) ?? provider),
         store: workspaceStore,
         dailyStore: () => options.arcs?.layerStoreFor(sessionId) ?? workspaceStore,
+        bot: () => options.bots?.flushTarget(sessionId),
         systemPrompt: composition.systemPromptFor(undefined),
       });
       flushes.set(sessionId, flush);
@@ -249,13 +286,29 @@ function repoMapPrompt(
 function refreshingOnSave(
   map: RepoMap | undefined,
   onFileSaved: ((path: string) => void) | undefined,
-): ((path: string) => void) | undefined {
-  if (map === undefined) return onFileSaved;
-  return (path) => {
-    map.markStale();
-    void map.refreshIfStale();
+): AfterSave | undefined {
+  if (map === undefined && onFileSaved === undefined) return undefined;
+  return async (path) => {
+    map?.markStale();
+    void map?.refreshIfStale();
     onFileSaved?.(path);
+    return undefined;
   };
+}
+
+function openLanguagePort(scope: ToolScope, options: CompositionOptions): LanguagePort | undefined {
+  const servers = languageServersFor(options.lsp);
+  if (!options.projectTrusted || Object.keys(servers).length === 0) return undefined;
+  return languagePort(scope, {
+    servers,
+    diagnostics: {
+      log: (level, event, payload) => options.diagnosticsLog?.()?.log(level, event, payload),
+    },
+    onMissing: (language) =>
+      options.notice?.(
+        `no ${language} language server on PATH · diagnostics off for ${servers[language]?.extensions.join(" ") ?? language}`,
+      ),
+  });
 }
 
 function followingProvider(current: () => Provider): Provider {
@@ -281,7 +334,13 @@ function buildAgent(
 ): Agent {
   let self: Agent | undefined;
   const recall = journalingRecall(
-    memoryRecall(composition.memory(), spec.sessionId, spec.onRetrieval, options.arcs),
+    memoryRecall(
+      composition.memory(),
+      spec.sessionId,
+      spec.onRetrieval,
+      options.arcs,
+      options.bots,
+    ),
     () => self,
   );
   const tap = options.citations?.tapFor(spec.sessionId);
@@ -289,7 +348,9 @@ function buildAgent(
     ...coreTools(composition.scope, {
       shell: spec.shell,
       onToolOutput: (chunk) => self?.bus.emit("tool.output", { chunk }),
-      onFileSaved: composition.onFileSaved,
+      afterSave: composition.afterSaveFor((publication) =>
+        self?.bus.emit("diagnostics.published", publication),
+      ),
     }),
     ...(recall === undefined
       ? []
@@ -301,13 +362,15 @@ function buildAgent(
   const bot = spec.bot;
   const permissions =
     bot === undefined ? options.permissions : narrowedPermissions(bot, options.permissions);
-  const composedPrompt = bot === undefined || bot.prompt === "";
+  const learning = bot === undefined ? undefined : options.bots?.bootstrapFor(bot);
+  const prompt = promptFor(composition, spec.provider.modelId, bot, learning);
   const agent = new Agent({
     provider: spec.provider,
     tools: bot === undefined ? tools : () => restrictTools(tools(), bot),
-    systemPrompt: composedPrompt ? composition.systemPromptFor(spec.provider.modelId) : bot.prompt,
-    standingInjections: composedPrompt ? composition.standingInjections : [],
+    systemPrompt: prompt.systemPrompt,
+    standingInjections: prompt.standingInjections,
     guard: spec.guard,
+    ...(options.thinking === true && { thinking: true }),
     ...(permissions !== undefined && { permissions }),
     ...(spec.history !== undefined && { history: spec.history }),
     ...(spec.bus !== undefined && { bus: spec.bus }),
@@ -325,7 +388,61 @@ function buildAgent(
   });
   self = agent;
   wireReplyCitations(agent, options.citations, spec.sessionId, replyTapped);
+  wireBootstrapCitations(agent, options.citations, spec.sessionId, prompt.bootstrap);
   return agent;
+}
+
+interface ComposedPrompt {
+  systemPrompt: string;
+  standingInjections: readonly ContextInjection[];
+  bootstrap?: BootstrapInjection;
+}
+
+function promptFor(
+  composition: Composition,
+  modelId: string | undefined,
+  bot: BotDefinition | undefined,
+  learning: BotLearning | undefined,
+): ComposedPrompt {
+  const composed = bot === undefined || bot.prompt === "";
+  if (learning === undefined || bot === undefined) {
+    return composed
+      ? {
+          systemPrompt: composition.systemPromptFor(modelId),
+          standingInjections: composition.standingInjections,
+        }
+      : { systemPrompt: bot.prompt, standingInjections: [] };
+  }
+  const botInjection: ContextInjection = { source: "memory-bootstrap", scope: `bot:${bot.name}` };
+  const announced = learning.own.text === "" ? [] : [botInjection];
+  return composed
+    ? {
+        systemPrompt: composition.systemPromptWith(modelId, learning.composed.text),
+        standingInjections: [...composition.standingInjections, ...announced],
+        bootstrap: learning.composed,
+      }
+    : {
+        systemPrompt: withMemoryPrompt(bot.prompt, learning.own.text),
+        standingInjections: announced,
+        bootstrap: learning.own,
+      };
+}
+
+function wireBootstrapCitations(
+  agent: Agent,
+  citations: CitationTrail | undefined,
+  sessionKey: SessionKey | undefined,
+  bootstrap: BootstrapInjection | undefined,
+): void {
+  if (citations === undefined || sessionKey === undefined || bootstrap === undefined) return;
+  let recorded = false;
+  agent.bus.on("turn.started", () => {
+    if (recorded) return;
+    const id = resolveSessionKey(sessionKey);
+    if (id === undefined) return;
+    recorded = true;
+    citations.recordBootstrap(id, bootstrap);
+  });
 }
 
 function wireReplyCitations(

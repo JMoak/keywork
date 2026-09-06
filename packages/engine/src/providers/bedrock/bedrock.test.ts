@@ -85,6 +85,7 @@ describe("BedrockProvider", () => {
           role: "assistant",
           parts: [
             { type: "thinking", thinking: "quietly", signature: "sig" },
+            { type: "visible-thinking", text: "shown reasoning" },
             { type: "tool-call", callId: "t1", name: "bash", arguments: { command: "ls" } },
           ],
         },

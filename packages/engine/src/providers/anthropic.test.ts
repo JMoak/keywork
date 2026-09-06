@@ -95,6 +95,7 @@ describe("AnthropicProvider", () => {
     const owner = { provider: "anthropic", model: "claude-test" };
 
     expect(deltas).toEqual([
+      { type: "visible-thinking", text: "Consider ls." },
       {
         type: "redacted-thinking",
         part: {
@@ -154,6 +155,26 @@ describe("AnthropicProvider", () => {
       stream: true,
       cache_control: { type: "ephemeral" },
       system: "sys",
+    });
+  });
+
+  it("asks for thinking only when the request opts in and leaves the default body byte-identical", async () => {
+    const bodies: string[] = [];
+    const fetchFn: FetchLike = async (_url, init) => {
+      bodies.push(init?.body as string);
+      return events(messageDelta("end_turn", { output_tokens: 1 }), messageStop);
+    };
+    const anthropic = provider(fetchFn);
+    await collect(anthropic.stream(simpleRequest));
+    await collect(anthropic.stream({ ...simpleRequest, thinking: true }));
+    await collect(anthropic.stream(simpleRequest));
+
+    const [before, opted, after] = bodies;
+    expect(after).toBe(before);
+    expect(before).not.toContain("thinking");
+    expect(JSON.parse(opted as string).thinking).toEqual({
+      type: "adaptive",
+      display: "summarized",
     });
   });
 

@@ -2,7 +2,7 @@ import type { Agent, ToolCallPart } from "@keywork/engine";
 import type { MarkdownSpan } from "./markdown.ts";
 import { TailFollow } from "./tail-follow.ts";
 
-export type TranscriptEntry = UserEntry | AssistantEntry | ToolEntry | NoticeEntry;
+export type TranscriptEntry = UserEntry | AssistantEntry | ThinkingEntry | ToolEntry | NoticeEntry;
 
 export interface UserEntry {
   kind: "user";
@@ -13,6 +13,12 @@ export interface UserEntry {
 export interface AssistantEntry {
   kind: "assistant";
   text: string;
+}
+
+export interface ThinkingEntry {
+  kind: "thinking";
+  text: string;
+  folded: boolean;
 }
 
 export interface ToolEntry {
@@ -64,6 +70,7 @@ export class TranscriptFeed {
       ),
       bus.on("turn.delta", ({ delta }) => {
         if (delta.type === "text") this.streamText(delta.text);
+        if (delta.type === "visible-thinking") this.streamThinking(delta.text);
       }),
       bus.on("tool.started", ({ call, replay }) => this.startTool(call, replay === true)),
       bus.on("tool.output", ({ chunk, callId }) => this.tailTool(chunk, callId)),
@@ -111,6 +118,11 @@ export class TranscriptFeed {
   }
 
   toggleFold(entry: TranscriptEntry): boolean {
+    if (entry.kind === "thinking") {
+      entry.folded = !entry.folded;
+      this.notify();
+      return true;
+    }
     if (entry.kind !== "tool" || entry.run?.detail === undefined) return false;
     entry.run.folded = !entry.run.folded;
     this.notify();
@@ -124,9 +136,7 @@ export class TranscriptFeed {
   }
 
   disclosableIndices(): number[] {
-    return this.entries.flatMap((entry, index) =>
-      entry.kind === "tool" && entry.run?.detail !== undefined ? [index] : [],
-    );
+    return this.entries.flatMap((entry, index) => (disclosable(entry) ? [index] : []));
   }
 
   promptIndices(): number[] {
@@ -159,6 +169,14 @@ export class TranscriptFeed {
       this.entries.push(entry);
       this.stream = { entry, steps: 0 };
     }
+    this.notify();
+  }
+
+  private streamThinking(text: string): void {
+    this.activity += 1;
+    const last = this.entries.at(-1);
+    if (last?.kind === "thinking") last.text += text;
+    else this.entries.push({ kind: "thinking", text, folded: true });
     this.notify();
   }
 
@@ -231,6 +249,10 @@ export function toolRowSpans(run: ToolRun): MarkdownSpan[] {
   return spans;
 }
 
+export function thinkingRowSpans(entry: ThinkingEntry): MarkdownSpan[] {
+  return [{ text: `thinking · ${wordCount(entry.text)}`, tone: "meta" }];
+}
+
 export function compactJson(value: unknown): string {
   const text = JSON.stringify(value) ?? "";
   return text.length > 60 ? `${text.slice(0, 60)}…` : text;
@@ -245,6 +267,16 @@ interface RunningTool {
 const streamSettleSteps = 4;
 const liveLineLimit = 120;
 const detailLineLimit = 12;
+
+function disclosable(entry: TranscriptEntry): boolean {
+  if (entry.kind === "thinking") return true;
+  return entry.kind === "tool" && entry.run?.detail !== undefined;
+}
+
+function wordCount(text: string): string {
+  const words = text.split(/\s+/).filter((word) => word !== "").length;
+  return words === 1 ? "1 word" : `${words} words`;
+}
 
 function toolRowText(run: ToolRun): string {
   return toolRowSpans(run)

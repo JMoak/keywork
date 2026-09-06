@@ -33,6 +33,7 @@ export interface SessionSummary {
   labelCount: number;
   costNanos?: number;
   arc?: string;
+  bot?: string;
 }
 
 export interface UnreadableSession {
@@ -102,6 +103,7 @@ export async function summarize(store: SessionStore): Promise<SessionSummary> {
   const stats = store.stats();
   const costNanos = knownCostNanos(stats.cost);
   const arc = store.arcBinding();
+  const bot = store.botBinding();
   return {
     id: store.header.id,
     file: store.file,
@@ -115,6 +117,7 @@ export async function summarize(store: SessionStore): Promise<SessionSummary> {
     labelCount: stats.labels,
     ...(costNanos !== undefined && { costNanos }),
     ...(arc !== undefined && { arc }),
+    ...(bot !== undefined && { bot }),
   };
 }
 

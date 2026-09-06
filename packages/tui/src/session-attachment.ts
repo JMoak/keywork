@@ -13,10 +13,13 @@ export interface AppendReceipt {
   entryId: string;
 }
 
+export type ThinkingSwitch = "on" | "off";
+
 export interface SessionAttachment {
   id: string;
   name?: string;
   modelReference?: string;
+  thinking?: ThinkingSwitch;
   arc?: string | undefined;
   bot?: string | undefined;
   history: readonly Message[];
@@ -24,6 +27,7 @@ export interface SessionAttachment {
   append(message: Message): Promise<AppendReceipt | undefined>;
   rename?(name: string): Promise<void>;
   recordModel?(reference: string): Promise<void>;
+  recordThinking?(level: ThinkingSwitch): Promise<void>;
   bindArc?(slug: string | undefined): Promise<void>;
   bindBot?(name: string | undefined): Promise<void>;
 }
@@ -191,6 +195,7 @@ export function adoptSession(
   pane.bot = attachment.bot;
   reconcileTitle(pane, attachment);
   if (agent === undefined) return;
+  if (attachment.thinking !== undefined) agent.setThinking(attachment.thinking === "on");
   attachment.replay(agent.bus);
 }
 
@@ -256,6 +261,7 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
     }
     apply(await options.afterTurn?.(turnOf(agent)), agent);
   });
+  pane.bindThinkingChange((level) => attachment.recordThinking?.(level) ?? Promise.resolve());
   const compact = options.compact;
   if (compact === undefined) return;
   pane.bindCompaction(async (instructions) => {

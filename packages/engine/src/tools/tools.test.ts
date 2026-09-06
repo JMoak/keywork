@@ -312,3 +312,54 @@ describe("bash", () => {
     expect(output).toContain("truncated");
   }, 10_000);
 });
+
+describe("after-save annotations", () => {
+  it("appends whatever the observer returns to the edit and write confirmations", async () => {
+    const cwd = await workspace();
+    await writeFile(join(cwd, "code.ts"), "const x = 1;");
+    const observer = async (path: string) =>
+      `diagnostics (typescript) · 1 error\n${path}:1:1 · boom`;
+
+    const edited = await editTool(toolScope(cwd), observer).execute({
+      path: "code.ts",
+      oldText: "1",
+      newText: "BROKEN",
+    });
+    const written = await writeTool(toolScope(cwd), observer).execute({
+      path: "fresh.ts",
+      content: "BROKEN",
+    });
+
+    expect(edited).toBe(
+      `Replaced 1 occurrence in code.ts\n\ndiagnostics (typescript) · 1 error\n${join(cwd, "code.ts")}:1:1 · boom`,
+    );
+    expect(written).toBe(
+      `Wrote 6 characters to fresh.ts\n\ndiagnostics (typescript) · 1 error\n${join(cwd, "fresh.ts")}:1:1 · boom`,
+    );
+  });
+
+  it("leaves the confirmation untouched when the observer is silent or throws", async () => {
+    const cwd = await workspace();
+    await writeFile(join(cwd, "code.ts"), "const x = 1;");
+    const silent = async () => undefined;
+    const throwing = async (): Promise<string> => {
+      throw new Error("server melted");
+    };
+
+    expect(
+      await editTool(toolScope(cwd), silent).execute({
+        path: "code.ts",
+        oldText: "1",
+        newText: "2",
+      }),
+    ).toBe("Replaced 1 occurrence in code.ts");
+    expect(
+      await editTool(toolScope(cwd), throwing).execute({
+        path: "code.ts",
+        oldText: "2",
+        newText: "3",
+      }),
+    ).toBe("Replaced 1 occurrence in code.ts");
+    expect(await readFile(join(cwd, "code.ts"), "utf8")).toBe("const x = 3;");
+  });
+});

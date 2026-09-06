@@ -36,6 +36,8 @@ export {
   connectionProtocols,
   defaultConfig,
   type KeyworkConfig,
+  type LanguageServerConfig,
+  type LspConfig,
   type McpServerConfig,
   type ModelCapabilitiesConfig,
   type PermissionAction,

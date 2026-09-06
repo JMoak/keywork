@@ -244,3 +244,71 @@ describe("crash log section", () => {
     expect(rows.at(-1)).toEqual({ label: "crash log", value: "none recorded" });
   });
 });
+
+describe("language server rows", () => {
+  const profile = detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "linux" });
+  const rowsFor = (facts: Parameters<typeof doctorReport>[2]) =>
+    doctorReport(profile, undefined, facts).rows.filter(
+      (row, index, rows) =>
+        row.label === "language servers" ||
+        (row.label === "" && rows.slice(0, index).some((r) => r.label === "language servers")),
+    );
+
+  it("names the switch when lsp is unset or off", () => {
+    expect(rowsFor({ trusted: true })).toEqual([
+      {
+        label: "language servers",
+        value: 'off · lsp: "auto" in keywork.json turns diagnostics on',
+      },
+    ]);
+    expect(rowsFor({ trusted: true, lspSetting: "off" })).toEqual([
+      { label: "language servers", value: "off in keywork.json" },
+    ]);
+  });
+
+  it("says an untrusted workspace spawns nothing", () => {
+    expect(rowsFor({ trusted: false, lspSetting: "auto" })).toEqual([
+      { label: "language servers", value: "workspace untrusted, none spawned" },
+    ]);
+  });
+
+  it("lists each server with its live state", () => {
+    const rows = rowsFor({
+      trusted: true,
+      lspSetting: "auto",
+      languageServers: {
+        servers: [
+          {
+            language: "typescript",
+            command: "typescript-language-server --stdio",
+            state: "ready",
+            pid: 4242,
+          },
+          { language: "python", command: "pyright-langserver --stdio", state: "missing" },
+          { language: "rust", command: "rust-analyzer", state: "failed", detail: "exit 101" },
+          { language: "go", command: "gopls", state: "idle" },
+        ],
+      },
+    });
+    expect(rows).toEqual([
+      { label: "language servers", value: "go · idle · gopls" },
+      { label: "", value: "python · missing · pyright-langserver --stdio not on PATH" },
+      { label: "", value: "rust · failed · exit 101" },
+      { label: "", value: "typescript · ready · pid 4242" },
+    ]);
+    expect(renderDoctorReport({ rows })).toContain("language servers  go · idle · gopls");
+  });
+
+  it("reports the built-in table idle from a fresh process", async () => {
+    const facts = await workspaceDoctorFacts("C:/definitely/not/scanned", true, {
+      repoMap: "off",
+      lsp: "auto",
+    });
+    expect(
+      facts.languageServers?.servers.map((server) => `${server.language}:${server.state}`),
+    ).toEqual(["typescript:idle", "python:idle", "go:idle", "rust:idle"]);
+    expect(
+      (await workspaceDoctorFacts("C:/nope", true, { repoMap: "off" })).languageServers,
+    ).toBeUndefined();
+  });
+});

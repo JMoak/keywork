@@ -2,6 +2,7 @@ import { memoryRecallTools } from "../memory/recall-tools.ts";
 import type { MemorySearcher } from "../memory/search.ts";
 import type { MemoryStore } from "../memory/store.ts";
 import type { Tool } from "../tools.ts";
+import type { AfterSave } from "./after-save.ts";
 import { bashTool, detectShell } from "./bash.ts";
 import type { ToolScope } from "./confine.ts";
 import { editTool } from "./edit.ts";
@@ -19,15 +20,15 @@ export interface CoreToolOptions {
   memory?: MemoryRecall | undefined;
   shell?: ShellSession | undefined;
   onToolOutput?: ((chunk: string) => void) | undefined;
-  onFileSaved?: ((path: string) => void) | undefined;
+  afterSave?: AfterSave | undefined;
 }
 
 export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool[] {
-  const { memory, shell, onToolOutput, onFileSaved } = options;
+  const { memory, shell, onToolOutput, afterSave } = options;
   const base = [
     readTool(scope),
-    writeTool(scope, onFileSaved),
-    editTool(scope, onFileSaved),
+    writeTool(scope, afterSave),
+    editTool(scope, afterSave),
     shell === undefined
       ? bashTool(scope.cwd, detectShell(), onToolOutput)
       : persistentBashTool(shell, onToolOutput),

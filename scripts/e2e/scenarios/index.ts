@@ -28,6 +28,7 @@ import { gardenHeatInk, gardenHeatLead } from "./garden-heat.ts";
 import { gaugeBar, gaugeBare, gaugeRamp, gaugeSteps, gaugeTile } from "./gauge-forms.ts";
 import { livePlayground } from "./live-playground.ts";
 import { longSession } from "./long-session.ts";
+import { lspLoop } from "./lsp-loop.ts";
 import { mastheadLadder } from "./masthead-ladder.ts";
 import { memoryAirlockTail, memoryBrowser } from "./memory-browser.ts";
 import { pageTiers } from "./page-tiers.ts";
@@ -42,6 +43,7 @@ export const scenarios: readonly Scenario[] = [
   coldStart,
   firstConversation,
   tilingTour,
+  lspLoop,
   chromaSweep,
   chromeStatesTiered,
   chromeStatesAscii,

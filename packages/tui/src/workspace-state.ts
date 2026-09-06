@@ -1,6 +1,7 @@
 import { isRecord } from "./defined.ts";
 import { Layout, type LayoutState, layoutStateIds } from "./layout.ts";
 import type { Pane, PaneDescriptor } from "./pane.ts";
+import { type SessionGroupBy, sessionGroupings } from "./sessions-overview-model.ts";
 
 export const workspaceStateVersion = 2;
 
@@ -86,10 +87,12 @@ function parsePane(value: unknown): WorkspacePane | undefined {
       return { id: value.id, kind: "browser", root: value.root };
     case "session-tree":
       if (value.sessionId !== undefined && typeof value.sessionId !== "string") return undefined;
+      if (value.groupBy !== undefined && !isSessionGrouping(value.groupBy)) return undefined;
       return {
         id: value.id,
         kind: "session-tree",
         ...(value.sessionId !== undefined && { sessionId: value.sessionId }),
+        ...(value.groupBy !== undefined && { groupBy: value.groupBy }),
       };
     case "arcs":
       if (value.arc !== undefined && typeof value.arc !== "string") return undefined;
@@ -123,4 +126,8 @@ function parseMemoryPane(value: Record<string, unknown>): WorkspacePane | undefi
     ...(typeof value.note === "string" && { note: value.note }),
     ...(typeof value.query === "string" && { query: value.query }),
   };
+}
+
+function isSessionGrouping(value: unknown): value is SessionGroupBy {
+  return sessionGroupings.some((grouping) => grouping === value);
 }

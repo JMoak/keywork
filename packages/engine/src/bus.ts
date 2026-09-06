@@ -23,6 +23,7 @@ interface LiveEvents {
   "gate.preset": { from: string; to: string };
   "session.mode": { mode: string };
   "context.injected": { injection: ContextInjection };
+  "diagnostics.published": { path: string; count: number };
   "shell.reset": Record<never, never>;
   "engine.error": { error: Error };
 }

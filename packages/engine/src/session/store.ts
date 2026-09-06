@@ -23,6 +23,7 @@ import {
   type SessionInfoEntry,
   type SessionTreeNode,
   sessionFormatVersion,
+  type ThinkingLevelChangeEntry,
 } from "./entries.ts";
 
 export interface SessionStats {
@@ -137,6 +138,16 @@ export class SessionStore {
     return this.activePath().findLast(
       (entry): entry is ModelChangeEntry => entry.type === "model_change",
     );
+  }
+
+  async appendThinkingLevelChange(thinkingLevel: string): Promise<ThinkingLevelChangeEntry> {
+    return this.appendEntry({ type: "thinking_level_change", thinkingLevel });
+  }
+
+  thinkingLevel(): string | undefined {
+    return this.activePath().findLast(
+      (entry): entry is ThinkingLevelChangeEntry => entry.type === "thinking_level_change",
+    )?.thinkingLevel;
   }
 
   appendArcBinding(arc: string | undefined): Promise<BindingEntry> {

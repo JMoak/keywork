@@ -1,4 +1,4 @@
-export { type AppOptions, runApp } from "./app.ts";
+export { type AppOptions, type NoticeSource, runApp } from "./app.ts";
 export type { FocusedArcPort } from "./arc-commands.ts";
 export {
   type ArcPicker,
@@ -203,14 +203,19 @@ export type {
   SessionAttachment,
   SessionPort,
   SessionTurn,
+  ThinkingSwitch,
 } from "./session-attachment.ts";
 export type { SessionTreeView } from "./session-tree-model.ts";
 export type { SessionTreePaneSeams, SessionTreePort } from "./session-tree-pane.ts";
-export type {
-  SessionLiveness,
-  SessionOverviewItem,
-  SessionOverviewRow,
-  SessionPresence,
+export {
+  type OverviewRow,
+  type SessionGroupBy,
+  type SessionGroupRow,
+  type SessionLiveness,
+  type SessionOverviewItem,
+  type SessionOverviewRow,
+  type SessionPresence,
+  sessionGroupings,
 } from "./sessions-overview-model.ts";
 export {
   type SlugInk,

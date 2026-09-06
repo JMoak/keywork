@@ -105,6 +105,27 @@ describe("replaySession", () => {
     expect(comparable(replayEvents)).toEqual(comparable(liveEvents));
   });
 
+  it("replays visible thinking ahead of the answer it preceded", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    await store.append(textMessage("user", "why"));
+    await store.append({
+      role: "assistant",
+      parts: [
+        { type: "visible-thinking", text: "Weighing it." },
+        { type: "text", text: "Because." },
+      ],
+    });
+
+    const bus = new EventBus<EngineEvents>();
+    const events = record(bus);
+    replaySession(store, bus);
+
+    expect(events.filter((event) => event.type === "turn.delta").map((e) => e.payload)).toEqual([
+      { delta: { type: "visible-thinking", text: "Weighing it." }, replay: true },
+      { delta: { type: "text", text: "Because." }, replay: true },
+    ]);
+  });
+
   it("replays the compacted context, not the summarized history", async () => {
     const store = await SessionStore.create(await sessionFile(), ".");
     await store.append(textMessage("user", "forgotten"));

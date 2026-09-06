@@ -3,6 +3,7 @@ import type { Box } from "@opentui/core";
 import type { GlyphSupport } from "./capability.ts";
 import type { Chord } from "./keys.ts";
 import type { PointerEvent } from "./pointer.ts";
+import type { SessionGroupBy } from "./sessions-overview-model.ts";
 import type { Theme } from "./theme.ts";
 
 export type PaneView = ReturnType<typeof Box>;
@@ -42,7 +43,7 @@ export type PaneDescriptor =
   | { kind: "conversation"; sessionId?: string }
   | { kind: "file"; path: string }
   | { kind: "browser"; root: string }
-  | { kind: "session-tree"; sessionId?: string }
+  | { kind: "session-tree"; sessionId?: string; groupBy?: SessionGroupBy }
   | { kind: "arcs"; arc?: string }
   | { kind: "arc"; arc: string }
   | { kind: "memory"; lens?: MemoryLens; note?: string; query?: string }

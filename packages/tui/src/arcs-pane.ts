@@ -26,7 +26,7 @@ import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { focusOrOpenSession, overviewRowView, type SessionTreePort } from "./session-tree-pane.ts";
-import { overviewRowLine, type SessionPresence } from "./sessions-overview-model.ts";
+import { overviewRowLine, type SessionPresence, withoutArcTag } from "./sessions-overview-model.ts";
 import { slugChunks, slugInk } from "./slug-ink.ts";
 import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
@@ -208,8 +208,8 @@ export class ArcsPane implements Pane {
     }
     return rowsView(this.model.sessions, rows, theme, width, {
       empty: "░ no sessions here yet",
-      text: (row) => overviewRowLine({ ...row, arc: undefined }, true),
-      line: (row) => overviewRowView({ ...row, arc: undefined }, theme, width, () => theme.textDim),
+      text: (row) => overviewRowLine(withoutArcTag(row), true),
+      line: (row) => overviewRowView(withoutArcTag(row), theme, width, () => theme.textDim),
     });
   }
 

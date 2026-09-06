@@ -7,6 +7,7 @@ import {
   type ToolCallPart,
 } from "@keywork/engine";
 import { toError } from "@keywork/shared";
+import { type BotSummary, describeBotSpend } from "./bots.ts";
 import type { FileReader } from "./diff-render.ts";
 import type { Chord } from "./keys.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
@@ -37,9 +38,12 @@ export interface ConversationPorts {
   forkAtPrompt?: (promptId: string, draft: string) => Promise<ForkOutcome>;
   idleNotice?: string;
   now?: () => number;
+  botSpend?: (bot: string) => Promise<BotSummary | undefined>;
 }
 
 export type CompactionHook = (instructions: string) => Promise<void>;
+
+export type ThinkingChangeHook = (level: "on" | "off") => Promise<void>;
 
 export type SettledOutcome = "finished" | "failed";
 
@@ -67,6 +71,7 @@ export class ConversationModel {
   private unfollow: () => void = () => {};
   private afterTurn: (() => Promise<void>) | undefined;
   private compaction: CompactionHook | undefined;
+  private thinkingChange: ThinkingChangeHook | undefined;
   private settledListener: ((outcome: SettledOutcome) => void) | undefined;
   private titleRequested = false;
   private retrievalDisclosed = false;
@@ -257,6 +262,10 @@ export class ConversationModel {
     this.compaction = hook;
   }
 
+  bindThinkingChange(hook: ThinkingChangeHook): void {
+    this.thinkingChange = hook;
+  }
+
   onSettled(listener: (outcome: SettledOutcome) => void): void {
     this.settledListener = listener;
   }
@@ -265,6 +274,7 @@ export class ConversationModel {
     const previous = this.agent;
     if (previous === agent) return;
     if (previous !== undefined) this.ledger.retire(previous);
+    if (previous !== undefined) agent.setThinking(previous.thinking());
     this.ask.denyAll();
     this.follow(agent);
     if (previous !== undefined) agent.adoptQueue(previous);
@@ -390,7 +400,7 @@ export class ConversationModel {
     const argument = rest.join(" ").trim();
     switch (verb.toLowerCase()) {
       case "cost":
-        this.feed.post("info", this.ledger.costReport(this.agent));
+        this.reportCost();
         return true;
       case "context":
         this.feed.post("info", this.ledger.contextReport(this.agent));
@@ -398,9 +408,44 @@ export class ConversationModel {
       case "compact":
         this.compactNow(argument);
         return true;
+      case "thinking":
+        this.toggleThinking(argument);
+        return true;
       default:
         return this.commands?.run(typed) ?? false;
     }
+  }
+
+  private toggleThinking(argument: string): void {
+    const agent = this.agent;
+    if (agent === undefined) {
+      this.feed.post("info", "no model bound · nothing to think with");
+      return;
+    }
+    const requested = thinkingSwitchFrom(argument) ?? (agent.thinking() ? "off" : "on");
+    agent.setThinking(requested === "on");
+    this.feed.post("info", thinkingNotices[requested]);
+    this.lastSend = (this.thinkingChange?.(requested) ?? Promise.resolve()).catch(
+      (cause: unknown) => {
+        if (!this.disposed) this.feed.post("error", toError(cause).message);
+      },
+    );
+  }
+
+  private reportCost(): void {
+    const report = this.ledger.costReport(this.agent);
+    const bot = this.ledger.bot;
+    const botSpend = this.ports?.botSpend;
+    if (bot === undefined || botSpend === undefined) {
+      this.feed.post("info", report);
+      return;
+    }
+    void botSpend(bot).then((summary) => {
+      this.feed.post(
+        "info",
+        summary === undefined ? report : `${report}\n${describeBotSpend(summary)}`,
+      );
+    });
   }
 
   private handleEscape(primed: boolean): boolean {
@@ -482,8 +527,19 @@ export class ConversationModel {
 
 const noForkPointNotice = "no fork point there";
 
+const thinkingNotices = {
+  on: "thinking shown · tab unfolds it · /thinking hides it again",
+  off: "thinking hidden · requests go out as before",
+} as const;
+
+function thinkingSwitchFrom(argument: string): "on" | "off" | undefined {
+  const word = argument.trim().toLowerCase();
+  return word === "on" || word === "off" ? word : undefined;
+}
+
 const conversationCommands: readonly CommandSuggestion[] = [
   { name: "cost", description: "token and cost breakdown for this session" },
   { name: "context", description: "how full the context is and where compaction fires" },
   { name: "compact", description: "fold older context into a summary: /compact [focus]" },
+  { name: "thinking", description: "show or hide the model's reasoning: /thinking [on|off]" },
 ];

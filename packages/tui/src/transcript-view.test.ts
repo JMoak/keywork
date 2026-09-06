@@ -396,6 +396,46 @@ describe("the voice rail and tool rows", () => {
   });
 });
 
+describe("thinking parts", () => {
+  const thought = "First weigh the options, then pick the shorter road.";
+
+  it("renders a folded thinking part as one meta row under the agent stamp", () => {
+    const lines = new TranscriptView().frame(
+      sourceOf([{ kind: "thinking", text: thought, folded: true }]),
+      { width: 80, rows: 40 },
+      { scrollBack: 0 },
+    ).lines;
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      kind: "thinking",
+      stamp: "▓ ",
+      text: "thinking · 9 words",
+      spans: [{ text: "thinking · 9 words", tone: "meta" }],
+    });
+  });
+
+  it("discloses the reasoning as meta prose under a rule when unfolded", () => {
+    const lines = new TranscriptView().frame(
+      sourceOf([{ kind: "thinking", text: `${thought}\n\nThen go.`, folded: false }]),
+      { width: 80, rows: 40 },
+      { scrollBack: 0 },
+    ).lines;
+    expect(lines[1]?.spans?.[0]?.tone).toBe("rule");
+    expect(lines.slice(2).map((line) => line.text)).toEqual([thought, "", "Then go."]);
+    expect(lines.slice(2).every((line) => line.spans?.[0]?.tone === "meta")).toBe(true);
+    expect(lines.slice(1).every((line) => line.stamp === "  ")).toBe(true);
+  });
+
+  it("re-renders when the fold flips without a text change", () => {
+    const entry: TranscriptEntry = { kind: "thinking", text: thought, folded: true };
+    const view = new TranscriptView();
+    const geometry = { width: 80, rows: 40 };
+    expect(view.frame(sourceOf([entry]), geometry, { scrollBack: 0 }).lines).toHaveLength(1);
+    entry.folded = false;
+    expect(view.frame(sourceOf([entry]), geometry, { scrollBack: 0 }).lines).toHaveLength(3);
+  });
+});
+
 describe("tiered transcript marks", () => {
   it("stamps voice and rules in ASCII at glyph tier 0", () => {
     const ascii = pageMarks({ glyphTier: 0, nerdFont: false });

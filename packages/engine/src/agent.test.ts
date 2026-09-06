@@ -815,6 +815,47 @@ function lastUserText(messages: readonly Message[]): string {
   return last === undefined ? "" : messageText(last);
 }
 
+describe("Agent visible thinking", () => {
+  function recordingProvider(requests: Record<string, unknown>[]): Provider {
+    return {
+      name: "recording",
+      stream: (request) => {
+        requests.push({ ...request });
+        return streamOf([
+          { type: "visible-thinking", text: "First, " },
+          { type: "visible-thinking", text: "consider." },
+          { type: "text", text: "Done." },
+          { type: "done", usage: { inputTokens: 1, outputTokens: 1 } },
+        ]);
+      },
+    };
+  }
+
+  it("carries the thinking flag only once switched on and keeps the streamed reasoning as its own part", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const agent = new Agent({ provider: recordingProvider(requests) });
+    expect(agent.thinking()).toBe(false);
+    await agent.send("one");
+    expect("thinking" in (requests[0] ?? {})).toBe(false);
+
+    agent.setThinking(true);
+    await agent.send("two");
+    expect(requests[1]?.thinking).toBe(true);
+    expect(agent.history().at(-1)?.parts).toEqual([
+      { type: "visible-thinking", text: "First, consider." },
+      { type: "text", text: "Done." },
+    ]);
+
+    agent.setThinking(false);
+    await agent.send("three");
+    expect("thinking" in (requests[2] ?? {})).toBe(false);
+  });
+
+  it("starts with thinking on when constructed that way", () => {
+    expect(new Agent({ provider: new MockProvider([]), thinking: true }).thinking()).toBe(true);
+  });
+});
+
 describe("Agent turn queue", () => {
   it("delivers three queued prompts after the turn, in order, each as its own turn, staying busy throughout", async () => {
     const prompts: string[] = [];

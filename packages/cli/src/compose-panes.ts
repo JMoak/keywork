@@ -26,6 +26,7 @@ import {
   crashLogFile,
   detectCapabilities,
   type ExtensionsPort,
+  type NoticeSource,
   readinessNotice,
   runApp,
   type WorkspacePort,
@@ -33,6 +34,7 @@ import {
   type WorkspacesPort,
 } from "@keywork/tui";
 import { arcService, arcsUnavailable, type ClosingRequest } from "./arcs.ts";
+import { botMemory } from "./bot-memory.ts";
 import { botService } from "./bots.ts";
 import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
 import {
@@ -143,6 +145,7 @@ export interface PanesOptions {
 
 export async function composePanes(options: PanesOptions): Promise<AppOptions> {
   const { cwd, projectTrusted, workspaceSlug, config, materialize, presets } = options;
+  const notices = noticeFeed();
   const composition = await composeWorkspace({
     cwd,
     projectTrusted,
@@ -151,12 +154,15 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     mcpServers: config.mcpServers,
     repoMap: config.repoMap,
     models: config.models,
+    lsp: config.lsp,
     onFileSaved: materialize === undefined ? undefined : (path) => materialize.fileSaved(path),
+    notice: notices.post,
     userRoot: options.userRoot,
     checkpointsGitDir: options.checkpointsGitDir,
     reportCheckpointsUnavailable: options.reportCheckpointsUnavailable,
   });
   const { checkpoints, extensions, mcp, memory } = composition;
+  const port = composition.languagePort;
   const citations = citationTrail(memory, () => composition.bootstrap);
   const setup = options.workspaceSetup;
   const stores = new Map<string, SessionStore>();
@@ -175,7 +181,23 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     unavailable:
       setup === undefined ? undefined : () => readinessNotice(setup.readiness()) ?? arcsUnavailable,
   });
-  const agents = composeAgents(composition, { permissions: presets?.resolver, arcs, citations });
+  const botLayers = botMemory({
+    cwd,
+    projectTrusted,
+    workspaceSlug,
+    userRoot: options.userRoot ?? homedir(),
+    memory,
+    roster: extensions.bots,
+    bindingOf: (sessionId) => stores.get(sessionId)?.botBinding(),
+  });
+  await botLayers.prepare();
+  const agents = composeAgents(composition, {
+    permissions: presets?.resolver,
+    arcs,
+    bots: botLayers,
+    citations,
+    thinking: config.thinking === "on",
+  });
   const bots = botService({
     cwd,
     projectTrusted,
@@ -226,7 +248,12 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
-    closers: [() => sweepOnClose(memory()), ...(mcp === undefined ? [] : [() => mcp.stop()])],
+    closers: [
+      () => sweepOnClose(memory()),
+      ...(mcp === undefined ? [] : [() => mcp.stop()]),
+      ...(port === undefined ? [] : [() => port.dispose()]),
+    ],
+    notices,
     extensions: extensionsView(extensions, cwd),
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
     ...(config.pointer !== undefined && { pointer: config.pointer }),
@@ -244,13 +271,16 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
         doctorReport(detectCapabilities(), options.inference?.current().runtime.registry, {
           ...facts,
           crashLog: crashLogFacts(crashLogFile),
+          ...(composition.languagePort !== undefined && {
+            languageServers: composition.languagePort.facts(),
+          }),
         }),
       );
     },
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
     ...(projectTrusted && {
-      memory: memoryPanePort(memory, arcs.registry, arcs.port.airlock),
+      memory: memoryPanePort(memory, arcs.registry, arcs.port.airlock, botLayers),
     }),
     ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
     ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
@@ -401,5 +431,18 @@ function extensionsView(extensions: WorkspaceExtensions, cwd: string): Extension
         ),
     })),
     failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
+  };
+}
+
+function noticeFeed(): NoticeSource & { post: (text: string) => void } {
+  const posts = new Set<(text: string) => void>();
+  return {
+    post: (text) => {
+      for (const post of posts) post(text);
+    },
+    subscribe: (post) => {
+      posts.add(post);
+      return () => posts.delete(post);
+    },
   };
 }

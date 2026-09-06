@@ -1,3 +1,6 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { MockProvider } from "../mock-provider.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
 
@@ -25,4 +28,32 @@ export function recordingProvider(
 async function* okTurn(): AsyncIterable<TurnDelta> {
   yield { type: "text", text: "ok" };
   yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
+}
+
+export const lspFixtureServerPath = fileURLToPath(
+  new URL("./lsp-fixture-server.ts", import.meta.url),
+);
+
+export interface LanguageServerShim {
+  dir: string;
+  marker: string;
+  trace: string;
+}
+
+export function installLanguageServerShim(
+  dir: string,
+  name: string,
+  profile: string,
+): LanguageServerShim {
+  const marker = join(dir, `${name}.pid`);
+  const trace = join(dir, `${name}.trace`);
+  const argv = [lspFixtureServerPath, profile, marker, trace];
+  if (process.platform === "win32") {
+    const quoted = [process.execPath, ...argv].map((part) => `"${part}"`).join(" ");
+    writeFileSync(join(dir, `${name}.cmd`), `@echo off\r\n${quoted} %*\r\n`);
+  } else {
+    const quoted = [process.execPath, ...argv].map((part) => `'${part}'`).join(" ");
+    writeFileSync(join(dir, name), `#!/bin/sh\nexec ${quoted} "$@"\n`, { mode: 0o755 });
+  }
+  return { dir, marker, trace };
 }

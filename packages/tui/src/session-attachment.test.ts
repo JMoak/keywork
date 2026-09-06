@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { ConversationPane } from "./conversation-pane.ts";
 import { AppProbe } from "./probe.ts";
 import {
+  adoptSession,
   attachOnFork,
   bindSessionLifecycle,
   paneSessionIndex,
@@ -217,6 +218,31 @@ describe("paneSessionIndex", () => {
 });
 
 describe("bindSessionLifecycle", () => {
+  it("restores the session's thinking switch on adopt and records /thinking through the attachment", async () => {
+    const recorded: string[] = [];
+    const attachment: SessionAttachment = {
+      ...attachmentOf("s1"),
+      thinking: "on",
+      recordThinking: async (level) => {
+        recorded.push(level);
+      },
+    };
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const pane = new ConversationPane(id, agent, notify, undefined, commands);
+        adoptSession(pane, agent, attachment);
+        bindSessionLifecycle({ pane, attachment });
+        return pane;
+      },
+    });
+    expect(agent.thinking()).toBe(true);
+    probe.type("/thinking").keys("enter");
+    await probe.settled();
+    expect(agent.thinking()).toBe(false);
+    expect(recorded).toEqual(["off"]);
+  });
+
   it("hands each persisted prompt's entry id back to the pane", async () => {
     let sequence = 0;
     const attachment: SessionAttachment = {

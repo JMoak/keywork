@@ -20,6 +20,7 @@ import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { focusOrOpenSession, type SessionTreePort } from "./session-tree-pane.ts";
 import {
+  isSessionRow,
   livenessMark,
   type SessionLiveness,
   type SessionOverviewRow,
@@ -181,14 +182,14 @@ export class ArcPane implements Pane {
   }
 
   private toggleFoldAtCursor(): true {
-    const row = this.members.cursorRow();
-    if (row === undefined) return true;
-    switch (this.placementOf(row.id)) {
+    const sessionId = this.members.cursorSession();
+    if (sessionId === undefined) return true;
+    switch (this.placementOf(sessionId)) {
       case "shown":
-        this.fold(row.id);
+        this.fold(sessionId);
         break;
       case "folded":
-        this.unfold(row.id);
+        this.unfold(sessionId);
         break;
       case "closed":
         this.intents.notice?.("closed session · enter opens it");
@@ -218,7 +219,7 @@ export class ArcPane implements Pane {
 
   private cluster(): string[] {
     const memberPanes = this.members
-      .rows()
+      .sessionRows()
       .map((row) => this.paneOf(row.id))
       .filter((paneId) => paneId !== undefined);
     return [...memberPanes, this.id];
@@ -226,14 +227,14 @@ export class ArcPane implements Pane {
 
   private memberIds(placement: MemberPlacement): string[] {
     return this.members
-      .rows()
+      .sessionRows()
       .map((row) => row.id)
       .filter((sessionId) => this.placementOf(sessionId) === placement);
   }
 
   private foldedMemberAwaitsYou(): boolean {
     return this.members
-      .rows()
+      .sessionRows()
       .some((row) => row.liveness === "waiting" && this.placementOf(row.id) === "folded");
   }
 
@@ -257,8 +258,11 @@ export class ArcPane implements Pane {
     const ink = arcInk(theme, this.options.arcOrdinal?.(this.options.slug));
     return rowsView(this.members, rows, theme, width, {
       empty: "░ no sessions in this arc yet · ctrl+k s inside a member adds one",
-      text: (row) => memberRowLine(row, this.placementOf(row.id)),
-      line: (row) => memberRowView(row, this.placementOf(row.id), theme, width, ink),
+      text: (row) => (isSessionRow(row) ? memberRowLine(row, this.placementOf(row.id)) : ""),
+      line: (row) =>
+        isSessionRow(row)
+          ? memberRowView(row, this.placementOf(row.id), theme, width, ink)
+          : Text({ content: "" }),
     });
   }
 

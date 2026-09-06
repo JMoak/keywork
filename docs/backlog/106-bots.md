@@ -5,7 +5,8 @@
 > inline as **⟨J⟩**: the entity merge (Q-B1, PD21.1), the scope layout (PD21.2), the
 > group-by toggle (Q-B2), the `notes` default (Q-B5), and the two-verb policy-row model
 > (Q-B8). Q-B3 is set aside, Q-B6 stays open for discussion, Q-B4 and Q-B7 stand as
-> reversible assumptions of the 2026-09-03 round. This file wins over
+> reversible assumptions of the 2026-09-03 round. J26 (the PD22 layer) landed 2026-09-06;
+> the ledger records it. This file wins over
 > [`105`](105-inference-resolution.md) and below where it speaks; the ledger at the end
 > records what the tree actually does.
 >
@@ -488,3 +489,148 @@ e2e 40/40.
    theme or NO_COLOR knob yet, so those two captures wait on one.
 6. `agent:` in command frontmatter became `bot:` with no alias.
 7. Pane-tray rows for bots were not added; the palette and go overlay carry the family.
+
+### J26 · bot memory layer · landed 2026-09-06
+
+- **The layer.** `engine/memory/bots/registry.ts` mirrors the arc registry: `BotRegistry` over a
+  vault root, `bots/<slug>/` with `MOC.md` as the bot's graph entity (frontmatter `bot`, `status`
+  `active` or `retired`, `created`), lazy `materialize(slug)` on the first write, `retireBot` as
+  the status verb, and `botStore(slug)` as a `MemoryStore` over the sub-vault that stamps every
+  note it writes with `learned_by: "[[bots/<slug>/MOC]]"` (`Note.learnedBy` reads it back as the
+  slug; `NoteInput.learnedBy` stamps a note a bot writes into another layer). `bots/` joined
+  `arcs/` and `daily/` as a structural directory, so the workspace walk never sees a bot note.
+- **Recall.** `engine/memory/bots/recall.ts`: `BotRecall` composes over any `MemorySearcher` (the
+  arc-composed one in practice), adds the active bot's hits boosted twice, tags them
+  `{ layer: "bot", bot }`, applies the superseded floor, and hides nothing. Other bots' layers
+  stay out of ambient recall and are reachable through `searchBot`. `MemoryLayerRef` gained the
+  bot variant and `searchHitLayer` yields `bot:<slug>`, so J13 citation events carry the layer
+  with no further change. `botBootstrapLayer` selects the MOC first, then pinned, then most
+  useful, within whatever budget it is handed.
+- **Composition.** `cli/bot-memory.ts` resolves a bot's layer from its scope: project bots in the
+  workspace vault (trusted only), global bots once in the user vault at
+  `~/.keywork/memory/bots/<slug>/`, `learning: off` nothing at all. It wraps the session's
+  searcher, supplies the flush target, and precomputes the bootstrap split per learning bot: the
+  bot slice gets a quarter of the 4096-token bootstrap budget and the workspace slice gets the
+  rest minus what the bot slice actually used, so an empty layer costs the workspace nothing.
+  Composed prompts carry workspace + bot slices; a bot with its own body gets only its own slice
+  appended. The standing injection `memory-bootstrap · scope bot:<slug>` announces it and the
+  slice's notes are recorded as bootstrap recalls on the session ledger at the first turn. The
+  same `composeAgents({ bots })` serves the panes app, `keywork run --bot`, and the chat REPL;
+  the binding is read from the session store, so resume and mid-session switches follow.
+- **Flush.** The prompt gains the bot clause only while a learning bot is bound: lines that start
+  with `bot:` are craft and land in the bot layer's daily log (materializing the layer on the
+  way); unprefixed lines are work and land in the workspace or active arc layer through the
+  unchanged path, same provenance, taint, staging, and redaction. `isMemoryFlushPrompt` still
+  recognizes the composed prompt for replay.
+- **Digest.** Bot-layer staged items ride the existing memory-pane inbox with the sigil as the
+  row tag (`⚖ Hostile Habit.md`); approve and discard route to the owning bot store. No new door,
+  no new counter. Bot layers are not yet listed as memory-pane layers (C68).
+- **Evidence.** `engine/memory/bots/registry.test` (lazy MOC, `learned_by`, workspace walk,
+  retire, slug, untrusted inert), `recall.test` (two sessions one bot, other bot ambient-invisible
+  yet searchable, arc tags kept beneath, retired skipped, untrusted inert, budget), `flush.test`
+  (clause routing, write-only-where-landed, unbound prompt byte-identical, partition),
+  `cli/bot-memory.test` (cross-session recall through `memory_search`, `bot:reviewer` citations
+  in the ledger and audit, unbound byte-for-byte on prompt, tools, flush prompt, daily write and
+  files, split budget in the built prompt, swapped-prompt slice, `learning: off` zero cost,
+  content rule at flush, slice refresh after learning, global bot in the user vault, untrusted
+  inert, digest tag and approve routing).
+
+**Gate (lane-run, 2026-09-06):** `bun run check:types` clean outside other lanes' in-flight
+TUI/doctor/run edits; `biome check` clean on every touched file; vitest
+`packages/engine packages/cli` 1550 passed with the 6 failures all in other lanes' files
+(`doctor.test`, `run.test`); `bot-memory.test` 13/13 across three runs. The lead runs the full gate.
+
+### Assumptions Jordan may reverse (2026-09-06)
+
+8. Q-B3 taken as recommended: a global bot's layer lives once in the user vault
+   (`~/.keywork/memory/bots/<slug>/`) and follows the user across workspaces; the user vault is
+   treated as trusted. The content rule is what keeps workspace facts out of it.
+9. The bot bootstrap share is a fixed quarter of the workspace bootstrap budget (1024 of 4096
+   tokens), adaptive downward only: the workspace slice reclaims whatever the bot slice leaves.
+   No config knob; the absolute readout waits for J27's `/policy`.
+10. Craft is routed by a `bot:` line prefix the flush prompt asks the model to use. A forgotten
+    prefix puts a craft line in the work layer, never a work fact in the bot layer, which is the
+    safe direction under the content rule.
+11. Bot recall and the bot flush ride the workspace's memory seams: a bound session in a directory
+    with no workspace declaration gets no bot layer either, global bot or not.
+12. `learned_by` uses the PD21.2 wikilink form rather than a bare slug. The bot store stamps its
+    own notes; `NoteInput.learnedBy` is the hook for bot-authored notes elsewhere, and no live
+    path writes those yet (daily-to-note promotion inside the layer is J27's micro-sweep).
+13. Bootstrap slices are computed once at composition and refreshed in-process after each bot
+    flush; notes added to a layer from outside the app show up at the next launch, as the
+    workspace slice does today.
+14. `memory_search` searches bot-layer notes but not bot-layer daily entries, matching the arc
+    layer; the daily search stays on the workspace log.
+
+### C68 · bot identity across surfaces · part 1 landed 2026-09-06
+
+- **Title bar (PD24.2).** `TitleBarState.bot` (`sigil` + `name`) renders in the PD19 detail
+  zone as a `bot` span, first in the tail: `█ auth-retry-fix #dock-v2 · ⚖ reviewer · $0.012 ·
+  plan`. Broadsheet and column show `sigil name`; clipping and masthead keep the sigil alone.
+  The shedding order under width pressure is now bot name → arc tag → mode word → telemetry →
+  sigil, then the fitted name, then the stamp. Tail ink is `textMid` (`pane-chrome.ts`
+  `tailInk`). `ConversationPane` composes it from `ledger.bot` through a `botOf` option that
+  `session-panes.ts` threads from the existing `SessionPaneDeps.botOf`; a bot whose definition
+  is gone falls back to `defaultSigil`. Identity is text, so glyph tier 0 and `NO_COLOR` keep
+  it legible by construction.
+- **Sessions overview group-by (PD24.3, Q-B2).** `SessionsOverviewModel` carries `groupBy`
+  (`none · arc · bot`); `g` cycles it in the pane (pane-local key, no leader chord; tray row
+  `group`). Rows become `OverviewRow = SessionOverviewRow | SessionGroupRow`: headers are
+  unselectable, keyed `group:<axis>:<member>`, and read `⚖ reviewer · 2 sessions · 3m`,
+  `#dock-v2 · 1 session · 1m`, `no bot · 2 sessions · 2m`. Groups order by their newest
+  session, sessions most-recent-first inside, the unbound remainder last; an axis with nothing
+  bound renders flat (no lone `no bot` header). The cursor stays on the same session across
+  a grouping change and a refresh. The axis persists through the `session-tree` descriptor
+  (`groupBy`, parsed back against an allow-list) and the `PaneRequest`/factory, so it survives
+  a workspace restore. A dim footer `g · group by arc or bot` / `g · grouped by bot` appears
+  once the overview holds two or more sessions. Bot group labels take the sigil from the
+  roster via `SessionTreePaneSeams.botSigil`; `SessionOverviewItem.bot` comes from the CLI
+  summary's `store.botBinding()`.
+- **Per-bot cost (PD24.4).** `cli/bots.ts` `boundStores` + `botCosts` run the engine's
+  `groupCosts` over every bot-bound session's entries; `knownCostNanos` lands on
+  `BotSummary.costNanos` only when every turn priced. Picker rows read `S scout · reads
+  before writing · 2 sessions · $0.0030 · current`; `/cost` in a bound pane appends `bot ⚖
+  reviewer · $0.0123 across 3 sessions` through a new `ConversationPorts.botSpend` seam wired
+  from `BotsPort.list()` (`app.ts` `botSpendLookup`), and stays byte-identical for unbound panes.
+- **Design language.** One clarification under the chroma section: bot identity is sigil and
+  name, never hue; hue stays the arc's.
+- **Waits on J26 (Q-B6 open):** the bot tag on bot-layer items in the memory pane and digest,
+  and the `/bot <slug>` briefing. The design-language line already names the memory-item tag
+  so J26 has its grammar.
+- **Evidence.** `title-bar.test` (bot zone across tiers, with and without an arc, shedding
+  order, monochrome, span tagging), `sessions-overview-model.test` (grouping, ordering,
+  header skipping, refresh survival, hint text), `session-tree-pane.test` (g cycle, descriptor
+  round-trip, revive grouped, refresh, footer hint, tray), `workspace-state.test` (groupBy
+  parse + rejection), `bot-picker.test` (cost fact), `conversation-model.test` (`/cost` bot
+  line), `cli/bots.test` (per-bot rollup equals `groupCosts` exactly; an unpriced turn leaves
+  the cost unknown). `arc-pane`, `arcs-pane`, `workflows-panes` tests moved to `sessionRows()`
+  / `cursorSession()`.
+- **Goldens.** None recaptured. `tray-tour/entity-tray.txt` will move by one row (the new
+  `group` tray entry); `bun run e2e tray-tour --update-goldens` refreshes it. The footer hint
+  shows only at two or more sessions, so the chrome-states captures (one session) are unchanged.
+- **Crossings (additive):** `pane.ts` / `pane-kinds.ts` / `workspace-state.ts` `groupBy` on the
+  `session-tree` descriptor, `app.ts` factory + `botSpend` wiring, `session-panes.ts` two
+  pass-throughs, `conversation-model.ts` `reportCost`, `arc-pane.ts` / `arcs-pane.ts` read
+  session rows through `sessionRows()` / `cursorSession()` / `withoutArcTag`.
+
+**Gate (lane-run):** `bun run check:types` clean; vitest `packages/tui` + `cli/bots.test`
+1552 passed (95 files); biome clean on `packages/tui/src` and the touched cli files. Full gate
+lead-run.
+
+### Assumptions Jordan may reverse (2026-09-06, C68 part 1)
+
+1. Shedding rank: bot name before the arc tag (PD24.2's wording), sigil after telemetry, so the
+   sigil is the last tail zone standing before the fitted name.
+2. The bot shows at every tier (sigil-only below column); the arc stays broadsheet-only as PD19
+   decided, because nothing else carries bot identity while the border hue carries the arc's.
+3. Bot ink in the title tail is `textMid`, the same rung as telemetry.
+4. Unbound sessions form the last group (`no arc` / `no bot`) rather than sorting by recency
+   with the bound groups; an axis with nothing bound renders flat.
+5. Group headers carry `label · n sessions · age of newest`; session rows stay unchanged (no
+   per-row bot sigil), since the group label is where PD24.2 places bot identity.
+6. The footer hint appears at two or more sessions, the point where grouping means something.
+7. Per-bot cost surfaces only when every bound turn is priced (`knownCostNanos`), mirroring the
+   session rows; partial totals stay off rather than reading as the whole.
+8. `/cost` reports the bot line through `BotsPort.list()` (a session-dir scan) rather than a
+   dedicated cost port.
+

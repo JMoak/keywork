@@ -3,7 +3,11 @@ import { ArcPane, type ArcPaneOptions, memberRowLine } from "./arc-pane.ts";
 import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { PointerEvent } from "./pointer.ts";
-import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
+import {
+  isSessionRow,
+  type SessionOverviewItem,
+  type SessionPresence,
+} from "./sessions-overview-model.ts";
 import { press } from "./testing/index.ts";
 import { resolveTheme } from "./theme.ts";
 
@@ -136,7 +140,9 @@ function paneOver(world: World, presence?: SessionPresence, extra: Partial<ArcPa
 function rowLines(pane: ArcPane): string[] {
   return pane.members
     .visibleRows(20)
-    .map(({ row }) => memberRowLine(row, pane.placementOf(row.id)));
+    .flatMap(({ row }) =>
+      isSessionRow(row) ? [memberRowLine(row, pane.placementOf(row.id))] : [],
+    );
 }
 
 describe("ArcPane", () => {

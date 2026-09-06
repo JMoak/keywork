@@ -1,6 +1,7 @@
 import type { CommandRegistry } from "./commands.ts";
 import type { DockSide } from "./layout.ts";
 import type { FileOpenOptions, MemoryLens, Pane, PaneDescriptor, PaneIntents } from "./pane.ts";
+import type { SessionGroupBy } from "./sessions-overview-model.ts";
 
 export type PaneKind = PaneDescriptor["kind"];
 export type PaneHome = "main" | DockSide;
@@ -40,6 +41,7 @@ export type SessionTreePaneFactory = (
   intents: PaneIntents,
   targetSession: () => string | undefined,
   sessionId?: string,
+  groupBy?: SessionGroupBy,
 ) => Pane;
 export type ArcsPaneFactory = (
   id: string,
@@ -86,7 +88,7 @@ export type PaneRequest =
   | { kind: "conversation"; sessionId?: string; draft?: string; origin?: PaneOrigin }
   | { kind: "file"; path: string; options?: FileOpenOptions }
   | { kind: "browser"; root: string }
-  | { kind: "session-tree"; sessionId?: string }
+  | { kind: "session-tree"; sessionId?: string; groupBy?: SessionGroupBy }
   | { kind: "arcs"; arc?: string }
   | { kind: "arc"; arc: string }
   | ({ kind: "memory" } & MemoryPaneRevival)
@@ -170,6 +172,7 @@ export function buildPane(
         seams.intents,
         seams.conversationSession,
         request.sessionId,
+        request.groupBy,
       );
     case "arcs":
       return factories.createArcsPane?.(

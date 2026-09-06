@@ -22,6 +22,7 @@ export interface Note {
   supersededBy?: string;
   delivered?: string;
   distilledFrom?: string;
+  learnedBy?: string;
 }
 
 export interface DailyEntry {
@@ -51,6 +52,7 @@ export function parseNote(path: string, raw: string): Note | undefined {
   const supersededBy = wikilinkTarget(frontmatter.superseded_by);
   const delivered = firstString(frontmatter.delivered);
   const distilledFrom = wikilinkTarget(frontmatter.distilled_from);
+  const learnedBy = learnedBySlug(frontmatter.learned_by);
   return {
     name: noteName(path),
     path,
@@ -69,7 +71,24 @@ export function parseNote(path: string, raw: string): Note | undefined {
     ...(supersededBy !== undefined && { supersededBy }),
     ...(delivered !== undefined && { delivered }),
     ...(distilledFrom !== undefined && { distilledFrom }),
+    ...(learnedBy !== undefined && { learnedBy }),
   };
+}
+
+export const botMocName = "MOC";
+
+export function botMocLink(slug: string): string {
+  return `bots/${slug}/${botMocName}`;
+}
+
+export function learnedByLink(slug: string): string {
+  return `[[${botMocLink(slug)}]]`;
+}
+
+export function learnedBySlug(value: unknown): string | undefined {
+  const target = wikilinkTarget(value);
+  if (target === undefined) return firstString(value);
+  return target.match(learnedByPattern)?.[1];
 }
 
 export function isEntityPath(path: string): boolean {
@@ -175,6 +194,7 @@ export function parseDailyEntries(raw: string): DailyEntry[] {
 const wikilinkPattern = /\[\[([^[\]|#]+)(?:#[^[\]|]*)?(?:\|[^[\]]*)?\]\]/g;
 const dailyMarkerPattern = /^- (\d{2}:\d{2}) \[prov: (user|agent|untrusted)\] (.*)$/;
 const dailyDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+const learnedByPattern = new RegExp(`^bots/([^/]+)/${botMocName}$`);
 
 function parseProvenance(frontmatter: Frontmatter, path: string): Provenance {
   const value = frontmatter.provenance;

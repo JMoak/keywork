@@ -12,12 +12,14 @@ import {
 } from "../session/context-budget.ts";
 import {
   backtrackFlushClause,
+  botFlushClause,
   flushPrompt,
   isMemoryFlushPrompt,
   isNoReply,
   MemoryFlush,
   memoryFlushPrompt,
   noReplyToken,
+  partitionBotLines,
   shouldFlush,
 } from "./flush.ts";
 import { memorySearchTool } from "./recall-tools.ts";
@@ -219,5 +221,92 @@ describe("backtrack capture", () => {
   it("recognizes both prompt forms", () => {
     expect(isMemoryFlushPrompt(flushPrompt(true))).toBe(true);
     expect(isMemoryFlushPrompt(flushPrompt(false))).toBe(true);
+  });
+});
+
+describe("the bot clause", () => {
+  function reviewerBound(layer: MemoryStore): {
+    slug: string;
+    remember(text: string): Promise<void>;
+  } {
+    return {
+      slug: "reviewer",
+      remember: async (text) => {
+        await layer.appendDaily(text, "agent");
+      },
+    };
+  }
+
+  it("asks what the bot learned about the job and routes those lines to the bot layer, the rest to the work layer", async () => {
+    const { store, root } = await openVault();
+    const layer = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([
+        textTurn(
+          [
+            "The dock keeps a third of the width.",
+            "bot: Jordan wants review comments terse.",
+            "bot:Snapshot tests get flagged, not rewritten.",
+          ].join("\n"),
+        ),
+      ]),
+      store,
+      bot: () => reviewerBound(layer.store),
+    });
+
+    const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
+
+    expect(outcome.persisted).toBe(true);
+    const prompt = messageText(outcome.messages[0] ?? textMessage("user", ""));
+    expect(prompt).toContain(botFlushClause("reviewer"));
+    expect(isMemoryFlushPrompt(prompt)).toBe(true);
+    const work = await readFile(join(root, "daily", "2026-08-10.md"), "utf8");
+    expect(work).toContain("The dock keeps a third of the width.");
+    expect(work).not.toContain("terse");
+    const craft = await readFile(join(layer.root, "daily", "2026-08-10.md"), "utf8");
+    expect(craft).toContain("[prov: agent] Jordan wants review comments terse.");
+    expect(craft).toContain("Snapshot tests get flagged, not rewritten.");
+    expect(craft).not.toContain("dock");
+  });
+
+  it("writes only where something landed, and nothing at all for NO_REPLY", async () => {
+    const { store, root } = await openVault();
+    const layer = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn("bot: prefers bullet points."), textTurn(noReplyToken)]),
+      store,
+      bot: () => reviewerBound(layer.store),
+    });
+    const first = await flush.maybeFlush(longConversation, readingAt(overThreshold));
+    flush.compactionCompleted();
+    const second = await flush.maybeFlush(longConversation, readingAt(overThreshold));
+
+    expect(first.persisted).toBe(true);
+    expect(second.persisted).toBe(false);
+    await expect(readFile(join(root, "daily", "2026-08-10.md"))).rejects.toThrow();
+    expect((await layer.store.readDaily("2026-08-10")).map((entry) => entry.text)).toEqual([
+      "prefers bullet points.",
+    ]);
+  });
+
+  it("leaves the unbound prompt and write path byte-identical", async () => {
+    const { store } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn("bot: looks like a prefix but no bot is bound")]),
+      store,
+      bot: () => undefined,
+    });
+    const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
+    expect(messageText(outcome.messages[0] ?? textMessage("user", ""))).toBe(memoryFlushPrompt);
+    expect((await store.readDaily("2026-08-10")).map((entry) => entry.text)).toEqual([
+      "bot: looks like a prefix but no bot is bound",
+    ]);
+  });
+
+  it("partitions prefixed lines and trims the prefix", () => {
+    expect(partitionBotLines("a\n  bot: b\nbot:c\nbot:\nd")).toEqual({
+      craft: "b\nc",
+      work: "a\nd",
+    });
   });
 });

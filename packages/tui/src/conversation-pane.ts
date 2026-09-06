@@ -1,5 +1,6 @@
-import type { Agent, ToolCallPart } from "@keywork/engine";
+import { type Agent, defaultSigil, type ToolCallPart } from "@keywork/engine";
 import { Box, bg, fg, StyledText, Text, type TextChunk } from "@opentui/core";
+import type { BotEntry } from "./bots.ts";
 import {
   density,
   type GlyphSupport,
@@ -21,6 +22,7 @@ import {
   ConversationModel,
   type ConversationPorts,
   type SettledOutcome,
+  type ThinkingChangeHook,
   type Titler,
 } from "./conversation-model.ts";
 import type { DiffLine } from "./diff-render.ts";
@@ -43,7 +45,7 @@ import {
 } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
-import { titleSpans } from "./title-bar.ts";
+import { type TitleBot, titleSpans } from "./title-bar.ts";
 import type { TranscriptLine } from "./transcript-view.ts";
 import { trayBox, trayRows } from "./tray.ts";
 import { clip, padEnd, width } from "./width.ts";
@@ -73,6 +75,7 @@ export interface ConversationPaneOptions {
   glyphs?: GlyphSupport;
   animator?: Animator;
   siblingTitles?: () => readonly string[];
+  botOf?: (name: string) => BotEntry | undefined;
   masthead?: "on" | "off";
   gauge?: GaugeStyle;
   elevation?: TranscriptElevation;
@@ -95,6 +98,7 @@ export class ConversationPane implements Pane {
 
   private readonly animator: Animator | undefined;
   private readonly siblingTitles: (() => readonly string[]) | undefined;
+  private readonly botOf: ((name: string) => BotEntry | undefined) | undefined;
   private readonly mastheadEnabled: boolean;
   private readonly gaugeOverride: GaugeStyle | undefined;
   private readonly elevation: TranscriptElevation | undefined;
@@ -124,6 +128,7 @@ export class ConversationPane implements Pane {
     this.stampGlyphs = lifecycleGlyphs(this.glyphs);
     this.animator = options?.animator;
     this.siblingTitles = options?.siblingTitles;
+    this.botOf = options?.botOf;
     this.mastheadEnabled = options?.masthead !== "off";
     this.gaugeOverride = options?.gauge;
     this.elevation = options?.elevation;
@@ -217,6 +222,10 @@ export class ConversationPane implements Pane {
 
   bindAfterTurn(hook: () => Promise<void>): void {
     this.model.bindAfterTurn(hook);
+  }
+
+  bindThinkingChange(hook: ThinkingChangeHook): void {
+    this.model.bindThinkingChange(hook);
   }
 
   bindCompaction(hook: CompactionHook): void {
@@ -373,6 +382,7 @@ export class ConversationPane implements Pane {
         name: this.model.title ?? this.id,
         stamp: this.stampGlyph(),
         arc: this.arc,
+        bot: this.titleBot(),
         telemetry: this.liveStatus(context) || undefined,
         siblings: this.siblingTitles?.(),
       },
@@ -387,6 +397,12 @@ export class ConversationPane implements Pane {
       groundArrival: this.groundInk,
       depth: this.chromeDepth(),
     };
+  }
+
+  private titleBot(): TitleBot | undefined {
+    const name = this.bot;
+    if (name === undefined) return undefined;
+    return this.botOf?.(name) ?? { sigil: defaultSigil(name), name };
   }
 
   private syncStamp(focused: boolean): void {
@@ -723,12 +739,13 @@ function stampColor(line: TranscriptLine, theme: Theme): string {
       return theme.accent;
     case "assistant":
       return theme.textMid;
+    case "thinking":
+    case "info":
+      return theme.textDim;
     case "tool":
       return line.failed ? theme.error : theme.textDim;
     case "error":
       return theme.error;
-    case "info":
-      return theme.textDim;
   }
 }
 
@@ -790,6 +807,8 @@ function lineColor(line: TranscriptLine, theme: Theme): string {
       return theme.accent;
     case "assistant":
       return theme.text;
+    case "thinking":
+      return theme.textMid;
     case "tool":
       return line.failed ? theme.error : theme.success;
     case "error":

@@ -240,3 +240,41 @@ describe("parseWorkspaceState", () => {
     for (const held of refused) expect(parseWorkspaceState(withHeld(held))).toBeUndefined();
   });
 });
+
+describe("session-tree grouping in the workspace state", () => {
+  it("round-trips the group-by axis and rejects one it does not know", () => {
+    const { layout, panes } = workspaceOf(
+      ["tree-1", { kind: "session-tree", groupBy: "bot" }],
+      ["session-1", { kind: "conversation" }],
+    );
+    const captured = JSON.parse(JSON.stringify(captureWorkspace(layout, panes))) as {
+      panes: Record<string, unknown>[];
+    };
+    expect(parseWorkspaceState(captured)?.panes[0]).toEqual({
+      id: "tree-1",
+      kind: "session-tree",
+      groupBy: "bot",
+    });
+    captured.panes[0] = { ...captured.panes[0], groupBy: "colour" };
+    expect(parseWorkspaceState(captured)).toBeUndefined();
+  });
+});
+
+describe("session-tree grouping in the workspace state", () => {
+  it("round-trips the group-by axis and rejects one it does not know", () => {
+    const { layout, panes } = workspaceOf(
+      ["tree-1", { kind: "session-tree", groupBy: "bot" }],
+      ["session-1", { kind: "conversation" }],
+    );
+    const captured = JSON.parse(JSON.stringify(captureWorkspace(layout, panes))) as {
+      panes: Record<string, unknown>[];
+    };
+    expect(parseWorkspaceState(captured)?.panes[0]).toEqual({
+      id: "tree-1",
+      kind: "session-tree",
+      groupBy: "bot",
+    });
+    captured.panes[0] = { ...captured.panes[0], groupBy: "colour" };
+    expect(parseWorkspaceState(captured)).toBeUndefined();
+  });
+});

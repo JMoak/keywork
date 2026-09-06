@@ -6,6 +6,7 @@ import type {
   SessionPort,
   SessionTreePort,
   SessionTreeView,
+  ThinkingSwitch,
 } from "@keywork/tui";
 import {
   findSession,
@@ -121,6 +122,7 @@ function attachmentOf(
 ): SessionAttachment {
   const name = store.name();
   const selection = store.modelSelection();
+  const thinking = thinkingSwitchOf(store.thinkingLevel());
   const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
@@ -128,6 +130,7 @@ function attachmentOf(
     ...(selection !== undefined && {
       modelReference: `${selection.provider}/${selection.modelId}`,
     }),
+    ...(thinking !== undefined && { thinking }),
     get arc() {
       return store.arcBinding();
     },
@@ -161,6 +164,11 @@ function attachmentOf(
       await store.appendModelChange(parsed.provider, parsed.model);
       seams.onChange?.(store.header.id);
     },
+    recordThinking: async (level) => {
+      if (thinkingSwitchOf(store.thinkingLevel()) === level) return;
+      await store.appendThinkingLevelChange(level);
+      seams.onChange?.(store.header.id);
+    },
     bindArc: async (slug) => {
       if (store.arcBinding() === slug) return;
       await store.appendArcBinding(slug);
@@ -185,6 +193,10 @@ export async function boundSessionCounts(dir: string): Promise<Map<string, numbe
   return counts;
 }
 
+function thinkingSwitchOf(level: string | undefined): ThinkingSwitch | undefined {
+  return level === "on" || level === "off" ? level : undefined;
+}
+
 function overviewItem(summary: SessionSummary): SessionOverviewItem {
   return {
     id: summary.id,
@@ -196,5 +208,6 @@ function overviewItem(summary: SessionSummary): SessionOverviewItem {
     labelCount: summary.labelCount,
     ...(summary.costNanos !== undefined && { costNanos: summary.costNanos }),
     ...(summary.arc !== undefined && { arc: summary.arc }),
+    ...(summary.bot !== undefined && { bot: summary.bot }),
   };
 }

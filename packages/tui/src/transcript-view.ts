@@ -5,8 +5,10 @@ import { inkAt } from "./motion.ts";
 import { columnPage, type PageGrammar, proseWidth } from "./page.ts";
 import {
   type AssistantEntry,
+  type ThinkingEntry,
   type ToolRun,
   type TranscriptEntry,
+  thinkingRowSpans,
   toolRowSpans,
 } from "./transcript-feed.ts";
 import { clipSpans, wrap } from "./width.ts";
@@ -247,8 +249,19 @@ function shapeOf(entry: TranscriptEntry): Shape {
   return {
     text: entry.text,
     failed: entry.kind === "tool" && entry.failed,
-    folded: entry.kind === "tool" ? entry.run?.folded !== false : true,
+    folded: foldedOf(entry),
   };
+}
+
+function foldedOf(entry: TranscriptEntry): boolean {
+  switch (entry.kind) {
+    case "tool":
+      return entry.run?.folded !== false;
+    case "thinking":
+      return entry.folded;
+    default:
+      return true;
+  }
 }
 
 function sameShape(left: Shape, right: Shape): boolean {
@@ -282,6 +295,8 @@ function stampFor(entry: TranscriptEntry, marks: PageMarks, streaming: number | 
       return streaming === undefined
         ? `${marks.voice.agent} `
         : `${inkAt(marks.streamRamp, streaming)} `;
+    case "thinking":
+      return `${marks.voice.agent} `;
     case "tool":
     case "error":
       return `${marks.voice.machine} `;
@@ -332,6 +347,8 @@ function entryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {
       return entry.run === undefined
         ? transcriptLines([entry], layout.body)
         : toolEntryLines(entry.run, entry.failed, layout);
+    case "thinking":
+      return thinkingEntryLines(entry, layout);
     case "error":
       return transcriptLines([entry], layout.body);
     case "user":
@@ -340,26 +357,35 @@ function entryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {
   }
 }
 
+function thinkingEntryLines(entry: ThinkingEntry, layout: Layout): TranscriptLine[] {
+  const spans = clipSpans(thinkingRowSpans(entry), layout.body, { text: "…", tone: "meta" });
+  const row: TranscriptLine = { kind: "thinking", failed: false, text: spanText(spans), spans };
+  if (entry.folded) return [row];
+  const gutter = " ".repeat(layout.page.proseGutter);
+  const body = entry.text
+    .split("\n")
+    .flatMap((line) => wrap(line, layout.prose))
+    .map((text) => metaLine("thinking", text === "" ? "" : `${gutter}${text}`));
+  return [row, ruleLine("thinking", layout), ...body];
+}
+
+function ruleLine(kind: TranscriptLine["kind"], layout: Layout): TranscriptLine {
+  const text = layout.marks.rule.repeat(Math.max(1, Math.min(layout.body, layout.prose)));
+  return { kind, failed: false, text, spans: [{ text, tone: "rule" }] };
+}
+
+function metaLine(kind: TranscriptLine["kind"], text: string): TranscriptLine {
+  return { kind, failed: false, text, spans: [{ text, tone: "meta" }] };
+}
+
 function toolEntryLines(run: ToolRun, failed: boolean, layout: Layout): TranscriptLine[] {
   const spans = clipSpans(toolRowSpans(run), layout.body, { text: "…", tone: "meta" });
   const row: TranscriptLine = { kind: "tool", failed, text: spanText(spans), spans };
   if (run.folded || run.detail === undefined) return [row];
-  const ruleText = layout.marks.rule.repeat(Math.max(1, Math.min(layout.body, layout.prose)));
-  const rule: TranscriptLine = {
-    kind: "tool",
-    failed: false,
-    text: ruleText,
-    spans: [{ text: ruleText, tone: "rule" }],
-  };
   const detail = [...(run.args === "{}" ? [] : [run.args]), ...run.detail]
     .flatMap((line) => wrap(line, layout.body))
-    .map((text) => ({
-      kind: "tool" as const,
-      failed: false,
-      text,
-      spans: [{ text, tone: "meta" as const }],
-    }));
-  return [row, rule, ...detail];
+    .map((text) => metaLine("tool", text));
+  return [row, ruleLine("tool", layout), ...detail];
 }
 
 function proseEntryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {

@@ -133,6 +133,29 @@ describe("TranscriptFeed", () => {
     expect(entry).toMatchObject({ run: { folded: false } });
   });
 
+  it("folds streamed thinking into one entry ahead of the answer and unfolds it on the latest-fold key", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([
+        [
+          { type: "visible-thinking", text: "Weigh " },
+          { type: "visible-thinking", text: "the options." },
+          { type: "text", text: "Go left." },
+          { type: "done", usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+      ]),
+    });
+    const feed = followed(agent);
+    await agent.send("which way");
+    expect(feed.entries).toEqual([
+      { kind: "user", text: "which way" },
+      { kind: "thinking", text: "Weigh the options.", folded: true },
+      { kind: "assistant", text: "Go left." },
+    ]);
+    expect(feed.disclosableIndices()).toEqual([1]);
+    expect(feed.toggleLatestFold()).toBe(true);
+    expect(feed.entries[1]).toMatchObject({ folded: false });
+  });
+
   it("stops following once unsubscribed", () => {
     const agent = new Agent({ provider: new MockProvider([]) });
     const feed = new TranscriptFeed(() => {});

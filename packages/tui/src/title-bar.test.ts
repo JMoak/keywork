@@ -139,3 +139,75 @@ describe("the title-bar spans", () => {
     expect(titleText(label)).toBe("█ auth-retry-fix");
   });
 });
+
+describe("the title-bar bot zone", () => {
+  const reviewer = { sigil: "⚖", name: "reviewer" };
+  const bound = {
+    name: "auth-retry-fix",
+    stamp: "█",
+    telemetry: "$0.012",
+    modeWord: "plan",
+    bot: reviewer,
+  };
+
+  it("leads the detail zone with sigil and name at broadsheet, after the arc tag when bound", () => {
+    expect(titleBar(bound, 132, true)).toBe(" █ auth-retry-fix · ⚖ reviewer · $0.012 · plan ");
+    expect(titleBar({ ...bound, arc: "dock-v2" }, 132, true)).toBe(
+      " █ auth-retry-fix #dock-v2 · ⚖ reviewer · $0.012 · plan ",
+    );
+  });
+
+  it("keeps the bot at column width on focused and unfocused panes alike", () => {
+    expect(titleBar(bound, 84, true)).toBe(" █ auth-retry-fix · ⚖ reviewer · $0.012 ");
+    expect(titleBar(bound, 84, false)).toBe(" █ auth-retry-fix · ⚖ reviewer ");
+  });
+
+  it("shrinks to the sigil alone at clipping and masthead widths", () => {
+    expect(titleBar(bound, 56, true)).toBe(" █ auth-retry-fix · ⚖ ");
+    expect(titleBar(bound, 30, true)).toBe(" █ auth-retry-fix · ⚖ ");
+  });
+
+  it("sheds the bot name before the arc tag under pressure, keeping the sigil", () => {
+    const words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"];
+    const pressed = {
+      ...bound,
+      arc: "dock-v2",
+      name: [...words, "india", "juliet", "kilo"].join("-"),
+    };
+    const title = titleBar(pressed, 108, true);
+    expect(title).toContain("#dock-v2");
+    expect(title).toContain("· ⚖ ·");
+    expect(title).toContain("plan");
+    expect(title).not.toContain("reviewer");
+  });
+
+  it("outlives telemetry and the mode word, and yields only when the name has no room left", () => {
+    const wide = { ...bound, name: "a-very-long-descriptive-session-title" };
+    const tight = titleBar(wide, 48, true);
+    expect(tight).not.toContain("plan");
+    expect(tight).not.toContain("$0.012");
+    expect(tight).toContain("⚖");
+    expect(titleBar(wide, 24, true)).toBe(" █ session-title · ⚖ ");
+    const tightest = titleBar(wide, 10, true);
+    expect(tightest).not.toContain("⚖");
+    expect(tightest.startsWith(" █ ")).toBe(true);
+  });
+
+  it("reads in monochrome because identity is text, at every tier", () => {
+    for (const width of [24, 44, 84, 132]) {
+      const title = titleBar({ name: "session-1", bot: reviewer }, width, true);
+      expect(title).toContain("⚖");
+      expect(Array.from(title).length).toBeLessThanOrEqual(width - 2);
+    }
+  });
+
+  it("tags the bot span so the chrome can ink it apart from the label", () => {
+    const spans = titleSpans({ name: "session-1", bot: reviewer }, 84, true);
+    expect(spans.map((span) => [span.zone, span.text])).toEqual([
+      ["slug", "session-1"],
+      ["joint", " · "],
+      ["bot", "⚖ reviewer"],
+    ]);
+    expect(spans.some((span) => span.zone === "bot" && isLabelZone(span.zone))).toBe(false);
+  });
+});

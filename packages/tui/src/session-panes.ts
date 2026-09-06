@@ -13,7 +13,7 @@ import type { FocusedArcPort } from "./arc-commands.ts";
 import { type ArcIndex, seedArcFromOrigin } from "./arc-index.ts";
 import type { ArcsPort } from "./arcs.ts";
 import type { FocusedBotPort } from "./bot-commands.ts";
-import type { BotEntry } from "./bots.ts";
+import type { BotEntry, BotSummary } from "./bots.ts";
 import type { GlyphSupport } from "./capability.ts";
 import type { CommandRegistry } from "./commands.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
@@ -60,6 +60,8 @@ export interface SessionPaneDeps {
   compact?: Compactor;
   arcs?: ArcsPort;
   botOf?: (name: string) => BotEntry | undefined;
+  botSpend?: (name: string) => Promise<BotSummary | undefined>;
+  now?: () => number;
 }
 
 export interface SessionControls {
@@ -222,6 +224,8 @@ class PaneSession implements SessionControls {
           promptDraft,
         ),
       ...(initial.failure !== undefined && { idleNotice: initial.failure }),
+      ...(deps.botSpend !== undefined && { botSpend: deps.botSpend }),
+      ...(deps.now !== undefined && { now: deps.now }),
     };
     this.pane = new ConversationPane(
       id,
@@ -235,6 +239,7 @@ class PaneSession implements SessionControls {
         glyphs: deps.glyphs,
         animator: deps.animator,
         siblingTitles: () => siblingTitles(deps.core(), id),
+        ...(deps.botOf !== undefined && { botOf: deps.botOf }),
         ...(deps.masthead !== undefined && { masthead: deps.masthead }),
         ...(deps.gauge !== undefined && { gauge: deps.gauge }),
         ...(deps.elevation !== undefined && { elevation: deps.elevation }),
