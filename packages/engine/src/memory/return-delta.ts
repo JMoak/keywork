@@ -1,12 +1,19 @@
 import type { ArcRegistry } from "./arcs/registry.ts";
 import type { AuditEntry } from "./audit.ts";
+import type { BotRegistry } from "./bots/registry.ts";
 import type { Note } from "./notes.ts";
 import type { MemoryStore } from "./store.ts";
+
+export interface BotIdentity {
+  slug: string;
+  sigil: string;
+}
 
 export interface ReturnDeltaInputs {
   since: string;
   workspaceNotes: readonly Note[];
   arc?: { slug: string; notes: readonly Note[] };
+  bot?: BotIdentity & { notes: readonly Note[] };
   audit?: readonly AuditEntry[];
 }
 
@@ -15,12 +22,15 @@ export interface GatherReturnDeltaOptions {
   workspace: MemoryStore;
   registry?: ArcRegistry;
   arc?: string;
+  bots?: BotRegistry;
+  bot?: BotIdentity;
 }
 
 export function returnDelta(inputs: ReturnDeltaInputs): string[] {
-  const { since, workspaceNotes, arc, audit } = inputs;
+  const { since, workspaceNotes, arc, bot, audit } = inputs;
   return [
     ...additionsLine(arc?.notes ?? [], since, `new in #${arc?.slug}`),
+    ...additionsLine(bot?.notes ?? [], since, `learned by ${bot?.sigil} ${bot?.slug}`),
     ...additionsLine(workspaceNotes, since, "new in the workspace"),
     ...supersededLine(workspaceNotes, since),
     ...deliveriesLine(audit ?? [], since),
@@ -28,13 +38,16 @@ export function returnDelta(inputs: ReturnDeltaInputs): string[] {
 }
 
 export async function gatherReturnDelta(options: GatherReturnDeltaOptions): Promise<string[]> {
-  const { since, workspace, registry, arc } = options;
+  const { since, workspace, registry, arc, bots, bot } = options;
   const arcNotes =
     registry === undefined || arc === undefined ? [] : await registry.arcStore(arc).listNotes();
+  const botNotes =
+    bots === undefined || bot === undefined ? [] : await bots.botStore(bot.slug).listNotes();
   return returnDelta({
     since,
     workspaceNotes: await workspace.listNotes(),
     ...(arc !== undefined && { arc: { slug: arc, notes: arcNotes } }),
+    ...(bot !== undefined && { bot: { ...bot, notes: botNotes } }),
     audit: await workspace.readAudit(),
   });
 }

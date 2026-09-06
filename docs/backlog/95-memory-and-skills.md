@@ -397,6 +397,56 @@ the Gardener (J7). Human-authored and bundled skills are never auto-modified.
 **Accept:** E2E: fixture skill with a stale command self-patches mid-run and the fix
 persists; human-authored fixture skill provably untouchable; telemetry increments.
 **Strategy:** `LIFT:hermes` contracts, reimplemented in TypeScript; depends on D1 + D7.
+**Landed (2026-09-06):** `packages/engine/src/skills/` over D7's discovery walk, `OWN`
+code from the Hermes contracts (attribution recorded in `NOTICE`). Provenance is a
+frontmatter key: `authored_by: keywork` marks a skill as agent-created, and
+`SkillDefinition.authoredBy` carries it. Frontmatter won over a sidecar because the
+marker then travels with the file wherever it is copied, shows in any editor, and gives a
+person a one-line opt-in for a skill they want the agent to maintain. Protection is by
+construction: `authorship.ts` owns the only two writers, and both take an
+`AgentAuthoredSkill` that exists only when `claimAgentAuthored(file)` has re-read the file
+from disk and found the marker at write time (the discovery snapshot is never trusted for
+this), every revision re-serializes with the marker kept, and creation opens with the
+exclusive flag so an existing file is never overwritten. Bundled skills and anything
+without the marker therefore have no write path at all. `SkillLibrary` holds the live
+skill set, so a patch is visible to the next `skill` load in the same run, and reports
+each change through `onChange` as a `FileDelta` with before/after hashes (the seam for
+J11's `S±` chip and revert). Tools, all `defineTool`, all budget-clipped: `skill` (use;
+its listing is a live getter so a freshly created skill appears at once), `skills_list`
+(metadata plus a repairable/protected tag), `skill_view` (SKILL.md plus its reference
+files, or one reference file by relative path confined to the skill dir), `skill_patch`
+(exact-once old/new text on the body), `skill_rewrite` (whole body, optional
+description), and `skill_create` (only offered when a genesis root exists; the trusted
+project root's `.keywork/skills/`). The when-to-patch and when-to-create guidance lives in
+the tool descriptions, so no prompt plumbing changed. Telemetry: `SkillTelemetry` counts
+use/view/reference/patch/rewrite/create per skill with a last-activity timestamp,
+persisted atomically to `~/.keywork/skills/<workspace identity>.json` (machine-local, so
+the git-able skills dir stays clean) and readable without the library through
+`readSkillTelemetry(file)`. `compose.ts` builds one library per composition and the CLI
+passes it in place of the old `skillTool` wiring.
+Evidence: `skills/tools.test.ts` "patches a stale agent skill mid-run, persists the fix,
+and cannot touch a human skill" (a real `Agent` over `MockProvider`: stale command fails,
+`skill_patch` lands, the fixed command runs, the next `skill` load and a fresh
+`discoverSkills` both see the fix, the human-authored fixture is byte-identical after the
+same run, and the telemetry file shows `use: 2, patch: 1`); "creates a skill from a
+discovered workflow that later sessions can load"; `library.test.ts` covers the on-disk
+authorship re-check, unique-match patching, rewrite fallback, genesis refusing to
+overwrite or accept hostile names, and reference-path confinement; `telemetry.test.ts`
+covers persistence, reopen, and the reader's handling of absent and malformed files.
+Crossings: `extensions/layers.ts` exports `validatedName`; `paths.ts` gains
+`skillTelemetryFile`; `Composition` gains `skills: SkillLibrary`.
+Follow-ups: J7 Gardener reads `readSkillTelemetry` for stale/archive marking of
+agent-created skills (not wired; gardener.ts is J27's file this round); J27's `skills`
+level passes a bot-scoped `SkillGenesis` (`bots/<slug>/skills/`, author
+`keywork/<slug>`) and applies the 98 idea-11 genesis gates, which the library leaves to
+its caller; J11 subscribes to `onChange` for the `S±` chip and one-key revert; per-skill
+`platforms`/required-toolsets hiding from Hermes' frontmatter is not built.
+Assumptions Jordan may reverse: the marker name `authored_by` and value `keywork`; a
+person adding the marker to their own skill is an opt-in rather than a mistake; patch and
+rewrite are `mutates: true` and so sit behind the ordinary ask gate by default (the
+vision's "never blocked mid-turn" is then a permission-policy choice, not a bypass);
+telemetry lives under `~/.keywork/skills/` rather than beside the skills; creation only
+in the trusted project root, never at user scope; the 16k-character output budget.
 
 ### J11 (3pt): Write gating (implements J-D4)
 The four J-D4 layers as one artifact, mechanism and visual design together: provenance

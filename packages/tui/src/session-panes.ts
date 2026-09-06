@@ -225,6 +225,7 @@ class PaneSession implements SessionControls {
         ),
       ...(initial.failure !== undefined && { idleNotice: initial.failure }),
       ...(deps.botSpend !== undefined && { botSpend: deps.botSpend }),
+      ...(deps.botOf !== undefined && { botOf: deps.botOf }),
       ...(deps.now !== undefined && { now: deps.now }),
     };
     this.pane = new ConversationPane(

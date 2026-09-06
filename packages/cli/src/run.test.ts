@@ -12,6 +12,7 @@ import {
   processExists,
   type SessionEntry,
   SessionStore,
+  type TurnDelta,
   tapJournal,
   textTurn,
   toolCallTurn,
@@ -1170,5 +1171,72 @@ describe("language diagnostics in headless runs", () => {
     expect(errors).toEqual([
       "keywork run: no typescript language server on PATH · diagnostics off for .ts",
     ]);
+  });
+});
+
+describe("visible thinking in headless runs", () => {
+  const thoughtfulTurn = (): TurnDelta[] => [
+    { type: "visible-thinking", text: "weighing it" },
+    ...textTurn("answer"),
+  ];
+
+  async function requestOf(
+    cwd: string,
+    thinking: RunOptions["thinking"],
+  ): Promise<ProviderRequest | undefined> {
+    const provider = recordingProvider([thoughtfulTurn()]);
+    await headless({
+      prompt: "think",
+      cwd,
+      json: true,
+      provider,
+      print: () => {},
+      ...(thinking !== undefined && { thinking }),
+    });
+    return provider.requests[0];
+  }
+
+  it("asks for thinking only when the config says on and leaves the off request byte-identical", async () => {
+    const cwd = await tempDir();
+    const on = await requestOf(cwd, "on");
+    const off = await requestOf(cwd, "off");
+    const unset = await requestOf(cwd, undefined);
+    expect(on?.thinking).toBe(true);
+    expect(off).not.toHaveProperty("thinking");
+    expect(JSON.stringify(off)).toBe(JSON.stringify(unset));
+    expect(JSON.stringify({ ...on, thinking: undefined })).toBe(JSON.stringify(unset));
+  });
+
+  it("streams thinking as its own turn.delta kind and keeps it out of the plain answer", async () => {
+    const cwd = await tempDir();
+    const lines: string[] = [];
+    await headless({
+      prompt: "think",
+      cwd,
+      json: true,
+      thinking: "on",
+      provider: new MockProvider([thoughtfulTurn()]),
+      print: (line) => lines.push(line),
+    });
+    const events = lines.map((line) => JSON.parse(line) as { type: string; delta?: TurnDelta });
+    const deltas = events.filter((event) => event.type === "turn.delta").map((e) => e.delta);
+    expect(deltas.slice(0, 2)).toEqual([
+      { type: "visible-thinking", text: "weighing it" },
+      { type: "text", text: "answer" },
+    ]);
+    expect(events.find((event) => event.type === "run.finished")).toMatchObject({
+      message: "answer",
+    });
+
+    const plain: string[] = [];
+    await headless({
+      prompt: "think",
+      cwd,
+      json: false,
+      thinking: "on",
+      provider: new MockProvider([thoughtfulTurn()]),
+      print: (line) => plain.push(line),
+    });
+    expect(plain).toEqual(["answer"]);
   });
 });

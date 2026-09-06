@@ -178,8 +178,20 @@ under Node (`node --experimental-strip-types scripts/check-guardrails.ts`): `che
    thinking through `decorations.body` shows it too. The request is what the switch governs.
 4. The session entry reuses `thinking_level_change` with `"on" | "off"` instead of a new
    `thinking_change` type, to avoid a format bump; levels could become budgets later.
-5. Headless `keywork run` and the REPL `chat` do not read `config.thinking` yet: they compose
-   from individual options, not the config object, and have no fold to show. Follow-up.
+5. ~~Headless `keywork run` and the REPL `chat` do not read `config.thinking` yet: they compose
+   from individual options, not the config object, and have no fold to show. Follow-up.~~
+   Landed 2026-09-06 (uncommitted): `RunOptions.thinking` and `ChatOptions.thinking` take the
+   config value (`KeyworkConfig["thinking"]`), `main.ts` forwards `config.thinking` beside
+   `models` and `lsp`, and both paths hand `composeAgents` the same `thinking: === "on"` the
+   panes do, so the request is the pane request byte for byte when on and the old request when
+   off or unset. `keywork run --json` needed no new event kind: thinking already rides
+   `turn.delta` as `delta.type: "visible-thinking"`, and plain mode prints only the answer
+   (`messageText` skips the part). The REPL prints thinking dimmed (SGR 2) ahead of the answer
+   with one newline between, and nothing when the stream carries none. Tests: `run.test.ts`
+   "asks for thinking only when the config says on and leaves the off request byte-identical",
+   "streams thinking as its own turn.delta kind and keeps it out of the plain answer";
+   `chat.test.ts` "prints thinking dimmed ahead of the answer and asks for it only when the
+   config says on". No `/thinking` in the REPL yet: the switch is config-only there.
 6. The folded row counts words, not tokens, and the pane shows no separate streaming cue for
    thinking; the count grows live instead.
 

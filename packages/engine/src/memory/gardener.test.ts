@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   type CurationJudgmentPort,
   type DailyEntryCandidate,
+  entryTokens,
   Gardener,
   type PairVerdict,
   type PromotionProposal,
@@ -493,6 +494,89 @@ describe("sweep hygiene", () => {
     expect(report.promoted).toEqual([]);
     expect(await readdir(root)).toEqual([]);
     expect(await inbox.list()).toEqual([]);
+    expect(port.seenEntries).toEqual([]);
+  });
+});
+
+describe("propose-only mode", () => {
+  it("routes a confident promotion to the inbox instead of writing the note", async () => {
+    const { store, root } = await vault();
+    await store.appendDaily("keep review comments short", "agent");
+    const before = await snapshotVault(root);
+    const port = scriptedPort({
+      promotions: [
+        {
+          entryId: `${today}#0`,
+          title: "Terse Reviews",
+          body: "short comments\n",
+          confidence: 0.95,
+        },
+      ],
+    });
+    const g = new Gardener({ store, judgment: port, proposeOnly: true });
+    const report = await g.sweep();
+    expect(report.promoted).toEqual([]);
+    expect(report.flagged).toEqual(["promotion:terse reviews"]);
+    expect(await store.readNote("Terse Reviews")).toBeUndefined();
+    const after = await snapshotVault(root);
+    const changed = [...after.keys()].filter((path) => after.get(path) !== before.get(path));
+    expect(changed.every((path) => path.startsWith(".staging/") || path === "curation.md")).toBe(
+      true,
+    );
+  });
+
+  it("proposes a confident agent-note merge rather than applying it", async () => {
+    const { store } = await vault();
+    await store.writeNote({
+      title: "Node test runner",
+      body: "tests run on node\n",
+      provenance: "agent",
+    });
+    await store.writeNote({
+      title: "Node testing",
+      body: "tests run on node\n",
+      provenance: "agent",
+    });
+    const port = scriptedPort({
+      verdict: () => ({ relation: "duplicate", confidence: 0.95, keep: "a" }),
+    });
+    const g = new Gardener({ store, judgment: port, proposeOnly: true });
+    const report = await g.sweep();
+    expect(report.merged).toEqual([]);
+    expect((await store.listStaged()).map((item) => item.kind)).toEqual(["merge-proposal"]);
+    expect((await store.readNote("Node testing"))?.supersededBy).toBeUndefined();
+  });
+
+  it("reports usefulness without stamping it", async () => {
+    const { store } = await vault();
+    await store.writeNote({ title: "Recalled", body: "r\n", provenance: "agent" });
+    const g = new Gardener({ store, proposeOnly: true });
+    g.recordRecall("Recalled", "s1");
+    const report = await g.sweep();
+    expect(report.usefulness.Recalled).toBeCloseTo(0.3);
+    expect((await store.readNote("Recalled"))?.usefulness).toBeUndefined();
+  });
+});
+
+describe("entry token budget", () => {
+  it("hands the judgment only the newest entries that fit, in log order", async () => {
+    const { store } = await vault();
+    await store.appendDaily("a".repeat(400), "agent");
+    await store.appendDaily("b".repeat(400), "agent");
+    await store.appendDaily("c".repeat(400), "agent");
+    const port = scriptedPort({});
+    const g = new Gardener({ store, judgment: port });
+    await g.sweep({ entryTokenBudget: 220 });
+    const seen = port.seenEntries[0] ?? [];
+    expect(seen.map((entry) => entry.id)).toEqual([`${today}#1`, `${today}#2`]);
+    expect(seen.reduce((sum, entry) => sum + entryTokens(entry), 0)).toBeLessThanOrEqual(220);
+  });
+
+  it("skips the judgment entirely when nothing fits", async () => {
+    const { store } = await vault();
+    await store.appendDaily("x".repeat(400), "agent");
+    const port = scriptedPort({});
+    await new Gardener({ store, judgment: port }).sweep({ entryTokenBudget: 10 });
     expect(port.seenEntries).toEqual([]);
   });
 });

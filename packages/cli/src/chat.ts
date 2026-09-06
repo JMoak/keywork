@@ -21,6 +21,7 @@ import {
   type TurnSettlement,
 } from "@keywork/engine";
 import {
+  type KeyworkConfig,
   type LspConfig,
   type McpServerConfig,
   type ModelCapabilitiesConfig,
@@ -70,6 +71,7 @@ export interface ChatOptions {
   repoMap?: "auto" | "off";
   lsp?: LspConfig;
   models?: ModelCapabilitiesConfig;
+  thinking?: KeyworkConfig["thinking"];
   userRoot?: string;
   checkpointsGitDir?: string;
 }
@@ -310,7 +312,12 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     io,
     opened.store,
     composition,
-    composeAgents(composition, { permissions: options.permissions, bots, citations }),
+    composeAgents(composition, {
+      permissions: options.permissions,
+      bots,
+      citations,
+      thinking: options.thinking === "on",
+    }),
     guard,
     commandRuntime(options.cwd, guard),
     opened.seeded,
@@ -500,8 +507,14 @@ function answerFor(key: KeyPress): Answer | undefined {
 }
 
 function wireStreamingOutput(agent: Agent, io: ChatIo): void {
+  const thinking = thinkingStream(io);
   agent.bus.on("turn.delta", ({ delta, replay }) => {
-    if (replay !== true && delta.type === "text") io.write(delta.text);
+    if (replay === true) return;
+    if (delta.type === "visible-thinking") thinking.write(delta.text);
+    if (delta.type === "text") {
+      thinking.close();
+      io.write(delta.text);
+    }
   });
   agent.bus.on("tool.output", ({ chunk, replay }) => {
     if (replay !== true) io.write(chunk);
@@ -513,9 +526,34 @@ function wireStreamingOutput(agent: Agent, io: ChatIo): void {
     if (replay !== true) io.print(`  ${isError ? "✗" : "✓"} ${firstLine(output, 100)}`);
   });
   agent.bus.on("turn.completed", ({ replay }) => {
-    if (replay !== true) io.print("");
+    if (replay === true) return;
+    thinking.close();
+    io.print("");
   });
   agent.bus.on("turn.interrupted", () => io.print("\n(interrupted)"));
+}
+
+interface ThinkingStream {
+  write(text: string): void;
+  close(): void;
+}
+
+function thinkingStream(io: ChatIo): ThinkingStream {
+  let open = false;
+  return {
+    write: (text) => {
+      open = true;
+      io.write(dimmed(text));
+    },
+    close: () => {
+      if (open) io.write("\n");
+      open = false;
+    },
+  };
+}
+
+function dimmed(text: string): string {
+  return `\u001b[2m${text}\u001b[22m`;
 }
 
 function greet(repl: Repl, seededCount: number): void {

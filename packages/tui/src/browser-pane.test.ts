@@ -1,8 +1,11 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Entry, ReadDirectory } from "./browser-model.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
+import { paneContext } from "./testing/workflow-probe.ts";
+import { resolveTheme } from "./theme.ts";
 
 const inertIntents: PaneIntents = {
   openFile: () => {},
@@ -78,3 +81,49 @@ describe("BrowserPane typed filter", () => {
     expect(pane.describe()).toEqual({ kind: "browser", root: "/workspace" });
   });
 });
+
+describe("BrowserPane ignored entries", () => {
+  it("paints .gitignore matches dim while leaving them openable", async () => {
+    const opened: string[] = [];
+    const listing: Record<string, Entry[]> = {
+      "/workspace": [
+        { name: ".gitignore", kind: "file" },
+        { name: "dist", kind: "dir" },
+        { name: "app.log", kind: "file" },
+        { name: "main.ts", kind: "file" },
+        { name: "zed.ts", kind: "file" },
+      ],
+    };
+    const pane = new BrowserPane(
+      "browser-1",
+      "/workspace",
+      () => {},
+      { ...inertIntents, openFile: (path) => opened.push(path) },
+      {
+        readDirectory: async (path) => listing[path] ?? [],
+        readIgnoreFile: async () => "dist/\n*.log\n",
+      },
+    );
+    await pane.settled();
+    const theme = resolveTheme();
+    for (const spec of ["j", "j", "j"]) pane.handleKey(parseChord(spec), undefined);
+    const view = pane.view({ ...paneContext(), theme, focused: false });
+    expect(inkOf(view, "▸ dist")).toBe(theme.textDim);
+    expect(inkOf(view, "  app.log")).toBe(theme.textDim);
+    expect(inkOf(view, "  main.ts")).toBe(theme.text);
+    for (const spec of ["k", "k"]) pane.handleKey(parseChord(spec), undefined);
+    pane.handleKey(parseChord("enter"), undefined);
+    expect(opened).toEqual([join("/workspace", "app.log")]);
+  });
+});
+
+function inkOf(node: unknown, text: string): unknown {
+  if (node === null || typeof node !== "object") return undefined;
+  const record = node as { props?: { content?: unknown; fg?: unknown }; children?: unknown[] };
+  if (record.props?.content === text) return record.props.fg;
+  for (const child of record.children ?? []) {
+    const found = inkOf(child, text);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}

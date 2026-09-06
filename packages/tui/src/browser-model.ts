@@ -1,6 +1,9 @@
-import { readdir } from "node:fs/promises";
+import { watch } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fuzzyScore } from "./commands.ts";
+import { Debounce, type DebounceTiming, realTiming } from "./debounce.ts";
+import { IgnoreRules } from "./gitignore.ts";
 import type { Chord } from "./keys.ts";
 import { failureMessage, PaneTasks } from "./pane-tasks.ts";
 import { isPrintable } from "./picker-keys.ts";
@@ -12,6 +15,17 @@ export interface Entry {
 }
 
 export type ReadDirectory = (path: string) => Promise<Entry[]>;
+export type ReadIgnoreFile = (path: string) => Promise<string>;
+export type WatchDirectory = (path: string, onChange: () => void) => () => void;
+
+export interface BrowserDisk {
+  readDirectory: ReadDirectory;
+  readIgnoreFile?: ReadIgnoreFile;
+  watchDirectory?: WatchDirectory;
+}
+
+export const gitignoreFileName = ".gitignore";
+export const watchQuietMs = 150;
 
 export async function readDirectoryFromDisk(path: string): Promise<Entry[]> {
   const entries = await readdir(path, { withFileTypes: true });
@@ -21,6 +35,31 @@ export async function readDirectoryFromDisk(path: string): Promise<Entry[]> {
   }));
 }
 
+export function readIgnoreFileFromDisk(path: string): Promise<string> {
+  return readFile(path, "utf8");
+}
+
+export function watchDirectoryFromDisk(path: string, onChange: () => void): () => void {
+  try {
+    const watcher = watch(path, onChange);
+    watcher.on("error", () => watcher.close());
+    watcher.unref?.();
+    return () => watcher.close();
+  } catch {
+    return () => {};
+  }
+}
+
+export const realBrowserDisk: BrowserDisk = {
+  readDirectory: readDirectoryFromDisk,
+  readIgnoreFile: readIgnoreFileFromDisk,
+  watchDirectory: watchDirectoryFromDisk,
+};
+
+export function browserDiskOf(disk: BrowserDisk | ReadDirectory): BrowserDisk {
+  return typeof disk === "function" ? { readDirectory: disk } : disk;
+}
+
 export interface BrowserRow {
   path: string;
   name: string;
@@ -28,6 +67,7 @@ export interface BrowserRow {
   depth: number;
   expanded: boolean;
   hidden: boolean;
+  ignored: boolean;
   load: "ready" | "loading" | "failed";
   failure: string | undefined;
 }
@@ -40,17 +80,22 @@ export class BrowserModel extends RowCursor<BrowserRow> {
 
   private readonly directories = new Map<string, DirectoryState>();
   private readonly expandedDirs = new Set<string>();
+  private readonly ignoreRules = new IgnoreRules();
+  private readonly watchers = new Map<string, () => void>();
+  private readonly diskChanges: Debounce;
   private readonly tasks: PaneTasks;
 
   constructor(
     readonly rootPath: string,
-    private readonly readDirectory: ReadDirectory,
+    private readonly disk: BrowserDisk,
     notify: () => void,
     private readonly openFile: (path: string) => void,
+    timing: DebounceTiming = realTiming,
   ) {
     const tasks = new PaneTasks(notify);
     super(() => tasks.emit());
     this.tasks = tasks;
+    this.diskChanges = new Debounce(watchQuietMs, () => this.mutate(() => this.reload()), timing);
     this.name = basename(rootPath) || rootPath;
     this.expandedDirs.add(rootPath);
     this.load(rootPath);
@@ -103,12 +148,14 @@ export class BrowserModel extends RowCursor<BrowserRow> {
   }
 
   dispose(): void {
+    this.diskChanges.dispose();
+    this.unwatchAll();
     this.tasks.dispose();
   }
 
   protected buildRows(): BrowserRow[] {
     const rows: BrowserRow[] = [];
-    this.collect(this.rootPath, 0, rows);
+    this.collect(this.rootPath, "", 0, false, rows);
     if (this.filterQuery === "") return rows;
     const query = this.filterQuery.toLowerCase();
     return rows.filter((row) => fuzzyScore(query, row.name.toLowerCase()) !== undefined);
@@ -181,16 +228,26 @@ export class BrowserModel extends RowCursor<BrowserRow> {
 
   private reload(): void {
     this.directories.clear();
+    this.ignoreRules.clear();
+    this.unwatchAll();
     this.load(this.rootPath);
   }
 
-  private collect(directoryPath: string, depth: number, out: BrowserRow[]): void {
+  private collect(
+    directoryPath: string,
+    relativeDirectory: string,
+    depth: number,
+    ancestorIgnored: boolean,
+    out: BrowserRow[],
+  ): void {
     const state = this.directories.get(directoryPath);
     if (state?.kind !== "loaded") return;
     for (const entry of state.entries) {
       const hidden = entry.name.startsWith(".");
       if (hidden && !this.showHidden) continue;
       const path = join(directoryPath, entry.name);
+      const relative = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
+      const ignored = ancestorIgnored || this.ignoreRules.ignores(relative, entry.kind);
       const expanded = entry.kind === "dir" && this.expandedDirs.has(path);
       out.push({
         path,
@@ -199,9 +256,10 @@ export class BrowserModel extends RowCursor<BrowserRow> {
         depth,
         expanded,
         hidden,
+        ignored,
         ...loadOf(expanded ? this.directories.get(path) : undefined),
       });
-      if (expanded) this.collect(path, depth + 1, out);
+      if (expanded) this.collect(path, relative, depth + 1, ignored, out);
     }
   }
 
@@ -209,8 +267,10 @@ export class BrowserModel extends RowCursor<BrowserRow> {
     if (this.directories.has(path)) return;
     const claim: DirectoryState = { kind: "loading" };
     this.directories.set(path, claim);
+    this.watch(path);
     this.tasks.track(() =>
-      this.readDirectory(path)
+      this.disk
+        .readDirectory(path)
         .then((entries) =>
           this.settle(path, claim, { kind: "loaded", entries: sortEntries(entries) }),
         )
@@ -224,8 +284,38 @@ export class BrowserModel extends RowCursor<BrowserRow> {
     if (this.directories.get(path) !== claim) return;
     this.rebuild(() => {
       this.directories.set(path, state);
-      if (state.kind === "loaded") this.loadExpandedChildren(path, state.entries);
+      if (state.kind === "loaded") {
+        this.loadExpandedChildren(path, state.entries);
+        this.loadIgnoreRules(path, state);
+      }
     });
+  }
+
+  private loadIgnoreRules(directoryPath: string, state: DirectoryState): void {
+    const readIgnoreFile = this.disk.readIgnoreFile;
+    if (readIgnoreFile === undefined || !listsGitignore(state)) return;
+    this.tasks.track(() =>
+      readIgnoreFile(join(directoryPath, gitignoreFileName))
+        .then((text) => {
+          if (this.directories.get(directoryPath) !== state) return;
+          this.rebuild(() => this.ignoreRules.add(relativeTo(this.rootPath, directoryPath), text));
+        })
+        .catch(() => {}),
+    );
+  }
+
+  private watch(path: string): void {
+    const watchDirectory = this.disk.watchDirectory;
+    if (watchDirectory === undefined || this.watchers.has(path)) return;
+    this.watchers.set(
+      path,
+      watchDirectory(path, () => this.diskChanges.touch()),
+    );
+  }
+
+  private unwatchAll(): void {
+    for (const unwatch of this.watchers.values()) unwatch();
+    this.watchers.clear();
   }
 
   private loadExpandedChildren(directoryPath: string, entries: readonly Entry[]): void {
@@ -241,13 +331,27 @@ type DirectoryState =
   | { kind: "loaded"; entries: Entry[] }
   | { kind: "failed"; reason: string };
 
+function listsGitignore(state: DirectoryState): boolean {
+  return (
+    state.kind === "loaded" &&
+    state.entries.some((entry) => entry.kind === "file" && entry.name === gitignoreFileName)
+  );
+}
+
+export function relativeTo(rootPath: string, path: string): string {
+  const root = rootPath.replaceAll("\\", "/").replace(/\/$/, "");
+  const slashed = path.replaceAll("\\", "/");
+  if (slashed === root) return "";
+  return slashed.startsWith(`${root}/`) ? slashed.slice(root.length + 1) : slashed;
+}
+
 function loadOf(state: DirectoryState | undefined): Pick<BrowserRow, "load" | "failure"> {
   if (state?.kind === "loading") return { load: "loading", failure: undefined };
   if (state?.kind === "failed") return { load: "failed", failure: state.reason };
   return { load: "ready", failure: undefined };
 }
 
-function sortEntries(entries: Entry[]): Entry[] {
+export function sortEntries(entries: readonly Entry[]): Entry[] {
   return [...entries].sort((left, right) => {
     if (left.kind !== right.kind) return left.kind === "dir" ? -1 : 1;
     return (

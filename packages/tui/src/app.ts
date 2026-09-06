@@ -14,6 +14,7 @@ import type { ArcsPort } from "./arcs.ts";
 import { ArcsPane } from "./arcs-pane.ts";
 import { botJumpCommands } from "./bot-commands.ts";
 import type { BotEntry, BotSummary, BotsPort } from "./bots.ts";
+import { realBrowserDisk } from "./browser-model.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
@@ -33,6 +34,7 @@ import {
   registerExtensions,
   shadowedExtensionNotice,
 } from "./extension-commands.ts";
+import { FileIndex, fileJumpSource, fileJumpsAllowed } from "./file-index.ts";
 import { FilePane } from "./file-pane.ts";
 import { type Flavor, FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
 import type { CheckpointsPort } from "./fork.ts";
@@ -183,6 +185,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     }),
   });
   const armed = armedExpiryWatch(() => core, render);
+  const fileIndex = new FileIndex(process.cwd(), realBrowserDisk, render);
   const unsubscribeMcp = options.mcp?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
   const unsubscribeNotices = options.notices?.subscribe((text) => core.postNotice(text));
   let releaseFatalGuards: () => void = () => {};
@@ -212,6 +215,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       unsubscribeMcp?.();
       unsubscribeNotices?.();
       arcIndex.dispose();
+      fileIndex.dispose();
       paneSessions.closeAll();
       escrow.releaseAll();
       renderer.destroy();
@@ -262,6 +266,12 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   core.registry.addSource(() => arcJumpCommands(core, arcIndex.listed()));
   const bots = options.bots;
   if (bots !== undefined) core.registry.addSource(() => botJumpCommands(core, bots));
+  core.registry.addSource(
+    fileJumpSource(fileIndex, {
+      openFile: (path) => core.openFile(path),
+      allowed: () => fileJumpsAllowed(options.workspaceSetup?.readiness()),
+    }),
+  );
   if (pointerOn) renderer.root.add(pointerPlane());
   wireInput(
     renderer,

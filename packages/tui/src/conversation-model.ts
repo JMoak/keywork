@@ -7,7 +7,7 @@ import {
   type ToolCallPart,
 } from "@keywork/engine";
 import { toError } from "@keywork/shared";
-import { type BotSummary, describeBotSpend } from "./bots.ts";
+import { type BotEntry, type BotSummary, describeBotSpend, learningPolicyReadout } from "./bots.ts";
 import type { FileReader } from "./diff-render.ts";
 import type { Chord } from "./keys.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
@@ -39,6 +39,7 @@ export interface ConversationPorts {
   idleNotice?: string;
   now?: () => number;
   botSpend?: (bot: string) => Promise<BotSummary | undefined>;
+  botOf?: (bot: string) => BotEntry | undefined;
 }
 
 export type CompactionHook = (instructions: string) => Promise<void>;
@@ -411,9 +412,19 @@ export class ConversationModel {
       case "thinking":
         this.toggleThinking(argument);
         return true;
+      case "policy":
+        return this.reportBotPolicy() || (this.commands?.run(typed) ?? false);
       default:
         return this.commands?.run(typed) ?? false;
     }
+  }
+
+  private reportBotPolicy(): boolean {
+    const bot = this.ledger.bot;
+    const entry = bot === undefined ? undefined : this.ports?.botOf?.(bot);
+    if (entry === undefined) return false;
+    this.feed.post("info", learningPolicyReadout(entry));
+    return true;
   }
 
   private toggleThinking(argument: string): void {

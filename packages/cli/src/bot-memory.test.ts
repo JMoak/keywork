@@ -1,14 +1,17 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type BotDefinition,
   BotRecall,
   type BotRegistry,
+  type CurationJudgmentPort,
+  type DailyEntryCandidate,
   MemorySearch,
   MockProvider,
   memoryFlushPrompt,
   messageText,
+  type PromotionProposal,
   textMessage,
   textTurn,
   toolCallTurn,
@@ -395,5 +398,106 @@ describe("the digest door", () => {
     await port.approve(row?.id ?? "");
     expect(await registry.botStore("reviewer").readNote("Hostile Habit")).toBeDefined();
     expect((await port.load()).inbox).toEqual([]);
+  });
+});
+
+describe("the learning policy", () => {
+  const today = (): string => new Date().toISOString().slice(0, 10);
+
+  function judgment(promotions: PromotionProposal[]): CurationJudgmentPort & {
+    seen: DailyEntryCandidate[][];
+  } {
+    const seen: DailyEntryCandidate[][] = [];
+    return {
+      id: "fake:closing",
+      seen,
+      async proposePromotions(entries) {
+        seen.push(entries);
+        return promotions;
+      },
+      async classifyPair() {
+        return { relation: "distinct", confidence: 1 };
+      },
+    };
+  }
+
+  async function vaultSnapshot(root: string): Promise<Map<string, string>> {
+    const files = new Map<string, string>();
+    if (!existsSync(root)) return files;
+    await walk("");
+    return files;
+
+    async function walk(rel: string): Promise<void> {
+      for (const entry of await readdir(join(root, rel), { withFileTypes: true })) {
+        const child = rel === "" ? entry.name : `${rel}/${entry.name}`;
+        if (entry.isDirectory()) await walk(child);
+        else files.set(child, await readFile(join(root, child), "utf8"));
+      }
+    }
+  }
+
+  it("off: a session with a bound stateless bot writes nothing beyond the workspace daily", async () => {
+    const stateless = bot("clerk", { learning: "off" });
+    const fx = await fixture({ roster: [stateless], bindings: { a: "clerk" } });
+    const vault = join(fx.cwd, ".keywork", "memory");
+    const before = await vaultSnapshot(vault);
+    const agents = composeAgents(fx.composition, { bots: fx.bots });
+    const agent = agents.build({
+      provider: new MockProvider([textTurn("done")]),
+      guard: {},
+      sessionId: "a",
+      bot: stateless,
+    });
+    await agent.send("hello");
+    const flush = agents.flushFor("a", new MockProvider([textTurn("The dock keeps a third.")]));
+    expect((await flush?.flushNow(conversation))?.persisted).toBe(true);
+    const sneaky = judgment([{ entryId: "x#0", title: "Sneaky", body: "s\n", confidence: 1 }]);
+    expect(await fx.bots.sweep(() => sneaky)).toEqual([]);
+    expect(sneaky.seen).toEqual([]);
+    const after = await vaultSnapshot(vault);
+    const changed = [...after.keys()].filter((path) => after.get(path) !== before.get(path));
+    expect(changed.every((path) => path.startsWith("daily/"))).toBe(true);
+    expect(existsSync(join(vault, "bots"))).toBe(false);
+  });
+
+  it("notes: the micro-sweep proposes into the bot's inbox and the digest row carries the sigil", async () => {
+    const fx = await fixture({ bindings: { a: "reviewer" } });
+    const registry = requireRegistry(fx.bots, reviewer);
+    await fx.bots.flushTarget("a")?.remember("Jordan wants review comments short");
+    const port = judgment([
+      {
+        entryId: `${today()}#0`,
+        title: "Terse Reviews",
+        body: "short comments\n",
+        confidence: 0.97,
+      },
+    ]);
+    const asked: string[] = [];
+    const swept = await fx.bots.sweep((definition) => {
+      asked.push(definition.name);
+      return definition.name === "reviewer" ? port : undefined;
+    });
+    expect(asked).toEqual(["reviewer", "scout"]);
+    expect(swept).toEqual([expect.objectContaining({ slug: "reviewer", swept: true })]);
+    expect(await registry.botStore("reviewer").readNote("Terse Reviews")).toBeUndefined();
+    const pane = memoryPanePort(fx.composition.memory, undefined, undefined, fx.bots);
+    const inputs = await pane.load();
+    const row = inputs.inbox.find((item) => item.title.startsWith("⚖ "));
+    expect(row).toMatchObject({ kind: "promotion", title: "⚖ Terse Reviews" });
+    expect(inputs.inbox).toHaveLength(1);
+    await pane.approve(row?.id ?? "");
+    const learned = await registry.botStore("reviewer").readNote("Terse Reviews");
+    expect(learned).toMatchObject({ provenance: "agent", learnedBy: "reviewer" });
+    expect(await fx.composition.memory()?.store.readNote("Terse Reviews")).toBeUndefined();
+  });
+
+  it("notes: a layer that never materialized is skipped without a write", async () => {
+    const fx = await fixture();
+    const swept = await fx.bots.sweep(() => judgment([]));
+    expect(swept).toEqual([
+      { slug: "reviewer", swept: false, skipped: "no-layer" },
+      { slug: "scout", swept: false, skipped: "no-layer" },
+    ]);
+    expect(existsSync(join(fx.cwd, ".keywork", "memory", "bots"))).toBe(false);
   });
 });

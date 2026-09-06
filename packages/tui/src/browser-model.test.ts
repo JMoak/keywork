@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BrowserModel, type Entry, type ReadDirectory } from "./browser-model.ts";
+import { BrowserModel, type Entry, type ReadDirectory, watchQuietMs } from "./browser-model.ts";
+import type { DebounceTiming } from "./debounce.ts";
 import { parseChord } from "./keys.ts";
 import { pressModel as press } from "./testing/index.ts";
 
@@ -33,7 +34,7 @@ async function browserOver(tree: Tree) {
   const opened: string[] = [];
   const model = new BrowserModel(
     "root",
-    disk.read,
+    { readDirectory: disk.read },
     () => {},
     (path) => opened.push(path),
   );
@@ -233,10 +234,12 @@ describe("BrowserModel disposal", () => {
     let notified = 0;
     const model = new BrowserModel(
       "root",
-      () =>
-        new Promise((resolve) => {
-          release = resolve;
-        }),
+      {
+        readDirectory: () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      },
       () => {
         notified += 1;
       },
@@ -271,7 +274,7 @@ describe("BrowserModel failure", () => {
     };
     const model = new BrowserModel(
       "root",
-      disk.read,
+      { readDirectory: disk.read },
       () => {},
       () => {},
     );
@@ -283,8 +286,10 @@ describe("BrowserModel failure", () => {
   it("surfaces a root read failure", async () => {
     const model = new BrowserModel(
       "root",
-      async () => {
-        throw new Error("ENOENT");
+      {
+        readDirectory: async () => {
+          throw new Error("ENOENT");
+        },
       },
       () => {},
       () => {},
@@ -359,7 +364,7 @@ describe("BrowserModel refresh and caching", () => {
       });
     const model = new BrowserModel(
       "root",
-      read,
+      { readDirectory: read },
       () => {},
       () => {},
     );
@@ -382,5 +387,200 @@ describe("BrowserModel refresh and caching", () => {
   it("orders names by locale, not code units", async () => {
     const { model } = await browserOver({ "z.ts": "file", "é.ts": "file" });
     expect(model.rows().map((row) => row.name)).toEqual(["é.ts", "z.ts"]);
+  });
+});
+
+describe("BrowserModel gitignore awareness", () => {
+  const repo: Tree = {
+    ".gitignore": "file",
+    dist: { "bundle.js": "file", "keep.txt": "file" },
+    src: { ".gitignore": "file", "app.ts": "file", "types.gen.ts": "file" },
+    "app.log": "file",
+    "main.ts": "file",
+  };
+  const ignoreFiles: Record<string, string> = {
+    [join("root", ".gitignore")]: "dist/\n*.log\n!keep.txt\n",
+    [join("root", "src", ".gitignore")]: "*.gen.ts\n",
+  };
+
+  async function repoBrowser() {
+    const disk = fakeDisk(repo);
+    const opened: string[] = [];
+    const ignoreReads: string[] = [];
+    const model = new BrowserModel(
+      "root",
+      {
+        readDirectory: disk.read,
+        readIgnoreFile: async (path) => {
+          ignoreReads.push(path);
+          const text = ignoreFiles[path];
+          if (text === undefined) throw new Error(`no ignore file at ${path}`);
+          return text;
+        },
+      },
+      () => {},
+      (path) => opened.push(path),
+    );
+    await model.settled();
+    return { model, opened, ignoreReads, disk };
+  }
+
+  it("marks matching entries ignored without hiding them", async () => {
+    const { model, ignoreReads } = await repoBrowser();
+    expect(ignoreReads).toEqual([join("root", ".gitignore")]);
+    expect(model.rows().map((row) => [row.name, row.ignored])).toEqual([
+      ["dist", true],
+      ["src", false],
+      ["app.log", true],
+      ["main.ts", false],
+    ]);
+  });
+
+  it("keeps ignored entries navigable and openable", async () => {
+    const { model, opened } = await repoBrowser();
+    press(model, "j", "j");
+    expect(model.cursorRow()?.name).toBe("app.log");
+    press(model, "enter");
+    expect(opened).toEqual([join("root", "app.log")]);
+  });
+
+  it("ignores everything beneath an ignored directory, negations included", async () => {
+    const { model } = await repoBrowser();
+    await pressSettled(model, "l");
+    const children = model.rows().filter((row) => row.depth === 1);
+    expect(children.map((row) => [row.name, row.ignored])).toEqual([
+      ["bundle.js", true],
+      ["keep.txt", true],
+    ]);
+  });
+
+  it("applies a nested .gitignore relative to its own directory", async () => {
+    const { model, ignoreReads } = await repoBrowser();
+    await pressSettled(model, "j", "l");
+    expect(ignoreReads).toContain(join("root", "src", ".gitignore"));
+    const children = model.rows().filter((row) => row.depth === 1);
+    expect(children.map((row) => [row.name, row.ignored])).toEqual([
+      ["app.ts", false],
+      ["types.gen.ts", true],
+    ]);
+  });
+
+  it("re-reads ignore rules on refresh", async () => {
+    const { model, ignoreReads } = await repoBrowser();
+    await pressSettled(model, "r");
+    expect(ignoreReads).toEqual([join("root", ".gitignore"), join("root", ".gitignore")]);
+    expect(model.rows().find((row) => row.name === "app.log")?.ignored).toBe(true);
+  });
+
+  it("stays unignored when there is no ignore reader or the read fails", async () => {
+    const { model } = await browserOver(repo);
+    expect(model.rows().every((row) => !row.ignored)).toBe(true);
+    const failing = new BrowserModel(
+      "root",
+      {
+        readDirectory: fakeDisk(repo).read,
+        readIgnoreFile: async () => {
+          throw new Error("EACCES");
+        },
+      },
+      () => {},
+      () => {},
+    );
+    await failing.settled();
+    expect(failing.rows().every((row) => !row.ignored)).toBe(true);
+  });
+});
+
+describe("BrowserModel disk watch", () => {
+  function fakeTiming() {
+    let clock = 0;
+    const armed: Array<{ dueAt: number; run: () => void; live: boolean }> = [];
+    const timing: DebounceTiming = {
+      now: () => clock,
+      after: (delayMs, run) => {
+        const entry = { dueAt: clock + delayMs, run, live: true };
+        armed.push(entry);
+        return () => {
+          entry.live = false;
+        };
+      },
+    };
+    const advanceTo = (time: number): void => {
+      clock = time;
+      for (const entry of [...armed]) {
+        if (entry.live && entry.dueAt <= clock) {
+          entry.live = false;
+          entry.run();
+        }
+      }
+    };
+    return { timing, advanceTo };
+  }
+
+  async function watchedBrowser(tree: Tree) {
+    const disk = fakeDisk(tree);
+    const watchers = new Map<string, () => void>();
+    const closed: string[] = [];
+    const { timing, advanceTo } = fakeTiming();
+    const model = new BrowserModel(
+      "root",
+      {
+        readDirectory: disk.read,
+        watchDirectory: (path, onChange) => {
+          watchers.set(path, onChange);
+          return () => closed.push(path);
+        },
+      },
+      () => {},
+      () => {},
+      timing,
+    );
+    await model.settled();
+    const change = (path: string): void => watchers.get(path)?.();
+    return { model, disk, watchers, closed, change, advanceTo };
+  }
+
+  it("watches each loaded directory and reloads once after a burst settles", async () => {
+    const tree: Tree = { src: { "a.ts": "file" }, "main.ts": "file" };
+    const { model, disk, watchers, change, advanceTo } = await watchedBrowser(tree);
+    await pressSettled(model, "l");
+    expect([...watchers.keys()]).toEqual(["root", join("root", "src")]);
+    tree["new.ts"] = "file";
+    change("root");
+    advanceTo(50);
+    change(join("root", "src"));
+    advanceTo(100);
+    change("root");
+    advanceTo(100 + watchQuietMs - 1);
+    await model.settled();
+    expect(disk.reads.get("root")).toBe(1);
+    advanceTo(100 + watchQuietMs);
+    await model.settled();
+    expect(disk.reads.get("root")).toBe(2);
+    expect(disk.reads.get(join("root", "src"))).toBe(2);
+    expect(model.rows().map((row) => row.name)).toEqual(["src", "a.ts", "main.ts", "new.ts"]);
+  });
+
+  it("keeps the cursor row across a watch-triggered reload", async () => {
+    const tree: Tree = { "a.ts": "file", "b.ts": "file", "c.ts": "file" };
+    const { model, change, advanceTo } = await watchedBrowser(tree);
+    press(model, "j", "j");
+    delete tree["a.ts"];
+    change("root");
+    advanceTo(watchQuietMs);
+    await model.settled();
+    expect(model.cursorRow()?.name).toBe("c.ts");
+  });
+
+  it("closes watchers on refresh and dispose", async () => {
+    const { model, closed, change, advanceTo } = await watchedBrowser({ "a.ts": "file" });
+    await pressSettled(model, "r");
+    expect(closed).toEqual(["root"]);
+    model.dispose();
+    expect(closed).toEqual(["root", "root"]);
+    change("root");
+    advanceTo(watchQuietMs * 2);
+    await model.settled();
+    expect(closed).toHaveLength(2);
   });
 });

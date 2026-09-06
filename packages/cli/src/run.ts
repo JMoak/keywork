@@ -22,6 +22,7 @@ import {
   tapJournal,
 } from "@keywork/engine";
 import type {
+  KeyworkConfig,
   LspConfig,
   McpServerConfig,
   ModelCapabilitiesConfig,
@@ -53,6 +54,7 @@ export interface RunOptions {
   repoMap?: "auto" | "off";
   lsp?: LspConfig;
   models?: ModelCapabilitiesConfig;
+  thinking?: KeyworkConfig["thinking"];
   signal?: AbortSignal;
   print?: (line: string) => void;
   printError?: (line: string) => void;
@@ -156,7 +158,11 @@ async function openRun(
   });
   await bots.prepare();
   const shell = new ShellSession(options.cwd);
-  const agent = composeAgents(composition, { permissions: options.permissions, bots }).build({
+  const agent = composeAgents(composition, {
+    permissions: options.permissions,
+    bots,
+    thinking: options.thinking === "on",
+  }).build({
     provider,
     guard: headlessGuard,
     shell,

@@ -94,8 +94,8 @@ describe("composePanes", () => {
     expect((await declared.app.memory?.load())?.layers.map((layer) => layer.id)).toEqual([
       "workspace",
     ]);
-    expect(bare.app.closers).toHaveLength(1);
-    expect(declared.app.closers).toHaveLength(1);
+    expect(bare.app.closers).toHaveLength(2);
+    expect(declared.app.closers).toHaveLength(2);
   });
 
   it("passes the workspace setup port through and phrases arc refusals from its readiness", async () => {

@@ -106,14 +106,20 @@ describe("botService", () => {
 
     const service = botService({ ...roots, sessionDir, roster });
     expect(service.defined()).toEqual([
-      { name: "scout", sigil: "S", source: "project", description: "reads first" },
+      {
+        name: "scout",
+        sigil: "S",
+        source: "project",
+        learning: "notes",
+        description: "reads first",
+      },
     ]);
     const listed = await service.list();
     expect(listed[0]).toMatchObject({ name: "scout", sessions: 2 });
     expect(listed[0]?.lastUsed).toBeDefined();
 
     const created = await service.create({ slug: "critic", scope: "project" });
-    expect(created).toEqual({ name: "critic", sigil: "C", source: "project" });
+    expect(created).toEqual({ name: "critic", sigil: "C", source: "project", learning: "notes" });
     expect(service.defined().map((bot) => bot.name)).toEqual(["critic", "scout"]);
     expect(roster.map((bot) => bot.name)).toEqual(["critic", "scout"]);
     expect(service.suggestSlug).toBeUndefined();

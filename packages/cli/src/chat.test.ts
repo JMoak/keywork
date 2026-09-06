@@ -523,3 +523,23 @@ describe("chat turn queue", () => {
     expect(io.out).toContain("usage: /queue <prompt>");
   });
 });
+
+describe("visible thinking in the REPL", () => {
+  const dim = (text: string) =>
+    `${String.fromCharCode(27)}[2m${text}${String.fromCharCode(27)}[22m`;
+
+  it("prints thinking dimmed ahead of the answer and asks for it only when the config says on", async () => {
+    const { options } = await world();
+    const provider = recordingProvider([
+      [{ type: "visible-thinking", text: "hmm" }, ...textTurn("answer")],
+    ]);
+    const io = scriptedIo({ lines: ["think"] });
+    await chat(options(provider, { thinking: "on" }), io);
+    expect(provider.requests[0]?.thinking).toBe(true);
+    expect(io.streamed.join("")).toBe(`${dim("hmm")}\nanswer`);
+
+    const quiet = recordingProvider([textTurn("answer")]);
+    await chat(options(quiet), scriptedIo({ lines: ["think"] }));
+    expect(quiet.requests[0]).not.toHaveProperty("thinking");
+  });
+});

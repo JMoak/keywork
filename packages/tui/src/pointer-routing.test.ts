@@ -287,3 +287,17 @@ describe("PanePointer title rows beside W4 grips", () => {
     pointer.cancelDrag();
   });
 });
+
+describe("PanePointer seam commits", () => {
+  it("commits a seam drag on drag-end just as on up, then hands the next press back to the panes", () => {
+    const { layout, pointer, changes } = surfaceWith(["a", "b"]);
+    pointer.route({ type: "down", x: 60, y: 5, button: 0 });
+    pointer.route({ type: "drag", x: 78, y: 5, button: 0 });
+    expect(pointer.route({ type: "drag-end", x: 78, y: 5, button: 0 })).toBe(true);
+    expect(layout.rects(screen).get("a")?.width).toBe(78);
+    const liveRetiles = changes.length;
+    pointer.route({ type: "down", x: 20, y: 5, button: 0 });
+    expect(layout.focused()).toBe("a");
+    expect(changes.length).toBe(liveRetiles + 1);
+  });
+});

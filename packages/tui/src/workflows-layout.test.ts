@@ -1,6 +1,7 @@
 import { Agent, MockProvider, textTurn } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { ConversationPane } from "./conversation-pane.ts";
+import type { Rect } from "./geometry.ts";
 import { AppProbe } from "./probe.ts";
 import { waitFor } from "./testing/index.ts";
 import {
@@ -557,5 +558,68 @@ describe("held panes", () => {
     second.core.focusPane("session-1");
     expect(paneIds(second).sort()).toEqual(["session-1", "session-2"]);
     expect(second.snapshot().held).toEqual([]);
+  });
+});
+
+describe("interior seam drag-resize", () => {
+  function tiles(probe: AppProbe): Rect[] {
+    return paneIds(probe).map((id) => probe.rect(id));
+  }
+
+  function assertGapless(probe: AppProbe): void {
+    const area = tiles(probe).reduce((sum, rect) => sum + rect.width * rect.height, 0);
+    expect(area).toBe(probe.screen.width * probe.screen.height);
+  }
+
+  function nestedProbe(): AppProbe {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("split");
+    return probe;
+  }
+
+  it("drags a nested horizontal seam live, commits on release, and stays gapless at every position", () => {
+    const probe = nestedProbe();
+    const upper = probe.rect("session-2");
+    const lower = probe.rect("session-3");
+    expect(lower.x).toBe(upper.x);
+    const seam = { x: upper.x + 5, y: lower.y - 1 };
+    probe.dragHold(seam, { x: seam.x, y: seam.y + 4 });
+    expect(probe.rect("session-2").height).toBe(upper.height + 4);
+    assertGapless(probe);
+    probe.release({ x: seam.x, y: seam.y + 4 });
+    expect(probe.rect("session-2").height).toBe(upper.height + 4);
+    for (let y = 0; y < probe.screen.height; y += 1) {
+      probe.drag({ x: seam.x, y: probe.rect("session-3").y - 1 }, { x: seam.x, y });
+      assertGapless(probe);
+    }
+  });
+
+  it("drags the outer vertical seam without stealing focus from the pane under it", () => {
+    const probe = nestedProbe();
+    probe.core.focusPane("session-1");
+    const first = probe.rect("session-1");
+    const seam = { x: first.x + first.width - 1, y: 30 };
+    probe.drag(seam, { x: seam.x + 10, y: 30 });
+    expect(probe.rect("session-1").width).toBeGreaterThan(first.width);
+    expect(probe.snapshot().focused).toBe("session-1");
+    assertGapless(probe);
+  });
+
+  it("persists a dragged ratio through the workspace file and survives zoom unchanged", () => {
+    const probe = nestedProbe();
+    const lower = probe.rect("session-3");
+    probe.drag({ x: lower.x + 5, y: lower.y - 1 }, { x: lower.x + 5, y: lower.y + 6 });
+    const dragged = tiles(probe);
+    expect(dragged).not.toEqual(tiles(nestedProbe()));
+    const restored = new AppProbe({ restoreWorkspace: mustParse(probe.workspaceState()) });
+    expect(tiles(restored)).toEqual(dragged);
+    probe.keys("ctrl+k", "z");
+    expect(probe.snapshot().zoomed).toBeDefined();
+    probe.keys("z");
+    expect(tiles(probe)).toEqual(dragged);
+    expect(JSON.stringify(probe.workspaceState().layout)).toBe(
+      JSON.stringify(restored.workspaceState().layout),
+    );
   });
 });

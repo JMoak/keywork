@@ -6,12 +6,15 @@ import {
   type BotFlushTarget,
   BotRecall,
   BotRegistry,
+  type BotSweepReport,
   bootstrapMemory,
   botBootstrapLayer,
+  type CurationJudgmentPort,
   type EmbeddingsPort,
   type LayerBootstrap,
   type MemorySearcher,
   type StagedItem,
+  sweepBotLayer,
 } from "@keywork/engine";
 import { resolveVaultPath } from "@keywork/shared";
 import {
@@ -56,7 +59,10 @@ export interface BotMemory {
   flushTarget(sessionId: string): BotFlushTarget | undefined;
   layers(): BotLayer[];
   staged(): Promise<BotStagedItem[]>;
+  sweep(judgmentFor: BotJudgmentLookup): Promise<BotSweepReport[]>;
 }
+
+export type BotJudgmentLookup = (bot: BotDefinition) => CurationJudgmentPort | undefined;
 
 export const botBootstrapShare = 0.25;
 export const botBootstrapBudget = Math.floor(memoryBootstrapBudget * botBootstrapShare);
@@ -161,6 +167,15 @@ export function botMemory(options: BotMemoryOptions): BotMemory {
         }
       }
       return items;
+    },
+    sweep: async (judgmentFor) => {
+      const reports: BotSweepReport[] = [];
+      for (const { bot, registry } of layers()) {
+        const judgment = judgmentFor(bot);
+        if (judgment === undefined) continue;
+        reports.push(await sweepBotLayer({ registry, slug: bot.name, judgment }));
+      }
+      return reports;
     },
   };
 }

@@ -133,6 +133,7 @@ function entryOf(bot: BotDefinition): BotEntry {
     name: bot.name,
     sigil: bot.sigil,
     source: bot.source,
+    learning: bot.learning,
     ...(bot.description !== undefined && { description: bot.description }),
     ...(bot.model !== undefined && { model: bot.model }),
   };

@@ -127,6 +127,8 @@ interface WriteTarget {
   name: string;
 }
 
+type PromotionReview = Extract<StagedItem, { kind: "borderline-promotion" }>;
+
 export class MemoryStore {
   readonly trusted: boolean;
   private readonly files: VaultFiles;
@@ -232,16 +234,12 @@ export class MemoryStore {
   async writeNote(input: NoteInput): Promise<WriteResult> {
     this.gate();
     return this.serialized(async () => {
-      const body = this.redact(input.body);
       const target = await this.resolveWriteTarget(input);
       const supersedes = await this.resolveSupersedes(input);
-      const frontmatter = await this.noteFrontmatter(input, target, supersedes);
-      const content = ensureTrailingNewline(serializeDocument(frontmatter, body));
+      const content = await this.noteContent(input, target, supersedes);
       if (input.provenance === "untrusted")
         return this.stage("note", target.path, content, supersedes);
-      const deltas = [await this.delta(target.path, content)];
-      if (supersedes !== undefined)
-        deltas.push(await this.supersededStamp(supersedes, target.name));
+      const deltas = await this.noteDeltas(target, content, supersedes);
       const op: LedgerOp = deltas[0]?.before === null ? "create" : "edit";
       return this.commit(op, deltas, target.path, false);
     });
@@ -305,7 +303,8 @@ export class MemoryStore {
         ...(await this.landingDeltas(item)),
         ...(await this.staging.removalDeltas(item)),
       ];
-      const result = await this.commit("approve", deltas, stagedSubjectPath(item), false);
+      const landed = deltas[0]?.path ?? stagedSubjectPath(item);
+      const result = await this.commit("approve", deltas, landed, false);
       await this.audit(`approved ${describeStaged(item)}`);
       return result;
     });
@@ -480,7 +479,39 @@ export class MemoryStore {
     return this.commit("create", stagedWriteDeltas(meta, content), target, true);
   }
 
+  private async noteContent(
+    input: NoteInput,
+    target: WriteTarget,
+    supersedes: string | undefined,
+  ): Promise<string> {
+    const frontmatter = await this.noteFrontmatter(input, target, supersedes);
+    return ensureTrailingNewline(serializeDocument(frontmatter, this.redact(input.body)));
+  }
+
+  private async noteDeltas(
+    target: WriteTarget,
+    content: string,
+    supersedes: string | undefined,
+  ): Promise<FileDelta[]> {
+    const deltas = [await this.delta(target.path, content)];
+    if (supersedes !== undefined) deltas.push(await this.supersededStamp(supersedes, target.name));
+    return deltas;
+  }
+
+  private async promotionDeltas(promotion: PromotionReview): Promise<FileDelta[]> {
+    if ((await this.readNote(promotion.title)) !== undefined) return [];
+    const input: NoteInput = {
+      title: promotion.title,
+      body: promotion.body,
+      provenance: "agent",
+      confidence: promotion.confidence,
+    };
+    const target = await this.resolveWriteTarget(input);
+    return this.noteDeltas(target, await this.noteContent(input, target, undefined), undefined);
+  }
+
   private async landingDeltas(item: StagedItem): Promise<FileDelta[]> {
+    if (item.kind === "borderline-promotion") return this.promotionDeltas(item);
     if (!isStagedWrite(item)) return [];
     const before = await this.files.read(item.target);
     const after = item.kind === "daily" ? `${before ?? ""}${item.content}` : item.content;

@@ -457,6 +457,28 @@ describe("staged reviews (the human inbox)", () => {
     expect(await store.propose([link])).toEqual([]);
   });
 
+  it("lands an approved promotion as an agent note through the same write path", async () => {
+    const { store } = await vault({ learnedBy: "reviewer" });
+    const [item] = await store.propose([promotion]);
+    const landed = await store.approve(item?.id ?? "");
+    expect(landed.path).toBe("Prefer pnpm.md");
+    const note = await store.readNote("Prefer pnpm");
+    expect(note).toMatchObject({ provenance: "agent", confidence: 0.6, learnedBy: "reviewer" });
+    expect(note?.body).toBe("b\n");
+    expect(await store.listStaged()).toEqual([]);
+    expect(await store.revert(landed.ledgerId)).toBe("reverted");
+    expect(await store.readNote("Prefer pnpm")).toBeUndefined();
+  });
+
+  it("drops an approved promotion whose note arrived in the meantime", async () => {
+    const { store } = await vault();
+    const [item] = await store.propose([promotion]);
+    await store.writeNote({ title: "Prefer pnpm", body: "already\n", provenance: "user" });
+    await store.approve(item?.id ?? "");
+    expect((await store.readNote("Prefer pnpm"))?.body).toBe("already\n");
+    expect(await store.listStaged()).toEqual([]);
+  });
+
   it("survives a fresh store over the same vault", async () => {
     const { store, root } = await vault();
     const [item] = await store.propose([link]);

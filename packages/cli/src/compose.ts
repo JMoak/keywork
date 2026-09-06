@@ -36,7 +36,10 @@ import {
   repoMapTokenBudget,
   restrictTools,
   type ShellSession,
-  skillTool,
+  SkillLibrary,
+  SkillTelemetry,
+  skillConventionDirs,
+  skillLibraryTools,
   type Tool,
   type ToolGuard,
   type ToolScope,
@@ -57,7 +60,7 @@ import {
   withMemoryPrompt,
   workspaceMemoryAccess,
 } from "./memory.ts";
-import { snapshotGitDir } from "./paths.ts";
+import { skillTelemetryFile, snapshotGitDir, workspaceIdentity } from "./paths.ts";
 
 export interface CompositionOptions {
   cwd: string;
@@ -87,6 +90,7 @@ export interface Composition {
   bootstrap: BootstrapInjection | undefined;
   checkpoints: Checkpoints | undefined;
   extensions: WorkspaceExtensions;
+  skills: SkillLibrary;
   mcp: McpRegistry | undefined;
   repoMap: RepoMap | undefined;
   languagePort: LanguagePort | undefined;
@@ -120,6 +124,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     projectTrusted,
     options.userRoot ?? homedir(),
   );
+  const skills = await openSkillLibrary(extensions, cwd, projectTrusted, workspaceSlug);
   const mcp = startMcpRegistry(options.mcpServers);
   const scope = workspaceToolScope(cwd, projectTrusted, workspaceSlug);
   const port = openLanguagePort(scope, options);
@@ -144,6 +149,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     bootstrap,
     checkpoints,
     extensions,
+    skills,
     mcp,
     repoMap,
     languagePort: port,
@@ -478,10 +484,28 @@ function journalingRecall(
 }
 
 function skillToolsFor(composition: Composition, agent: () => Agent | undefined): Tool[] {
-  if (composition.extensions.skills.length === 0) return [];
-  return [
-    skillTool(composition.extensions.skills, (skill) =>
+  const { skills } = composition;
+  if (skills.skills().length === 0 && !skills.canCreate()) return [];
+  return skillLibraryTools(skills, {
+    onUse: (skill) =>
       agent()?.bus.emit("context.injected", { injection: { source: "skill", id: skill.name } }),
-    ),
-  ];
+  });
+}
+
+async function openSkillLibrary(
+  extensions: WorkspaceExtensions,
+  cwd: string,
+  projectTrusted: boolean,
+  workspaceSlug: string | undefined,
+): Promise<SkillLibrary> {
+  const telemetry = await SkillTelemetry.open({
+    file: skillTelemetryFile(workspaceIdentity(cwd, workspaceSlug)),
+  });
+  return new SkillLibrary({
+    skills: extensions.skills,
+    telemetry,
+    ...(projectTrusted && {
+      genesis: { root: cwd, source: "project", convention: skillConventionDirs[0] ?? "" },
+    }),
+  });
 }

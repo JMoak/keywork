@@ -115,6 +115,7 @@ describe("skillTool", () => {
       file: "/repo/.keywork/skills/deploy/SKILL.md",
       source: "project" as const,
       convention: ".keywork/skills",
+      authoredBy: undefined,
     },
   ];
 

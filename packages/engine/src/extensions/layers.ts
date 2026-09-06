@@ -118,7 +118,7 @@ async function readDefinition(found: DiscoveredFile, layer: Layer): Promise<Mark
   };
 }
 
-function validatedName(name: string): string {
+export function validatedName(name: string): string {
   if (validName.test(name)) return name;
   throw new Error(`invalid name "${name}"; use letters, digits, - or _`);
 }

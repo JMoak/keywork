@@ -937,3 +937,52 @@ describe("suggestion tray pointer", () => {
     expect(model.selectedSuggestion).toBe(0);
   });
 });
+
+describe("/policy", () => {
+  function modelBoundTo(bot: string | undefined, learning?: "off" | "notes" | "skills" | "self") {
+    const agent = new Agent({ provider: new MockProvider([textTurn("a")]) });
+    const model = new ConversationModel(agent, () => {}, undefined, undefined, {
+      botOf: (name) => ({
+        name,
+        sigil: "⚖",
+        source: "project",
+        ...(learning !== undefined && { learning }),
+      }),
+    });
+    model.ledger.bot = bot;
+    return model;
+  }
+
+  it("prints the bound bot's learning level with every level explained and the current one marked", () => {
+    const model = modelBoundTo("reviewer", "notes");
+    type(model, "/policy");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: [
+        "learning · ⚖ reviewer · notes",
+        "  off    remembers nothing, a stateless role",
+        "▸ notes  remembers craft in its own layer, proposes notes to the inbox under its sigil",
+        "  skills not built yet, runs as notes: routines kept in the bot's own skills dir",
+        "  self   not built yet, runs as notes: proposals against its own bot.md through the inbox",
+      ].join("\n"),
+    });
+  });
+
+  it("marks a skills or self bot as not built yet rather than as notes", () => {
+    const model = modelBoundTo("reviewer", "self");
+    type(model, "/policy");
+    model.handleKey(parseChord("return"), undefined);
+    const text = model.entries.at(-1)?.text ?? "";
+    expect(text.startsWith("learning · ⚖ reviewer · self\n")).toBe(true);
+    expect(text).toContain("▸ self   not built yet, runs as notes");
+    expect(text).toContain("  notes  remembers craft");
+  });
+
+  it("leaves an unbound pane byte-identical: /policy is still an unknown command", () => {
+    const model = modelBoundTo(undefined, "notes");
+    type(model, "/policy");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)).toEqual({ kind: "error", text: "unknown command /policy" });
+  });
+});

@@ -226,6 +226,7 @@ async function runChat(context: CommandContext, { values }: ParsedInvocation): P
     ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
     ...(config.lsp !== undefined && { lsp: config.lsp }),
     ...(config.models !== undefined && { models: config.models }),
+    ...(config.thinking !== undefined && { thinking: config.thinking }),
     ...(values.resume !== undefined && { resumeId: values.resume }),
     ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
   });
@@ -270,6 +271,7 @@ async function runHeadlessPrompt(
       ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
       ...(config.lsp !== undefined && { lsp: config.lsp }),
       ...(config.models !== undefined && { models: config.models }),
+      ...(config.thinking !== undefined && { thinking: config.thinking }),
       ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
     });
     return exitCodeOf(outcome);

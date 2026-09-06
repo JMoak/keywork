@@ -272,6 +272,13 @@ export {
   validateBotSlug,
 } from "./memory/bots/registry.ts";
 export {
+  type BotSweepOptions,
+  type BotSweepReport,
+  type BotSweepSkip,
+  botSweepTokenBudget,
+  sweepBotLayer,
+} from "./memory/bots/sweep.ts";
+export {
   type CitationChain,
   type CitationChainHop,
   type CitationEvent,
@@ -317,6 +324,7 @@ export {
   type CurationThresholds,
   type DailyEntryCandidate,
   defaultCurationThresholds,
+  entryTokens,
   Gardener,
   type GardenerOptions,
   type PairRelation,
@@ -383,6 +391,7 @@ export {
 } from "./memory/recall-tools.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
 export {
+  type BotIdentity,
   type GatherReturnDeltaOptions,
   gatherReturnDelta,
   type ReturnDeltaInputs,
@@ -606,6 +615,43 @@ export {
   type SessionStats,
   SessionStore,
 } from "./session/store.ts";
+export {
+  type AgentAuthoredSkill,
+  authoredByKey,
+  authorOf,
+  claimAgentAuthored,
+  keyworkAuthor,
+  ProtectedSkillError,
+  SkillAlreadyExistsError,
+} from "./skills/authorship.ts";
+export {
+  ReferenceOutsideSkillError,
+  type SkillChange,
+  type SkillChangeKind,
+  type SkillGenesis,
+  SkillGenesisUnavailableError,
+  SkillLibrary,
+  type SkillLibraryOptions,
+  SkillPatchError,
+  type SkillView,
+  UnknownSkillError,
+} from "./skills/library.ts";
+export {
+  readSkillTelemetry,
+  type SkillActivity,
+  type SkillEventCounts,
+  SkillTelemetry,
+  type SkillTelemetryEvent,
+  type SkillTelemetryOptions,
+  type SkillTelemetrySnapshot,
+  skillTelemetryEvents,
+} from "./skills/telemetry.ts";
+export {
+  clippedToBudget,
+  defaultSkillOutputBudget,
+  type SkillToolOptions,
+  skillLibraryTools,
+} from "./skills/tools.ts";
 export {
   fitTitle,
   kebabTitle,

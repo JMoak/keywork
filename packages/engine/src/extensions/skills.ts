@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
+import { authorOf } from "../skills/authorship.ts";
 import { defineTool } from "../tools/define.ts";
 import type { Tool } from "../tools.ts";
 import {
@@ -23,6 +24,7 @@ export interface SkillDefinition {
   file: string;
   source: LayerSource;
   convention: string;
+  authoredBy: string | undefined;
 }
 
 export interface SkillLoad {
@@ -75,6 +77,7 @@ function buildSkill(definition: MarkdownDefinition): SkillDefinition {
     file: definition.file,
     source: definition.source,
     convention: definition.convention,
+    authoredBy: authorOf(definition.frontmatter),
   };
 }
 

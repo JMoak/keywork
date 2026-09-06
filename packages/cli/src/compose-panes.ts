@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import {
   type Agent,
+  type BotDefinition,
   type ContextBudget,
   type CurationJudgmentPort,
   closingJudgment,
@@ -206,16 +207,17 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     roster: extensions.bots,
     namer: () => namingProvider(options),
   });
-  const closingProviderFor = (arc: string): Provider | undefined => {
+  const closingProvider = (sessionIds: readonly string[]): Provider | undefined => {
     const state = options.inference?.current();
     const fromRole =
       state === undefined ? undefined : roleProvider(state.runtime, state.config, closingRole);
     if (fromRole !== undefined) return fromRole;
-    return arcs.bindings
-      .sessionsBoundTo(arc)
+    return sessionIds
       .map((sessionId) => agents.providerOf(sessionId))
       .find((provider) => provider !== undefined);
   };
+  const closingProviderFor = (arc: string): Provider | undefined =>
+    closingProvider(arcs.bindings.sessionsBoundTo(arc));
   const closingSeam = (request: ClosingRequest): CurationJudgmentPort | undefined => {
     const provider = closingProviderFor(request.arc);
     if (provider === undefined) return undefined;
@@ -224,6 +226,13 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       ...(request.direction !== undefined && { direction: request.direction }),
       onDegrade: request.onDegrade,
     });
+  };
+  const botJudgment = (bot: BotDefinition): CurationJudgmentPort | undefined => {
+    const bound = [...stores.values()]
+      .filter((store) => store.botBinding() === bot.name)
+      .map((store) => store.header.id);
+    const provider = closingProvider(bound);
+    return provider === undefined ? undefined : closingJudgment({ provider });
   };
   return {
     workspace: options.workspace,
@@ -250,6 +259,9 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     compact: compactOnRequest(stores, agents, changes.emit),
     closers: [
       () => sweepOnClose(memory()),
+      async () => {
+        await botLayers.sweep(botJudgment);
+      },
       ...(mcp === undefined ? [] : [() => mcp.stop()]),
       ...(port === undefined ? [] : [() => port.dispose()]),
     ],

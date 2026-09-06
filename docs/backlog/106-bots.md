@@ -336,7 +336,7 @@ searchable; bootstrap respects the split budget; a workspace fact written by a b
 the workspace/arc layer, not the bot layer (flush fixture); untrusted vault inert.
 **Strategy:** `OWN` over the J17 shapes; rides landed J3/J4/J6/J13 seams.
 
-### J27 (2pt): Learning policy (implements PD23)
+### J27 (2pt): Learning policy (implements PD23; `off` and `notes` landed 2026-09-06, `skills` and `self` wait on J10)
 The `learning` levels: `notes` (session-end digest tagging + bot-scoped Gardener
 micro-sweep, budget capped, proposals only), `skills` (J10 hooks scoped to the bot's
 `skills/` dir; genesis gates from 98 idea 11), `self` (instruction-change proposals against
@@ -634,3 +634,80 @@ lead-run.
 8. `/cost` reports the bot line through `BotsPort.list()` (a session-dir scan) rather than a
    dedicated cost port.
 
+### J27 · learning policy · `notes` level landed 2026-09-06 (`skills` and `self` wait on J10)
+
+- **The micro-sweep.** `engine/memory/bots/sweep.ts` `sweepBotLayer({ registry, slug, judgment })`
+  runs the J7 Gardener over the bot's own store in a new `proposeOnly` mode: every promotion
+  the judgment port returns lands in the bot's inbox as a `borderline-promotion`, every pair
+  action becomes a merge or supersession proposal, and usefulness is reported but never
+  stamped. The only files a sweep touches are `.staging/` sidecars and the layer's own
+  `curation.md` audit line. Layers that never materialized, retired layers, and untrusted vaults
+  are skipped with a named reason (`no-layer`, `retired`, `inert`) and no write at all.
+- **The cap.** `botSweepTokenBudget = 1024`. `SweepOptions.entryTokenBudget` (new on the Gardener,
+  unset for the workspace sweep) hands the judgment port only the newest daily entries that fit,
+  in log order, and skips the port entirely when nothing fits. `entryTokens` is the same
+  `ceil(length / 4)` estimate notes already use.
+- **Approve lands the note.** The J11 kernel now lands an approved `borderline-promotion` as an
+  agent note through the same write path as `writeNote` (provenance, confidence, redaction, the
+  store's `learned_by` stamp, one revertable ledger entry); a promotion whose note appeared in
+  the meantime is dropped without a write. Until now approving a promotion only cleared it,
+  which would have left the notes level with nothing to learn from.
+- **Wiring.** `BotMemory.sweep(judgmentFor)` sweeps every bot with a layer, skipping any bot the
+  lookup gives no judgment for. `compose-panes.ts` adds it as a second closer after the
+  workspace sweep; the judgment is `closingJudgment` over the shared `closing` role provider,
+  falling back to the provider of a session bound to that bot (the arc close's provider rule,
+  now shared as `closingProvider`).
+- **The digest.** Bot-layer proposals ride the memory-pane inbox J26 already tags with the sigil
+  (`⚖ Terse Reviews` as a `promotion` row); approve routes to the owning bot store, and the
+  workspace vault never sees the note. `returnDelta` gains an optional bot line, `1 learned by
+  ⚖ reviewer: [[Terse Reviews]]`, after the arc line and before the workspace line, with
+  `gatherReturnDelta({ bots, bot })` reading the layer; no caller passes it yet (see assumptions).
+- **`/policy`.** In a bot-bound pane the conversation model answers `/policy` itself through a
+  new `ConversationPorts.botOf` seam (threaded from the existing `SessionPaneDeps.botOf`, no
+  `app.ts` change) and prints `learning · ⚖ reviewer · notes` followed by one row per level,
+  the current one marked `▸`. `skills` and `self` read "not built yet, runs as notes" so a bot
+  declared at either level is never mistaken for a finished one. `BotEntry.learning` is now
+  stamped by the CLI's `entryOf`. An unbound pane falls through to the command port exactly as
+  before, so `/policy` there is still `unknown command /policy`; the command is not in the
+  suggestion tray for the same reason.
+- **Evidence.** `engine/memory/gardener.test` (propose-only routes a confident promotion to the
+  inbox and touches only staging plus the audit; a confident agent merge becomes a proposal;
+  usefulness reported unstamped; budget keeps the newest entries that fit in log order; nothing
+  fits skips the port), `bots/sweep.test` (proposals never notes, approve lands with
+  `learned_by`, the cap pinned at 1024 with a 12-entry log, no-layer / retired / inert write
+  nothing), `store.test` (approved promotion lands as an agent note and reverts; a note that
+  arrived first wins), `return-delta.test` (bot line placement and sigil; byte-identical without
+  a bot), `cli/bot-memory.test` ("the learning policy": `off` session changes only the workspace
+  daily and grows no `bots/` dir while a sneaky judgment is never consulted; `notes` sweep
+  proposes into the bot inbox, the digest row reads `⚖ Terse Reviews`, approve lands in the bot
+  layer only; unmaterialized layers skipped without a write), `tui/conversation-model.test`
+  ("/policy": full readout, `self` marked not built yet, unbound pane unchanged),
+  `cli/bots.test` (`learning` on entries), `cli/compose-panes.test` (two closers).
+- **Crossings (additive):** `engine/memory/store.ts` (`promotionDeltas`, `noteContent` /
+  `noteDeltas` split out of `writeNote`, approve subject is the landed path), `engine/index.ts`
+  exports, `cli/bots.ts` `entryOf.learning`, `cli/compose-panes.ts` closer + `closingProvider`,
+  `tui/bots.ts` `BotEntry.learning` + `learningPolicyReadout`, `tui/session-panes.ts` one
+  pass-through, `tui/conversation-model.ts` `/policy` case.
+
+**Gate (lane-run, 2026-09-06):** `bun run check:types` clean; biome clean on every touched
+file; vitest over the touched files (`engine/memory/**`, `cli/bot-memory`, `cli/bots`,
+`cli/memory`, `cli/compose-panes`, `tui/conversation-model`, `tui/bot-commands`,
+`tui/session-panes`) 514 passed across 36 files. The lead runs the full gate.
+
+### Assumptions Jordan may reverse (2026-09-06, J27 notes)
+
+1. "Proposals only" is read strictly: the bot sweep never writes a note, merge, supersession, or
+   usefulness stamp on its own, even inside the agent-only blast radius PD22.4 would allow.
+   Loosening it is one flag (`proposeOnly: false`) on the sweep's Gardener.
+2. The sweep cap is 1024 entry tokens per bot per close, newest entries first; older craft that
+   never fit waits for a quieter close. No config knob.
+3. The bot sweep reuses the arc `closingJudgment` port unchanged, so its prompt still speaks of
+   "a keywork arc"; a craft-flavoured instruction is a follow-up on `closing.ts` (arc territory).
+4. Approving a `borderline-promotion` now lands the note everywhere, workspace included; the
+   old approve-as-dismiss behaviour is gone since discard already covers it.
+5. `/policy` prints only the learning level; the J-D8 bootstrap slice readout (1024 of 4096
+   tokens) is still owed and needs the CLI budget to reach the pane.
+6. The return-delta bot line exists in the engine but no surface passes a bot yet; `chat.ts`
+   "since you were here" and the arc pane are the candidates, both outside this lane.
+7. A bot declared `skills` or `self` runs as `notes` at runtime (J26 already did this); the
+   readout says so rather than refusing the level.
