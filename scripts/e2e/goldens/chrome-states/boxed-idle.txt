@@ -1,0 +1,24 @@
+╭─ session tree · 1 session ────╮╭─ session-1 ─────────────────────────────────────────────────────╮
+│ ▓ shout the middle line · now ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││ █ shout the middle line                                         │
+│                               ││ ▓ Shouting the middle line of notes.txt now.                    │
+│                               ││ ░ write notes.txt · ~···· · failed · declined by user           │
+│                               ││ ▓ Left it alone.                                                │
+│                               ││ › ▌                                                             │
+╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
+ flavor now boxed                                                                            return 

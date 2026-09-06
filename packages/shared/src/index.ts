@@ -13,6 +13,15 @@ export {
   mostSpecificRule,
 } from "./glob.ts";
 export {
+  type IgnoreFile,
+  type IgnoreLayer,
+  type IgnorePattern,
+  type IgnoreProblem,
+  ignoresPath,
+  ignoreVerdict,
+  parseIgnoreFile,
+} from "./ignore.ts";
+export {
   type Disk,
   type JsonFileStore,
   type JsonFileStoreOptions,
@@ -20,4 +29,5 @@ export {
   type PathKeyedStringStore,
   pathKeyedStringStore,
 } from "./json-file-store.ts";
+export { countOccurrences, toUnixEol } from "./text.ts";
 export * from "./trust/index.ts";

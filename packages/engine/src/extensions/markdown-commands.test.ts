@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import {
   type CommandRuntime,
   fileEmbedder,
@@ -10,20 +10,7 @@ import {
   scanTemplate,
 } from "./markdown-commands.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
-
-async function scratch(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-commands-"));
-  cleanups.push(root);
-  return root;
-}
+const scratch = scratchDirs("keywork-commands-");
 
 async function seed(dir: string, files: Record<string, string>): Promise<void> {
   await mkdir(dir, { recursive: true });
@@ -42,7 +29,7 @@ describe("loadCommands", () => {
     const root = await scratch();
     await seed(join(root, ".keywork", "commands"), {
       "review.md":
-        "---\ndescription: Review the diff\nagent: reviewer\nmodel: some-model\n---\nReview $ARGUMENTS carefully.\n",
+        "---\ndescription: Review the diff\nbot: reviewer\nmodel: some-model\n---\nReview $ARGUMENTS carefully.\n",
     });
     const { commands, failures } = await loadCommands({ projectRoot: root });
     expect(failures).toEqual([]);
@@ -50,7 +37,7 @@ describe("loadCommands", () => {
     expect(commands[0]).toMatchObject({
       name: "review",
       description: "Review the diff",
-      agent: "reviewer",
+      bot: "reviewer",
       model: "some-model",
       template: "Review $ARGUMENTS carefully.",
       source: "project",

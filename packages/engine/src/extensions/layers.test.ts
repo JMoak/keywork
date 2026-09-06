@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import {
   type ExtensionConventions,
   loadLayered,
@@ -9,20 +9,7 @@ import {
   markdownFilesIn,
 } from "./layers.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
-
-async function scratch(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-layers-"));
-  cleanups.push(root);
-  return root;
-}
+const scratch = scratchDirs("keywork-layers-");
 
 async function seed(root: string, files: Record<string, string>): Promise<void> {
   for (const [relative, content] of Object.entries(files)) {

@@ -9,6 +9,12 @@ export {
   describeArcRow,
 } from "./arc-picker.ts";
 export {
+  type AirlockCandidateView,
+  type AirlockDigestView,
+  type AirlockFinishOutcome,
+  type AirlockQuestionView,
+  type AirlockSweepView,
+  type ArcAirlockPort,
   type ArcCloseOutcome,
   type ArcOrdinals,
   type ArcStatus,
@@ -19,12 +25,36 @@ export {
   arcOrdinalsOf,
   arcSlugProblem,
   arcTag,
+  type CandidateChoice,
   describeCloseOutcome,
+  describeFinishOutcome,
   isArcSlug,
+  type QuestionChoice,
   suggestArcSlug,
 } from "./arcs.ts";
 export { ArcsPane, type ArcsPaneOptions } from "./arcs-pane.ts";
 export type { ArcGroupKey, ArcGroupRow, ArcsLevel } from "./arcs-pane-model.ts";
+export type { FocusedBotPort } from "./bot-commands.ts";
+export {
+  type BotPicker,
+  type BotPickerChoice,
+  type BotPickerRow,
+  botChoiceOf,
+  botPickerOver,
+  describeBotRow,
+} from "./bot-picker.ts";
+export {
+  type BotDraft,
+  type BotEntry,
+  type BotScope,
+  type BotSummary,
+  type BotsPort,
+  botLabel,
+  botSlugProblem,
+  botsHint,
+  describeBots,
+  isBotSlug,
+} from "./bots.ts";
 export {
   border,
   type CapabilityProfile,
@@ -52,9 +82,10 @@ export {
   type InstrumentTier,
 } from "./context-gauge.ts";
 export type { CompactionHook, ForkOutcome, Titler } from "./conversation-model.ts";
+export type { TranscriptElevation } from "./conversation-pane.ts";
+export { type CrashLogFacts, crashLogFacts, crashLogFile } from "./crash-log.ts";
 export type {
   ConversationTarget,
-  ExtensionAgentEntry,
   ExtensionCommandEntry,
   ExtensionsPort,
 } from "./extension-commands.ts";
@@ -107,6 +138,8 @@ export {
   type HeadlineFace,
   type HeadlineFrame,
   headline,
+  type MastheadMoment,
+  wearsMasthead,
 } from "./masthead.ts";
 export { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 export type {
@@ -134,6 +167,7 @@ export type {
   QueryLeg,
   QuerySource,
 } from "./memory-pane-model.ts";
+export { type DigestTreatment, type GardenHeat, noteHeat } from "./memory-rows.ts";
 export {
   Animator,
   type AnimatorOptions,
@@ -158,6 +192,7 @@ export {
   resolvePage,
   resolvePageThresholds,
 } from "./page.ts";
+export type { LifecycleState } from "./pane.ts";
 export type { ArcOrigin, PaneOrigin } from "./pane-kinds.ts";
 export type { WorkspacePort } from "./restore-plan.ts";
 export type {
@@ -185,9 +220,11 @@ export {
   slugInk,
   slugParts,
   slugWords,
-} from "./slug.ts";
+} from "./slug-ink.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
-export { type LifecycleState, type TitleBarState, titleBar } from "./title-bar.ts";
+export { curatedTips, rotatingTip, type Tip, type TipSignals, tipRotationMs } from "./tips.ts";
+export { type TitleBarState, type TitleSpan, titleBar, titleSpans } from "./title-bar.ts";
+export type { FocusOutline } from "./view/frame.ts";
 export {
   describeWorkspaceRow,
   type WorkspaceChoice,
@@ -206,3 +243,9 @@ export {
   type WorkspaceSetupReceipt,
 } from "./workspace-setup.ts";
 export type { WorkspaceState } from "./workspace-state.ts";
+export { WorkspacesPane, type WorkspacesPaneOptions } from "./workspaces-pane.ts";
+export type {
+  FocusDirRow,
+  WorkspaceRow,
+  WorkspacesLevel,
+} from "./workspaces-pane-model.ts";

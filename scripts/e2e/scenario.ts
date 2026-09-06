@@ -1,5 +1,13 @@
 import type { Tool, TurnDelta } from "../../packages/engine/src/index.ts";
-import type { AgentFactory, Flavor, PresetsPort } from "../../packages/tui/src/index.ts";
+import type {
+  AgentFactory,
+  AppOptions,
+  Flavor,
+  FocusOutline,
+  GlyphSupport,
+  PresetsPort,
+} from "../../packages/tui/src/index.ts";
+import type { CapturedFrame } from "./frame.ts";
 
 export interface FrameSize {
   readonly width: number;
@@ -17,11 +25,15 @@ export interface Stage {
   press(...chords: readonly string[]): Promise<void>;
   type(text: string): Promise<void>;
   click(x: number, y: number): Promise<void>;
+  hover(x: number, y: number): Promise<void>;
   scroll(x: number, y: number, direction: "up" | "down", times?: number): Promise<void>;
   drag(from: Point, to: Point): Promise<void>;
+  dragHold(from: Point, to: Point): Promise<void>;
+  release(at: Point): Promise<void>;
   settle(): Promise<void>;
-  until(marker: string, timeoutMs?: number): Promise<string>;
+  until(marker: string | RegExp, timeoutMs?: number): Promise<string>;
   capture(stepName: string): Promise<string>;
+  spans(): CapturedFrame;
   evidence(fileName: string, content: string): string;
   resize(width: number, height: number): Promise<void>;
   renderOnce(): Promise<number>;
@@ -47,6 +59,9 @@ export interface Scenario {
   readonly script?: "per-agent" | "shared";
   readonly contextWindow?: number;
   readonly flavors?: readonly Flavor[];
+  readonly glyphs?: GlyphSupport;
+  readonly focusOutline?: FocusOutline;
+  readonly app?: Partial<AppOptions>;
   readonly presets?: (stateDir: string) => PresetsPort;
   readonly goldens?: readonly string[];
   beforeBoot?(world: WorldPaths): void;

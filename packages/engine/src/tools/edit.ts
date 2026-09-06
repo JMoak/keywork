@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { countOccurrences, toUnixEol } from "@keywork/shared";
 import { z } from "zod";
 import { confinedPath, type ToolScope } from "./confine.ts";
 import { defineTool } from "./define.ts";
@@ -38,20 +39,4 @@ export function editTool(scope: ToolScope, onSaved?: (path: string) => void) {
       return `Replaced ${label} in ${path}`;
     },
   });
-}
-
-function toUnixEol(text: string): string {
-  return text.replaceAll("\r\n", "\n");
-}
-
-function countOccurrences(content: string, search: string): number {
-  let count = 0;
-  for (
-    let at = content.indexOf(search);
-    at !== -1;
-    at = content.indexOf(search, at + search.length)
-  ) {
-    count += 1;
-  }
-  return count;
 }

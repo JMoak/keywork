@@ -1,29 +1,21 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { SessionStore, textMessage } from "@keywork/engine";
 import { listWorkspaces, openWorkspace } from "@keywork/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import {
   fileWorkspaceRecall,
   nameFromSlug,
   selectWorkspace,
+  unknownWorkspaceProblem,
   type WorkspaceRecall,
   workspaceCommand,
   workspacesPort,
 } from "./workspaces.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-workspaces-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-workspaces-");
 
 async function declaredRoot(): Promise<string> {
   const root = await tempDir();
@@ -233,7 +225,16 @@ describe("workspacesPort", () => {
       requestSwitch: (slug) => switches.push(slug),
     });
     expect(await port.list()).toEqual([
-      { slug: undefined, name: "alpha", declared: true, current: true, notes: 0 },
+      {
+        slug: undefined,
+        name: "alpha",
+        declared: true,
+        current: true,
+        notes: 0,
+        focusDirs: [],
+        sessions: 0,
+        lastUsed: undefined,
+      },
     ]);
 
     await port.create("frontend");
@@ -252,5 +253,64 @@ describe("workspacesPort", () => {
 describe("nameFromSlug", () => {
   it("turns a slug into a readable name", () => {
     expect(nameFromSlug("frontend-revamp")).toBe("frontend revamp");
+  });
+});
+
+describe("unknownWorkspaceProblem", () => {
+  it("names a missing slug, and accepts nothing, default, or a declared slug", async () => {
+    const root = await declaredRoot();
+    await workspaceCommand(
+      ["new", "frontend"],
+      root,
+      consoleOf().io,
+      undefined,
+      await recallIn(root),
+    );
+    expect(unknownWorkspaceProblem(root, undefined)).toBeUndefined();
+    expect(unknownWorkspaceProblem(root, "default")).toBeUndefined();
+    expect(unknownWorkspaceProblem(root, "frontend")).toBeUndefined();
+    expect(unknownWorkspaceProblem(root, "ghost")).toContain('no workspace named "ghost"');
+  });
+
+  it("selectWorkspace reads the word default as the default slot without a warning", async () => {
+    const root = await declaredRoot();
+    const warnings: string[] = [];
+    expect(
+      selectWorkspace(root, "default", await recallIn(root), (line) => warnings.push(line)),
+    ).toBeUndefined();
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe("workspacesPort node facts", () => {
+  it("counts used sessions per workspace with their last activity and lists focus dirs", async () => {
+    const root = await declaredRoot();
+    await mkdir(join(root, "packages", "web"), { recursive: true });
+    const sessionsOf = (slug: string | undefined) => join(root, "sessions", slug ?? "default");
+    const port = workspacesPort({
+      cwd: root,
+      current: undefined,
+      recall: await recallIn(root),
+      requestSwitch: () => {},
+      sessionDirFor: sessionsOf,
+    });
+    await port.create("frontend");
+    await mkdir(sessionsOf("frontend"), { recursive: true });
+    const used = await SessionStore.create(join(sessionsOf("frontend"), "used.jsonl"), root);
+    await used.append(textMessage("user", "hi"));
+    await SessionStore.create(join(sessionsOf("frontend"), "empty.jsonl"), root);
+
+    expect(await port.linkFocusDir("frontend", "packages/web")).toBe("packages/web");
+    const listed = await port.list();
+    expect(listed.map((choice) => [choice.slug, choice.sessions, choice.focusDirs])).toEqual([
+      [undefined, 0, []],
+      ["frontend", 1, ["packages/web"]],
+    ]);
+    expect(listed[1]?.lastUsed).toBeGreaterThan(0);
+    expect(listed[0]?.lastUsed).toBeUndefined();
+
+    await port.unlinkFocusDir("frontend", "packages/web");
+    expect((await port.list())[1]?.focusDirs).toEqual([]);
+    await expect(port.linkFocusDir("frontend", "nope")).rejects.toThrow("isn't a directory");
   });
 });

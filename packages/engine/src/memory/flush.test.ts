@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { messageText, textMessage } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
 import {
@@ -24,14 +24,7 @@ import { memorySearchTool } from "./recall-tools.ts";
 import { MemorySearch } from "./search.ts";
 import { MemoryStore } from "./store.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-flush-");
 
 const contextWindow = 200_000;
 const budget = contextBudgetFor(contextWindow);
@@ -39,8 +32,7 @@ const overThreshold = contextWindow - budget.flushReserve + 1;
 const readingAt = (used: number) => readContext(used, budget);
 
 async function openVault(trusted = true): Promise<{ store: MemoryStore; root: string }> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-flush-"));
-  cleanups.push(root);
+  const root = await scratch();
   const store = new MemoryStore({
     vaultRoot: root,
     trusted,
@@ -84,6 +76,19 @@ describe("MemoryFlush", () => {
       query: "split ratios decided",
     });
     expect(recall).toContain("Split ratios were decided 60/40");
+  });
+
+  it("flushes on demand for the arc airlock, ignoring the budget, and skips an empty conversation", async () => {
+    const { store, root } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn("The dock keeps a third of the width.")]),
+      store,
+    });
+    expect(await flush.flushNow([])).toMatchObject({ flushed: false, persisted: false });
+    const outcome = await flush.flushNow(longConversation.slice(0, 2));
+    expect(outcome).toMatchObject({ flushed: true, persisted: true });
+    const daily = await readFile(join(root, "daily", "2026-08-10.md"), "utf8");
+    expect(daily).toContain("The dock keeps a third of the width.");
   });
 
   it("asks about wrongness and instructs a NO_REPLY escape in the flush prompt", () => {

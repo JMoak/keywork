@@ -28,7 +28,9 @@ a config file. What the agent is allowed to do is always on screen.
 - **Everything is on the keyboard.** There's a leader key, and the palette doubles as live
   documentation, so you find things by looking instead of memorizing a cheat sheet. The
   moves you make constantly are single keystrokes. When an agent is mid-run, `Enter`
-  steers it and `Alt+Enter` queues your next thought behind it.
+  queues your next thought behind it and `Alt+Enter` steers it mid-stride. On Windows
+  Terminal, `ctrl+shift+p` ships bound to the terminal's own palette, so keywork's
+  palette also answers to `leader i` and the help overlay leads with that chord there.
 - **Tiling is built in.** Split, rotate, zoom, focus. No tmux underneath, and Windows gets
   the real thing instead of an afterthought. Every pane is a live view onto the same event
   stream, whether it's showing the conversation, your files, the session tree, or MCP
@@ -79,6 +81,7 @@ whenever. It's plain API keys, nothing fancier:
 ```
 KEYWORK_OPENROUTER_API_KEY or OPENROUTER_API_KEY         OpenRouter (one key, hundreds of models)
 KEYWORK_OPENAI_API_KEY or OPENAI_API_KEY                 OpenAI (or any compatible endpoint)
+KEYWORK_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY           Anthropic (an API key from the console; never a Claude subscription)
 AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION   Amazon Bedrock
 ```
 
@@ -139,8 +142,10 @@ agents equally.
 keywork borrows gratefully from two MIT projects,
 [Pi](https://github.com/earendil-works/pi) and
 [OpenCode](https://github.com/sst/opencode), and every adapted piece is credited in
-[`NOTICE`](NOTICE). Anthropic models connect through an API key and the Agent SDK, and
-that is the only way they ever will.
+[`NOTICE`](NOTICE). Anthropic models connect through an API key against the public Messages
+API, and that is the only way they ever will: no Claude subscription sign-in, no borrowed
+client identity. [`docs/compliance/anthropic-review.md`](docs/compliance/anthropic-review.md)
+is the checklist that keeps it that way.
 
 The license is [FSL-1.1-MIT](LICENSE.md): use it for anything short of building a
 competitor, and each release converts to plain MIT after two years.

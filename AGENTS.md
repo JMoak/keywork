@@ -10,7 +10,9 @@ and says which one owns each topic; superseded overlays live in `docs/backlog/ar
 1. **Anthropic is API-key / Agent-SDK only.** No subscription-OAuth of any kind, no
    Claude-Code client impersonation, no ported login flows from OpenCode/Pi or anywhere else.
    `scripts/check-guardrails.ts` enforces this in CI; never weaken it to make code pass.
-   No Anthropic provider wiring at all before backlog task G1.
+   The Anthropic provider (G1, `engine/src/providers/anthropic.ts`) speaks the public Messages
+   API with an API key in `x-api-key` and nothing else; `docs/compliance/anthropic-review.md`
+   is the checklist every change to it re-runs.
 2. **Licensing:** Pi (`earendil-works/pi`) and OpenCode (`sst/opencode`) are MIT; code may be
    adapted **with attribution recorded in `NOTICE`**. Crush (`charmbracelet/crush`) is
    FSL-1.1-MIT and is **not a source for keywork at all**: never copy, port, or closely
@@ -36,4 +38,5 @@ subagent writing keywork code; the perspective is the point.
 - Every behavior lands with tests; acceptance criteria in `docs/backlog/` are the bar.
 - Exact-pinned dependencies only (`scripts/check-pins.ts` enforces).
 - New config options require a `.describe()` justification in the schema (vision D9).
-- `bun run check && bun test` must be green before any task is called done.
+- `bun run check && bun run test` must be green before any task is called done (`bun run test` is
+  vitest, the runner CI uses; bare `bun test` is Bun's own runner and is not the gate).

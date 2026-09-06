@@ -1,5 +1,6 @@
 import { type ArcPicker, type ArcPickerChoice, arcPickerOver } from "./arc-picker.ts";
 import { type ArcsPort, arcSlugProblem, describeCloseOutcome, suggestArcSlug } from "./arcs.ts";
+import { verbAndOperand } from "./commands.ts";
 
 export interface FocusedArcPort {
   current(): string | undefined;
@@ -15,24 +16,51 @@ export interface ArcCommandSeams {
   openArcPane(slug: string): void;
 }
 
-export function runArcCommand(seams: ArcCommandSeams, argument: string): Promise<void> {
-  const [verb = "", operand] = argument.split(/\s+/).filter((word) => word !== "");
-  switch (verb) {
-    case "":
-      return showArcPicker(seams);
+export type ArcInvocation =
+  | { verb: "pick"; slug?: string | undefined }
+  | { verb: "new"; slug?: string | undefined }
+  | { verb: "open"; slug?: string | undefined }
+  | { verb: "release" }
+  | { verb: "close"; slug?: string | undefined; direction?: string | undefined }
+  | { verb: "abandon"; slug?: string | undefined };
+
+export function runArcCommand(seams: ArcCommandSeams, invocation: ArcInvocation): Promise<void> {
+  switch (invocation.verb) {
+    case "pick":
+      return invocation.slug === undefined
+        ? showArcPicker(seams)
+        : switchArc(seams, invocation.slug);
     case "new":
-      return createArc(seams, operand);
+      return createArc(seams, invocation.slug);
     case "open":
-      return openArcPane(seams, operand);
-    case "none":
+      return openArcPane(seams, invocation.slug);
     case "release":
       return bindFocusedArc(seams, undefined);
     case "close":
-      return closeArc(seams, operand);
+      return closeArc(seams, invocation.slug, invocation.direction);
     case "abandon":
-      return abandonArc(seams, operand);
+      return abandonArc(seams, invocation.slug);
+  }
+}
+
+export function legacyArcInvocation(argument: string): ArcInvocation {
+  const [verb, operand] = verbAndOperand(argument);
+  switch (verb) {
+    case "":
+      return { verb: "pick" };
+    case "new":
+      return { verb: "new", slug: operand };
+    case "open":
+      return { verb: "open", slug: operand };
+    case "none":
+    case "release":
+      return { verb: "release" };
+    case "close":
+      return { verb: "close", slug: operand };
+    case "abandon":
+      return { verb: "abandon", slug: operand };
     default:
-      return switchArc(seams, verb);
+      return { verb: "pick", slug: verb };
   }
 }
 
@@ -45,7 +73,7 @@ export function applyArcChoice(seams: ArcCommandSeams, choice: ArcPickerChoice):
     case "create":
       return createArc(seams, choice.slug);
     case "archived":
-      seams.notice(`arc ${choice.slug} is archived · pick an active arc or /arc new`);
+      seams.notice(`arc ${choice.slug} is archived · pick an active arc or /arc-new`);
       return Promise.resolve();
   }
 }
@@ -89,12 +117,12 @@ async function createArc(seams: ArcCommandSeams, requested: string | undefined):
 async function openArcPane(seams: ArcCommandSeams, requested: string | undefined): Promise<void> {
   const slug = requested ?? seams.focusedArc?.current();
   if (slug === undefined) {
-    seams.notice("no arc here · /arc open <slug> names one");
+    seams.notice("no arc here · /arc-open <slug> names one");
     return;
   }
   const found = (await seams.arcs.list()).find((arc) => arc.slug === slug);
   if (found === undefined) {
-    seams.notice(`no arc named ${slug} · /arc new ${slug} creates it`);
+    seams.notice(`no arc named ${slug} · /arc-new ${slug} creates it`);
     return;
   }
   seams.openArcPane(slug);
@@ -103,28 +131,32 @@ async function openArcPane(seams: ArcCommandSeams, requested: string | undefined
 async function switchArc(seams: ArcCommandSeams, slug: string): Promise<void> {
   const found = (await seams.arcs.list()).find((arc) => arc.slug === slug);
   if (found === undefined) {
-    seams.notice(`no arc named ${slug} · /arc new ${slug} creates it`);
+    seams.notice(`no arc named ${slug} · /arc-new ${slug} creates it`);
     return;
   }
   if (found.status === "archived") {
-    seams.notice(`arc ${slug} is archived · /arc new starts another`);
+    seams.notice(`arc ${slug} is archived · /arc-new starts another`);
     return;
   }
   await bindFocusedArc(seams, slug);
 }
 
-async function closeArc(seams: ArcCommandSeams, requested: string | undefined): Promise<void> {
+async function closeArc(
+  seams: ArcCommandSeams,
+  requested: string | undefined,
+  direction: string | undefined,
+): Promise<void> {
   const slug = requested ?? seams.focusedArc?.current();
   if (slug === undefined) {
-    seams.notice("no arc to close · this session is unbound · /arc close <slug> names one");
+    seams.notice("no arc to close · this session is unbound · /arc <slug> binds one first");
     return;
   }
-  seams.notice(describeCloseOutcome(slug, await seams.arcs.close(slug)));
+  seams.notice(describeCloseOutcome(slug, await seams.arcs.close(slug, direction)));
 }
 
 async function abandonArc(seams: ArcCommandSeams, slug: string | undefined): Promise<void> {
   if (slug === undefined) {
-    seams.notice("abandon needs a name · /arc abandon <slug>");
+    seams.notice("abandon needs a name · /arc-abandon <slug>");
     return;
   }
   await seams.arcs.abandon(slug);

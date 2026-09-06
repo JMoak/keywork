@@ -1,11 +1,15 @@
 import { homedir } from "node:os";
 import {
   Agent,
-  type AgentDefinition,
+  actionRecallBudget,
+  type BootstrapInjection,
+  type BotDefinition,
   buildSystemPrompt,
   Checkpoints,
   type ContextInjection,
+  contextBudgetFor,
   coreTools,
+  declaredContextWindow,
   type EngineEvents,
   type EventBus,
   loadProjectInstructions,
@@ -13,9 +17,14 @@ import {
   MemoryFlush,
   type MemoryRecall,
   type Message,
+  memoryRecallTools,
+  messageText,
   narrowedPermissions,
   type PermissionResolver,
   type Provider,
+  pointOfActionRecall,
+  RepoMap,
+  repoMapTokenBudget,
   restrictTools,
   type ShellSession,
   skillTool,
@@ -24,14 +33,16 @@ import {
   type ToolScope,
   toolScope,
 } from "@keywork/engine";
-import type { McpServerConfig, PromptsConfig } from "@keywork/shared";
-import { openWorkspace, resolveAnchor } from "@keywork/shared";
+import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
+import { mostSpecificMatch, openWorkspace, resolveAnchor, toError } from "@keywork/shared";
 import type { ArcService } from "./arcs.ts";
 import { loadWorkspaceExtensions, type WorkspaceExtensions } from "./commands.ts";
 import {
   bootstrapInjection,
+  type CitationTrail,
   type MemoryAccess,
   memoryRecall,
+  resolveSessionKey,
   type SessionKey,
   withMemoryPrompt,
   workspaceMemoryAccess,
@@ -44,6 +55,8 @@ export interface CompositionOptions {
   workspaceSlug?: string | undefined;
   prompts?: PromptsConfig | undefined;
   mcpServers?: Record<string, McpServerConfig> | undefined;
+  repoMap?: "auto" | "off" | undefined;
+  models?: ModelCapabilitiesConfig | undefined;
   onFileSaved?: ((path: string) => void) | undefined;
   checkpoints?: "on" | "off";
   reportCheckpointsUnavailable?: ((message: string) => void) | undefined;
@@ -57,9 +70,11 @@ export interface Composition {
   systemPromptFor(modelId: string | undefined): string;
   standingInjections: readonly ContextInjection[];
   memory: MemoryAccess;
+  bootstrap: BootstrapInjection | undefined;
   checkpoints: Checkpoints | undefined;
   extensions: WorkspaceExtensions;
   mcp: McpRegistry | undefined;
+  repoMap: RepoMap | undefined;
   onFileSaved: ((path: string) => void) | undefined;
 }
 
@@ -68,15 +83,19 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   const instructions = projectTrusted ? await loadProjectInstructions(cwd) : undefined;
   const memory = workspaceMemoryAccess(cwd, projectTrusted, workspaceSlug);
   const bootstrap = await bootstrapInjection(memory());
-  const systemPromptFor = (modelId: string | undefined): string =>
-    withMemoryPrompt(
+  const repoMap = await openRepoMap(cwd, projectTrusted, options.repoMap);
+  const systemPromptFor = (modelId: string | undefined): string => {
+    const map = repoMapPrompt(repoMap, options.models, modelId);
+    return withMemoryPrompt(
       buildSystemPrompt({
         ...(instructions !== undefined && { projectInstructions: instructions }),
         ...(options.prompts !== undefined && { prompts: options.prompts }),
         ...(modelId !== undefined && { modelId }),
+        ...(map !== undefined && { repoMap: map }),
       }),
-      bootstrap,
+      bootstrap?.text ?? "",
     );
+  };
   const checkpoints = options.checkpoints === "off" ? undefined : await openCheckpoints(options);
   const extensions = await loadWorkspaceExtensions(
     cwd,
@@ -88,12 +107,14 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     cwd,
     scope: workspaceToolScope(cwd, projectTrusted, workspaceSlug),
     systemPromptFor,
-    standingInjections: standingInjectionsFor(instructions, bootstrap),
+    standingInjections: standingInjectionsFor(instructions, bootstrap?.text ?? "", repoMap),
     memory,
+    bootstrap,
     checkpoints,
     extensions,
     mcp,
-    onFileSaved: options.onFileSaved,
+    repoMap,
+    onFileSaved: refreshingOnSave(repoMap, options.onFileSaved),
   };
 }
 
@@ -110,12 +131,13 @@ export function workspaceToolScope(
 export interface AgentCompositionOptions {
   permissions?: PermissionResolver | undefined;
   arcs?: ArcService | undefined;
+  citations?: CitationTrail | undefined;
 }
 
 export interface AgentBuildSpec {
   provider: Provider;
   guard: ToolGuard;
-  definition?: AgentDefinition | undefined;
+  bot?: BotDefinition | undefined;
   history?: readonly Message[] | undefined;
   bus?: EventBus<EngineEvents> | undefined;
   sessionId?: SessionKey | undefined;
@@ -126,6 +148,8 @@ export interface AgentBuildSpec {
 export interface AgentComposition {
   build(spec: AgentBuildSpec): Agent;
   flushFor(sessionId: string, provider: Provider): MemoryFlush | undefined;
+  flushOf(sessionId: string): MemoryFlush | undefined;
+  providerOf(sessionId: string): Provider | undefined;
   release(sessionId: string): void;
 }
 
@@ -135,8 +159,9 @@ export function composeAgents(
 ): AgentComposition {
   const flushes = new Map<string, MemoryFlush>();
   const providers = new Map<string, Provider>();
+  const replyTapped = new WeakSet<EventBus<EngineEvents>>();
   return {
-    build: (spec) => buildAgent(composition, options, spec),
+    build: (spec) => buildAgent(composition, options, spec, replyTapped),
     flushFor: (sessionId, provider) => {
       const memory = composition.memory();
       if (memory === undefined) return undefined;
@@ -153,6 +178,8 @@ export function composeAgents(
       flushes.set(sessionId, flush);
       return flush;
     },
+    flushOf: (sessionId) => flushes.get(sessionId),
+    providerOf: (sessionId) => providers.get(sessionId),
     release: (sessionId) => {
       flushes.delete(sessionId);
       providers.delete(sessionId);
@@ -174,7 +201,7 @@ function openCheckpoints(options: CompositionOptions): Promise<Checkpoints | und
     worktree: options.cwd,
     gitDir: options.checkpointsGitDir ?? snapshotGitDir(options.cwd, options.workspaceSlug),
   }).catch((cause: unknown) => {
-    options.reportCheckpointsUnavailable?.((cause as Error).message);
+    options.reportCheckpointsUnavailable?.(toError(cause).message);
     return undefined;
   });
 }
@@ -182,13 +209,53 @@ function openCheckpoints(options: CompositionOptions): Promise<Checkpoints | und
 function standingInjectionsFor(
   projectInstructions: string | undefined,
   bootstrap: string,
+  repoMap: RepoMap | undefined,
 ): ContextInjection[] {
+  const mappedFiles = repoMap?.facts().files ?? 0;
+  const mappedLabel = mappedFiles === 1 ? "1 file" : `${mappedFiles} files`;
   return [
     ...(projectInstructions === undefined
       ? []
       : [{ source: "project-instructions" as const, id: "AGENTS.md" }]),
     ...(bootstrap === "" ? [] : [{ source: "memory-bootstrap" as const, scope: "workspace" }]),
+    ...(mappedFiles === 0
+      ? []
+      : [{ source: "repo-map" as const, id: mappedLabel, scope: "workspace" }]),
   ];
+}
+
+async function openRepoMap(
+  cwd: string,
+  projectTrusted: boolean,
+  setting: "auto" | "off" | undefined,
+): Promise<RepoMap | undefined> {
+  if (!projectTrusted || setting === "off") return undefined;
+  const map = new RepoMap({ root: cwd });
+  await map.build();
+  return map;
+}
+
+function repoMapPrompt(
+  map: RepoMap | undefined,
+  models: ModelCapabilitiesConfig | undefined,
+  modelId: string | undefined,
+): string | undefined {
+  if (map === undefined) return undefined;
+  const window = mostSpecificMatch(models, modelId)?.contextWindow;
+  const rendered = map.serialize(repoMapTokenBudget(window));
+  return rendered === "" ? undefined : rendered;
+}
+
+function refreshingOnSave(
+  map: RepoMap | undefined,
+  onFileSaved: ((path: string) => void) | undefined,
+): ((path: string) => void) | undefined {
+  if (map === undefined) return onFileSaved;
+  return (path) => {
+    map.markStale();
+    void map.refreshIfStale();
+    onFileSaved?.(path);
+  };
 }
 
 function followingProvider(current: () => Provider): Provider {
@@ -210,42 +277,71 @@ function buildAgent(
   composition: Composition,
   options: AgentCompositionOptions,
   spec: AgentBuildSpec,
+  replyTapped: WeakSet<EventBus<EngineEvents>>,
 ): Agent {
   let self: Agent | undefined;
+  const recall = journalingRecall(
+    memoryRecall(composition.memory(), spec.sessionId, spec.onRetrieval, options.arcs),
+    () => self,
+  );
+  const tap = options.citations?.tapFor(spec.sessionId);
   const baseTools = [
     ...coreTools(composition.scope, {
-      memory: journalingRecall(
-        memoryRecall(composition.memory(), spec.sessionId, spec.onRetrieval, options.arcs),
-        () => self,
-      ),
       shell: spec.shell,
       onToolOutput: (chunk) => self?.bus.emit("tool.output", { chunk }),
       onFileSaved: composition.onFileSaved,
     }),
+    ...(recall === undefined
+      ? []
+      : memoryRecallTools(recall.store, recall.search, recall.onRecall, tap)),
     ...skillToolsFor(composition, () => self),
   ];
   const tools =
     composition.mcp === undefined ? () => baseTools : composition.mcp.surface(baseTools);
-  const definition = spec.definition;
+  const bot = spec.bot;
   const permissions =
-    definition === undefined
-      ? options.permissions
-      : narrowedPermissions(definition, options.permissions);
-  const composedPrompt = definition === undefined || definition.prompt === "";
+    bot === undefined ? options.permissions : narrowedPermissions(bot, options.permissions);
+  const composedPrompt = bot === undefined || bot.prompt === "";
   const agent = new Agent({
     provider: spec.provider,
-    tools: definition === undefined ? tools : () => restrictTools(tools(), definition),
-    systemPrompt: composedPrompt
-      ? composition.systemPromptFor(spec.provider.modelId)
-      : definition.prompt,
+    tools: bot === undefined ? tools : () => restrictTools(tools(), bot),
+    systemPrompt: composedPrompt ? composition.systemPromptFor(spec.provider.modelId) : bot.prompt,
     standingInjections: composedPrompt ? composition.standingInjections : [],
     guard: spec.guard,
     ...(permissions !== undefined && { permissions }),
     ...(spec.history !== undefined && { history: spec.history }),
     ...(spec.bus !== undefined && { bus: spec.bus }),
+    ...(recall !== undefined && {
+      actionRecall: pointOfActionRecall({
+        search: recall.search,
+        tokens: actionRecallBudget(contextBudgetFor(declaredContextWindow(spec.provider))),
+        ...(tap !== undefined && { tap }),
+        onRecall: (noteName) =>
+          self?.bus.emit("context.injected", {
+            injection: { source: "memory-action", id: noteName, scope: "workspace" },
+          }),
+      }),
+    }),
   });
   self = agent;
+  wireReplyCitations(agent, options.citations, spec.sessionId, replyTapped);
   return agent;
+}
+
+function wireReplyCitations(
+  agent: Agent,
+  citations: CitationTrail | undefined,
+  sessionKey: SessionKey | undefined,
+  replyTapped: WeakSet<EventBus<EngineEvents>>,
+): void {
+  if (citations === undefined || sessionKey === undefined) return;
+  if (replyTapped.has(agent.bus)) return;
+  replyTapped.add(agent.bus);
+  agent.bus.on("turn.completed", ({ message, replay }) => {
+    if (replay === true) return;
+    const id = resolveSessionKey(sessionKey);
+    if (id !== undefined) citations.recordReply(id, messageText(message));
+  });
 }
 
 function journalingRecall(

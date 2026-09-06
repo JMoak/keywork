@@ -49,6 +49,7 @@ export class TranscriptFeed {
   activity = 0;
   private readonly running = new Map<string, RunningTool>();
   private stream: { entry: AssistantEntry; steps: number } | undefined;
+  private turnStartedAtMs: number | undefined;
   private readonly promptsAwaitingId: UserEntry[] = [];
 
   constructor(
@@ -69,15 +70,25 @@ export class TranscriptFeed {
       bus.on("tool.finished", ({ callId, output, isError }) =>
         this.settleTool(callId, output, isError),
       ),
-      bus.on("turn.completed", () => this.endStream()),
+      bus.on("turn.completed", () => this.endTurn()),
       bus.on("turn.interrupted", () => {
-        this.endStream();
+        this.endTurn();
         this.post("info", "· interrupted");
       }),
     ];
     return () => {
       for (const stop of stops) stop();
     };
+  }
+
+  activeTool(): ToolRun | undefined {
+    return [...this.running.values()].map(({ run }) => run).findLast((run) => !run.replay);
+  }
+
+  turnElapsedMs(): number | undefined {
+    return this.turnStartedAtMs === undefined
+      ? undefined
+      : Math.max(0, this.now() - this.turnStartedAtMs);
   }
 
   post(kind: NoticeEntry["kind"], text: string): void {
@@ -125,8 +136,16 @@ export class TranscriptFeed {
   private startTurn(text: string, replay: boolean, entryId: string | undefined): void {
     const prompt: UserEntry = { kind: "user", text, ...(entryId !== undefined && { entryId }) };
     this.entries.push(prompt);
-    if (!replay) this.promptsAwaitingId.push(prompt);
+    if (!replay) {
+      this.promptsAwaitingId.push(prompt);
+      this.turnStartedAtMs = this.now();
+    }
     this.notify();
+  }
+
+  private endTurn(): void {
+    this.endStream();
+    this.turnStartedAtMs = undefined;
   }
 
   private streamText(text: string): void {

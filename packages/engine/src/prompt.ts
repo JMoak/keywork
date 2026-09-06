@@ -18,10 +18,16 @@ export interface SystemPromptOptions {
   projectInstructions?: string;
   prompts?: PromptsConfig;
   modelId?: string;
+  repoMap?: string;
 }
 
 export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
-  return [corePrompt, ...projectSection(options), ...userSections(options)].join("\n\n");
+  return [
+    corePrompt,
+    ...projectSection(options),
+    ...repoMapSection(options),
+    ...userSections(options),
+  ].join("\n\n");
 }
 
 export async function loadProjectInstructions(cwd: string): Promise<string | undefined> {
@@ -30,6 +36,14 @@ export async function loadProjectInstructions(cwd: string): Promise<string | und
   } catch {
     return undefined;
   }
+}
+
+function repoMapSection({ repoMap }: SystemPromptOptions): string[] {
+  const map = presence(repoMap);
+  if (map === undefined) return [];
+  return [
+    `Repo map (files ranked by how widely their exported names are referenced; heuristic, not exhaustive):\n${map}`,
+  ];
 }
 
 function projectSection({ projectInstructions }: SystemPromptOptions): string[] {

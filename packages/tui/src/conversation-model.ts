@@ -19,7 +19,7 @@ import {
   PromptEditor,
 } from "./prompt-editor.ts";
 import { SessionLedger } from "./session-ledger.ts";
-import { type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
+import { type ToolRun, type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
 import { TranscriptNavigation } from "./transcript-navigation.ts";
 import { type TranscriptLine, TranscriptView } from "./transcript-view.ts";
 
@@ -63,10 +63,8 @@ export class ConversationModel {
   private readonly ask: MutationAsk;
   private readonly navigation: TranscriptNavigation;
   private readonly view = new TranscriptView();
-  private readonly held: string[] = [];
   private agent: Agent | undefined;
   private unfollow: () => void = () => {};
-  private settling = false;
   private afterTurn: (() => Promise<void>) | undefined;
   private compaction: CompactionHook | undefined;
   private settledListener: ((outcome: SettledOutcome) => void) | undefined;
@@ -102,7 +100,7 @@ export class ConversationModel {
   }
 
   get busy(): boolean {
-    return !this.disposed && ((this.agent?.busy() ?? false) || this.settling);
+    return !this.disposed && (this.agent?.busy() ?? false);
   }
 
   get activity(): number {
@@ -126,11 +124,21 @@ export class ConversationModel {
   }
 
   queued(): readonly string[] {
-    return [...(this.agent?.queued().map((prompt) => prompt.text) ?? []), ...this.held];
+    return this.agent?.queued().map((prompt) => prompt.text) ?? [];
   }
 
   suggestions(): readonly CommandSuggestion[] {
     return this.editor.suggestions();
+  }
+
+  traySelect(at: number): void {
+    this.editor.selectSuggestion(at);
+  }
+
+  trayAccept(at: number): boolean {
+    const outcome = this.editor.acceptSuggestion(at);
+    if (outcome === "pass") return false;
+    return this.applyEdit(outcome);
   }
 
   usageSummary(): string {
@@ -139,6 +147,14 @@ export class ConversationModel {
 
   contextReading(): ContextReading | undefined {
     return this.ledger.contextReading(this.agent);
+  }
+
+  activeTool(): ToolRun | undefined {
+    return this.feed.activeTool();
+  }
+
+  turnElapsedMs(): number | undefined {
+    return this.feed.turnElapsedMs();
   }
 
   backtracking(): boolean {
@@ -160,7 +176,7 @@ export class ConversationModel {
       { width, rows, page, marks },
       this.navigation.viewport(),
     );
-    this.navigation.framed(frame.scrollBack);
+    this.navigation.framed(frame.scrollBack, frame.total);
     return frame.lines;
   }
 
@@ -204,11 +220,6 @@ export class ConversationModel {
     if (trimmed === "" || this.agent === undefined || this.disposed) return;
     this.editor.remember(trimmed);
     this.navigation.snapToLive();
-    if (this.settling) {
-      this.held.push(trimmed);
-      this.touch();
-      return;
-    }
     this.send(trimmed, behavior);
   }
 
@@ -256,6 +267,7 @@ export class ConversationModel {
     if (previous !== undefined) this.ledger.retire(previous);
     this.ask.denyAll();
     this.follow(agent);
+    if (previous !== undefined) agent.adoptQueue(previous);
   }
 
   discloseRetrieval(text: string): void {
@@ -271,7 +283,6 @@ export class ConversationModel {
   dispose(): void {
     this.disposed = true;
     this.unfollow();
-    this.held.length = 0;
     this.ask.close();
     this.feed.endStream();
     this.navigation.reset();
@@ -287,6 +298,8 @@ export class ConversationModel {
 
   private follow(agent: Agent): void {
     this.unfollow();
+    this.agent?.settleTurnsWith(undefined);
+    agent.settleTurnsWith(() => this.settleAfterTurn());
     const stops = [
       this.feed.follow(agent.bus),
       agent.bus.on("turn.completed", ({ replay }) => {
@@ -308,7 +321,7 @@ export class ConversationModel {
         () => undefined,
         (cause: unknown) => this.reportTurnFailure(cause),
       )
-      .then(() => this.settleIfIdle());
+      .then(() => this.reportRest());
     this.touch();
   }
 
@@ -317,25 +330,17 @@ export class ConversationModel {
     this.feed.post("error", toError(cause).message);
   }
 
-  private settleIfIdle(): Promise<void> {
-    if (this.settling || (this.agent?.busy() ?? false)) return Promise.resolve();
-    return this.settle(() => this.afterTurn?.() ?? Promise.resolve());
+  private settleAfterTurn(): Promise<void> {
+    this.touch();
+    return (this.afterTurn?.() ?? Promise.resolve()).catch((cause: unknown) => {
+      if (!this.disposed) this.feed.post("error", toError(cause).message);
+    });
   }
 
-  private settle(work: () => Promise<void>): Promise<void> {
-    this.settling = true;
+  private reportRest(): void {
+    if (this.disposed) return;
+    if (!this.busy) this.settledListener?.(this.outcome());
     this.touch();
-    return work()
-      .catch((cause: unknown) => {
-        if (!this.disposed) this.feed.post("error", toError(cause).message);
-      })
-      .then(() => {
-        this.settling = false;
-        if (this.disposed) return;
-        for (const text of this.held.splice(0)) this.send(text, "queue");
-        if (!this.busy) this.settledListener?.(this.outcome());
-        this.touch();
-      });
   }
 
   private outcome(): SettledOutcome {
@@ -356,7 +361,13 @@ export class ConversationModel {
       this.feed.post("info", "turn still running · compact once it settles");
       return;
     }
-    this.lastSend = this.settle(() => hook(instructions));
+    this.lastSend = this.agent
+      .hold(() => hook(instructions))
+      .catch((cause: unknown) => {
+        if (!this.disposed) this.feed.post("error", toError(cause).message);
+      })
+      .then(() => this.reportRest());
+    this.touch();
   }
 
   private applyEdit(outcome: Exclude<EditorOutcome, "pass">): boolean {
@@ -364,7 +375,7 @@ export class ConversationModel {
     if ("submit" in outcome) {
       if (this.agent === undefined) return true;
       this.editor.clear();
-      this.submitText(outcome.submit);
+      this.submitText(outcome.submit, outcome.behavior);
       return true;
     }
     const ran =

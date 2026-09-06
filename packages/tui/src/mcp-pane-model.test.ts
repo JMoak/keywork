@@ -7,6 +7,7 @@ import {
   stateGlyph,
   tileMark,
 } from "./mcp-pane-model.ts";
+import { pressModel as press } from "./testing/index.ts";
 
 interface ServerSpec {
   name: string;
@@ -47,10 +48,6 @@ function modelOver(servers: ServerSpec[]) {
   });
   model.setServers(servers.map(serverOf));
   return { model, recorded };
-}
-
-function press(model: McpPaneModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5);
 }
 
 function texts(model: McpPaneModel): string[] {

@@ -1,7 +1,8 @@
 import type { McpServerConfig } from "@keywork/shared";
 import type { ToolSource } from "../agent.ts";
 import type { Tool } from "../tools.ts";
-import { connectStdioServer, type McpTool } from "./client.ts";
+import { connectStdioServer, type McpConnection, type McpTool } from "./client.ts";
+import { connectHttpServer } from "./http.ts";
 import {
   type ConnectServer,
   type McpServerStatus,
@@ -69,8 +70,7 @@ export class McpRegistry {
   constructor(options: McpRegistryOptions) {
     const timeoutMs = options.requestTimeoutMs ?? 10_000;
     const connect: ConnectServer =
-      options.connect ??
-      ((spec, signal) => connectStdioServer(spec, { requestTimeoutMs: timeoutMs, signal }));
+      options.connect ?? ((config, signal) => openTransport(config, timeoutMs, signal));
     const restartDelays = options.restartDelaysMs ?? defaultRestartDelaysMs;
     this.maxResultChars = options.maxResultChars ?? 30_000;
     this.onToolResult = options.onToolResult;
@@ -222,6 +222,27 @@ export class McpRegistry {
 
 interface ServerCatalogEntry extends CatalogEntry {
   server: ServerReconciler;
+}
+
+function openTransport(
+  config: McpServerConfig,
+  requestTimeoutMs: number,
+  signal: AbortSignal,
+): Promise<McpConnection> {
+  if (config.transport === "http") {
+    return connectHttpServer(
+      { url: config.url, ...(config.headers !== undefined && { headers: config.headers }) },
+      { requestTimeoutMs, signal },
+    );
+  }
+  return connectStdioServer(
+    {
+      command: config.command,
+      ...(config.args !== undefined && { args: config.args }),
+      ...(config.env !== undefined && { env: config.env }),
+    },
+    { requestTimeoutMs, signal },
+  );
 }
 
 function qualifiedName(server: string, tool: string): string {

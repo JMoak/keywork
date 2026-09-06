@@ -9,11 +9,13 @@ const toolProse = "Counting the files now.";
 const toolVerdict = "There are 4 files here.";
 const settledToolMark = "· done";
 const replayToolLine = "░ list · done";
+const calmHeader = /│ session-1 +│/;
 
 export const sessionLifecycle: Scenario = {
   name: "session-lifecycle",
   description:
     "converse → sessions overview → drill in → label → fork → live overview → switchboard enter → tool turn → quit → relaunch restores layout, sessions, and clean tool replay",
+  size: { width: 132, height: 32 },
   tools: () => [listTool],
   turns: [
     textTurn(reply),
@@ -32,7 +34,7 @@ export const sessionLifecycle: Scenario = {
     await stage.type("plan the fix");
     await stage.press("enter");
     await stage.until(reply);
-    await stage.until("─ session-1 · ░");
+    await stage.until(calmHeader);
     await stage.capture("conversation");
 
     await stage.press("ctrl+k", "t", "escape");

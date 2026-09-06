@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { toError } from "@keywork/shared";
@@ -7,23 +7,74 @@ import type { FileOpenOptions } from "./pane.ts";
 
 export const crashLogFile = join(homedir(), ".keywork", "tui-crash.log");
 
+export interface CrashLogFacts {
+  readonly path: string;
+  readonly entries: number;
+  readonly lastAt?: string | undefined;
+}
+
+export function crashLogFacts(path: string): CrashLogFacts {
+  const lines = crashLogLines(path);
+  const lastAt = lines.at(-1)?.split(" ")[0];
+  return { path, entries: lines.length, ...(lastAt !== undefined && { lastAt }) };
+}
+
+function crashLogLines(path: string): string[] {
+  try {
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => line !== "");
+  } catch {
+    return [];
+  }
+}
+
 export interface DoctorDeps {
   logFile: string;
   exists(path: string): boolean;
   openFile(path: string, options?: FileOpenOptions): void;
   notice(text: string): void;
+  report?(): Promise<string>;
+  post?(text: string): boolean;
 }
 
-export function doctorCommand(deps: DoctorDeps): CommandSpec {
+export function doctorCommands(deps: DoctorDeps): CommandSpec[] {
+  return [doctorReportCommand(deps), crashLogOpenCommand(deps)];
+}
+
+function doctorReportCommand(deps: DoctorDeps): CommandSpec {
+  const report = deps.report;
+  if (report === undefined) {
+    return {
+      name: "doctor",
+      description: "open the crash log: /doctor",
+      run: () => openCrashLog(deps),
+    };
+  }
   return {
     name: "doctor",
-    aliases: ["crashlog"],
-    description: "open the crash log: /doctor",
+    description: "the capability and workspace report: /doctor",
     run: () => {
-      if (deps.exists(deps.logFile)) deps.openFile(deps.logFile, { atEnd: true });
-      else deps.notice("no crashes recorded · nothing to show");
+      void report()
+        .then((text) => {
+          if (deps.post?.(text) !== true) deps.notice("open a session to print the report into");
+        })
+        .catch((cause) => deps.notice(`doctor report failed · ${toError(cause).message}`));
     },
   };
+}
+
+function crashLogOpenCommand(deps: DoctorDeps): CommandSpec {
+  return {
+    name: "crashlog",
+    description: "open the raw crash log: /crashlog",
+    run: () => openCrashLog(deps),
+  };
+}
+
+function openCrashLog(deps: DoctorDeps): void {
+  if (deps.exists(deps.logFile)) deps.openFile(deps.logFile, { atEnd: true });
+  else deps.notice("no crashes recorded · nothing to show");
 }
 
 export function recordCrash(scope: string, cause: unknown): void {

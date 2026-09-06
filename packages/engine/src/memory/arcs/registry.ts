@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { slugProblem } from "@keywork/shared";
+import { validateSlug } from "@keywork/shared";
 import { type Frontmatter, parseDocument, serializeDocument } from "../frontmatter.ts";
 import type { Note } from "../notes.ts";
 import { MemoryInertError, MemoryStore } from "../store.ts";
@@ -23,16 +23,6 @@ export interface ArcRegistryOptions {
   now?: () => Date;
   secrets?: Record<string, string>;
   openQuestionCap?: number;
-}
-
-export class InvalidArcSlugError extends Error {
-  constructor(
-    readonly slug: string,
-    detail: string,
-  ) {
-    super(`invalid arc slug "${slug}": ${detail}`);
-    this.name = "InvalidArcSlugError";
-  }
 }
 
 export class ArcExistsError extends Error {
@@ -183,8 +173,7 @@ export class ArcRegistry {
 }
 
 export function validateArcSlug(slug: string): void {
-  const problem = slugProblem(slug);
-  if (problem !== undefined) throw new InvalidArcSlugError(slug, problem);
+  validateSlug("arc", slug);
 }
 
 function isValidArcSlug(slug: string): boolean {

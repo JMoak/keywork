@@ -33,15 +33,24 @@ export {
   type ConnectionsConfig,
   configSchema,
   connectionNamePattern,
+  connectionProtocols,
   defaultConfig,
   type KeyworkConfig,
   type McpServerConfig,
+  type ModelCapabilitiesConfig,
   type PermissionAction,
   type PermissionsConfig,
   type PromptOverride,
   type PromptsConfig,
 } from "./schema.ts";
-export { isSlug, slugGrammar, slugProblem } from "./slug.ts";
+export {
+  InvalidSlugError,
+  isReservedDeviceName,
+  isSlug,
+  slugGrammar,
+  slugProblem,
+  validateSlug,
+} from "./slug.ts";
 export {
   openWorkspace,
   resolveAnchor,

@@ -6,6 +6,7 @@ import type { PaneIntents } from "./pane.ts";
 import type { SessionTreeView } from "./session-tree-model.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
+import { press } from "./testing/index.ts";
 
 interface TreeWorld {
   items: SessionOverviewItem[];
@@ -162,15 +163,6 @@ function paneOver(world: TreeWorld, setup: PaneSetup = {}) {
     },
   );
   return { pane, recorded, port };
-}
-
-function press(pane: SessionTreePane, ...specs: string[]): void {
-  for (const spec of specs) pane.handleKey(parseChord(spec), typedSequence(spec));
-}
-
-function typedSequence(spec: string): string | undefined {
-  if (spec === "space") return " ";
-  return spec.length === 1 ? spec : undefined;
 }
 
 describe("SessionTreePane two levels", () => {

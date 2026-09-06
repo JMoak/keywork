@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { isMissingFileError } from "../memory/vault-files.ts";
 import { confinedPath, toolScope } from "../tools/confine.ts";
 import {
   definitionString,
@@ -14,7 +15,7 @@ import {
 export interface CommandDefinition {
   name: string;
   description?: string;
-  agent?: string;
+  bot?: string;
   model?: string;
   template: string;
   file: string;
@@ -60,7 +61,7 @@ export function fileEmbedder(root: string): (path: string) => Promise<string | u
     try {
       return await readFile(confined, "utf8");
     } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      if (isMissingFileError(cause)) return undefined;
       throw cause;
     }
   };
@@ -167,12 +168,12 @@ const commandConventions: ExtensionConventions = {
 
 function buildCommand(definition: MarkdownDefinition): CommandDefinition {
   const description = definitionString(definition.frontmatter, "description");
-  const agent = definitionString(definition.frontmatter, "agent");
+  const bot = definitionString(definition.frontmatter, "bot");
   const model = definitionString(definition.frontmatter, "model");
   return {
     name: definition.name,
     ...(description !== undefined && { description }),
-    ...(agent !== undefined && { agent }),
+    ...(bot !== undefined && { bot }),
     ...(model !== undefined && { model }),
     template: definition.body.trim(),
     file: definition.file,

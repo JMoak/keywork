@@ -83,6 +83,26 @@ describe("composeInference built-ins", () => {
     ).toBe("bedrock/amazon.nova-lite-v1:0");
   });
 
+  it("registers anthropic from an API key only, with the same scoped-over-ambient precedence", () => {
+    expect(reference(runtime({ env: { ANTHROPIC_API_KEY: "k" } }).resolve({}))).toBe(
+      "anthropic/claude-haiku-4-5",
+    );
+    const scoped = runtime({ env: { KEYWORK_ANTHROPIC_API_KEY: "s", ANTHROPIC_API_KEY: "a" } });
+    const credential = scoped.registry.registration("anthropic")?.credential;
+    expect(credential?.kind === "present" ? credential.handle.label : credential).toBe(
+      "KEYWORK_ANTHROPIC_API_KEY",
+    );
+    expect(scoped.registry.registration("anthropic")).toMatchObject({
+      protocol: "anthropic-messages",
+      endpoint: "https://api.anthropic.com/v1",
+    });
+    const missing = runtime().registry.registration("anthropic")?.credential;
+    expect(missing).toEqual({
+      kind: "missing",
+      expected: "KEYWORK_ANTHROPIC_API_KEY, ANTHROPIC_API_KEY, or keywork connect",
+    });
+  });
+
   it("answers a qualified reference for a credential-less built-in with unavailable-credential", () => {
     const resolution = runtime({ env: { OPENROUTER_API_KEY: "k" } }).resolve({
       override: "openai/gpt-5",

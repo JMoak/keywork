@@ -42,12 +42,12 @@ export class FilePane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
-    const { theme, height, width } = context;
-    this.lastPageRows = paneContentHeight(height);
+    const { theme } = context;
+    this.lastPageRows = paneContentHeight(context);
     return paneChrome(
       context,
       this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(width)),
+      ...this.bodyLines(theme, this.lastPageRows, paneContentWidth(context)),
     );
   }
 

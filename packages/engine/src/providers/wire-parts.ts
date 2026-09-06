@@ -25,15 +25,17 @@ export class ToolCallAssembler {
     });
   }
 
+  take(index: number): ToolCallPart | undefined {
+    const call = this.pending.get(index);
+    if (call === undefined) return undefined;
+    this.pending.delete(index);
+    return toolCallPart(index, call);
+  }
+
   completed(): ToolCallPart[] {
     return [...this.pending]
       .sort(([left], [right]) => left - right)
-      .map(([index, call]) => ({
-        type: "tool-call",
-        callId: call.id !== "" ? call.id : `call_${index}`,
-        name: call.name,
-        arguments: parseToolArguments(call.argumentsJson),
-      }));
+      .map(([index, call]) => toolCallPart(index, call));
   }
 }
 
@@ -56,6 +58,15 @@ interface PendingToolCall {
   id: string;
   name: string;
   argumentsJson: string;
+}
+
+function toolCallPart(index: number, call: PendingToolCall): ToolCallPart {
+  return {
+    type: "tool-call",
+    callId: call.id !== "" ? call.id : `call_${index}`,
+    name: call.name,
+    arguments: parseToolArguments(call.argumentsJson),
+  };
 }
 
 function firstSet(current: string, incoming: string | undefined): string {

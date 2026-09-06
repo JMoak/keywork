@@ -1,7 +1,7 @@
 import { actionCovering, appActions } from "./app-actions.ts";
 import type { AppCore } from "./app-core.ts";
 import type { CommandSpec } from "./commands.ts";
-import { type PaneKind, paneKindAvailable } from "./pane-kinds.ts";
+import { type PaneKind, paneKindAvailable, paneKindOf } from "./pane-kinds.ts";
 
 export function registerCoreCommands(core: AppCore): void {
   const shortcut = (action: string | undefined): Pick<CommandSpec, "shortcut"> => {
@@ -71,30 +71,25 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       description: "open the arcs node: /arcs",
       run: () => core.summon("arcs"),
     }),
+    ...when(available("workspaces"), {
+      name: "workspaces",
+      description: "open the workspaces node: /workspaces",
+      run: () => core.summon("workspaces"),
+    }),
     ...when(available("mcp"), {
       name: "mcp",
       description: "open the MCP status pane: /mcp",
       run: () => core.summon("mcp"),
     }),
-    ...when(options.workspaces !== undefined, {
-      name: "workspace",
-      aliases: ["workspaces"],
-      description:
-        "switch or create a workspace over this root: /workspace [slug | new <slug> | default]",
-      run: (args) => core.openWorkspaceCommand(args),
-    }),
+    ...(options.workspaces === undefined ? [] : workspaceCommands(core)),
     ...when(options.workspaceSetup !== undefined, {
       name: "init",
       aliases: ["trust"],
       description: "trust this folder and set up its workspace, memory and arcs included: /init",
       run: () => core.openWorkspaceSetup(),
     }),
-    ...when(options.arcs !== undefined, {
-      name: "arc",
-      description:
-        "bind this session to an arc: /arc [slug | new [slug] | none | close | abandon <slug>]",
-      run: (args) => core.openArcCommand(args),
-    }),
+    ...(options.arcs === undefined ? [] : arcCommands(core)),
+    ...(options.bots === undefined ? [] : botCommands(core)),
     ...when(options.presets !== undefined, {
       name: "preset",
       aliases: ["presets"],
@@ -115,6 +110,12 @@ function builtinCommands(core: AppCore): CommandSpec[] {
     }),
     ...undoCommands(core),
     {
+      name: "show-costs",
+      aliases: ["costs", "hide-costs"],
+      description: "toggle spend and token counts in pane headers: /show-costs",
+      run: () => core.toggleCosts(),
+    },
+    {
       name: "exit",
       description: "close this pane · quits keywork if it's the last",
       run: () => core.closePane(),
@@ -126,6 +127,93 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       run: () => core.shutdown(),
     },
   ];
+}
+
+function arcCommands(core: AppCore): CommandSpec[] {
+  return [
+    {
+      name: "arc",
+      description: "bind this session to an arc, or pick from a list: /arc [slug]",
+      run: (args) => core.openArcCommand(args),
+    },
+    {
+      name: "arc-new",
+      description: "start an arc and bind this session to it: /arc-new [slug]",
+      run: (args) => core.arcCommand({ verb: "new", slug: operandOf(args) }),
+    },
+    {
+      name: "arc-close",
+      description:
+        "close the focused arc, with optional direction for the distiller: /arc-close [direction]",
+      run: (args) => core.arcCommand({ verb: "close", direction: operandOf(args) }),
+    },
+    {
+      name: "arc-abandon",
+      description: "archive an arc without distilling, nothing deleted: /arc-abandon <slug>",
+      run: (args) => core.arcCommand({ verb: "abandon", slug: operandOf(args) }),
+    },
+    {
+      name: "arc-release",
+      description: "unbind this session from its arc: /arc-release",
+      run: () => core.arcCommand({ verb: "release" }),
+    },
+    {
+      name: "arc-open",
+      description: "open an arc pane, the focused session's arc by default: /arc-open [slug]",
+      run: (args) => core.arcCommand({ verb: "open", slug: operandOf(args) }),
+    },
+  ];
+}
+
+function botCommands(core: AppCore): CommandSpec[] {
+  return [
+    {
+      name: "bot",
+      description: "open a session with a bot, or pick from a list: /bot [slug|none]",
+      run: (args) => core.openBotCommand(args),
+    },
+    {
+      name: "bot-new",
+      description: "create a bot: purpose, name, and where it lives: /bot-new [slug]",
+      run: (args) => core.botCommand({ verb: "new", name: operandOf(args) }),
+    },
+    {
+      name: "bot-switch",
+      description: "rebind this session to a bot between turns: /bot-switch <slug>",
+      needsArgs: true,
+      run: (args) => core.botCommand({ verb: "switch", name: operandOf(args) }),
+    },
+    {
+      name: "bot-release",
+      description: "run this session as the default persona again: /bot-release",
+      run: () => core.botCommand({ verb: "switch", name: undefined }),
+    },
+  ];
+}
+
+function workspaceCommands(core: AppCore): CommandSpec[] {
+  return [
+    {
+      name: "workspace",
+      description: "switch workspaces over this root, or pick from a list: /workspace [slug]",
+      run: (args) => core.openWorkspaceCommand(args),
+    },
+    {
+      name: "workspace-new",
+      description: "create a workspace over this root and switch to it: /workspace-new <slug>",
+      run: (args) => core.workspaceCommand({ verb: "new", slug: operandOf(args) }),
+    },
+    {
+      name: "workspace-default",
+      description: "switch back to the default workspace: /workspace-default",
+      run: () => core.workspaceCommand({ verb: "default" }),
+    },
+  ];
+}
+
+function operandOf(args: string | undefined): string | undefined {
+  const trimmed = args?.trim() ?? "";
+  return trimmed === "" ? undefined : trimmed;
 }
 
 function dockCommands(core: AppCore): CommandSpec[] {
@@ -172,7 +260,7 @@ function jumpCommands(core: AppCore): CommandSpec[] {
   const focused = core.layout.focused();
   const targets = core.layout
     .panes()
-    .filter((id) => id !== focused)
+    .filter((id) => id !== focused && paneKindOf(id) !== "arc")
     .map((id) => ({ id, title: core.panes.get(id)?.title().trim().split(" ·")[0] ?? id }));
   const titleCounts = new Map<string, number>();
   for (const { title } of targets) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);

@@ -121,6 +121,10 @@ describe("buildPane", () => {
         calls.push(`mcp ${id}`);
         return stubPane(id);
       },
+      createWorkspacesPane: (id, _notify, paneIntents) => {
+        calls.push(`workspaces ${id} ${paneIntents === intents}`);
+        return stubPane(id);
+      },
     };
     const seams = seamsWith(notified);
     buildPane(factories, seams, "session-1", {
@@ -136,6 +140,7 @@ describe("buildPane", () => {
     buildPane(factories, seams, "arc-1", { kind: "arc", arc: "dock" });
     buildPane(factories, seams, "memory-1", { kind: "memory" });
     buildPane(factories, seams, "mcp-1", { kind: "mcp" });
+    buildPane(factories, seams, "workspaces-1", { kind: "workspaces" });
     expect(calls).toEqual([
       "conversation session-1 s1 hi new",
       "file file-1 a.md true",
@@ -145,6 +150,7 @@ describe("buildPane", () => {
       "arc arc-1 s-focused dock",
       "memory memory-1",
       "mcp mcp-1",
+      "workspaces workspaces-1 true",
     ]);
     expect(notified).toEqual(["session-1"]);
   });

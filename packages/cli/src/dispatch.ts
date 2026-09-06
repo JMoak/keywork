@@ -3,6 +3,7 @@ export const usage = `keywork: a coding agent you drive from the keyboard
 Usage:
   keywork [panes] [--fresh] [--workspace <slug>]            tiled multi-session workspace
   keywork run "<prompt>" [--model <model>] [--json] [--debug]
+              [--workspace <slug>] [--bot <slug>]
               [--preset careful|standard|open]
               [--session-dir <dir>]                         one-shot headless run
   keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
@@ -10,12 +11,13 @@ Usage:
                                                             (setup is an alias)
   keywork init                                              set up the workspace at its anchor
   keywork workspace [list|new|use|rm] [slug]                named workspaces over this root
+  keywork bot [list|new|rm] [slug] [purpose] [--global]     personas with their own memory
   keywork link <dir>                                        widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust
   keywork doctor                                            show what your terminal supports
   keywork --version                                         print the version and exit
   keywork --help                                            print this usage and exit
-  keywork chat [--model <model>] [--continue]
+  keywork chat [--model <model>] [--continue] [--workspace <slug>]
                [--resume <session-id>]                      engine smoke REPL (debug)
 
 Exit codes (keywork run): 0 completed · 1 failed · 2 usage · 3 unresolved · 4 denied · 130 interrupted
@@ -45,6 +47,7 @@ export const commandNames = [
   "setup",
   "init",
   "workspace",
+  "bot",
   "link",
   "trust",
   "untrust",
@@ -67,6 +70,7 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   setup: { behavior: "runs", note: "answers are read line by line from stdin" },
   init: { behavior: "runs", note: "confirmations are skipped, never assumed" },
   workspace: { behavior: "runs", note: "removal confirmations are skipped, never assumed" },
+  bot: { behavior: "runs", note: "removal confirmations are skipped, never assumed" },
   link: { behavior: "runs", note: "confirmations are skipped, never assumed" },
   trust: { behavior: "runs" },
   untrust: { behavior: "runs" },

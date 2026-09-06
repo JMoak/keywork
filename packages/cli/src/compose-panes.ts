@@ -1,9 +1,14 @@
+import { homedir } from "node:os";
 import {
   type Agent,
   type ContextBudget,
+  type CurationJudgmentPort,
+  closingJudgment,
   compactNow,
   contextBudgetFor,
   declaredContextWindow,
+  type MemoryFlush,
+  type Provider,
   renderCommand,
   type SessionStore,
   scanTemplate,
@@ -17,6 +22,9 @@ import {
   type AgentFactory,
   type AppOptions,
   type Compactor,
+  crashLogFacts,
+  crashLogFile,
+  detectCapabilities,
   type ExtensionsPort,
   readinessNotice,
   runApp,
@@ -24,7 +32,8 @@ import {
   type WorkspaceSetupPort,
   type WorkspacesPort,
 } from "@keywork/tui";
-import { arcService, arcsUnavailable } from "./arcs.ts";
+import { arcService, arcsUnavailable, type ClosingRequest } from "./arcs.ts";
+import { botService } from "./bots.ts";
 import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
 import {
   type AgentComposition,
@@ -33,10 +42,11 @@ import {
   composeWorkspace,
 } from "./compose.ts";
 import { inferencePort } from "./inference/port.ts";
+import { closingRole, namingRole, roleProvider } from "./inference/roles.ts";
 import type { LiveInference } from "./inference-state.ts";
 import { type DeferredMaterialization, deferredMaterialization } from "./materialize.ts";
 import { mcpPanePort } from "./mcp.ts";
-import { memoryPanePort, sweepOnClose } from "./memory.ts";
+import { citationTrail, memoryPanePort, sweepOnClose } from "./memory.ts";
 import { defaultSessionDir, workspaceIdentity, workspaceStateFile } from "./paths.ts";
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
 import {
@@ -45,6 +55,7 @@ import {
   sessionPort,
   sessionTreePort,
 } from "./sessions/ports.ts";
+import { listSessions } from "./sessions/store.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
 import { workspaceSetupPort } from "./workspace-setup.ts";
 import { type WorkspaceRecall, workspacesPort } from "./workspaces.ts";
@@ -74,11 +85,12 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
   const requestReopen = (slug: string | undefined): void => {
     pendingReopen = { slug };
   };
+  const sessionDir = launch.sessionDir ?? defaultSessionDir(cwd, workspaceSlug);
   const app = await composePanes({
     cwd,
     projectTrusted,
     workspaceSlug,
-    sessionDir: launch.sessionDir ?? defaultSessionDir(cwd, workspaceSlug),
+    sessionDir,
     workspace: workspaceStateStore(cwd, workspaceSlug, launch.fresh === true),
     config: launch.inference.current().config,
     inference: launch.inference,
@@ -90,6 +102,7 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
       current: workspaceSlug,
       recall: launch.workspaceRecall,
       requestSwitch: requestReopen,
+      sessionDirFor: (slug) => (slug === workspaceSlug ? sessionDir : defaultSessionDir(cwd, slug)),
     }),
     workspaceSetup: workspaceSetupPort({
       cwd,
@@ -136,51 +149,109 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     workspaceSlug,
     prompts: config.prompts,
     mcpServers: config.mcpServers,
+    repoMap: config.repoMap,
+    models: config.models,
     onFileSaved: materialize === undefined ? undefined : (path) => materialize.fileSaved(path),
     userRoot: options.userRoot,
     checkpointsGitDir: options.checkpointsGitDir,
     reportCheckpointsUnavailable: options.reportCheckpointsUnavailable,
   });
   const { checkpoints, extensions, mcp, memory } = composition;
+  const citations = citationTrail(memory, () => composition.bootstrap);
   const setup = options.workspaceSetup;
+  const stores = new Map<string, SessionStore>();
+  const changes = sessionChangeFeed();
   const arcs = arcService({
     cwd,
     trusted: projectTrusted,
     workspaceSlug,
     memory,
     boundSessionCounts: () => boundSessionCounts(options.sessionDir),
+    flushFor: (sessionId) => airlockFlushFor(stores.get(sessionId), agents.flushOf(sessionId)),
+    closing: (request) => closingSeam(request),
+    citedNotes: (slug) => citations.citedNotes(slug),
+    lastActivity: (slug) => latestArcActivity(options.sessionDir, slug),
+    onReleased: (sessionId) => changes.emit(sessionId),
     unavailable:
       setup === undefined ? undefined : () => readinessNotice(setup.readiness()) ?? arcsUnavailable,
   });
-  const agents = composeAgents(composition, { permissions: presets?.resolver, arcs });
-  const stores = new Map<string, SessionStore>();
-  const changes = sessionChangeFeed();
+  const agents = composeAgents(composition, { permissions: presets?.resolver, arcs, citations });
+  const bots = botService({
+    cwd,
+    projectTrusted,
+    userRoot: options.userRoot ?? homedir(),
+    sessionDir: options.sessionDir,
+    roster: extensions.bots,
+    namer: () => namingProvider(options),
+  });
+  const closingProviderFor = (arc: string): Provider | undefined => {
+    const state = options.inference?.current();
+    const fromRole =
+      state === undefined ? undefined : roleProvider(state.runtime, state.config, closingRole);
+    if (fromRole !== undefined) return fromRole;
+    return arcs.bindings
+      .sessionsBoundTo(arc)
+      .map((sessionId) => agents.providerOf(sessionId))
+      .find((provider) => provider !== undefined);
+  };
+  const closingSeam = (request: ClosingRequest): CurationJudgmentPort | undefined => {
+    const provider = closingProviderFor(request.arc);
+    if (provider === undefined) return undefined;
+    return closingJudgment({
+      provider,
+      ...(request.direction !== undefined && { direction: request.direction }),
+      onDegrade: request.onDegrade,
+    });
+  };
   return {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
       checkpointTag: () => checkpoints?.takeTurnTag(),
       onAttach: (store) => {
         stores.set(store.header.id, store);
-        arcs.attached(store);
+        citations.forSession(store.header.id);
+        void arcs.attached(store);
       },
       onRelease: (sessionId) => {
         stores.delete(sessionId);
         agents.release(sessionId);
         arcs.released(sessionId);
+        citations.release(sessionId);
       },
       onChange: (sessionId) => changes.emit(sessionId),
       onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
     }),
     sessionTrees: sessionTreePort(options.sessionDir, changes),
     arcs: arcs.port,
+    bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
     closers: [() => sweepOnClose(memory()), ...(mcp === undefined ? [] : [() => mcp.stop()])],
     extensions: extensionsView(extensions, cwd),
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
+    ...(config.pointer !== undefined && { pointer: config.pointer }),
+    ...(config.masthead !== undefined && { masthead: config.masthead }),
+    ...(config.motion !== undefined && { motion: config.motion }),
+    ...(config.tips !== undefined && { tips: config.tips }),
+    ...(config.scrim !== undefined && { scrim: config.scrim }),
+    ...(config.dim !== undefined && { dim: config.dim }),
+    doctorReport: async () => {
+      const { doctorReport, renderDoctorReport, workspaceDoctorFacts } = await import(
+        "./doctor.ts"
+      );
+      const facts = await workspaceDoctorFacts(cwd, projectTrusted, config);
+      return renderDoctorReport(
+        doctorReport(detectCapabilities(), options.inference?.current().runtime.registry, {
+          ...facts,
+          crashLog: crashLogFacts(crashLogFile),
+        }),
+      );
+    },
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
-    ...(projectTrusted && { memory: memoryPanePort(memory, arcs.registry) }),
+    ...(projectTrusted && {
+      memory: memoryPanePort(memory, arcs.registry, arcs.port.airlock),
+    }),
     ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
     ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
     ...(setup !== undefined && { workspaceSetup: setup }),
@@ -191,6 +262,27 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     ...(options.inference !== undefined &&
       inferenceSeams(options.inference, options, composition, agents, stores)),
   };
+}
+
+function namingProvider(options: PanesOptions): Provider | undefined {
+  const state = options.inference?.current();
+  if (state === undefined) return undefined;
+  const fromRole = roleProvider(state.runtime, state.config, namingRole);
+  if (fromRole !== undefined) return fromRole;
+  const resolution = state.runtime.resolve({
+    override: options.modelOverride,
+    default: state.config.model,
+  });
+  return resolution.ok ? state.runtime.provider(resolution.binding) : undefined;
+}
+
+async function latestArcActivity(sessionDir: string, slug: string): Promise<string | undefined> {
+  const { sessions } = await listSessions(sessionDir);
+  return sessions
+    .filter((session) => session.arc === slug)
+    .map((session) => session.lastActivityAt)
+    .sort()
+    .at(-1);
 }
 
 function workspaceStateStore(cwd: string, slug: string | undefined, fresh: boolean): WorkspacePort {
@@ -210,7 +302,7 @@ function inferenceSeams(
   stores: ReadonlyMap<string, SessionStore>,
 ): InferenceSeams {
   const selection = { override: options.modelOverride, default: options.config.model };
-  const agentFactory: AgentFactory = (guard, history, seams, agentName) => {
+  const agentFactory: AgentFactory = (guard, history, seams, botName) => {
     const bound = inference
       .current()
       .runtime.open({ ...selection, selection: seams?.modelReference });
@@ -221,7 +313,7 @@ function inferenceSeams(
       bus: seams?.bus,
       sessionId: () => seams?.sessionId(),
       onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
-      definition: composition.extensions.agents.find((candidate) => candidate.name === agentName),
+      bot: composition.extensions.bots.find((candidate) => candidate.name === botName),
     });
     tapJournal(agent.bus, () => {
       const sessionId = seams?.sessionId();
@@ -280,6 +372,15 @@ function compactOnRequest(
   };
 }
 
+function airlockFlushFor(
+  store: SessionStore | undefined,
+  flush: MemoryFlush | undefined,
+): (() => Promise<unknown>) | undefined {
+  if (store === undefined) return undefined;
+  if (flush === undefined) return async () => undefined;
+  return () => flush.flushNow(store.messages());
+}
+
 function budgetOf(agent: Agent): ContextBudget {
   return contextBudgetFor(declaredContextWindow(agent.provider));
 }
@@ -298,10 +399,6 @@ function extensionsView(extensions: WorkspaceExtensions, cwd: string): Extension
             confirm: (call) => confirmShell((call.arguments as { command: string }).command),
           }),
         ),
-    })),
-    agents: extensions.agents.map((agent) => ({
-      name: agent.name,
-      ...(agent.description !== undefined && { description: agent.description }),
     })),
     failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
   };

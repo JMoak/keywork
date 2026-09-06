@@ -1,22 +1,12 @@
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { EventBus } from "./bus.ts";
 import { DiagnosticsLog, debugEnabled, debugLogFile, redactSecrets } from "./diagnostics.ts";
 import { textMessage } from "./messages.ts";
 
-const tempDirs: string[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-diagnostics-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
+const tempDir = scratchDirs("keywork-diagnostics-");
 
 async function readLines(file: string): Promise<Record<string, unknown>[]> {
   const content = await readFile(file, "utf8");
@@ -207,6 +197,12 @@ describe("redactSecrets", () => {
       name: "RangeError",
       message: "denied for [redacted]",
     });
+  });
+
+  it("scrubs anthropic-shaped keys wherever they appear", () => {
+    expect(
+      redactSecrets({ message: "401 with x-api-key sk-ant-api03-EXAMPLEabcdef0123456789" }),
+    ).toEqual({ message: "401 with x-api-key [redacted]" });
   });
 });
 

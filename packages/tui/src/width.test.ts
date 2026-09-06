@@ -79,6 +79,16 @@ describe("wrap", () => {
     expect(wrap("👨‍👩‍👧x", 2)).toEqual(["👨‍👩‍👧", "x"]);
   });
 
+  it("breaks at the last space that fits and never opens a line with one", () => {
+    expect(wrap("no model bound · /model picks one", 18)).toEqual([
+      "no model bound ·",
+      "/model picks one",
+    ]);
+    expect(wrap("ab cd", 2)).toEqual(["ab", "cd"]);
+    expect(wrap("a  b", 3)).toEqual(["a", "b"]);
+    expect(wrap("word toolongforaline x", 8)).toEqual(["word", "toolongf", "oraline", "x"]);
+  });
+
   it("keeps empty lines and unwrappable widths as one piece", () => {
     expect(wrap("", 5)).toEqual([""]);
     expect(wrap("abc", 0)).toEqual(["abc"]);

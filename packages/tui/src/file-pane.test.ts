@@ -25,9 +25,10 @@ function context(height = 8) {
 
 function lines(pane: FilePane, height = 8): string[] {
   const view = pane.view(context(height)) as unknown as {
-    children?: { props?: { content?: unknown } }[];
+    children?: { children?: { props?: { content?: unknown } }[] }[];
   };
-  return (view.children ?? []).map((child) => String(child.props?.content ?? ""));
+  const [body] = view.children ?? [];
+  return (body?.children ?? []).map((child) => String(child.props?.content ?? ""));
 }
 
 describe("FilePane", () => {

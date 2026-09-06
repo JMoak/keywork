@@ -1,18 +1,12 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
 import { persistentBashTool, ShellSession } from "./shell-session.ts";
 
-const tempDirs: string[] = [];
+const tempDir = scratchDirs("keywork-shell-");
 const sessions: ShellSession[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-shell-"));
-  tempDirs.push(dir);
-  return dir;
-}
 
 async function openSession(): Promise<ShellSession> {
   const session = new ShellSession(await tempDir());
@@ -40,7 +34,6 @@ function expectMissingExecutable(outcome: unknown, executable: string): void {
 
 afterEach(async () => {
   await Promise.all(sessions.splice(0).map((session) => session.close()));
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe("ShellSession", () => {
@@ -116,6 +109,30 @@ describe("ShellSession", () => {
     expect(echoed.trim()).toBe("[]");
   });
 
+  it("refuses an already-aborted signal without touching the shell", async () => {
+    const session = await openSession();
+
+    await expect(session.run("echo never", { signal: AbortSignal.abort() })).rejects.toThrow(
+      /abort/i,
+    );
+
+    expect(session.running()).toBe(false);
+  });
+
+  it("kills the shell when the signal aborts mid-command and starts fresh next time", async () => {
+    const session = await openSession();
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 200);
+
+    await expect(
+      session.run("sleep 30", { timeoutMs: 20_000, signal: controller.signal }),
+    ).rejects.toThrow(/Command aborted/);
+    await waitUntil(() => !session.running(), 3_000);
+
+    expect(session.running()).toBe(false);
+    expect((await session.run("echo fresh")).trim()).toBe("fresh");
+  }, 10_000);
+
   it("caps a newline-free flood without buffering it whole", async () => {
     const session = await openSession();
 
@@ -185,6 +202,12 @@ const powershell = {
 };
 
 describe.skipIf(process.platform !== "win32")("ShellSession over PowerShell", () => {
+  beforeAll(async () => {
+    const warmup = new ShellSession(await tempDir(), powershell);
+    await warmup.run("Write-Output warm", { timeoutMs: 110_000 });
+    await warmup.close();
+  }, 120_000);
+
   async function openPowerShell(): Promise<ShellSession> {
     const session = new ShellSession(await tempDir(), powershell);
     sessions.push(session);

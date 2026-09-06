@@ -1,25 +1,15 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolGuard } from "@keywork/engine";
+import { scratchDirs } from "@keywork/shared/testing";
 import type { AppOptions, ConnectionsPort, WorkspacePort } from "@keywork/tui";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { composePanes, type PanesOptions } from "./compose-panes.ts";
 import { composeInference } from "./inference/runtime.ts";
 import type { LiveInference } from "./inference-state.ts";
 import { createPresetSwitch } from "./presets.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-panes-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-panes-");
 
 const stateStore: WorkspacePort = { load: async () => undefined, save: () => {}, seal: () => {} };
 
@@ -76,7 +66,7 @@ describe("composePanes", () => {
     expect(app.connections).toBeUndefined();
     expect(app.presets).toBeUndefined();
     expect(app.statusLabel).toBeUndefined();
-    expect(app.extensions).toEqual({ commands: [], agents: [], failures: [] });
+    expect(app.extensions).toEqual({ commands: [], failures: [] });
   });
 
   it("settles turns only for sessions it attached", async () => {
@@ -138,7 +128,13 @@ describe("composePanes", () => {
   });
 
   it("passes the workspaces port and the config's theme and page through", async () => {
-    const workspaces = { list: async () => [], create: async () => {}, use: async () => {} };
+    const workspaces = {
+      list: async () => [],
+      create: async () => {},
+      use: async () => {},
+      linkFocusDir: async () => "",
+      unlinkFocusDir: async () => {},
+    };
     const { app } = await composedIn(await tempDir(), {
       workspaces,
       config: { theme: { accent: "#ff0000" }, page: { columnAt: 90 } },

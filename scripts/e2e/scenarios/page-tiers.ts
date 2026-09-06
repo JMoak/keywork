@@ -96,21 +96,24 @@ export const pageTiers: Scenario = {
     await stage.capture("clipping-56");
 
     await stage.resize(38, 36);
-    const masthead = await stage.capture("masthead-38");
-    assert.ok(!masthead.includes("The width tier"), "the masthead tile replaces the transcript");
-    assert.ok(/[▀▄]/.test(masthead), "the headline is set in the half-block face");
-    assert.ok(masthead.includes("idle"), "one status line sits under the headline");
+    const narrowFocused = await stage.capture("focused-38");
+    assert.ok(
+      narrowFocused.includes("The width tier"),
+      "the focused pane keeps the working page below the masthead threshold",
+    );
+    assert.ok(!/[▀▄]/.test(narrowFocused), "no ceremony while the pane holds focus");
 
-    await stage.type("x");
-    const typing = await stage.until("The width tier");
-    assert.ok(!/[▀▄]/.test(typing), "typing dismisses the masthead; input outranks ceremony");
-    await stage.press("backspace");
-    await stage.until("idle");
+    await stage.press("ctrl+k", "z", "escape");
+    await stage.resize(76, 20);
+    await stage.press("ctrl+k", "s", "escape");
+    await stage.settle();
+    const tiled = await stage.capture("masthead-unfocused");
+    assert.ok(/[▀▄]/.test(tiled), "the unfocused idle pane wears the masthead tile");
 
-    await stage.resize(32, 36);
-    const caps = await stage.capture("masthead-32");
-    assert.ok(caps.includes("SESSION 1"), "a word too wide for the face falls to caps");
-    assert.ok(!/[▀▄]/.test(caps), "caps fallback sets no half-blocks");
+    await stage.press("ctrl+k", "h", "escape");
+    const refocused = await stage.until("widths.");
+    assert.ok(refocused.includes("widths."), "focusing the pane returns the working page");
+    await stage.capture("masthead-follows-focus");
 
     await stage.quit();
   },

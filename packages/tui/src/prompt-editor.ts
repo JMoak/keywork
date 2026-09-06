@@ -1,3 +1,4 @@
+import type { SendBehavior } from "@keywork/engine";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import { isPrintable } from "./picker-keys.ts";
@@ -16,7 +17,7 @@ export interface CommandsPort {
 export type EditorOutcome =
   | "handled"
   | "pass"
-  | { submit: string }
+  | { submit: string; behavior: SendBehavior }
   | { command: string; chosen: string | undefined };
 
 export class PromptEditor {
@@ -75,6 +76,19 @@ export class PromptEditor {
     return merged.slice(0, suggestionLimit);
   }
 
+  selectSuggestion(at: number): void {
+    const count = this.suggestions().length;
+    if (count === 0) return;
+    this.selectedSuggestion = ((at % count) + count) % count;
+    this.notify();
+  }
+
+  acceptSuggestion(at: number): EditorOutcome {
+    if (this.slashQuery() === undefined) return "pass";
+    this.selectedSuggestion = at;
+    return this.chooseSelected();
+  }
+
   handleKey(chord: Chord, sequence: string | undefined): EditorOutcome {
     if (this.slashQuery() !== undefined) {
       const slashed = this.handleSlashKey(chord);
@@ -85,7 +99,8 @@ export class PromptEditor {
       case "enter": {
         if (chord.shift) return this.edit(() => this.buffer.newline());
         const text = this.value.trim();
-        return text === "" ? "handled" : { submit: text };
+        if (text === "") return "handled";
+        return { submit: text, behavior: chord.meta ? "steer" : "queue" };
       }
       case "backspace":
         return this.edit(() => this.buffer.backspace());
@@ -129,17 +144,20 @@ export class PromptEditor {
         return "handled";
       }
       case "return":
-      case "enter": {
-        const command = this.value.slice(1).trim();
-        const chosen = this.suggestions()[this.selectedSuggestion]?.name;
-        this.buffer.clear();
-        this.selectedSuggestion = 0;
-        this.notify();
-        return { command, chosen };
-      }
+      case "enter":
+        return this.chooseSelected();
       default:
         return "pass";
     }
+  }
+
+  private chooseSelected(): EditorOutcome {
+    const command = this.value.slice(1).trim();
+    const chosen = this.suggestions()[this.selectedSuggestion]?.name;
+    this.buffer.clear();
+    this.selectedSuggestion = 0;
+    this.notify();
+    return { command, chosen };
   }
 
   private lineUpOrHistory(direction: -1 | 1): EditorOutcome {

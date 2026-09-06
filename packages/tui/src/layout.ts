@@ -51,7 +51,10 @@ import {
   type PaneId,
   removeLeaf,
   resizeAroundLeaf,
+  type SplitNode,
   splitLeaf,
+  splitRects,
+  steppedRatio,
   swapLeaves,
 } from "./layout-tree.ts";
 
@@ -60,6 +63,12 @@ export type { DockSide, DockState } from "./layout-arrangement.ts";
 export type { DockWeights } from "./layout-scene.ts";
 export { type DocksState, type LayoutState, layoutStateIds } from "./layout-state.ts";
 export { type LayoutNode, minPaneSize, type Orientation, type PaneId } from "./layout-tree.ts";
+
+export type SplitStep = "first" | "second";
+
+export interface SplitHandle {
+  readonly path: readonly SplitStep[];
+}
 
 export type DropTarget =
   | { kind: "swap"; with: PaneId; rect: Rect }
@@ -263,6 +272,27 @@ export class Layout {
     this.arrangement = withTree(this.arrangement, resizeAroundLeaf(tree, this.focusedId, delta));
   }
 
+  splitHandleAt(x: number, y: number, screen: Screen): SplitHandle | undefined {
+    const main = this.mainTreeRect(screen);
+    if (main === undefined) return undefined;
+    return findSplitHandle(main.tree, main.rect, x, y, []);
+  }
+
+  dragSplitHandle(handle: SplitHandle, x: number, y: number, screen: Screen): void {
+    const main = this.mainTreeRect(screen);
+    if (main === undefined) return;
+    const target = splitAlong(main.tree, main.rect, handle.path);
+    if (target === undefined) return;
+    const preferred =
+      target.split.orientation === "row"
+        ? (x + 1 - target.rect.x) / target.rect.width
+        : (y + 1 - target.rect.y) / target.rect.height;
+    this.arrangement = withTree(
+      this.arrangement,
+      withRatioAlong(main.tree, handle.path, preferred),
+    );
+  }
+
   dropTargetAt(dragged: PaneId, x: number, y: number, screen: Screen): DropTarget | undefined {
     if (!this.panes().includes(dragged)) return undefined;
     const scene = this.scene(screen);
@@ -309,6 +339,14 @@ export class Layout {
     const { left, right } = scene.arrangement.docks;
     if (left.panes.length === 0 && right.panes.length === 0) return undefined;
     return scene.regions.main;
+  }
+
+  private mainTreeRect(screen: Screen): MainTreeRect | undefined {
+    const scene = this.scene(screen);
+    if (scene.kind !== "tiled") return undefined;
+    const tree = scene.arrangement.tree;
+    if (tree === undefined || tree !== this.arrangement.tree) return undefined;
+    return { tree, rect: scene.regions.main };
   }
 
   private scene(screen: Screen): Scene {
@@ -494,6 +532,68 @@ export class Layout {
     const candidates = [...rects].filter(([id]) => id !== focused && eligible(id));
     return nearestInDirection(origin, candidates, direction);
   }
+}
+
+interface MainTreeRect {
+  readonly tree: LayoutNode;
+  readonly rect: Rect;
+}
+
+function findSplitHandle(
+  node: LayoutNode,
+  rect: Rect,
+  x: number,
+  y: number,
+  path: readonly SplitStep[],
+): SplitHandle | undefined {
+  if (node.kind === "leaf") return undefined;
+  const [first, second] = splitRects(rect, node);
+  if (onSplitBorder(node.orientation, second, rect, x, y)) return { path };
+  if (contains(first, x, y)) return findSplitHandle(node.first, first, x, y, [...path, "first"]);
+  if (contains(second, x, y)) {
+    return findSplitHandle(node.second, second, x, y, [...path, "second"]);
+  }
+  return undefined;
+}
+
+function onSplitBorder(
+  orientation: Orientation,
+  second: Rect,
+  rect: Rect,
+  x: number,
+  y: number,
+): boolean {
+  if (orientation === "row") {
+    return y >= rect.y && y < rect.y + rect.height && (x === second.x - 1 || x === second.x);
+  }
+  return x >= rect.x && x < rect.x + rect.width && y === second.y - 1;
+}
+
+function splitAlong(
+  node: LayoutNode,
+  rect: Rect,
+  path: readonly SplitStep[],
+): { split: SplitNode; rect: Rect } | undefined {
+  if (node.kind === "leaf") return undefined;
+  if (path.length === 0) return { split: node, rect };
+  const [first, second] = splitRects(rect, node);
+  const [head, ...rest] = path;
+  return head === "first"
+    ? splitAlong(node.first, first, rest)
+    : splitAlong(node.second, second, rest);
+}
+
+function withRatioAlong(
+  node: LayoutNode,
+  path: readonly SplitStep[],
+  preferred: number,
+): LayoutNode {
+  if (node.kind === "leaf") return node;
+  if (path.length === 0) return { ...node, ratio: steppedRatio(preferred) };
+  const [head, ...rest] = path;
+  return head === "first"
+    ? { ...node, first: withRatioAlong(node.first, rest, preferred) }
+    : { ...node, second: withRatioAlong(node.second, rest, preferred) };
 }
 
 function splitOrientation(rect: Rect | undefined): Orientation {

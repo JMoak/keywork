@@ -1,6 +1,7 @@
 import { Box, fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import { type ArcPicker, type ArcPickerRow, arcRowParts, describeArcRow } from "../arc-picker.ts";
 import { type ArcOrdinals, arcInk } from "../arcs.ts";
+import { type BotPicker, type BotPickerRow, botRowParts, describeBotRow } from "../bot-picker.ts";
 import type { FilterPicker } from "../filter-picker.ts";
 import { describeModelRow, type ModelPicker, type ModelPickerRow } from "../model-picker.ts";
 import type { Theme } from "../theme.ts";
@@ -103,6 +104,23 @@ export function workspacePickerSpec(
     rowInk: (row, selected, theme) => [
       fg(selected ? theme.accent : theme.text)(describeWorkspaceRow(row)),
     ],
+  };
+}
+
+export function botPickerSpec(picker: BotPicker): FilterOverlaySpec<BotPickerRow> {
+  return {
+    picker,
+    title: " bot ",
+    emptyHint: "  type a slug to create a bot · esc closes",
+    rowInk: (row, selected, theme) => {
+      if (row.kind !== "bot")
+        return [fg(selected ? theme.accent : theme.text)(describeBotRow(row))];
+      const { label, facts } = botRowParts(row);
+      return [
+        fg(selected ? theme.accent : theme.text)(label),
+        fg(selected ? theme.accent : theme.textMid)(facts),
+      ];
+    },
   };
 }
 

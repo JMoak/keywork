@@ -2,6 +2,7 @@ import { type SessionTreeNode, textMessage } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
 import { SessionTreeModel, type SessionTreeView } from "./session-tree-model.ts";
+import { pressModel as press } from "./testing/index.ts";
 
 interface NodeSpec {
   id: string;
@@ -70,15 +71,6 @@ function modelOver(specs: NodeSpec[]) {
   });
   model.setView(viewOf(specs));
   return { model, recorded };
-}
-
-function press(model: SessionTreeModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5, typedSequence(spec));
-}
-
-function typedSequence(spec: string): string | undefined {
-  if (spec === "space") return " ";
-  return spec.length === 1 ? spec : undefined;
 }
 
 describe("SessionTreeModel flattening", () => {

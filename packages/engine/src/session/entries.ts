@@ -76,9 +76,15 @@ export interface ModelChangeEntry extends EntryBase {
   modelId: string;
 }
 
-export interface ArcBindingEntry extends EntryBase {
-  type: "arc_binding";
+export interface BindingEntry extends EntryBase {
+  type: "binding";
+  arc?: string | null;
+  bot?: string | null;
+}
+
+export interface SessionBinding {
   arc?: string;
+  bot?: string;
 }
 
 export interface FileTrackingDetails {
@@ -96,7 +102,7 @@ export type SessionEntry =
   | CustomMessageEntry
   | ThinkingLevelChangeEntry
   | ModelChangeEntry
-  | ArcBindingEntry;
+  | BindingEntry;
 
 export type FileEntry = SessionHeader | SessionEntry;
 
@@ -183,6 +189,24 @@ export function contextMessages(entries: readonly SessionEntry[]): Message[] {
   });
 }
 
+export function foldBinding(path: readonly SessionEntry[]): SessionBinding {
+  const binding: SessionBinding = {};
+  for (const entry of path) {
+    if (entry.type !== "binding") continue;
+    if ("arc" in entry) assignBinding(binding, "arc", entry.arc);
+    if ("bot" in entry) assignBinding(binding, "bot", entry.bot);
+  }
+  return binding;
+}
+
+export function describeBinding(entry: BindingEntry): string {
+  const changes = [
+    ...("arc" in entry ? [axisChange("arc", entry.arc)] : []),
+    ...("bot" in entry ? [axisChange("bot", entry.bot)] : []),
+  ];
+  return changes.length === 0 ? "binding unchanged" : changes.join(" · ");
+}
+
 export function buildTree(
   entries: readonly SessionEntry[],
   labels: ReadonlyMap<string, string>,
@@ -249,9 +273,22 @@ function labelProperty(labels: ReadonlyMap<string, string>, id: string): { label
   return label === undefined ? {} : { label };
 }
 
+function axisChange(axis: keyof SessionBinding, value: string | null | undefined): string {
+  return value === null || value === undefined ? `${axis} released` : `${axis} → ${value}`;
+}
+
+function assignBinding(
+  binding: SessionBinding,
+  axis: keyof SessionBinding,
+  value: string | null | undefined,
+): void {
+  if (value === null || value === undefined) delete binding[axis];
+  else binding[axis] = value;
+}
+
 function migrateFileEntry(parsed: FileEntry): FileEntry {
   if (parsed.type !== "session") {
-    const entry = parsed as Partial<EntryBase> & SessionEntry;
+    const entry = currentEntry(parsed as StoredEntry);
     return entry.timestamp === undefined ? { ...entry, timestamp: "" } : entry;
   }
   const header = parsed as Partial<SessionHeader> & { type: "session"; createdAt?: string };
@@ -260,4 +297,17 @@ function migrateFileEntry(parsed: FileEntry): FileEntry {
     version: header.version ?? 1,
     timestamp: header.timestamp ?? header.createdAt ?? "",
   };
+}
+
+interface LegacyArcBindingEntry extends EntryBase {
+  type: "arc_binding";
+  arc?: string;
+}
+
+type StoredEntry = Partial<EntryBase> & (SessionEntry | LegacyArcBindingEntry);
+
+function currentEntry(entry: StoredEntry): Partial<EntryBase> & SessionEntry {
+  if (entry.type !== "arc_binding") return entry;
+  const { type: _legacy, arc, ...base } = entry;
+  return { ...base, type: "binding", arc: arc ?? null };
 }

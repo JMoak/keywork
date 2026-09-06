@@ -3,7 +3,7 @@ import type { Screen } from "../geometry.ts";
 import type { Chord } from "../keys.ts";
 import { type OverlayFrame, paletteFrame, RowOverlay } from "./overlay.ts";
 
-export type PickerKind = "model" | "arc" | "workspace";
+export type PickerKind = "model" | "arc" | "workspace" | "bot";
 
 export interface PickerSeams<Row> {
   dismiss(): void;

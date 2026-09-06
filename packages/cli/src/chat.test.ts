@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type Message,
@@ -12,22 +11,14 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { recordingProvider } from "@keywork/engine/testing";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { type ChatIo, type ChatOptions, chat, persistNewMessages } from "./chat.ts";
 import type { PresetPort } from "./presets.ts";
 import { latestSessionFile } from "./sessions/store.ts";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-chat-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-chat-");
 
 interface ScriptedIo extends ChatIo {
   out: string[];
@@ -93,6 +84,12 @@ async function world(): Promise<World> {
       ...overrides,
     }),
   };
+}
+
+async function seedHelperBot(cwd: string): Promise<void> {
+  const dir = join(cwd, ".keywork", "bots", "helper");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "bot.md"), "---\ndescription: Helps out\n---\nBe helpful.");
 }
 
 async function savedMessages(sessionDir: string): Promise<Message[]> {
@@ -202,31 +199,47 @@ describe("chat REPL", () => {
     expect(io.out.some((line) => line.includes("nothing to compact yet"))).toBe(true);
   });
 
-  it("/agent explains when no agents are defined", async () => {
+  it("/bot explains when no bots are defined", async () => {
     const { options } = await world();
-    const io = scriptedIo({ lines: ["/agent"] });
+    const io = scriptedIo({ lines: ["/bot"] });
 
     await chat(options(new MockProvider([])), io);
 
-    expect(io.out).toContain("no agents yet, add one at .keywork/agents/<name>.md");
+    expect(io.out).toContain("no bots yet, add one at .keywork/bots/<slug>/bot.md");
   });
 
-  it("/agent lists, switches, rejects unknown names, and clears", async () => {
+  it("/bot lists, switches, rejects unknown names, and releases", async () => {
     const { options, cwd } = await world();
-    await mkdir(join(cwd, ".keywork", "agents"), { recursive: true });
-    await writeFile(
-      join(cwd, ".keywork", "agents", "helper.md"),
-      "---\ndescription: Helps out\n---\nBe helpful.",
-    );
-    const io = scriptedIo({ lines: ["/agent", "/agent helper", "/agent ghost", "/agent none"] });
+    await seedHelperBot(cwd);
+    const io = scriptedIo({ lines: ["/bot", "/bot helper", "/bot ghost", "/bot none"] });
 
     await chat(options(new MockProvider([]), { projectTrusted: true }), io);
 
-    expect(io.out).toContain("/agent <name> to switch · /agent none to clear");
-    expect(io.out).toContain("  helper · Helps out");
-    expect(io.out).toContain("agent → helper");
-    expect(io.out).toContain('unknown agent "ghost"');
-    expect(io.out).toContain("back to the default agent");
+    expect(io.out).toContain("/bot <slug> to switch · /bot none to release");
+    expect(io.out).toContain("  H helper · Helps out");
+    expect(io.out).toContain("bot → H helper");
+    expect(io.out).toContain("no bot named ghost");
+    expect(io.out).toContain("bot released");
+  });
+
+  it("a bot binding survives exit and resume, and the resumed turn runs as the bot", async () => {
+    const { options, cwd, sessionDir } = await world();
+    await seedHelperBot(cwd);
+
+    await chat(
+      options(new MockProvider([]), { projectTrusted: true }),
+      scriptedIo({ lines: ["/bot helper"] }),
+    );
+    const file = await latestSessionFile(sessionDir);
+    if (file === undefined) throw new Error("no session file");
+    expect((await SessionStore.open(file)).botBinding()).toBe("helper");
+
+    const provider = recordingProvider([textTurn("helped")]);
+    await chat(
+      options(provider, { projectTrusted: true, resume: true }),
+      scriptedIo({ lines: ["hello again"] }),
+    );
+    expect(provider.requests[0]?.systemPrompt).toBe("Be helpful.");
   });
 
   it("renders an extension command and sends the rendered prompt", async () => {
@@ -279,6 +292,48 @@ describe("chat REPL", () => {
 
     expect(io.out).toContain("resumed 2 messages");
     expect(await savedMessages(sessionDir)).toHaveLength(2);
+  });
+});
+
+describe("chat return delta", () => {
+  async function trustedVault(cwd: string): Promise<string> {
+    const vault = join(cwd, ".keywork", "memory");
+    await mkdir(vault, { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "fixture" }));
+    return vault;
+  }
+
+  it("tells a resumed session what changed while it was away, then stays quiet", async () => {
+    const { options, cwd } = await world();
+    const vault = await trustedVault(cwd);
+    await chat(
+      options(new MockProvider([textTurn("first")]), { projectTrusted: true }),
+      scriptedIo({ lines: ["one"] }),
+    );
+    await writeFile(
+      join(vault, "Fresh Rule.md"),
+      "---\ncreated: 2099-01-01T00:00:00.000Z\nprovenance: agent\n---\nnew\n",
+    );
+
+    const io = scriptedIo({ lines: [] });
+    await chat(options(new MockProvider([]), { projectTrusted: true, resume: true }), io);
+    expect(io.out).toContain("since you were here: 1 new in the workspace: [[Fresh Rule]]");
+  });
+
+  it("says nothing on resume when nothing changed, and nothing on a fresh session", async () => {
+    const { options, cwd } = await world();
+    await trustedVault(cwd);
+    const fresh = scriptedIo({ lines: [] });
+    await chat(options(new MockProvider([]), { projectTrusted: true }), fresh);
+    expect(fresh.out.some((line) => line.startsWith("since you were here"))).toBe(false);
+
+    await chat(
+      options(new MockProvider([textTurn("first")]), { projectTrusted: true }),
+      scriptedIo({ lines: ["one"] }),
+    );
+    const resumed = scriptedIo({ lines: [] });
+    await chat(options(new MockProvider([]), { projectTrusted: true, resume: true }), resumed);
+    expect(resumed.out.some((line) => line.startsWith("since you were here"))).toBe(false);
   });
 });
 
@@ -380,5 +435,91 @@ describe("persistNewMessages", () => {
     const store = await tempStore();
     await persistNewMessages(store, turn("one", "re: one"), 0);
     expect(store.entries()[0]).not.toHaveProperty("checkpoint");
+  });
+});
+
+describe("chat turn queue", () => {
+  function gatedProvider(replies: string[]): { provider: Provider; open: () => void } {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let turn = 0;
+    const provider: Provider = {
+      name: "gated",
+      async *stream(request) {
+        const reply = replies[turn] ?? "";
+        turn += 1;
+        if (turn === 1) {
+          await Promise.race([
+            gate,
+            new Promise<void>((resolve) =>
+              request.signal?.addEventListener("abort", () => resolve(), { once: true }),
+            ),
+          ]);
+          if (request.signal?.aborted) throw new Error("aborted");
+        }
+        yield* textTurn(reply);
+      },
+    };
+    return { provider, open };
+  }
+
+  it("a line typed mid-turn queues in the engine and runs after settlement, in order", async () => {
+    const { options, sessionDir } = await world();
+    const { provider, open } = gatedProvider(["re: one", "re: two"]);
+    const io = scriptedIo({ lines: ["one", "two", "/session"] });
+    const originalReadLine = io.readLine;
+    io.readLine = async (prompt, readOptions) => {
+      const line = await originalReadLine(prompt, readOptions);
+      if (line === "/session") open();
+      return line;
+    };
+
+    await chat(options(provider), io);
+
+    expect(io.out).toContain("  · queued");
+    expect(io.streamed.join("")).toBe("re: onere: two");
+    const usageLines = io.out.filter((line) => line.startsWith("  · session "));
+    expect(usageLines).toHaveLength(2);
+    const messages = await savedMessages(sessionDir);
+    expect(messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(io.out.some((line) => line.startsWith("file      "))).toBe(true);
+  });
+
+  it("/steer interrupts the running turn and sends now; /queue waits its turn", async () => {
+    const { options, sessionDir } = await world();
+    const { provider } = gatedProvider(["never", "steered", "later"]);
+    const io = scriptedIo({ lines: ["slow", "/queue later", "/steer now"] });
+
+    await chat(options(provider), io);
+
+    expect(io.out).toContain("  · queued");
+    expect(io.out).toContain("  · steering");
+    expect(io.out).toContain("\n(interrupted)");
+    expect(io.streamed.join("")).toBe("steeredlater");
+    const messages = await savedMessages(sessionDir);
+    expect(messages.map((message) => `${message.role}:${message.parts.length}`)).toEqual([
+      "user:1",
+      "user:1",
+      "assistant:1",
+      "user:1",
+      "assistant:1",
+    ]);
+  });
+
+  it("/steer and /queue without text explain themselves", async () => {
+    const { options } = await world();
+    const io = scriptedIo({ lines: ["/steer", "/queue  "] });
+
+    await chat(options(new MockProvider([])), io);
+
+    expect(io.out).toContain("usage: /steer <prompt>");
+    expect(io.out).toContain("usage: /queue <prompt>");
   });
 });

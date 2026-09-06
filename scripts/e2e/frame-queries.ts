@@ -21,5 +21,5 @@ export function occurrences(frame: string, marker: string): number {
 }
 
 export function paneTitleCount(frame: string): number {
-  return [...frame.matchAll(/╭─ (?:[░▒▓█] )?session-\d+\b/g)].length;
+  return [...frame.matchAll(/(?:╭─|│) (?:▪ )?(?:[░▒▓█] )?session-\d+\b/g)].length;
 }

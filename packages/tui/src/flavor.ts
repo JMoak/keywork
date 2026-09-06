@@ -10,7 +10,7 @@ export const keyworkNightFlavor: Flavor = parseFlavor({
   tokens: keyworkNight,
   density: { light: "textDim", medium: "textMid", heavy: "text", full: "accent" },
   gap: 0,
-  chromeWeight: "regular",
+  chromeWeight: "seams",
   instruments: "calm",
 });
 

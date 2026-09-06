@@ -16,6 +16,7 @@ export interface VoiceStamps {
 export interface PageMarks {
   readonly voice: VoiceStamps;
   readonly streamRamp: readonly string[];
+  readonly streamCursor: string;
   readonly headingWeights: readonly string[];
   readonly bullet: string;
   readonly rule: string;
@@ -27,6 +28,7 @@ export const pageMarkFamilies = {
   bullet: { tier1: "•", tier0: "-" },
   rule: { tier1: "─", tier0: "-" },
   fenceRail: { tier1: "▎", tier0: "|" },
+  streamCursor: { tier1: "▌", tier0: "_" },
 } satisfies Record<string, TieredMark | TieredRamp>;
 
 export function pageMarks(support: GlyphSupport): PageMarks {
@@ -34,6 +36,7 @@ export function pageMarks(support: GlyphSupport): PageMarks {
   return {
     voice: { user: full, agent: heavy, machine: light },
     streamRamp: [light, medium, heavy],
+    streamCursor: resolveMark(pageMarkFamilies.streamCursor, support),
     headingWeights: resolveRamp(pageMarkFamilies.headingWeights, support),
     bullet: resolveMark(pageMarkFamilies.bullet, support),
     rule: resolveMark(pageMarkFamilies.rule, support),

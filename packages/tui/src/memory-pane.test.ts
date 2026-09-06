@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
+import { type AirlockDigestView, type ArcAirlockPort, arcInk } from "./arcs.ts";
 import { parseChord } from "./keys.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
+import type { InboxItemView } from "./memory-pane-model.ts";
 import {
   emptyMemoryInputs,
   type MemoryPaneInputs,
   type MemoryQueryOutcome,
 } from "./memory-pane-model.ts";
+import { AppProbe } from "./probe.ts";
+import {
+  describePaneTree,
+  dockedIds,
+  mustParse,
+  paneContext,
+  paneIds,
+} from "./testing/workflow-probe.ts";
 import { resolveTheme } from "./theme.ts";
 
 interface World {
@@ -307,6 +317,11 @@ function context() {
   return { theme: resolveTheme(), focused: true, width: 60, height: 20 };
 }
 
+function paintedRgb(hex: string): string {
+  const channel = (at: number) => Number.parseInt(hex.slice(at, at + 2), 16);
+  return JSON.stringify({ buffer: { 0: channel(1), 1: channel(3), 2: channel(5), 3: 255 } });
+}
+
 function describeTree(node: unknown): unknown {
   if (node === null || typeof node !== "object") return node;
   const record = node as {
@@ -324,3 +339,333 @@ function describeTree(node: unknown): unknown {
     ...(Array.isArray(record.children) && { children: record.children.map(describeTree) }),
   };
 }
+
+describe("MemoryPane airlock digest", () => {
+  const digest: AirlockDigestView = {
+    arc: "dock-v2",
+    candidates: [
+      {
+        note: "Arc Lesson",
+        title: "Arc Lesson",
+        provenance: "agent",
+        eligible: true,
+        shortfalls: [],
+      },
+    ],
+    questions: [{ title: "Tie order", provenance: "user", created: "2026-08-21T12:00:00Z" }],
+    sweep: { acked: 2, wedged: 1 },
+  };
+  const arcLayer = { id: "arc:dock-v2", kind: "arc" as const, label: "dock-v2", arc: "dock-v2" };
+  const arcInputs: Partial<MemoryPaneInputs> = {
+    layers: [{ id: "workspace", kind: "workspace", label: "workspace" }, arcLayer],
+    notes: [
+      {
+        name: "Arc Lesson",
+        title: "Arc Lesson",
+        layer: "arc:dock-v2",
+        provenance: "agent",
+        curing: 0,
+        links: [],
+        aliases: [],
+      },
+    ],
+    inbox: [
+      {
+        id: "card-1",
+        kind: "airlock",
+        title: "deliver Arc Lesson",
+        provenance: "agent",
+        created: "2026-08-22T09:00:00Z",
+        arc: "dock-v2",
+        note: "Arc Lesson",
+      },
+    ],
+    airlocks: [digest],
+  };
+
+  interface AirlockCalls {
+    triaged: string[];
+    delivered: string[];
+    finished: string[];
+    failNext: string | undefined;
+  }
+
+  function airlockOver(calls: AirlockCalls): ArcAirlockPort {
+    const guard = async (): Promise<void> => {
+      if (calls.failNext === undefined) return;
+      const message = calls.failNext;
+      calls.failNext = undefined;
+      throw new Error(message);
+    };
+    return {
+      digest: async () => digest,
+      triageCandidate: async (arc, note, choice) => {
+        await guard();
+        calls.triaged.push(`${arc}:${note}:${choice}`);
+      },
+      triageQuestion: async (arc, title, choice) => {
+        await guard();
+        calls.triaged.push(`${arc}:${title}:${choice}`);
+      },
+      deliverEligible: async (arc) => {
+        calls.delivered.push(arc);
+        return 1;
+      },
+      finish: async (arc, options) => {
+        calls.finished.push(`${arc}:${options?.force === true}`);
+        return { kind: "closed", delivered: 1, released: 2 };
+      },
+    };
+  }
+
+  async function digestPane(seams: { listeners?: Array<() => void>; ordinal?: number } = {}) {
+    const calls: AirlockCalls = { triaged: [], delivered: [], finished: [], failNext: undefined };
+    const { port, world } = portOver(arcInputs);
+    const notices: string[] = [];
+    const pane = new MemoryPane(
+      "memory-1",
+      () => {},
+      { ...port, airlock: airlockOver(calls) },
+      {
+        intents: { openFile: () => {}, notice: (text) => notices.push(text) },
+        focusedArc: () => "dock-v2",
+        arcOrdinal: () => seams.ordinal,
+        now: () => Date.parse("2026-08-22T12:00:00Z"),
+        scheduleFrame: (run) => {
+          const timer = setTimeout(run, 0);
+          return () => clearTimeout(timer);
+        },
+        ...(seams.listeners !== undefined && {
+          subscribe: (listener: () => void) => {
+            seams.listeners?.push(listener);
+            return () => {};
+          },
+        }),
+      },
+    );
+    await pane.settled();
+    return { pane, world, calls, notices };
+  }
+
+  it("routes candidate and question decisions to the airlock port and reloads", async () => {
+    const { pane, world, calls } = await digestPane();
+    pane.handleKey(parseChord("a"));
+    await frames(pane);
+    pane.handleKey(parseChord("j"));
+    pane.handleKey(parseChord("c"));
+    await frames(pane);
+    expect(calls.triaged).toEqual(["dock-v2:Arc Lesson:deliver", "dock-v2:Tie order:carry"]);
+    expect(world.approved).toEqual([]);
+    expect(world.loads).toBe(3);
+  });
+
+  it("turns an airlock refusal into a notice instead of a pane failure", async () => {
+    const { pane, calls, notices } = await digestPane();
+    calls.failNext = "carrying a question out of arc dock-v2 needs an active successor arc";
+    pane.handleKey(parseChord("j"));
+    pane.handleKey(parseChord("c"));
+    await frames(pane);
+    expect(notices).toEqual([
+      "carrying a question out of arc dock-v2 needs an active successor arc",
+    ]);
+    expect(JSON.stringify(describeTree(pane.view(context())))).toContain("#dock-v2");
+  });
+
+  it("finishes and force-finishes from the close row and says what happened", async () => {
+    const { pane, calls, notices } = await digestPane();
+    pane.handleKey(parseChord("j"));
+    pane.handleKey(parseChord("j"));
+    pane.handleKey(parseChord("a"));
+    await frames(pane);
+    pane.handleKey(parseChord("enter"));
+    await frames(pane);
+    pane.handleKey(parseChord("f"));
+    await frames(pane);
+    expect(calls.delivered).toEqual(["dock-v2"]);
+    expect(calls.finished).toEqual(["dock-v2:false", "dock-v2:true"]);
+    expect(notices).toEqual([
+      "1 eligible note marked deliver · the rest stay archived",
+      "arc dock-v2 closed · delivered 1 note · 2 sessions released",
+      "arc dock-v2 closed · delivered 1 note · 2 sessions released",
+    ]);
+  });
+
+  it("explains itself when the port has no airlock", async () => {
+    const { port } = portOver(arcInputs);
+    const notices: string[] = [];
+    const pane = new MemoryPane("memory-1", () => {}, port, {
+      intents: { openFile: () => {}, notice: (text) => notices.push(text) },
+      focusedArc: () => "dock-v2",
+    });
+    await pane.settled();
+    pane.handleKey(parseChord("a"));
+    expect(notices).toEqual(["the airlock isn't available here"]);
+  });
+
+  it("reloads when the arcs feed changes, so /arc close shows its digest without a keystroke", async () => {
+    const listeners: Array<() => void> = [];
+    const { pane, world } = await digestPane({ listeners });
+    expect(world.loads).toBe(1);
+    for (const listener of listeners) listener();
+    await frames(pane);
+    expect(world.loads).toBe(2);
+    pane.dispose();
+  });
+
+  it("paints the arc layer header and the close row in the arc's hue, and the words carry the grouping alone", async () => {
+    const theme = resolveTheme();
+    const wide = { ...context(), width: 100 };
+    const { pane } = await digestPane({ ordinal: 3 });
+    const painted = JSON.stringify(pane.view(wide));
+    const header = "#dock-v2 · 1 note · airlock ░2 · 2 flushed · 1 didn't flush";
+    expect(JSON.stringify(describeTree(pane.view(wide)))).toContain(header);
+    expect(painted).toContain(`"text":"#dock-v2","fg":${paintedRgb(arcInk(theme, 3))}`);
+    expect(painted).not.toContain(`"text":"#dock-v2","fg":${paintedRgb(theme.textDim)}`);
+    const { pane: plain } = await digestPane();
+    expect(JSON.stringify(plain.view(wide))).toContain(
+      `"text":"#dock-v2","fg":${paintedRgb(theme.textDim)}`,
+    );
+    expect(JSON.stringify(describeTree(plain.view(wide)))).toContain(header);
+  });
+});
+
+describe("memory pane", () => {
+  interface MemoryWorld {
+    inbox: InboxItemView[];
+    approved: string[];
+    discarded: string[];
+  }
+
+  function memoryProbe(inputs?: Partial<MemoryPaneInputs>) {
+    const world: MemoryWorld = {
+      inbox: [
+        {
+          id: "staged-1",
+          kind: "staged",
+          title: "config change",
+          provenance: "untrusted",
+          created: "2026-08-10T01:00:00Z",
+        },
+      ],
+      approved: [],
+      discarded: [],
+    };
+    const port: MemoryPanePort = {
+      load: async () => ({
+        layers: [{ id: "workspace", kind: "workspace" as const, label: "workspace" }],
+        notes: [
+          {
+            name: "ratio-rule",
+            title: "ratio-rule",
+            layer: "workspace",
+            provenance: "agent" as const,
+            curing: 3 as const,
+            links: [],
+            aliases: [],
+          },
+        ],
+        inbox: world.inbox,
+        ledger: [],
+        ...inputs,
+      }),
+      approve: async (id) => {
+        const found = world.inbox.find((item) => item.id === id);
+        if (found === undefined) throw new Error(`no review item with id ${id}`);
+        world.inbox = world.inbox.filter((item) => item.id !== id);
+        world.approved.push(id);
+      },
+      discard: async (id) => {
+        world.inbox = world.inbox.filter((item) => item.id !== id);
+        world.discarded.push(id);
+      },
+    };
+    const probe = new AppProbe({
+      createMemoryPane: (id, notify) => new MemoryPane(id, notify, port),
+    });
+    return { probe, world, port };
+  }
+
+  function memoryPane(probe: AppProbe, id = "memory-1"): MemoryPane {
+    const pane = probe.core.panes.get(id);
+    if (!(pane instanceof MemoryPane)) throw new Error(`no memory pane "${id}"`);
+    return pane;
+  }
+
+  it("/memory opens the pane docked and focused with counts in the title", async () => {
+    const { probe } = memoryProbe();
+    probe.type("/memory").keys("enter");
+    expect(paneIds(probe)).toEqual(["memory-1", "session-1"]);
+    expect(dockedIds(probe)).toEqual(["memory-1"]);
+    expect(probe.snapshot().focused).toBe("memory-1");
+    await probe.settled();
+    expect(probe.snapshot().panes.find((pane) => pane.id === "memory-1")?.title).toContain(
+      "1 note",
+    );
+  });
+
+  it("leader m summons the memory pane and refocuses instead of duplicating", () => {
+    const { probe } = memoryProbe();
+    probe.keys("ctrl+k", "m");
+    expect(paneIds(probe)).toEqual(["memory-1", "session-1"]);
+    expect(probe.snapshot().focused).toBe("memory-1");
+    probe.keys("ctrl+k", "l");
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.keys("m");
+    expect(probe.snapshot().focused).toBe("memory-1");
+    expect(paneIds(probe)).toEqual(["memory-1", "session-1"]);
+  });
+
+  it("i jumps to the inbox and a approves the staged item through the port", async () => {
+    const { probe, world } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    probe.keys("i", "a");
+    await probe.settled();
+    expect(world.approved).toEqual(["staged-1"]);
+    expect(memoryPane(probe).model.stagedCount()).toBe(0);
+  });
+
+  it("approving an already-resolved item shows a calm failure and r recovers", async () => {
+    const { probe, world } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    const pane = memoryPane(probe);
+    world.inbox = [];
+    probe.keys("i", "a");
+    await probe.settled();
+    expect(world.approved).toEqual([]);
+    const failed = JSON.stringify(describePaneTree(pane.view(paneContext())));
+    expect(failed).toContain("no review item with id staged-1");
+    probe.keys("r");
+    await probe.settled();
+    const recovered = JSON.stringify(describePaneTree(pane.view(paneContext())));
+    expect(recovered).not.toContain("no review item");
+  });
+
+  it("persists as a memory pane and revives from workspace state", async () => {
+    const { probe, port } = memoryProbe();
+    probe.command("memory");
+    await probe.settled();
+    const state = mustParse(probe.workspaceState());
+    expect(state.panes).toContainEqual({ id: "memory-1", kind: "memory" });
+    const restored = new AppProbe({
+      createMemoryPane: (id, notify) => new MemoryPane(id, notify, port),
+      restoreWorkspace: state,
+    });
+    await restored.settled();
+    expect(paneIds(restored)).toEqual(["memory-1", "session-1"]);
+    expect(memoryPane(restored).model.noteCount()).toBe(1);
+  });
+
+  it("an empty vault renders the calm invitation, not a dashboard of zeros", async () => {
+    const { probe } = memoryProbe({ layers: [], notes: [], inbox: [], ledger: [] });
+    probe.command("memory");
+    await probe.settled();
+    const rows = memoryPane(probe).model.rows();
+    expect(rows.map((row) => row.text)).toEqual(["nothing remembered yet"]);
+  });
+
+  it("memory is absent when no memory factory is wired", () => {
+    expect(new AppProbe().command("memory")).toBe(false);
+  });
+});

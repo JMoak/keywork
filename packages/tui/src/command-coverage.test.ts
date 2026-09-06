@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { actionCommandNames, actionCovering, appActions } from "./app-actions.ts";
+import { memberTray } from "./arc-pane.ts";
+import { arcSessionsTray, arcsTray } from "./arcs-pane.ts";
+import { parseChord } from "./keys.ts";
+import { memoryTray } from "./memory-pane.ts";
 import type { Pane } from "./pane.ts";
+import type { KeyedTrayCommand } from "./pane-chrome.ts";
 import { AppProbe } from "./probe.ts";
+import { entriesTray, overviewTray } from "./session-tree-pane.ts";
+import { focusTray, workspacesTray } from "./workspaces-pane.ts";
 
 function stubPane(id: string): Pane {
   return {
@@ -21,6 +28,7 @@ function fullyEquippedProbe(): AppProbe {
     createArcsPane: (id) => stubPane(id),
     createMemoryPane: (id) => stubPane(id),
     createMcpPane: (id) => stubPane(id),
+    createWorkspacesPane: (id) => stubPane(id),
     isDirectory: () => false,
     undo: { undo: async () => true, redo: async () => true },
     presets: {
@@ -92,5 +100,37 @@ describe("command coverage", () => {
       }
     }
     expect(collisions).toEqual([]);
+  });
+});
+
+describe("pane keymap coverage", () => {
+  const trays: Record<string, readonly KeyedTrayCommand[]> = {
+    arcsTray,
+    arcSessionsTray,
+    overviewTray,
+    entriesTray,
+    workspacesTray,
+    focusTray,
+    memberTray,
+    memoryTray,
+  };
+
+  it("keeps every entity tray pressing distinct, parseable keys", () => {
+    for (const [name, table] of Object.entries(trays)) {
+      const keys = table.map((command) => command.key);
+      expect(new Set(keys).size, name).toBe(keys.length);
+      const names = table.map((command) => command.name);
+      expect(new Set(names).size, name).toBe(names.length);
+      for (const key of keys) {
+        expect(parseChord(key).name, `${name} ${key}`).not.toBe("");
+      }
+    }
+  });
+
+  it("summons every node kind through a registered command", () => {
+    const probe = fullyEquippedProbe();
+    for (const name of ["browse", "tree", "arcs", "workspaces", "memory", "mcp"]) {
+      expect(probe.command(name), `/${name}`).toBe(true);
+    }
   });
 });

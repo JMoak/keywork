@@ -19,6 +19,18 @@ export type MemoryLayerRef = { layer: "workspace" } | { layer: "arc"; arc: strin
 
 export type ArcSearchHit = SearchHit & MemoryLayerRef;
 
+export const workspaceLayer = "workspace";
+
+export function arcLayer(slug: string): string {
+  return `arc:${slug}`;
+}
+
+export function searchHitLayer(hit: SearchHit): string | undefined {
+  if (!("layer" in hit)) return undefined;
+  const tagged = hit as ArcSearchHit;
+  return tagged.layer === "workspace" ? workspaceLayer : arcLayer(tagged.arc);
+}
+
 export interface ArcRecallOutcome {
   hits: ArcSearchHit[];
   workspaceSource: RetrievalSource;

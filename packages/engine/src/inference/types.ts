@@ -1,10 +1,19 @@
 import type { ModelCapabilities, ModelCapabilityDeclaration } from "../capabilities.ts";
 
-export type Protocol = "chat-completions" | "responses" | "bedrock-converse";
+export type Protocol = "chat-completions" | "responses" | "anthropic-messages" | "bedrock-converse";
 
-export const protocols: readonly Protocol[] = ["chat-completions", "responses", "bedrock-converse"];
+export const protocols: readonly Protocol[] = [
+  "chat-completions",
+  "responses",
+  "anthropic-messages",
+  "bedrock-converse",
+];
 
-export const httpProtocols: ReadonlySet<Protocol> = new Set(["chat-completions", "responses"]);
+export const httpProtocols: ReadonlySet<Protocol> = new Set([
+  "chat-completions",
+  "responses",
+  "anthropic-messages",
+]);
 
 export interface ModelReference {
   provider: string;

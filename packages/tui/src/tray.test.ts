@@ -57,3 +57,12 @@ describe("clipLine", () => {
     expect(clipLine("plain", 10)).toBe("plain");
   });
 });
+
+describe("tray rows at glyph tier 0", () => {
+  it("keeps the selection mark legible without unicode glyphs", () => {
+    const rows = trayRows([{ name: "a", description: "" }], 0, 30, theme, {
+      glyphs: { glyphTier: 0, nerdFont: false },
+    });
+    expect(rowTexts(rows[0] as TrayChild)[0]).toContain("> a");
+  });
+});

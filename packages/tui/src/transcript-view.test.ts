@@ -43,7 +43,7 @@ describe("transcriptLines", () => {
       ],
       5,
     );
-    expect(lines.map((line) => line.text)).toEqual(["› abc", "defgh", "12345"]);
+    expect(lines.map((line) => line.text)).toEqual(["› abc", "  def", "  gh", "12345"]);
   });
 
   it("splits embedded newlines", () => {
@@ -425,5 +425,63 @@ describe("tiered transcript marks", () => {
     expect(lines.map((line) => line.stamp)).toEqual(["# ", ". ", "  ", "  ", "+ ", "  "]);
     expect(lines[2]?.text).toBe("-".repeat(78));
     expect(lines[4]?.text).toBe("= Title");
+  });
+});
+
+describe("the streaming cursor", () => {
+  it("marks the streaming entry's last line and lifts it when the stream settles", () => {
+    const entries: TranscriptEntry[] = [{ kind: "assistant", text: "hello there" }];
+    const view = new TranscriptView();
+    const streaming: TranscriptSource = {
+      entries,
+      streamingProgress: (entry) => (entry === entries[0] ? 0.5 : undefined),
+    };
+    const live = view.frame(streaming, { width: 40, rows: 5 }, { scrollBack: 0 });
+    expect(live.lines.at(-1)?.text.endsWith("▌")).toBe(true);
+    expect(live.lines.at(-1)?.spans?.at(-1)).toEqual({ text: "▌", tone: "meta" });
+
+    const settled = view.frame(sourceOf(entries), { width: 40, rows: 5 }, { scrollBack: 0 });
+    expect(settled.lines.at(-1)?.text.endsWith("▌")).toBe(false);
+  });
+
+  it("degrades the cursor to ascii at glyph tier 0", () => {
+    const entries: TranscriptEntry[] = [{ kind: "assistant", text: "plain" }];
+    const view = new TranscriptView();
+    const live = view.frame(
+      { entries, streamingProgress: () => 0.5 },
+      { width: 40, rows: 5, marks: pageMarks({ glyphTier: 0, nerdFont: false }) },
+      { scrollBack: 0 },
+    );
+    expect(live.lines.at(-1)?.text.endsWith("_")).toBe(true);
+  });
+});
+
+describe("scroll stability while streaming", () => {
+  it("keeps the anchored viewport put as new lines arrive below", () => {
+    const entries = assistantLines(30);
+    const view = new TranscriptView();
+    const geometry = { width: 40, rows: 5 };
+    const first = view.frame(sourceOf(entries), geometry, { scrollBack: 10 });
+    expect(first.total).toBe(30);
+
+    const grown = view.frame(sourceOf([...entries, ...assistantLines(3)]), geometry, {
+      scrollBack: 10,
+      anchorTotal: first.total,
+    });
+    expect(grown.scrollBack).toBe(13);
+    expect(grown.lines.map((line) => line.text)).toEqual(first.lines.map((line) => line.text));
+  });
+
+  it("leaves the live viewport following the tail", () => {
+    const entries = assistantLines(30);
+    const view = new TranscriptView();
+    const geometry = { width: 40, rows: 5 };
+    const first = view.frame(sourceOf(entries), geometry, { scrollBack: 0 });
+    const grown = view.frame(sourceOf([...entries, ...assistantLines(2)]), geometry, {
+      scrollBack: 0,
+      anchorTotal: first.total,
+    });
+    expect(grown.scrollBack).toBe(0);
+    expect(grown.lines.at(-1)?.text).toContain("entry 2");
   });
 });

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { ArcPane, type ArcPaneOptions, memberRowLine } from "./arc-pane.ts";
 import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
+import type { PointerEvent } from "./pointer.ts";
 import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
+import { press } from "./testing/index.ts";
 import { resolveTheme } from "./theme.ts";
 
 const minute = 60_000;
@@ -98,9 +100,10 @@ const membersOpen = presenceOf((sessionId) =>
   sessionId === "unbound" ? undefined : `pane-${sessionId}`,
 );
 
-function paneOver(world: World, presence?: SessionPresence) {
+function paneOver(world: World, presence?: SessionPresence, extra: Partial<ArcPaneOptions> = {}) {
   const recorded = recordedIntents();
   const options: ArcPaneOptions = {
+    ...extra,
     slug: "dock-v2",
     sessions: {
       overview: async () => {
@@ -128,10 +131,6 @@ function paneOver(world: World, presence?: SessionPresence) {
   };
   const pane = new ArcPane("arc-1", () => {}, recorded.intents, options);
   return { pane, recorded };
-}
-
-function press(pane: ArcPane, ...specs: string[]): void {
-  for (const spec of specs) pane.handleKey(parseChord(spec), spec.length === 1 ? spec : undefined);
 }
 
 function rowLines(pane: ArcPane): string[] {
@@ -220,6 +219,50 @@ describe("ArcPane", () => {
     expect(() =>
       pane.view({ theme: resolveTheme(), focused: true, width: 60, height: 8 }),
     ).not.toThrow();
+  });
+});
+
+describe("ArcPane return delta", () => {
+  const down: PointerEvent = { type: "down", x: 0, y: 0, button: 0 };
+
+  it("shows the quiet digest above the members and offsets clicks past it", async () => {
+    const world = worldOf();
+    const { pane, recorded } = paneOver(world, membersOpen, {
+      returnDelta: async () => ["2 new in #dock-v2: [[A]], [[B]]"],
+    });
+    await pane.settled();
+    expect(() =>
+      pane.view({ theme: resolveTheme(), focused: true, width: 60, height: 10 }),
+    ).not.toThrow();
+    expect(pane.handleMouse({ x: 2, y: 1 }, down)).toBe(false);
+    expect(pane.handleMouse({ x: 2, y: 2 }, down)).toBe(true);
+    expect(recorded.focused).toEqual(["pane-oldest"]);
+  });
+
+  it("caps the digest at three lines", async () => {
+    const world = worldOf();
+    const { pane } = paneOver(world, membersOpen, {
+      returnDelta: async () => ["one", "two", "three", "four", "five"],
+    });
+    await pane.settled();
+    expect(pane.handleMouse({ x: 2, y: 3 }, down)).toBe(false);
+    expect(pane.handleMouse({ x: 2, y: 4 }, down)).toBe(true);
+  });
+
+  it("renders nothing and shifts nothing when the delta is empty or fails", async () => {
+    const world = worldOf();
+    const quiet = paneOver(world, membersOpen, { returnDelta: async () => [] });
+    await quiet.pane.settled();
+    expect(quiet.pane.handleMouse({ x: 2, y: 1 }, down)).toBe(true);
+
+    const failing = paneOver(world, membersOpen, {
+      returnDelta: async () => {
+        throw new Error("vault offline");
+      },
+    });
+    await failing.pane.settled();
+    expect(rowLines(failing.pane)).toHaveLength(3);
+    expect(failing.pane.handleMouse({ x: 2, y: 1 }, down)).toBe(true);
   });
 });
 

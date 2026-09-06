@@ -20,6 +20,7 @@ import { contextReadout } from "./context-gauge.ts";
 export class SessionLedger {
   sessionId: string | undefined;
   arc: string | undefined;
+  bot: string | undefined;
   private readonly retired = new Map<string, ModelTotals>();
   private context: { agent: Agent; messages: number; reading: ContextReading } | undefined;
 

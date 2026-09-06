@@ -23,7 +23,7 @@ to stderr. `--json` prints one JSON object per line to stdout and nothing else.
 |---:|---|---|
 | 0 | `completed` | the turn reached `turn.completed`. Content that reports inability is still 0: exit codes describe the harness, never the model's self-report. |
 | 1 | `failed` | the turn ended in `engine.error`: provider failure after retries, tool-loop abort, internal error. |
-| 2 | `usage` | bad invocation: no prompt, unknown command or preset, or `panes` / `chat` / bare `keywork` without a terminal. |
+| 2 | `usage` | bad invocation: no prompt, unknown command, preset, or `--workspace` slug, or `panes` / `chat` / bare `keywork` without a terminal. |
 | 3 | `unresolved` | inference resolution failed. The IR-18 `code` (`unconfigured` · `ambiguous` · `unknown-provider` · `unknown-model` · `disabled-provider` · `unavailable-credential` · `unsupported-protocol` · `missing-capability` · `insecure-endpoint`) rides in the payload. |
 | 4 | `denied` | a tool call needed an approval nobody could give. The turn still ran to its end with that call refused; stderr names the tools and the fix. |
 | 130 | `interrupted` | SIGINT or SIGTERM arrived mid-turn. The agent was interrupted and orphaned tool calls were settled; the session was persisted only when `--session-dir` was given (the `run.finished` line carries `saved`). |

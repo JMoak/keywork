@@ -121,7 +121,6 @@ function attachmentOf(
 ): SessionAttachment {
   const name = store.name();
   const selection = store.modelSelection();
-  const arc = store.arcBinding();
   const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
@@ -129,7 +128,12 @@ function attachmentOf(
     ...(selection !== undefined && {
       modelReference: `${selection.provider}/${selection.modelId}`,
     }),
-    ...(arc !== undefined && { arc }),
+    get arc() {
+      return store.arcBinding();
+    },
+    get bot() {
+      return store.botBinding();
+    },
     history: store.messages(),
     replay: (bus) => {
       replaySession(store, bus);
@@ -161,6 +165,11 @@ function attachmentOf(
       if (store.arcBinding() === slug) return;
       await store.appendArcBinding(slug);
       seams.onArcBound?.(store.header.id, slug);
+      seams.onChange?.(store.header.id);
+    },
+    bindBot: async (name) => {
+      if (store.botBinding() === name) return;
+      await store.appendBotBinding(name);
       seams.onChange?.(store.header.id);
     },
   };

@@ -327,14 +327,15 @@ function calmRow(): McpRow {
 
 function serverText(server: McpServerView): string {
   const name = clip(server.name, nameLimit);
-  if (!isOn(server)) return `${stateGlyph("down")} ${name} · off`;
+  const via = server.transport === "http" ? " · http" : "";
+  if (!isOn(server)) return `${stateGlyph("down")} ${name} · off${via}`;
   switch (server.state) {
     case "connected":
-      return `${stateGlyph("connected")} ${name} · ${toolPhrase(server.toolCount)}`;
+      return `${stateGlyph("connected")} ${name} · ${toolPhrase(server.toolCount)}${via}`;
     case "connecting":
-      return `${stateGlyph("connecting")} ${name} · ${tileMark(server.progress)} connecting`;
+      return `${stateGlyph("connecting")} ${name} · ${tileMark(server.progress)} connecting${via}`;
     case "down":
-      return `${stateGlyph("down")} ${name} · ▛`;
+      return `${stateGlyph("down")} ${name} · ▛${via}`;
   }
 }
 

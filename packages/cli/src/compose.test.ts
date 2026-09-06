@@ -1,40 +1,30 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  type AgentDefinition,
+  type BotDefinition,
   extensionState,
   MockProvider,
   messageText,
   type Provider,
-  type ProviderRequest,
   SessionStore,
   ShellSession,
-  type TurnDelta,
   tapJournal,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { recordingProvider } from "@keywork/engine/testing";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { type Composition, composeAgents, composeWorkspace, startMcpRegistry } from "./compose.ts";
+import { citationTrail } from "./memory.ts";
 
 const fixtureServerPath = fileURLToPath(
   new URL("../../engine/src/testing/mcp-fixture-server.ts", import.meta.url),
 );
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-compose-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-compose-");
 
 async function composedIn(
   cwd: string,
@@ -56,22 +46,14 @@ async function declaredWorkspace(): Promise<string> {
   return cwd;
 }
 
-class RecordingProvider implements Provider {
-  readonly name = "recording";
-  readonly requests: ProviderRequest[] = [];
-
-  async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
-    this.requests.push(request);
-    yield { type: "text", text: "ok" };
-    yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
-  }
-}
-
-const briefAgent: AgentDefinition = {
+const briefBot: BotDefinition = {
   name: "brief",
   overrides: {},
+  sigil: "B",
+  learning: "off",
   prompt: "be brief",
-  file: "brief.md",
+  file: "brief/bot.md",
+  dir: "brief",
   source: "project",
 };
 
@@ -82,7 +64,7 @@ describe("composeWorkspace", () => {
     expect(composition.cwd).toBe(cwd);
     expect(composition.memory()).toBeUndefined();
     expect(composition.mcp).toBeUndefined();
-    expect(composition.extensions).toEqual({ commands: [], agents: [], skills: [], failures: [] });
+    expect(composition.extensions).toEqual({ commands: [], bots: [], skills: [], failures: [] });
     expect(composition.systemPromptFor(undefined).length).toBeGreaterThan(0);
   });
 
@@ -179,13 +161,13 @@ describe("composeAgents", () => {
     expect(outputs[0]?.trim().endsWith("nested")).toBe(true);
   });
 
-  it("gives default agents the composed system prompt for their model and definitions their own", async () => {
+  it("gives default agents the composed system prompt for their model and bots their own", async () => {
     const composition = await composedIn(await tempDir());
-    const provider = new RecordingProvider();
+    const provider = recordingProvider();
     const agents = composeAgents(composition);
 
     await agents.build({ provider, guard: {} }).send("hello");
-    await agents.build({ provider, guard: {}, definition: briefAgent }).send("hello");
+    await agents.build({ provider, guard: {}, bot: briefBot }).send("hello");
 
     expect(provider.requests[0]?.systemPrompt).toBe(composition.systemPromptFor(undefined));
     expect(provider.requests[1]?.systemPrompt).toBe("be brief");
@@ -212,7 +194,7 @@ describe("composeAgents", () => {
     const defined = agents.build({
       provider: new MockProvider([textTurn("ok")]),
       guard: {},
-      definition: briefAgent,
+      bot: briefBot,
     });
     const announced: string[] = [];
     defined.bus.on("context.injected", ({ injection }) => announced.push(injection.source));
@@ -223,6 +205,115 @@ describe("composeAgents", () => {
       { source: "memory-bootstrap", scope: "workspace" },
     ]);
     expect(announced).toEqual([]);
+  });
+
+  it("records reply citations for the session, rejecting wikilinks that were never recalled", async () => {
+    const cwd = await declaredWorkspace();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(
+      join(cwd, ".keywork", "memory", "Ratio Rule.md"),
+      "---\nprovenance: user\n---\nthe split is 60/40\n",
+    );
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const citations = citationTrail(composition.memory, () => composition.bootstrap);
+    const agents = composeAgents(composition, { citations });
+    const provider = new MockProvider([
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-1",
+        name: "memory_search",
+        arguments: { query: "ratio split" },
+      }),
+      textTurn("per [[Ratio Rule]] it is 60/40, whatever [[Ghost Note]] says"),
+    ]);
+
+    await agents.build({ provider, guard: {}, sessionId: "s1" }).send("what is the split?");
+
+    const events = citations.forSession("s1").events();
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: "recall", note: "Ratio Rule", surface: "search" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: "citation", note: "Ratio Rule" }),
+    );
+    expect(events.some((event) => "note" in event && event.note === "Ghost Note")).toBe(false);
+    await composition.memory()?.store.recordAudit("settle");
+  });
+
+  it("keeps one reply tap per bus across agent rebuilds", async () => {
+    const cwd = await declaredWorkspace();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(
+      join(cwd, ".keywork", "memory", "Ratio Rule.md"),
+      "---\nprovenance: user\npinned: true\n---\nthe split is 60/40\n",
+    );
+    await writeFile(join(cwd, ".keywork", "memory", "MEMORY.md"), "- [[Ratio Rule]]\n");
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const citations = citationTrail(composition.memory, () => composition.bootstrap);
+    const agents = composeAgents(composition, { citations });
+    const first = agents.build({
+      provider: new MockProvider([textTurn("nothing yet")]),
+      guard: {},
+      sessionId: "s1",
+    });
+    const rebuilt = agents.build({
+      provider: new MockProvider([textTurn("per [[Ratio Rule]]")]),
+      guard: {},
+      sessionId: "s1",
+      bus: first.bus,
+    });
+
+    await rebuilt.send("what is the split?");
+
+    const cited = citations
+      .forSession("s1")
+      .events()
+      .filter((event) => event.kind === "citation");
+    expect(cited).toHaveLength(1);
+    await composition.memory()?.store.recordAudit("settle");
+  });
+
+  it("surfaces point-of-action recall inside a mutating tool's result", async () => {
+    const cwd = await declaredWorkspace();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(
+      join(cwd, ".keywork", "memory", "Note Txt Rule.md"),
+      "---\nprovenance: user\n---\nnote.txt stays short\n",
+    );
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const citations = citationTrail(composition.memory, () => composition.bootstrap);
+    const agents = composeAgents(composition, { citations });
+    const provider = new MockProvider([
+      toolCallTurn({
+        type: "tool-call",
+        callId: "call-1",
+        name: "write",
+        arguments: { path: "note.txt", content: "hello" },
+      }),
+      textTurn("written"),
+    ]);
+    const agent = agents.build({
+      provider,
+      guard: { confirm: async () => true },
+      sessionId: "s1",
+    });
+    const injected: string[] = [];
+    agent.bus.on("context.injected", ({ injection }) => {
+      if (injection.source === "memory-action") injected.push(injection.id ?? "");
+    });
+
+    await agent.send("write the note");
+
+    const toolResult = agent.history().find((message) => message.role === "tool")?.parts[0];
+    const output = toolResult?.type === "tool-result" ? String(toolResult.output) : "";
+    expect(output).toContain("## memory for note.txt");
+    expect(output).toContain("[[Note Txt Rule]]");
+    expect(output).toContain("retrieval: lexical");
+    expect(injected).toEqual(["Note Txt Rule"]);
+    expect(citations.forSession("s1").events()).toContainEqual(
+      expect.objectContaining({ kind: "recall", note: "Note Txt Rule", surface: "action" }),
+    );
+    await composition.memory()?.store.recordAudit("settle");
   });
 
   it("skips memory flushes when the workspace has no memory", async () => {
@@ -299,5 +390,77 @@ describe("startMcpRegistry", () => {
       await registry.stop();
     }
     expect(registry.status()[0]?.state).toBe("down");
+  });
+});
+
+describe("repo map composition", () => {
+  async function trustedWorkspaceWith(files: Record<string, string>): Promise<string> {
+    const cwd = await tempDir();
+    for (const [name, content] of Object.entries(files)) {
+      await writeFile(join(cwd, name), content, "utf8");
+    }
+    return cwd;
+  }
+
+  it("injects a ranked map and a standing disclosure for a trusted workspace", async () => {
+    const cwd = await trustedWorkspaceWith({ "core.ts": "export function widelyUsed() {}" });
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    expect(composition.repoMap).toBeDefined();
+    const prompt = composition.systemPromptFor(undefined);
+    expect(prompt).toContain("Repo map");
+    expect(prompt).toContain("core.ts: widelyUsed");
+    expect(composition.standingInjections).toContainEqual({
+      source: "repo-map",
+      id: "1 file",
+      scope: "workspace",
+    });
+  });
+
+  it("skips the map entirely when configured off", async () => {
+    const cwd = await trustedWorkspaceWith({ "core.ts": "export const a = 1;" });
+    const composition = await composedIn(cwd, { projectTrusted: true, repoMap: "off" });
+    expect(composition.repoMap).toBeUndefined();
+    expect(composition.systemPromptFor(undefined)).not.toContain("Repo map");
+    expect(
+      composition.standingInjections.some((injection) => injection.source === "repo-map"),
+    ).toBe(false);
+  });
+
+  it("never maps an untrusted directory", async () => {
+    const cwd = await trustedWorkspaceWith({ "core.ts": "export const a = 1;" });
+    const composition = await composedIn(cwd, { projectTrusted: false });
+    expect(composition.repoMap).toBeUndefined();
+    expect(composition.systemPromptFor(undefined)).not.toContain("Repo map");
+  });
+
+  it("shrinks the map for a model with a small declared window", async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 80; index += 1) {
+      files[`module-${String(index).padStart(2, "0")}.ts`] =
+        `export function generouslyNamedSymbolNumber${index}() {}`;
+    }
+    const cwd = await trustedWorkspaceWith(files);
+    const composition = await composedIn(cwd, {
+      projectTrusted: true,
+      models: { "tiny*": { contextWindow: 4096 } },
+    });
+    const roomy = composition.systemPromptFor(undefined);
+    const tight = composition.systemPromptFor("tiny-model");
+    expect(tight.length).toBeLessThan(roomy.length);
+    expect(tight).toContain("more files");
+  });
+
+  it("refreshes the map after a tool save", async () => {
+    const cwd = await trustedWorkspaceWith({ "first.ts": "export const first = 1;" });
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    expect(composition.systemPromptFor(undefined)).not.toContain("second.ts");
+    await writeFile(join(cwd, "second.ts"), "export const second = 2;", "utf8");
+    composition.onFileSaved?.(join(cwd, "second.ts"));
+    const deadline = Date.now() + 5_000;
+    while (!composition.systemPromptFor(undefined).includes("second.ts")) {
+      if (Date.now() > deadline) throw new Error("map never refreshed");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(composition.systemPromptFor(undefined)).toContain("second.ts: second");
   });
 });

@@ -35,7 +35,8 @@ export function statusBar(core: AppCore, inputs: StatusBarInputs) {
 function statusChunks(core: AppCore, inputs: StatusBarInputs): TextChunk[] {
   const { theme, focusedArc } = inputs;
   const lead = `${inputs.label ?? "keywork"} · `;
-  const tail = `${core.layout.panes().length} panes · ctrl+k nav · ctrl+p go · > commands`;
+  const guidance = core.tip() ?? "ctrl+k nav · ctrl+p go · / commands";
+  const tail = `${core.layout.panes().length} panes · ${guidance}`;
   if (focusedArc === undefined) return [fg(theme.textDim)(`${lead}${tail}`)];
   return [
     fg(theme.textDim)(lead),

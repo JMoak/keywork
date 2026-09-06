@@ -1,6 +1,6 @@
 import { contains, type Rect, type Screen } from "./geometry.ts";
 import type { Chord } from "./keys.ts";
-import type { DockSide, DropTarget, Layout } from "./layout.ts";
+import type { DockSide, DropTarget, Layout, SplitHandle } from "./layout.ts";
 import type { Pane } from "./pane.ts";
 import { type PointerEvent, type PointerScroll, wheelSteps } from "./pointer.ts";
 
@@ -9,6 +9,7 @@ export interface PointerSurface {
   screen(): Screen;
   paneAt(id: string): Pane | undefined;
   changed(): void;
+  drawnRect?(rect: Rect, screen: Screen): Rect;
 }
 
 interface PaneDrag {
@@ -19,15 +20,17 @@ interface PaneDrag {
 
 export class PanePointer {
   private dockResize: DockSide | undefined;
+  private splitResize: SplitHandle | undefined;
   private paneDrag: PaneDrag | undefined;
 
   constructor(private readonly surface: PointerSurface) {}
 
-  route(event: PointerEvent): void {
-    if (this.routeDockResize(event)) return;
-    if (this.routePaneDrag(event)) return;
+  route(event: PointerEvent): boolean {
+    if (this.routeDockResize(event)) return true;
+    if (this.routeSplitResize(event)) return true;
+    if (this.routePaneDrag(event)) return true;
     const hit = this.paneUnder(event.x, event.y);
-    if (hit === undefined) return;
+    if (hit === undefined) return false;
     if (event.type === "down") {
       this.surface.layout.focus(hit.id);
       this.surface.changed();
@@ -35,16 +38,28 @@ export class PanePointer {
     }
     const pane = this.surface.paneAt(hit.id);
     const local = { x: event.x - hit.rect.x, y: event.y - hit.rect.y };
-    if (pane?.handleMouse?.(local, event) === true) return;
-    if (event.type === "scroll" && event.scroll !== undefined) scrollByKeys(pane, event.scroll);
+    if (pane?.handleMouse?.(local, event) === true) return true;
+    if (event.type === "scroll" && event.scroll !== undefined) {
+      scrollByKeys(pane, event.scroll);
+      return true;
+    }
+    return event.type === "down";
   }
 
   dragPreview(): Rect | undefined {
-    return this.paneDrag?.lifted === true ? this.paneDrag.target?.rect : undefined;
+    const drag = this.paneDrag;
+    if (drag?.lifted !== true) return undefined;
+    return drag.target?.rect ?? this.surface.layout.rects(this.surface.screen()).get(drag.id);
   }
 
   draggingPane(): string | undefined {
     return this.paneDrag?.lifted === true ? this.paneDrag.id : undefined;
+  }
+
+  cancelDrag(): boolean {
+    if (this.paneDrag?.lifted !== true) return false;
+    this.paneDrag = undefined;
+    return true;
   }
 
   private routePaneDrag(event: PointerEvent): boolean {
@@ -90,8 +105,31 @@ export class PanePointer {
     return true;
   }
 
+  private routeSplitResize(event: PointerEvent): boolean {
+    const { layout } = this.surface;
+    if (this.splitResize !== undefined) {
+      if (event.type === "drag") {
+        layout.dragSplitHandle(this.splitResize, event.x, event.y, this.surface.screen());
+        this.surface.changed();
+        return true;
+      }
+      if (event.type === "up" || event.type === "drag-end") {
+        this.splitResize = undefined;
+        return true;
+      }
+      this.splitResize = undefined;
+    }
+    if (event.type !== "down") return false;
+    const handle = layout.splitHandleAt(event.x, event.y, this.surface.screen());
+    if (handle === undefined) return false;
+    this.splitResize = handle;
+    return true;
+  }
+
   private paneUnder(x: number, y: number): { id: string; rect: Rect } | undefined {
-    for (const [id, rect] of this.surface.layout.rects(this.surface.screen())) {
+    const screen = this.surface.screen();
+    for (const [id, laidOut] of this.surface.layout.rects(screen)) {
+      const rect = this.surface.drawnRect?.(laidOut, screen) ?? laidOut;
       if (contains(rect, x, y)) return { id, rect };
     }
     return undefined;

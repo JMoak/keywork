@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./config": "./src/config/index.ts"
+    "./config": "./src/config/index.ts",
+    "./testing": "./src/testing/index.ts"
   },
   "dependencies": {
     "zod": "4.4.3"

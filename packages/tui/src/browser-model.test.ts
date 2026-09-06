@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BrowserModel, type Entry, type ReadDirectory } from "./browser-model.ts";
 import { parseChord } from "./keys.ts";
+import { pressModel as press } from "./testing/index.ts";
 
 type Tree = { [name: string]: Tree | "file" };
 
@@ -38,15 +39,6 @@ async function browserOver(tree: Tree) {
   );
   await model.settled();
   return { model, disk, opened };
-}
-
-function press(model: BrowserModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5, typedSequence(spec));
-}
-
-function typedSequence(spec: string): string | undefined {
-  if (spec === "space") return " ";
-  return spec.length === 1 ? spec : undefined;
 }
 
 async function pressSettled(model: BrowserModel, ...specs: string[]): Promise<void> {

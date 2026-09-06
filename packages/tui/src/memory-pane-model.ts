@@ -1,6 +1,10 @@
+import type { AirlockDigestView, CandidateChoice, QuestionChoice } from "./arcs.ts";
 import type { Chord } from "./keys.ts";
 import {
+  type AirlockRowRef,
+  type DigestTreatment,
   findNote,
+  type GardenHeat,
   gardenRows,
   ledgerRows,
   type MemoryRow,
@@ -60,7 +64,7 @@ export interface MemoryNoteView {
   relations?: NoteRelationView[];
 }
 
-export type InboxKind = "staged" | "promotion" | "contradiction" | "proposal";
+export type InboxKind = "staged" | "promotion" | "contradiction" | "proposal" | "airlock";
 
 export interface InboxItemView {
   id: string;
@@ -95,6 +99,7 @@ export interface MemoryPaneInputs {
   inbox: InboxItemView[];
   ledger: LedgerEventView[];
   gardener?: GardenerActivityView;
+  airlocks?: AirlockDigestView[];
 }
 
 export type QueryLeg = "lexical" | "semantic" | "graph";
@@ -134,11 +139,17 @@ export interface MemoryPaneEffects {
   openFile(path: string): void;
   ask(query: string): void;
   notice?(text: string): void;
+  triageCandidate?(arc: string, note: string, choice: CandidateChoice): void;
+  triageQuestion?(arc: string, title: string, choice: QuestionChoice): void;
+  deliverEligible?(arc: string): void;
+  finishClose?(arc: string, force: boolean): void;
 }
 
 export interface MemoryPaneSeams {
   focusedArc?: () => string | undefined;
   now?: () => number;
+  digestTreatment?: DigestTreatment;
+  gardenHeat?: GardenHeat;
 }
 
 export const emptyMemoryInputs: MemoryPaneInputs = {
@@ -154,6 +165,7 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
   private focusedNote: string | undefined;
   private ledgerNote: string | undefined;
   private query: MemoryQueryState | undefined;
+  private readonly unfoldedArcs = new Set<string>();
   private bodyWidth = 40;
 
   constructor(
@@ -247,13 +259,23 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
     switch (this.lens) {
       case "garden":
         return this.query === undefined
-          ? gardenRows(this.inputs, { focusedArc: this.seams.focusedArc?.(), now })
+          ? this.gardenRows(now)
           : queryRows(this.inputs, this.query, now);
       case "note":
         return this.noteLensRows(now);
       case "ledger":
         return ledgerRows(this.inputs, { note: this.ledgerNote, now });
     }
+  }
+
+  private gardenRows(now: number): MemoryRow[] {
+    return gardenRows(this.inputs, {
+      focusedArc: this.seams.focusedArc?.(),
+      now,
+      treatment: this.seams.digestTreatment ?? "stamp",
+      ...(this.seams.gardenHeat !== undefined && { heat: this.seams.gardenHeat }),
+      unfolded: (arc) => this.unfoldedArcs.has(arc),
+    });
   }
 
   protected keyOf(row: MemoryRow): string {
@@ -266,12 +288,13 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
 
   private noteLensRows(now: number): MemoryRow[] {
     const focus = this.focusedNote === undefined ? undefined : this.findNote(this.focusedNote);
-    if (focus === undefined)
-      return gardenRows(this.inputs, { focusedArc: this.seams.focusedArc?.(), now });
+    if (focus === undefined) return this.gardenRows(now);
     return noteRows(this.inputs, focus, { now, bodyWidth: this.bodyWidth });
   }
 
   private handleGardenKey(chord: Chord): boolean {
+    const airlock = this.cursorRow()?.airlock;
+    if (airlock !== undefined && this.handleAirlockKey(airlock, chord)) return true;
     switch (chord.name) {
       case "enter":
       case "return":
@@ -442,13 +465,67 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
   }
 
   private jumpTo(kind: MemoryRowKind): boolean {
-    return this.settleOn((row) => row.kind === kind && row.selectable);
+    const kinds: MemoryRowKind[] = kind === "inbox" ? ["inbox", "airlock"] : [kind];
+    return this.settleOn((row) => kinds.includes(row.kind) && row.selectable);
   }
 
   private settleOn(wanted: (row: MemoryRow) => boolean): true {
     const at = this.rows().findIndex(wanted);
     if (at !== -1) this.moveTo(at);
     return true;
+  }
+
+  private handleAirlockKey(ref: AirlockRowRef, chord: Chord): boolean {
+    switch (ref.kind) {
+      case "candidate":
+        return this.triageCandidate(ref, chord);
+      case "question":
+        return this.triageQuestion(ref, chord);
+      case "fold":
+        if (chord.name !== "space" && chord.name !== "enter" && chord.name !== "return")
+          return false;
+        return this.toggleFold(ref.arc);
+      case "finish":
+        return this.finishAirlock(ref, chord);
+    }
+  }
+
+  private triageCandidate(ref: AirlockRowRef, chord: Chord): boolean {
+    const choice = candidateChoices[chord.name];
+    if (choice === undefined) return false;
+    this.effects.triageCandidate?.(ref.arc, ref.key, choice);
+    return true;
+  }
+
+  private triageQuestion(ref: AirlockRowRef, chord: Chord): boolean {
+    const choice = questionChoices[chord.name];
+    if (choice === undefined) return false;
+    this.effects.triageQuestion?.(ref.arc, ref.key, choice);
+    return true;
+  }
+
+  private finishAirlock(ref: AirlockRowRef, chord: Chord): boolean {
+    switch (chord.name) {
+      case "enter":
+      case "return":
+        this.effects.finishClose?.(ref.arc, false);
+        return true;
+      case "f":
+        this.effects.finishClose?.(ref.arc, true);
+        return true;
+      case "a":
+        this.effects.deliverEligible?.(ref.arc);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private toggleFold(arc: string): boolean {
+    return this.mutate(() => {
+      if (this.unfoldedArcs.has(arc)) this.unfoldedArcs.delete(arc);
+      else this.unfoldedArcs.add(arc);
+    });
   }
 
   private actOnInbox(act: (id: string) => void): boolean {
@@ -508,3 +585,10 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
     return findNote(this.inputs.notes, reference, layer);
   }
 }
+
+const candidateChoices: Partial<Record<string, CandidateChoice>> = { a: "deliver", d: "leave" };
+const questionChoices: Partial<Record<string, QuestionChoice>> = {
+  a: "resolve",
+  c: "carry",
+  d: "drop",
+};

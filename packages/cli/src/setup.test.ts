@@ -1,27 +1,17 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { scratchDirs } from "@keywork/shared/testing";
 import type {
   ConnectionDraft,
   ConnectionsPort,
   ConnectionTarget,
   VerificationOutcome,
 } from "@keywork/tui";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { type ConnectIo, connectCommand, saveApiKey, terminalConnectIo } from "./setup.ts";
 
-const tempDirs: string[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-setup-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
+const tempDir = scratchDirs("keywork-setup-");
 
 describe("saveApiKey", () => {
   async function savedAuth(dir: string): Promise<Record<string, unknown>> {

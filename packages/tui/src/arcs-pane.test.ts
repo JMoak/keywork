@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { ArcCloseOutcome, ArcSummary, ArcsPort } from "./arcs.ts";
 import { ArcsPane, type ArcsPaneOptions } from "./arcs-pane.ts";
 import type { FrameScheduler } from "./frame-scheduler.ts";
-import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
+import { press } from "./testing/index.ts";
 import { resolveTheme } from "./theme.ts";
 
 const minute = 60_000;
@@ -176,15 +176,6 @@ function paneOver(world: World, setup: PaneSetup = {}) {
   return { pane, recorded };
 }
 
-function press(pane: ArcsPane, ...specs: string[]): void {
-  for (const spec of specs) pane.handleKey(parseChord(spec), typedSequence(spec));
-}
-
-function typedSequence(spec: string): string | undefined {
-  if (spec === "space") return " ";
-  return spec.length === 1 ? spec : undefined;
-}
-
 function context() {
   return { theme: resolveTheme(), focused: true, width: 60, height: 12 };
 }
@@ -226,7 +217,8 @@ describe("ArcsPane two levels", () => {
     await pane.settled();
     expect(pane.title()).toBe(" #dock-v2 · 2 sessions ");
     expect(pane.describe()).toEqual({ kind: "arcs", arc: "dock-v2" });
-    const sessionsLevel = JSON.stringify(describeTree(pane.view(context())).children);
+    const [body] = describeTree(pane.view(context())).children ?? [];
+    const sessionsLevel = JSON.stringify(body);
     expect(sessionsLevel).toContain("title-s1");
     expect(sessionsLevel).not.toContain("#dock-v2");
     press(pane, "escape");
@@ -472,7 +464,7 @@ describe("ArcsPane command tray", () => {
       "refresh",
     ]);
     expect(pane.tray.matches().map((command) => command.shortcut)).toEqual([
-      "⏎",
+      "enter",
       "n",
       "c",
       "A",

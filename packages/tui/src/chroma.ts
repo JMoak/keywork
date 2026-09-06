@@ -1,4 +1,6 @@
 import { canonicalHex, hexChannels } from "@keywork/shared";
+import { clamp } from "./clamp.ts";
+import type { LifecycleState } from "./pane.ts";
 import type { Theme } from "./theme.ts";
 
 export interface Oklch {
@@ -9,9 +11,77 @@ export interface Oklch {
 
 export type PaneBorderTheme = Pick<Theme, "border" | "borderFocus" | "ramp">;
 
+export type LifecycleTheme = PaneBorderTheme &
+  Pick<Theme, "background" | "text" | "textMid" | "error">;
+
+export interface LifecycleChrome {
+  readonly labelInk: string;
+  readonly labelGround: string | undefined;
+  readonly borderColor: string;
+}
+
 export function paneBorder(theme: PaneBorderTheme, position: number, focused: boolean): string {
-  const hue = rampColor(theme.ramp, position);
-  return focused ? focusLift(hue, theme.borderFocus) : borderCarryingHue(theme, hue);
+  return borderOfHue(theme, rampColor(theme.ramp, position), focused);
+}
+
+export function lifecycleChrome(
+  state: LifecycleState,
+  focused: boolean,
+  hue: string,
+  theme: LifecycleTheme,
+  depth?: number,
+): LifecycleChrome {
+  const border = borderOfHue(theme, hue, focused);
+  const resting = focused ? border : theme.textMid;
+  switch (state) {
+    case "idle":
+    case "working":
+      return depth === undefined
+        ? { labelInk: resting, labelGround: undefined, borderColor: border }
+        : {
+            labelInk: rampColor([resting, hue], depth),
+            labelGround: undefined,
+            borderColor: rampColor([border, hue], depth),
+          };
+    case "needs-you":
+      return {
+        labelInk: theme.background,
+        labelGround: hue,
+        borderColor: saturationLift(border, hue),
+      };
+    case "finished-unseen":
+      return {
+        labelInk: focused ? border : theme.text,
+        labelGround: undefined,
+        borderColor: border,
+      };
+    case "failed":
+      return { labelInk: theme.error, labelGround: undefined, borderColor: border };
+  }
+}
+
+export function dimStep(hex: string, groundHex: string): string {
+  return oklchToHex(mixOklch(hexToOklch(hex), hexToOklch(groundHex), dimBlend));
+}
+
+export function dimmedTheme(theme: Theme): Theme {
+  const recede = (hex: string): string => dimStep(hex, theme.background);
+  return {
+    ...theme,
+    text: recede(theme.text),
+    textMid: recede(theme.textMid),
+    textDim: recede(theme.textDim),
+    accent: recede(theme.accent),
+    accentSoft: recede(theme.accentSoft),
+    success: recede(theme.success),
+    error: recede(theme.error),
+  };
+}
+
+export function saturationLift(hex: string, targetHex: string): string {
+  const { l, c } = hexToOklch(hex);
+  const target = hexToOklch(targetHex);
+  return oklchToHex({ l, c: Math.max(c, target.c), h: target.h });
 }
 
 export function rampPositions(
@@ -90,10 +160,15 @@ export function oklchToHex(color: Oklch): string {
 
 const goldenRatioConjugate = 0.618033988749895;
 const microGradientSpan = 0.08;
+const dimBlend = 0.22;
 const neutralChroma = 1e-4;
 const gamutSlack = 1e-6;
 
 type Triple = readonly [number, number, number];
+
+function borderOfHue(theme: PaneBorderTheme, hue: string, focused: boolean): string {
+  return focused ? focusLift(hue, theme.borderFocus) : borderCarryingHue(theme, hue);
+}
 
 function borderCarryingHue(theme: PaneBorderTheme, hue: string): string {
   const swing = hueSwing(rampColor(theme.ramp, 0), hue);
@@ -220,8 +295,4 @@ function normalizedHue(degrees: number): number {
 
 function lerp(from: number, to: number, blend: number): number {
   return from + (to - from) * blend;
-}
-
-function clamp(value: number, low: number, high: number): number {
-  return Math.min(Math.max(value, low), high);
 }

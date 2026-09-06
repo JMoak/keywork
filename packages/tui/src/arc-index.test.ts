@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { arcIndexOf, firstArcIntroducer, seedArcFromOrigin } from "./arc-index.ts";
+import { arcIndexOf, arcJumpCommands, firstArcIntroducer, seedArcFromOrigin } from "./arc-index.ts";
 import type { ArcsPort } from "./arcs.ts";
+import { ArcsPane } from "./arcs-pane.ts";
 import { ConversationPane } from "./conversation-pane.ts";
+import type { Pane, PaneDescriptor } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
 
 function arcsOver(taken: string[]): { port: ArcsPort; created: string[] } {
@@ -140,3 +142,83 @@ describe("seedArcFromOrigin (PD13 splits)", () => {
     expect(notice).toContain("no arcs here");
   });
 });
+
+describe("arcJumpCommands", () => {
+  const listed = [
+    { slug: "dock-v2", status: "active" as const, created: "2026-08-20T00:00:00Z", sessions: 2 },
+    {
+      slug: "old-login",
+      status: "archived" as const,
+      created: "2026-08-01T00:00:00Z",
+      sessions: 0,
+    },
+  ];
+
+  it("lists one jump row per active arc: label is the slug tag, hint the member count", () => {
+    const probe = new AppProbe();
+    const rows = arcJumpCommands(probe.core, listed);
+    expect(rows.map((row) => [row.name, row.label, row.description, row.jump])).toEqual([
+      ["arc-dock-v2", "#dock-v2", "2 sessions", true],
+    ]);
+  });
+
+  it("focuses the arc's docked pane when one is showing", async () => {
+    const { port } = arcsOver(["dock-v2"]);
+    const probe = new AppProbe({
+      arcs: port,
+      createArcPane: (id, _notify, _intents, _target, arc) => stubPane(id, { kind: "arc", arc }),
+    });
+    probe.command("arc open dock-v2");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    probe.command("go-session-1");
+    expect(probe.snapshot().focused).toBe("session-1");
+    probe.core.registry.addSource(() => arcJumpCommands(probe.core, listed));
+    expect(probe.command("arc-dock-v2")).toBe(true);
+    expect(probe.snapshot().focused).toBe("arc-1");
+  });
+
+  it("otherwise opens the arcs node drilled into that arc", () => {
+    const drilled: string[] = [];
+    const { port } = arcsOver(["dock-v2"]);
+    const probe = new AppProbe({
+      arcs: port,
+      createArcsPane: (id, notify, intents, target) => {
+        const pane = new ArcsPane(id, notify, intents, {
+          arcs: port,
+          sessions: { overview: async () => [] },
+          currentSession: target,
+        });
+        const drill = pane.model.drillInto.bind(pane.model);
+        pane.model.drillInto = (key) => {
+          if (key.kind === "arc") drilled.push(key.slug);
+          drill(key);
+        };
+        return pane;
+      },
+    });
+    probe.core.registry.addSource(() => arcJumpCommands(probe.core, listed));
+    expect(probe.command("arc-dock-v2")).toBe(true);
+    expect(probe.snapshot().focused).toBe("arcs-1");
+    expect(drilled).toEqual(["dock-v2"]);
+  });
+
+  it("the index remembers the last listing for the jump source", async () => {
+    const { port } = arcsOver(["first"]);
+    const index = arcIndexOf(port, () => {});
+    expect(index.listed()).toEqual([]);
+    index.changed();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(index.listed().map((arc) => arc.slug)).toEqual(["first"]);
+  });
+});
+
+function stubPane(id: string, descriptor: PaneDescriptor): Pane {
+  return {
+    id,
+    title: () => ` ${id} `,
+    describe: () => descriptor,
+    view: () => {
+      throw new Error("never rendered");
+    },
+  };
+}

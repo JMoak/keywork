@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import type { McpServerView } from "./mcp-pane-model.ts";
+import { AppProbe } from "./probe.ts";
+import { dockedIds, dockOf, mustParse, paneIds, stubFilePane } from "./testing/workflow-probe.ts";
 import { resolveTheme } from "./theme.ts";
 
 interface World {
@@ -324,5 +326,78 @@ describe("McpPane command tray", () => {
     const { pane } = await paneOver([]);
     pane.handleKey(parseChord("/"));
     expect(pane.tray.matches().map((command) => command.name)).toEqual(["refresh"]);
+  });
+});
+
+describe("mcp status pane wiring", () => {
+  function mcpFactory(servers: McpServerView[] = []) {
+    const port: McpPanePort = {
+      load: async () => servers,
+      restart: async () => {},
+      setEnabled: async () => {},
+      listTools: async () => [],
+    };
+    return (id: string, notify: () => void) => new McpPane(id, notify, port);
+  }
+
+  it("auto-docks the pane on the right at startup without stealing focus", async () => {
+    const probe = new AppProbe({
+      createMcpPane: mcpFactory([{ name: "files", state: "connected", toolCount: 2 }]),
+    });
+    await probe.settled();
+    expect(paneIds(probe)).toEqual(["session-1", "mcp-1"]);
+    expect(dockedIds(probe)).toEqual(["mcp-1"]);
+    expect(dockOf(probe, "mcp-1")).toBe("right");
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("a fresh start seeds sessions left, chat in main, mcp right, chat focused", async () => {
+    const probe = new AppProbe({
+      createMcpPane: mcpFactory(),
+      createSessionTreePane: (id) => stubFilePane(id, "sessions"),
+    });
+    await probe.settled();
+    expect(paneIds(probe)).toEqual(["tree-1", "session-1", "mcp-1"]);
+    expect(dockOf(probe, "tree-1")).toBe("left");
+    expect(dockOf(probe, "session-1")).toBeUndefined();
+    expect(dockOf(probe, "mcp-1")).toBe("right");
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("per-side defaults: mcp homes right while the browser homes left", async () => {
+    const probe = new AppProbe({
+      createMcpPane: mcpFactory(),
+      createBrowserPane: (id) => stubFilePane(id, "workspace"),
+    });
+    await probe.settled();
+    probe.command("browse");
+    expect(dockOf(probe, "browser-1")).toBe("left");
+    expect(dockOf(probe, "mcp-1")).toBe("right");
+    expect(paneIds(probe)).toEqual(["browser-1", "session-1", "mcp-1"]);
+  });
+
+  it("/mcp summons and refocuses the pane instead of duplicating it", async () => {
+    const probe = new AppProbe({ createMcpPane: mcpFactory() });
+    await probe.settled();
+    probe.type("/mcp").keys("enter");
+    expect(probe.snapshot().focused).toBe("mcp-1");
+    expect(paneIds(probe)).toEqual(["session-1", "mcp-1"]);
+  });
+
+  it("with zero servers configured the pane never exists and /mcp is absent", () => {
+    const probe = new AppProbe();
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    expect(probe.command("mcp")).toBe(false);
+  });
+
+  it("revives a saved mcp pane without double-docking a second one", async () => {
+    const first = new AppProbe({ createMcpPane: mcpFactory() });
+    await first.settled();
+    const state = mustParse(JSON.parse(JSON.stringify(first.workspaceState())));
+    expect(state.panes.map((pane) => pane.kind)).toContain("mcp");
+
+    const revived = new AppProbe({ createMcpPane: mcpFactory(), restoreWorkspace: state });
+    await revived.settled();
+    expect(paneIds(revived).filter((id) => id.startsWith("mcp-"))).toEqual(["mcp-1"]);
   });
 });

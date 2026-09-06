@@ -213,14 +213,14 @@ export const appActions: Record<string, AppAction> = {
   },
   "palette.go": {
     chords: "ctrl+p",
-    help: "quick open (> commands)",
+    help: "quick open (/ commands)",
     invoke: (target) => target.openPalette(),
     command: { name: "go", description: "jump to a pane (type > for commands)" },
   },
   "palette.commands": {
     chords: ["leader i", "ctrl+shift+p"],
     help: "command palette",
-    invoke: (target) => target.openPalette(">"),
+    invoke: (target) => target.openPalette("/"),
     command: {
       name: "palette",
       description: "open the command palette",

@@ -67,6 +67,14 @@ export class CommandRegistry {
   }
 }
 
+export function verbAndOperand(argument: string): [string, string | undefined] {
+  const trimmed = argument.trim();
+  const spaceAt = trimmed.search(/\s/);
+  if (spaceAt === -1) return [trimmed, undefined];
+  const rest = trimmed.slice(spaceAt).trim();
+  return [trimmed.slice(0, spaceAt), rest === "" ? undefined : rest];
+}
+
 function namesOf(command: CommandSpec): string[] {
   return [command.name, ...(command.aliases ?? [])];
 }

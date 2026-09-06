@@ -55,7 +55,8 @@ export interface TieredRamp {
   readonly tier2?: readonly string[];
 }
 
-export type GlyphSupport = Pick<CapabilityProfile, "glyphTier" | "nerdFont">;
+export type GlyphSupport = Pick<CapabilityProfile, "glyphTier" | "nerdFont"> &
+  Partial<Pick<CapabilityProfile, "colorDepth">>;
 
 export function resolveMark(mark: TieredMark, support: GlyphSupport): string {
   if (support.nerdFont && mark.garnish !== undefined) return mark.garnish;

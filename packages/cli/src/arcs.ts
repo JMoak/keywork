@@ -1,17 +1,40 @@
 import {
   ArcAirlock,
   ArcBindings,
+  ArcCloseDraft,
   ArcRecall,
   ArcRegistry,
+  type ArcReview,
+  type CurationJudgmentPort,
   type EmbeddingsPort,
+  gatherReturnDelta,
+  IneligibleDeliveryError,
+  isStagedWrite,
   type MemorySearch,
   type MemorySearcher,
   type MemoryStore,
+  MissingSuccessorError,
   type SessionStore,
+  type StagedItem,
+  WedgedSessionsError,
 } from "@keywork/engine";
 import { resolveVaultPath } from "@keywork/shared";
-import type { ArcCloseOutcome, ArcsPort } from "@keywork/tui";
+import type {
+  AirlockDigestView,
+  AirlockFinishOutcome,
+  ArcAirlockPort,
+  ArcCloseOutcome,
+  ArcsPort,
+} from "@keywork/tui";
 import type { SessionKey, WorkspaceMemory } from "./memory.ts";
+
+export type SessionFlush = () => Promise<unknown>;
+
+export interface ClosingRequest {
+  arc: string;
+  direction?: string | undefined;
+  onDegrade(reason: string): void;
+}
 
 export interface ArcServiceOptions {
   cwd: string;
@@ -19,6 +42,11 @@ export interface ArcServiceOptions {
   workspaceSlug?: string | undefined;
   memory: () => WorkspaceMemory | undefined;
   boundSessionCounts: () => Promise<ReadonlyMap<string, number>>;
+  flushFor?: ((sessionId: string) => SessionFlush | undefined) | undefined;
+  closing?: ((request: ClosingRequest) => CurationJudgmentPort | undefined) | undefined;
+  citedNotes?: ((slug: string) => Promise<string[]>) | undefined;
+  lastActivity?: ((slug: string) => Promise<string | undefined>) | undefined;
+  onReleased?: ((sessionId: string) => void) | undefined;
   unavailable?: (() => string) | undefined;
   now?: () => Date;
 }
@@ -27,10 +55,11 @@ export interface ArcService {
   readonly port: ArcsPort;
   readonly bindings: ArcBindings;
   registry(): ArcRegistry | undefined;
-  attached(store: SessionStore): void;
+  attached(store: SessionStore): Promise<void>;
   released(sessionId: string): void;
   recordBinding(sessionId: string, arc: string | undefined): void;
   layerStoreFor(sessionId: string): MemoryStore | undefined;
+  routeStragglers(slug: string): Promise<string[]>;
   searcher(
     workspace: MemorySearch,
     session: SessionKey,
@@ -46,6 +75,7 @@ export function arcService(options: ArcServiceOptions): ArcService {
   const listeners = new Set<() => void>();
   const registries = new Map<string, ArcRegistry>();
   const recalls = new WeakMap<ArcRegistry, ArcRecall>();
+  const drafts = new Map<string, ArcCloseDraft>();
   const changed = (): void => {
     for (const listener of [...listeners]) listener();
   };
@@ -69,21 +99,147 @@ export function arcService(options: ArcServiceOptions): ArcService {
     if (found === undefined) throw unavailable();
     return found;
   };
-  const airlock = (): ArcAirlock => {
+  const requireMemory = (): WorkspaceMemory => {
     const memory = options.memory();
     if (memory === undefined) throw unavailable();
+    return memory;
+  };
+  const airlock = (judgment?: CurationJudgmentPort): ArcAirlock => {
+    const memory = requireMemory();
+    const found = requireRegistry();
     return new ArcAirlock({
-      registry: requireRegistry(),
+      registry: found,
       bindings,
       workspace: memory.store,
+      citedNotes: async (slug) => (await options.citedNotes?.(slug)) ?? [],
+      ...(judgment !== undefined && { judgment }),
       ...(options.now !== undefined && { now: options.now }),
     });
   };
+  const closingFor = (slug: string, notices: string[]): CurationJudgmentPort | undefined =>
+    options.closing?.({
+      arc: slug,
+      direction: draftFor(slug).direction(),
+      onDegrade: (reason) =>
+        notices.push(`closing agent didn't run (${reason}) · swept without it`),
+    });
+  const draftFor = (slug: string): ArcCloseDraft => {
+    const existing = drafts.get(slug);
+    if (existing !== undefined) return existing;
+    const created = new ArcCloseDraft();
+    drafts.set(slug, created);
+    return created;
+  };
+  const flushesFor = (slug: string, alreadyAcked: readonly string[]): Map<string, SessionFlush> =>
+    new Map(
+      bindings.sessionsBoundTo(slug).flatMap((sessionId): [string, SessionFlush][] => {
+        if (alreadyAcked.includes(sessionId)) return [[sessionId, async () => undefined]];
+        const flush = options.flushFor?.(sessionId);
+        return flush === undefined ? [] : [[sessionId, flush]];
+      }),
+    );
   const persistRelease = async (sessionIds: readonly string[]): Promise<void> => {
     for (const sessionId of sessionIds) {
       const store = attachedStores.get(sessionId);
-      if (store?.arcBinding() !== undefined) await store.appendArcBinding(undefined);
+      if (store?.arcBinding() === undefined) continue;
+      await store.appendArcBinding(undefined);
+      options.onReleased?.(sessionId);
     }
+  };
+  const routeStragglers = async (slug: string): Promise<string[]> => {
+    if (options.memory() === undefined || registry() === undefined) return [];
+    const routed = await airlock().routeStragglers(slug);
+    if (routed.length > 0) changed();
+    return routed;
+  };
+  const settleArchivedBinding = async (store: SessionStore, arc: string): Promise<void> => {
+    const record = await registry()?.readArc(arc);
+    if (record?.status !== "archived") return;
+    bindings.unbind(store.header.id);
+    await store.appendArcBinding(undefined);
+    options.onReleased?.(store.header.id);
+    await routeStragglers(arc);
+    changed();
+  };
+  const reviewOf = (slug: string): Promise<ArcReview> => airlock().review(slug);
+  const successorFor = async (slug: string): Promise<string> => {
+    const drafted = draftFor(slug).successorArc();
+    if (drafted !== undefined) return drafted;
+    const others = (await requireRegistry().listArcs())
+      .filter((arc) => arc.status === "active" && arc.slug !== slug)
+      .sort((left, right) => right.created.localeCompare(left.created));
+    const newest = others[0];
+    if (newest === undefined) throw new MissingSuccessorError(slug);
+    return newest.slug;
+  };
+  const finishClose = async (slug: string, force: boolean): Promise<AirlockFinishOutcome> => {
+    const draft = draftFor(slug);
+    const acked = draft.lastSweep()?.acked ?? [];
+    const notices: string[] = [];
+    const digest = await airlock(closingFor(slug, notices)).prepareClose(slug, {
+      flushes: flushesFor(slug, acked),
+      force,
+    });
+    draft.recordSweep(digest.sweep);
+    draft.leaveBelowBar(digest.candidates);
+    const undecided = draft.undecided(digest);
+    if (undecided.length > 0) {
+      changed();
+      return { kind: "undecided", items: undecided };
+    }
+    const delivery = await airlock().completeClose(slug, draft.decisions(digest));
+    drafts.delete(slug);
+    await persistRelease(delivery.releasedSessions);
+    changed();
+    return {
+      kind: "closed",
+      delivered: delivery.delivered.length,
+      released: delivery.releasedSessions.length,
+      ...(notices[0] !== undefined && { notice: notices[0] }),
+    };
+  };
+  const airlockPort: ArcAirlockPort = {
+    digest: async (slug) => {
+      const memory = options.memory();
+      const found = registry();
+      if (memory === undefined || found === undefined) return undefined;
+      if ((await found.readArc(slug))?.status !== "active") return undefined;
+      if (!(await memory.store.listStaged()).some((item) => isArcReviewFor(item, slug)))
+        return undefined;
+      return digestView(slug, await reviewOf(slug), draftFor(slug));
+    },
+    triageCandidate: async (slug, note, choice) => {
+      const review = await reviewOf(slug);
+      const candidate = review.candidates.find((found) => found.note.name === note);
+      if (candidate === undefined) throw new Error(`arc ${slug} has no candidate named ${note}`);
+      if (choice === "deliver" && !candidate.eligible)
+        throw new IneligibleDeliveryError(slug, note, candidate.shortfalls);
+      draftFor(slug).decideCandidate(note, choice);
+      changed();
+    },
+    triageQuestion: async (slug, title, choice) => {
+      const review = await reviewOf(slug);
+      if (!review.questions.some((question) => question.title === title))
+        throw new Error(`arc ${slug} has no open question titled ${title}`);
+      const successor = choice === "carry" ? await successorFor(slug) : undefined;
+      draftFor(slug).decideQuestion(title, choice, successor);
+      changed();
+    },
+    deliverEligible: async (slug) => {
+      const review = await reviewOf(slug);
+      const delivered = draftFor(slug).deliverEligible(review.candidates);
+      changed();
+      return delivered;
+    },
+    finish: async (slug, finishOptions = {}) => {
+      try {
+        return await finishClose(slug, finishOptions.force === true);
+      } catch (cause) {
+        if (cause instanceof WedgedSessionsError)
+          return { kind: "wedged", sessions: cause.sessions };
+        throw cause;
+      }
+    },
   };
   const port: ArcsPort = {
     list: async () => {
@@ -102,15 +258,41 @@ export function arcService(options: ArcServiceOptions): ArcService {
       changed();
       return { slug: record.slug, status: record.status, created: record.created, sessions: 0 };
     },
-    close: async (slug) => {
-      const { outcome, releasedSessions } = await closeThroughAirlock(airlock(), slug);
-      await persistRelease(releasedSessions);
+    close: async (slug, direction) => {
+      const draft = draftFor(slug);
+      draft.steer(direction);
+      const notices: string[] = [];
+      const digest = await airlock(closingFor(slug, notices)).prepareClose(slug, {
+        flushes: flushesFor(slug, draft.lastSweep()?.acked ?? []),
+        force: true,
+      });
+      draft.recordSweep(digest.sweep);
+      if (digest.candidates.length > 0 || digest.questions.length > 0) {
+        changed();
+        return {
+          ...pendingOutcome(digest.candidates.length, digest.questions.length, digest.sweep),
+          ...(notices[0] !== undefined && { notice: notices[0] }),
+        };
+      }
+      const delivery = await airlock().completeClose(slug, {
+        candidates: {},
+        questions: {},
+        ...(direction !== undefined && { direction }),
+      });
+      drafts.delete(slug);
+      await persistRelease(delivery.releasedSessions);
       changed();
-      return outcome;
+      return {
+        kind: "closed",
+        delivered: delivery.delivered.length,
+        released: delivery.releasedSessions.length,
+        ...(notices[0] !== undefined && { notice: notices[0] }),
+      };
     },
     abandon: async (slug) => {
       const boundSessions = bindings.sessionsBoundTo(slug);
       await airlock().abandon(slug);
+      drafts.delete(slug);
       await persistRelease(boundSessions);
       changed();
     },
@@ -118,6 +300,15 @@ export function arcService(options: ArcServiceOptions): ArcService {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    returnDelta: async (slug) => {
+      const memory = options.memory();
+      const found = registry();
+      if (memory === undefined || found === undefined) return [];
+      const since = await options.lastActivity?.(slug);
+      if (since === undefined) return [];
+      return gatherReturnDelta({ since, workspace: memory.store, registry: found, arc: slug });
+    },
+    airlock: airlockPort,
   };
   return {
     port,
@@ -126,8 +317,12 @@ export function arcService(options: ArcServiceOptions): ArcService {
     attached: (store) => {
       attachedStores.set(store.header.id, store);
       const arc = store.arcBinding();
-      if (arc === undefined) bindings.unbind(store.header.id);
-      else bindings.bind(store.header.id, arc);
+      if (arc === undefined) {
+        bindings.unbind(store.header.id);
+        return Promise.resolve();
+      }
+      bindings.bind(store.header.id, arc);
+      return settleArchivedBinding(store, arc);
     },
     released: (sessionId) => {
       attachedStores.delete(sessionId);
@@ -143,6 +338,7 @@ export function arcService(options: ArcServiceOptions): ArcService {
       if (arc === undefined) return undefined;
       return registry()?.arcStore(arc);
     },
+    routeStragglers,
     searcher: (workspace, session, embeddings) => ({
       search: async (query, searchOptions) => {
         const found = registry();
@@ -160,33 +356,52 @@ export function arcService(options: ArcServiceOptions): ArcService {
   };
 }
 
-interface AirlockClose {
-  outcome: ArcCloseOutcome;
-  releasedSessions: readonly string[];
+function pendingOutcome(
+  candidates: number,
+  questions: number,
+  sweep: { wedged: string[] },
+): ArcCloseOutcome {
+  return { kind: "pending", candidates, questions, wedged: sweep.wedged.length };
 }
 
-async function closeThroughAirlock(airlock: ArcAirlock, slug: string): Promise<AirlockClose> {
-  const digest = await airlock.prepareClose(slug, { force: true });
-  if (digest.candidates.length > 0 || digest.questions.length > 0) {
-    return {
-      outcome: {
-        kind: "pending",
-        candidates: digest.candidates.length,
-        questions: digest.questions.length,
-        wedged: digest.sweep.wedged.length,
-      },
-      releasedSessions: [],
-    };
-  }
-  const delivery = await airlock.completeClose(slug, { candidates: {}, questions: {} });
+function digestView(slug: string, review: ArcReview, draft: ArcCloseDraft): AirlockDigestView {
+  const sweep = draft.lastSweep();
+  const successor = draft.successorArc();
+  const direction = draft.direction();
   return {
-    outcome: {
-      kind: "closed",
-      delivered: delivery.delivered.length,
-      released: delivery.releasedSessions.length,
-    },
-    releasedSessions: delivery.releasedSessions,
+    ...(direction !== undefined && { direction }),
+    arc: slug,
+    candidates: review.candidates.map((candidate) => {
+      const choice = draft.candidateDecision(candidate.note.name);
+      return {
+        note: candidate.note.name,
+        title: candidate.note.title,
+        provenance: candidate.note.provenance,
+        eligible: candidate.eligible,
+        shortfalls: [...candidate.shortfalls],
+        ...(candidate.note.created !== undefined && { created: candidate.note.created }),
+        ...(choice !== undefined && { choice }),
+      };
+    }),
+    questions: review.questions.map((question) => {
+      const choice = draft.questionDecision(question.title);
+      return {
+        title: question.title,
+        provenance: question.provenance,
+        created: question.created,
+        ...(choice !== undefined && { choice }),
+      };
+    }),
+    ...(successor !== undefined && { successor }),
+    ...(sweep !== undefined && {
+      sweep: { acked: sweep.acked.length, wedged: sweep.wedged.length },
+    }),
   };
+}
+
+function isArcReviewFor(item: StagedItem, slug: string): boolean {
+  if (isStagedWrite(item)) return false;
+  return (item.kind === "arc-distillation" || item.kind === "arc-question") && item.arc === slug;
 }
 
 function recallOver(

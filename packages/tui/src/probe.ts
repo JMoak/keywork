@@ -21,6 +21,7 @@ export interface AppProbeOptions
       | "createArcPane"
       | "createMemoryPane"
       | "createMcpPane"
+      | "createWorkspacesPane"
       | "isDirectory"
       | "undo"
       | "presets"
@@ -28,6 +29,8 @@ export interface AppProbeOptions
       | "connections"
       | "arcs"
       | "focusedArc"
+      | "bots"
+      | "focusedBot"
       | "workspaces"
       | "workspaceSetup"
       | "currentModel"
@@ -100,10 +103,19 @@ export class AppProbe {
   }
 
   drag(from: { x: number; y: number }, ...path: { x: number; y: number }[]): this {
+    this.dragHold(from, ...path);
+    const last = path.at(-1) ?? from;
+    return this.release(last);
+  }
+
+  dragHold(from: { x: number; y: number }, ...path: { x: number; y: number }[]): this {
     this.point({ type: "down", x: from.x, y: from.y, button: 0 });
     for (const at of path) this.point({ type: "drag", x: at.x, y: at.y, button: 0 });
-    const last = path.at(-1) ?? from;
-    this.point({ type: "up", x: last.x, y: last.y, button: 0 });
+    return this;
+  }
+
+  release(at: { x: number; y: number }): this {
+    this.point({ type: "up", x: at.x, y: at.y, button: 0 });
     return this;
   }
 
@@ -128,7 +140,7 @@ export class AppProbe {
 
   model(id = this.core.snapshot().focused): ConversationModel | undefined {
     const pane = id === undefined ? undefined : this.core.panes.get(id);
-    return pane instanceof ConversationPane ? modelOf(pane) : undefined;
+    return pane instanceof ConversationPane ? pane.model : undefined;
   }
 
   async settled(): Promise<this> {
@@ -163,8 +175,4 @@ function printableChord(character: string): Chord {
     shift: false,
     meta: false,
   };
-}
-
-function modelOf(pane: ConversationPane): ConversationModel {
-  return (pane as unknown as { model: ConversationModel }).model;
 }

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolCallPart } from "@keywork/engine";
 import { type PermissionsConfig, permissionPresets } from "@keywork/shared";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createPresetSwitch,
   presetCommand,
@@ -14,7 +15,7 @@ import {
 } from "./presets.ts";
 import { updateUserConfig } from "./user-config.ts";
 
-const tempDirs: string[] = [];
+const tempDir = scratchDirs("keywork-presets-");
 const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 let home = "";
 
@@ -29,16 +30,6 @@ afterAll(async () => {
   process.env.USERPROFILE = savedHome.USERPROFILE;
   await rm(home, { recursive: true, force: true });
 });
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-presets-"));
-  tempDirs.push(dir);
-  return dir;
-}
 
 function bashCall(command: string): ToolCallPart {
   return { type: "tool-call", callId: "c1", name: "bash", arguments: { command } };

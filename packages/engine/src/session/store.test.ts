@@ -1,27 +1,17 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { messageText, textMessage } from "../messages.ts";
 import { checkpointForPrompt } from "./entries.ts";
 import { SessionStore } from "./store.ts";
 
-const tempDirs: string[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-session-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const tempDir = scratchDirs("keywork-session-");
 
 async function sessionFile(name = "session.jsonl"): Promise<string> {
   return join(await tempDir(), name);
 }
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
 
 describe("SessionStore", () => {
   it("materializes on disk only when the first entry lands", async () => {

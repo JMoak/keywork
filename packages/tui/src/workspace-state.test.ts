@@ -149,6 +149,22 @@ describe("parseWorkspaceState", () => {
     expect(parseWorkspaceState({ version: 2, layout, panes: panes("") })).toBeUndefined();
   });
 
+  it("reads a docked workspaces node back as itself", () => {
+    const layout = {
+      tree: { kind: "leaf", id: "session-1" },
+      docks: { left: { panes: ["workspaces-1"], ratio: 1 / 3 } },
+    };
+    const state = parseWorkspaceState({
+      version: 2,
+      layout,
+      panes: [
+        { id: "session-1", kind: "conversation" },
+        { id: "workspaces-1", kind: "workspaces" },
+      ],
+    });
+    expect(state?.panes[1]).toEqual({ id: "workspaces-1", kind: "workspaces" });
+  });
+
   it("reads a memory pane's lens, note, and question, and refuses malformed ones", () => {
     const layout = {
       tree: { kind: "leaf", id: "session-1" },

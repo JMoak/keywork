@@ -225,7 +225,10 @@ async function composeMockApp(
     ...(scenario.provider !== "none" && { agentFactory: mockAgentFactory(scenario, paths) }),
     ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
     ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
-    glyphs: assumedGlyphs,
+    tips: "off",
+    ...scenario.app,
+    glyphs: scenario.glyphs ?? assumedGlyphs,
+    ...(scenario.focusOutline !== undefined && { focusOutline: scenario.focusOutline }),
     statusLabel: "keywork e2e",
     ...seams,
   });
@@ -279,6 +282,10 @@ function buildStage(context: StageContext): Stage {
       await app.setup.mockMouse.click(x, y);
       await sleep(0);
     },
+    hover: async (x, y) => {
+      await app.setup.mockMouse.moveTo(x, y);
+      await sleep(0);
+    },
     scroll: async (x, y, direction, times = 1) => {
       for (let step = 0; step < times; step += 1) {
         await app.setup.mockMouse.scroll(x, y, direction);
@@ -287,6 +294,15 @@ function buildStage(context: StageContext): Stage {
     },
     drag: async (from, to) => {
       await app.setup.mockMouse.drag(from.x, from.y, to.x, to.y);
+      await sleep(0);
+    },
+    dragHold: async (from, to) => {
+      await app.setup.mockMouse.pressDown(from.x, from.y);
+      await app.setup.mockMouse.moveTo(to.x, to.y);
+      await sleep(0);
+    },
+    release: async (at) => {
+      await app.setup.mockMouse.release(at.x, at.y);
       await sleep(0);
     },
     settle: () => settle(app.setup),
@@ -309,6 +325,7 @@ function buildStage(context: StageContext): Stage {
       }
       return frame;
     },
+    spans: () => app.setup.captureSpans() as CapturedFrame,
     evidence: (fileName, content) => {
       const path = join(artifactDir, fileName);
       writeFileSync(path, content);
@@ -342,13 +359,13 @@ async function settle(setup: TestSetup): Promise<void> {
 
 async function frameContaining(
   setup: TestSetup,
-  marker: string,
+  marker: string | RegExp,
   timeoutMs: number,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const frame = setup.captureCharFrame();
-    if (frame.includes(marker)) return frame;
+    if (typeof marker === "string" ? frame.includes(marker) : marker.test(frame)) return frame;
     if (Date.now() >= deadline) {
       throw new Error(`marker never appeared: "${marker}"\nlast frame:\n${frame}`);
     }

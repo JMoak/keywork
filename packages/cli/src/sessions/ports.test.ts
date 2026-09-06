@@ -1,5 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type EngineEvents,
@@ -8,7 +7,8 @@ import {
   SessionStore,
   textMessage,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { boundSessionCounts, sessionChangeFeed, sessionPort, sessionTreePort } from "./ports.ts";
 import {
   findSession,
@@ -18,17 +18,7 @@ import {
   openOrResumeSession,
 } from "./store.ts";
 
-const tempDirs: string[] = [];
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-sessions-ports-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
+const tempDir = scratchDirs("keywork-sessions-ports-");
 
 async function storeOf(dir: string, id: string | undefined): Promise<SessionStore> {
   const store = await findSession(dir, id ?? "");
@@ -139,6 +129,7 @@ describe("sessionPort", () => {
     await created?.bindArc?.("dock-v2");
     await created?.bindArc?.("dock-v2");
     expect(bound).toEqual([[created?.id, "dock-v2"]]);
+    expect(created?.arc).toBe("dock-v2");
 
     const reopened = await port.open(created?.id ?? "");
     expect(reopened?.arc).toBe("dock-v2");

@@ -1,5 +1,10 @@
-import { type FetchLike, isLoopbackEndpoint } from "@keywork/engine";
-import type { ConnectionConfig, KeyworkConfig } from "@keywork/shared";
+import { anthropicHeaders, type FetchLike, isLoopbackEndpoint } from "@keywork/engine";
+import {
+  type ConnectionConfig,
+  type ConnectionProtocol,
+  connectionProtocols,
+  type KeyworkConfig,
+} from "@keywork/shared";
 import type {
   ConnectionDraft,
   ConnectionsPort,
@@ -132,7 +137,7 @@ function draftFromSaved(saved: SavedConnection, deps: ConnectionsDeps): Connecti
     return {
       name: saved.name,
       endpoint: builtIn?.endpoint ?? saved.endpoint,
-      protocol: saved.protocol === "responses" ? "responses" : "chat-completions",
+      protocol: connectionProtocolOf(builtIn?.protocol ?? saved.protocol),
       credential: "api-key",
       apiKey: "",
       insecureTransport: false,
@@ -147,6 +152,11 @@ function draftFromSaved(saved: SavedConnection, deps: ConnectionsDeps): Connecti
     apiKey: "",
     insecureTransport: connection.insecureTransport ?? false,
   };
+}
+
+function connectionProtocolOf(protocol: string): ConnectionProtocol {
+  const known = connectionProtocols.find((candidate) => candidate === protocol);
+  return known ?? "chat-completions";
 }
 
 function credentialChoiceOf(source: string): CredentialChoice {
@@ -250,6 +260,7 @@ function observationFacts(
 
 function authHeadersFor(draft: ConnectionDraft, deps: ConnectionsDeps): Record<string, string> {
   const key = apiKeyFor(draft, deps);
+  if (draft.protocol === "anthropic-messages") return anthropicHeaders(key);
   return key === undefined ? {} : { authorization: `Bearer ${key}` };
 }
 

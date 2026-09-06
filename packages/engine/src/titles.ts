@@ -33,6 +33,28 @@ export async function suggestTitle(
   }
 }
 
+export async function suggestBotName(
+  provider: Provider,
+  purpose: string,
+): Promise<string | undefined> {
+  const trimmed = purpose.trim();
+  if (trimmed === "") return undefined;
+  try {
+    let text = "";
+    const request = {
+      systemPrompt: botNameInstruction,
+      messages: [textMessage("user", trimmed.slice(0, 600))],
+      tools: [],
+    };
+    for await (const delta of provider.stream(request)) {
+      if (delta.type === "text") text += delta.text;
+    }
+    return kebabTitle(text);
+  } catch {
+    return undefined;
+  }
+}
+
 export function kebabTitle(raw: string): string | undefined {
   const words = raw
     .toLowerCase()
@@ -53,6 +75,9 @@ export function fitTitle(slug: string, width: number, siblings: readonly string[
   if (fitted.length <= width) return fitted;
   return width === 1 ? "…" : `${fitted.slice(0, width - 1)}…`;
 }
+
+const botNameInstruction =
+  "Reply with only a 1-3 word kebab-case name for an assistant whose purpose is described below. A name, not a description. No other text.";
 
 const baseTitleInstruction =
   "Reply with only a 2-4 word kebab-case title describing this conversation. No other text.";

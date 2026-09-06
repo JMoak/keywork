@@ -2,7 +2,8 @@
   "allowed": [
     "const key = process.env.ANTHROPIC_API_KEY; fetch(\"https://api.anthropic.com/v1/messages\")",
     "const verifier = pkce.code_verifier; // the openai device flow keeps its own pkce pair",
-    "Claude Code is a separate product; keywork reaches Anthropic through the Agent SDK."
+    "Claude Code is a separate product; keywork reaches Anthropic through the Agent SDK.",
+    "headers: { \"x-api-key\": apiKey, \"anthropic-version\": \"2023-06-01\" }"
   ],
   "codeOnly": [
     {
@@ -68,6 +69,27 @@
       "pattern": "claude_code|claudeCode",
       "flags": "",
       "flagged": ["const claudeCodeVersion = \"1.0.0\"", "scope: claude_code"]
+    },
+    {
+      "name": "claude-code-beta-header",
+      "pattern": "claude-code-20\\d{6}",
+      "flags": "i",
+      "flagged": ["\"anthropic-beta\": \"claude-code-20250219\""]
+    },
+    {
+      "name": "oauth-beta-header",
+      "pattern": "oauth-20\\d{2}-\\d{2}-\\d{2}",
+      "flags": "i",
+      "flagged": ["betas.push(\"oauth-2025-04-20\")"]
+    },
+    {
+      "name": "bearer-anthropic-key",
+      "pattern": "bearer\\s+(\\$\\{\\s*)?(anthropic|sk-ant)",
+      "flags": "i",
+      "flagged": [
+        "headers.authorization = `Bearer ${anthropicToken}`",
+        "authorization: \"Bearer sk-ant-api03-abc\""
+      ]
     }
   ]
 }

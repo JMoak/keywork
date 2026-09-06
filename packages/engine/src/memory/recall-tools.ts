@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { defineTool } from "../tools/define.ts";
 import type { Tool } from "../tools.ts";
-import type { CitationLedger } from "./citations.ts";
+import { searchHitLayer } from "./arcs/recall.ts";
+import type { RecallTap } from "./citations.ts";
 import { type DailyEntry, isDailyDate, type Note } from "./notes.ts";
 import { type MemorySearcher, type SearchHit, tokenize } from "./search.ts";
 import type { MemoryStore } from "./store.ts";
@@ -12,7 +13,7 @@ export function memoryRecallTools(
   store: MemoryStore,
   search: MemorySearcher,
   onRecall?: RecallListener,
-  ledger?: CitationLedger,
+  ledger?: RecallTap,
 ): Tool[] {
   return [
     memorySearchTool(store, search, onRecall, ledger),
@@ -24,7 +25,7 @@ export function memorySearchTool(
   store: MemoryStore,
   search: MemorySearcher,
   onRecall?: RecallListener,
-  ledger?: CitationLedger,
+  ledger?: RecallTap,
 ): Tool {
   return defineTool({
     name: "memory_search",
@@ -41,7 +42,7 @@ export function memorySearchTool(
       }
       for (const hit of outcome.hits) {
         onRecall?.(hit.note.name);
-        ledger?.recordRecall(hit.note.name, "search");
+        ledger?.recordRecall(hit.note.name, "search", searchHitLayer(hit));
       }
       return renderSearch(outcome.hits, daily, outcome.source.kind);
     },
@@ -51,7 +52,7 @@ export function memorySearchTool(
 export function memoryGetTool(
   store: MemoryStore,
   onRecall?: RecallListener,
-  ledger?: CitationLedger,
+  ledger?: RecallTap,
 ): Tool {
   return defineTool({
     name: "memory_get",

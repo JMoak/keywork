@@ -9,6 +9,7 @@ export {
   type ToolGuard,
   type ToolPermission,
   type ToolSource,
+  type TurnSettler,
 } from "./agent.ts";
 export { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
 export {
@@ -29,18 +30,23 @@ export {
   debugLogFile,
   redactSecrets,
 } from "./diagnostics.ts";
+export {
+  type BotDefinition,
+  type BotLoad,
+  botFileName,
+  botsDir,
+  defaultSigil,
+  type LearningLevel,
+  learningLevels,
+  loadBots,
+  narrowedPermissions,
+  restrictTools,
+} from "./extensions/bots.ts";
 export type {
   ExtensionLoadFailure,
   LayerRoots,
   LayerSource,
 } from "./extensions/layers.ts";
-export {
-  type AgentDefinition,
-  type AgentLoad,
-  loadAgents,
-  narrowedPermissions,
-  restrictTools,
-} from "./extensions/markdown-agents.ts";
 export {
   type CommandDefinition,
   type CommandLoad,
@@ -106,7 +112,17 @@ export {
   type StdioConnectOptions,
   type StdioServerSpec,
 } from "./mcp/client.ts";
-export type { ConnectServer, McpServerState, McpServerStatus } from "./mcp/reconciler.ts";
+export {
+  connectHttpServer,
+  type HttpConnectOptions,
+  type HttpServerSpec,
+} from "./mcp/http.ts";
+export type {
+  ConnectServer,
+  McpServerState,
+  McpServerStatus,
+  McpTransport,
+} from "./mcp/reconciler.ts";
 export {
   defaultRestartDelaysMs,
   isMcpBackedTool,
@@ -134,9 +150,11 @@ export {
   type ArcCloseCandidate,
   type ArcCloseDigest,
   type ArcDelivery,
+  type ArcReview,
   ArcStillActiveError,
   type CandidateTriage,
   type CloseDecisions,
+  deliveryRecordTitle,
   IneligibleDeliveryError,
   MissingSuccessorError,
   type PrepareCloseOptions,
@@ -151,6 +169,8 @@ export {
   type ArcBindingListener,
   ArcBindings,
 } from "./memory/arcs/bindings.ts";
+export { type ClosingAgentOptions, closingJudgment } from "./memory/arcs/closing.ts";
+export { ArcCloseDraft } from "./memory/arcs/draft.ts";
 export {
   ArcOpenQuestions,
   type ArcOpenQuestionsOptions,
@@ -169,8 +189,11 @@ export {
   type ArcRecallOutcome,
   type ArcSearchHit,
   arcBootstrapLayer,
+  arcLayer,
   defaultArcBoost,
   type MemoryLayerRef,
+  searchHitLayer,
+  workspaceLayer,
 } from "./memory/arcs/recall.ts";
 export {
   ArcExistsError,
@@ -180,7 +203,6 @@ export {
   type ArcRegistryOptions,
   type ArcStatus,
   arcMocLink,
-  InvalidArcSlugError,
   MissingArcError,
   validateArcSlug,
 } from "./memory/arcs/registry.ts";
@@ -211,11 +233,14 @@ export {
   type CitationLedgerEvent,
   type CitationLedgerOptions,
   type CitationOutcome,
+  citationAuditEvent,
   citationChain,
   citationUsefulnessFeed,
   type LatencyEvent,
+  parseCitationEvents,
   type RecallEvent,
   type RecallSurface,
+  type RecallTap,
   type UsefulnessSink,
 } from "./memory/citations.ts";
 export {
@@ -234,6 +259,7 @@ export {
   type Frontmatter,
   type FrontmatterValue,
   MalformedFrontmatterError,
+  serializeDocument,
 } from "./memory/frontmatter.ts";
 export {
   type CurationJudgmentPort,
@@ -288,12 +314,25 @@ export {
   wikilinkTarget,
 } from "./memory/notes.ts";
 export {
+  type ActionRecallOptions,
+  actionRecallBudget,
+  actionRecallDefaults,
+  actionSubject,
+  pointOfActionRecall,
+} from "./memory/point-of-action.ts";
+export {
   memoryGetTool,
   memoryRecallTools,
   memorySearchTool,
   type RecallListener,
 } from "./memory/recall-tools.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
+export {
+  type GatherReturnDeltaOptions,
+  gatherReturnDelta,
+  type ReturnDeltaInputs,
+  returnDelta,
+} from "./memory/return-delta.ts";
 export type { NoteRelations } from "./memory/search.ts";
 export {
   type EmbeddingsPort,
@@ -390,6 +429,14 @@ export {
   type TurnDelta,
 } from "./provider.ts";
 export {
+  AnthropicApiError,
+  type AnthropicOptions,
+  AnthropicProvider,
+  anthropicHeaders,
+  anthropicVersion,
+  defaultMaxOutputTokens,
+} from "./providers/anthropic.ts";
+export {
   BedrockExceptionError,
   type BedrockOptions,
   BedrockProvider,
@@ -421,6 +468,14 @@ export {
   type StreamingPost,
 } from "./providers/transport.ts";
 export {
+  RepoMap,
+  type RepoMapFacts,
+  type RepoMapOptions,
+  repoMapTokenBudget,
+  repoMapTokenCap,
+} from "./repomap/map.ts";
+export { type IgnoreFileProblem, scanWorkspace, type WorkspaceScan } from "./repomap/scan.ts";
+export {
   type CompactionOptions,
   type CompactionPlan,
   compactSession,
@@ -442,18 +497,21 @@ export {
   reserveCaps,
 } from "./session/context-budget.ts";
 export {
-  type ArcBindingEntry,
+  type BindingEntry,
   type BranchSummaryEntry,
   type CompactionEntry,
   type CustomEntry,
   type CustomMessageEntry,
   checkpointForPrompt,
+  describeBinding,
   type FileEntry,
   type FileTrackingDetails,
+  foldBinding,
   type LabelEntry,
   type MessageEntry,
   type ModelChangeEntry,
   type PromptCheckpoint,
+  type SessionBinding,
   type SessionEntry,
   type SessionHeader,
   type SessionInfoEntry,
@@ -491,7 +549,13 @@ export {
   type SessionStats,
   SessionStore,
 } from "./session/store.ts";
-export { fitTitle, kebabTitle, suggestTitle, type TitleContext } from "./titles.ts";
+export {
+  fitTitle,
+  kebabTitle,
+  suggestBotName,
+  suggestTitle,
+  type TitleContext,
+} from "./titles.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
 export { confinedPath, scopeContains, type ToolScope, toolScope } from "./tools/confine.ts";
 export { type CoreToolOptions, coreTools, type MemoryRecall } from "./tools/core.ts";

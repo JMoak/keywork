@@ -15,7 +15,7 @@ import {
   trayCommandsPressing,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
-import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { focusOrOpenSession, type SessionTreePort } from "./session-tree-pane.ts";
@@ -26,7 +26,7 @@ import {
   type SessionPresence,
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
-import { slugChunks, slugInk } from "./slug.ts";
+import { slugChunks, slugInk } from "./slug-ink.ts";
 import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
 
@@ -36,6 +36,7 @@ export interface ArcPaneOptions {
   currentSession: () => string | undefined;
   presence?: SessionPresence;
   arcOrdinal?: ArcOrdinals;
+  returnDelta?: () => Promise<string[]>;
   now?: () => number;
   scheduleFrame?: FrameScheduler;
 }
@@ -49,6 +50,8 @@ export class ArcPane implements Pane {
   private readonly pendingRefresh: FrameCoalescer;
   private readonly unsubscribe: (() => void) | undefined;
   private lastPageRows = 20;
+  private trayFirstRow = 0;
+  private deltaLines: string[] = [];
 
   constructor(
     readonly id: string,
@@ -80,6 +83,7 @@ export class ArcPane implements Pane {
     );
     this.unsubscribe = options.sessions.subscribe?.(() => this.pendingRefresh.request());
     this.refresh();
+    this.fetchReturnDelta();
   }
 
   dispose(): void {
@@ -122,8 +126,9 @@ export class ArcPane implements Pane {
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    if (this.tray.open) return paneTrayMouse(this.tray, this.trayFirstRow, local, event);
     if (event.type !== "down" || this.tasks.failure() !== undefined) return false;
-    const row = local.y - 1;
+    const row = local.y - 1 - this.deltaLines.length;
     if (row < 0 || row >= this.lastPageRows) return false;
     return this.members.activateVisible(row, this.lastPageRows);
   }
@@ -140,16 +145,27 @@ export class ArcPane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
-    const { theme, height, width } = context;
-    const innerWidth = paneContentWidth(width);
-    const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
-    this.lastPageRows = Math.max(0, paneContentHeight(height) - (tray?.rows ?? 0));
-    return paneChrome(
-      context,
-      this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, innerWidth),
-      ...(tray?.children ?? []),
-    );
+    const { theme } = context;
+    const innerWidth = paneContentWidth(context);
+    const tray = this.tray.open
+      ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
+      : undefined;
+    const delta = this.deltaLines.map((line) => deltaRowView(line, theme, innerWidth));
+    this.lastPageRows = Math.max(0, paneContentHeight(context) - (tray?.rows ?? 0) - delta.length);
+    const body = [...delta, ...this.bodyLines(theme, this.lastPageRows, innerWidth)];
+    this.trayFirstRow = 2 + body.length;
+    return paneChrome(context, this.title(), ...body, ...(tray?.children ?? []));
+  }
+
+  private fetchReturnDelta(): void {
+    const returnDelta = this.options.returnDelta;
+    if (returnDelta === undefined) return;
+    this.tasks.track(async () => {
+      this.deltaLines = await returnDelta().then(
+        (lines) => lines.slice(0, deltaRowCap),
+        () => [],
+      );
+    });
   }
 
   private handleFoldKey(chord: Chord): boolean {
@@ -278,6 +294,11 @@ export function memberRowLine(row: SessionOverviewRow, placement: MemberPlacemen
 
 const foldMark = "░";
 const needsYouStamp = "█";
+const deltaRowCap = 3;
+
+function deltaRowView(line: string, theme: Theme, width: number): PaneChild {
+  return Text({ content: new StyledText(clipSpans([fg(theme.textDim)(`· ${line}`)], width)) });
+}
 
 const livenessWord: Record<SessionLiveness, string> = {
   waiting: "needs you",
@@ -286,7 +307,7 @@ const livenessWord: Record<SessionLiveness, string> = {
   idle: "closed",
 };
 
-const memberTray: readonly KeyedTrayCommand[] = [
+export const memberTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "open the selected session, unfolding it first", key: "enter" },
   { name: "fold", description: "fold or unfold the selected session", key: "space" },
   { name: "fold all", description: "fold every shown session, or unfold them all", key: "a" },

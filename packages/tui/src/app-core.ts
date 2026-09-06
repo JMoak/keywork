@@ -8,12 +8,26 @@ import {
 } from "./app-actions.ts";
 import {
   type ArcCommandSeams,
+  type ArcInvocation,
   applyArcChoice,
   type FocusedArcPort,
+  legacyArcInvocation,
   runArcCommand,
 } from "./arc-commands.ts";
 import { arcChoiceOf } from "./arc-picker.ts";
 import type { ArcsPort } from "./arcs.ts";
+import {
+  applyBotChoice,
+  type BotCommandSeams,
+  type BotInvocation,
+  botInvocationOf,
+  describeCreatedBot,
+  type FocusedBotPort,
+  runBotCommand,
+} from "./bot-commands.ts";
+import { BotCreateModel, type BotCreateSeed } from "./bot-create-model.ts";
+import { botChoiceOf } from "./bot-picker.ts";
+import type { BotsPort } from "./bots.ts";
 import { CommandRegistry } from "./commands.ts";
 import { ConnectModel } from "./connect-model.ts";
 import { registerCoreCommands } from "./core-commands.ts";
@@ -27,6 +41,8 @@ import { type DockSide, Layout, layoutStateIds } from "./layout.ts";
 import type { ModelPicker } from "./model-picker.ts";
 import {
   type ArcOverlay,
+  BotCreateOverlay,
+  type BotOverlay,
   ConnectOverlay,
   HelpOverlay,
   type Overlay,
@@ -60,10 +76,13 @@ import {
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { PanePointer } from "./pointer-routing.ts";
+import { rotatingTip, type TipSignals } from "./tips.ts";
 import {
   applyWorkspaceChoice,
+  legacyWorkspaceInvocation,
   runWorkspaceCommand,
   type WorkspaceCommandSeams,
+  type WorkspaceInvocation,
 } from "./workspace-commands.ts";
 import { type WorkspacesPort, workspaceChoiceOf } from "./workspace-picker.ts";
 import {
@@ -80,8 +99,14 @@ export interface UndoPort {
   redo(): Promise<boolean>;
 }
 
+export interface TipsOption {
+  enabled: boolean;
+  now?: () => number;
+}
+
 export interface AppCoreOptions extends PaneFactories {
   screen: () => Screen;
+  drawnRect?: (rect: Rect, screen: Screen) => Rect;
   isDirectory?: (path: string) => boolean;
   undo?: UndoPort;
   presets?: PresetsPort;
@@ -89,10 +114,13 @@ export interface AppCoreOptions extends PaneFactories {
   connections?: ConnectionsPort;
   arcs?: ArcsPort;
   focusedArc?: FocusedArcPort;
+  bots?: BotsPort;
+  focusedBot?: FocusedBotPort;
   workspaces?: WorkspacesPort;
   workspaceSetup?: WorkspaceSetupPort;
   currentModel?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;
+  tips?: TipsOption;
   restoreWorkspace?: WorkspaceState;
   initialWorkspace?: readonly InitialPane[];
   saveWorkspace?: (state: WorkspaceState) => void;
@@ -116,6 +144,7 @@ export interface AppSnapshot {
   overlay: OverlayKind | undefined;
   paletteQuery: string;
   leaderArmed: boolean;
+  costsShown: boolean;
   lastKey: string;
   notice: string;
 }
@@ -135,6 +164,7 @@ export class AppCore implements ActionTarget {
     paneHeld: (id) => this.paneHeld(id),
   };
   leaderArmed = false;
+  costsShown = false;
   lastKey = "";
   notice = "";
   private readonly held = new Set<string>();
@@ -144,6 +174,7 @@ export class AppCore implements ActionTarget {
     screen: () => this.screen(),
     paneAt: (id) => this.panes.get(id),
     changed: () => this.touch(),
+    drawnRect: (rect, screen) => this.options.drawnRect?.(rect, screen) ?? rect,
   });
   private readonly ids = new PaneIds();
   private readonly described = new Map<string, string>();
@@ -189,6 +220,7 @@ export class AppCore implements ActionTarget {
       overlay: this.overlay?.kind,
       paletteQuery: this.paletteQuery,
       leaderArmed: this.leaderArmed,
+      costsShown: this.costsShown,
       lastKey: this.lastKey,
       notice: this.notice,
     };
@@ -207,7 +239,8 @@ export class AppCore implements ActionTarget {
       this.shutdown();
       return;
     }
-    if (this.overlay !== undefined) this.overlay.handleKey(chord, sequence);
+    if (chord.name === "escape" && this.pointer.cancelDrag()) this.touch();
+    else if (this.overlay !== undefined) this.overlay.handleKey(chord, sequence);
     else this.handleAppKey(chord, sequence, nowMs, repeat);
     this.persistWorkspace();
   }
@@ -221,10 +254,12 @@ export class AppCore implements ActionTarget {
     if (id !== undefined) this.panes.get(id)?.handlePaste?.(text);
   }
 
-  handleMouse(event: PointerEvent): void {
+  handleMouse(event: PointerEvent): boolean {
+    let handled = true;
     if (this.overlay !== undefined) this.overlay.handleMouse(event, this.screen());
-    else this.pointer.route(event);
+    else handled = this.pointer.route(event);
     this.persistWorkspace();
+    return handled;
   }
 
   runCommand(name: string): boolean {
@@ -419,6 +454,11 @@ export class AppCore implements ActionTarget {
     return this.pointer.draggingPane();
   }
 
+  toggleCosts(): void {
+    this.costsShown = !this.costsShown;
+    this.postNotice(this.costsShown ? "spend shown in pane headers" : "spend hidden");
+  }
+
   toggleHelp(): void {
     this.overlay = this.helpVisible ? undefined : new HelpOverlay(this.keymap, this.overlaySeams);
   }
@@ -457,6 +497,10 @@ export class AppCore implements ActionTarget {
   }
 
   openArcCommand(argument = ""): void {
+    this.arcCommand(legacyArcInvocation(argument));
+  }
+
+  arcCommand(invocation: ArcInvocation): void {
     const arcs = this.options.arcs;
     if (arcs === undefined) return;
     const blocker = this.workspaceBlocker();
@@ -476,10 +520,46 @@ export class AppCore implements ActionTarget {
         });
       },
     };
-    this.settle(runArcCommand(seams, argument.trim()));
+    this.settle(runArcCommand(seams, invocation));
+  }
+
+  openBotCommand(argument = ""): void {
+    this.botCommand(botInvocationOf(argument));
+  }
+
+  botCommand(invocation: BotInvocation): void {
+    const bots = this.options.bots;
+    if (bots === undefined) return;
+    const seams: BotCommandSeams = {
+      bots,
+      focusedBot: this.options.focusedBot,
+      notice: (text) => this.postNotice(text),
+      openBotPane: (name) => this.openBotPane(name),
+      showCreate: (seed) => this.openBotCreate(bots, seed),
+      showPicker: (picker) => {
+        this.overlay = new PickerOverlay("bot", picker, {
+          ...this.overlaySeams,
+          choose: (row) => this.settle(applyBotChoice(seams, botChoiceOf(row))),
+        });
+      },
+    };
+    this.settle(runBotCommand(seams, invocation));
+  }
+
+  openBotPane(name: string): void {
+    const [sourcePaneId] = this.panesFocusedFirst();
+    this.openPane(undefined, undefined, {
+      ...(sourcePaneId !== undefined && { sourcePaneId }),
+      arc: "inherit",
+      bot: name,
+    });
   }
 
   openWorkspaceCommand(argument = ""): void {
+    this.workspaceCommand(legacyWorkspaceInvocation(argument));
+  }
+
+  workspaceCommand(invocation: WorkspaceInvocation): void {
     const workspaces = this.options.workspaces;
     if (workspaces === undefined) return;
     const seams: WorkspaceCommandSeams = {
@@ -493,7 +573,7 @@ export class AppCore implements ActionTarget {
         });
       },
     };
-    this.settle(runWorkspaceCommand(seams, argument.trim()));
+    this.settle(runWorkspaceCommand(seams, invocation));
   }
 
   openWorkspaceSetup(): void {
@@ -533,6 +613,10 @@ export class AppCore implements ActionTarget {
 
   get helpVisible(): boolean {
     return this.overlay?.kind === "help";
+  }
+
+  helpOverlay(): HelpOverlay | undefined {
+    return this.overlay?.kind === "help" ? this.overlay : undefined;
   }
 
   get paletteOpen(): boolean {
@@ -575,6 +659,14 @@ export class AppCore implements ActionTarget {
     return this.overlay?.kind === "workspace" ? this.overlay.picker : undefined;
   }
 
+  botPicker(): BotOverlay["picker"] | undefined {
+    return this.overlay?.kind === "bot" ? this.overlay.picker : undefined;
+  }
+
+  botCreate(): BotCreateModel | undefined {
+    return this.overlay?.kind === "bot-new" ? this.overlay.model : undefined;
+  }
+
   connectModel(): ConnectModel | undefined {
     return this.overlay?.kind === "connect" ? this.overlay.model : undefined;
   }
@@ -593,6 +685,22 @@ export class AppCore implements ActionTarget {
     this.notify();
   }
 
+  tip(): string | undefined {
+    const tips = this.options.tips;
+    if (tips === undefined || !tips.enabled) return undefined;
+    return rotatingTip(this.tipSignals(), (tips.now ?? Date.now)());
+  }
+
+  private tipSignals(): TipSignals {
+    const kinds = new Set([...this.panes.keys()].map(paneKindOf));
+    return {
+      paneCount: this.layout.panes().length,
+      costsShown: this.costsShown,
+      memoryUntouched: this.options.createMemoryPane !== undefined && !kinds.has("memory"),
+      arcsUntouched: this.options.arcs !== undefined && !kinds.has("arc") && !kinds.has("arcs"),
+    };
+  }
+
   settle(work: Promise<unknown>): void {
     work
       .catch((cause: unknown) => this.postNotice(toError(cause).message))
@@ -606,10 +714,28 @@ export class AppCore implements ActionTarget {
     this.options.onExit();
   }
 
+  private openBotCreate(bots: BotsPort, seed: BotCreateSeed): void {
+    const model = new BotCreateModel(
+      bots,
+      {
+        notify: () => this.notify(),
+        notice: (text) => this.postNotice(text),
+        created: (bot) => {
+          this.overlay = undefined;
+          this.openBotPane(bot.name);
+          this.postNotice(describeCreatedBot(bot));
+        },
+      },
+      seed,
+    );
+    this.overlay = new BotCreateOverlay(model, this.overlaySeams);
+  }
+
   private readonly overlaySeams = {
     dismiss: (): void => {
       this.overlay = undefined;
     },
+    screen: (): Screen => this.screen(),
     notice: (text: string): void => this.postNotice(text),
   };
 

@@ -1,15 +1,14 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { Checkpoints, UnknownCheckpointError } from "./checkpoints.ts";
 
-const cleanups: string[] = [];
+const scratch = scratchDirs("keywork-checkpoints-");
 
 async function scratchProject(): Promise<{ worktree: string; gitDir: string }> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-checkpoints-"));
-  cleanups.push(root);
+  const root = await scratch();
   const worktree = join(root, "project");
   await mkdir(worktree);
   return { worktree, gitDir: join(root, "shadow") };
@@ -20,13 +19,6 @@ async function seed(worktree: string, files: Record<string, string>): Promise<vo
     await writeFile(join(worktree, name), content, "utf8");
   }
 }
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
 
 describe("Checkpoints", () => {
   it("undoes edits, deletions, and new files back to the captured state", async () => {

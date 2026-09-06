@@ -1,5 +1,5 @@
 import { mkdtempSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,26 +15,18 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { recordingProvider } from "@keywork/engine/testing";
+import { scratchDirs } from "@keywork/shared/testing";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { composeAgents, composeWorkspace } from "./compose.ts";
 import { conclude, exitCodeOf, type HeadlessOutcome, type RunOptions, runHeadless } from "./run.ts";
 
-const tempDirs: string[] = [];
+const tempDir = scratchDirs("keywork-cli-");
 const emptyUserRoot = mkdtempSync(join(tmpdir(), "keywork-cli-user-"));
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-cli-"));
-  tempDirs.push(dir);
-  return dir;
-}
 
 function headless(options: Omit<RunOptions, "userRoot">): Promise<HeadlessOutcome> {
   return runHeadless({ userRoot: emptyUserRoot, ...options });
 }
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
 
 afterAll(() => rm(emptyUserRoot, { recursive: true, force: true }));
 
@@ -258,19 +250,6 @@ describe("runHeadless", () => {
 });
 
 describe("composition parity with panes", () => {
-  class RecordingProvider implements Provider {
-    readonly name = "recording";
-    readonly modelId = "recorded-model";
-    readonly requests: ProviderRequest[] = [];
-
-    constructor(private readonly inner: MockProvider) {}
-
-    stream(request: ProviderRequest) {
-      this.requests.push(request);
-      return this.inner.stream(request);
-    }
-  }
-
   async function trustedWorkspace(): Promise<string> {
     const cwd = await tempDir();
     await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
@@ -298,8 +277,8 @@ describe("composition parity with panes", () => {
   it("hands the agent the tools and system prompt a pane would get", async () => {
     const cwd = await trustedWorkspace();
     await skillAt(cwd, "greet", "Say hello warmly.");
-    const viaHeadless = new RecordingProvider(new MockProvider([textTurn("ok")]));
-    const viaPanes = new RecordingProvider(new MockProvider([textTurn("ok")]));
+    const viaHeadless = recordingProvider([textTurn("ok")], { modelId: "recorded-model" });
+    const viaPanes = recordingProvider([textTurn("ok")], { modelId: "recorded-model" });
 
     await headless({
       prompt: "hi",
@@ -400,7 +379,7 @@ describe("composition parity with panes", () => {
       join(named, "Side Fact.md"),
       "---\nprovenance: user\npinned: true\n---\nThe side workspace is in force.\n",
     );
-    const provider = new RecordingProvider(new MockProvider([textTurn("ok")]));
+    const provider = recordingProvider([textTurn("ok")], { modelId: "recorded-model" });
 
     await headless({
       prompt: "hi",
@@ -987,5 +966,63 @@ describe("headless exit contract", () => {
     const [file] = await readdir(sessionDir);
     const store = await SessionStore.open(join(sessionDir, file as string));
     expect(store.messages().map((message) => message.role)).toEqual(["user"]);
+  });
+});
+
+describe("keywork run --bot", () => {
+  async function seedScout(cwd: string): Promise<void> {
+    const dir = join(cwd, ".keywork", "bots", "scout");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "bot.md"), "---\ntools: [read]\n---\nYou are the scout.\n");
+  }
+
+  it("runs the named persona: prompt swapped, tools narrowed, binding persisted", async () => {
+    const cwd = await tempDir();
+    const sessionDir = await tempDir();
+    await seedScout(cwd);
+    const provider = recordingProvider([textTurn("scouted")]);
+
+    const outcome = await headless({
+      prompt: "look around",
+      cwd,
+      json: false,
+      projectTrusted: true,
+      sessionDir,
+      provider,
+      bot: "scout",
+      print: () => {},
+      printError: () => {},
+    });
+
+    expect(outcome.outcome).toBe("completed");
+    expect(provider.requests[0]?.systemPrompt).toBe("You are the scout.");
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toEqual(["read"]);
+    const [file] = (await readdir(sessionDir)).filter((name) => name.endsWith(".jsonl"));
+    if (file === undefined) throw new Error("no session file");
+    expect((await SessionStore.open(join(sessionDir, file))).botBinding()).toBe("scout");
+  });
+
+  it("refuses an unknown bot as a usage failure, exit 2, naming the bots here", async () => {
+    const cwd = await tempDir();
+    await seedScout(cwd);
+    const lines: string[] = [];
+
+    const outcome = await headless({
+      prompt: "look around",
+      cwd,
+      json: true,
+      projectTrusted: true,
+      provider: new MockProvider([textTurn("never")]),
+      bot: "ghost",
+      print: (line) => lines.push(line),
+      printError: () => {},
+    });
+
+    expect(outcome).toEqual({
+      outcome: "usage",
+      error: 'keywork run: no bot named "ghost" (bots here: scout)',
+    });
+    expect(exitCodeOf(outcome)).toBe(2);
+    expect(lines.map((line) => JSON.parse(line).type)).toEqual(["run.finished"]);
   });
 });

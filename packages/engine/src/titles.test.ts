@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "./messages.ts";
 import { MockProvider, textTurn } from "./mock-provider.ts";
-import type { Provider, ProviderRequest, TurnDelta } from "./provider.ts";
-import { fitTitle, kebabTitle, suggestTitle } from "./titles.ts";
+import { recordingProvider } from "./testing/index.ts";
+import { fitTitle, kebabTitle, suggestBotName, suggestTitle } from "./titles.ts";
 
 describe("kebabTitle", () => {
   it("normalizes model replies into kebab-case", () => {
@@ -43,38 +43,24 @@ describe("suggestTitle", () => {
   });
 
   it("hands sibling titles and the arc to the prompt as distinctness constraints", async () => {
-    const provider = new RecordingProvider("Sleep Wake Repair");
+    const provider = recordingProvider([textTurn("Sleep Wake Repair")]);
     await suggestTitle(provider, [textMessage("user", "the server drops after sleep")], {
       arc: "mcp-hardening",
       avoid: ["timeout-retry", "handshake-abort"],
     });
-    const prompt = provider.request?.systemPrompt ?? "";
+    const prompt = provider.requests[0]?.systemPrompt ?? "";
     expect(prompt).toContain('arc "mcp-hardening"');
     expect(prompt).toContain("timeout-retry, handshake-abort");
   });
 
   it("leaves the prompt bare without context", async () => {
-    const provider = new RecordingProvider("Build Tiny Todo App");
+    const provider = recordingProvider([textTurn("Build Tiny Todo App")]);
     await suggestTitle(provider, [textMessage("user", "make me a todo app")]);
-    const prompt = provider.request?.systemPrompt ?? "";
+    const prompt = provider.requests[0]?.systemPrompt ?? "";
     expect(prompt).not.toContain("arc");
     expect(prompt).not.toContain("Sibling");
   });
 });
-
-class RecordingProvider implements Provider {
-  readonly name = "recording";
-  readonly modelId = undefined;
-  request: ProviderRequest | undefined;
-
-  constructor(private readonly reply: string) {}
-
-  async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
-    this.request = request;
-    yield { type: "text", text: this.reply };
-    yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
-  }
-}
 
 describe("fitTitle", () => {
   it("returns a fitting slug untouched", () => {
@@ -124,5 +110,23 @@ describe("fitTitle", () => {
       }
       previous = new Set(fitTitle(slug, width, siblings).split("-"));
     }
+  });
+});
+
+describe("suggestBotName", () => {
+  it("asks for a name from the purpose line and normalizes the reply to a slug", async () => {
+    const provider = recordingProvider([textTurn("Test Hawk\n")]);
+    expect(await suggestBotName(provider, "Reviews my PRs the way I would, hunts for tests")).toBe(
+      "test-hawk",
+    );
+    expect(provider.requests[0]?.systemPrompt).toContain("kebab-case name for an assistant");
+    expect(provider.requests[0]?.messages.map((message) => message.role)).toEqual(["user"]);
+  });
+
+  it("returns undefined for an empty purpose without asking, and swallows provider failures", async () => {
+    const provider = recordingProvider([textTurn("never")]);
+    expect(await suggestBotName(provider, "   ")).toBeUndefined();
+    expect(provider.requests).toHaveLength(0);
+    expect(await suggestBotName(new MockProvider([]), "anything")).toBeUndefined();
   });
 });

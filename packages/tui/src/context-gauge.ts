@@ -1,8 +1,8 @@
 import { type ContextReading, formatTokenCount } from "@keywork/engine";
 import type { Flavor } from "@keywork/shared";
-import { density, type GlyphSupport, resolveRamp } from "./capability.ts";
+import { density, type GlyphSupport, resolveMark, resolveRamp, tile } from "./capability.ts";
 
-export type GaugeStyle = "ramp" | "bar";
+export type GaugeStyle = "ramp" | "bar" | "bare" | "steps" | "tile";
 
 export type InstrumentTier = Flavor["instruments"];
 
@@ -13,14 +13,26 @@ export interface GaugeOptions {
 
 export const barCells = 10;
 
-export function gaugeStyleFor(instruments: InstrumentTier): GaugeStyle {
-  return instruments === "cockpit" ? "bar" : "ramp";
+export function gaugeStyleFor(instruments: InstrumentTier, focused: boolean): GaugeStyle {
+  if (instruments === "cockpit") return "bar";
+  return focused ? "steps" : "tile";
 }
 
 export function contextGauge(reading: ContextReading, options: GaugeOptions): string {
   if (reading.used === 0) return "";
   const ramp = resolveRamp(density, options.glyphs);
-  return options.style === "bar" ? barGauge(reading, ramp) : rampGauge(reading, ramp);
+  switch (options.style) {
+    case "bar":
+      return barGauge(reading, ramp);
+    case "bare":
+      return stopGlyph(reading, ramp);
+    case "steps":
+      return `${stepsGauge(reading, ramp, options.glyphs)} ${formatTokenCount(reading.used)}`;
+    case "tile":
+      return `${twinTile(reading, options.glyphs)} ${formatTokenCount(reading.used)}`;
+    case "ramp":
+      return `${stopGlyph(reading, ramp)} ${formatTokenCount(reading.used)}`;
+  }
 }
 
 export function contextReadout(reading: ContextReading): string[] {
@@ -34,17 +46,34 @@ export function contextReadout(reading: ContextReading): string[] {
   ];
 }
 
-function rampGauge(reading: ContextReading, ramp: readonly string[]): string {
+function stopGlyph(reading: ContextReading, ramp: readonly string[]): string {
   const [light = ".", medium = ":", heavy = "+", full = "#"] = ramp;
-  const cell =
-    reading.used > reading.compactAt
-      ? full
-      : reading.used > reading.flushAt
-        ? heavy
-        : reading.used > reading.flushAt / 2
-          ? medium
-          : light;
-  return `${cell} ${formatTokenCount(reading.used)}`;
+  if (reading.used > reading.compactAt) return full;
+  if (reading.used > reading.flushAt) return heavy;
+  if (reading.used > reading.flushAt / 2) return medium;
+  return light;
+}
+
+const emptyStepMark = { tier1: "·", tier0: "." };
+const tileLadder = ["⡀", "⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿", "█"] as const;
+
+function stepsGauge(
+  reading: ContextReading,
+  ramp: readonly string[],
+  glyphs: GlyphSupport,
+): string {
+  const empty = resolveMark(emptyStepMark, glyphs);
+  const bounds = [0, reading.flushAt / 2, reading.flushAt, reading.compactAt];
+  return bounds.map((from, zone) => (reading.used > from ? (ramp[zone] ?? "#") : empty)).join("");
+}
+
+function twinTile(reading: ContextReading, glyphs: GlyphSupport): string {
+  if (glyphs.glyphTier < 2) return stopGlyph(reading, resolveRamp(tile.fill, glyphs));
+  const steps = tileLadder.length * 2;
+  const lit = Math.max(1, Math.min(steps, Math.ceil((reading.used / reading.window) * steps)));
+  const first = tileLadder[Math.min(tileLadder.length, lit) - 1] ?? "█";
+  const second = lit <= tileLadder.length ? "·" : (tileLadder[lit - tileLadder.length - 1] ?? "█");
+  return `${first}${second}`;
 }
 
 function barGauge(reading: ContextReading, ramp: readonly string[]): string {

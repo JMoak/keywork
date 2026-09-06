@@ -2,7 +2,7 @@ import { formatCostNanos } from "@keywork/engine";
 import { type ArcStatus, type ArcSummary, isArcSlug } from "./arcs.ts";
 import type { Chord } from "./keys.ts";
 import { isPrintable } from "./picker-keys.ts";
-import { pluralize } from "./pluralize.ts";
+import { sessionsFact } from "./pluralize.ts";
 import { RowCursor } from "./row-cursor.ts";
 import {
   livenessMark,
@@ -299,8 +299,4 @@ export function arcGroupParts(row: ArcGroupRow, cursored: boolean): ArcGroupPart
     label: row.label,
     facts: ` · ${facts.join(" · ")}`,
   };
-}
-
-function sessionsFact(count: number): string {
-  return count === 0 ? "no sessions" : pluralize(count, "session");
 }

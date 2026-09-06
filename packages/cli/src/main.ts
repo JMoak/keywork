@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { debugEnabled, type PermissionResolver, ResolutionError } from "@keywork/engine";
 import {
@@ -27,7 +28,12 @@ import { isPresetName, permissionsResolver, presetResolver, userPresetSwitch } f
 import { conclude, exitCodeOf, runHeadless } from "./run.ts";
 import { terminalConfirm } from "./terminal-input.ts";
 import { versionLine } from "./version.ts";
-import { fileWorkspaceRecall, selectWorkspace, type WorkspaceRecall } from "./workspaces.ts";
+import {
+  fileWorkspaceRecall,
+  selectWorkspace,
+  unknownWorkspaceProblem,
+  type WorkspaceRecall,
+} from "./workspaces.ts";
 
 export interface MainSeams {
   cwd?: string;
@@ -55,7 +61,12 @@ export async function main(argv: readonly string[], seams: MainSeams = {}): Prom
   }
   const invocation = parseInvocation(decision.rest);
   if (!invocation.ok) return refuseInvocation(decision, invocation.problem, io);
-  const context = await openCommandContext(io, invocation.values.workspace);
+  const requestedWorkspace = invocation.values.workspace;
+  const workspaceProblem = strictWorkspaceCommands.has(decision.command)
+    ? unknownWorkspaceProblem(io.cwd, requestedWorkspace)
+    : undefined;
+  if (workspaceProblem !== undefined) return refuseInvocation(decision, workspaceProblem, io);
+  const context = await openCommandContext(io, requestedWorkspace);
   return commands[decision.command](context, invocation);
 }
 
@@ -108,6 +119,8 @@ interface CommandContext {
 
 type Command = (context: CommandContext, invocation: ParsedInvocation) => Promise<number>;
 
+const strictWorkspaceCommands: ReadonlySet<CommandName> = new Set(["run", "chat"]);
+
 const commands: Record<CommandName, Command> = {
   panes: runPanes,
   chat: runChat,
@@ -118,6 +131,7 @@ const commands: Record<CommandName, Command> = {
   init: runInit,
   link: runLink,
   workspace: runWorkspace,
+  bot: runBot,
   trust: (context) => runTrust("trust", context),
   untrust: (context) => runTrust("untrust", context),
   doctor: runDoctor,
@@ -209,6 +223,8 @@ async function runChat(context: CommandContext, { values }: ParsedInvocation): P
     ...(workspaceSlug !== undefined && { workspaceSlug }),
     ...(config.prompts !== undefined && { prompts: config.prompts }),
     ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
+    ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
+    ...(config.models !== undefined && { models: config.models }),
     ...(values.resume !== undefined && { resumeId: values.resume }),
     ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
   });
@@ -240,6 +256,7 @@ async function runHeadlessPrompt(
       cwd,
       json: values.json,
       projectTrusted,
+      ...(values.bot !== undefined && { bot: values.bot }),
       permissions: headlessPermissions(preset, config.permissions),
       debug: values.debug || debugEnabled(io.env),
       provider: runtime.provider(bound.binding),
@@ -249,6 +266,8 @@ async function runHeadlessPrompt(
       ...(workspaceSlug !== undefined && { workspaceSlug }),
       ...(config.prompts !== undefined && { prompts: config.prompts }),
       ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
+      ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
+      ...(config.models !== undefined && { models: config.models }),
       ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
     });
     return exitCodeOf(outcome);
@@ -329,17 +348,37 @@ async function runWorkspace(
   );
 }
 
+async function runBot(
+  context: CommandContext,
+  { positionals, values }: ParsedInvocation,
+): Promise<number> {
+  const { botCommand } = await import("./bots.ts");
+  return botCommand(
+    positionals,
+    { cwd: context.cwd, projectTrusted: context.projectTrusted, userRoot: homedir() },
+    commandIo(context),
+    terminalConfirm(),
+    { global: values.global },
+  );
+}
+
 async function runTrust(action: "trust" | "untrust", context: CommandContext): Promise<number> {
   const { trustCommand } = await import("./trust.ts");
   return trustCommand(action, context.cwd, context.trustStore, commandIo(context));
 }
 
 async function runDoctor(context: CommandContext): Promise<number> {
-  const { doctorCommand } = await import("./doctor.ts");
+  const { doctorCommand, workspaceDoctorFacts } = await import("./doctor.ts");
+  const { crashLogFacts, crashLogFile } = await import("@keywork/tui");
   return doctorCommand(
     { env: context.io.env, platform: process.platform },
     context.io.print,
     async () => (await context.openInference()).current().runtime.registry,
+    async () => {
+      const { config } = (await context.openInference()).current();
+      const facts = await workspaceDoctorFacts(context.cwd, context.projectTrusted, config);
+      return { ...facts, crashLog: crashLogFacts(crashLogFile) };
+    },
   );
 }
 
@@ -368,6 +407,8 @@ function parseInvocationArgs(args: readonly string[]) {
       debug: { type: "boolean", default: false },
       model: { type: "string" },
       preset: { type: "string" },
+      bot: { type: "string" },
+      global: { type: "boolean", default: false },
       continue: { type: "boolean", default: false },
       fresh: { type: "boolean", default: false },
       resume: { type: "string" },

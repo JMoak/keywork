@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AirlockDigestView } from "./arcs.ts";
 import { parseChord } from "./keys.ts";
 import {
   emptyMemoryInputs,
@@ -9,6 +10,7 @@ import {
   MemoryPaneModel,
   type MemoryQueryOutcome,
 } from "./memory-pane-model.ts";
+import { pressModel as press } from "./testing/index.ts";
 
 const now = Date.parse("2026-08-22T12:00:00Z");
 const workspace: MemoryLayerView = {
@@ -84,10 +86,6 @@ function modelOver(
   );
   model.setInputs({ ...emptyMemoryInputs, layers: [workspace], ...inputs });
   return { model, recorded };
-}
-
-function press(model: MemoryPaneModel, ...specs: string[]): void {
-  for (const spec of specs) model.handleKey(parseChord(spec), 5);
 }
 
 function type(model: MemoryPaneModel, text: string): void {
@@ -442,5 +440,114 @@ describe("MemoryPaneModel property: cursor lands on a selectable visible row", (
       expect(model.cursor).toBeGreaterThanOrEqual(0);
       expect(model.cursor).toBeLessThan(Math.max(1, model.rows().length));
     }
+  });
+});
+
+describe("MemoryPaneModel airlock digest", () => {
+  const digest: AirlockDigestView = {
+    arc: "dock-v2",
+    candidates: [
+      {
+        note: "Arc Lesson",
+        title: "Arc Lesson",
+        provenance: "agent",
+        eligible: true,
+        shortfalls: [],
+      },
+      {
+        note: "Uncited Hunch",
+        title: "Uncited Hunch",
+        provenance: "agent",
+        eligible: false,
+        shortfalls: ["uncited"],
+      },
+    ],
+    questions: [{ title: "Tie order", provenance: "user", created: "2026-08-21T12:00:00Z" }],
+  };
+
+  function digestModel() {
+    const triaged: string[] = [];
+    const finished: string[] = [];
+    const delivered: string[] = [];
+    const { model, recorded } = modelOver(
+      {
+        layers: [workspace, arc],
+        notes: garden,
+        inbox: [inbox({ id: "c1", kind: "airlock", arc: "dock-v2", title: "deliver Arc Lesson" })],
+        airlocks: [digest],
+      },
+      { focusedArc: "dock-v2" },
+    );
+    const effects = model as unknown as {
+      effects: {
+        triageCandidate?: (arc: string, note: string, choice: string) => void;
+        triageQuestion?: (arc: string, title: string, choice: string) => void;
+        deliverEligible?: (arc: string) => void;
+        finishClose?: (arc: string, force: boolean) => void;
+      };
+    };
+    effects.effects.triageCandidate = (a, note, choice) => triaged.push(`${a}:${note}:${choice}`);
+    effects.effects.triageQuestion = (a, title, choice) => triaged.push(`${a}:${title}:${choice}`);
+    effects.effects.deliverEligible = (a) => delivered.push(a);
+    effects.effects.finishClose = (a, force) => finished.push(`${a}:${force}`);
+    return { model, recorded, triaged, finished, delivered };
+  }
+
+  it("a and d decide the cursored candidate, never touching the inbox approve path", () => {
+    const { model, recorded, triaged } = digestModel();
+    expect(texts(model)[2]).toBe("░▓ Arc Lesson");
+    press(model, "a");
+    press(model, "d");
+    expect(triaged).toEqual(["dock-v2:Arc Lesson:deliver", "dock-v2:Arc Lesson:leave"]);
+    expect(recorded.approved).toEqual([]);
+    expect(recorded.discarded).toEqual([]);
+  });
+
+  it("a, c, and d take a question through resolve, carry, and drop", () => {
+    const { model, triaged } = digestModel();
+    press(model, "j", "a", "c", "d");
+    expect(triaged).toEqual([
+      "dock-v2:Tie order:resolve",
+      "dock-v2:Tie order:carry",
+      "dock-v2:Tie order:drop",
+    ]);
+  });
+
+  it("space unfolds and refolds the below-bar notes", () => {
+    const { model } = digestModel();
+    press(model, "j", "j");
+    expect(model.cursorRow()?.airlock?.kind).toBe("fold");
+    press(model, "space");
+    expect(texts(model)).toContain("  ▓ Uncited Hunch · uncited");
+    press(model, "space");
+    expect(texts(model)).not.toContain("  ▓ Uncited Hunch · uncited");
+  });
+
+  it("enter on the close row finishes, f forces, a delivers every eligible candidate", () => {
+    const { model, finished, delivered } = digestModel();
+    press(model, "j", "j", "j");
+    expect(model.cursorRow()?.airlock?.kind).toBe("finish");
+    press(model, "enter", "f", "a");
+    expect(finished).toEqual(["dock-v2:false", "dock-v2:true"]);
+    expect(delivered).toEqual(["dock-v2"]);
+  });
+
+  it("i lands on the digest, the inbox's fourth door, even when the cursor rests on a note", () => {
+    const { model } = digestModel();
+    press(model, "g");
+    expect(model.cursorRow()?.kind).toBe("note");
+    press(model, "i");
+    expect(model.cursorRow()?.airlock).toEqual({
+      arc: "dock-v2",
+      kind: "candidate",
+      key: "Arc Lesson",
+    });
+  });
+
+  it("enter on a candidate opens its note so it can be read before deciding", () => {
+    const { model } = digestModel();
+    press(model, "enter");
+    expect(model.currentLens()).toBe("note");
+    expect(model.focused()).toBe("Arc Lesson");
   });
 });

@@ -36,6 +36,7 @@ export interface FrameGeometry {
 
 export interface Viewport {
   scrollBack: number;
+  anchorTotal?: number;
   revealAt?: number;
   backtrackAt?: number;
   foldCursor?: number;
@@ -44,6 +45,7 @@ export interface Viewport {
 export interface Frame {
   lines: TranscriptLine[];
   scrollBack: number;
+  total: number;
 }
 
 export type MarkdownRenderer = typeof renderMarkdown;
@@ -64,11 +66,16 @@ export class TranscriptView {
     };
     const countAt = (at: number): number => rawLinesAt(at).length;
     const linesAt = (at: number): TranscriptLine[] => highlighted(at, viewport, rawLinesAt(at));
+    let total = 0;
+    for (let at = 0; at < entries.length; at += 1) total += countAt(at);
     const scrollBack =
       viewport.revealAt === undefined
-        ? viewport.scrollBack
+        ? anchoredScrollBack(viewport, total)
         : revealScroll(entries.length, countAt, viewport.revealAt, geometry.rows);
-    return windowFromEnd(entries.length, countAt, linesAt, scrollBack, geometry.rows);
+    return {
+      ...windowFromEnd(entries.length, countAt, linesAt, scrollBack, geometry.rows),
+      total,
+    };
   }
 
   private linesOf(
@@ -83,7 +90,7 @@ export class TranscriptView {
         ? this.refreshed(cached, entry, layout, stamp)
         : this.rendered(entry, layout, stamp);
     this.cache.set(entry, next);
-    return next.lines;
+    return streaming === undefined ? next.lines : withStreamCursor(next.lines, layout.marks);
   }
 
   private refreshed(
@@ -140,7 +147,7 @@ export function windowFromEnd(
   linesAt: (index: number) => TranscriptLine[],
   scrollBack: number,
   rows: number,
-): Frame {
+): Pick<Frame, "lines" | "scrollBack"> {
   const bottom = scrollBack;
   const top = scrollBack + rows;
   const picked: TranscriptLine[][] = [];
@@ -165,12 +172,23 @@ export function transcriptLines(
 ): TranscriptLine[] {
   return entries.flatMap((entry) => {
     const failed = entry.kind === "tool" && entry.failed;
-    const prefixed = entry.kind === "user" ? `› ${entry.text}` : entry.text;
-    return prefixed
-      .split("\n")
-      .flatMap((line) => wrap(line, width))
-      .map((text) => ({ kind: entry.kind, failed, text }));
+    const lines =
+      entry.kind === "user" ? promptedLines(entry.text, width) : plainLines(entry.text, width);
+    return lines.map((text) => ({ kind: entry.kind, failed, text }));
   });
+}
+
+const promptMark = "› ";
+const promptHang = " ".repeat(promptMark.length);
+
+function plainLines(text: string, width: number): string[] {
+  return text.split("\n").flatMap((line) => wrap(line, width));
+}
+
+function promptedLines(text: string, width: number): string[] {
+  return plainLines(text, Math.max(1, width - promptMark.length)).map((line, index) =>
+    index === 0 ? `${promptMark}${line}` : `${promptHang}${line}`,
+  );
 }
 
 const railWidth = 2;
@@ -270,6 +288,25 @@ function stampFor(entry: TranscriptEntry, marks: PageMarks, streaming: number | 
     case "info":
       return railBlank;
   }
+}
+
+function anchoredScrollBack(viewport: Viewport, total: number): number {
+  if (viewport.scrollBack === 0 || viewport.anchorTotal === undefined) return viewport.scrollBack;
+  return viewport.scrollBack + Math.max(0, total - viewport.anchorTotal);
+}
+
+function withStreamCursor(lines: TranscriptLine[], marks: PageMarks): TranscriptLine[] {
+  const last = lines.at(-1);
+  if (last === undefined) return lines;
+  const cursor = marks.streamCursor;
+  const cued: TranscriptLine = {
+    ...last,
+    text: `${last.text}${cursor}`,
+    ...(last.spans !== undefined && {
+      spans: [...last.spans, { text: cursor, tone: "meta" as const }],
+    }),
+  };
+  return [...lines.slice(0, -1), cued];
 }
 
 function highlighted(at: number, viewport: Viewport, lines: TranscriptLine[]): TranscriptLine[] {

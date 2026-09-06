@@ -101,6 +101,20 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("second");
   });
 
+  it("places the repo map between project instructions and user prompts", () => {
+    const prompt = buildSystemPrompt({
+      projectInstructions: "use tabs",
+      repoMap: "src/core.ts: widelyUsed",
+      prompts: { system: "be terse" },
+    });
+    expect(prompt.indexOf("use tabs")).toBeLessThan(prompt.indexOf("Repo map"));
+    expect(prompt.indexOf("src/core.ts: widelyUsed")).toBeLessThan(prompt.indexOf("be terse"));
+  });
+
+  it("omits the repo map section when the map is blank", () => {
+    expect(buildSystemPrompt({ repoMap: "  \n" })).toBe(buildSystemPrompt());
+  });
+
   it("treats regex metacharacters in patterns as literals", () => {
     const prompt = buildSystemPrompt({
       modelId: "gpt-5x1",

@@ -72,6 +72,11 @@ export class MemoryFlush {
     return this.flush(conversation);
   }
 
+  flushNow(conversation: readonly Message[]): Promise<FlushOutcome> {
+    if (!this.store.trusted || conversation.length === 0) return Promise.resolve(skipped());
+    return this.flush(conversation);
+  }
+
   compactionCompleted(): void {
     this.latched = false;
   }

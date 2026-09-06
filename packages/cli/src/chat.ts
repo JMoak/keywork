@@ -1,23 +1,30 @@
 import {
   type Agent,
-  type AgentDefinition,
+  type BotDefinition,
   type Checkpoints,
   type CommandRuntime,
   compactNow,
   contextBudgetFor,
   declaredContextWindow,
+  gatherReturnDelta,
   type MemoryFlush,
   type Message,
   type PermissionResolver,
   type Provider,
   renderCommand,
   replaySession,
+  type SendBehavior,
   type SessionStore,
   settleTurn,
   type ToolGuard,
   type TurnSettlement,
 } from "@keywork/engine";
-import { type McpServerConfig, type PromptsConfig, toError } from "@keywork/shared";
+import {
+  type McpServerConfig,
+  type ModelCapabilitiesConfig,
+  type PromptsConfig,
+  toError,
+} from "@keywork/shared";
 import {
   commandRuntime,
   parseSlashLine,
@@ -31,7 +38,7 @@ import {
   composeAgents,
   composeWorkspace,
 } from "./compose.ts";
-import { sweepOnClose } from "./memory.ts";
+import { citationTrail, sweepOnClose } from "./memory.ts";
 import { defaultSessionDir } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
 import { openOrResumeSession } from "./sessions/store.ts";
@@ -57,6 +64,8 @@ export interface ChatOptions {
   permissions?: PermissionResolver;
   presets?: PresetPort;
   mcpServers?: Record<string, McpServerConfig>;
+  repoMap?: "auto" | "off";
+  models?: ModelCapabilitiesConfig;
   userRoot?: string;
   checkpointsGitDir?: string;
 }
@@ -111,6 +120,11 @@ export async function persistNewMessages(
 
 type SlashHandler = (repl: Repl, args: string) => Promise<void>;
 
+const promptBehaviors: Readonly<Record<string, SendBehavior>> = {
+  queue: "queue",
+  steer: "steer",
+};
+
 const builtinCommands: Readonly<Record<string, SlashHandler>> = {
   session: async (repl) => printSessionInfo(repl),
   undo: (repl) => timeTravel(repl, "undo"),
@@ -121,7 +135,9 @@ const builtinCommands: Readonly<Record<string, SlashHandler>> = {
       repl.io.confirm(question),
     ),
   compact: (repl, args) => compactSession(repl, args),
-  agent: async (repl, args) => switchAgent(repl, args),
+  bot: (repl, args) => switchBot(repl, args),
+  steer: (repl, args) => submitPrompt(repl, args, "steer"),
+  queue: (repl, args) => submitPrompt(repl, args, "queue"),
 };
 
 const builtinCommandNames: readonly string[] = Object.keys(builtinCommands);
@@ -130,8 +146,10 @@ const exitWords = new Set(["exit", "quit"]);
 
 class Repl {
   agent: Agent;
-  activeAgent: AgentDefinition | undefined;
+  activeBot: BotDefinition | undefined;
   persisted: number;
+  private builtWith: BotDefinition | undefined;
+  private turns: Promise<unknown> = Promise.resolve();
 
   constructor(
     readonly options: ChatOptions,
@@ -143,8 +161,14 @@ class Repl {
     readonly runtime: CommandRuntime,
     seeded: readonly Message[],
   ) {
-    this.agent = this.buildAgent(undefined, seeded);
+    this.activeBot = this.botNamed(store.botBinding());
+    this.builtWith = this.activeBot;
+    this.agent = this.buildAgent(this.activeBot, seeded);
     this.persisted = seeded.length;
+  }
+
+  botNamed(name: string | undefined): BotDefinition | undefined {
+    return this.extensions.bots.find((bot) => bot.name === name);
   }
 
   get checkpoints(): Checkpoints | undefined {
@@ -155,25 +179,77 @@ class Repl {
     return this.composition.extensions;
   }
 
-  buildAgent(definition: AgentDefinition | undefined, history: readonly Message[]): Agent {
+  buildAgent(bot: BotDefinition | undefined, history: readonly Message[]): Agent {
     const agent = this.agents.build({
       provider: this.options.provider,
       guard: this.guard,
-      definition,
+      bot,
       history,
       sessionId: this.store.header.id,
     });
     wireStreamingOutput(agent, this.io);
+    agent.settleTurnsWith(() => this.afterTurn(agent));
     return agent;
   }
 
-  rebuild(history: readonly Message[]): void {
-    this.agent = this.buildAgent(this.activeAgent, history);
+  adopt(bot: BotDefinition | undefined, history: readonly Message[]): void {
+    const previous = this.agent;
+    this.agent = this.buildAgent(bot, history);
+    this.builtWith = bot;
     this.persisted = history.length;
+    this.agent.adoptQueue(previous);
+  }
+
+  rebuild(history: readonly Message[]): void {
+    this.adopt(this.activeBot, history);
+  }
+
+  dispatch(prompt: string, behavior: SendBehavior): Promise<void> {
+    if (this.agent.busy()) this.io.print(behavior === "steer" ? "  · steering" : "  · queued");
+    const turn = this.agent.send(prompt, { behavior }).then(
+      () => undefined,
+      (cause: unknown) => this.io.printError(`\nerror: ${toError(cause).message}`),
+    );
+    this.turns = this.turns.then(() => turn);
+    return turn;
+  }
+
+  drained(): Promise<void> {
+    return this.turns.then(() => undefined);
+  }
+
+  interrupt(): void {
+    this.agent.interrupt();
   }
 
   flush(): MemoryFlush | undefined {
     return this.agents.flushFor(this.store.header.id, this.options.provider);
+  }
+
+  private async afterTurn(agent: Agent): Promise<void> {
+    if (agent !== this.agent) return;
+    try {
+      printUsageLine(agent, this.io);
+      this.persisted = await persistNewMessages(
+        this.store,
+        agent.history(),
+        this.persisted,
+        this.checkpoints,
+      );
+      const settlement = await settleTurn({
+        store: this.store,
+        provider: agent.provider,
+        history: agent.history(),
+        budget: contextBudgetFor(declaredContextWindow(agent.provider)),
+        flush: this.flush(),
+      });
+      reportSettlement(settlement, this.io);
+      if (this.builtWith !== this.activeBot || settlement.history !== undefined) {
+        this.rebuild(settlement.history ?? agent.history());
+      }
+    } catch (cause) {
+      this.io.printError(`settling the turn failed: ${toError(cause).message}`);
+    }
   }
 
   async close(): Promise<void> {
@@ -200,6 +276,8 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     workspaceSlug: options.workspaceSlug,
     prompts: options.prompts,
     mcpServers: options.mcpServers,
+    repoMap: options.repoMap,
+    models: options.models,
     reportCheckpointsUnavailable: (message) => io.print(`can't undo: ${message}`),
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
     ...(options.checkpointsGitDir !== undefined && {
@@ -208,19 +286,30 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
   });
   reportExtensionFailures(composition.extensions, io);
   const guard = mutationGuard(io, composition.checkpoints);
+  const citations = citationTrail(composition.memory, () => composition.bootstrap);
+  citations.forSession(opened.store.header.id);
   const repl = new Repl(
     options,
     io,
     opened.store,
     composition,
-    composeAgents(composition, { permissions: options.permissions }),
+    composeAgents(composition, { permissions: options.permissions, citations }),
     guard,
     commandRuntime(options.cwd, guard),
     opened.seeded,
   );
   replaySession(opened.store, repl.agent.bus);
   greet(repl, opened.seeded.length);
+  if (opened.seeded.length > 0) await printReturnDelta(repl);
   return repl;
+}
+
+async function printReturnDelta(repl: Repl): Promise<void> {
+  const memory = repl.composition.memory();
+  if (memory === undefined) return;
+  const since = repl.store.stats().lastActivityAt;
+  const lines = await gatherReturnDelta({ since, workspace: memory.store }).catch(() => []);
+  if (lines.length > 0) repl.io.print(`since you were here: ${lines.join(" · ")}`);
 }
 
 async function runRepl(repl: Repl): Promise<void> {
@@ -228,17 +317,26 @@ async function runRepl(repl: Repl): Promise<void> {
     ...builtinCommandNames,
     ...repl.extensions.commands.map((command) => command.name),
   ]);
-  while (true) {
-    const line = (await repl.io.readLine("\n› ", { complete }))?.trim();
-    if (line === undefined || exitWords.has(line)) return;
-    if (line !== "") await handleLine(repl, line);
+  const stopListening = repl.io.onKey((key) => {
+    if (key.name === "escape" || (key.ctrl && key.name === "c")) repl.interrupt();
+  });
+  try {
+    while (true) {
+      const line = (await repl.io.readLine("\n› ", { complete }))?.trim();
+      if (line === undefined || exitWords.has(line)) break;
+      if (line !== "") await handleLine(repl, line);
+    }
+    await repl.drained();
+  } finally {
+    stopListening();
   }
 }
 
 async function handleLine(repl: Repl, line: string): Promise<void> {
   const slash = parseSlashLine(line);
-  if (slash === undefined) return submitPrompt(repl, line);
+  if (slash === undefined) return submitPrompt(repl, line, "queue");
   if (Object.hasOwn(builtinCommands, slash.name)) {
+    if (promptBehaviors[slash.name] === undefined) await repl.drained();
     return builtinCommands[slash.name]?.(repl, slash.args);
   }
   const invoked = resolveSlashCommand(repl.extensions.commands, line);
@@ -253,51 +351,25 @@ async function handleLine(repl: Repl, line: string): Promise<void> {
     },
   );
   if (prompt === undefined) return;
-  const definition = repl.extensions.agents.find((agent) => agent.name === invoked.command.agent);
-  await submitPrompt(repl, prompt, definition);
+  await submitPrompt(repl, prompt, "queue", repl.botNamed(invoked.command.bot));
 }
 
 async function submitPrompt(
   repl: Repl,
   prompt: string,
-  definition: AgentDefinition | undefined = repl.activeAgent,
+  behavior: SendBehavior,
+  bot: BotDefinition | undefined = repl.activeBot,
 ): Promise<void> {
-  const turnAgent =
-    definition === repl.activeAgent
-      ? repl.agent
-      : repl.buildAgent(definition, repl.agent.history());
-  await runTurn(turnAgent, prompt, repl.io);
-  printUsageLine(turnAgent, repl.io);
-  repl.persisted = await persistNewMessages(
-    repl.store,
-    turnAgent.history(),
-    repl.persisted,
-    repl.checkpoints,
-  );
-  const settlement = await settleTurn({
-    store: repl.store,
-    provider: turnAgent.provider,
-    history: turnAgent.history(),
-    budget: contextBudgetFor(declaredContextWindow(turnAgent.provider)),
-    flush: repl.flush(),
-  });
-  reportSettlement(settlement, repl.io);
-  if (turnAgent !== repl.agent || settlement.history !== undefined) {
-    repl.rebuild(settlement.history ?? turnAgent.history());
+  const text = prompt.trim();
+  if (text === "") {
+    repl.io.print(`usage: /${behavior} <prompt>`);
+    return;
   }
-}
-
-async function runTurn(agent: Agent, prompt: string, io: ChatIo): Promise<void> {
-  const stopListening = io.onKey((key) => {
-    if (key.name === "escape" || (key.ctrl && key.name === "c")) agent.interrupt();
-  });
-  try {
-    await agent.send(prompt);
-  } catch (cause) {
-    io.printError(`\nerror: ${toError(cause).message}`);
-  } finally {
-    stopListening();
+  if (bot !== repl.activeBot) {
+    await repl.drained();
+    repl.adopt(bot, repl.agent.history());
   }
+  void repl.dispatch(text, behavior);
 }
 
 async function compactSession(repl: Repl, instructions: string): Promise<void> {
@@ -312,32 +384,37 @@ async function compactSession(repl: Repl, instructions: string): Promise<void> {
   if (settlement.history !== undefined) repl.rebuild(settlement.history);
 }
 
-function switchAgent(repl: Repl, name: string): void {
-  const { agents } = repl.extensions;
+async function switchBot(repl: Repl, name: string): Promise<void> {
+  const { bots } = repl.extensions;
   if (name === "") {
-    listAgents(agents, repl.io);
+    listBots(bots, repl.io);
     return;
   }
-  const definition = agents.find((candidate) => candidate.name === name);
-  if (name !== "none" && definition === undefined) {
-    listAgents(agents, repl.io, `unknown agent "${name}"`);
+  const bot = repl.botNamed(name);
+  if (name !== "none" && bot === undefined) {
+    listBots(bots, repl.io, `no bot named ${name}`);
     return;
   }
-  repl.io.print(definition === undefined ? "back to the default agent" : `agent → ${name}`);
-  repl.activeAgent = definition;
+  repl.io.print(bot === undefined ? "bot released" : `bot → ${botLabel(bot)}`);
+  repl.activeBot = bot;
+  await repl.store.appendBotBinding(bot?.name);
   repl.rebuild(repl.agent.history());
 }
 
-function listAgents(agents: readonly AgentDefinition[], io: ChatIo, prefix?: string): void {
-  if (agents.length === 0) {
-    io.print("no agents yet, add one at .keywork/agents/<name>.md");
+function listBots(bots: readonly BotDefinition[], io: ChatIo, prefix?: string): void {
+  if (bots.length === 0) {
+    io.print("no bots yet, add one at .keywork/bots/<slug>/bot.md");
     return;
   }
   if (prefix !== undefined) io.print(prefix);
-  io.print("/agent <name> to switch · /agent none to clear");
-  for (const agent of agents) {
-    io.print(`  ${agent.name}${agent.description === undefined ? "" : ` · ${agent.description}`}`);
+  io.print("/bot <slug> to switch · /bot none to release");
+  for (const bot of bots) {
+    io.print(`  ${botLabel(bot)}${bot.description === undefined ? "" : ` · ${bot.description}`}`);
   }
+}
+
+function botLabel(bot: BotDefinition): string {
+  return `${bot.sigil} ${bot.name}`;
 }
 
 async function labelLeaf(repl: Repl, name: string): Promise<void> {
@@ -430,13 +507,13 @@ function greet(repl: Repl, seededCount: number): void {
   io.print(`session → ${store.file}`);
   if (seededCount > 0) io.print(`resumed ${seededCount} messages`);
   io.print(
-    `Type to start · Esc stops a turn · "exit" quits · /session stats · /undo takes back the last change · /compact shrinks old context · /label <name> bookmarks here · /preset switches permissions`,
+    `Type to start · a line typed mid-turn queues · /steer <text> interrupts and sends now · Esc stops a turn · "exit" quits · /session stats · /undo takes back the last change · /compact shrinks old context · /label <name> bookmarks here · /preset switches permissions`,
   );
   if (extensions.commands.length > 0) {
     io.print(`commands: ${extensions.commands.map((command) => `/${command.name}`).join(" ")}`);
   }
-  if (extensions.agents.length > 0) {
-    io.print(`agents (/agent <name>): ${extensions.agents.map((agent) => agent.name).join(", ")}`);
+  if (extensions.bots.length > 0) {
+    io.print(`bots (/bot <slug>): ${extensions.bots.map(botLabel).join(", ")}`);
   }
   if (extensions.skills.length > 0) {
     io.print(`skills: ${extensions.skills.map((skill) => skill.name).join(", ")}`);

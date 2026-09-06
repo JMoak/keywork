@@ -13,6 +13,6 @@ export function defineTool<Schema extends z.ZodType>(options: {
     description: options.description,
     parameters: z.toJSONSchema(options.schema),
     ...(options.mutates !== undefined && { mutates: options.mutates }),
-    execute: (args, signal) => options.run(options.schema.parse(args), signal),
+    execute: async (args, signal) => options.run(options.schema.parse(args), signal),
   };
 }

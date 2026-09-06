@@ -1,3 +1,4 @@
+import { toError } from "@keywork/shared";
 import { type Chord, parseChord } from "./keys.ts";
 import { type McpAction, McpPaneModel, type McpServerView, stateGlyph } from "./mcp-pane-model.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
@@ -13,7 +14,8 @@ import {
   toneInk,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
-import { PaneTrayModel, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import type { PointerEvent } from "./pointer.ts";
 import type { Theme } from "./theme.ts";
 
 export interface McpPanePort {
@@ -43,6 +45,7 @@ export class McpPane implements Pane {
   readonly tray: PaneTrayModel;
   private readonly tasks: PaneTasks;
   private lastPageRows = 20;
+  private trayFirstRow = 0;
   private readonly unsubscribe: (() => void) | undefined;
 
   constructor(
@@ -91,6 +94,10 @@ export class McpPane implements Pane {
     return this.model.handleKey(chord, this.lastPageRows);
   }
 
+  handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
+    return paneTrayMouse(this.tray, this.trayFirstRow, local, event);
+  }
+
   settled(): Promise<void> {
     return this.tasks.settled();
   }
@@ -100,16 +107,15 @@ export class McpPane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
-    const { theme, height, width } = context;
-    const innerWidth = paneContentWidth(width);
-    const tray = this.tray.open ? paneTrayView(this.tray, innerWidth, theme) : undefined;
-    this.lastPageRows = Math.max(0, paneContentHeight(height) - (tray?.rows ?? 0));
-    return paneChrome(
-      context,
-      this.title(),
-      ...this.bodyLines(theme, this.lastPageRows, innerWidth),
-      ...(tray?.children ?? []),
-    );
+    const { theme } = context;
+    const innerWidth = paneContentWidth(context);
+    const tray = this.tray.open
+      ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
+      : undefined;
+    this.lastPageRows = Math.max(0, paneContentHeight(context) - (tray?.rows ?? 0));
+    const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
+    this.trayFirstRow = 2 + body.length;
+    return paneChrome(context, this.title(), ...body, ...(tray?.children ?? []));
   }
 
   private trayCommands(): TrayCommand[] {
@@ -144,7 +150,7 @@ export class McpPane implements Pane {
     try {
       this.model.setTools(name, { tools: await this.port.listTools(name) });
     } catch (cause: unknown) {
-      this.model.setTools(name, { error: (cause as Error).message });
+      this.model.setTools(name, { error: toError(cause).message });
     }
   }
 

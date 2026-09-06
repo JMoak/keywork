@@ -21,11 +21,5 @@ export function mcpPanePort(registry: McpRegistryLike): McpPanePort {
 }
 
 function serverView(status: McpServerStatus): McpServerView {
-  return {
-    name: status.name,
-    state: status.state,
-    toolCount: status.toolCount,
-    enabled: status.enabled,
-    ...(status.lastError !== undefined && { lastError: status.lastError }),
-  };
+  return { ...status };
 }

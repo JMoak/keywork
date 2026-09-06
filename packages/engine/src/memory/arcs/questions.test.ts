@@ -1,7 +1,7 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { MemoryStore, type MemoryStoreOptions } from "../store.ts";
 import {
   ArcOpenQuestions,
@@ -10,21 +10,13 @@ import {
   questionsDir as questionsDirName,
 } from "./questions.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-questions-");
 
 async function questionsDir(options: Partial<MemoryStoreOptions> = {}): Promise<{
   questions: ArcOpenQuestions;
   dir: string;
 }> {
-  const root = await mkdtemp(join(tmpdir(), "keywork-questions-"));
-  cleanups.push(root);
+  const root = await scratch();
   const store = new MemoryStore({
     vaultRoot: root,
     trusted: true,

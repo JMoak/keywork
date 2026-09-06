@@ -119,6 +119,14 @@
 > package + `workflows.test.ts` split, C16 R-15 sweep + `tui/slug.ts` -> `slug-ink.ts` + `/doctor`
 > unification through `crash-log.ts` and `doctorReport`, decision 5 (shell drivers) if taken.
 
+> **Status (2026-09-03): Closeout wave for engine core, providers, shared and scripts LANDED.**
+> Every P2 row in those four areas was re-verified against the tree and every one is closed
+> (26 fixed with a named test, 1 no longer applicable, 1 recorded as designed); R-05, R-08, R-12,
+> S-17 verified closed; S-05 / S-16 stay by decisions 6 and 9. New in the wave: `childClosed`
+> hoisted into `tools/command-run.ts`, `defineTool.execute` always returns a promise, abort
+> coverage for both shell drivers. Decision 5 (shell-driver absorption) is still Jordan's; the
+> recommendation is in the ledger at the end of this file.
+
 ## The short version
 
 Statement-level quality is genuinely high and consistent across every package: 175 non-test
@@ -504,3 +512,118 @@ item stays in the tree and the plan rows above are marked accordingly.
    Removed from C12.
 10. **`/doctor`:** unify. The TUI `/doctor` runs the same diagnostics as `keywork doctor`
     with the crash log as one section, so both surfaces read the same report. C16 carries it.
+
+## Closeout wave · 2026-09-03 (engine core, providers, shared, scripts)
+
+One lane, read-only verification first, then fixes. Every P2 row from the four areas was
+re-read at its current location (the audit's line numbers are stale; the tree moved through
+waves A to D and 113). Verdicts: **fixed** means the behavior is in the tree with the named
+test; **n/a** means the code the row described no longer exists; **designed** means the
+behavior stands by intent and is now pinned by a test that says so.
+
+### Engine core
+
+| Row | Verdict | Evidence |
+|---|---|---|
+| duplicate `bus.on(fn)` collapses to one entry | fixed | `bus.ts` keeps one `Registration` per `on()`; `bus.test` "treats each on() as its own registration, so one unsubscribe removes only that one" |
+| `SentinelScanner.buffer` unbounded on newline-free output | fixed | `shell-session.ts` `flushOverlongLine` caps at `maxOutputChars`; `shell-session.test` "caps a newline-free flood without buffering it whole" |
+| `bash.ts` spawns before honoring an already-aborted signal | fixed, now pinned | `execute` calls `signal?.throwIfAborted()` first; new `tools.test` "refuses an already-aborted signal before spawning anything" (asserts the command's side effect never happened) |
+| `redactSecrets` recursion has no cycle guard | fixed | `diagnostics.ts` threads a `WeakSet` of ancestors; `diagnostics.test` "marks cycles as circular while still visiting shared, acyclic branches" |
+| `Agent.history()` hands out the live array | fixed | `history()` returns a copy; `agent.test` "hands out a history snapshot that later turns do not mutate" |
+| settle-after-exit leaves the process group alive by design but unrecorded | designed | `tools.test` "settles when a backgrounded child keeps the pipes open, leaving that child running" names the intent |
+
+### Providers
+
+| Row | Verdict | Evidence |
+|---|---|---|
+| SSE size ceiling checked before draining complete lines | fixed (C12) | `sse.test` "sseJsonEvents size ceiling": exactly-at-ceiling accepted, one over fails, chunk-boundary table |
+| null body throws a plain `Error` that `isTransient` cannot classify | fixed | `ProviderEmptyResponseError` carries `transient = true`; `transport.test` "fails with a typed transient error when the response has no body"; `retry.test` "retries an empty response body" |
+| retry has no jitter, ceiling, or `Retry-After` | fixed (C12) | `retry.ts` `delayBefore`: half-jittered exponential, `maxDelayMs`, `retryAfterMs` honored; `retry.test` backoff cases |
+| responses protocol treats `response.incomplete` as success and drops refusals | fixed (C12) | `openai-responses.test` "fails the turn with the cut-off reason when the response is incomplete", "streams a refusal as the model's text" |
+| malformed tool arguments pass through as a raw string in three places | fixed (R-12) | one parse site, `wire-parts.ts` `ToolCallAssembler`; `wire-parts.test` "keeps unparseable arguments as the raw text for the model to see" (the Anthropic provider reuses the assembler) |
+| `lastFailure` modeled and rendered but never written | fixed | written by `cli/src/inference/connections.ts` on a failed verification and rendered in `connect-model.ts` |
+| `Object.freeze` on the binding is shallow | n/a | no `Object.freeze` remains in any package; the registry hands out `readonly` views instead |
+
+### Shared
+
+| Row | Verdict | Evidence |
+|---|---|---|
+| `writeWorkspaceDeclaration` checks only upward | fixed (A11) | `rejectEnclosingDeclaration` + `rejectEnclosedDeclaration`; `workspace.test` "rejects a declaration nested inside another declared workspace" |
+| `updateWorkspaceDeclaration` skips the slug guard | fixed (S-15) | one `namedDeclarationFileFor` throws `ConfigError` on `slugProblem`; `named-workspaces.test` "refuses to create a workspace under an invalid slug" |
+| `config?.tools?.[name]` leaks prototype keys | fixed (A11) | `permissionPolicy` looks tools up in a `Map`; `permissions.test` asserts `policy("hasOwnProperty", {})` is `undefined` |
+| trust-file writes are not atomic | fixed (C4) | `TrustStore` over `jsonFileStore` (tmp + rename); `store-atomic-write.test` |
+| `TrustStoreOptions.home` overrides the blanket check but not the file path | fixed | file derives from the same `home`; `store.test` "keeps the trust file under an overridden home" |
+
+### Scripts, CI, installers
+
+| Row | Verdict | Evidence |
+|---|---|---|
+| harness can leak cwd and a temp dir | fixed (B6) | `chdir` and `beforeBoot` inside the try; `harness.test` "restores the working directory and removes the temp root when beforeBoot throws" |
+| an unset version ships `keywork undefined` and passes smoke | fixed (B5) | `release/build-inputs.ts`; `release.test` "fails by name when the manifest has no version instead of shipping keywork undefined" |
+| `build-npm --outdir ..` deletes the repo | fixed (B5) | `outdirInside("dist", ...)` refuses anything outside `dist/` before `rmSync` |
+| release publishes without running checks, write scope on every job | fixed (B5) | `release.yml`: `contents: read` at the top, the check job runs `check` + `test` + `e2e`, `contents: write` only on the release job, `id-token: write` only on publish |
+| `soak.yml` interpolates an input into a shell command | fixed (B5) | `TURNS` passes through `env:`; the only `${{ }}` sits in a step `name:` |
+| `ci.yml` / `soak.yml` declare no `permissions` | fixed (B5) | both declare `contents: read` |
+| checkpoint-open failures swallowed twice | fixed (B6) | harness warns `checkpoints unavailable for ...` with the reason |
+| installers' checksum wording overstates the assurance | fixed (B4) | both installers say "unsigned, same origin: this catches a corrupt download" |
+| `install.ps1` arch detection misses 32-bit-on-x64 and ARM64 | fixed (B4) | `Get-MachineArchitecture` reads `PROCESSOR_ARCHITEW6432`; ARM64 refuses with a message |
+| `paneTitleCount` is a substring tally | fixed (S-11) | `frame-queries.ts` matches title rows; `frame-queries.test` "counts session pane title rows" and "ignores session names mentioned in transcript text" |
+| mask truncation collapses distinct short values | fixed (B6) | `mask.ts` `samePadded` pads and refuses a longer placeholder; `mask.test` "refuses a placeholder longer than its match instead of truncating it" |
+
+### Structure and redundancy rows in this territory
+
+- **R-05 / C5 hoist:** done in Wave C (`tools/command-run.ts`: constants, `scrubbedEnv`,
+  `BoundedOutput`, `CommandRun` settle machine, result and failure builders). This wave hoisted the
+  last shared piece, `childClosed`, so neither driver builds the close promise by hand. What still
+  differs between `bash.ts` (144 lines) and `shell-session.ts` (255 lines) is exactly the two
+  designs: spawn-per-command with `killTree` on timeout, versus one live shell with sentinel
+  framing, a command queue and shell-death recovery.
+- **R-08:** closed; `capabilities.ts`, `prompt.ts` and `trust/permissions.ts` all read
+  `@keywork/shared` `glob.ts` (`mostSpecificMatch` / `mostSpecificRule`).
+- **R-12:** closed; `imageDataUrl`, the tool-call assembler and `bearerHeaders` each have one
+  home; `formatReference` in `inference/references.ts`. `toWireTool` appears three times on
+  purpose: chat-completions, responses and Messages each have their own tool envelope.
+- **S-17:** the MCP fixture lives at `engine/src/testing/mcp-fixture-server.ts`;
+  `branch_summary` stays (decision 7).
+- **S-05 / S-16:** untouched by decisions 6 and 9.
+
+### Changes this wave
+
+- `tools/command-run.ts` exports `childClosed(child)`; `bash.ts` and `shell-session.ts` use it.
+- `tools/define.ts`: `execute` is `async`, so a schema failure or an already-aborted signal is a
+  rejection, never a synchronous throw out of a function typed `Promise<string>`. New
+  `define.test.ts` pins both cases plus the JSON-Schema publication.
+- Abort coverage that did not exist for either driver: `tools.test` "refuses an already-aborted
+  signal before spawning anything", "kills the command when the signal aborts mid-run";
+  `shell-session.test` "refuses an already-aborted signal without touching the shell", "kills the
+  shell when the signal aborts mid-command and starts fresh next time".
+
+### Decision 5, the recommendation (Jordan)
+
+**Recommend: keep both drivers; do not absorb.** After the hoist the overlap is gone, and what
+remains is two honest behaviors, not one behavior written twice. The one-shot driver
+(`bashTool`) is what headless `keywork run`, the e2e harness and any caller wanting a
+hermetic command get: nothing persists between calls, a timeout kills a process tree and the
+next call starts clean. The persistent driver (`persistentBashTool` over `ShellSession`) is what
+the panes use so `cd`, exports and activated environments survive across tool calls. Absorbing
+one-shot into the session ("a session that resets after every command") would make every
+one-shot command pay for sentinel framing, a shell that stays resident between calls and
+the shell-death recovery path, and would make the hermetic guarantee depend on a `reset()`
+being called rather than on there being no state to leak. If taken, the user-visible change
+is nil today and the risk is a resident shell per headless run. If not taken, nothing changes
+and R-05 closes as "two drivers, one shared kernel". Reversible either way; the shared kernel
+is the part that mattered.
+
+### Assumptions Jordan may reverse
+
+1. `defineTool.execute` returning a rejected promise for bad arguments (instead of throwing
+   synchronously) is the intended contract for every `Tool`.
+2. The three `toWireTool` functions stay separate because the envelopes differ; a shared
+   `toolEnvelope(shape)` was judged a worse read.
+3. The "settle after exit leaves a backgrounded child running" behavior is design, pinned by
+   its test rather than changed.
+
+**Gate (lane-run):** `check:types` clean; biome clean on every file this lane touched; vitest over
+`packages/engine`, `packages/shared`, `scripts`: 106 files, 1314 passed / 1 skipped, plus the 2
+failures in `scripts/e2e/scenarios/index.test.ts` that belong to the bots lane's in-progress
+`bots-tour` scenarios (its `index.ts` import order also fails biome); none are this lane's.

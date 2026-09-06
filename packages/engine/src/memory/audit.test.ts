@@ -1,18 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { describe, expect, it } from "vitest";
 import { auditLine, parseAuditLog } from "./audit.ts";
 import { MemoryStore } from "./store.ts";
 
-const cleanups: string[] = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const root = cleanups.pop();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-  }
-});
+const scratch = scratchDirs("keywork-audit-");
 
 describe("parseAuditLog", () => {
   it("round-trips audit lines and skips anything that is not one", () => {
@@ -24,8 +15,7 @@ describe("parseAuditLog", () => {
   });
 
   it("reads back what the store audited, oldest first", async () => {
-    const root = await mkdtemp(join(tmpdir(), "keywork-audit-"));
-    cleanups.push(root);
+    const root = await scratch();
     let tick = 0;
     const store = new MemoryStore({
       vaultRoot: root,

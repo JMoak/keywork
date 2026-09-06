@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, rmSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import {
   listWorkspaces,
@@ -13,7 +14,9 @@ import {
 import type { WorkspaceChoice, WorkspacesPort } from "@keywork/tui";
 import { type CommandIo, type Confirm, resolveCommandIo } from "./command-io.ts";
 import { exitCodes } from "./dispatch.ts";
-import { keyworkHome } from "./paths.ts";
+import { linkFocusDir, unlinkFocusDir } from "./link.ts";
+import { defaultSessionDir, keyworkHome } from "./paths.ts";
+import { scanSessions } from "./sessions/store.ts";
 
 export interface WorkspaceRecall {
   recall(cwd: string): string | undefined;
@@ -40,6 +43,7 @@ export function selectWorkspace(
   recall: WorkspaceRecall,
   warn: (line: string) => void,
 ): string | undefined {
+  if (requested === defaultWorkspaceWord) return undefined;
   const slug = requested ?? recall.recall(cwd);
   if (slug === undefined || openWorkspace(cwd, slug) !== undefined) return slug;
   warn(
@@ -49,6 +53,17 @@ export function selectWorkspace(
   );
   return undefined;
 }
+
+export function unknownWorkspaceProblem(
+  cwd: string,
+  requested: string | undefined,
+): string | undefined {
+  if (requested === undefined || requested === defaultWorkspaceWord) return undefined;
+  if (openWorkspace(cwd, requested) !== undefined) return undefined;
+  return `no workspace named "${requested}" here · keywork workspace list shows what exists`;
+}
+
+const defaultWorkspaceWord = "default";
 
 export async function workspaceCommand(
   args: readonly string[],
@@ -83,12 +98,23 @@ export interface WorkspacesPortOptions {
   current: string | undefined;
   recall: WorkspaceRecall;
   requestSwitch(slug: string | undefined): void;
+  sessionDirFor?(slug: string | undefined): string;
 }
 
 export function workspacesPort(options: WorkspacesPortOptions): WorkspacesPort {
   const root = resolveAnchor(options.cwd).root;
+  const sessionDirFor = options.sessionDirFor ?? ((slug) => defaultSessionDir(options.cwd, slug));
   return {
-    list: async () => listWorkspaces(root).map((slot) => choiceOf(slot, options.current)),
+    list: () =>
+      Promise.all(
+        listWorkspaces(root).map(async (slot) => ({
+          ...choiceOf(slot, options.current),
+          focusDirs: focusDirsOf(options.cwd, slot),
+          ...(await sessionFacts(sessionDirFor(slot.slug))),
+        })),
+      ),
+    linkFocusDir: async (slug, dir) => linkFocusDir(options.cwd, slug, dir),
+    unlinkFocusDir: async (slug, dir) => unlinkFocusDir(options.cwd, slug, dir),
     create: async (slug) => {
       if (openWorkspace(options.cwd, slug) !== undefined) {
         throw new Error(`a workspace named ${slug} already exists · /workspace ${slug} opens it`);
@@ -109,13 +135,33 @@ export function nameFromSlug(slug: string): string {
   return slug.split("-").filter(Boolean).join(" ");
 }
 
-function choiceOf(slot: WorkspaceSlot, current: string | undefined): WorkspaceChoice {
+type SessionFacts = Pick<WorkspaceChoice, "sessions" | "lastUsed">;
+
+function choiceOf(
+  slot: WorkspaceSlot,
+  current: string | undefined,
+): Omit<WorkspaceChoice, "focusDirs" | keyof SessionFacts> {
   return {
     slug: slot.slug,
     name: slot.problem === undefined ? (slot.name ?? "default") : "(unavailable)",
     declared: slot.declared,
     current: slot.slug === current,
     notes: noteCount(slot.vaultPath),
+  };
+}
+
+function focusDirsOf(cwd: string, slot: WorkspaceSlot): readonly string[] {
+  if (!slot.declared || slot.problem !== undefined) return [];
+  return openWorkspace(cwd, slot.slug)?.focusDirs ?? [];
+}
+
+async function sessionFacts(dir: string): Promise<SessionFacts> {
+  const { stores } = await scanSessions(dir);
+  const used = stores.filter((store) => store.stats().entries > 0);
+  const touched = await Promise.all(used.map((store) => stat(store.file).then((s) => s.mtimeMs)));
+  return {
+    sessions: used.length,
+    lastUsed: touched.length === 0 ? undefined : Math.max(...touched),
   };
 }
 

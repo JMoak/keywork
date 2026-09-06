@@ -397,6 +397,25 @@ describe("ConnectModel editing", () => {
     expect(m.stage.kind === "editor" && m.stage.draft.credential).toBe("env:MY_KEY");
   });
 
+  it("cycles the protocol through every declared protocol in both directions", () => {
+    const { model: m } = model(fakePort());
+    m.open("openai");
+    const protocolAfter = (key: string): string | undefined => {
+      m.handleKey(chord(key), undefined);
+      return m.stage.kind === "editor" ? m.stage.draft.protocol : undefined;
+    };
+    expect(protocolAfter("right")).toBe("responses");
+    expect(protocolAfter("right")).toBe("anthropic-messages");
+    expect(protocolAfter("right")).toBe("chat-completions");
+    expect(protocolAfter("left")).toBe("anthropic-messages");
+  });
+
+  it("names the anthropic-messages protocol as a fact", () => {
+    expect(connectionFacts({ ...lab, protocol: "anthropic-messages" }, false)).toContain(
+      "anthropic-messages",
+    );
+  });
+
   it("pastes into the selected text or secret field and nowhere else", () => {
     const { model: m } = model(fakePort());
     m.open("openai");

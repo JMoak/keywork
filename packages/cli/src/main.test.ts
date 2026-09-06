@@ -3,21 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MockProvider, type Provider, textTurn } from "@keywork/engine";
 import { TrustStore, writeNamedWorkspaceDeclaration } from "@keywork/shared";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { scratchDirs } from "@keywork/shared/testing";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { usage } from "./dispatch.ts";
 import { composeInference } from "./inference/runtime.ts";
 import { type MainSeams, main, runUntilSwitch } from "./main.ts";
 import { defaultSessionDir } from "./paths.ts";
 
-const tempDirs: string[] = [];
+const tempDir = scratchDirs("keywork-main-");
 const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 let home = "";
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "keywork-main-"));
-  tempDirs.push(dir);
-  return dir;
-}
 
 beforeAll(async () => {
   home = await mkdtemp(join(tmpdir(), "keywork-main-home-"));
@@ -29,10 +24,6 @@ afterAll(async () => {
   process.env.HOME = savedHome.HOME;
   process.env.USERPROFILE = savedHome.USERPROFILE;
   await rm(home, { recursive: true, force: true });
-});
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 interface Invocation {
@@ -233,3 +224,43 @@ function recordingProvider(systemPrompts: string[]): Provider {
     },
   };
 }
+
+describe("--workspace on run and chat", () => {
+  it("run refuses an unknown slug as a typed usage failure, exit 2, on the JSON stream too", async () => {
+    const cwd = await tempDir();
+    const plain = await invoke(["run", "hi", "--workspace", "ghost"], { cwd });
+    expect(plain.code).toBe(2);
+    expect(plain.err.join("\n")).toContain('keywork run: no workspace named "ghost" here');
+    expect(plain.err.join("\n")).not.toContain("opening the default");
+
+    const json = await invoke(["run", "hi", "--workspace", "ghost", "--json"], { cwd });
+    expect(json.code).toBe(2);
+    expect(JSON.parse(json.out.join("\n"))).toMatchObject({
+      type: "run.finished",
+      outcome: "usage",
+      exitCode: 2,
+      error: expect.stringContaining('no workspace named "ghost"'),
+    });
+  });
+
+  it("chat refuses an unknown slug with the usage block, exit 2, before touching inference", async () => {
+    const cwd = await tempDir();
+    const { code, err } = await invoke(["chat", "--workspace", "ghost"], {
+      cwd,
+      interactive: true,
+    });
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain('keywork: no workspace named "ghost" here');
+    expect(err.join("\n")).toContain("Usage:");
+  });
+
+  it("run accepts the word default as the default slot and a declared slug as itself", async () => {
+    const cwd = await tempDir();
+    writeNamedWorkspaceDeclaration(cwd, "foo", { name: "Foo" });
+    const chosen = await invoke(["run", "hi", "--workspace", "default"], { cwd });
+    expect(chosen.code).toBe(3);
+    const named = await invoke(["run", "hi", "--workspace", "foo"], { cwd });
+    expect(named.code).toBe(3);
+    expect([...chosen.err, ...named.err].join("\n")).not.toContain("no workspace named");
+  });
+});

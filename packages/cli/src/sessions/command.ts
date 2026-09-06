@@ -1,6 +1,7 @@
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  describeBinding,
   messageText,
   type SessionEntry,
   SessionStore,
@@ -127,8 +128,8 @@ function describeEntry(entry: SessionEntry): string {
       return `label ${entry.label ?? "(cleared)"} → ${entry.targetId.slice(0, 8)}`;
     case "session_info":
       return `named "${entry.name ?? ""}"`;
-    case "arc_binding":
-      return entry.arc === undefined ? "arc released" : `arc → ${entry.arc}`;
+    case "binding":
+      return describeBinding(entry);
     case "model_change":
       return `model → ${entry.provider}/${entry.modelId}`;
     case "thinking_level_change":

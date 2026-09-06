@@ -1,30 +1,71 @@
 import { Box, Text } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
 import { type GlyphSupport, resolveMark } from "../capability.ts";
-import { paneBorder, rampPositions } from "../chroma.ts";
+import { dimmedTheme, lifecycleChrome, rampColor, rampPositions } from "../chroma.ts";
 import type { Flavor } from "../flavor.ts";
-import type { Rect, Screen } from "../geometry.ts";
-import { minPaneSize } from "../layout.ts";
+import { fullRect, type Rect, type Screen } from "../geometry.ts";
 import { pinMark } from "../marks.ts";
-import type { PaneView } from "../pane.ts";
+import type { ChromeWeight, LifecycleState, PaneView } from "../pane.ts";
+import { hasHeaderRow, isSeamed, paneContentHeight, paneContentWidth } from "../pane-chrome.ts";
+import { drawnRect } from "../pane-geometry.ts";
 import type { Theme } from "../theme.ts";
+import {
+  anchorOutline,
+  fieldOf,
+  framedByOutline,
+  onOutline,
+  type SeamCell,
+  type SeamField,
+  type StrokeWeight,
+  seamCells,
+  seamsView,
+} from "./seams.ts";
 import { type StatusBarInputs, statusBar } from "./status-bar.ts";
 
 export const frameChrome = { statusRows: 1 } as const;
 export const pointerPlaneId = "pointer-plane";
+export const idleMainId = "idle-main";
 const pointerPlaneZIndex = 1000;
+
+export type FocusOutline = "frame" | "grid";
 
 export interface FrameInputs extends StatusBarInputs {
   screen: Screen;
+  chrome: ChromeWeight;
+  gap: number;
+  dim?: boolean;
+  focusOutline?: FocusOutline;
   instruments: Flavor["instruments"];
   glyphs: GlyphSupport;
   arcOf(paneId: string): string | undefined;
 }
 
-export function screenWithin(renderer: { width: number; height: number }): Screen {
+export function frameInset(chrome: ChromeWeight): number {
+  return isSeamed(chrome) ? 1 : 0;
+}
+
+export function idleMainLines(tip: string | undefined): readonly string[] {
+  return withTip(
+    ["· main ·", "ctrl+k s starts a session here", "ctrl+k shift+l/h pushes a docked pane in"],
+    tip,
+  );
+}
+
+export function noSessionsLines(tip: string | undefined): readonly string[] {
+  return withTip(
+    ["no sessions open", "ctrl+k s starts one · ctrl+p go · / commands · ctrl+q quits"],
+    tip,
+  );
+}
+
+export function screenWithin(
+  renderer: { width: number; height: number },
+  chrome: ChromeWeight,
+): Screen {
+  const inset = frameInset(chrome);
   return {
-    width: renderer.width,
-    height: Math.max(0, renderer.height - frameChrome.statusRows),
+    width: Math.max(0, renderer.width - 2 * inset),
+    height: Math.max(0, renderer.height - 2 * inset - frameChrome.statusRows),
   };
 }
 
@@ -78,7 +119,7 @@ function body(core: AppCore, inputs: FrameInputs) {
   if (rects.size === 0) {
     return Box(
       { width: screen.width, height: screen.height, flexDirection: "row" },
-      emptyView(theme),
+      emptyView(theme, core.tip()),
     );
   }
   const idleMain = core.layout.emptyMainRect(screen);
@@ -87,14 +128,77 @@ function body(core: AppCore, inputs: FrameInputs) {
     const arc = inputs.arcOf(id);
     return arc === undefined ? undefined : inputs.arcOrdinal(arc);
   });
+  const seamed = isSeamed(inputs.chrome);
+  const inset = frameInset(inputs.chrome);
+  const layoutField = fullRect(screen);
+  const drawn = (rect: Rect): Rect => shifted(drawnRect(rect, layoutField, inputs), inset);
+  const hueOf = (id: string): string => rampColor(theme.ramp, sweep.get(id) ?? 0);
+  const unfocusedTheme = inputs.dim === true ? dimmedTheme(theme) : theme;
   return Box(
-    { width: screen.width, height: screen.height },
+    { width: screen.width + 2 * inset, height: screen.height + 2 * inset },
     ...[...rects].map(([id, rect]) =>
-      placedBox(rect, paneViewFor(core, inputs, id, rect, id === focused, sweep.get(id) ?? 0)),
+      placedBox(
+        drawn(rect),
+        paneViewFor(core, inputs, id, drawn(rect), id === focused, hueOf(id), unfocusedTheme),
+      ),
     ),
-    ...(idleMain === undefined ? [] : [placedBox(idleMain, idleMainView(theme))]),
-    ...(dropPreview === undefined ? [] : [dropPreviewBox(dropPreview, theme)]),
+    ...(idleMain === undefined
+      ? []
+      : [placedBox(drawn(idleMain), idleMainView(theme, hasHeaderRow(inputs.chrome), core.tip()))]),
+    ...(seamed
+      ? [seamsLayer(core, inputs, rects, idleMain, focused, hueOf, inset, core.leaderArmed)]
+      : []),
+    ...(dropPreview === undefined ? [] : [dropPreviewBox(shifted(dropPreview, inset), theme)]),
   );
+}
+
+function seamsLayer(
+  core: AppCore,
+  inputs: FrameInputs,
+  rects: ReadonlyMap<string, Rect>,
+  idleMain: Rect | undefined,
+  focused: string | undefined,
+  hueOf: (id: string) => string,
+  inset: number,
+  navigating: boolean,
+) {
+  const { theme, screen } = inputs;
+  const framed = new Map([...rects].map(([id, rect]) => [id, shifted(rect, inset)]));
+  if (idleMain !== undefined) framed.set(idleMainId, shifted(idleMain, inset));
+  const viewport = {
+    width: screen.width + 2 * inset,
+    height: screen.height + 2 * inset,
+  };
+  const field: SeamField = fieldOf(viewport, inset);
+  const anchored = focused === undefined ? undefined : framed.get(focused);
+  const outline = anchored === undefined ? undefined : anchorOutline(anchored, field.field);
+  const outlineOf = (id: string, isFocused: boolean): string =>
+    lifecycleChrome(lifecycleOf(core, id), isFocused, hueOf(id), theme).borderColor;
+  const ink = (cell: SeamCell): string => {
+    if (navigating && cell.ring) return theme.accent;
+    if (focused !== undefined && outline !== undefined && onOutline(cell, outline)) {
+      return outlineOf(focused, true);
+    }
+    if (cell.ring) return theme.border;
+    return cell.owner === undefined || !rects.has(cell.owner)
+      ? theme.border
+      : outlineOf(cell.owner, false);
+  };
+  const stroke = (cell: SeamCell): StrokeWeight => (navigating && cell.ring ? "heavy" : "light");
+  const cells = seamCells(framed, field);
+  const framedCells =
+    outline === undefined || inputs.focusOutline === "grid"
+      ? cells
+      : framedByOutline(cells, outline, (cell) => !(navigating && cell.ring));
+  return seamsView(framedCells, ink, inputs.glyphs, stroke);
+}
+
+function lifecycleOf(core: AppCore, id: string): LifecycleState {
+  return core.panes.get(id)?.lifecycle?.() ?? "idle";
+}
+
+function shifted(rect: Rect, inset: number): Rect {
+  return { ...rect, x: rect.x + inset, y: rect.y + inset };
 }
 
 function paneViewFor(
@@ -103,10 +207,12 @@ function paneViewFor(
   id: string,
   rect: Rect,
   focused: boolean,
-  rampPosition: number,
+  hue: string,
+  unfocusedTheme: Theme,
 ): PaneView {
-  const { theme } = inputs;
-  if (rect.width < minPaneSize.width || rect.height < minPaneSize.height) {
+  const { chrome } = inputs;
+  const theme = focused ? inputs.theme : unfocusedTheme;
+  if (paneContentWidth({ ...rect, chrome }) < 1 || paneContentHeight({ ...rect, chrome }) < 1) {
     return overflowedView(theme);
   }
   const view = core.panes.get(id)?.view({
@@ -114,7 +220,10 @@ function paneViewFor(
     focused,
     width: rect.width,
     height: rect.height,
-    borderColor: paneBorder(theme, rampPosition, focused),
+    chrome: inputs.chrome,
+    costs: core.costsShown,
+    hue,
+    glyphs: inputs.glyphs,
     instruments: inputs.instruments,
     ...(core.layout.pinned(id) && { pinMark: resolveMark(pinMark, inputs.glyphs) }),
   });
@@ -151,21 +260,17 @@ function dropPreviewBox(rect: Rect, theme: Theme) {
   });
 }
 
-function idleMainView(theme: Theme) {
+function idleMainView(theme: Theme, bare: boolean, tip: string | undefined) {
   return Box(
     {
       flexGrow: 1,
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      border: true,
-      borderStyle: "rounded",
-      borderColor: theme.border,
+      ...(!bare && { border: true, borderStyle: "rounded", borderColor: theme.border }),
       overflow: "hidden",
     },
-    Text({ content: "· main ·", fg: theme.textDim }),
-    Text({ content: "ctrl+k s starts a session here", fg: theme.textDim }),
-    Text({ content: "ctrl+k shift+l/h pushes a docked pane in", fg: theme.textDim }),
+    ...idleMainLines(tip).map((line) => Text({ content: line, fg: theme.textDim })),
   );
 }
 
@@ -182,13 +287,13 @@ function overflowedView(theme: Theme) {
   );
 }
 
-function emptyView(theme: Theme) {
+function emptyView(theme: Theme, tip?: string) {
   return Box(
     { flexGrow: 1, flexDirection: "column", alignItems: "center", justifyContent: "center" },
-    Text({ content: "no sessions open", fg: theme.textDim }),
-    Text({
-      content: "ctrl+k s starts one · ctrl+p go · > commands · ctrl+q quits",
-      fg: theme.textDim,
-    }),
+    ...noSessionsLines(tip).map((line) => Text({ content: line, fg: theme.textDim })),
   );
+}
+
+function withTip(hints: readonly string[], tip: string | undefined): readonly string[] {
+  return tip === undefined ? hints : [...hints, tip];
 }

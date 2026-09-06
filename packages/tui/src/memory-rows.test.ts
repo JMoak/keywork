@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AirlockDigestView } from "./arcs.ts";
 import type {
   InboxItemView,
   LedgerEventView,
@@ -13,6 +14,7 @@ import {
   findNote,
   gardenRows,
   ledgerRows,
+  noteHeat,
   noteRows,
   provenanceGlyph,
   queryRows,
@@ -443,5 +445,175 @@ describe("ledgerRows", () => {
       "ledger · 0 events",
       "nothing recorded yet",
     ]);
+  });
+});
+
+describe("the airlock digest under the arc layer", () => {
+  const digest: AirlockDigestView = {
+    arc: "dock-v2",
+    candidates: [
+      {
+        note: "Dock Ratio Finding",
+        title: "Dock Ratio Finding",
+        provenance: "agent",
+        eligible: true,
+        shortfalls: [],
+        created: "2026-08-20T12:00:00Z",
+        choice: "deliver",
+      },
+      {
+        note: "Uncited Hunch",
+        title: "Uncited Hunch",
+        provenance: "agent",
+        eligible: false,
+        shortfalls: ["uncited"],
+      },
+    ],
+    questions: [
+      { title: "Tie order", provenance: "user", created: "2026-08-21T12:00:00Z", choice: "carry" },
+      { title: "Theme drift", provenance: "agent", created: "2026-08-21T12:00:00Z" },
+    ],
+    successor: "next-arc",
+    sweep: { acked: 2, wedged: 1 },
+  };
+  const cards: InboxItemView[] = [
+    inbox({
+      id: "c1",
+      kind: "airlock",
+      provenance: "agent",
+      title: "deliver Dock Ratio Finding",
+      arc: "dock-v2",
+    }),
+    inbox({
+      id: "c2",
+      kind: "airlock",
+      provenance: "agent",
+      title: "deliver Uncited Hunch",
+      arc: "dock-v2",
+    }),
+    inbox({
+      id: "q1",
+      kind: "airlock",
+      provenance: "agent",
+      title: "triage Tie order",
+      arc: "dock-v2",
+    }),
+    inbox({
+      id: "q2",
+      kind: "airlock",
+      provenance: "agent",
+      title: "triage Theme drift",
+      arc: "dock-v2",
+    }),
+  ];
+
+  function digestTexts(treatment: "tail" | "stamp", unfolded = false): string[] {
+    const rows = gardenRows(
+      inputsOf({ layers: [workspace, arc], inbox: cards, airlocks: [digest] }),
+      { focusedArc: "dock-v2", now, treatment, unfolded: () => unfolded },
+    );
+    return texts(rows).slice(1, 7);
+  }
+
+  it("replaces the raw airlock cards with decision rows, the fold, and the close row (tail treatment)", () => {
+    expect(digestTexts("tail")).toEqual([
+      "#dock-v2 · no notes yet · airlock ░4 · 2 flushed · 1 didn't flush",
+      "▓ Dock Ratio Finding · 2d → deliver",
+      "█ Tie order · question · 1d → carry to #next-arc",
+      "▓ Theme drift · question · 1d · undecided",
+      "░ 1 below the bar · uncited · archived, searchable",
+      "░ close #dock-v2 · 1 to decide · a here delivers all eligible · 1 session didn't flush · f forces",
+    ]);
+  });
+
+  it("stamps the decision into the lead under the stamp treatment", () => {
+    expect(digestTexts("stamp").slice(1, 4)).toEqual([
+      "█▓ deliver · Dock Ratio Finding · 2d",
+      "██ carry to #next-arc · Tie order · question · 1d",
+      "░▓ Theme drift · question · 1d",
+    ]);
+  });
+
+  it("shows the steering direction in the layer header", () => {
+    const steered: AirlockDigestView = { ...digest, direction: "keep the dock rules" };
+    const rows = gardenRows(
+      inputsOf({ layers: [workspace, arc], inbox: cards, airlocks: [steered] }),
+      { focusedArc: "dock-v2", now },
+    );
+    expect(texts(rows)[1]).toContain("steered: keep the dock rules");
+  });
+
+  it("unfolds the below-bar notes dim, each with its shortfall, and they drill into the note", () => {
+    const rows = gardenRows(
+      inputsOf({ layers: [workspace, arc], inbox: cards, airlocks: [digest] }),
+      { focusedArc: "dock-v2", now, unfolded: () => true },
+    );
+    const below = rows.find((row) => row.id === "airlock:dock-v2:below:Uncited Hunch");
+    expect(texts(rows)[5]).toBe("▒ 1 below the bar · uncited · archived, searchable");
+    expect(below).toMatchObject({
+      text: "  ▓ Uncited Hunch · uncited",
+      tone: "dim",
+      note: "Uncited Hunch",
+    });
+  });
+
+  it("reads enter closes once every eligible item and question is decided", () => {
+    const decided: AirlockDigestView = {
+      ...digest,
+      questions: digest.questions.map((question) => ({ ...question, choice: "drop" })),
+      sweep: { acked: 2, wedged: 0 },
+    };
+    const rows = gardenRows(
+      inputsOf({ layers: [workspace, arc], inbox: cards, airlocks: [decided] }),
+      { focusedArc: "dock-v2", now },
+    );
+    const finish = rows.find((row) => row.airlock?.kind === "finish");
+    expect(finish?.text).toBe("█ close #dock-v2 · enter closes");
+    expect(finish?.arc).toBe("dock-v2");
+    expect(finish?.spans?.[1]).toEqual({ text: "#dock-v2", ink: "arc" });
+  });
+
+  it("shows raw airlock cards when no digest view is loaded, but never lets a/d bypass the airlock", () => {
+    const rows = gardenRows(inputsOf({ layers: [workspace, arc], inbox: cards.slice(0, 1) }), {
+      focusedArc: "dock-v2",
+      now,
+    });
+    expect(texts(rows)[2]).toBe("▓ airlock · deliver Dock Ratio Finding · 2h");
+    expect(rows[2]?.inboxId).toBeUndefined();
+    expect(rows[2]?.selectable).toBe(true);
+  });
+});
+
+describe("garden heat candidates", () => {
+  const hot = note({ name: "Hot Rule", usefulness: 0.9, recalls: 4 });
+  const mild = note({ name: "Mild Fact", usefulness: 0.5 });
+  const cold = note({ name: "Cold Guess" });
+  const rowsWith = (heat: "lead" | "ink") =>
+    gardenRows(inputsOf({ notes: [hot, mild, cold] }), { focusedArc: undefined, now, heat });
+
+  it("scores heat from usefulness and recalls, zeroing superseded notes", () => {
+    expect(noteHeat(hot)).toBeCloseTo(0.93);
+    expect(noteHeat(cold)).toBe(0);
+    expect(noteHeat(note({ name: "Old", usefulness: 1, supersededBy: "New" }))).toBe(0);
+  });
+
+  it("carries heat in the lead cell by density under the lead treatment", () => {
+    const lines = texts(rowsWith("lead"));
+    expect(lines.find((line) => line.includes("Hot Rule"))?.startsWith("█")).toBe(true);
+    expect(lines.find((line) => line.includes("Mild Fact"))?.startsWith("▒")).toBe(true);
+    expect(lines.find((line) => line.includes("Cold Guess"))?.startsWith("·")).toBe(true);
+  });
+
+  it("warms the title ink under the ink treatment and stays plain without one", () => {
+    const inkOf = (rows: ReturnType<typeof rowsWith>, title: string) =>
+      rows.find((row) => row.text.includes(title))?.spans?.[1]?.ink;
+    const warmed = rowsWith("ink");
+    expect(inkOf(warmed, "Hot Rule")).toBe("accent");
+    expect(inkOf(warmed, "Mild Fact")).toBe("text");
+    expect(inkOf(warmed, "Cold Guess")).toBe("dim");
+    const plain = gardenRows(inputsOf({ notes: [hot, cold] }), { focusedArc: undefined, now });
+    expect(inkOf(plain, "Hot Rule")).toBe("text");
+    expect(inkOf(plain, "Cold Guess")).toBe("text");
+    expect(texts(plain).some((line) => line.startsWith("·"))).toBe(false);
   });
 });
