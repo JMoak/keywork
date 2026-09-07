@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   type Agent,
@@ -65,6 +65,7 @@ export interface SessionPaneDeps {
   botSpend?: (name: string) => Promise<BotSummary | undefined>;
   now?: () => number;
   shellEscape?: (guard: ToolGuard) => ShellEscapePort;
+  spillFile?: (sessionId: string, spillId: string) => string | undefined;
 }
 
 export interface SessionControls {
@@ -125,6 +126,15 @@ export class SessionPanes {
       if (pane instanceof ConversationPane && pane.model.busy) busy += 1;
     }
     return busy;
+  }
+
+  awaiting(): readonly string[] {
+    const titles: string[] = [];
+    for (const id of this.controls.keys()) {
+      const pane = this.deps.core().panes.get(id);
+      if (pane instanceof ConversationPane && pane.awaitingYou()) titles.push(pane.titled() ?? id);
+    }
+    return titles;
   }
 
   currentModel(): string | undefined {
@@ -234,6 +244,8 @@ class PaneSession implements SessionControls {
         shellEscape: deps.shellEscape(this.guard),
         recordShellEscape: (transcript: string) => this.recordShellEscape(transcript),
       }),
+      spillFile: (spillId) => this.spillOnDisk(spillId),
+      openFile: (path, options) => deps.core().intents.openFile(path, options),
     };
     this.pane = new ConversationPane(
       id,
@@ -320,6 +332,12 @@ class PaneSession implements SessionControls {
     if (this.live === undefined || this.pane.arc === arc) return;
     this.pane.arc = arc;
     this.notify();
+  }
+
+  private spillOnDisk(spillId: string): string | undefined {
+    const sessionId = this.pane.sessionId;
+    const path = sessionId === undefined ? undefined : this.deps.spillFile?.(sessionId, spillId);
+    return path !== undefined && existsSync(path) ? path : undefined;
   }
 
   private async recordShellEscape(transcript: string): Promise<void> {

@@ -16,6 +16,7 @@ import {
 } from "./chrome-states.ts";
 import { coldStart } from "./cold-start.ts";
 import { defectRepros } from "./defect-repros.ts";
+import { diffPane } from "./diff-pane.ts";
 import { discovery } from "./discovery.ts";
 import {
   elevationArcStamps,
@@ -37,6 +38,7 @@ import { pointerOff } from "./pointer-off.ts";
 import { pointerTour } from "./pointer-tour.ts";
 import { sessionLifecycle } from "./session-lifecycle.ts";
 import { statusTips } from "./status-tips.ts";
+import { terminalMirror } from "./terminal-mirror.ts";
 import { tilingTour } from "./tiling-tour.ts";
 import { trayTour } from "./tray-tour.ts";
 
@@ -83,6 +85,8 @@ export const scenarios: readonly Scenario[] = [
   pointerTour,
   pointerOff,
   trayTour,
+  terminalMirror,
+  diffPane,
   livePlayground,
 ];
 

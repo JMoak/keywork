@@ -32,6 +32,7 @@ export {
   type TemplateSegment,
 } from "./markdown-commands.ts";
 export {
+  bundledSkillsRoot,
   discoverSkills,
   type SkillDefinition,
   type SkillLoad,

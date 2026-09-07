@@ -9,6 +9,19 @@ export interface CheckpointsOptions {
   limit?: number;
 }
 
+export interface ChangedPath {
+  path: string;
+  added: number;
+  deleted: number;
+  turn?: number;
+}
+
+export interface CheckpointReads {
+  baseline(): Promise<string>;
+  changedSince(tree: string): Promise<ChangedPath[]>;
+  contentAt(tree: string, path: string): Promise<string | undefined>;
+}
+
 export class UnknownCheckpointError extends Error {
   constructor(readonly tree: string) {
     super(`no checkpoint with tree ${tree}`);
@@ -34,9 +47,13 @@ function withoutRepoStateEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([key]) => !repoStateVars.has(key)));
 }
 
-export class Checkpoints {
+export class Checkpoints implements CheckpointReads {
   private readonly undoTrees: string[] = [];
   private readonly redoTrees: string[] = [];
+  private readonly turnStarts: string[] = [];
+  private readonly touchedByTurn = new Map<string, number>();
+  private turnsAttributed = 0;
+  private baselineTree: string | undefined;
   private turnTag: string | undefined;
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -67,11 +84,38 @@ export class Checkpoints {
   captureTree(): Promise<string> {
     return this.serialized(async () => {
       const tree = await this.snapshotWorktree();
+      this.baselineTree ??= tree;
+      if (this.turnTag === undefined) this.turnStarts.push(tree);
       this.turnTag ??= tree;
       this.redoTrees.length = 0;
       if (this.undoTrees.at(-1) !== tree) this.pushBounded(this.undoTrees, tree);
       return tree;
     });
+  }
+
+  baseline(): Promise<string> {
+    return this.serialized(async () => {
+      this.baselineTree ??= await this.snapshotWorktree();
+      return this.baselineTree;
+    });
+  }
+
+  changedSince(tree: string): Promise<ChangedPath[]> {
+    return this.serialized(async () => {
+      const current = await this.snapshotWorktree();
+      const touched = await this.turnsTouching(current);
+      const listing = await this.git("diff-tree", "-r", "--numstat", "-z", tree, current);
+      return parseNumstat(listing).map((change) => {
+        const turn = touched.get(change.path);
+        return turn === undefined ? change : { ...change, turn };
+      });
+    });
+  }
+
+  contentAt(tree: string, path: string): Promise<string | undefined> {
+    return this.serialized(() =>
+      this.gitRaw("cat-file", "-p", `${tree}:${path}`).catch(() => undefined),
+    );
   }
 
   takeTurnTag(): string | undefined {
@@ -109,6 +153,31 @@ export class Checkpoints {
     });
   }
 
+  private async turnsTouching(current: string): Promise<Map<string, number>> {
+    for (; this.turnsAttributed + 1 < this.turnStarts.length; this.turnsAttributed += 1) {
+      const from = this.turnStarts[this.turnsAttributed] ?? current;
+      const to = this.turnStarts[this.turnsAttributed + 1] ?? current;
+      await this.attribute(this.touchedByTurn, from, to, this.turnsAttributed + 1);
+    }
+    const touched = new Map(this.touchedByTurn);
+    const openTurn = this.turnStarts.at(-1);
+    if (openTurn !== undefined) {
+      await this.attribute(touched, openTurn, current, this.turnStarts.length);
+    }
+    return touched;
+  }
+
+  private async attribute(
+    into: Map<string, number>,
+    from: string,
+    to: string,
+    turn: number,
+  ): Promise<void> {
+    if (from === to) return;
+    const listing = await this.git("diff-tree", "-r", "--name-only", "-z", from, to);
+    for (const path of listing.split("\0")) if (path !== "") into.set(path, turn);
+  }
+
   private async assertKnownTree(tree: string): Promise<void> {
     if (!treeHashShape.test(tree)) throw new UnknownCheckpointError(tree);
     const kind = await this.git("cat-file", "-t", tree).catch(() => "missing");
@@ -139,6 +208,10 @@ export class Checkpoints {
   }
 
   private git(...args: string[]): Promise<string> {
+    return this.gitRaw(...args).then((stdout) => stdout.trim());
+  }
+
+  private gitRaw(...args: string[]): Promise<string> {
     return new Promise((resolvePromise, rejectPromise) => {
       const child = spawn("git", args, {
         cwd: this.worktree,
@@ -160,9 +233,25 @@ export class Checkpoints {
       });
       child.on("error", rejectPromise);
       child.on("close", (code) => {
-        if (code === 0) resolvePromise(stdout.trim());
+        if (code === 0) resolvePromise(stdout);
         else rejectPromise(new Error(`git ${args[0]} failed: ${stderr.trim() || `exit ${code}`}`));
       });
     });
   }
+}
+
+function parseNumstat(listing: string): ChangedPath[] {
+  return listing
+    .split("\0")
+    .filter((record) => record !== "")
+    .flatMap((record) => {
+      const [added, deleted, path] = record.split("\t");
+      if (path === undefined || path === "") return [];
+      return [{ path, added: countOf(added), deleted: countOf(deleted) }];
+    });
+}
+
+function countOf(field: string | undefined): number {
+  const count = Number(field);
+  return Number.isInteger(count) ? count : 0;
 }

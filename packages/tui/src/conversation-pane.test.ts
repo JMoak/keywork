@@ -451,6 +451,26 @@ describe("keyboard disclosure in the pane", () => {
       false,
     );
   });
+
+  it("names the spill key in the disclosure hint when the cursored row spilled", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const pane = new ConversationPane("session-1", agent, () => {});
+    agent.bus.emit("tool.started", {
+      call: { type: "tool-call", callId: "c1", name: "bash", arguments: { command: "cat big" } },
+    });
+    agent.bus.emit("tool.finished", {
+      callId: "c1",
+      output: "head\n…\ntail",
+      isError: false,
+      spill: { id: "s1", bytes: 200_000, elidedFrom: 49_000, elidedTo: 183_000 },
+    });
+    expect(pane.handleKey(parseChord("shift+tab"), undefined)).toBe(true);
+    const rows = frameRows(pane.view(context(true)));
+    expect(rows).toContain(
+      "disclose · tab toggles · shift+tab older · o opens the spill · esc done",
+    );
+    expect(rows.some((row) => row.includes("elided 49000..183000"))).toBe(true);
+  });
 });
 
 function frameRows(view: ReturnType<ConversationPane["view"]>): string[] {

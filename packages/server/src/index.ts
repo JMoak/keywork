@@ -1,4 +1,20 @@
 export {
+  type ClientSeams,
+  type Delay,
+  type EventStreamOptions,
+  envelopeOf,
+  type Fetch,
+  type FrameReader,
+  type KeyworkClient,
+  keyworkClient,
+  reconnectDelayMs,
+  resolveServerTicket,
+  ServerRefusal,
+  type SseFrame,
+  sseFrames,
+  type TicketSources,
+} from "./client.ts";
+export {
   type BusEnvelope,
   type EngineEventType,
   EventLog,

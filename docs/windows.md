@@ -31,3 +31,29 @@ OSC 0 path.
 - The e2e harness's `typeText` splits by UTF-16 code unit, so astral graphemes (emoji,
   ZWJ families, flags) are proven in the vitest probe and BMP graphemes (accents, CJK,
   Hangul) in the `injection-citizenship` e2e scenario.
+
+## Terminal pane (2026-09-07, C15)
+
+The terminal pane (`/terminal`, alias `/term`, `leader shift+t`) has two modes and neither
+one is a PTY. OpenTUI 0.5.1 ships no terminal or PTY renderable (its `dist/` has text,
+edit-buffer, image and audio surfaces only), so the pane renders the child's bytes as
+sanitized text lines the way the transcript tail does: ANSI sequences stripped, `\r`
+rewriting the current line, CRLF treated as one newline, other control bytes dropped,
+2000 lines of scrollback per pane.
+
+| | Linux | Windows |
+|---|---|---|
+| Mirror mode | agent `bash` calls from the paired conversation pane: `$ command`, streamed chunks, `· done` or `· failed` | same; the events carry text either way |
+| Shell mode | `openInteractiveShell` spawns the detected shell over pipes (`bash` from `PATH`, else `sh`) | `bash` when Git Bash is on `PATH`, else `powershell.exe -NoProfile -NonInteractive -Command -`; smoke-tested 2026-09-07 for `cd` persistence and stderr capture on both |
+| Prompt | keywork draws `❯ ` and the typed line; the child's own prompt is not requested (non-interactive stdin) | same |
+| Ctrl+C, job control, tab completion, history | not available: stdin is a pipe, so no signals reach the child and readline is not running | same |
+| Full-screen programs (`vim`, `htop`, `less`) | out of scope for v1: no PTY means no window size, no cursor addressing, no alternate screen | same, plus no ConPTY handle, so programs that query the console see a redirected handle |
+| Exit | `· shell exited (code)` marker; `enter` starts a fresh shell in the workspace root | same |
+
+What ConPTY would add and why it waits: Bun's `spawn` does not expose a pseudo-console on
+Windows, and Node's `child_process` has no pty option either, so a real ConPTY needs a
+native addon that keywork's exact-pin policy and single-binary launch rail do not want
+yet. The mirror mode carries the agent's workflow on its own; the shell mode is a
+convenience for one-line commands scoped to the project. Shell mode opens only in a
+trusted workspace (`/init`); typed lines are the user's own and never pass through the
+agent's permission gate.

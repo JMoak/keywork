@@ -27,6 +27,13 @@ export interface PaneContext {
 
 export interface FileOpenOptions {
   atEnd?: true;
+  line?: number;
+  byteRange?: FileByteRange;
+}
+
+export interface FileByteRange {
+  from: number;
+  to: number;
 }
 
 export interface PaneIntents {
@@ -48,7 +55,11 @@ export type PaneDescriptor =
   | { kind: "arc"; arc: string }
   | { kind: "memory"; lens?: MemoryLens; note?: string; query?: string }
   | { kind: "mcp" }
-  | { kind: "workspaces" };
+  | { kind: "workspaces" }
+  | { kind: "diff" }
+  | { kind: "terminal"; mode: TerminalMode; sessionId?: string };
+
+export type TerminalMode = "mirror" | "shell";
 
 export type MemoryLens = "garden" | "note" | "ledger";
 

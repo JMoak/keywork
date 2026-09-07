@@ -59,6 +59,15 @@ and `pointer.ts` untouched. Pi's ignore handling was not lifted: it leans on the
 npm package, which would be a new dependency, so the matcher is `OWN` and `NOTICE` is
 unchanged.
 
+**C33 follow-up (2026-09-07).** `FileIndex` now watches every directory its walk read
+through the same `BrowserDisk.watchDirectory` seam and re-walks 150 ms after the last change
+(`Debounce` over an injected `DebounceTiming`), so a file created after launch is jumpable
+without a restart; a change landing mid-walk queues exactly one more walk, and watchers for
+directories the next walk no longer reaches are closed. `app.ts` needs no change, it already
+hands the index `realBrowserDisk`. Evidence: `file-index.test.ts` ("re-walks once after a
+burst of watcher events settles", "queues one more walk when a change lands mid-walk",
+"drops watchers on directories that vanished and closes them all on dispose").
+
 Assumptions Jordan may reverse:
 - Matching is case-sensitive and reads only `.gitignore` files at or below the browser root
   (no `.git/info/exclude`, no global excludes, no parent-of-root ignore files).

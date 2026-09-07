@@ -271,6 +271,7 @@ class Repl {
   private async sweepMemory(): Promise<void> {
     const telemetryFile = skillTelemetryFile(
       workspaceIdentity(this.options.cwd, this.options.workspaceSlug),
+      this.options.userRoot,
     );
     const evidence = await skillEvidenceOf(this.composition.skills, telemetryFile);
     await sweepOnClose(this.composition.memory(), evidence);

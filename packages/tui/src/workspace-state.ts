@@ -106,6 +106,10 @@ function parsePane(value: unknown): WorkspacePane | undefined {
       return { id: value.id, kind: "mcp" };
     case "workspaces":
       return { id: value.id, kind: "workspaces" };
+    case "diff":
+      return { id: value.id, kind: "diff" };
+    case "terminal":
+      return parseTerminalPane(value);
     default:
       return undefined;
   }
@@ -126,6 +130,13 @@ function parseMemoryPane(value: Record<string, unknown>): WorkspacePane | undefi
     ...(typeof value.note === "string" && { note: value.note }),
     ...(typeof value.query === "string" && { query: value.query }),
   };
+}
+
+function parseTerminalPane(value: Record<string, unknown>): WorkspacePane | undefined {
+  const { id, mode, sessionId } = value;
+  if (typeof id !== "string" || (mode !== "mirror" && mode !== "shell")) return undefined;
+  if (sessionId !== undefined && typeof sessionId !== "string") return undefined;
+  return { id, kind: "terminal", mode, ...(sessionId !== undefined && { sessionId }) };
 }
 
 function isSessionGrouping(value: unknown): value is SessionGroupBy {

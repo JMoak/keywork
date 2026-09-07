@@ -64,7 +64,14 @@ describe("composeWorkspace", () => {
     expect(composition.cwd).toBe(cwd);
     expect(composition.memory()).toBeUndefined();
     expect(composition.mcp).toBeUndefined();
-    expect(composition.extensions).toEqual({ commands: [], bots: [], skills: [], failures: [] });
+    expect(composition.extensions.commands).toEqual([]);
+    expect(composition.extensions.bots).toEqual([]);
+    expect(composition.extensions.failures).toEqual([]);
+    expect(composition.extensions.skills.map((skill) => [skill.name, skill.source])).toEqual([
+      ["lint", "bundled"],
+      ["test", "bundled"],
+      ["typecheck", "bundled"],
+    ]);
     expect(composition.systemPromptFor(undefined).length).toBeGreaterThan(0);
   });
 

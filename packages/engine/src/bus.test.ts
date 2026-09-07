@@ -1,5 +1,47 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { EventBus } from "./bus.ts";
+import { type EngineEvents, EventBus } from "./bus.ts";
+
+const documentedEvents = [
+  "turn.started",
+  "turn.delta",
+  "turn.completed",
+  "turn.interrupted",
+  "queue.changed",
+  "tool.started",
+  "tool.output",
+  "tool.finished",
+  "gate.permission",
+  "gate.preset",
+  "session.mode",
+  "context.injected",
+  "diagnostics.published",
+  "shell.reset",
+  "engine.error",
+] as const satisfies readonly (keyof EngineEvents)[];
+
+type EventWithoutSection = Exclude<keyof EngineEvents, (typeof documentedEvents)[number]>;
+
+const everyEventHasASection: [EventWithoutSection] extends [never] ? true : never = true;
+
+const eventsDoc = fileURLToPath(new URL("../../../docs/events.md", import.meta.url));
+
+function eventHeadingsIn(markdown: string): string[] {
+  return markdown.split("\n").flatMap((line) => {
+    const heading = /^### ([a-z]+\.[a-z]+)$/.exec(line);
+    return heading?.[1] === undefined ? [] : [heading[1]];
+  });
+}
+
+describe("docs/events.md", () => {
+  it("carries one section per engine event and none for an event that does not exist", () => {
+    expect(everyEventHasASection).toBe(true);
+    const headings = eventHeadingsIn(readFileSync(eventsDoc, "utf8"));
+    expect([...headings].sort()).toEqual([...documentedEvents].sort());
+    expect(new Set(headings).size).toBe(headings.length);
+  });
+});
 
 describe("EventBus", () => {
   it("counts live listeners per event and overall, and forgets the unsubscribed", () => {

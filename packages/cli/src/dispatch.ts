@@ -18,6 +18,8 @@ Usage:
   keywork serve [--port <n>] [--model <model>]
                 [--preset careful|standard|open]
                 [--session-dir <dir>]                       HTTP + SSE server on 127.0.0.1
+  keywork attach [--pane conversation|session-tree] [--session <id>]
+                 [--url <url>] [--token <token>]            mount a pane over keywork serve
   keywork --version                                         print the version and exit
   keywork --help                                            print this usage and exit
   keywork chat [--model <model>] [--continue] [--workspace <slug>]
@@ -56,6 +58,7 @@ export const commandNames = [
   "untrust",
   "doctor",
   "serve",
+  "attach",
 ] as const;
 
 export type CommandName = (typeof commandNames)[number];
@@ -80,6 +83,7 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   untrust: { behavior: "runs" },
   doctor: { behavior: "runs" },
   serve: { behavior: "runs", note: "prints the URL and token, then runs until SIGINT" },
+  attach: { behavior: "refused", reason: "attach needs a terminal" },
 };
 
 export type Dispatch =

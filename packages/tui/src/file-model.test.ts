@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FileModel } from "./file-model.ts";
 import { parseChord } from "./keys.ts";
+import type { FileOpenOptions } from "./pane.ts";
 
 const tempDirs: string[] = [];
 
@@ -14,9 +15,9 @@ async function fileWith(content: string): Promise<{ cwd: string; name: string }>
   return { cwd, name: "sample.ts" };
 }
 
-async function loadedModel(content: string): Promise<FileModel> {
+async function loadedModel(content: string, options?: FileOpenOptions): Promise<FileModel> {
   const { cwd, name } = await fileWith(content);
-  const model = new FileModel(cwd, name, () => {});
+  const model = new FileModel(cwd, name, () => {}, options);
   await model.settled();
   return model;
 }
@@ -123,5 +124,25 @@ describe("FileModel", () => {
     expect(notified).toBe(0);
     expect(model.handleKey(parseChord("down"), 10)).toBe(true);
     expect(notified).toBe(0);
+  });
+});
+
+describe("opening at a place", () => {
+  const content = "héllo\r\nworld\nthird\nfourth";
+
+  it("scrolls to the line holding a byte offset, counting UTF-8 bytes and CRLF endings", async () => {
+    const atThird = await loadedModel(content, { byteRange: { from: 14, to: 19 } });
+    expect(atThird.visibleLines(2)[0]?.number).toBe(3);
+    const insideSecond = await loadedModel(content, { byteRange: { from: 9, to: 12 } });
+    expect(insideSecond.visibleLines(2)[0]?.number).toBe(2);
+    const past = await loadedModel(content, { byteRange: { from: 10_000, to: 10_001 } });
+    expect(past.visibleLines(2)[0]?.number).toBe(3);
+  });
+
+  it("scrolls to a one-based line", async () => {
+    const model = await loadedModel(content, { line: 3 });
+    expect(model.visibleLines(2)[0]?.number).toBe(3);
+    const clamped = await loadedModel(content, { line: 0 });
+    expect(clamped.visibleLines(2)[0]?.number).toBe(1);
   });
 });

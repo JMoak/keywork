@@ -4,20 +4,65 @@ import {
   arcAnchor,
   arcAnchorPosition,
   arcMemberPositions,
+  blendToward,
   dimmedTheme,
   dimStep,
   focusLift,
   hexToOklch,
+  inkClearingFloor,
   lifecycleChrome,
   oklchToHex,
   paneBorder,
   rampColor,
   rampPositions,
   saturationLift,
+  shiftLightness,
   spawnRankPositions,
 } from "./chroma.ts";
 import type { LifecycleState } from "./pane.ts";
 import { keyworkNight } from "./theme.ts";
+
+describe("inkClearingFloor", () => {
+  it("returns an ink that already clears the floor untouched", () => {
+    expect(inkClearingFloor("#C0CAF5", "#1a1b26", 60)).toBe("#c0caf5");
+  });
+
+  it("lifts a dim ink on a dark ground just far enough to clear", () => {
+    const cleared = inkClearingFloor("#3b4261", "#1a1b26", 60);
+    expect(apcaLc(cleared, "#1a1b26")).toBeGreaterThanOrEqual(60);
+    expect(apcaLc(cleared, "#1a1b26")).toBeLessThan(63);
+    expect(Math.abs(hexToOklch(cleared).h - hexToOklch("#3b4261").h)).toBeLessThan(3);
+  });
+
+  it("deepens a bright ink on a light ground", () => {
+    const cleared = inkClearingFloor("#00ff00", "#ffffff", 40);
+    expect(apcaLc(cleared, "#ffffff")).toBeGreaterThanOrEqual(40);
+    expect(hexToOklch(cleared).l).toBeLessThan(hexToOklch("#00ff00").l);
+  });
+
+  it("hands back the extreme when nothing on the ramp can clear", () => {
+    expect(inkClearingFloor("#808080", "#808080", 200)).toBe("#000000");
+    expect(inkClearingFloor("#404040", "#404040", 200)).toBe("#ffffff");
+  });
+});
+
+describe("shiftLightness and blendToward", () => {
+  it("moves lightness by the asked amount within the gamut", () => {
+    expect(hexToOklch(shiftLightness("#1a1b26", 0.1)).l).toBeCloseTo(
+      hexToOklch("#1a1b26").l + 0.1,
+      2,
+    );
+    expect(shiftLightness("#ffffff", 0.2)).toBe("#ffffff");
+  });
+
+  it("blends toward the target with the ends fixed", () => {
+    expect(blendToward("#c0caf5", "#1a1b26", 0)).toBe("#c0caf5");
+    expect(blendToward("#c0caf5", "#1a1b26", 1)).toBe("#1a1b26");
+    const middle = hexToOklch(blendToward("#c0caf5", "#1a1b26", 0.5)).l;
+    expect(middle).toBeGreaterThan(hexToOklch("#1a1b26").l);
+    expect(middle).toBeLessThan(hexToOklch("#c0caf5").l);
+  });
+});
 
 const ramp = keyworkNight.ramp;
 

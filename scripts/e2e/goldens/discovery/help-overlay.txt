@@ -23,8 +23,8 @@
 │                                 │ ctrl+k f                            file browser │                                 │
 │                                 │ ctrl+k t                            session tree │                                 │
 │                                 │ ctrl+k m                             memory pane │                                 │
-│                                 │ ctrl+k a                               arcs node │                                 │
-│                                 │        ↑↓ scroll · 11 below · esc closes         │                                 │
+│                                 │ ctrl+k g                               diff pane │                                 │
+│                                 │        ↑↓ scroll · 13 below · esc closes         │                                 │
 │                                 │                                                  │                                 │
 │                                 ╰──────────────────────────────────────────────────╯                                 │
 │                                      │ › ▌                                                                           │

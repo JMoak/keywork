@@ -30,6 +30,8 @@ function fullyEquippedProbe(): AppProbe {
     createMemoryPane: (id) => stubPane(id),
     createMcpPane: (id) => stubPane(id),
     createWorkspacesPane: (id) => stubPane(id),
+    createDiffPane: (id) => stubPane(id),
+    createTerminalPane: (id) => stubPane(id),
     isDirectory: () => false,
     undo: { undo: async () => true, redo: async () => true },
     presets: {

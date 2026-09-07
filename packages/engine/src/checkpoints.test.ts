@@ -291,3 +291,64 @@ describe("Checkpoints", () => {
     expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v2");
   });
 });
+
+describe("Checkpoints reads", () => {
+  it("lists changes since the session-start baseline with line counts", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "notes.txt": "alpha\nbeta\ngamma\n", "gone.txt": "bye\n" });
+    const baseline = await store.baseline();
+    expect(await store.changedSince(baseline)).toEqual([]);
+
+    await store.capture();
+    await seed(worktree, { "notes.txt": "alpha\nBETA\ngamma\n", "fresh.txt": "one\ntwo\n" });
+    await rm(join(worktree, "gone.txt"));
+
+    expect(await store.changedSince(baseline)).toEqual([
+      { path: "fresh.txt", added: 2, deleted: 0, turn: 1 },
+      { path: "gone.txt", added: 0, deleted: 1, turn: 1 },
+      { path: "notes.txt", added: 1, deleted: 1, turn: 1 },
+    ]);
+    expect(await store.baseline()).toBe(baseline);
+  });
+
+  it("reads a file as it was at a tree, trailing newline intact", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "notes.txt": "  indented\n\n" });
+    const tree = await store.captureTree();
+    await seed(worktree, { "notes.txt": "changed" });
+
+    expect(await store.contentAt(tree, "notes.txt")).toBe("  indented\n\n");
+    expect(await store.contentAt(tree, "missing.txt")).toBeUndefined();
+  });
+
+  it("attributes each changed path to the turn that last touched it", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "a.txt": "a1", "b.txt": "b1" });
+    const baseline = await store.baseline();
+
+    await store.capture();
+    await seed(worktree, { "a.txt": "a2" });
+    store.takeTurnTag();
+    await store.capture();
+    await seed(worktree, { "b.txt": "b2" });
+    await store.capture();
+    await seed(worktree, { "a.txt": "a3" });
+
+    const turns = new Map(
+      (await store.changedSince(baseline)).map((change) => [change.path, change.turn]),
+    );
+    expect(turns.get("a.txt")).toBe(2);
+    expect(turns.get("b.txt")).toBe(2);
+    store.takeTurnTag();
+    await store.capture();
+    await seed(worktree, { "b.txt": "b3" });
+    const later = new Map(
+      (await store.changedSince(baseline)).map((change) => [change.path, change.turn]),
+    );
+    expect(later.get("a.txt")).toBe(2);
+    expect(later.get("b.txt")).toBe(3);
+  });
+});

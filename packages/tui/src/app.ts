@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
+import { openInteractiveShell } from "@keywork/engine";
 import {
   type CliRenderer,
   createCliRenderer,
@@ -29,6 +30,8 @@ import {
   recoveredNotice,
 } from "./crash-log.ts";
 import { definedOnly } from "./defined.ts";
+import { announcingFileChanges, type DiffPort, FileChangeFeed } from "./diff-model.ts";
+import { DiffPane } from "./diff-pane.ts";
 import {
   type ExtensionsPort,
   extensionFailureNotice,
@@ -42,6 +45,7 @@ import type { CheckpointsPort } from "./fork.ts";
 import { FrameCoalescer, type FrameScheduler } from "./frame-scheduler.ts";
 import { fullRect, type Rect, type Screen } from "./geometry.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
+import { applyKeybindings, type KeybindingSource, watchKeybindings } from "./keybindings.ts";
 import { chordOf } from "./keys.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
@@ -49,6 +53,15 @@ import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { DigestTreatment, GardenHeat } from "./memory-rows.ts";
 import { Animator } from "./motion.ts";
 import {
+  type NotificationPolicy,
+  Notifier,
+  transportFor,
+  type WorkSnapshot,
+} from "./notifications.ts";
+import {
+  disableFocusReporting,
+  enableFocusReporting,
+  focusEventsIn,
   type TerminalFacts,
   TerminalReporter,
   terminalSupport,
@@ -72,6 +85,11 @@ import {
 } from "./session-attachment.ts";
 import { type SessionPaneDeps, SessionPanes } from "./session-panes.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
+import {
+  mirrorSourceOverPanes,
+  type TerminalPanePort,
+  terminalPaneFactory,
+} from "./terminal-pane.ts";
 import type { ThemeOverrides } from "./theme.ts";
 import {
   appFrame,
@@ -91,6 +109,8 @@ import { WorkspacesPane } from "./workspaces-pane.ts";
 
 export interface AppOptions {
   themeOverrides?: ThemeOverrides;
+  flavor?: string;
+  keybindings?: KeybindingSource;
   pointer?: "on" | "off";
   masthead?: "on" | "off";
   motion?: "full" | "reduced";
@@ -107,6 +127,7 @@ export interface AppOptions {
   focusOutline?: FocusOutline;
   agentFactory?: AgentFactory;
   shellEscape?: SessionPaneDeps["shellEscape"];
+  spillFile?: SessionPaneDeps["spillFile"];
   afterTurn?: AfterTurn;
   compact?: Compactor;
   closers?: readonly Closer[];
@@ -130,25 +151,37 @@ export interface AppOptions {
   memoryDigest?: DigestTreatment;
   clock?: () => number;
   mcp?: McpPanePort;
+  diff?: DiffPort;
   notices?: NoticeSource;
   extensions?: ExtensionsPort;
   terminal?: TerminalSeams;
+  terminalPane?: TerminalPanePort;
+  notifications?: NotificationPolicy;
+  inbox?: InboxSource;
 }
 
 export interface NoticeSource {
   subscribe(post: (text: string) => void): () => void;
 }
 
+export interface InboxSource {
+  subscribe(listener: (waiting: number) => void): () => void;
+}
+
 export interface TerminalSeams {
   write?: (bytes: string) => void;
   facts?: TerminalFacts;
+  input?: InputTap;
 }
 
-export async function runApp(options: AppOptions = {}): Promise<void> {
-  const flavors = new FlavorSwitch([
-    ...startupFlavors(options.themeOverrides),
-    ...(options.flavors ?? []),
-  ]);
+export type InputTap = (listener: (bytes: string) => void) => () => void;
+
+export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
+  const fileChanges = new FileChangeFeed();
+  const options = announcingFileChanges(launchOptions, fileChanges);
+  const flavors = new FlavorSwitch(
+    startupFlavors(options.themeOverrides, options.flavors, options.flavor),
+  );
   const escrow = sessionEscrow(options.sessions);
   const restore = await loadRestorePlan(options, escrow);
   if (restore.kind === "failed") recordCrash("restore", restore.cause);
@@ -185,6 +218,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     ...definedOnly({
       agentFactory: options.agentFactory,
       shellEscape: options.shellEscape,
+      spillFile: options.spillFile,
       sessions: options.sessions,
       trees,
       checkpoints: options.checkpoints,
@@ -204,6 +238,12 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
   const fileIndex = new FileIndex(process.cwd(), realBrowserDisk, render);
   const unsubscribeMcp = options.mcp?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
   const unsubscribeNotices = options.notices?.subscribe((text) => core.postNotice(text));
+  let inboxWaiting = 0;
+  const unsubscribeInbox = options.inbox?.subscribe((waiting) => {
+    inboxWaiting = waiting;
+    render();
+  });
+  let stopFocusWatch: () => void = () => {};
   let releaseFatalGuards: () => void = () => {};
   const core: AppCore = new AppCore({
     screen: () => screenWithin(renderer, flavors.active.chromeWeight),
@@ -213,6 +253,10 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         gap: flavors.active.gap,
       }),
     ...paneFactories(options, sessions, trees, paneSessions, arcIndex, () => core),
+    ...(options.diff !== undefined && {
+      createDiffPane: (id: string, notify: () => void, intents: PaneIntents) =>
+        new DiffPane(id, notify, intents, { ...options.diff, changes: fileChanges }),
+    }),
     ...hostPorts(options, sessions),
     ...(restore.kind === "restore" && { restoreWorkspace: restore.state }),
     ...(options.workspace !== undefined && {
@@ -230,10 +274,13 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       frames.dispose();
       unsubscribeMcp?.();
       unsubscribeNotices?.();
+      unwatchKeybindings();
       arcIndex.dispose();
       fileIndex.dispose();
       paneSessions.closeAll();
       escrow.releaseAll();
+      unsubscribeInbox?.();
+      stopFocusWatch();
       terminal.reporter.end();
       renderer.destroy();
       options.workspace?.seal();
@@ -268,6 +315,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         options.scrim === "on",
       );
       terminal.reporter.report(focusedWindowTitle(sessions));
+      terminal.notifier.observe(workSnapshot(sessions, inboxWaiting));
     } catch (cause) {
       recordCrash("render", cause);
     }
@@ -314,9 +362,23 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     },
   });
   terminal.reporter.begin();
+  stopFocusWatch = watchFocus(terminal, options.terminal?.input ?? stdinTap);
   renderer.auto();
   core.bindNotify(render);
   core.start();
+  const keybindingSeams = {
+    keymap: core.keymap,
+    source: options.keybindings ?? { read: async () => ({}) },
+    notice: (text: string): void => {
+      core.postNotice(text);
+      render();
+    },
+  };
+  if (options.keybindings !== undefined) await applyKeybindings(keybindingSeams);
+  const unwatchKeybindings = watchKeybindings(keybindingSeams);
+  if (options.flavor !== undefined && flavors.active.name !== options.flavor) {
+    core.postNotice(`no flavor named "${options.flavor}" · wearing ${flavors.active.name}`);
+  }
   const readiness = options.workspaceSetup?.readiness();
   const blocker = readiness === undefined ? undefined : readinessNotice(readiness);
   if (blocker !== undefined) core.postNotice(blocker);
@@ -343,6 +405,12 @@ function paneFactories(
       new FilePane(id, process.cwd(), path, notify, fileOptions),
     createBrowserPane: (id, root, notify, intents) =>
       new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
+    createTerminalPane: terminalPaneFactory({
+      cwd: process.cwd(),
+      trusted: () => options.terminalPane?.trusted === true,
+      spawn: options.terminalPane?.spawn ?? openInteractiveShell,
+      mirror: mirrorSourceOverPanes(() => core().panes),
+    }),
     ...(trees !== undefined && {
       createSessionTreePane: (id, notify, intents, targetSession, sessionId, groupBy) =>
         new SessionTreePane(id, notify, intents, trees, targetSession, {
@@ -484,6 +552,7 @@ function registerHostCommands(
 
 interface Terminal {
   readonly reporter: TerminalReporter;
+  readonly notifier: Notifier;
   readonly write: (bytes: string) => void;
   readonly clipboard: boolean;
 }
@@ -491,17 +560,46 @@ interface Terminal {
 function terminalOf(options: AppOptions, glyphs: GlyphSupport): Terminal {
   const write = options.terminal?.write ?? ((bytes: string) => void process.stdout.write(bytes));
   const support = terminalSupport(options.terminal?.facts);
+  const transport = transportFor(options.notifications ?? "auto", options.terminal?.facts);
   return {
     reporter: new TerminalReporter(write, support, glyphs),
+    notifier: new Notifier(write, transport),
     write,
     clipboard: support.clipboard,
   };
 }
 
+function watchFocus(terminal: Terminal, tap: InputTap): () => void {
+  if (terminal.notifier.transport === "off") return () => {};
+  terminal.write(enableFocusReporting);
+  const release = tap((bytes) => {
+    for (const event of focusEventsIn(bytes)) terminal.notifier.focusChanged(event);
+  });
+  return () => {
+    release();
+    terminal.write(disableFocusReporting);
+  };
+}
+
+const stdinTap: InputTap = (listener) => {
+  const onData = (chunk: Buffer | string): void => listener(chunk.toString());
+  process.stdin.on("data", onData);
+  return () => void process.stdin.off("data", onData);
+};
+
 function focusedWindowTitle(sessions: SessionPanes): WindowTitleState {
   const focused = sessions.focused();
   if (focused === undefined) return { state: "idle" };
   return { name: focused.pane.titled() ?? focused.id, state: focused.pane.lifecycle() };
+}
+
+function workSnapshot(sessions: SessionPanes, inbox: number): WorkSnapshot {
+  const focused = sessions.focused();
+  return {
+    title: focused === undefined ? "keywork" : (focused.pane.titled() ?? focused.id),
+    asks: sessions.awaiting(),
+    inbox,
+  };
 }
 
 function botLookup(

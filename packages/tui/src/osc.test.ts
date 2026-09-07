@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { GlyphSupport } from "./capability.ts";
 import {
+  bell,
+  colorQueries,
+  colorRepliesComplete,
   copyToClipboard,
+  disableFocusReporting,
+  enableFocusReporting,
+  focusEventsIn,
+  notifyOsc9,
+  notifyOsc777,
+  parseColorReplies,
   popTitle,
   progressOf,
   pushTitle,
+  queryAnsiColor,
+  queryBackground,
+  queryForeground,
   setProgress,
   setTitle,
   TerminalReporter,
@@ -14,6 +26,44 @@ import {
 
 const unicode: GlyphSupport = { glyphTier: 1, nerdFont: false };
 const ascii: GlyphSupport = { glyphTier: 0, nerdFont: false };
+
+describe("color queries", () => {
+  it("asks for the ground, the ink, and the ANSI 16 in one burst", () => {
+    expect(queryBackground).toBe("\x1b]11;?\x1b\\");
+    expect(queryForeground).toBe("\x1b]10;?\x1b\\");
+    expect(queryAnsiColor(12)).toBe("\x1b]4;12;?\x1b\\");
+    const burst = colorQueries();
+    expect(burst.startsWith(queryBackground + queryForeground)).toBe(true);
+    expect(burst.endsWith(queryAnsiColor(15))).toBe(true);
+  });
+
+  it("reads X11 rgb specs at every digit width and both terminators", () => {
+    const colors = parseColorReplies(
+      "\x1b]11;rgb:1a1a/1b1b/2626\x1b\\\x1b]10;rgb:c0/ca/f5\x07\x1b]4;12;rgb:7/a/f\x1b\\",
+    );
+    expect(colors.background).toBe("#1a1b26");
+    expect(colors.foreground).toBe("#c0caf5");
+    expect(colors.ansi.get(12)).toBe("#77aaff");
+  });
+
+  it("reads hash forms and ignores replies it cannot parse", () => {
+    const colors = parseColorReplies("\x1b]11;#fff\x1b\\\x1b]4;1;#cd0000\x1b\\\x1b]10;nope\x1b\\");
+    expect(colors.background).toBe("#ffffff");
+    expect(colors.ansi.get(1)).toBe("#cd0000");
+    expect(colors.foreground).toBeUndefined();
+  });
+
+  it("knows when every reply has arrived", () => {
+    const partial = parseColorReplies("\x1b]11;rgb:00/00/00\x1b\\");
+    expect(colorRepliesComplete(partial)).toBe(false);
+    const all = [
+      "\x1b]11;rgb:00/00/00\x1b\\",
+      "\x1b]10;rgb:ff/ff/ff\x1b\\",
+      ...Array.from({ length: 16 }, (_, index) => `\x1b]4;${index};rgb:80/80/80\x1b\\`),
+    ].join("");
+    expect(colorRepliesComplete(parseColorReplies(all))).toBe(true);
+  });
+});
 
 describe("terminalSupport", () => {
   it("reports progress on Windows Terminal and ConEmu only", () => {
@@ -63,6 +113,40 @@ describe("escape strings", () => {
     expect(copyToClipboard("hello")).toBe("\x1b]52;c;aGVsbG8=\x07");
     expect(copyToClipboard("日本語 👋")).toBe("\x1b]52;c;5pel5pys6KqeIPCfkYs=\x07");
     expect(copyToClipboard("")).toBe("\x1b]52;c;\x07");
+  });
+
+  it("switches focus reporting with DECSET 1004 and rings the bell as one byte", () => {
+    expect(enableFocusReporting).toBe("\x1b[?1004h");
+    expect(disableFocusReporting).toBe("\x1b[?1004l");
+    expect(bell).toBe("\x07");
+  });
+
+  it("notifies through OSC 777 with title and body, and OSC 9 with one text", () => {
+    expect(notifyOsc777("fix the parser", "needs you · ask")).toBe(
+      "\x1b]777;notify;fix the parser;needs you · ask\x07",
+    );
+    expect(notifyOsc9("fix the parser · needs you · ask")).toBe(
+      "\x1b]9;fix the parser · needs you · ask\x07",
+    );
+  });
+
+  it("keeps a hostile title from ending a notification or shifting its fields", () => {
+    expect(notifyOsc777("a\x07b;c", "d\x1be")).toBe("\x1b]777;notify;ab,c;de\x07");
+    expect(notifyOsc9("a\x07b\x1bc")).toBe("\x1b]9;abc\x07");
+  });
+});
+
+describe("focusEventsIn", () => {
+  it("reads CSI I and CSI O in order, ignoring everything around them", () => {
+    expect(focusEventsIn("\x1b[I")).toEqual(["focus-in"]);
+    expect(focusEventsIn("\x1b[O")).toEqual(["focus-out"]);
+    expect(focusEventsIn("\x1b[Oabc\x1b[A\x1b[I")).toEqual(["focus-out", "focus-in"]);
+  });
+
+  it("finds no focus report in ordinary keys", () => {
+    expect(focusEventsIn("")).toEqual([]);
+    expect(focusEventsIn("\x1b[A\x1b[1;5I")).toEqual([]);
+    expect(focusEventsIn("IO")).toEqual([]);
   });
 });
 

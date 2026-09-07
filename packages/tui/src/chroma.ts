@@ -1,4 +1,4 @@
-import { canonicalHex, hexChannels } from "@keywork/shared";
+import { apcaLc, canonicalHex, hexChannels } from "@keywork/shared";
 import { clamp } from "./clamp.ts";
 import type { LifecycleState } from "./pane.ts";
 import type { Theme } from "./theme.ts";
@@ -144,6 +144,31 @@ export function arcMemberPositions(anchor: number, count: number): number[] {
     { length: count },
     (_, rank) => start + (microGradientSpan * rank) / (count - 1),
   );
+}
+
+export function blendToward(hex: string, towardHex: string, amount: number): string {
+  return oklchToHex(mixOklch(hexToOklch(hex), hexToOklch(towardHex), clamp(amount, 0, 1)));
+}
+
+export function shiftLightness(hex: string, delta: number): string {
+  const { l, c, h } = hexToOklch(hex);
+  return oklchToHex({ l: clamp(l + delta, 0, 1), c, h });
+}
+
+export function inkClearingFloor(hex: string, groundHex: string, floor: number): string {
+  if (apcaLc(hex, groundHex) >= floor) return canonicalHex(hex);
+  const ink = hexToOklch(hex);
+  const awayFromGround = hexToOklch(groundHex).l < 0.5 ? 1 : 0;
+  const clears = (l: number): boolean => apcaLc(oklchToHex({ ...ink, l }), groundHex) >= floor;
+  if (!clears(awayFromGround)) return oklchToHex({ ...ink, l: awayFromGround });
+  let failing = ink.l;
+  let passing = awayFromGround;
+  for (let step = 0; step < 24; step++) {
+    const middle = (failing + passing) / 2;
+    if (clears(middle)) passing = middle;
+    else failing = middle;
+  }
+  return oklchToHex({ ...ink, l: passing });
 }
 
 export function hexToOklch(hex: string): Oklch {

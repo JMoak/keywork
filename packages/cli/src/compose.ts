@@ -121,12 +121,14 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   const systemPromptFor = (modelId: string | undefined): string =>
     systemPromptWith(modelId, bootstrap?.text ?? "");
   const checkpoints = options.checkpoints === "off" ? undefined : await openCheckpoints(options);
-  const extensions = await loadWorkspaceExtensions(
+  const userRoot = options.userRoot ?? homedir();
+  const extensions = await loadWorkspaceExtensions(cwd, projectTrusted, userRoot);
+  const skills = await openSkillLibrary(extensions, {
     cwd,
     projectTrusted,
-    options.userRoot ?? homedir(),
-  );
-  const skills = await openSkillLibrary(extensions, cwd, projectTrusted, workspaceSlug);
+    workspaceSlug,
+    userRoot,
+  });
   const mcp = startMcpRegistry(options.mcpServers);
   const scope = workspaceToolScope(cwd, projectTrusted, workspaceSlug);
   const port = openLanguagePort(scope, options);
@@ -497,14 +499,19 @@ function skillToolsFor(skills: SkillLibrary, agent: () => Agent | undefined): To
   });
 }
 
+interface SkillLibraryPlace {
+  cwd: string;
+  projectTrusted: boolean;
+  workspaceSlug: string | undefined;
+  userRoot: string;
+}
+
 async function openSkillLibrary(
   extensions: WorkspaceExtensions,
-  cwd: string,
-  projectTrusted: boolean,
-  workspaceSlug: string | undefined,
+  { cwd, projectTrusted, workspaceSlug, userRoot }: SkillLibraryPlace,
 ): Promise<SkillLibrary> {
   const telemetry = await SkillTelemetry.open({
-    file: skillTelemetryFile(workspaceIdentity(cwd, workspaceSlug)),
+    file: skillTelemetryFile(workspaceIdentity(cwd, workspaceSlug), userRoot),
   });
   return new SkillLibrary({
     skills: extensions.skills,

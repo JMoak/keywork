@@ -198,12 +198,26 @@ export const appActions: Record<string, AppAction> = {
     invoke: (target) => target.summon("memory"),
     coveredBy: "memory",
   },
+  "diff.summon": {
+    chords: "leader g",
+    help: "diff pane",
+    chainable: true,
+    invoke: (target) => target.summon("diff"),
+    coveredBy: "diff",
+  },
   "arcs.summon": {
     chords: "leader a",
     help: "arcs node",
     chainable: true,
     invoke: (target) => target.summon("arcs"),
     coveredBy: "arcs",
+  },
+  "terminal.summon": {
+    chords: "leader shift+t",
+    help: "terminal pane",
+    chainable: true,
+    invoke: (target) => target.summon("terminal"),
+    coveredBy: "terminal",
   },
   "help.toggle": {
     chords: ["leader /", "f1"],

@@ -631,6 +631,31 @@ describe("the skills level", () => {
     expect((await pane.load()).inbox).toEqual([]);
   });
 
+  it("keeps bot skill telemetry under the injected user root and never touches the home directory", async () => {
+    const home = await tempDir();
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    try {
+      const fx = await fixture({
+        roster: (cwd) => [routinier(cwd)],
+        bindings: { a: "routinier" },
+        seed: async (cwd) => {
+          await seedSkills(cwd);
+        },
+      });
+      const library = fx.bots.skillsFor(routinier(fx.cwd));
+      if (library === undefined) throw new Error("expected a bot library");
+      await library.patch("build", "make build-old", "make build-new");
+      const telemetryDir = join(fx.userRoot, ".keywork", "skills");
+      expect((await readdir(telemetryDir)).length).toBe(1);
+      expect(existsSync(join(home, ".keywork"))).toBe(false);
+    } finally {
+      process.env.HOME = saved.HOME;
+      process.env.USERPROFILE = saved.USERPROFILE;
+    }
+  });
+
   it("feeds the bot's skill telemetry to its sweep so a churning skill is flagged with counts", async () => {
     const fx = await fixture({
       roster: (cwd) => [routinier(cwd)],

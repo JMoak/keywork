@@ -6,6 +6,8 @@ import {
   MockProvider,
   replaySession,
   SessionStore,
+  type SpillReference,
+  type TickScheduler,
   type Tool,
   textTurn,
   toolCallTurn,
@@ -13,10 +15,23 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
 
-function followed(agent: Agent, now?: () => number): TranscriptFeed {
-  const feed = new TranscriptFeed(() => {}, now);
+function followed(agent: Agent, now?: () => number, tick?: TickScheduler): TranscriptFeed {
+  const feed = new TranscriptFeed(() => {}, now, tick);
   feed.follow(agent.bus);
   return feed;
+}
+
+function steppingTick(): { tick: TickScheduler; step: () => void; armed: () => number } {
+  const pending: (() => void)[] = [];
+  return {
+    tick: (flush) => {
+      pending.push(flush);
+    },
+    step: () => {
+      for (const flush of pending.splice(0)) flush();
+    },
+    armed: () => pending.length,
+  };
 }
 
 describe("TranscriptFeed", () => {
@@ -41,12 +56,16 @@ describe("TranscriptFeed", () => {
 
   it("reports streaming progress only for the entry still being streamed", () => {
     const agent = new Agent({ provider: new MockProvider([]) });
-    const feed = followed(agent);
+    const ticks = steppingTick();
+    const feed = followed(agent, undefined, ticks.tick);
     agent.bus.emit("turn.delta", { delta: { type: "text", text: "one " } });
+    ticks.step();
     const entry = feed.entries[0] as TranscriptEntry;
     expect(feed.streamingProgress(entry)).toBe(0);
     agent.bus.emit("turn.delta", { delta: { type: "text", text: "two " } });
+    ticks.step();
     agent.bus.emit("turn.delta", { delta: { type: "text", text: "three " } });
+    ticks.step();
     expect(feed.streamingProgress(entry)).toBe(0.5);
     agent.bus.emit("turn.interrupted", { message: { role: "assistant", parts: [] } });
     expect(feed.streamingProgress(entry)).toBeUndefined();
@@ -83,12 +102,14 @@ describe("TranscriptFeed", () => {
 
   it("follows live tool output in the row text and settles it on finish", () => {
     const agent = new Agent({ provider: new MockProvider([]) });
-    const feed = followed(agent);
+    const ticks = steppingTick();
+    const feed = followed(agent, undefined, ticks.tick);
     agent.bus.emit("tool.started", {
       call: { type: "tool-call", callId: "c1", name: "bash", arguments: { command: "ls" } },
     });
     expect(feed.entries[0]?.text).toBe("bash ls · running");
     agent.bus.emit("tool.output", { chunk: "one\ntwo", callId: "c1" });
+    ticks.step();
     expect(feed.entries[0]?.text).toBe("bash ls · two");
     agent.bus.emit("tool.finished", { callId: "c1", output: "one\ntwo\n", isError: false });
     expect(feed.entries[0]?.text).toMatch(/^bash ls · \d+ms · done$/);
@@ -154,6 +175,29 @@ describe("TranscriptFeed", () => {
     expect(feed.disclosableIndices()).toEqual([1]);
     expect(feed.toggleLatestFold()).toBe(true);
     expect(feed.entries[1]).toMatchObject({ folded: false });
+  });
+
+  it("carries the spill reference on the run and shows the elided range on the row", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const feed = followed(agent);
+    const spill: SpillReference = {
+      id: "s1",
+      bytes: 3_407_872,
+      elidedFrom: 49_116,
+      elidedTo: 3_407_791,
+    };
+    agent.bus.emit("tool.started", {
+      call: { type: "tool-call", callId: "c1", name: "bash", arguments: { command: "cat big" } },
+    });
+    agent.bus.emit("tool.finished", {
+      callId: "c1",
+      output: "head\n…\ntail",
+      isError: false,
+      spill,
+    });
+    const entry = feed.entries[0] as Extract<TranscriptEntry, { kind: "tool" }>;
+    expect(entry.run?.spill).toEqual(spill);
+    expect(entry.text).toMatch(/^bash cat big · \d+ms · 3\.4M · elided 49116\.\.3407791 · done$/);
   });
 
   it("stops following once unsubscribed", () => {
@@ -265,5 +309,77 @@ describe("session replay rendering", () => {
     expect(revived.entries[1]).toEqual({ kind: "assistant", text: "Counting the files now." });
     expect(revived.entries[2]).toMatchObject({ kind: "tool", text: "list · done" });
     expect(revived.entries[3]).toEqual({ kind: "assistant", text: "There are 4 files here." });
+  });
+});
+
+describe("delta coalescing", () => {
+  it("folds a burst of same-target deltas into one render and one appended text per tick", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const ticks = steppingTick();
+    let renders = 0;
+    const feed = new TranscriptFeed(
+      () => {
+        renders += 1;
+      },
+      undefined,
+      ticks.tick,
+    );
+    feed.follow(agent.bus);
+    const burst = Array.from({ length: 1000 }, (_, at) => `${at} `);
+    for (const text of burst) agent.bus.emit("turn.delta", { delta: { type: "text", text } });
+
+    expect(renders).toBe(0);
+    expect(feed.entries).toEqual([]);
+    expect(feed.activity).toBe(1000);
+    expect(ticks.armed()).toBe(1);
+    ticks.step();
+    expect(renders).toBe(1);
+    const entry = feed.entries[0] as TranscriptEntry;
+    expect(entry).toEqual({ kind: "assistant", text: burst.join("") });
+    expect(feed.streamingProgress(entry)).toBe(0);
+    ticks.step();
+    expect(renders).toBe(1);
+  });
+
+  it("passes non-delta events through at once, behind the deltas already pending", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const ticks = steppingTick();
+    let renders = 0;
+    const feed = new TranscriptFeed(
+      () => {
+        renders += 1;
+      },
+      undefined,
+      ticks.tick,
+    );
+    feed.follow(agent.bus);
+    agent.bus.emit("turn.delta", { delta: { type: "text", text: "thinking aloud" } });
+    agent.bus.emit("tool.started", {
+      call: { type: "tool-call", callId: "c1", name: "bash", arguments: { command: "ls" } },
+    });
+    expect(feed.entries.map((entry) => entry.kind)).toEqual(["assistant", "tool"]);
+    expect(renders).toBe(2);
+
+    agent.bus.emit("tool.output", { chunk: "one\n", callId: "c1" });
+    agent.bus.emit("tool.output", { chunk: "two\n", callId: "c1" });
+    expect(renders).toBe(2);
+    agent.bus.emit("tool.finished", { callId: "c1", output: "one\ntwo\n", isError: false });
+    expect(feed.entries[1]?.text).toMatch(/ · done$/);
+    expect(renders).toBe(4);
+    ticks.step();
+    expect(renders).toBe(4);
+  });
+
+  it("flushes what is still pending when the feed stops following", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const ticks = steppingTick();
+    const feed = new TranscriptFeed(() => {}, undefined, ticks.tick);
+    const stop = feed.follow(agent.bus);
+    agent.bus.emit("turn.delta", { delta: { type: "text", text: "kept" } });
+    stop();
+    expect(feed.entries).toEqual([{ kind: "assistant", text: "kept" }]);
+    agent.bus.emit("turn.delta", { delta: { type: "text", text: " ghost" } });
+    ticks.step();
+    expect(feed.entries).toEqual([{ kind: "assistant", text: "kept" }]);
   });
 });

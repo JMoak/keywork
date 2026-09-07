@@ -262,6 +262,11 @@ export const configSchema = z
       .describe(
         "Visible reasoning switch (70/G4): on asks the model for its reasoning text where the protocol offers it (Anthropic thinking, Responses reasoning summaries) and shows it as a folded thinking part in the conversation; off, the default, leaves requests exactly as they are today; exists because reasoning text costs tokens and screen space and is valued by some and noise to others. /thinking toggles it per session.",
       ),
+    notifications: z
+      .enum(["auto", "osc777", "osc9", "bell", "off"])
+      .describe(
+        "Notification transport policy (80/P2.4): auto reads the terminal from its environment (OSC 777 on rxvt, ghostty, WezTerm and VTE terminals; OSC 9 on Windows Terminal, iTerm2 and kitty; the bell everywhere else and inside tmux), a named transport forces that one, and off silences every notification; exists because environment sniffing is a guess that must stay overridable and some setups want silence. What notifies is fixed by the needs-you formula (an agent blocked on a decision, or the review inbox crossing its threshold, both only while the app is unfocused) and never becomes a setting.",
+      ),
     tips: z
       .enum(["on", "off"])
       .describe(
@@ -282,8 +287,14 @@ export const configSchema = z
       .describe(
         'Action-name to chord overrides: a single chord, an array of alternative chords, or the literal "none" to unbind the action; exists because fully rebindable keys are a core product value.',
       ),
+    flavor: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]*$/, "flavor names are lowercase slugs")
+      .describe(
+        'Which closet flavor keywork wears at startup: "keywork-night" (the default) or "system", which derives its palette from the terminal (OSC 10/11 for ink and ground, OSC 4 for the ANSI 16, COLORFGBG when the terminal stays silent) so keywork looks native with zero config (30/C17); theme overrides lay over whichever flavor is worn, so this stays one mechanism (100/PD15).',
+      ),
     theme: flavorTokenOverridesSchema.describe(
-      "Token-by-token #rrggbb overrides (plus the 1-6 stop ramp) laid over the keywork-night palette and checked against the flavor token schema, so a misspelled token or malformed color fails at config load; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
+      "Token-by-token #rrggbb overrides (plus the 1-6 stop ramp) laid over the worn flavor's palette and checked against the flavor token schema, so a misspelled token or malformed color fails at config load; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
     ),
     page: z
       .object({

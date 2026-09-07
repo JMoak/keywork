@@ -3,6 +3,8 @@ export {
   type AgentOptions,
   addUsage,
   type ConfirmingGate,
+  type DelegatedOutcome,
+  type DelegatedTurn,
   type PermissionResolver,
   QueuedPromptCancelledError,
   type SendOptions,
@@ -10,6 +12,7 @@ export {
   type ToolGuard,
   type ToolPermission,
   type ToolSource,
+  type TurnDelegate,
   type TurnSettler,
 } from "./agent.ts";
 export { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
@@ -22,7 +25,13 @@ export {
   undeclaredCapabilities,
   withDeclaredCapabilities,
 } from "./capabilities.ts";
-export { Checkpoints, type CheckpointsOptions, UnknownCheckpointError } from "./checkpoints.ts";
+export {
+  type ChangedPath,
+  type CheckpointReads,
+  Checkpoints,
+  type CheckpointsOptions,
+  UnknownCheckpointError,
+} from "./checkpoints.ts";
 export {
   type BusEvent,
   coalesceDeltas,
@@ -68,6 +77,7 @@ export {
   type TemplateSegment,
 } from "./extensions/markdown-commands.ts";
 export {
+  bundledSkillsRoot,
   discoverSkills,
   discoverSkillsUnder,
   type SkillDefinition,
@@ -721,6 +731,8 @@ export { defineTool } from "./tools/define.ts";
 export { editTool } from "./tools/edit.ts";
 export { readTool } from "./tools/read.ts";
 export {
+  type InteractiveShell,
+  openInteractiveShell,
   persistentBashTool,
   type ShellRunOptions,
   ShellSession,

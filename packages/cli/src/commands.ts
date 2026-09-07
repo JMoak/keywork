@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import {
   type BotDefinition,
   bashTool,
+  bundledSkillsRoot,
   type CommandDefinition,
   type CommandRuntime,
   discoverSkills,
@@ -36,7 +37,7 @@ export async function loadWorkspaceExtensions(
   const [commands, bots, skills] = await Promise.all([
     loadCommands(roots),
     loadBots(roots),
-    discoverSkills(roots),
+    discoverSkills({ ...roots, bundledRoot: bundledSkillsRoot }),
   ]);
   return {
     commands: commands.commands,

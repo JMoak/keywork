@@ -1,11 +1,26 @@
 import type { CommandRegistry } from "./commands.ts";
 import type { DockSide } from "./layout.ts";
-import type { FileOpenOptions, MemoryLens, Pane, PaneDescriptor, PaneIntents } from "./pane.ts";
+import type {
+  FileOpenOptions,
+  MemoryLens,
+  Pane,
+  PaneDescriptor,
+  PaneIntents,
+  TerminalMode,
+} from "./pane.ts";
 import type { SessionGroupBy } from "./sessions-overview-model.ts";
 
 export type PaneKind = PaneDescriptor["kind"];
 export type PaneHome = "main" | DockSide;
-export type SummonableKind = "browser" | "session-tree" | "arcs" | "workspaces" | "memory" | "mcp";
+export type SummonableKind =
+  | "browser"
+  | "session-tree"
+  | "arcs"
+  | "workspaces"
+  | "memory"
+  | "mcp"
+  | "terminal"
+  | "diff";
 
 export type ArcOrigin = "inherit" | "new";
 
@@ -71,6 +86,18 @@ export type MemoryPaneFactory = (
 ) => Pane;
 export type McpPaneFactory = (id: string, notify: () => void) => Pane;
 export type WorkspacesPaneFactory = (id: string, notify: () => void, intents: PaneIntents) => Pane;
+export type DiffPaneFactory = (id: string, notify: () => void, intents: PaneIntents) => Pane;
+export interface TerminalTarget {
+  paneId?: string;
+  sessionId?: string;
+}
+export type TerminalPaneFactory = (
+  id: string,
+  notify: () => void,
+  mode: TerminalMode,
+  target: TerminalTarget,
+  intents: PaneIntents,
+) => Pane | undefined;
 
 export interface PaneFactories {
   createPane: PaneFactory;
@@ -82,6 +109,8 @@ export interface PaneFactories {
   createMemoryPane?: MemoryPaneFactory;
   createMcpPane?: McpPaneFactory;
   createWorkspacesPane?: WorkspacesPaneFactory;
+  createTerminalPane?: TerminalPaneFactory;
+  createDiffPane?: DiffPaneFactory;
 }
 
 export type PaneRequest =
@@ -93,7 +122,9 @@ export type PaneRequest =
   | { kind: "arc"; arc: string }
   | ({ kind: "memory" } & MemoryPaneRevival)
   | { kind: "mcp" }
-  | { kind: "workspaces" };
+  | { kind: "workspaces" }
+  | { kind: "terminal"; mode?: TerminalMode; sessionId?: string }
+  | { kind: "diff" };
 
 export interface PaneKindSpec {
   readonly idPrefix: string;
@@ -112,6 +143,8 @@ export const paneKinds: Readonly<Record<PaneKind, PaneKindSpec>> = {
   memory: { idPrefix: "memory", home: "left", factory: "createMemoryPane" },
   mcp: { idPrefix: "mcp", home: "right", factory: "createMcpPane" },
   workspaces: { idPrefix: "workspaces", home: "left", factory: "createWorkspacesPane" },
+  terminal: { idPrefix: "terminal", home: "right", factory: "createTerminalPane" },
+  diff: { idPrefix: "diff", home: "right", factory: "createDiffPane" },
 };
 
 export function dockWeightOf(id: string): number {
@@ -126,6 +159,8 @@ export const summonRequests: Readonly<Record<SummonableKind, PaneRequest>> = {
   workspaces: { kind: "workspaces" },
   memory: { kind: "memory" },
   mcp: { kind: "mcp" },
+  terminal: { kind: "terminal" },
+  diff: { kind: "diff" },
 };
 
 export interface PaneBuildSeams {
@@ -133,6 +168,7 @@ export interface PaneBuildSeams {
   commands: CommandRegistry;
   intents: PaneIntents;
   conversationSession(): string | undefined;
+  conversationPane?(): string | undefined;
 }
 
 export function paneKindAvailable(factories: PaneFactories, kind: PaneKind): boolean {
@@ -200,7 +236,23 @@ export function buildPane(
       return factories.createMcpPane?.(id, notify);
     case "workspaces":
       return factories.createWorkspacesPane?.(id, notify, seams.intents);
+    case "terminal":
+      return factories.createTerminalPane?.(
+        id,
+        notify,
+        request.mode ?? "mirror",
+        terminalTarget(request.sessionId, seams),
+        seams.intents,
+      );
+    case "diff":
+      return factories.createDiffPane?.(id, notify, seams.intents);
   }
+}
+
+function terminalTarget(sessionId: string | undefined, seams: PaneBuildSeams): TerminalTarget {
+  if (sessionId !== undefined) return { sessionId };
+  const paneId = seams.conversationPane?.();
+  return paneId === undefined ? {} : { paneId };
 }
 
 export class PaneIds {

@@ -30,7 +30,7 @@ export interface BotDefinition {
   prompt: string;
   file: string;
   dir: string;
-  source: LayerSource;
+  source: BotSource;
 }
 
 export interface BotLoad {
@@ -41,7 +41,9 @@ export interface BotLoad {
 export const botsDir = ".keywork/bots";
 export const botFileName = "bot.md";
 
-export async function loadBots(roots: LayerRoots): Promise<BotLoad> {
+export type BotSource = Exclude<LayerSource, "bundled">;
+
+export async function loadBots(roots: Omit<LayerRoots, "bundledRoot">): Promise<BotLoad> {
   const { items, failures } = await loadLayered(roots, botConventions, buildBot);
   return { bots: items, failures };
 }
@@ -159,8 +161,13 @@ function buildBot(definition: MarkdownDefinition): BotDefinition {
     prompt: definition.body.trim(),
     file: definition.file,
     dir: dirname(definition.file),
-    source: definition.source,
+    source: botSourceOf(definition.source),
   };
+}
+
+function botSourceOf(source: LayerSource): BotSource {
+  if (source === "bundled") throw new Error("bots have no bundled layer");
+  return source;
 }
 
 function parseFrontmatter(frontmatter: Frontmatter): z.infer<typeof botFrontmatter> {

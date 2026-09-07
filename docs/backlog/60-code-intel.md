@@ -12,6 +12,17 @@ Curated skills/commands (D5/D7 formats) for the TS toolchain: `typecheck` (tsc),
 the prompt body so the model reads results well. Not core code; content.
 **Accept:** skills invoke correctly in a fixture TS repo via mock conversation.
 **Strategy:** `OWN` content.
+**Landed 2026-09-07:** three bundled skills at `packages/engine/src/skills/bundled/`
+(`typecheck`, `lint`, `test`), each a human-authored `SKILL.md` (no `authored_by`) with
+output-reading hints, beside a `resolve.ts` that reads the manifest and lockfile and prints
+`tool:` / `command:` / `reason:` (`toolchain.ts` holds the detection). `layers.ts` gained the
+`bundled` source beneath project and user (`LayerRoots.bundledRoot`, exported
+`bundledSkillsRoot`). Evidence: `extensions/skills.test.ts` "bundled skills" (2),
+`skills/bundled/bundled.test.ts` (4 resolution rows: vitest+biome, bun test+eslint, scripted
+npm, bare; 3 mock conversations through the `skill` and `bash` tools asserting the resolved
+command text). Open crossing: `loadWorkspaceExtensions` in `packages/cli/src/commands.ts` does
+not pass `bundledRoot` yet, so the three stay dark in the app until that one line lands
+together with the `skills: []` expectation in `compose.test.ts`.
 
 ### F2 (3pt): Repo map: extraction & ranking
 Blessed extension: parse TS/JS (ts-morph or SWC) for exported symbols/signatures; rank by

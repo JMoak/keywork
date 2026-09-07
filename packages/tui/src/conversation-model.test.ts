@@ -6,6 +6,7 @@ import {
   MockProvider,
   type PermissionResolver,
   type Provider,
+  type SpillReference,
   type Tool,
   type ToolCallPart,
   type ToolGuard,
@@ -18,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import { ConversationModel, type ConversationPorts } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
+import type { FileOpenOptions } from "./pane.ts";
 import { bindSessionLifecycle } from "./session-attachment.ts";
 import { guardedShellEscape } from "./shell-escape.ts";
 import type { ToolEntry } from "./transcript-feed.ts";
@@ -1556,5 +1558,69 @@ describe("large-paste placeholders", () => {
     await submit(model);
     model.paste(sevenLines);
     expect(model.input).toBe("[pasted #1, 7 lines]");
+  });
+});
+
+describe("spill open", () => {
+  const spill: SpillReference = { id: "s1", bytes: 200_000, elidedFrom: 49_000, elidedTo: 183_000 };
+
+  function spilledModel(ports: ConversationPorts) {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const model = new ConversationModel(agent, () => {}, undefined, undefined, ports);
+    agent.bus.emit("tool.started", {
+      call: { type: "tool-call", callId: "c1", name: "bash", arguments: { command: "cat big" } },
+    });
+    agent.bus.emit("tool.finished", {
+      callId: "c1",
+      output: "head\n…\ntail",
+      isError: false,
+      spill,
+    });
+    return model;
+  }
+
+  it("opens the cursored spill in a file pane at the elided byte range", () => {
+    const opened: { path: string; options: FileOpenOptions }[] = [];
+    const model = spilledModel({
+      spillFile: (id) => `/sessions/abc.spills/${id}.txt`,
+      openFile: (path, options) => opened.push({ path, options }),
+    });
+    expect(model.cursoredSpill()).toBeUndefined();
+    expect(model.handleKey(parseChord("shift+tab"), undefined)).toBe(true);
+    expect(model.cursoredSpill()).toEqual(spill);
+    expect(model.handleKey(parseChord("o"), "o")).toBe(true);
+    expect(opened).toEqual([
+      {
+        path: "/sessions/abc.spills/s1.txt",
+        options: { byteRange: { from: 49_000, to: 183_000 } },
+      },
+    ]);
+    expect(model.input).toBe("");
+  });
+
+  it("posts a notice when the spill file is gone", () => {
+    const opened: string[] = [];
+    const model = spilledModel({
+      spillFile: () => undefined,
+      openFile: (path) => opened.push(path),
+    });
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("o"), "o");
+    expect(opened).toEqual([]);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "spill s1 is not on disk any more",
+    });
+  });
+
+  it("leaves o as prompt text when no spill row is under the cursor", () => {
+    const opened: string[] = [];
+    const model = spilledModel({
+      spillFile: (id) => `/spills/${id}.txt`,
+      openFile: (path) => opened.push(path),
+    });
+    model.handleKey(parseChord("o"), "o");
+    expect(model.input).toBe("o");
+    expect(opened).toEqual([]);
   });
 });

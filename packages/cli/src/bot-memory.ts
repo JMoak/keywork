@@ -115,7 +115,11 @@ export function botMemory(options: BotMemoryOptions): BotMemory {
   const learnsSkills = (bot: BotDefinition): boolean =>
     bot.learning === "skills" && registryFor(bot) !== undefined;
   const telemetryFileFor = (bot: BotDefinition): string =>
-    botSkillTelemetryFile(workspaceIdentity(options.cwd, options.workspaceSlug), bot.name);
+    botSkillTelemetryFile(
+      workspaceIdentity(options.cwd, options.workspaceSlug),
+      bot.name,
+      options.userRoot,
+    );
   const botNamed = (slug: string | undefined): BotDefinition | undefined =>
     slug === undefined ? undefined : options.roster.find((bot) => bot.name === slug);
   const boundBot = (sessionId: string): BotDefinition | undefined => {

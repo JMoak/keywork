@@ -136,6 +136,7 @@ const commands: Record<CommandName, Command> = {
   untrust: (context) => runTrust("untrust", context),
   doctor: runDoctor,
   serve: runServe,
+  attach: runAttach,
 };
 
 async function openCommandContext(
@@ -328,6 +329,30 @@ ${connectHint}`,
   );
 }
 
+async function runAttach(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
+  const { io } = context;
+  const { attach, choosePane } = await import("./attach.ts");
+  const choice = choosePane(values.pane);
+  if (choice.kind === "refused") {
+    const reason = `keywork attach: ${choice.reason}`;
+    io.printError(
+      choice.usage
+        ? `${reason}
+
+${usage}`
+        : reason,
+    );
+    return exitCodes.usage;
+  }
+  return attach({
+    pane: choice.pane,
+    session: values.session,
+    url: values.url,
+    token: values.token,
+    printError: io.printError,
+  });
+}
+
 function parsePort(raw: string | undefined): number | undefined | "invalid" {
   if (raw === undefined) return undefined;
   const port = Number(raw);
@@ -475,6 +500,10 @@ function parseInvocationArgs(args: readonly string[]) {
       "session-dir": { type: "string" },
       workspace: { type: "string" },
       port: { type: "string" },
+      pane: { type: "string" },
+      session: { type: "string" },
+      url: { type: "string" },
+      token: { type: "string" },
     },
   });
 }

@@ -1,7 +1,11 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   type Agent,
   type BotDefinition,
+  type Checkpoints,
   type ContextBudget,
   type CurationJudgmentPort,
   closingJudgment,
@@ -24,20 +28,31 @@ import {
   type AgentFactory,
   type AppOptions,
   type Compactor,
+  checkpointBaseline,
   crashLogFacts,
   crashLogFile,
+  type DiffPort,
   detectCapabilities,
+  detectTerminalColors,
   type ExtensionsPort,
+  type GitRunner,
+  gitHeadBaseline,
   guardedShellEscape,
   type NoticeSource,
+  noBaselineNotice,
   readinessNotice,
   runApp,
+  stdioColorTransport,
+  systemFlavor,
+  type TerminalColors,
+  untrustedNotice,
   type WorkspacePort,
   type WorkspaceSetupPort,
   type WorkspacesPort,
+  workingFileReader,
 } from "@keywork/tui";
 import { arcService, arcsUnavailable, type ClosingRequest } from "./arcs.ts";
-import { botMemory } from "./bot-memory.ts";
+import { type BotMemory, botMemory } from "./bot-memory.ts";
 import { botService } from "./bots.ts";
 import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
 import {
@@ -49,9 +64,16 @@ import {
 import { inferencePort } from "./inference/port.ts";
 import { closingRole, namingRole, roleProvider } from "./inference/roles.ts";
 import type { LiveInference } from "./inference-state.ts";
+import { fileKeybindings } from "./keybindings.ts";
 import { type DeferredMaterialization, deferredMaterialization } from "./materialize.ts";
 import { mcpPanePort } from "./mcp.ts";
-import { citationTrail, memoryPanePort, skillEvidenceOf, sweepOnClose } from "./memory.ts";
+import {
+  citationTrail,
+  type MemoryAccess,
+  memoryPanePort,
+  skillEvidenceOf,
+  sweepOnClose,
+} from "./memory.ts";
 import {
   defaultSessionDir,
   skillTelemetryFile,
@@ -61,11 +83,13 @@ import {
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
 import {
   boundSessionCounts,
+  type SessionChangeFeed,
   sessionChangeFeed,
   sessionPort,
   sessionTreePort,
 } from "./sessions/ports.ts";
 import { listSessions } from "./sessions/store.ts";
+import { userConfigDir } from "./user-config.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
 import { workspaceSetupPort } from "./workspace-setup.ts";
 import { type WorkspaceRecall, workspacesPort } from "./workspaces.ts";
@@ -87,6 +111,7 @@ export interface PanesSeams {
   createRenderer?: AppOptions["createRenderer"];
   exit?: (code: number) => void;
   reopen?: (slug: string | undefined) => void;
+  terminalColors?: () => Promise<TerminalColors | undefined>;
 }
 
 export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Promise<void> {
@@ -122,8 +147,10 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
     }),
   });
   const exit = seams.exit ?? ((code: number) => process.exit(code));
+  const colors = await (seams.terminalColors ?? processTerminalColors)();
   await runApp({
     ...app,
+    flavors: [systemFlavor(colors)],
     ...(seams.createRenderer !== undefined && { createRenderer: seams.createRenderer }),
     exit: (code) => {
       if (pendingReopen !== undefined && seams.reopen !== undefined) {
@@ -247,7 +274,10 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     });
   };
   const workspaceSkillEvidence = () =>
-    skillEvidenceOf(composition.skills, skillTelemetryFile(workspaceIdentity(cwd, workspaceSlug)));
+    skillEvidenceOf(
+      composition.skills,
+      skillTelemetryFile(workspaceIdentity(cwd, workspaceSlug), options.userRoot ?? homedir()),
+    );
   return {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
@@ -271,6 +301,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
+    spillFile: (sessionId, spillId) => stores.get(sessionId)?.spills().path(spillId),
     shellEscape: (guard) =>
       guardedShellEscape({
         tools: () => coreTools(composition.scope),
@@ -286,14 +317,25 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       ...(port === undefined ? [] : [() => port.dispose()]),
     ],
     notices,
+    terminalPane: { trusted: projectTrusted },
     extensions: extensionsView(extensions, cwd),
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
+    ...(config.flavor !== undefined && { flavor: config.flavor }),
+    keybindings: fileKeybindings({
+      userDir: userConfigDir(),
+      projectDir: join(cwd, ".keywork"),
+      projectTrusted,
+    }),
     ...(config.pointer !== undefined && { pointer: config.pointer }),
     ...(config.masthead !== undefined && { masthead: config.masthead }),
     ...(config.motion !== undefined && { motion: config.motion }),
     ...(config.tips !== undefined && { tips: config.tips }),
     ...(config.scrim !== undefined && { scrim: config.scrim }),
     ...(config.dim !== undefined && { dim: config.dim }),
+    ...(config.notifications !== undefined && { notifications: config.notifications }),
+    ...(projectTrusted && {
+      inbox: reviewInboxFeed(changes, () => stagedCount(memory, botLayers)),
+    }),
     doctorReport: async () => {
       const { doctorReport, renderDoctorReport, workspaceDoctorFacts } = await import(
         "./doctor.ts"
@@ -311,6 +353,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     },
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
+    diff: diffPort(cwd, projectTrusted, checkpoints),
     ...(projectTrusted && {
       memory: memoryPanePort(memory, arcs.registry, arcs.port.airlock, botLayers),
     }),
@@ -418,6 +461,33 @@ function settleAfterTurn(
   };
 }
 
+function reviewInboxFeed(
+  changes: SessionChangeFeed,
+  count: () => Promise<number>,
+): NonNullable<AppOptions["inbox"]> {
+  return {
+    subscribe: (listener) => {
+      let reported: number | undefined;
+      const refresh = (): void => {
+        void count().then((waiting) => {
+          if (waiting === reported) return;
+          reported = waiting;
+          listener(waiting);
+        });
+      };
+      const stop = changes.subscribe(refresh);
+      refresh();
+      return stop;
+    },
+  };
+}
+
+async function stagedCount(memory: MemoryAccess, bots: BotMemory): Promise<number> {
+  const workspace = memory();
+  const staged = workspace === undefined ? 0 : (await workspace.store.listStaged()).length;
+  return staged + (await bots.staged()).length;
+}
+
 function compactOnRequest(
   stores: ReadonlyMap<string, SessionStore>,
   agents: AgentComposition,
@@ -468,6 +538,42 @@ function extensionsView(extensions: WorkspaceExtensions, cwd: string): Extension
     })),
     failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
   };
+}
+
+function processTerminalColors(): Promise<TerminalColors | undefined> {
+  return detectTerminalColors({
+    env: process.env,
+    tty: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    transport: stdioColorTransport(process.stdin, process.stdout),
+  });
+}
+
+function diffPort(cwd: string, trusted: boolean, checkpoints: Checkpoints | undefined): DiffPort {
+  const readFile = workingFileReader(cwd);
+  if (!trusted) return { unavailable: untrustedNotice, readFile };
+  if (checkpoints !== undefined) return { baseline: checkpointBaseline(checkpoints), readFile };
+  if (!existsSync(join(cwd, ".git"))) return { unavailable: noBaselineNotice, readFile };
+  return { baseline: gitHeadBaseline(gitRunnerIn(cwd), readFile), readFile };
+}
+
+function gitRunnerIn(cwd: string): GitRunner {
+  return (args) =>
+    new Promise((resolvePromise, rejectPromise) => {
+      const child = spawn("git", args, { cwd, windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", rejectPromise);
+      child.on("close", (code) => {
+        if (code === 0) resolvePromise(stdout);
+        else rejectPromise(new Error(`git ${args[0]} failed: ${stderr.trim() || `exit ${code}`}`));
+      });
+    });
 }
 
 function noticeFeed(): NoticeSource & { post: (text: string) => void } {

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { BrowserDisk, Entry } from "./browser-model.ts";
+import type { DebounceTiming } from "./debounce.ts";
 import { FileIndex, fileIndexLimits, fileJumpSource, fileJumpsAllowed } from "./file-index.ts";
 import { AppProbe } from "./probe.ts";
 import { paneIds, stubFilePane } from "./testing/workflow-probe.ts";
@@ -127,6 +128,100 @@ describe("FileIndex walk", () => {
     index.refresh();
     await index.settled();
     expect(index.entries().map((file) => file.relative)).toEqual(["a.ts", "b.ts"]);
+  });
+});
+
+function fakeTiming() {
+  let clock = 0;
+  const armed: Array<{ dueAt: number; run: () => void; live: boolean }> = [];
+  const timing: DebounceTiming = {
+    now: () => clock,
+    after: (delayMs, run) => {
+      const entry = { dueAt: clock + delayMs, run, live: true };
+      armed.push(entry);
+      return () => {
+        entry.live = false;
+      };
+    },
+  };
+  const advanceTo = (time: number): void => {
+    clock = time;
+    for (const entry of [...armed]) {
+      if (entry.live && entry.dueAt <= clock) {
+        entry.live = false;
+        entry.run();
+      }
+    }
+  };
+  return { timing, advanceTo };
+}
+
+function watchedIndexOver(tree: Tree) {
+  const { disk, reads } = diskOver(tree);
+  const watchers = new Map<string, () => void>();
+  const watching: BrowserDisk = {
+    ...disk,
+    watchDirectory: (path, onChange) => {
+      watchers.set(path, onChange);
+      return () => watchers.delete(path);
+    },
+  };
+  const { timing, advanceTo } = fakeTiming();
+  const index = new FileIndex("root", watching, () => {}, fileIndexLimits, timing);
+  const change = (path: string): void => {
+    const onChange = watchers.get(path);
+    if (onChange === undefined) throw new Error(`nothing watches ${path}`);
+    onChange();
+  };
+  return { index, reads, watchers, change, advanceTo };
+}
+
+describe("FileIndex watching", () => {
+  it("re-walks once after a burst of watcher events settles", async () => {
+    const tree: Tree = { src: { "a.ts": "" } };
+    const { index, reads, watchers, change, advanceTo } = watchedIndexOver(tree);
+    await settledEntries(index);
+    expect([...watchers.keys()]).toEqual(["root", join("root", "src")]);
+    (tree.src as Tree)["b.ts"] = "";
+    change(join("root", "src"));
+    advanceTo(100);
+    change(join("root", "src"));
+    advanceTo(249);
+    await index.settled();
+    expect(index.entries().map((file) => file.relative)).toEqual(["src/a.ts"]);
+    advanceTo(250);
+    await index.settled();
+    expect(index.entries().map((file) => file.relative)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(reads.filter((path) => path === "root")).toHaveLength(2);
+  });
+
+  it("queues one more walk when a change lands mid-walk", async () => {
+    const tree: Tree = { "a.ts": "" };
+    const { index, reads, change, advanceTo } = watchedIndexOver(tree);
+    await settledEntries(index);
+    tree["b.ts"] = "";
+    change("root");
+    advanceTo(150);
+    tree["c.ts"] = "";
+    change("root");
+    advanceTo(300);
+    await index.settled();
+    expect(index.entries().map((file) => file.relative)).toEqual(["a.ts", "b.ts", "c.ts"]);
+    expect(reads).toEqual(["root", "root", "root"]);
+  });
+
+  it("drops watchers on directories that vanished and closes them all on dispose", async () => {
+    const tree: Tree = { src: { "a.ts": "" }, old: { "gone.ts": "" } };
+    const { index, watchers, change, advanceTo } = watchedIndexOver(tree);
+    await settledEntries(index);
+    expect(index.watchedDirectories()).toEqual(["root", join("root", "old"), join("root", "src")]);
+    delete tree.old;
+    change("root");
+    advanceTo(150);
+    await index.settled();
+    expect(index.watchedDirectories()).toEqual(["root", join("root", "src")]);
+    index.dispose();
+    expect(watchers.size).toBe(0);
   });
 });
 

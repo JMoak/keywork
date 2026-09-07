@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { textMessage } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
@@ -107,6 +107,18 @@ describe("keywork sessions list", () => {
     expect(out.join("\n")).toContain("found 1 empty session file");
     expect(out.join("\n")).toContain("removed 1 empty session file");
     expect(existsSync(emptyFile)).toBe(false);
+    expect(existsSync(keptFile)).toBe(true);
+  });
+
+  it("takes the spill directory along with an empty session it deletes", async () => {
+    const { dir, emptyFile, keptFile } = await litteredDir();
+    const spillDir = join(dir, "1000000000000-0001-1.spills");
+    await mkdir(spillDir, { recursive: true });
+    await writeFile(join(spillDir, "abandoned.txt"), "orphan output", "utf8");
+    const { io } = consoleOf();
+    await sessionsCommand(["list"], dir, { ...io, confirm: async () => true });
+    expect(existsSync(emptyFile)).toBe(false);
+    expect(existsSync(spillDir)).toBe(false);
     expect(existsSync(keptFile)).toBe(true);
   });
 

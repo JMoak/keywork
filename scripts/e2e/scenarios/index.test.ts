@@ -48,6 +48,8 @@ describe("scenario registry", () => {
       "pointer-tour",
       "pointer-off",
       "tray-tour",
+      "terminal-mirror",
+      "diff-pane",
       "live-playground",
     ]);
   });
@@ -97,6 +99,8 @@ describe("scenario registry", () => {
       "pointer-tour",
       "pointer-off",
       "tray-tour",
+      "terminal-mirror",
+      "diff-pane",
     ]);
   });
 

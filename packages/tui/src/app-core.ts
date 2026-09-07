@@ -59,7 +59,7 @@ import {
   SetupConfirmOverlay,
   type WorkspaceOverlay,
 } from "./overlays/index.ts";
-import type { FileOpenOptions, Pane, PaneDescriptor, PaneIntents } from "./pane.ts";
+import type { FileOpenOptions, Pane, PaneDescriptor, PaneIntents, TerminalMode } from "./pane.ts";
 import {
   type ArcOrigin,
   buildPane,
@@ -341,6 +341,16 @@ export class AppCore implements ActionTarget {
 
   openBrowser(root: string): void {
     this.place({ kind: "browser", root });
+  }
+
+  openTerminal(mode: TerminalMode | undefined): void {
+    if (mode === undefined) {
+      this.summon("terminal");
+      return;
+    }
+    const existing = [...this.panes.keys()].find((id) => this.terminalModeOf(id) === mode);
+    if (existing !== undefined) this.focusPane(existing);
+    else this.place({ kind: "terminal", mode });
   }
 
   focusPane(id: string): void {
@@ -800,6 +810,7 @@ export class AppCore implements ActionTarget {
     commands: this.registry,
     intents: this.intents,
     conversationSession: (): string | undefined => this.conversationSession(),
+    conversationPane: (): string | undefined => this.conversationPane(),
   };
 
   private noteDescribed(id: string): void {
@@ -902,6 +913,15 @@ export class AppCore implements ActionTarget {
     if (this.place(summonRequests[entry.kind]) !== undefined && entry.pinned) {
       this.layout.pinFocused();
     }
+  }
+
+  private terminalModeOf(id: string): TerminalMode | undefined {
+    const descriptor = this.panes.get(id)?.describe?.();
+    return descriptor?.kind === "terminal" ? descriptor.mode : undefined;
+  }
+
+  private conversationPane(): string | undefined {
+    return this.panesFocusedFirst().find((id) => paneKindOf(id) === "conversation");
   }
 
   private conversationSession(): string | undefined {

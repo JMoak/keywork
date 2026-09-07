@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
+import type { FileOpenOptions } from "./pane.ts";
 import { failureMessage, PaneTasks } from "./pane-tasks.ts";
 
 export type FileState =
@@ -19,11 +20,11 @@ export class FileModel {
     cwd: string,
     readonly path: string,
     notify: () => void,
-    options: { atEnd?: true } = {},
+    options: FileOpenOptions = {},
   ) {
     this.name = basename(path);
     this.tasks = new PaneTasks(notify);
-    this.tasks.track(() => this.load(resolve(cwd, path), options.atEnd === true));
+    this.tasks.track(() => this.load(resolve(cwd, path), options));
   }
 
   handleKey(chord: Chord, pageRows: number): boolean {
@@ -77,7 +78,7 @@ export class FileModel {
     return true;
   }
 
-  private async load(absolutePath: string, atEnd: boolean): Promise<void> {
+  private async load(absolutePath: string, options: FileOpenOptions): Promise<void> {
     try {
       const { size } = await stat(absolutePath);
       if (size > maxFileBytes) {
@@ -88,7 +89,7 @@ export class FileModel {
       this.state = content.includes("\u0000")
         ? { kind: "failed", reason: "binary file" }
         : { kind: "loaded", lines: content.split(/\r?\n/) };
-      if (atEnd) this.scrollTop = this.lineCount();
+      this.scrollTop = openingRow(content, this.lineCount(), options);
     } catch (cause) {
       this.state = { kind: "failed", reason: failureMessage(cause) };
     }
@@ -96,6 +97,22 @@ export class FileModel {
 }
 
 const maxFileBytes = 20 * 1024 * 1024;
+const newlineByte = 0x0a;
+
+function openingRow(content: string, lineCount: number, options: FileOpenOptions): number {
+  if (options.atEnd) return lineCount;
+  if (options.byteRange !== undefined) return lineAtByte(content, options.byteRange.from);
+  if (options.line !== undefined) return Math.max(0, options.line - 1);
+  return 0;
+}
+
+function lineAtByte(content: string, offset: number): number {
+  let line = 0;
+  for (const byte of Buffer.from(content, "utf8").subarray(0, Math.max(0, offset))) {
+    if (byte === newlineByte) line += 1;
+  }
+  return line;
+}
 
 function megabytes(bytes: number): number {
   return Math.round(bytes / (1024 * 1024));

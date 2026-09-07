@@ -38,6 +38,8 @@ function command(name: string, template = "body"): CommandDefinition {
   return { name, template, file: `${name}.md`, source: "project" };
 }
 
+const bundledSkillNames = ["lint", "test", "typecheck"];
+
 describe("loadWorkspaceExtensions", () => {
   it("loads commands, bots, and skills from a trusted project", async () => {
     const cwd = await scratch();
@@ -55,7 +57,11 @@ describe("loadWorkspaceExtensions", () => {
     const extensions = await loadWorkspaceExtensions(cwd, true, userRoot);
     expect(extensions.commands.map((entry) => entry.name).sort()).toEqual(["mine", "ship"]);
     expect(extensions.bots.map((entry) => entry.name)).toEqual(["scout"]);
-    expect(extensions.skills.map((entry) => entry.name)).toEqual(["deploy", "personal"]);
+    expect(extensions.skills.map((entry) => entry.name)).toEqual([
+      "deploy",
+      "personal",
+      ...bundledSkillNames,
+    ]);
     expect(extensions.failures).toEqual([]);
   });
 
@@ -72,14 +78,21 @@ describe("loadWorkspaceExtensions", () => {
     const extensions = await loadWorkspaceExtensions(cwd, false, userRoot);
     expect(extensions.commands.map((entry) => entry.name)).toEqual(["mine"]);
     expect(extensions.bots).toEqual([]);
-    expect(extensions.skills).toEqual([]);
+    expect(extensions.skills.map((entry) => entry.source)).toEqual([
+      "bundled",
+      "bundled",
+      "bundled",
+    ]);
   });
 
   it("stays calm when nothing is defined anywhere", async () => {
     const cwd = await scratch();
     const userRoot = await scratch();
     const extensions = await loadWorkspaceExtensions(cwd, true, userRoot);
-    expect(extensions).toEqual({ commands: [], bots: [], skills: [], failures: [] });
+    expect(extensions.commands).toEqual([]);
+    expect(extensions.bots).toEqual([]);
+    expect(extensions.failures).toEqual([]);
+    expect(extensions.skills.map((entry) => entry.name)).toEqual(bundledSkillNames);
   });
 });
 

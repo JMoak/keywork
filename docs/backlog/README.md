@@ -54,7 +54,7 @@ file that currently owns each topic; the file itself says what it amends.
 | [`50-trust.md`](50-trust.md) | E: trust & safety | 5 | 10 |
 | [`60-code-intel.md`](60-code-intel.md) | F: code intelligence | 5 | 10 |
 | [`70-anthropic.md`](70-anthropic.md) | G: Anthropic (API-key provider; G1 + G2 landed 2026-09-03, ledger inside) | 2 | 3 |
-| [`80-p2-reach.md`](80-p2-reach.md) | P2: server, attach, workspaces; external-surface posture (2026-08-10); P2.1 server landed 2026-09-06 | 7 | 20 |
+| [`80-p2-reach.md`](80-p2-reach.md) | P2: server, attach, workspaces; external-surface posture (2026-08-10); P2.1 server landed 2026-09-06; P2.2 attach and P2.4 notifications landed 2026-09-07 | 7 | 20 |
 
 ## Overlays
 

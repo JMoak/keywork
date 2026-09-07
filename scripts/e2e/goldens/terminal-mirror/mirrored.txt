@@ -1,0 +1,32 @@
+╭──────────────────────────────────────╭───────────────────────────────────────╮───────────────────────────────────────╮
+│ session tree                         │ ░ session-1                           │ terminal · mirroring                  │
+│ ░ no sessions yet                    │                                       │ $ bun test                            │
+│                                      │                                       │ 3 files scanned                       │
+│                                      │                                       │ 12 tests passed                       │
+│                                      │                                       │ no failures                           │
+│                                      │                                       │ · done                                │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │                                       │                                       │
+│                                      │ █ lease run the tests                 │                                       │
+│                                      │ ▓ Running the tests now.              │                                       │
+│                                      │ ░ bash bun test · ~·· · done          │                                       │
+│                                      │ ▓ All twelve tests pass.              │                                       │
+│                                      │ › ▌                                   │                                       │
+╰──────────────────────────────────────╰───────────────────────────────────────╯───────────────────────────────────────╯
+ keywork e2e · 3 panes · ctrl+k nav · ctrl+p go · / commands                                                     return 

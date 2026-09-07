@@ -827,6 +827,80 @@ than by call id (call ids come from providers and are not guaranteed filename-sa
 16 ms frame tick; `tool-call`, `done`, and redacted-thinking deltas flush and pass through
 rather than merging.
 
+**Landed (2026-09-07), pane half:** `OWN`, in `packages/tui/src/transcript-feed.ts`,
+`transcript-view.ts`, `conversation-model.ts`, `conversation-pane.ts`, `file-model.ts`,
+`session-panes.ts`, with one additive field on `FileOpenOptions` in `pane.ts`.
+Coalescer hookup: `TranscriptFeed.follow(bus)` no longer applies bus events directly. Every
+followed event is relayed into `coalesceDeltas(absorb, tick)` and the feed applies whatever
+the coalescer hands back, so a burst of `turn.delta` text, visible thinking, or `tool.output`
+for one target lands as one appended text and one `notify` per tick, while `turn.started`,
+`tool.started`, `tool.finished`, `turn.completed`, and `turn.interrupted` flush what is
+pending and apply at once, in order. The tick is the engine's `frameTick` (16 ms) by default
+and injectable through `TranscriptFeed`'s third constructor argument and
+`ConversationPorts.frameTick`, so tests step it by hand. Unfollowing flushes the pending run
+into the feed before the listeners drop, so an agent swap never loses the last frame's text.
+`activity` still counts raw events at the relay (text and thinking deltas, tool starts, live
+tool output), so the work glyph keeps its cadence and the goldens their stamps.
+Virtualized rows: `TranscriptView` replaced its per-entry `WeakMap` with a `RowIndex`, an
+array of slots aligned to the transcript, each holding the entry it was rendered from, its
+shape (text, failed, folded), its wrapped lines and, for assistant entries, the markdown
+blocks the incremental streaming path already kept. A frame adopts the layout (a width, prose
+measure, gutter, or marks change drops every slot), then syncs the index: an entry whose slot
+holds the same object and the same shape costs three comparisons; a new, replaced, or mutated
+entry is laid out again and the running `total` moves by the difference; a truncated
+transcript drops its trailing slots. `windowFromEnd` then reads counts from the index and
+materializes only the visible entries, where the streaming stamp and cursor are applied.
+Scroll anchoring, `revealAt`, backtrack and fold highlighting, and the returned `total` are
+unchanged. Spill open: `ToolRun.spill` carries the `SpillReference` from `tool.finished`
+(replay included), the collapsed row reads `bash cat big · 1.2s · 3.4M · elided
+49116..3407791 · done` (size is the spill's full byte count when one exists), and with the
+fold cursor on that row (`shift+tab`) the key `o` opens the spill file in a file pane through
+`ConversationPorts.openFile` with `byteRange: { from: elidedFrom, to: elidedTo }`; the
+disclosure hint grows `· o opens the spill` only when the cursored row has one, and outside
+that case `o` stays prompt text. `FileModel` honors `byteRange` by scrolling to the line that
+holds `from` (UTF-8 bytes counted on the raw content, so CRLF endings and multi-byte
+characters land on the right line) and honors the diff lane's `line` (one-based) the same
+way. `ConversationPorts.spillFile(id)` resolves the path; `session-panes.ts` fills it from a
+new optional `SessionPaneDeps.spillFile(sessionId, spillId)` and answers `undefined` unless
+the file exists, so a spill that was swept posts `spill <id> is not on disk any more` instead
+of a file pane showing a read failure.
+Evidence: `transcript-feed.test.ts` "folds a burst of same-target deltas into one render and
+one appended text per tick" (1,000 deltas, zero renders and zero entries before the step,
+one render, one entry, `streamingProgress` still 0 after it, one tick armed), "passes
+non-delta events through at once, behind the deltas already pending", "flushes what is still
+pending when the feed stops following", "carries the spill reference on the run and shows
+the elided range on the row"; `transcript-view.test.ts` "lays out O(visible) rows per frame
+over a 10,000-entry transcript" (10,000 layouts on the first frame at a width, then 100
+streaming frames cost 100 block layouts, 100 scrolled-back frames cost zero, one replaced
+entry costs one, a width change costs a full pass again) and "keeps the frame identical to a
+fresh view through growth, mutation, and truncation"; `conversation-model.test.ts` "spill
+open" (opens at the elided byte range, missing file posts the notice, `o` types when no spill
+row is cursored); `conversation-pane.test.ts` "names the spill key in the disclosure hint when
+the cursored row spilled"; `file-model.test.ts` "opening at a place" (byte offset across
+CRLF and a multi-byte character, past-the-end clamps, one-based line). Three existing tests
+that asserted mid-stream state now step the tick. `bun run e2e elevation-turn-age
+elevation-scroll-map elevation-chrome discovery long-session`: the three elevation goldens
+verified unchanged; `long-session` has no goldens and its session-tree entry counts vary run
+to run on the baseline as well; `discovery`'s `help-overlay.txt` differs only by the new
+leader chords another lane added to the keymap (`ctrl+k g diff pane` and two rows below it).
+Crossings: `ConversationPorts` gains `frameTick`, `spillFile`, `openFile`; `SessionPaneDeps`
+gains `spillFile`; `FileOpenOptions` gains `byteRange`; `ToolRun` gains `spill`;
+`TranscriptFeed` takes a `TickScheduler`. The CLI does not yet supply
+`SessionPaneDeps.spillFile`; the one-line wiring in `compose-panes.ts` is
+`(sessionId, id) => stores.get(sessionId)?.spills().path(id)`, and until it lands the key
+posts the missing-spill notice.
+Follow-ups: a spill over `FileModel`'s 20 MB cap still fails to open (a `readRange`-backed
+window pane would lift that); the elided range is only scrolled to, never highlighted, in
+the file pane; the index sync is a linear scan of three comparisons per entry, which is
+where a per-entry revision from the feed would go if a 100k-entry transcript ever shows it;
+`Frame.total` still requires every entry laid out once per width, so the first frame after a
+resize is a full pass.
+Assumptions Jordan may reverse: `o` as the pane-local key, live only under the fold cursor
+and only when the row spilled; the row wording `elided a..b` beside the full byte size; the
+tick flushing on unfollow rather than dropping; activity counted per raw event rather than
+per frame; `line` honored in `FileModel` on this lane's side since the diff lane opens with
+it.
+
 ## Non-goals (v1)
 
 - Cross-workspace federation (designed-for via J6's scope seam; built post-v1).

@@ -152,6 +152,91 @@ this is the tmux/zellij composition story from the Q6 synthesis: same components
 mounting surface.
 **Strategy:** `OWN` on C11's registry.
 
+#### P2.2 ledger (landed 2026-09-07)
+
+**What landed.** `keywork attach` mounts the TUI as a second surface over a running
+`keywork serve`, with no local workspace composition at all: no memory, no MCP, no tools, no
+checkpoints. Three pieces. `packages/server/src/client.ts` is a typed client over the P2.1
+routes (`sessions`, `session`, `createSession`, `prompt`, `abort`) plus `events()`, an async
+iterator over `/events` that carries `Last-Event-ID` across reconnects and backs off 250ms
+doubling to a 5s ceiling; it is pure over an injected `fetch`, frame reader and delay, and
+`resolveServerTicket` reads `~/.keywork/server.json` unless `--url` and `--token` both arrive.
+`packages/cli/src/remote-ports.ts` fills the TUI ports over that client: `remoteSessionPort`
+(open and create; history from `GET /sessions/{id}`, replayed onto the pane's bus with
+`replay: true`), `remoteSessionTreePort` (overview from `/sessions`, a linear tree from the
+message list, refresh on every `turn.completed` envelope) and `remoteAgentFactory`, which builds
+a real engine `Agent` whose turns run on the server. `packages/cli/src/attach.ts` validates the
+pane kind, resolves the ticket, checks the server answers, opens the event feed before any
+prompt can race it, and calls `runApp` with a one-pane workspace.
+
+**The engine seam.** `AgentFactory` returns the `Agent` class, and the conversation pane consumes
+that class directly, so the remote agent had to be a real `Agent`. Rather than subclass, `agent.ts`
+gained one option, `turns?: TurnDelegate`: when present, `runTurn` still pushes the user message,
+emits `turn.started`, queues and settles exactly as before, and hands the body of the turn to the
+delegate, which returns the assistant message, usage, an interrupted flag and optionally the whole
+history to adopt. The remote delegate posts the prompt, relays every envelope for that session
+onto the pane's bus except `turn.started` and `queue.changed` (the local agent owns those), settles
+on the server's `turn.completed` or `turn.interrupted`, then re-reads the session so local history
+matches the server's byte for byte (tool messages included). `interrupt()` aborts the local
+controller, which posts `abort`; the server's `turn.interrupted` settles the turn. The pane renders
+the turn through the same feed it uses locally, with no rendering code touched.
+
+**Command grammar.**
+`keywork attach [--pane conversation|session-tree] [--session <id>] [--url <url>] [--token <token>]`.
+The default pane is `conversation`. `--session` binds the pane to an existing server session and
+exits 1 if the server does not have it. The chrome label reads `attached · 127.0.0.1:4770`
+through the existing `statusLabel` seam, and the first notice says the server answers asks with
+no. Refusals: an unknown kind exits 2 with usage; `browser`, `file`, `diff` and `terminal` exit 2
+naming the local files they would need; `memory`, `mcp`, `arcs`, `arc` and `workspaces` exit 2
+naming the local workspace; a missing ticket, an unreachable server, a refused token or an unknown
+session exit 1 with one line each. `attach` needs a terminal and is refused without one.
+
+**Evidence.** `packages/server/src/client.test.ts` (11): ticket read with each override, every
+route with the bearer header captured per call, missing ids as outcomes, 401 as `ServerRefusal`
+on routes and on the stream, resume with `since`, a dropped stream reconnecting with
+`Last-Event-ID: 2` after one 250ms delay, the backoff table, abort without reconnect, and two
+real-socket tests through `listen()` on an ephemeral port (a prompt read from `/events`, and an
+abort of a hanging turn). `packages/cli/src/remote-ports.test.ts` (7): a tool-using turn reaching
+an in-memory server and landing on the pane's bus in local order with history equal to the
+server's, the headless ask refusal arriving as `gate.permission{gate:"headless"}` plus a failed
+tool card, interrupt forwarding to abort and settling as `turn.interrupted`, refusal before a
+session is bound, open plus replay of served history, tool rounds replayed as pairs, and the tree
+port's overview, linear tree, refused edits and change feed. `packages/cli/src/attach.test.ts`
+(11): the pane table, four exit-1 paths, the label and the mounted workspace state.
+`main.test.ts` rows: `attach` without a terminal exits 2; at a terminal `attach --help`,
+`--pane bogus` and `--pane diff` exit 2 and `--pane session-tree` with no ticket exits 1.
+
+**Crossings.** `packages/engine/src/agent.ts` gained `DelegatedTurn`, `DelegatedOutcome`,
+`TurnDelegate`, the `turns` option and `runDelegatedTurn` (additive; every existing agent test
+passes unchanged). `dispatch.ts` gained the `attach` command word, its refused-without-terminal
+posture and a usage line. `main.ts` gained `runAttach` and the `--pane`, `--session`, `--url`
+and `--token` options. `packages/server/src/index.ts` exports the client. `NOTICE` is unchanged.
+
+**What attach cannot do yet.** Asks: the server answers no headlessly, so a mutating tool call
+from an attached pane arrives as a denied gate and a failed tool card; answering from the client
+needs a server-side ask queue and is a follow-up. Labels and forks in the session tree refuse with
+a notice, since the server has no route for either. Renames, model switches, thinking switches
+and arc or bot bindings made in an attached pane stay local to the pane. The tree view is linear
+because `GET /sessions/{id}` returns messages, not entries. Cost and model shown in the masthead
+are empty: the attached provider has no model id. Only one server per user is reachable through
+the ticket file.
+
+**Assumptions Jordan may reverse.**
+- The remote ports live in `packages/cli/src/remote-ports.ts`, beside `sessions/ports.ts`, so the
+  server package keeps its two dependencies and never learns about the TUI. Moving them into
+  `packages/server` means adding `@keywork/tui` to its manifest.
+- The engine seam is a turn delegate on `AgentOptions`; the alternative was a `Provider` that
+  streams from the server, which would have re-run tool calls locally.
+- The probe-harness test for the attached pane was left out: `AppProbe`, `SessionPanes` and
+  `ConversationPane` are internal to `packages/tui`, so the remote ports are proven at the bus
+  level, which is the surface the pane consumes. Exporting a probe from the TUI would let a pane
+  level test land in `attach.test.ts`.
+- A server title of `(untitled session)` is treated as no name so the pane's own titler runs.
+- `--pane` accepts `diff` and `terminal` as refusals even though neither is a registered kind
+  today; both are named in the task.
+- The feed opens before the pane mounts and one stream serves every pane in the process; per
+  session filtering waits for `/events?session=`.
+
 ### P2.3 (5pt): Shared workspaces
 Same `--cwd` ⇒ implicit workspace join with live session mirroring across clients; local
 socket/Bun IPC discovery; concurrent-access story for the B1 store decided here (index or
@@ -169,6 +254,77 @@ policy-configurable; the formula is not a mode enum.
 completion while unfocused does NOT notify; ask-gate does); transport fallback chain
 tested per terminal fixture.
 **Strategy:** `OWN` design.
+
+#### P2.4 ledger (landed 2026-09-07)
+
+**What landed.** `packages/tui/src/notifications.ts` holds the formula as code. `Notifier`
+takes a `WorkSnapshot` after every paint (`title` of the focused session, `asks` = titles of
+every conversation pane with a pending ask, `inbox` = review items waiting) and fires on exactly
+two rising edges, both only while the terminal reports the app unfocused: a new ask (`asks`
+grew) and the inbox reaching its threshold (`inbox` climbed from below 3 to 3 or more). Each
+trigger fires at most once per unfocused stretch; a focus-in resets both budgets. Nothing
+else is observed, so a completion, a failure or an ask answered elsewhere can never notify;
+they stay dock state (the C64 stamp and the V2.12 title glyph). Content is the session title
+plus a reason (`needs you · ask`, `inbox · 3 waiting`), and every transport runs it through
+the title sanitizer `osc.ts` already had (OSC 777 also turns `;` into `,` so a hostile title
+cannot shift the fields). `notificationTransport(facts)` is the pure detector beside
+`terminalSupport`; `transportFor(policy, facts)` lets the config force one.
+
+Focus tracking is keywork's own: OpenTUI 0.5.1 never enables DECSET 1004 and its stdin parser
+files unknown CSI finals under a `response` event, so `osc.ts` gained `enableFocusReporting`,
+`disableFocusReporting` and `focusEventsIn(bytes)` (a scanner for `CSI I` / `CSI O`), and
+`app.ts` taps the input stream (`TerminalSeams.input`, default `process.stdin` `data`) beside
+the existing OpenTUI listener, forwarding focus events to the notifier. Focus reporting is
+switched on after the title push and off before the title pop, and only when the transport
+is not `off`. Until the first report arrives the notifier assumes focus, so a terminal without
+focus reporting never notifies.
+
+| Terminal (facts) | Transport | Bytes |
+|---|---|---|
+| `TERM` starts with `rxvt` | OSC 777 | `ESC ] 777 ; notify ; <title> ; <reason> BEL` |
+| `TERM_PROGRAM=ghostty`, `TERM_PROGRAM=WezTerm`, `VTE_VERSION` set | OSC 777 | same |
+| `WT_SESSION`, `TERM_PROGRAM=iTerm.app`, `TERM=xterm-kitty` | OSC 9 | `ESC ] 9 ; <title> · <reason> BEL` |
+| `TMUX` set (checked before the rows above) | bell | `BEL` |
+| any other live terminal (plain xterm, conhost) | bell | `BEL` |
+| stdout not a TTY, or `TERM=dumb` | off | nothing, and no focus reporting either |
+
+**Config.** `notifications: "auto" | "osc777" | "osc9" | "bell" | "off"` in
+`shared/config/schema.ts` with a `.describe()` justification; `auto` is the default when the
+key is absent. It forces a transport or silences everything; what notifies is fixed and has
+no setting. `compose-panes.ts` passes it through and wires the inbox count as an
+`AppOptions.inbox` feed that recounts `store.listStaged()` plus bot-staged items whenever the
+session change feed fires (trusted workspaces only), reporting only when the number changed.
+
+**Evidence.** `notifications.test.ts` (24): ten terminal fixtures for transport selection,
+dumb and piped stdout, the policy override, exact bytes per transport, the sanitizer path, and
+the `Notifier` probes: nothing while focused, one ask notification then silence for a second
+ask in the same stretch, a refocus then a new ask notifies again, the newly waiting pane is the
+one named, completion and failure and a cleared ask never notify, the inbox crossing its
+threshold notifies once with the count, an inbox already over the threshold at blur stays
+quiet, ask and inbox keep separate budgets, `off` emits nothing, the threshold is a
+constructor knob. `osc.test.ts` (+5): the DECSET 1004 strings, the bell byte, OSC 777 and OSC
+9 bytes, hostile titles, and the focus scanner on mixed input. `load.test.ts` (+1): every
+policy value round-trips and an unknown transport is a `ConfigError`.
+
+**Crossings (additive).** `app.ts`: `AppOptions.notifications`, `AppOptions.inbox`,
+`TerminalSeams.input`, `Terminal.notifier`, `watchFocus` and `workSnapshot` beside the
+terminal reporter; `session-panes.ts`: `SessionPanes.awaiting()` beside `busyCount()`;
+`compose-panes.ts`: the option pass-through, `reviewInboxFeed` and `stagedCount`.
+
+**Assumptions Jordan may reverse.**
+- The inbox threshold is the constant `defaultInboxThreshold = 3` in `notifications.ts`, the
+  count P3 said would live in the policy plane; it is a constructor argument, so a config key
+  is one line when P3's threshold lands.
+- Both triggers are edge-triggered: an ask already pending when you blur does not notify
+  (you saw it), and neither does an inbox already over the threshold at blur.
+- The transport table is a best reading of what each terminal speaks: VTE terminals get OSC
+  777 on the strength of the distro-patched builds (an unpatched VTE ignores it silently);
+  kitty and Windows Terminal get OSC 9 as the task specified, though kitty's native protocol is
+  OSC 99 and Windows Terminal's OSC 9 support is a toast in some builds and a no-op in others;
+  tmux gets the bell because passthrough is off by default. A wrong row costs one env check.
+- Ask titles fall back to the pane id when a session is untitled, matching the window title.
+- The inbox feed recounts on every session change because the memory store has no change
+  feed of its own; the count is cheap (one directory listing).
 
 ### P2.5 (2pt): HTML export & sharing
 `/export` static HTML of a session branch (self-contained, themed); optional gist upload.

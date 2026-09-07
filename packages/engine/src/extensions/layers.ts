@@ -2,12 +2,15 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type Frontmatter, parseDocument } from "../memory/frontmatter.ts";
 
-export type LayerSource = "project" | "user";
+export type LayerSource = "project" | "user" | "bundled";
 
 export interface LayerRoots {
   projectRoot?: string | undefined;
   userRoot?: string | undefined;
+  bundledRoot?: string | undefined;
 }
+
+export const bundledConvention = "bundled";
 
 export interface ExtensionConventions {
   readonly dirs: readonly string[];
@@ -94,7 +97,13 @@ function layersByPrecedence(roots: LayerRoots, conventions: ExtensionConventions
   return [
     ...layersUnder("project", roots.projectRoot, conventions.dirs),
     ...layersUnder("user", roots.userRoot, conventions.dirs),
+    ...bundledLayer(roots.bundledRoot),
   ];
+}
+
+function bundledLayer(root: string | undefined): Layer[] {
+  if (root === undefined) return [];
+  return [{ source: "bundled", convention: bundledConvention, dir: root }];
 }
 
 function layersUnder(

@@ -334,6 +334,17 @@ describe("loadConfig", () => {
     ).rejects.toThrow(ConfigError);
   });
 
+  it("round-trips the notifications policy and rejects a transport it does not know", async () => {
+    expect(await loadConfig({})).not.toHaveProperty("notifications");
+    for (const policy of ["auto", "osc777", "osc9", "bell", "off"]) {
+      const userDir = await dirWithConfig({ notifications: policy });
+      expect((await loadConfig({ userDir })).notifications).toBe(policy);
+    }
+    await expect(
+      loadConfig({ userDir: await dirWithConfig({ notifications: "toast" }) }),
+    ).rejects.toThrow(ConfigError);
+  });
+
   it("surfaces unreadable config files instead of treating them as absent", async () => {
     const userDir = await mkdtemp(join(tmpdir(), "keywork-config-"));
     tempDirs.push(userDir);

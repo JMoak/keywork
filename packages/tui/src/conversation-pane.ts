@@ -620,9 +620,10 @@ export class ConversationPane implements Pane {
       ];
     }
     if (this.model.disclosing()) {
+      const spill = this.model.cursoredSpill() === undefined ? "" : " · o opens the spill";
       return [
         Text({
-          content: "disclose · tab toggles · shift+tab older · esc done",
+          content: `disclose · tab toggles · shift+tab older${spill} · esc done`,
           fg: theme.accent,
         }),
       ];

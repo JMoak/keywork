@@ -5,6 +5,8 @@ import {
   type QueuedPrompt,
   QueuedPromptCancelledError,
   type SendBehavior,
+  type SpillReference,
+  type TickScheduler,
   type ToolCallPart,
 } from "@keywork/engine";
 import { toError } from "@keywork/shared";
@@ -14,6 +16,7 @@ import type { Chord } from "./keys.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
 import { type AskDiffWindow, MutationAsk, type PendingAsk } from "./mutation-ask.ts";
 import { columnPage, type PageGrammar } from "./page.ts";
+import type { FileOpenOptions } from "./pane.ts";
 import {
   type CommandSuggestion,
   type CommandsPort,
@@ -49,6 +52,9 @@ export interface ConversationPorts {
   botOf?: (bot: string) => BotEntry | undefined;
   shellEscape?: ShellEscapePort;
   recordShellEscape?: (transcript: string) => Promise<void>;
+  frameTick?: TickScheduler;
+  spillFile?: (spillId: string) => string | undefined;
+  openFile?: (path: string, options: FileOpenOptions) => void;
 }
 
 export type QueueMove = -1 | 1;
@@ -100,7 +106,7 @@ export class ConversationModel {
     private readonly ports?: ConversationPorts,
   ) {
     const touch = () => this.touch();
-    this.feed = new TranscriptFeed(touch, ports?.now);
+    this.feed = new TranscriptFeed(touch, ports?.now, ports?.frameTick);
     this.editor = new PromptEditor(touch, conversationCommands, commands);
     this.ask = new MutationAsk(touch, ports?.readFile);
     this.navigation = new TranscriptNavigation(this.feed, touch);
@@ -201,6 +207,12 @@ export class ConversationModel {
     return this.navigation.disclosing();
   }
 
+  cursoredSpill(): SpillReference | undefined {
+    const at = this.navigation.viewport().foldCursor;
+    const entry = at === undefined ? undefined : this.entries[at];
+    return entry?.kind === "tool" ? entry.run?.spill : undefined;
+  }
+
   visibleTranscript(
     width: number,
     rows: number,
@@ -220,6 +232,8 @@ export class ConversationModel {
     if (this.ask.pending !== undefined) return this.ask.handleKey(chord, viewport.askRows);
     if (this.navigation.backtracking()) return this.handleBacktrackKey(chord, sequence, viewport);
     if (this.editingQueue()) return this.handleQueueKey(chord, sequence, viewport);
+    if (isOpenSpillKey(chord) && this.cursoredSpill() !== undefined)
+      return this.openCursoredSpill();
     if (this.navigation.disclosing() && chord.name !== "tab") {
       this.navigation.exitDisclosure();
       if (chord.name === "escape") return true;
@@ -565,6 +579,17 @@ export class ConversationModel {
     });
   }
 
+  private openCursoredSpill(): boolean {
+    const spill = this.cursoredSpill();
+    if (spill === undefined) return false;
+    const path = this.ports?.spillFile?.(spill.id);
+    const open = this.ports?.openFile;
+    if (path === undefined) this.feed.post("info", `spill ${spill.id} is not on disk any more`);
+    else if (open === undefined) this.feed.post("info", noFilePaneNotice);
+    else open(path, { byteRange: { from: spill.elidedFrom, to: spill.elidedTo } });
+    return true;
+  }
+
   private handleEscape(primed: boolean): boolean {
     if (this.navigation.scrollBack > 0) return this.navigation.snapToLive();
     if (this.busy) {
@@ -733,6 +758,11 @@ export class ConversationModel {
 
 const noForkPointNotice = "no fork point there";
 const noShellNotice = "no shell here · ! needs a workspace runtime";
+const noFilePaneNotice = "can't open the spill · no file panes here";
+
+function isOpenSpillKey(chord: Chord): boolean {
+  return chord.name === "o" && !chord.ctrl && !chord.meta && !chord.shift;
+}
 const noShellResult = { output: "no shell here", isError: true } as const;
 
 function queueEntryDirection(chord: Chord): QueueMove | undefined {

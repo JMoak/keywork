@@ -1,8 +1,8 @@
-import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
   describeBinding,
   messageText,
+  removeSessionFiles,
   type SessionEntry,
   SessionStore,
   type SessionTreeNode,
@@ -91,7 +91,7 @@ async function offerEmptySessionCleanup(
   const noun = empties.length === 1 ? "file" : "files";
   print(`found ${empties.length} empty session ${noun} (just a header, never used)`);
   if (!(await confirm(`delete ${empties.length === 1 ? "it" : "them"} now? [y/N] `))) return;
-  for (const file of empties) await unlink(file);
+  for (const file of empties) await removeSessionFiles(file);
   print(`removed ${empties.length} empty session ${noun}`);
 }
 

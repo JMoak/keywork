@@ -1,6 +1,7 @@
 import { actionCovering, appActions } from "./app-actions.ts";
 import type { AppCore } from "./app-core.ts";
 import type { CommandSpec } from "./commands.ts";
+import type { TerminalMode } from "./pane.ts";
 import { type PaneKind, paneKindAvailable, paneKindOf } from "./pane-kinds.ts";
 
 export function registerCoreCommands(core: AppCore): void {
@@ -55,6 +56,12 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       run: (args) =>
         args === undefined || args === "" ? core.summon("browser") : core.openBrowser(args),
     }),
+    ...when(available("diff"), {
+      name: "diff",
+      aliases: ["changes"],
+      description: "open the diff pane over this session's file changes: /diff",
+      run: () => core.summon("diff"),
+    }),
     ...when(available("session-tree"), {
       name: "tree",
       aliases: ["session-tree", "sessions"],
@@ -75,6 +82,13 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       name: "workspaces",
       description: "open the workspaces node: /workspaces",
       run: () => core.summon("workspaces"),
+    }),
+    ...when(available("terminal"), {
+      name: "terminal",
+      aliases: ["term"],
+      description:
+        "open the terminal pane, mirroring the agent by default: /terminal [mirror|shell]",
+      run: (args) => core.openTerminal(terminalModeOf(args)),
     }),
     ...when(available("mcp"), {
       name: "mcp",
@@ -209,6 +223,11 @@ function workspaceCommands(core: AppCore): CommandSpec[] {
       run: () => core.workspaceCommand({ verb: "default" }),
     },
   ];
+}
+
+function terminalModeOf(args: string | undefined): TerminalMode | undefined {
+  const operand = operandOf(args);
+  return operand === "mirror" || operand === "shell" ? operand : undefined;
 }
 
 function operandOf(args: string | undefined): string | undefined {

@@ -21,8 +21,24 @@ export type ToolSource = () => readonly Tool[];
 export type ActionRecall = (call: ToolCallPart) => Promise<string | undefined>;
 export type SpillSource = () => SpillStore | undefined;
 
+export interface DelegatedTurn {
+  userText: string;
+  signal: AbortSignal;
+  bus: EventBus<EngineEvents>;
+}
+
+export interface DelegatedOutcome {
+  message: Message;
+  usage: Usage;
+  interrupted: boolean;
+  history?: readonly Message[];
+}
+
+export type TurnDelegate = (turn: DelegatedTurn) => Promise<DelegatedOutcome>;
+
 export interface AgentOptions {
   provider: Provider;
+  turns?: TurnDelegate;
   systemPrompt?: string;
   tools?: readonly Tool[] | ToolSource;
   bus?: EventBus<EngineEvents>;
@@ -74,6 +90,7 @@ export class Agent {
   private readonly permissions: PermissionResolver | undefined;
   private readonly actionRecall: ActionRecall | undefined;
   private readonly spills: SpillSource;
+  private readonly turns: TurnDelegate | undefined;
   private readonly pending: PendingPrompt[] = [];
   private running: ToolCallPart | undefined;
   private unannouncedInjections: readonly ContextInjection[];
@@ -95,6 +112,7 @@ export class Agent {
     this.permissions = options.permissions;
     this.actionRecall = options.actionRecall;
     this.spills = spillSource(options.spills);
+    this.turns = options.turns;
     this.unannouncedInjections = options.standingInjections ?? [];
     this.thinkingRequested = options.thinking ?? false;
   }
@@ -251,7 +269,9 @@ export class Agent {
       this.messages.push(textMessage("user", userText));
       this.announceStandingInjections();
       this.bus.emit("turn.started", { userText });
-      return await this.runUntilFinalMessage(controller.signal);
+      return await (this.turns === undefined
+        ? this.runUntilFinalMessage(controller.signal)
+        : this.runDelegatedTurn(this.turns, userText, controller.signal));
     } catch (cause) {
       const error = errorOf(cause);
       this.bus.emit("engine.error", { error });
@@ -284,6 +304,20 @@ export class Agent {
       await this.executeToolCalls(calls, signal);
       if (signal.aborted) return this.finishInterrupted(turn.message);
     }
+  }
+
+  private async runDelegatedTurn(
+    delegate: TurnDelegate,
+    userText: string,
+    signal: AbortSignal,
+  ): Promise<Message> {
+    const outcome = await delegate({ userText, signal, bus: this.bus });
+    this.totals = addUsage(this.totals, outcome.usage);
+    this.costTotals = withTurnCost(this.costTotals, outcome.usage, this.provider.modelId);
+    if (outcome.history === undefined) this.messages.push(outcome.message);
+    else this.messages.splice(0, this.messages.length, ...outcome.history);
+    if (outcome.interrupted) return this.finishInterrupted(outcome.message);
+    return this.finishCompleted({ ...outcome, interrupted: false });
   }
 
   private finishCompleted(turn: AssistantTurn): Message {

@@ -1,4 +1,4 @@
-import { Agent, MockProvider, textMessage } from "@keywork/engine";
+import { Agent, MockProvider, type TickScheduler, textMessage } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { type MarkdownRow, renderMarkdown } from "./markdown.ts";
 import { pageMarks } from "./marks.ts";
@@ -326,18 +326,26 @@ describe("the voice rail and tool rows", () => {
 
   it("steps the streaming stamp through the ramp and settles it on interrupt", () => {
     const agent = new Agent({ provider: new MockProvider([]) });
-    const feed = new TranscriptFeed(() => {});
+    const ticks: (() => void)[] = [];
+    const tick: TickScheduler = (flush) => {
+      ticks.push(flush);
+    };
+    const feed = new TranscriptFeed(() => {}, undefined, tick);
     feed.follow(agent.bus);
     const view = new TranscriptView();
     const stamp = () =>
       view
         .frame(feed, { width: 60, rows: 20 }, { scrollBack: 0 })
         .lines.find((line) => line.kind === "assistant")?.stamp;
+    const delta = (text: string) => {
+      agent.bus.emit("turn.delta", { delta: { type: "text", text } });
+      for (const flush of ticks.splice(0)) flush();
+    };
 
-    agent.bus.emit("turn.delta", { delta: { type: "text", text: "one " } });
+    delta("one ");
     expect(stamp()).toBe("░ ");
-    agent.bus.emit("turn.delta", { delta: { type: "text", text: "two " } });
-    agent.bus.emit("turn.delta", { delta: { type: "text", text: "three " } });
+    delta("two ");
+    delta("three ");
     expect(stamp()).toBe("▒ ");
     agent.bus.emit("turn.interrupted", { message: textMessage("assistant", "one two three") });
     expect(stamp()).toBe("▓ ");
@@ -523,5 +531,57 @@ describe("scroll stability while streaming", () => {
     });
     expect(grown.scrollBack).toBe(0);
     expect(grown.lines.at(-1)?.text).toContain("entry 2");
+  });
+});
+
+describe("virtualized rows", () => {
+  const geometry = { width: 60, rows: 20 };
+
+  it("lays out O(visible) rows per frame over a 10,000-entry transcript", () => {
+    const markdown = countingMarkdown();
+    const view = new TranscriptView(markdown.render);
+    const entries = assistantLines(10_000);
+    const source = sourceOf(entries);
+    view.frame(source, geometry, { scrollBack: 0 });
+    expect(markdown.calls).toHaveLength(10_000);
+
+    markdown.calls.length = 0;
+    const tail = entries[entries.length - 1] as TranscriptEntry;
+    for (let at = 0; at < 100; at += 1) {
+      tail.text += ` more ${at}`;
+      view.frame(source, geometry, { scrollBack: 0 });
+    }
+    expect(markdown.calls).toHaveLength(100);
+
+    markdown.calls.length = 0;
+    for (let at = 0; at < 100; at += 1) view.frame(source, geometry, { scrollBack: 5_000 + at });
+    expect(markdown.calls).toHaveLength(0);
+
+    entries[4_000] = { kind: "assistant", text: "rewritten" };
+    view.frame(source, geometry, { scrollBack: 5_000 });
+    expect(markdown.calls).toHaveLength(1);
+
+    view.frame(source, { ...geometry, width: 50 }, { scrollBack: 0 });
+    expect(markdown.calls).toHaveLength(10_001);
+  });
+
+  it("keeps the frame identical to a fresh view through growth, mutation, and truncation", () => {
+    const entries = assistantLines(40);
+    const view = new TranscriptView();
+    const same = (scrollBack: number) => {
+      const kept = view.frame(sourceOf(entries), geometry, { scrollBack });
+      const fresh = new TranscriptView().frame(sourceOf(entries), geometry, { scrollBack });
+      expect(kept.lines).toEqual(fresh.lines);
+      expect(kept.total).toBe(fresh.total);
+    };
+    same(0);
+    entries.push(...assistantLines(5));
+    same(0);
+    (entries[2] as TranscriptEntry).text = "word ".repeat(30).trim();
+    same(30);
+    entries.length = 3;
+    same(0);
+    entries.push({ kind: "user", text: "again" });
+    same(0);
   });
 });

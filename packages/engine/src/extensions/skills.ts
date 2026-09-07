@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { authorOf } from "../skills/authorship.ts";
 import { defineTool } from "../tools/define.ts";
@@ -33,6 +34,8 @@ export interface SkillLoad {
 }
 
 export const skillConventionDirs = [".keywork/skills", ".claude/skills", ".cursor/skills"];
+
+export const bundledSkillsRoot = fileURLToPath(new URL("../skills/bundled/", import.meta.url));
 
 export async function discoverSkills(roots: LayerRoots): Promise<SkillLoad> {
   const { items, failures } = await loadLayered(roots, skillConventions, buildSkill);

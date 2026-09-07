@@ -42,6 +42,12 @@ deltas, tool lifecycle (`tool.requested` / `tool.approved` / `tool.started` / `t
 config/keybinding reloads, pane hints. Names are API; bikeshed once, here.
 **Accept:** doc exists; bus types generated from / checked against it.
 **Strategy:** `LIFT:opencode` SSE event naming as reference.
+**Landed 2026-09-07:** [`docs/events.md`](../events.md) documents the envelope, all fifteen
+types with payload fields and firing conditions, the SSE framing, `Last-Event-ID` resume and
+the `engine.error` translation; `packages/engine/src/bus.test.ts` reads the doc and fails when
+its headings and `EngineEvents` disagree in either direction. Of the original sketch,
+`tool.requested` / `tool.approved` became `gate.permission`, and config reloads and pane hints
+have no bus presence yet, so the doc names what exists.
 
 ### A6 (3pt): Agent loop
 The turn engine: assemble context (system prompt + session messages + tool defs), call
