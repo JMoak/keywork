@@ -58,6 +58,8 @@ describe("main(argv) usage contract", () => {
     [["frobnicate"], 2, "err", 'unknown command "frobnicate"'],
     [[], 2, "err", "no command given and no terminal attached"],
     [["run"], 2, "err", "keywork run needs a prompt"],
+    [["serve", "--help"], 2, "err", "keywork: Unknown option '--help'"],
+    [["serve", "--port", "http"], 2, "err", "keywork serve: --port wants a whole number"],
     [["run", "hi"], 3, "err", "keywork connect"],
     [["sessions", "bogus"], 2, "err", 'keywork sessions: unknown subcommand "bogus"'],
   ];

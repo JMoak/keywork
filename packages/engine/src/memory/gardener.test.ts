@@ -580,3 +580,60 @@ describe("entry token budget", () => {
     expect(port.seenEntries).toEqual([]);
   });
 });
+
+describe("skill telemetry", () => {
+  const activity = (use: number, patch: number, rewrite: number, lastActivityAt: string) => ({
+    counts: { use, view: 0, reference: 0, patch, rewrite, create: 1 },
+    lastActivityAt,
+  });
+
+  it("proposes a review citing the counts for churning and long-unused agent skills only", async () => {
+    const { store, root } = await vault();
+    const before = await snapshotVault(root);
+    const g = new Gardener({ store, now: clock });
+    const report = await g.sweep({
+      skills: {
+        skills: [
+          { name: "release-tag", authoredBy: "keywork" },
+          { name: "old-routine", authoredBy: "keywork" },
+          { name: "fresh-routine", authoredBy: "keywork" },
+          { name: "busy-routine", authoredBy: "keywork" },
+          { name: "human-runbook", authoredBy: undefined },
+          { name: "unseen", authoredBy: "keywork" },
+        ],
+        telemetry: {
+          "release-tag": activity(4, 2, 1, "2026-08-09T00:00:00.000Z"),
+          "old-routine": activity(0, 0, 0, "2026-06-01T00:00:00.000Z"),
+          "fresh-routine": activity(0, 0, 0, "2026-08-01T00:00:00.000Z"),
+          "busy-routine": activity(9, 1, 0, "2026-08-09T00:00:00.000Z"),
+          "human-runbook": activity(0, 5, 5, "2026-01-01T00:00:00.000Z"),
+        },
+      },
+    });
+    expect(report.flagged).toEqual(["skill-review:release-tag", "skill-review:old-routine"]);
+    const staged = await store.listStaged();
+    expect(staged).toEqual([
+      expect.objectContaining({ skill: "old-routine", reason: "unused", uses: 0, patches: 0 }),
+      expect.objectContaining({ skill: "release-tag", reason: "churning", uses: 4, patches: 2 }),
+    ]);
+    expect(staged.every((item) => item.kind === "skill-review")).toBe(true);
+    const after = await snapshotVault(root);
+    const changed = [...after.keys()].filter((path) => after.get(path) !== before.get(path));
+    expect(changed.every((path) => path.startsWith(".staging/") || path === "curation.md")).toBe(
+      true,
+    );
+  });
+
+  it("is a no-op without evidence and never re-stages a pending review", async () => {
+    const { store } = await vault();
+    const g = new Gardener({ store, now: clock });
+    expect((await g.sweep()).flagged).toEqual([]);
+    const skills = {
+      skills: [{ name: "release-tag", authoredBy: "keywork" }],
+      telemetry: { "release-tag": activity(0, 3, 0, "2026-08-09T00:00:00.000Z") },
+    };
+    await g.sweep({ skills });
+    expect((await g.sweep({ skills })).flagged).toEqual([]);
+    expect(await store.listStaged()).toHaveLength(1);
+  });
+});

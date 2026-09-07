@@ -135,6 +135,7 @@ const commands: Record<CommandName, Command> = {
   trust: (context) => runTrust("trust", context),
   untrust: (context) => runTrust("untrust", context),
   doctor: runDoctor,
+  serve: runServe,
 };
 
 async function openCommandContext(
@@ -278,6 +279,61 @@ async function runHeadlessPrompt(
   });
 }
 
+async function runServe(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
+  const { io, cwd, projectTrusted, workspaceSlug } = context;
+  const port = parsePort(values.port);
+  if (port === "invalid") {
+    io.printError(`keywork serve: --port wants a whole number from 1 to 65535
+
+${usage}`);
+    return exitCodes.usage;
+  }
+  const preset = values.preset;
+  if (preset !== undefined && !isPresetName(preset)) {
+    io.printError(
+      `keywork serve: no preset named "${preset}" (options: ${presetOrder.join(" · ")})`,
+    );
+    return exitCodes.usage;
+  }
+  const { config, runtime } = (await context.openInference()).current();
+  const bound = runtime.resolve({ override: values.model, default: config.model });
+  if (!bound.ok) {
+    io.printError(
+      `${bound.failure.message} · ${nextActionFor(bound.failure, shellCommands)}
+
+${connectHint}`,
+    );
+    return exitCodes.unresolved;
+  }
+  const { serve } = await import("./serve.ts");
+  return untilInterrupted((signal) =>
+    serve({
+      cwd,
+      projectTrusted,
+      workspaceSlug,
+      port,
+      provider: runtime.provider(bound.binding),
+      permissions: headlessPermissions(preset, config.permissions),
+      sessionDir: values["session-dir"],
+      prompts: config.prompts,
+      mcpServers: config.mcpServers,
+      repoMap: config.repoMap,
+      lsp: config.lsp,
+      models: config.models,
+      thinking: config.thinking,
+      signal,
+      print: io.print,
+      printError: io.printError,
+    }),
+  );
+}
+
+function parsePort(raw: string | undefined): number | undefined | "invalid" {
+  if (raw === undefined) return undefined;
+  const port = Number(raw);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : "invalid";
+}
+
 function headlessPermissions(
   preset: PresetName | undefined,
   configured: PermissionsConfig | undefined,
@@ -418,6 +474,7 @@ function parseInvocationArgs(args: readonly string[]) {
       resume: { type: "string" },
       "session-dir": { type: "string" },
       workspace: { type: "string" },
+      port: { type: "string" },
     },
   });
 }

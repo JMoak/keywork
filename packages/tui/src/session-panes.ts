@@ -6,6 +6,7 @@ import {
   modelReferenceOf,
   type ToolCallPart,
   type ToolGuard,
+  textMessage,
 } from "@keywork/engine";
 import { toError } from "@keywork/shared";
 import type { AppCore } from "./app-core.ts";
@@ -39,6 +40,7 @@ import {
   startFreshSession,
 } from "./session-attachment.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
+import type { ShellEscapePort } from "./shell-escape.ts";
 
 export interface SessionPaneDeps {
   core(): AppCore;
@@ -62,6 +64,7 @@ export interface SessionPaneDeps {
   botOf?: (name: string) => BotEntry | undefined;
   botSpend?: (name: string) => Promise<BotSummary | undefined>;
   now?: () => number;
+  shellEscape?: (guard: ToolGuard) => ShellEscapePort;
 }
 
 export interface SessionControls {
@@ -227,6 +230,10 @@ class PaneSession implements SessionControls {
       ...(deps.botSpend !== undefined && { botSpend: deps.botSpend }),
       ...(deps.botOf !== undefined && { botOf: deps.botOf }),
       ...(deps.now !== undefined && { now: deps.now }),
+      ...(deps.shellEscape !== undefined && {
+        shellEscape: deps.shellEscape(this.guard),
+        recordShellEscape: (transcript: string) => this.recordShellEscape(transcript),
+      }),
     };
     this.pane = new ConversationPane(
       id,
@@ -313,6 +320,10 @@ class PaneSession implements SessionControls {
     if (this.live === undefined || this.pane.arc === arc) return;
     this.pane.arc = arc;
     this.notify();
+  }
+
+  private async recordShellEscape(transcript: string): Promise<void> {
+    await this.live?.append(textMessage("user", transcript));
   }
 
   private wire(attachment: SessionAttachment, agent: Agent | undefined): void {

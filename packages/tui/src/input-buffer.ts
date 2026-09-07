@@ -10,6 +10,10 @@ export class InputBuffer {
     return this.text;
   }
 
+  get cursorOffset(): number {
+    return this.cursor;
+  }
+
   isEmpty(): boolean {
     return this.text === "";
   }
@@ -30,6 +34,11 @@ export class InputBuffer {
 
   newline(): void {
     this.insert("\n");
+  }
+
+  replaceRange(start: number, end: number, piece: string): void {
+    this.text = this.text.slice(0, start) + piece + this.text.slice(end);
+    this.cursor = start + piece.length;
   }
 
   backspace(): void {

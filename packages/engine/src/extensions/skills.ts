@@ -39,6 +39,17 @@ export async function discoverSkills(roots: LayerRoots): Promise<SkillLoad> {
   return { skills: items, failures };
 }
 
+export async function discoverSkillsUnder(
+  root: string,
+  convention: string,
+  source: LayerSource,
+): Promise<SkillLoad> {
+  const roots: LayerRoots = source === "user" ? { userRoot: root } : { projectRoot: root };
+  const conventions: ExtensionConventions = { dirs: [convention], discover: skillFilesUnder };
+  const { items, failures } = await loadLayered(roots, conventions, buildSkill);
+  return { skills: items, failures };
+}
+
 export function skillTool(
   skills: readonly SkillDefinition[],
   onLoad?: (skill: SkillDefinition) => void,

@@ -28,7 +28,7 @@ import {
   type PromptsConfig,
   toError,
 } from "@keywork/shared";
-import { botMemory } from "./bot-memory.ts";
+import { type BotMemory, botMemory } from "./bot-memory.ts";
 import {
   commandRuntime,
   parseSlashLine,
@@ -42,8 +42,8 @@ import {
   composeAgents,
   composeWorkspace,
 } from "./compose.ts";
-import { citationTrail, sweepOnClose } from "./memory.ts";
-import { defaultSessionDir } from "./paths.ts";
+import { citationTrail, skillEvidenceOf, sweepOnClose } from "./memory.ts";
+import { defaultSessionDir, skillTelemetryFile, workspaceIdentity } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
 import { openOrResumeSession } from "./sessions/store.ts";
 import {
@@ -163,6 +163,7 @@ class Repl {
     readonly store: SessionStore,
     readonly composition: Composition,
     readonly agents: AgentComposition,
+    readonly bots: BotMemory,
     readonly guard: ToolGuard,
     readonly runtime: CommandRuntime,
     seeded: readonly Message[],
@@ -192,6 +193,7 @@ class Repl {
       bot,
       history,
       sessionId: this.store.header.id,
+      spills: this.store.spills(),
     });
     wireStreamingOutput(agent, this.io);
     agent.settleTurnsWith(() => this.afterTurn(agent));
@@ -261,9 +263,17 @@ class Repl {
   async close(): Promise<void> {
     await this.composition.mcp?.stop();
     await this.composition.languagePort?.dispose();
-    await sweepOnClose(this.composition.memory()).catch((cause: unknown) => {
+    await this.sweepMemory().catch((cause: unknown) => {
       this.io.printError(`memory sweep failed: ${toError(cause).message}`);
     });
+  }
+
+  private async sweepMemory(): Promise<void> {
+    const telemetryFile = skillTelemetryFile(
+      workspaceIdentity(this.options.cwd, this.options.workspaceSlug),
+    );
+    const evidence = await skillEvidenceOf(this.composition.skills, telemetryFile);
+    await sweepOnClose(this.composition.memory(), evidence);
   }
 }
 
@@ -305,6 +315,7 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     memory: composition.memory,
     roster: composition.extensions.bots,
     bindingOf: () => opened.store.botBinding(),
+    skills: composition.extensions.skills,
   });
   await bots.prepare();
   const repl = new Repl(
@@ -318,6 +329,7 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
       citations,
       thinking: options.thinking === "on",
     }),
+    bots,
     guard,
     commandRuntime(options.cwd, guard),
     opened.seeded,
@@ -332,7 +344,14 @@ async function printReturnDelta(repl: Repl): Promise<void> {
   const memory = repl.composition.memory();
   if (memory === undefined) return;
   const since = repl.store.stats().lastActivityAt;
-  const lines = await gatherReturnDelta({ since, workspace: memory.store }).catch(() => []);
+  const bot = repl.activeBot;
+  const registry = bot === undefined ? undefined : repl.bots.registryFor(bot);
+  const lines = await gatherReturnDelta({
+    since,
+    workspace: memory.store,
+    ...(bot !== undefined &&
+      registry !== undefined && { bots: registry, bot: { slug: bot.name, sigil: bot.sigil } }),
+  }).catch(() => []);
   if (lines.length > 0) repl.io.print(`since you were here: ${lines.join(" · ")}`);
 }
 

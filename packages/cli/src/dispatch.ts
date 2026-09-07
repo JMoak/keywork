@@ -15,6 +15,9 @@ Usage:
   keywork link <dir>                                        widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust
   keywork doctor                                            show what your terminal supports
+  keywork serve [--port <n>] [--model <model>]
+                [--preset careful|standard|open]
+                [--session-dir <dir>]                       HTTP + SSE server on 127.0.0.1
   keywork --version                                         print the version and exit
   keywork --help                                            print this usage and exit
   keywork chat [--model <model>] [--continue] [--workspace <slug>]
@@ -52,6 +55,7 @@ export const commandNames = [
   "trust",
   "untrust",
   "doctor",
+  "serve",
 ] as const;
 
 export type CommandName = (typeof commandNames)[number];
@@ -75,6 +79,7 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   trust: { behavior: "runs" },
   untrust: { behavior: "runs" },
   doctor: { behavior: "runs" },
+  serve: { behavior: "runs", note: "prints the URL and token, then runs until SIGINT" },
 };
 
 export type Dispatch =

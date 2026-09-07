@@ -1,18 +1,26 @@
 import {
   Agent,
+  bashTool,
   EventBus,
+  type Message,
   MockProvider,
+  type PermissionResolver,
   type Provider,
   type Tool,
   type ToolCallPart,
+  type ToolGuard,
   type TurnDelta,
   textMessage,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { ConversationModel } from "./conversation-model.ts";
+import { ConversationModel, type ConversationPorts } from "./conversation-model.ts";
+import { ConversationPane } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
+import { bindSessionLifecycle } from "./session-attachment.ts";
+import { guardedShellEscape } from "./shell-escape.ts";
+import type { ToolEntry } from "./transcript-feed.ts";
 
 const echoTool: Tool = {
   name: "echo",
@@ -33,11 +41,19 @@ function submit(model: ConversationModel): Promise<unknown> {
 }
 
 async function drained(model: ConversationModel): Promise<void> {
-  let previous: Promise<unknown>;
-  do {
-    previous = model.lastSend;
+  for (;;) {
+    const previous = model.lastSend;
     await previous;
-  } while (previous !== model.lastSend);
+    if (previous === model.lastSend && !model.busy) return;
+    if (model.busy) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+async function untilAsked(model: ConversationModel): Promise<void> {
+  for (let spins = 0; model.pendingAsk === undefined; spins += 1) {
+    if (spins > 1000) throw new Error("no ask arrived");
+    await Promise.resolve();
+  }
 }
 
 function gate(): { open: () => void; opened: Promise<void> } {
@@ -963,7 +979,7 @@ describe("/policy", () => {
         "learning · ⚖ reviewer · notes",
         "  off    remembers nothing, a stateless role",
         "▸ notes  remembers craft in its own layer, proposes notes to the inbox under its sigil",
-        "  skills not built yet, runs as notes: routines kept in the bot's own skills dir",
+        "  skills keeps routines in its own skills dir, self-patched, proposed from recurring commands",
         "  self   not built yet, runs as notes: proposals against its own bot.md through the inbox",
       ].join("\n"),
     });
@@ -984,5 +1000,561 @@ describe("/policy", () => {
     type(model, "/policy");
     model.handleKey(parseChord("return"), undefined);
     expect(model.entries.at(-1)).toEqual({ kind: "error", text: "unknown command /policy" });
+  });
+});
+
+describe("! shell escape", () => {
+  function bashStub(runs: string[]): Tool {
+    return {
+      name: "bash",
+      description: "stub",
+      parameters: { type: "object" },
+      mutates: true,
+      execute: async (args, signal) => {
+        const { command } = args as { command: string };
+        runs.push(command);
+        if (command === "sleep") await abortOf(signal);
+        if (signal?.aborted) throw new Error("aborted");
+        return `ran ${command}`;
+      },
+    };
+  }
+
+  function shellPorts(
+    tool: Tool,
+    guard: ToolGuard,
+    permissions: PermissionResolver | undefined,
+    extra: Partial<ConversationPorts> = {},
+  ): ConversationPorts {
+    return {
+      shellEscape: guardedShellEscape({
+        tools: () => [tool],
+        guard,
+        ...(permissions !== undefined && { permissions }),
+      }),
+      ...extra,
+    };
+  }
+
+  function toolEntries(model: ConversationModel): ToolEntry[] {
+    return model.entries.filter((entry): entry is ToolEntry => entry.kind === "tool");
+  }
+
+  it("!echo hi runs the real bash tool and lands as one user-provenance tool entry", async () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    let model: ConversationModel | undefined;
+    const guard: ToolGuard = {
+      confirm: (call) => model?.confirmMutation(call) ?? Promise.resolve(false),
+    };
+    model = new ConversationModel(
+      agent,
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(bashTool(process.cwd()), guard, () => "allow"),
+    );
+
+    type(model, "!echo hi");
+    await submit(model);
+    await drained(model);
+
+    const tools = toolEntries(model);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.run?.provenance).toBe("user");
+    expect(tools[0]?.run?.name).toBe("bash");
+    expect(tools[0]?.run?.outcome).toBe("done");
+    expect(tools[0]?.run?.detail?.join("\n")).toContain("hi");
+    expect(model.entries.filter((entry) => entry.kind === "user")).toEqual([]);
+    expect(model.input).toBe("");
+    expect(model.busy).toBe(false);
+    expect(agent.history()).toEqual([]);
+  });
+
+  it("holds the command at the ask gate when policy says ask, exactly like an agent call", async () => {
+    const runs: string[] = [];
+    let model: ConversationModel | undefined;
+    const guard: ToolGuard = {
+      confirm: (call) => model?.confirmMutation(call) ?? Promise.resolve(false),
+    };
+    model = new ConversationModel(
+      new Agent({ provider: new MockProvider([]) }),
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(bashStub(runs), guard, undefined),
+    );
+
+    model.submitText("!echo hi");
+    await untilAsked(model);
+    expect(model.pendingAsk?.summary).toBe('bash {"command":"echo hi"}');
+    expect(runs).toEqual([]);
+    expect(model.busy).toBe(true);
+
+    model.handleKey(parseChord("y"), "y");
+    await drained(model);
+
+    expect(runs).toEqual(["echo hi"]);
+    expect(toolEntries(model)[0]?.run?.outcome).toBe("done");
+
+    model.submitText("!echo again");
+    await untilAsked(model);
+    model.handleKey(parseChord("n"), "n");
+    await drained(model);
+
+    expect(runs).toEqual(["echo hi"]);
+    expect(toolEntries(model)[1]?.run).toMatchObject({
+      provenance: "user",
+      outcome: "failed",
+      reason: "declined by user",
+    });
+  });
+
+  it("!rm -rf hits the same deny rule the agent's own bash call hits", async () => {
+    const runs: string[] = [];
+    const tool = bashStub(runs);
+    const denyRecursiveDeletes: PermissionResolver = (call) =>
+      /^rm -rf/.test((call.arguments as { command: string }).command) ? "deny" : "allow";
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "c1",
+          name: "bash",
+          arguments: { command: "rm -rf build" },
+        }),
+        textTurn("ok"),
+      ]),
+      tools: [tool],
+      permissions: denyRecursiveDeletes,
+    });
+    const model = new ConversationModel(
+      agent,
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(tool, {}, denyRecursiveDeletes),
+    );
+
+    model.submitText("clean up");
+    await drained(model);
+    model.submitText("!rm -rf build");
+    await drained(model);
+
+    const [agentCall, userCall] = toolEntries(model);
+    expect(agentCall?.run?.provenance).toBeUndefined();
+    expect(agentCall?.run?.reason).toBe("denied by permission policy");
+    expect(userCall?.run).toMatchObject({
+      provenance: "user",
+      reason: "denied by permission policy",
+    });
+    expect(runs).toEqual([]);
+  });
+
+  it("a bare ! or ! followed by a space is prompt text for the model", async () => {
+    const runs: string[] = [];
+    const model = new ConversationModel(
+      new Agent({ provider: new MockProvider([textTurn("a"), textTurn("b")]) }),
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(bashStub(runs), {}, () => "allow"),
+    );
+
+    model.submitText("!");
+    await drained(model);
+    model.submitText("! not a command");
+    await drained(model);
+
+    expect(runs).toEqual([]);
+    expect(model.entries.map((entry) => entry.text)).toEqual(["!", "a", "! not a command", "b"]);
+  });
+
+  it("busy panes queue the command like a prompt, run it before the next prompt, and record it after the turn", async () => {
+    const runs: string[] = [];
+    const recorded: string[] = [];
+    const { open, opened } = gate();
+    const agent = new Agent({ provider: gatedProvider(opened, ["re: slow", "re: next"]) });
+    const model = new ConversationModel(
+      agent,
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(bashStub(runs), {}, () => "allow", {
+        recordShellEscape: async (transcript) => {
+          recorded.push(transcript);
+        },
+      }),
+    );
+    model.bindAfterTurn(async () => {
+      recorded.push("turn persisted");
+    });
+
+    model.submitText("slow");
+    model.submitText("!echo one");
+    model.submitText("next");
+    expect(model.queued()).toEqual(["!echo one", "next"]);
+    expect(runs).toEqual([]);
+
+    open();
+    await drained(model);
+
+    expect(model.entries.map((entry) => `${entry.kind}:${entry.text.split(" ·")[0]}`)).toEqual([
+      "user:slow",
+      "assistant:re: slow",
+      "tool:bash echo one",
+      "user:next",
+      "assistant:re: next",
+    ]);
+    expect(toolEntries(model)[0]?.run?.provenance).toBe("user");
+    expect(recorded).toEqual(["turn persisted", "$ echo one\nran echo one", "turn persisted"]);
+    expect(agent.history().map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+  });
+
+  it("alt+enter promotes a shell escape ahead of the queue after the interrupted turn settles", async () => {
+    const runs: string[] = [];
+    const { opened } = gate();
+    const agent = new Agent({ provider: gatedProvider(opened, ["never", "re: later"]) });
+    const model = new ConversationModel(
+      agent,
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(bashStub(runs), {}, () => "allow"),
+    );
+
+    model.submitText("slow");
+    model.submitText("later");
+    model.submitText("!echo now", "steer");
+    expect(model.queued()).toEqual(["!echo now", "later"]);
+
+    await drained(model);
+
+    expect(runs).toEqual(["echo now"]);
+    expect(model.entries.map((entry) => entry.kind)).toEqual([
+      "user",
+      "info",
+      "tool",
+      "user",
+      "assistant",
+    ]);
+  });
+
+  it("records an idle-pane run as a user transcript once the command settles", async () => {
+    const runs: string[] = [];
+    const recorded: string[] = [];
+    const model = new ConversationModel(
+      new Agent({ provider: new MockProvider([]) }),
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(bashStub(runs), {}, () => "allow", {
+        recordShellEscape: async (transcript) => {
+          recorded.push(transcript);
+        },
+      }),
+    );
+
+    model.submitText("!echo hi");
+    await drained(model);
+
+    expect(recorded).toEqual(["$ echo hi\nran echo hi"]);
+  });
+
+  it("runs with no model bound, since the shell needs no provider", async () => {
+    const runs: string[] = [];
+    const model = new ConversationModel(
+      undefined,
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(bashStub(runs), {}, () => "allow"),
+    );
+
+    type(model, "!echo hi");
+    await submit(model);
+
+    expect(runs).toEqual(["echo hi"]);
+    expect(model.input).toBe("");
+    expect(toolEntries(model)[0]?.run?.provenance).toBe("user");
+  });
+
+  it("explains itself when no shell port is wired and keeps the model out of it", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("never")]) });
+    const model = new ConversationModel(agent, () => {});
+
+    model.submitText("!echo hi");
+    await drained(model);
+
+    expect(model.entries).toEqual([
+      { kind: "info", text: "no shell here · ! needs a workspace runtime" },
+    ]);
+    expect(agent.history()).toEqual([]);
+  });
+
+  it("escape aborts a running shell escape", async () => {
+    const runs: string[] = [];
+    const model = new ConversationModel(
+      new Agent({ provider: new MockProvider([]) }),
+      () => {},
+      undefined,
+      undefined,
+      shellPorts(bashStub(runs), {}, () => "allow"),
+    );
+
+    model.submitText("!sleep");
+    for (let spins = 0; runs.length === 0; spins += 1) {
+      if (spins > 1000) throw new Error("the command never started");
+      await Promise.resolve();
+    }
+    expect(model.busy).toBe(true);
+    expect(model.handleKey(parseChord("escape"), undefined)).toBe(true);
+    await drained(model);
+
+    expect(toolEntries(model)[0]?.run).toMatchObject({ outcome: "failed", reason: "aborted" });
+    expect(model.busy).toBe(false);
+  });
+});
+
+describe("queue editing", () => {
+  function queuedModel(replies: string[]) {
+    const { open, opened } = gate();
+    const agent = new Agent({ provider: gatedProvider(opened, replies) });
+    const model = new ConversationModel(agent, () => {});
+    model.submitText("first");
+    for (const prompt of ["a", "b", "c"]) model.submitText(prompt);
+    return { model, agent, open };
+  }
+
+  it("alt+up enters at the newest row, alt+down at the oldest, and ↑↓ move within the queue", () => {
+    const { model } = queuedModel([]);
+    expect(model.editingQueue()).toBe(false);
+
+    expect(model.handleKey(parseChord("alt+up"), undefined)).toBe(true);
+    expect(model.queueSelection()).toBe(2);
+    model.handleKey(parseChord("up"), undefined);
+    model.handleKey(parseChord("up"), undefined);
+    model.handleKey(parseChord("up"), undefined);
+    expect(model.queueSelection()).toBe(0);
+    model.handleKey(parseChord("down"), undefined);
+    expect(model.queueSelection()).toBe(1);
+    model.handleKey(parseChord("escape"), undefined);
+    expect(model.editingQueue()).toBe(false);
+
+    model.handleKey(parseChord("alt+down"), undefined);
+    expect(model.queueSelection()).toBe(0);
+    model.dispose();
+  });
+
+  it("needs an empty prompt and a non-empty queue", () => {
+    const idle = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
+    expect(idle.handleKey(parseChord("alt+up"), undefined)).toBe(false);
+
+    const { model } = queuedModel([]);
+    type(model, "draft");
+    expect(model.handleKey(parseChord("alt+up"), undefined)).toBe(false);
+    expect(model.editingQueue()).toBe(false);
+    expect(model.input).toBe("draft");
+    model.dispose();
+  });
+
+  it("backspace cancels the selected row and the transcript never sees it", async () => {
+    const { model, open } = queuedModel(["re: first", "re: a", "re: c"]);
+
+    model.handleKey(parseChord("alt+up"), undefined);
+    model.handleKey(parseChord("up"), undefined);
+    model.handleKey(parseChord("backspace"), undefined);
+    expect(model.queued()).toEqual(["a", "c"]);
+    expect(model.queueSelection()).toBe(1);
+
+    open();
+    await drained(model);
+
+    expect(model.entries.map((entry) => entry.text)).toEqual([
+      "first",
+      "re: first",
+      "a",
+      "re: a",
+      "c",
+      "re: c",
+    ]);
+    expect(model.editingQueue()).toBe(false);
+  });
+
+  it("shift+↑ moves a row earlier and the transcript plus the session log keep the new order", async () => {
+    const { open, opened } = gate();
+    const agent = new Agent({
+      provider: gatedProvider(opened, ["re: first", "re: 2", "re: 3", "re: 4"]),
+    });
+    const pane = new ConversationPane("session-1", agent, () => {});
+    const log: string[] = [];
+    bindSessionLifecycle({
+      pane,
+      attachment: {
+        id: "s1",
+        history: [],
+        replay: () => {},
+        append: async (message) => {
+          log.push(JSON.stringify(message));
+          return undefined;
+        },
+      },
+    });
+    const model = pane.model;
+    model.submitText("first");
+    for (const prompt of ["a", "b", "c"]) model.submitText(prompt);
+
+    model.handleKey(parseChord("alt+up"), undefined);
+    model.handleKey(parseChord("shift+up"), undefined);
+    expect(model.queued()).toEqual(["a", "c", "b"]);
+    expect(model.queueSelection()).toBe(1);
+    model.handleKey(parseChord("shift+up"), undefined);
+    expect(model.queued()).toEqual(["c", "a", "b"]);
+    model.handleKey(parseChord("shift+down"), undefined);
+    model.handleKey(parseChord("shift+down"), undefined);
+    expect(model.queued()).toEqual(["a", "b", "c"]);
+    model.handleKey(parseChord("shift+down"), undefined);
+    expect(model.queued()).toEqual(["a", "b", "c"]);
+    model.handleKey(parseChord("up"), undefined);
+    model.handleKey(parseChord("shift+up"), undefined);
+    expect(model.queued()).toEqual(["b", "a", "c"]);
+
+    open();
+    await pane.settled();
+
+    expect(model.entries.map((entry) => entry.text)).toEqual([
+      "first",
+      "re: first",
+      "b",
+      "re: 2",
+      "a",
+      "re: 3",
+      "c",
+      "re: 4",
+    ]);
+    const persistedPrompts = log
+      .map((line) => JSON.parse(line) as Message)
+      .filter((message) => message.role === "user")
+      .map((message) => (message.parts[0] as { text: string }).text);
+    expect(persistedPrompts).toEqual(["first", "b", "a", "c"]);
+    pane.dispose();
+  });
+
+  it("enter promotes the selected row to steer: the turn is interrupted and it runs first", async () => {
+    const { model, agent } = queuedModel(["never", "re: c", "re: a", "re: b"]);
+
+    model.handleKey(parseChord("alt+up"), undefined);
+    model.handleKey(parseChord("return"), undefined);
+    expect(agent.queued().map((prompt) => `${prompt.behavior}:${prompt.text}`)).toEqual([
+      "steer:c",
+      "queue:a",
+      "queue:b",
+    ]);
+    expect(model.editingQueue()).toBe(false);
+
+    await drained(model);
+
+    expect(model.entries.map((entry) => entry.text)).toEqual([
+      "first",
+      "· interrupted",
+      "c",
+      "re: c",
+      "a",
+      "re: a",
+      "b",
+      "re: b",
+    ]);
+  });
+
+  it("steer rows keep the front of the queue: moving across them is refused", () => {
+    const { opened } = gate();
+    const agent = new Agent({ provider: gatedProvider(opened, []) });
+    const model = new ConversationModel(agent, () => {});
+    model.submitText("first");
+    model.submitText("queued");
+    model.submitText("urgent", "steer");
+    expect(model.queued()).toEqual(["urgent", "queued"]);
+
+    model.handleKey(parseChord("alt+up"), undefined);
+    model.handleKey(parseChord("shift+up"), undefined);
+    expect(model.queued()).toEqual(["urgent", "queued"]);
+    model.handleKey(parseChord("up"), undefined);
+    model.handleKey(parseChord("shift+down"), undefined);
+    expect(model.queued()).toEqual(["urgent", "queued"]);
+    model.dispose();
+  });
+
+  it("any other key leaves queue editing and is handled as usual", () => {
+    const { model } = queuedModel([]);
+    model.handleKey(parseChord("alt+up"), undefined);
+    model.handleKey(parseChord("x"), "x");
+    expect(model.editingQueue()).toBe(false);
+    expect(model.input).toBe("x");
+    model.dispose();
+  });
+});
+
+describe("large-paste placeholders", () => {
+  const sixLines = ["1", "2", "3", "4", "5", "6"].join("\n");
+  const sevenLines = `${sixLines}\n7`;
+
+  it("keeps a paste at the threshold literal and collapses one line past it", () => {
+    const model = new ConversationModel(undefined, () => {});
+    model.paste(sixLines);
+    expect(model.input).toBe(sixLines);
+
+    const collapsed = new ConversationModel(undefined, () => {});
+    collapsed.paste(sevenLines);
+    expect(collapsed.input).toBe("[pasted #1, 7 lines]");
+  });
+
+  it("never submits on paste, even when the text ends in a newline", () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("never")]) });
+    const model = new ConversationModel(agent, () => {});
+    model.paste("a\nb\n");
+    model.paste(`${sevenLines}\n`);
+    expect(model.entries).toEqual([]);
+    expect(model.busy).toBe(false);
+    expect(model.input).toBe("a\nb\n[pasted #1, 8 lines]");
+  });
+
+  it("numbers several placeholders in one prompt and submits the full text", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("ok")]) });
+    const model = new ConversationModel(agent, () => {});
+    type(model, "look: ");
+    model.paste(sevenLines);
+    type(model, " and ");
+    model.paste("x\n".repeat(10));
+    expect(model.input).toBe("look: [pasted #1, 7 lines] and [pasted #2, 11 lines]");
+
+    await submit(model);
+
+    expect(model.entries[0]).toEqual({
+      kind: "user",
+      text: `look: ${sevenLines} and ${"x\n".repeat(10)}`.trim(),
+    });
+    expect(model.input).toBe("");
+  });
+
+  it("tab expands the placeholder under the cursor in place", () => {
+    const model = new ConversationModel(undefined, () => {});
+    type(model, "see ");
+    model.paste(sevenLines);
+    expect(model.handleKey(parseChord("tab"), undefined)).toBe(true);
+    expect(model.input).toBe(`see ${sevenLines}`);
+    expect(model.handleKey(parseChord("tab"), undefined)).toBe(false);
+  });
+
+  it("restarts numbering for the next prompt", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("ok")]) });
+    const model = new ConversationModel(agent, () => {});
+    model.paste(sevenLines);
+    await submit(model);
+    model.paste(sevenLines);
+    expect(model.input).toBe("[pasted #1, 7 lines]");
   });
 });

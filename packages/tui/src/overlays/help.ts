@@ -27,6 +27,12 @@ export const promptKeys: readonly HelpRow[] = [
   { keys: "alt+enter", help: "steer · interrupts the turn and sends now" },
   { keys: "shift+enter", help: "newline in the prompt" },
   { keys: "esc", help: "interrupt the running turn" },
+  { keys: "!cmd", help: "run a shell command through the bash gate · shown as your tool call" },
+  {
+    keys: "alt+up",
+    help: "edit queued prompts · ↑↓ pick · shift+↑↓ move · backspace cancels · enter sends now",
+  },
+  { keys: "tab", help: "expand a [pasted #n] placeholder under the cursor" },
 ];
 
 export class HelpOverlay extends RowOverlay {

@@ -2,6 +2,7 @@ import {
   type Agent,
   type ContextReading,
   type Message,
+  type QueuedPrompt,
   QueuedPromptCancelledError,
   type SendBehavior,
   type ToolCallPart,
@@ -20,6 +21,12 @@ import {
   PromptEditor,
 } from "./prompt-editor.ts";
 import { SessionLedger } from "./session-ledger.ts";
+import {
+  type ShellEscapePort,
+  shellEscapeCall,
+  shellEscapeCommand,
+  shellEscapeTranscript,
+} from "./shell-escape.ts";
 import { type ToolRun, type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
 import { TranscriptNavigation } from "./transcript-navigation.ts";
 import { type TranscriptLine, TranscriptView } from "./transcript-view.ts";
@@ -40,7 +47,11 @@ export interface ConversationPorts {
   now?: () => number;
   botSpend?: (bot: string) => Promise<BotSummary | undefined>;
   botOf?: (bot: string) => BotEntry | undefined;
+  shellEscape?: ShellEscapePort;
+  recordShellEscape?: (transcript: string) => Promise<void>;
 }
+
+export type QueueMove = -1 | 1;
 
 export type CompactionHook = (instructions: string) => Promise<void>;
 
@@ -77,6 +88,9 @@ export class ConversationModel {
   private titleRequested = false;
   private retrievalDisclosed = false;
   private disposed = false;
+  private shellSequence = 0;
+  private shellAbort: AbortController | undefined;
+  private queueCursor: number | undefined;
 
   constructor(
     agent: Agent | undefined,
@@ -106,7 +120,8 @@ export class ConversationModel {
   }
 
   get busy(): boolean {
-    return !this.disposed && (this.agent?.busy() ?? false);
+    if (this.disposed) return false;
+    return this.shellAbort !== undefined || (this.agent?.busy() ?? false);
   }
 
   get activity(): number {
@@ -130,7 +145,22 @@ export class ConversationModel {
   }
 
   queued(): readonly string[] {
-    return this.agent?.queued().map((prompt) => prompt.text) ?? [];
+    return this.queuedPrompts().map((prompt) => prompt.text);
+  }
+
+  queuedPrompts(): readonly QueuedPrompt[] {
+    return this.agent?.queued() ?? [];
+  }
+
+  queueSelection(): number | undefined {
+    const cursor = this.queueCursor;
+    const count = this.queuedPrompts().length;
+    if (cursor === undefined || count === 0) return undefined;
+    return Math.min(cursor, count - 1);
+  }
+
+  editingQueue(): boolean {
+    return this.queueSelection() !== undefined;
   }
 
   suggestions(): readonly CommandSuggestion[] {
@@ -189,15 +219,19 @@ export class ConversationModel {
   handleKey(chord: Chord, sequence: string | undefined, viewport = defaultKeyViewport): boolean {
     if (this.ask.pending !== undefined) return this.ask.handleKey(chord, viewport.askRows);
     if (this.navigation.backtracking()) return this.handleBacktrackKey(chord, sequence, viewport);
+    if (this.editingQueue()) return this.handleQueueKey(chord, sequence, viewport);
     if (this.navigation.disclosing() && chord.name !== "tab") {
       this.navigation.exitDisclosure();
       if (chord.name === "escape") return true;
     }
     const primed = this.navigation.takeEscapePrime();
     if (chord.name === "tab" && this.editor.slashQuery() === undefined) {
-      if (!this.editor.isEmpty()) return false;
+      if (!this.editor.isEmpty()) return this.editor.expandPlaceholderAtCursor();
       return chord.shift ? this.navigation.stepFoldCursor() : this.navigation.toggleCursoredFold();
     }
+    const queueEntry = queueEntryDirection(chord);
+    if (queueEntry !== undefined && this.editor.isEmpty())
+      return this.enterQueueEditing(queueEntry);
     const edited = this.editor.handleKey(chord, sequence);
     if (edited !== "pass") return this.applyEdit(edited);
     switch (chord.name) {
@@ -223,7 +257,13 @@ export class ConversationModel {
 
   submitText(text: string, behavior: SendBehavior = "queue"): void {
     const trimmed = text.trim();
-    if (trimmed === "" || this.agent === undefined || this.disposed) return;
+    if (trimmed === "" || this.disposed) return;
+    const command = shellEscapeCommand(trimmed);
+    if (command !== undefined) {
+      this.submitShell(trimmed, command, behavior);
+      return;
+    }
+    if (this.agent === undefined) return;
     this.editor.remember(trimmed);
     this.navigation.snapToLive();
     this.send(trimmed, behavior);
@@ -293,6 +333,7 @@ export class ConversationModel {
 
   dispose(): void {
     this.disposed = true;
+    this.shellAbort?.abort();
     this.unfollow();
     this.ask.close();
     this.feed.endStream();
@@ -343,9 +384,74 @@ export class ConversationModel {
 
   private settleAfterTurn(): Promise<void> {
     this.touch();
-    return (this.afterTurn?.() ?? Promise.resolve()).catch((cause: unknown) => {
-      if (!this.disposed) this.feed.post("error", toError(cause).message);
+    return this.drainQueuedShellEscapes()
+      .then((transcripts) => this.settleThenRecord(transcripts))
+      .catch((cause: unknown) => {
+        if (!this.disposed) this.feed.post("error", toError(cause).message);
+      });
+  }
+
+  private async settleThenRecord(transcripts: readonly string[]): Promise<void> {
+    await this.afterTurn?.();
+    for (const transcript of transcripts) await this.ports?.recordShellEscape?.(transcript);
+  }
+
+  private async drainQueuedShellEscapes(): Promise<string[]> {
+    const transcripts: string[] = [];
+    for (;;) {
+      const agent = this.agent;
+      const next = agent?.queued()[0];
+      const command = next === undefined ? undefined : shellEscapeCommand(next.text);
+      if (agent === undefined || next === undefined || command === undefined) return transcripts;
+      agent.cancelQueued(next.id);
+      transcripts.push(await this.runShell(command));
+    }
+  }
+
+  private submitShell(text: string, command: string, behavior: SendBehavior): void {
+    if (this.ports?.shellEscape === undefined) {
+      this.feed.post("info", noShellNotice);
+      return;
+    }
+    this.editor.remember(text);
+    this.navigation.snapToLive();
+    const agent = this.agent;
+    if (agent?.busy() === true) {
+      this.send(text, behavior);
+      return;
+    }
+    this.lastSend = this.runShellNow(agent, command)
+      .then(
+        (transcript) => this.ports?.recordShellEscape?.(transcript),
+        (cause: unknown) => this.reportTurnFailure(cause),
+      )
+      .then(() => this.reportRest());
+    this.touch();
+  }
+
+  private async runShellNow(agent: Agent | undefined, command: string): Promise<string> {
+    if (agent === undefined) return this.runShell(command);
+    let transcript = "";
+    await agent.hold(async () => {
+      transcript = await this.runShell(command);
     });
+    return transcript;
+  }
+
+  private async runShell(command: string): Promise<string> {
+    const port = this.ports?.shellEscape;
+    this.shellSequence += 1;
+    const call = shellEscapeCall(command, this.shellSequence);
+    const controller = new AbortController();
+    this.shellAbort = controller;
+    this.feed.beginUserTool(call);
+    this.touch();
+    const result = await (
+      port?.run(call, controller.signal) ?? Promise.resolve(noShellResult)
+    ).catch((cause: unknown) => ({ output: toError(cause).message, isError: true }));
+    if (this.shellAbort === controller) this.shellAbort = undefined;
+    this.feed.finishUserTool(call.callId, result.output, result.isError);
+    return shellEscapeTranscript(command, result.output);
   }
 
   private reportRest(): void {
@@ -384,7 +490,7 @@ export class ConversationModel {
   private applyEdit(outcome: Exclude<EditorOutcome, "pass">): boolean {
     if (outcome === "handled") return true;
     if ("submit" in outcome) {
-      if (this.agent === undefined) return true;
+      if (this.agent === undefined && shellEscapeCommand(outcome.submit) === undefined) return true;
       this.editor.clear();
       this.submitText(outcome.submit, outcome.behavior);
       return true;
@@ -462,6 +568,7 @@ export class ConversationModel {
   private handleEscape(primed: boolean): boolean {
     if (this.navigation.scrollBack > 0) return this.navigation.snapToLive();
     if (this.busy) {
+      this.shellAbort?.abort();
       this.agent?.interrupt();
       return true;
     }
@@ -494,6 +601,94 @@ export class ConversationModel {
         this.navigation.exitBacktrack();
         return this.handleKey(chord, sequence, viewport);
     }
+  }
+
+  private enterQueueEditing(direction: QueueMove): boolean {
+    const count = this.queuedPrompts().length;
+    if (count === 0) return false;
+    this.queueCursor = direction === -1 ? count - 1 : 0;
+    this.touch();
+    return true;
+  }
+
+  private exitQueueEditing(): void {
+    this.queueCursor = undefined;
+    this.touch();
+  }
+
+  private handleQueueKey(
+    chord: Chord,
+    sequence: string | undefined,
+    viewport: KeyViewport,
+  ): boolean {
+    switch (chord.name) {
+      case "escape":
+        this.exitQueueEditing();
+        return true;
+      case "up":
+      case "down": {
+        const direction: QueueMove = chord.name === "up" ? -1 : 1;
+        return chord.shift ? this.moveSelectedQueued(direction) : this.stepQueueCursor(direction);
+      }
+      case "backspace":
+      case "delete":
+        return this.cancelSelectedQueued();
+      case "return":
+      case "enter":
+        return this.promoteSelectedQueued();
+      default:
+        this.exitQueueEditing();
+        return this.handleKey(chord, sequence, viewport);
+    }
+  }
+
+  private stepQueueCursor(direction: QueueMove): boolean {
+    const selected = this.queueSelection();
+    if (selected === undefined) return true;
+    const last = this.queuedPrompts().length - 1;
+    this.queueCursor = Math.min(last, Math.max(0, selected + direction));
+    this.touch();
+    return true;
+  }
+
+  private cancelSelectedQueued(): boolean {
+    const prompt = this.selectedQueued();
+    if (prompt === undefined) return true;
+    this.agent?.cancelQueued(prompt.id);
+    if (!this.editingQueue()) this.queueCursor = undefined;
+    this.touch();
+    return true;
+  }
+
+  private moveSelectedQueued(direction: QueueMove): boolean {
+    const agent = this.agent;
+    const from = this.queueSelection();
+    if (agent === undefined || from === undefined) return true;
+    const prompts = [...agent.queued()];
+    const to = from + direction;
+    if (to < 0 || to >= prompts.length) return true;
+    const first = Math.min(from, to);
+    const reordered = swapped(prompts, from, to).slice(first);
+    if (reordered.some((prompt) => prompt.behavior === "steer")) return true;
+    for (const prompt of prompts.slice(first)) agent.cancelQueued(prompt.id);
+    for (const prompt of reordered) this.send(prompt.text, "queue");
+    this.queueCursor = to;
+    this.touch();
+    return true;
+  }
+
+  private promoteSelectedQueued(): boolean {
+    const prompt = this.selectedQueued();
+    if (prompt === undefined) return true;
+    this.agent?.cancelQueued(prompt.id);
+    this.exitQueueEditing();
+    this.send(prompt.text, "steer");
+    return true;
+  }
+
+  private selectedQueued(): QueuedPrompt | undefined {
+    const selected = this.queueSelection();
+    return selected === undefined ? undefined : this.queuedPrompts()[selected];
   }
 
   private forkSelectedPrompt(): void {
@@ -537,6 +732,23 @@ export class ConversationModel {
 }
 
 const noForkPointNotice = "no fork point there";
+const noShellNotice = "no shell here · ! needs a workspace runtime";
+const noShellResult = { output: "no shell here", isError: true } as const;
+
+function queueEntryDirection(chord: Chord): QueueMove | undefined {
+  if (!chord.meta || chord.ctrl) return undefined;
+  if (chord.name === "up") return -1;
+  if (chord.name === "down") return 1;
+  return undefined;
+}
+
+function swapped<T>(items: readonly T[], from: number, to: number): T[] {
+  const copy = [...items];
+  const moved = copy[from] as T;
+  copy[from] = copy[to] as T;
+  copy[to] = moved;
+  return copy;
+}
 
 const thinkingNotices = {
   on: "thinking shown · tab unfolds it · /thinking hides it again",

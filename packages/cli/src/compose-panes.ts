@@ -7,6 +7,7 @@ import {
   closingJudgment,
   compactNow,
   contextBudgetFor,
+  coreTools,
   declaredContextWindow,
   type MemoryFlush,
   type Provider,
@@ -27,6 +28,7 @@ import {
   crashLogFile,
   detectCapabilities,
   type ExtensionsPort,
+  guardedShellEscape,
   type NoticeSource,
   readinessNotice,
   runApp,
@@ -49,8 +51,13 @@ import { closingRole, namingRole, roleProvider } from "./inference/roles.ts";
 import type { LiveInference } from "./inference-state.ts";
 import { type DeferredMaterialization, deferredMaterialization } from "./materialize.ts";
 import { mcpPanePort } from "./mcp.ts";
-import { citationTrail, memoryPanePort, sweepOnClose } from "./memory.ts";
-import { defaultSessionDir, workspaceIdentity, workspaceStateFile } from "./paths.ts";
+import { citationTrail, memoryPanePort, skillEvidenceOf, sweepOnClose } from "./memory.ts";
+import {
+  defaultSessionDir,
+  skillTelemetryFile,
+  workspaceIdentity,
+  workspaceStateFile,
+} from "./paths.ts";
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
 import {
   boundSessionCounts,
@@ -190,6 +197,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     memory,
     roster: extensions.bots,
     bindingOf: (sessionId) => stores.get(sessionId)?.botBinding(),
+    skills: extensions.skills,
   });
   await botLayers.prepare();
   const agents = composeAgents(composition, {
@@ -232,8 +240,14 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       .filter((store) => store.botBinding() === bot.name)
       .map((store) => store.header.id);
     const provider = closingProvider(bound);
-    return provider === undefined ? undefined : closingJudgment({ provider });
+    if (provider === undefined) return undefined;
+    return closingJudgment({
+      provider,
+      subject: { kind: "bot", slug: bot.name, sigil: bot.sigil },
+    });
   };
+  const workspaceSkillEvidence = () =>
+    skillEvidenceOf(composition.skills, skillTelemetryFile(workspaceIdentity(cwd, workspaceSlug)));
   return {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
@@ -257,8 +271,14 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
+    shellEscape: (guard) =>
+      guardedShellEscape({
+        tools: () => coreTools(composition.scope),
+        guard,
+        ...(presets?.resolver !== undefined && { permissions: presets.resolver }),
+      }),
     closers: [
-      () => sweepOnClose(memory()),
+      async () => sweepOnClose(memory(), await workspaceSkillEvidence()),
       async () => {
         await botLayers.sweep(botJudgment);
       },
@@ -356,6 +376,10 @@ function inferenceSeams(
       sessionId: () => seams?.sessionId(),
       onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
       bot: composition.extensions.bots.find((candidate) => candidate.name === botName),
+      spills: () => {
+        const sessionId = seams?.sessionId();
+        return sessionId === undefined ? undefined : stores.get(sessionId)?.spills();
+      },
     });
     tapJournal(agent.bus, () => {
       const sessionId = seams?.sessionId();

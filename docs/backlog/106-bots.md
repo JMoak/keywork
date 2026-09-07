@@ -5,8 +5,8 @@
 > inline as **⟨J⟩**: the entity merge (Q-B1, PD21.1), the scope layout (PD21.2), the
 > group-by toggle (Q-B2), the `notes` default (Q-B5), and the two-verb policy-row model
 > (Q-B8). Q-B3 is set aside, Q-B6 stays open for discussion, Q-B4 and Q-B7 stand as
-> reversible assumptions of the 2026-09-03 round. J26 (the PD22 layer) landed 2026-09-06;
-> the ledger records it. This file wins over
+> reversible assumptions of the 2026-09-03 round. J26 (the PD22 layer) and J27 through the
+> `skills` level landed 2026-09-06; the ledger records them. This file wins over
 > [`105`](105-inference-resolution.md) and below where it speaks; the ledger at the end
 > records what the tree actually does.
 >
@@ -336,7 +336,7 @@ searchable; bootstrap respects the split budget; a workspace fact written by a b
 the workspace/arc layer, not the bot layer (flush fixture); untrusted vault inert.
 **Strategy:** `OWN` over the J17 shapes; rides landed J3/J4/J6/J13 seams.
 
-### J27 (2pt): Learning policy (implements PD23; `off` and `notes` landed 2026-09-06, `skills` and `self` wait on J10)
+### J27 (2pt): Learning policy (implements PD23; `off`, `notes`, and `skills` landed 2026-09-06, `self` open)
 The `learning` levels: `notes` (session-end digest tagging + bot-scoped Gardener
 micro-sweep, budget capped, proposals only), `skills` (J10 hooks scoped to the bot's
 `skills/` dir; genesis gates from 98 idea 11), `self` (instruction-change proposals against
@@ -711,3 +711,96 @@ file; vitest over the touched files (`engine/memory/**`, `cli/bot-memory`, `cli/
    "since you were here" and the arc pane are the candidates, both outside this lane.
 7. A bot declared `skills` or `self` runs as `notes` at runtime (J26 already did this); the
    readout says so rather than refusing the level.
+
+### J27 · learning policy · `skills` level landed 2026-09-06 (`self` open)
+
+- **The Gardener reads skill telemetry.** `Gardener.sweep({ skills })` takes a `SkillEvidence`
+  snapshot (`{ name, authoredBy }` per skill plus the `readSkillTelemetry` snapshot) and turns it
+  into `skill-review` proposals, one per agent-authored skill that is either churning (patches
+  plus rewrites at or above `skillChurn`, default 2) or unused (zero uses and no activity for
+  `skillIdleDays`, default 30, measured against the Gardener's clock). The proposal cites the
+  counts (`uses`, `patches`, `rewrites`) and the inbox row reads `rework skill release-tag ·
+  4 uses, 2 patches, 1 rewrites` or `retire skill old-routine`. Skills without the
+  `authored_by` marker are never proposed on, the blast-radius rule J7 already keeps, and the
+  Gardener still writes no skill file: approving a review only clears the row. The workspace
+  closer (`compose-panes.ts`, `chat.ts`) now hands `sweepOnClose` the evidence built by
+  `skillEvidenceOf(composition.skills, skillTelemetryFile(...))`.
+- **Skill genesis.** `skills/genesis.ts` reads a command sequence out of a daily entry
+  (backticked commands in order, or `$ `-prompted lines), normalizes whitespace, and fingerprints
+  the ordered sequence (sha256, 16 hex). A sequence needs two or more commands to count, and
+  `recurringSequences` needs two distinct entries carrying the same fingerprint before anything
+  fires. `bots/skill-genesis.ts` runs that over the bot layer's whole daily log, skips fingerprints
+  already in the layer's reserved `skill-genesis.json`, proposes a `skill-proposal` (`name`,
+  `fingerprint`, `commands` as one redactable string, `occurrences`) through the store's inbox,
+  then records the fingerprints and one audit line (`skill genesis: proposed 1`). The fingerprint
+  is remembered at proposal time, so a declined pattern never re-fires and a second bot with the
+  same routine gets its own single proposal from its own ledger. No model call is involved, so the
+  judgment cap stays the 1024 entry tokens the notes level set.
+- **The bot library.** `BotMemory.skillsFor(bot)` exists only for a bot declared `skills` with a
+  layer: a `SkillLibrary` over the bot's own `.keywork/bots/<slug>/skills/` (discovered through the
+  new `discoverSkillsUnder`) plus the workspace skills it does not shadow, with a `SkillGenesis`
+  root at the bot's dir, convention `skills`, author `keywork/<slug>`, and its own telemetry file
+  (`~/.keywork/skills/<identity>/bot-<slug>.json`). `composeAgents` gives a bound session that
+  library's tools in place of the workspace library's, so a stale bot skill self-patches through
+  the unchanged J10 path and lands in the bot's dir, while the workspace library never sees the bot
+  skill. `BotMemory.sweep` passes the library's skills and telemetry as evidence to the bot sweep,
+  and `BotMemory.approve` lands an approved `skill-proposal` by creating the skill through the
+  library (`skillDescriptionFor` / `skillBodyFor`, a numbered command list) before clearing the
+  row; a name the library already holds is left alone. The memory pane's approve routes bot rows
+  through it.
+- **Two notes-lane follow-ups.** `closingJudgment` takes a `subject`: `{ kind: "bot", slug, sigil }`
+  swaps both prompts for craft wording ("the closing distiller for ⚖ reviewer, a keywork bot ...
+  keep to craft") and drops the arc steer clause; the arc wording is byte-identical without it.
+  The chat REPL's "since you were here" now passes the bound bot and its registry to
+  `gatherReturnDelta`, so a resumed bot-bound session prints `1 learned by H helper: [[Terse
+  Reviews]]`.
+- **`/policy`.** `skills` reads `keeps routines in its own skills dir, self-patched, proposed from
+  recurring commands`; `self` still reads `not built yet, runs as notes`.
+- **Evidence.** `skills/genesis.test` (extraction, normalization, distinct-occurrence gate, order
+  sensitivity, naming fallback), `memory/gardener.test` "skill telemetry" (churning and unused
+  proposed with counts, fresh and human skills skipped, staging-only writes, no re-stage while
+  pending), `bots/sweep.test` "at the skills level" (one occurrence proposes nothing, two propose
+  exactly one, discard then a third occurrence proposes nothing, a second bot gets its own,
+  notes level silent, judgment under the cap with genesis on, telemetry review in the bot inbox),
+  `arcs/closing.test` (arc versus bot wording), `cli/bot-memory.test` "the skills level"
+  (self-patch lands in the bot dir with the author kept while the human workspace skill is
+  byte-identical and the workspace library never sees the bot skill; genesis proposal row
+  `R new skill bun-run-check · 3 steps, seen 2 times`, approve creates the skill under the bot
+  with `authored_by: "keywork/routinier"` and no `.keywork/skills/` appears, the third
+  occurrence proposes nothing; churning bot skill flagged `R rework skill build · 0 uses, 2
+  patches, 0 rewrites`), `cli/chat.test` (bot line on resume), `cli/memory.test` (`sweepOnClose`
+  with evidence stages a review), `tui/conversation-model.test` (`/policy` readout).
+- **Crossings (additive):** `memory/staging.ts` two proposal kinds and keys; `extensions/skills.ts`
+  `discoverSkillsUnder`; `cli/memory.ts` inbox rows for both kinds, `skillEvidenceOf`,
+  `sweepOnClose(memory, skills?)`, approve routed through `BotMemory.approve`; `cli/compose.ts`
+  `skillToolsFor` takes the library a bot session resolves; `cli/paths.ts` `botSkillTelemetryFile`;
+  `engine/index.ts` exports.
+
+**Gate (lane-run, 2026-09-06):** `bun run check:types` clean outside other lanes' in-flight TUI
+test edits; biome clean on every touched file; vitest over the touched files 225 engine
+(`skills/**`, `memory/gardener`, `memory/bots/**`, `arcs/closing`, `staging`, `store`,
+`extensions/**`) plus 96 CLI (`bot-memory`, `chat`, `memory`, `compose-panes`, `bots`) plus 70
+`tui/conversation-model`, all passing. The lead runs the full gate.
+
+### Assumptions Jordan may reverse (2026-09-06, J27 skills)
+
+1. A bot's skills live beside its definition at `.keywork/bots/<slug>/skills/` (the user root for a
+   global bot), the git-able place a person already edits. The memory vault's `bots/<slug>/` was
+   the other reading of PD23 and would have parsed a `SKILL.md` as a note.
+2. "Command sequence" means two or more backticked or `$ `-prompted commands in one daily entry;
+   a lone command never seeds a skill. Order is part of the fingerprint.
+3. The fingerprint is remembered when the proposal is staged, so approve, discard, and a proposal
+   that is still pending all count as "proposed once ever". Fingerprints live in the bot layer's
+   reserved `skill-genesis.json` and go through the store's ledgered reserved write.
+4. Approving a `skill-review` only clears the row. The Gardener proposes; retiring or rewriting a
+   skill stays a human act (or the bot's own `skill_rewrite` mid-run).
+5. Review thresholds are `skillChurn: 2` and `skillIdleDays: 30` on the Gardener's threshold
+   record; no config knob.
+6. A proposed skill is named after its first command (`bun-run-check`), falling back to
+   `routine-<fingerprint>`; a name the bot library already holds means approve creates nothing.
+7. The bot library also lists workspace skills it does not shadow, so a bot can still load and, when
+   they carry the marker, repair shared skills; its genesis root is only ever its own dir.
+8. Bot skill telemetry is per workspace identity and bot (`~/.keywork/skills/<identity>/bot-<slug>.json`),
+   so a global bot's counts do not follow it across workspaces.
+9. The bot closing prompt has no steer clause; direction is an arc-close affordance.
+10. `self` still runs as `notes`; the readout says so.

@@ -298,6 +298,7 @@ function stampFor(entry: TranscriptEntry, marks: PageMarks, streaming: number | 
     case "thinking":
       return `${marks.voice.agent} `;
     case "tool":
+      return `${entry.run?.provenance === "user" ? marks.voice.user : marks.voice.machine} `;
     case "error":
       return `${marks.voice.machine} `;
     case "info":

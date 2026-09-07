@@ -1,6 +1,7 @@
 import type { SendBehavior } from "@keywork/engine";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
+import { PasteVault } from "./paste-placeholder.ts";
 import { isPrintable } from "./picker-keys.ts";
 
 export interface CommandSuggestion {
@@ -23,6 +24,7 @@ export type EditorOutcome =
 export class PromptEditor {
   readonly buffer = new InputBuffer();
   selectedSuggestion = 0;
+  private readonly pastes = new PasteVault();
   private readonly history: string[] = [];
   private historyIndex: number | undefined;
 
@@ -46,13 +48,23 @@ export class PromptEditor {
 
   clear(): void {
     this.buffer.clear();
+    this.pastes.clear();
     this.historyIndex = undefined;
     this.selectedSuggestion = 0;
     this.notify();
   }
 
   paste(text: string): void {
-    this.edit(() => this.buffer.insert(text.replace(/\r\n?/g, "\n")));
+    const normalized = text.replace(/\r\n?/g, "\n");
+    this.edit(() => this.buffer.insert(this.pastes.collapse(normalized)));
+  }
+
+  expandPlaceholderAtCursor(): boolean {
+    const span = this.pastes.spanAt(this.value, this.buffer.cursorOffset);
+    const full = span === undefined ? undefined : this.pastes.textOf(span.ordinal);
+    if (span === undefined || full === undefined) return false;
+    this.edit(() => this.buffer.replaceRange(span.start, span.end, full));
+    return true;
   }
 
   remember(text: string): void {
@@ -98,7 +110,7 @@ export class PromptEditor {
       case "return":
       case "enter": {
         if (chord.shift) return this.edit(() => this.buffer.newline());
-        const text = this.value.trim();
+        const text = this.pastes.expandAll(this.value).trim();
         if (text === "") return "handled";
         return { submit: text, behavior: chord.meta ? "steer" : "queue" };
       }

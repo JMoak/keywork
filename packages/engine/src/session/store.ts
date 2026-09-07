@@ -25,6 +25,7 @@ import {
   sessionFormatVersion,
   type ThinkingLevelChangeEntry,
 } from "./entries.ts";
+import { SpillStore } from "./spill.ts";
 
 export interface SessionStats {
   entries: number;
@@ -61,6 +62,7 @@ export class SessionStore {
   private leaf: string | null = null;
   private headerOnDisk: Promise<void> | undefined;
   private writes: Promise<unknown> = Promise.resolve();
+  private spillStore: SpillStore | undefined;
 
   private constructor(
     readonly file: string,
@@ -123,6 +125,11 @@ export class SessionStore {
 
   async setName(name: string): Promise<SessionInfoEntry> {
     return this.appendEntry({ type: "session_info", name });
+  }
+
+  spills(): SpillStore {
+    this.spillStore ??= SpillStore.beside(this.file);
+    return this.spillStore;
   }
 
   name(): string | undefined {

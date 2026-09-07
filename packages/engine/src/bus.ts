@@ -1,4 +1,4 @@
-import type { Message, ToolCallPart, Usage } from "./messages.ts";
+import type { Message, SpillReference, ToolCallPart, Usage } from "./messages.ts";
 import type { TurnDelta } from "./provider.ts";
 import type { ContextInjection, PermissionDecision } from "./session/journal.ts";
 
@@ -18,7 +18,7 @@ interface LiveEvents {
   "queue.changed": { queued: readonly QueuedPrompt[] };
   "tool.started": { call: ToolCallPart };
   "tool.output": { chunk: string; callId?: string };
-  "tool.finished": { callId: string; output: string; isError: boolean };
+  "tool.finished": { callId: string; output: string; isError: boolean; spill?: SpillReference };
   "gate.permission": { decision: PermissionDecision };
   "gate.preset": { from: string; to: string };
   "session.mode": { mode: string };

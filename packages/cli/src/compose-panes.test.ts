@@ -127,6 +127,26 @@ describe("composePanes", () => {
     expect(app.connections).toBe(inference.connections);
   });
 
+  it("runs a prompt-line shell escape through the workspace bash tool under the pane guard", async () => {
+    const asked: string[] = [];
+    const { app } = await composedIn(await tempDir());
+    const port = app.shellEscape?.({
+      confirm: async (call) => {
+        asked.push((call.arguments as { command: string }).command);
+        return true;
+      },
+    });
+    const result = await port?.run({
+      type: "tool-call",
+      callId: "user-shell-1",
+      name: "bash",
+      arguments: { command: "echo wired" },
+    });
+    expect(asked).toEqual(["echo wired"]);
+    expect(result?.isError).toBe(false);
+    expect(result?.output.trim()).toBe("wired");
+  });
+
   it("passes the workspaces port and the config's theme and page through", async () => {
     const workspaces = {
       list: async () => [],

@@ -28,8 +28,10 @@ export class MissingBotLayerError extends Error {
   }
 }
 
+export const botGenesisFile = "skill-genesis.json";
+
 const botMocFile = `${botMocName}.md`;
-const botReservedPaths = [botMocFile];
+const botReservedPaths = [botMocFile, botGenesisFile];
 
 export class BotRegistry {
   readonly trusted: boolean;

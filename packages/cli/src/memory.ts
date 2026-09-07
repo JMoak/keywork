@@ -23,7 +23,10 @@ import {
   parseCitationEvents,
   type RecallTap,
   type RetrievalSource,
+  readSkillTelemetry,
   type SearchHit,
+  type SkillEvidence,
+  type SkillLibrary,
   type StagedItem,
   type StagedWrite,
   titleKey,
@@ -221,7 +224,17 @@ export function withMemoryPrompt(systemPrompt: string, injection: string): strin
   return injection === "" ? systemPrompt : `${systemPrompt}\n\n${injection}`;
 }
 
-export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise<void> {
+export async function skillEvidenceOf(
+  library: SkillLibrary,
+  telemetryFile: string,
+): Promise<SkillEvidence> {
+  return { skills: library.skills(), telemetry: await readSkillTelemetry(telemetryFile) };
+}
+
+export async function sweepOnClose(
+  memory: WorkspaceMemory | undefined,
+  skills?: SkillEvidence,
+): Promise<void> {
   if (memory === undefined) return;
   const failures: Error[] = [];
   const attempt = (work: () => Promise<unknown>): Promise<void> =>
@@ -231,7 +244,7 @@ export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise
         failures.push(toError(cause));
       },
     );
-  await attempt(() => memory.gardener.sweep());
+  await attempt(() => memory.gardener.sweep(skills === undefined ? {} : { skills }));
   if (memory.store.trusted) await attempt(() => memory.askGate.proposePreferences(memory.store));
   if (failures.length > 0) {
     throw new AggregateError(
@@ -254,17 +267,19 @@ export function memoryPanePort(
     if (opened === undefined) throw new Error("memory isn't set up here yet · /init sets it up");
     return opened.store;
   };
+  const botStaged = async (id: string): Promise<BotStagedItem | undefined> =>
+    (await botStagedItems(bots)).find(({ item }) => item.id === id);
   const stagedOwner = async (id: string): Promise<MemoryStore> => {
-    for (const { bot, item, registry } of await botStagedItems(bots)) {
-      if (item.id === id) return registry.botStore(bot.name);
-    }
-    return store();
+    const owned = await botStaged(id);
+    return owned === undefined ? store() : owned.registry.botStore(owned.bot.name);
   };
   const recalls = new WeakMap<ArcRegistry, ArcRecall>();
   return {
     load: () => loadInputs(memory(), arcs?.(), airlock, bots),
     approve: async (id) => {
-      await (await stagedOwner(id)).approve(id);
+      const owned = await botStaged(id);
+      if (owned !== undefined && bots !== undefined) await bots.approve(owned);
+      else await store().approve(id);
     },
     discard: async (id) => (await stagedOwner(id)).discard(id),
     revert: (ledgerId) => store().revert(ledgerId),
@@ -505,6 +520,22 @@ function inboxView(item: StagedItem): InboxItemView {
         title: `allow ${item.toolShape} without asking`,
         provenance: "user",
         detail: `approved ${item.approvals} times in a row`,
+      };
+    case "skill-proposal":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `new skill ${item.name}`,
+        provenance: "agent",
+        detail: `${item.commands.split("\n").length} steps, seen ${item.occurrences} times`,
+      };
+    case "skill-review":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `${item.reason === "churning" ? "rework" : "retire"} skill ${item.skill}`,
+        provenance: "agent",
+        detail: `${item.uses} uses, ${item.patches} patches, ${item.rewrites} rewrites`,
       };
   }
 }

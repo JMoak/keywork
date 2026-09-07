@@ -217,6 +217,7 @@ export {
   type SessionPresence,
   sessionGroupings,
 } from "./sessions-overview-model.ts";
+export { guardedShellEscape, type ShellEscapePort, type ShellEscapeSeams } from "./shell-escape.ts";
 export {
   type SlugInk,
   type SlugPart,

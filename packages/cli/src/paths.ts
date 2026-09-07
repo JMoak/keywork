@@ -39,6 +39,10 @@ export function skillTelemetryFile(identity: WorkspaceIdentity): string {
   return join(keyworkHome(), "skills", `${identity}.json`);
 }
 
+export function botSkillTelemetryFile(identity: WorkspaceIdentity, slug: string): string {
+  return join(keyworkHome(), "skills", identity, `bot-${slug}.json`);
+}
+
 export interface StateMigration {
   from: number;
   migrate: (stateHome: string) => void;

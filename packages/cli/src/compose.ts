@@ -38,6 +38,8 @@ import {
   type ShellSession,
   SkillLibrary,
   SkillTelemetry,
+  type SpillSource,
+  type SpillStore,
   skillConventionDirs,
   skillLibraryTools,
   type Tool,
@@ -185,6 +187,7 @@ export interface AgentBuildSpec {
   sessionId?: SessionKey | undefined;
   onRetrieval?: ((disclosure: string) => void) | undefined;
   shell?: ShellSession | undefined;
+  spills?: SpillStore | SpillSource | undefined;
 }
 
 export interface AgentComposition {
@@ -350,10 +353,12 @@ function buildAgent(
     () => self,
   );
   const tap = options.citations?.tapFor(spec.sessionId);
+  const skills =
+    (spec.bot === undefined ? undefined : options.bots?.skillsFor(spec.bot)) ?? composition.skills;
   const baseTools = [
     ...coreTools(composition.scope, {
       shell: spec.shell,
-      onToolOutput: (chunk) => self?.bus.emit("tool.output", { chunk }),
+      onToolOutput: (chunk) => self?.reportToolOutput(chunk),
       afterSave: composition.afterSaveFor((publication) =>
         self?.bus.emit("diagnostics.published", publication),
       ),
@@ -361,7 +366,7 @@ function buildAgent(
     ...(recall === undefined
       ? []
       : memoryRecallTools(recall.store, recall.search, recall.onRecall, tap)),
-    ...skillToolsFor(composition, () => self),
+    ...skillToolsFor(skills, () => self),
   ];
   const tools =
     composition.mcp === undefined ? () => baseTools : composition.mcp.surface(baseTools);
@@ -380,6 +385,7 @@ function buildAgent(
     ...(permissions !== undefined && { permissions }),
     ...(spec.history !== undefined && { history: spec.history }),
     ...(spec.bus !== undefined && { bus: spec.bus }),
+    ...(spec.spills !== undefined && { spills: spec.spills }),
     ...(recall !== undefined && {
       actionRecall: pointOfActionRecall({
         search: recall.search,
@@ -483,8 +489,7 @@ function journalingRecall(
   };
 }
 
-function skillToolsFor(composition: Composition, agent: () => Agent | undefined): Tool[] {
-  const { skills } = composition;
+function skillToolsFor(skills: SkillLibrary, agent: () => Agent | undefined): Tool[] {
   if (skills.skills().length === 0 && !skills.canCreate()) return [];
   return skillLibraryTools(skills, {
     onUse: (skill) =>

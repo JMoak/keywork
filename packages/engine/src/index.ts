@@ -6,6 +6,7 @@ export {
   type PermissionResolver,
   QueuedPromptCancelledError,
   type SendOptions,
+  type SpillSource,
   type ToolGuard,
   type ToolPermission,
   type ToolSource,
@@ -22,6 +23,15 @@ export {
   withDeclaredCapabilities,
 } from "./capabilities.ts";
 export { Checkpoints, type CheckpointsOptions, UnknownCheckpointError } from "./checkpoints.ts";
+export {
+  type BusEvent,
+  coalesceDeltas,
+  type DeltaCoalescer,
+  type EventSink,
+  frameTick,
+  frameTickMs,
+  type TickScheduler,
+} from "./coalesce.ts";
 export {
   type DiagnosticsLevel,
   type DiagnosticsLine,
@@ -59,6 +69,7 @@ export {
 } from "./extensions/markdown-commands.ts";
 export {
   discoverSkills,
+  discoverSkillsUnder,
   type SkillDefinition,
   type SkillLoad,
   skillConventionDirs,
@@ -197,7 +208,11 @@ export {
   type ArcBindingListener,
   ArcBindings,
 } from "./memory/arcs/bindings.ts";
-export { type ClosingAgentOptions, closingJudgment } from "./memory/arcs/closing.ts";
+export {
+  type ClosingAgentOptions,
+  type ClosingSubject,
+  closingJudgment,
+} from "./memory/arcs/closing.ts";
 export { ArcCloseDraft } from "./memory/arcs/draft.ts";
 export {
   ArcOpenQuestions,
@@ -268,9 +283,15 @@ export {
   type BotLayerStatus,
   BotRegistry,
   type BotRegistryOptions,
+  botGenesisFile,
   MissingBotLayerError,
   validateBotSlug,
 } from "./memory/bots/registry.ts";
+export {
+  proposeSkillGenesis,
+  rememberedFingerprints,
+  type SkillGenesisReport,
+} from "./memory/bots/skill-genesis.ts";
 export {
   type BotSweepOptions,
   type BotSweepReport,
@@ -331,6 +352,9 @@ export {
   type PairVerdict,
   type PromotionProposal,
   type ProposalRejection,
+  type SkillEvidence,
+  type SkillEvidenceEntry,
+  type SkillReviewReason,
   type SweepOptions,
   type SweepReport,
 } from "./memory/gardener.ts";
@@ -451,6 +475,7 @@ export {
   type ProviderStateOwner,
   type RedactedThinkingPart,
   type Role,
+  type SpillReference,
   type TextPart,
   type ThinkingPart,
   type ToolCallPart,
@@ -610,6 +635,16 @@ export {
   type TurnSettlement,
 } from "./session/settle.ts";
 export {
+  type BoundedToolOutput,
+  type ByteRange,
+  boundToolOutput,
+  defaultToolOutputBudget,
+  elisionMarker,
+  removeSessionFiles,
+  SpillStore,
+  spillDirFor,
+} from "./session/spill.ts";
+export {
   type BranchSummaryInput,
   type CompactionInput,
   type SessionStats,
@@ -624,6 +659,20 @@ export {
   ProtectedSkillError,
   SkillAlreadyExistsError,
 } from "./skills/authorship.ts";
+export {
+  type CommandOccurrence,
+  commandSequenceOf,
+  genesisRecurrenceFloor,
+  genesisSequenceFloor,
+  type RecurringSequence,
+  recurringSequences,
+  type SkillProposal,
+  sequenceFingerprint,
+  skillBodyFor,
+  skillDescriptionFor,
+  skillNameFor,
+  skillProposalFor,
+} from "./skills/genesis.ts";
 export {
   ReferenceOutsideSkillError,
   type SkillChange,

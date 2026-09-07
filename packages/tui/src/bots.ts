@@ -66,7 +66,7 @@ export function describeBotSpend(bot: BotSummary): string {
 export const learningLevelMeaning: Record<LearningLevel, string> = {
   off: "remembers nothing, a stateless role",
   notes: "remembers craft in its own layer, proposes notes to the inbox under its sigil",
-  skills: "not built yet, runs as notes: routines kept in the bot's own skills dir",
+  skills: "keeps routines in its own skills dir, self-patched, proposed from recurring commands",
   self: "not built yet, runs as notes: proposals against its own bot.md through the inbox",
 };
 

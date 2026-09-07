@@ -168,6 +168,7 @@ async function openRun(
     shell,
     bot,
     sessionId: store?.header.id,
+    spills: () => store?.spills(),
   });
   const journal = store === undefined ? undefined : tapJournal(agent.bus, store);
   const diagnostics = options.debug === true ? await openDiagnostics(options) : undefined;

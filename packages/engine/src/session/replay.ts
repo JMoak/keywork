@@ -100,6 +100,7 @@ function replayToolResults(
       callId: part.callId,
       output: part.output,
       isError: part.isError,
+      ...(part.spill !== undefined && { spill: part.spill }),
       replay: true,
     });
   }

@@ -161,6 +161,34 @@ describe("composeAgents", () => {
     expect(outputs[0]?.trim().endsWith("nested")).toBe(true);
   });
 
+  it("streams bash output to the bus as tool.output in order, leaving the final result whole", async () => {
+    const composition = await composedIn(await tempDir());
+    const chunks: { chunk: string; callId?: string | undefined }[] = [];
+    const finished: string[] = [];
+    const agent = composeAgents(composition, { permissions: () => "allow" }).build({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "c1",
+          name: "bash",
+          arguments: { command: "echo one; sleep 0.3; echo two; sleep 0.3; echo three" },
+        }),
+        textTurn("done"),
+      ]),
+      guard: {},
+    });
+    agent.bus.on("tool.output", (event) => chunks.push(event));
+    agent.bus.on("tool.finished", ({ output }) => finished.push(output));
+
+    await agent.send("count");
+
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+    expect(chunks.every((event) => event.callId === "c1")).toBe(true);
+    const streamed = chunks.map((event) => event.chunk).join("");
+    expect(streamed.replace(/\r/g, "")).toBe("one\ntwo\nthree\n");
+    expect(finished[0]?.replace(/\r/g, "")).toBe("one\ntwo\nthree");
+  });
+
   it("gives default agents the composed system prompt for their model and bots their own", async () => {
     const composition = await composedIn(await tempDir());
     const provider = recordingProvider();

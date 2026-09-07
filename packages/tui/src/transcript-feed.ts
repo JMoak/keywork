@@ -33,11 +33,14 @@ export interface NoticeEntry {
   text: string;
 }
 
+export type ToolProvenance = "agent" | "user";
+
 export interface ToolRun {
   name: string;
   subject: string;
   args: string;
   replay: boolean;
+  provenance?: ToolProvenance;
   startedAtMs: number;
   folded: boolean;
   live?: string | undefined;
@@ -96,6 +99,14 @@ export class TranscriptFeed {
     return this.turnStartedAtMs === undefined
       ? undefined
       : Math.max(0, this.now() - this.turnStartedAtMs);
+  }
+
+  beginUserTool(call: ToolCallPart): void {
+    this.startTool(call, false, "user");
+  }
+
+  finishUserTool(callId: string, output: string, isError: boolean): void {
+    this.settleTool(callId, output, isError);
   }
 
   post(kind: NoticeEntry["kind"], text: string): void {
@@ -180,13 +191,14 @@ export class TranscriptFeed {
     this.notify();
   }
 
-  private startTool(call: ToolCallPart, replay: boolean): void {
+  private startTool(call: ToolCallPart, replay: boolean, provenance?: ToolProvenance): void {
     this.endStream();
     const run: ToolRun = {
       name: call.name,
       subject: toolSubject(call.arguments),
       args: compactJson(call.arguments),
       replay,
+      ...(provenance !== undefined && { provenance }),
       startedAtMs: this.now(),
       folded: true,
     };

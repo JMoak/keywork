@@ -24,7 +24,7 @@
 │                                 │ ctrl+k t                            session tree │                                 │
 │                                 │ ctrl+k m                             memory pane │                                 │
 │                                 │ ctrl+k a                               arcs node │                                 │
-│                                 │         ↑↓ scroll · 8 below · esc closes         │                                 │
+│                                 │        ↑↓ scroll · 11 below · esc closes         │                                 │
 │                                 │                                                  │                                 │
 │                                 ╰──────────────────────────────────────────────────╯                                 │
 │                                      │ › ▌                                                                           │

@@ -10,10 +10,19 @@ import {
   bootstrapMemory,
   botBootstrapLayer,
   type CurationJudgmentPort,
+  discoverSkillsUnder,
   type EmbeddingsPort,
   type LayerBootstrap,
   type MemorySearcher,
+  readSkillTelemetry,
+  type SkillDefinition,
+  type SkillEvidence,
+  SkillLibrary,
+  type SkillProposal,
+  SkillTelemetry,
   type StagedItem,
+  skillBodyFor,
+  skillDescriptionFor,
   sweepBotLayer,
 } from "@keywork/engine";
 import { resolveVaultPath } from "@keywork/shared";
@@ -24,6 +33,7 @@ import {
   type SessionKey,
   workspaceLayerId,
 } from "./memory.ts";
+import { botSkillTelemetryFile, workspaceIdentity } from "./paths.ts";
 
 export interface BotMemoryOptions {
   cwd: string;
@@ -33,6 +43,7 @@ export interface BotMemoryOptions {
   memory: MemoryAccess;
   roster: readonly BotDefinition[];
   bindingOf: (sessionId: string) => string | undefined;
+  skills?: readonly SkillDefinition[] | undefined;
   now?: (() => Date) | undefined;
 }
 
@@ -55,10 +66,12 @@ export interface BotMemory {
   registryFor(bot: BotDefinition): BotRegistry | undefined;
   boundBot(sessionId: string): BotDefinition | undefined;
   bootstrapFor(bot: BotDefinition): BotLearning | undefined;
+  skillsFor(bot: BotDefinition): SkillLibrary | undefined;
   searcher(base: MemorySearcher, session: SessionKey, embeddings?: EmbeddingsPort): MemorySearcher;
   flushTarget(sessionId: string): BotFlushTarget | undefined;
   layers(): BotLayer[];
   staged(): Promise<BotStagedItem[]>;
+  approve(item: BotStagedItem): Promise<void>;
   sweep(judgmentFor: BotJudgmentLookup): Promise<BotSweepReport[]>;
 }
 
@@ -66,15 +79,21 @@ export type BotJudgmentLookup = (bot: BotDefinition) => CurationJudgmentPort | u
 
 export const botBootstrapShare = 0.25;
 export const botBootstrapBudget = Math.floor(memoryBootstrapBudget * botBootstrapShare);
+export const botSkillsDir = "skills";
 
 export function userVaultPath(userRoot: string): string {
   return join(userRoot, ".keywork", "memory");
+}
+
+export function botSkillAuthor(slug: string): string {
+  return `keywork/${slug}`;
 }
 
 export function botMemory(options: BotMemoryOptions): BotMemory {
   const registries = new Map<string, BotRegistry>();
   const learnings = new Map<string, BotLearning | undefined>();
   const loading = new Map<string, Promise<void>>();
+  const libraries = new Map<string, SkillLibrary>();
   const registryAt = (vaultRoot: string, trusted: boolean): BotRegistry => {
     const existing = registries.get(vaultRoot);
     if (existing !== undefined) return existing;
@@ -93,6 +112,10 @@ export function botMemory(options: BotMemoryOptions): BotMemory {
     const vaultRoot = resolveVaultPath(options.cwd, options.workspaceSlug);
     return vaultRoot === undefined ? undefined : registryAt(vaultRoot, true);
   };
+  const learnsSkills = (bot: BotDefinition): boolean =>
+    bot.learning === "skills" && registryFor(bot) !== undefined;
+  const telemetryFileFor = (bot: BotDefinition): string =>
+    botSkillTelemetryFile(workspaceIdentity(options.cwd, options.workspaceSlug), bot.name);
   const botNamed = (slug: string | undefined): BotDefinition | undefined =>
     slug === undefined ? undefined : options.roster.find((bot) => bot.name === slug);
   const boundBot = (sessionId: string): BotDefinition | undefined => {
@@ -114,6 +137,31 @@ export function botMemory(options: BotMemoryOptions): BotMemory {
     learnings.delete(bot.name);
     void load(bot).catch(() => undefined);
   };
+  const openLibrary = async (bot: BotDefinition): Promise<void> => {
+    const own = await discoverSkillsUnder(bot.dir, botSkillsDir, bot.source);
+    const library = new SkillLibrary({
+      skills: mergedSkills(own.skills, options.skills ?? []),
+      telemetry: await SkillTelemetry.open({ file: telemetryFileFor(bot) }),
+      genesis: {
+        root: bot.dir,
+        source: bot.source,
+        convention: botSkillsDir,
+        author: botSkillAuthor(bot.name),
+      },
+    });
+    libraries.set(bot.name, library);
+  };
+  const skillEvidenceFor = async (bot: BotDefinition): Promise<SkillEvidence | undefined> => {
+    const library = libraries.get(bot.name);
+    if (library === undefined) return undefined;
+    return { skills: library.skills(), telemetry: await readSkillTelemetry(telemetryFileFor(bot)) };
+  };
+  const landSkill = async (bot: BotDefinition, proposal: SkillProposal): Promise<void> => {
+    const library = libraries.get(bot.name);
+    if (library === undefined) return;
+    if (library.skills().some((skill) => skill.name === proposal.name)) return;
+    await library.create(proposal.name, skillDescriptionFor(proposal), skillBodyFor(proposal));
+  };
   const layers = (): BotLayer[] =>
     options.roster.flatMap((bot) => {
       const registry = registryFor(bot);
@@ -121,7 +169,10 @@ export function botMemory(options: BotMemoryOptions): BotMemory {
     });
   return {
     prepare: async () => {
-      await Promise.all(layers().map(({ bot }) => load(bot)));
+      await Promise.all([
+        ...layers().map(({ bot }) => load(bot)),
+        ...options.roster.filter(learnsSkills).map(openLibrary),
+      ]);
     },
     registryFor,
     boundBot,
@@ -130,6 +181,7 @@ export function botMemory(options: BotMemoryOptions): BotMemory {
       if (registryFor(bot) !== undefined) void load(bot).catch(() => undefined);
       return undefined;
     },
+    skillsFor: (bot) => libraries.get(bot.name),
     searcher: (base, session, embeddings) => {
       const recalls = new Map<BotRegistry, BotRecall>();
       return {
@@ -168,16 +220,36 @@ export function botMemory(options: BotMemoryOptions): BotMemory {
       }
       return items;
     },
+    approve: async ({ bot, registry, item }) => {
+      if (item.kind === "skill-proposal") await landSkill(bot, item);
+      await registry.botStore(bot.name).approve(item.id);
+    },
     sweep: async (judgmentFor) => {
       const reports: BotSweepReport[] = [];
       for (const { bot, registry } of layers()) {
         const judgment = judgmentFor(bot);
         if (judgment === undefined) continue;
-        reports.push(await sweepBotLayer({ registry, slug: bot.name, judgment }));
+        const skills = await skillEvidenceFor(bot);
+        reports.push(
+          await sweepBotLayer({
+            registry,
+            slug: bot.name,
+            judgment,
+            ...(skills !== undefined && { skills }),
+          }),
+        );
       }
       return reports;
     },
   };
+}
+
+function mergedSkills(
+  own: readonly SkillDefinition[],
+  shared: readonly SkillDefinition[],
+): SkillDefinition[] {
+  const taken = new Set(own.map((skill) => skill.name));
+  return [...own, ...shared.filter((skill) => !taken.has(skill.name))];
 }
 
 async function learningOf(

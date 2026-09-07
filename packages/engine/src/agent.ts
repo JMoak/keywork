@@ -3,6 +3,7 @@ import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } f
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
 import type { ContextInjection, PermissionDecision, PermissionGate } from "./session/journal.ts";
+import type { SpillStore } from "./session/spill.ts";
 import { findTool, type Tool } from "./tools.ts";
 
 export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
@@ -18,6 +19,7 @@ export type PermissionResolver = (call: ToolCallPart) => ToolPermission | undefi
 export type ToolSource = () => readonly Tool[];
 
 export type ActionRecall = (call: ToolCallPart) => Promise<string | undefined>;
+export type SpillSource = () => SpillStore | undefined;
 
 export interface AgentOptions {
   provider: Provider;
@@ -30,6 +32,7 @@ export interface AgentOptions {
   standingInjections?: readonly ContextInjection[];
   actionRecall?: ActionRecall;
   thinking?: boolean;
+  spills?: SpillStore | SpillSource;
 }
 
 export interface SendOptions {
@@ -59,6 +62,8 @@ interface AssistantTurn {
   failure?: Error;
 }
 
+type ToolOutcome = EngineEvents["tool.finished"];
+
 export class Agent {
   readonly bus: EventBus<EngineEvents>;
   readonly provider: Provider;
@@ -68,7 +73,9 @@ export class Agent {
   private readonly guard: ToolGuard | undefined;
   private readonly permissions: PermissionResolver | undefined;
   private readonly actionRecall: ActionRecall | undefined;
+  private readonly spills: SpillSource;
   private readonly pending: PendingPrompt[] = [];
+  private running: ToolCallPart | undefined;
   private unannouncedInjections: readonly ContextInjection[];
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
   private costTotals: CostRollup = emptyCostRollup();
@@ -87,6 +94,7 @@ export class Agent {
     this.guard = options.guard;
     this.permissions = options.permissions;
     this.actionRecall = options.actionRecall;
+    this.spills = spillSource(options.spills);
     this.unannouncedInjections = options.standingInjections ?? [];
     this.thinkingRequested = options.thinking ?? false;
   }
@@ -125,6 +133,15 @@ export class Agent {
 
   interrupt(): void {
     this.active?.abort();
+  }
+
+  runningCall(): ToolCallPart | undefined {
+    return this.running;
+  }
+
+  reportToolOutput(chunk: string): void {
+    const callId = this.running?.callId;
+    this.bus.emit("tool.output", { chunk, ...(callId !== undefined && { callId }) });
   }
 
   send(userText: string, options: SendOptions = {}): Promise<Message> {
@@ -344,7 +361,9 @@ export class Agent {
     for (const call of calls) {
       if (signal.aborted) return;
       this.bus.emit("tool.started", { call });
-      const result = await this.executeToolCall(call, signal);
+      this.running = call;
+      const result = await this.bounded(await this.executeToolCall(call, signal));
+      this.running = undefined;
       this.bus.emit("tool.finished", result);
       this.messages.push({
         role: "tool",
@@ -353,10 +372,14 @@ export class Agent {
     }
   }
 
-  private async executeToolCall(
-    call: ToolCallPart,
-    signal: AbortSignal,
-  ): Promise<{ callId: string; output: string; isError: boolean }> {
+  private async bounded(outcome: ToolOutcome): Promise<ToolOutcome> {
+    const spills = this.spills();
+    if (spills === undefined) return outcome;
+    const { output, spill } = await spills.keep(outcome.output);
+    return { ...outcome, output, ...(spill !== undefined && { spill }) };
+  }
+
+  private async executeToolCall(call: ToolCallPart, signal: AbortSignal): Promise<ToolOutcome> {
     try {
       const tool = findTool(this.tools(), call.name);
       const policyVerdict = this.permissions?.(call);
@@ -423,6 +446,11 @@ function toolSource(tools: readonly Tool[] | ToolSource | undefined): ToolSource
   if (typeof tools === "function") return tools;
   const fixed = tools ?? [];
   return () => fixed;
+}
+
+function spillSource(spills: SpillStore | SpillSource | undefined): SpillSource {
+  if (typeof spills === "function") return spills;
+  return () => spills;
 }
 
 function defaultPermission(tool: Tool): ToolPermission {

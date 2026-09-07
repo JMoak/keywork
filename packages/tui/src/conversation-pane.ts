@@ -589,7 +589,9 @@ export class ConversationPane implements Pane {
             }),
           ]
         : []),
-      ...queued.map((text) => Text({ content: `⋯ ${text}`, fg: theme.textDim })),
+      ...queued.map((text, at) =>
+        queuedRow(text, at, this.model.queueSelection(), innerWidth, theme),
+      ),
       ...(suggestions.length === 0
         ? []
         : [
@@ -625,6 +627,7 @@ export class ConversationPane implements Pane {
         }),
       ];
     }
+    if (this.model.editingQueue()) return [Text({ content: queueEditHint, fg: theme.accent })];
     if (this.model.busy && !this.model.editor.isEmpty()) {
       return [Text({ content: busyPromptHint, fg: theme.textDim })];
     }
@@ -692,6 +695,21 @@ export class ConversationPane implements Pane {
 }
 
 const askControls = "  [y] allow  [a] always  [n] deny";
+
+export const queueEditHint =
+  "queue · ↑↓ pick · shift+↑↓ move · backspace cancels · enter sends now · esc done";
+
+function queuedRow(
+  text: string,
+  at: number,
+  selected: number | undefined,
+  paneWidth: number,
+  theme: Theme,
+) {
+  const content = `⋯ ${text}`;
+  if (at !== selected) return Text({ content, fg: theme.textDim });
+  return Text({ content: padEnd(content, paneWidth), fg: theme.background, bg: theme.accent });
+}
 
 function askRow(summary: string, paneWidth: number, theme: Theme) {
   const room = Math.max(0, paneWidth - askControls.length - 2);
@@ -851,7 +869,7 @@ function alternatedLetters(
   return new StyledText(chunks.length === 0 ? [fg(ink)(" ")] : chunks);
 }
 
-const busyPromptHint = "enter queues · alt+enter steers · esc interrupts";
+const busyPromptHint = "enter queues · alt+enter steers · alt+↑ edits the queue · esc interrupts";
 
 function queuedSegment(count: number): string {
   return count === 0 ? "" : `${count} queued`;

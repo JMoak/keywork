@@ -52,11 +52,19 @@ export interface ToolCallPart {
   arguments: unknown;
 }
 
+export interface SpillReference {
+  id: string;
+  bytes: number;
+  elidedFrom: number;
+  elidedTo: number;
+}
+
 export interface ToolResultPart {
   type: "tool-result";
   callId: string;
   output: string;
   isError: boolean;
+  spill?: SpillReference;
 }
 
 export type Part =

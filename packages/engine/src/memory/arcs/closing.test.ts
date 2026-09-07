@@ -116,3 +116,24 @@ describe("closingJudgment degradation", () => {
     expect(reasons).toEqual(["provider unreachable"]);
   });
 });
+
+describe("closingJudgment subjects", () => {
+  it("speaks of the arc by default and of the bot's craft when sweeping a bot layer", async () => {
+    const arcSeen: ProviderRequest[] = [];
+    await closingJudgment({ provider: replying("[]", arcSeen) }).proposePromotions(entries);
+    expect(arcSeen[0]?.systemPrompt).toContain("closing distiller for a keywork arc");
+
+    const botSeen: ProviderRequest[] = [];
+    const bot = closingJudgment({
+      provider: replying("[]", botSeen),
+      subject: { kind: "bot", slug: "reviewer", sigil: "⚖" },
+    });
+    await bot.proposePromotions(entries);
+    await bot.classifyPair(...notePair);
+    expect(botSeen[0]?.systemPrompt).toContain("closing distiller for ⚖ reviewer, a keywork bot");
+    expect(botSeen[0]?.systemPrompt).toContain("keep to craft");
+    expect(botSeen[0]?.systemPrompt).not.toContain("arc");
+    expect(botSeen[1]?.systemPrompt).toContain("craft notes of ⚖ reviewer");
+    expect(botSeen[1]?.systemPrompt).toContain('"relation": "duplicate"');
+  });
+});

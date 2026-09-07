@@ -4,11 +4,11 @@
 > Landed: V2.1 (tail-follow), V2.2 (diff preview), V2.3 (markdown + code fences, `markdown.ts`
 > / `highlighter.ts`), V2.5 (context gauge + cost line, `context-gauge.ts`; the at-threshold
 > compaction offer is not built), V2.10 (retrieval disclosure), V2.13 (backtrack-fork with
-> checkpoint restore). Still open, in this file's own numbering: V2.4 thinking blocks, V2.6
-> queue editing, V2.7 @-mention autocomplete, V2.8 `!` shell escape, V2.9 recall citations
-> (J13's UX face), V2.11 provenance gutter, V2.12 OSC title/progress, V2.14 large-paste
-> placeholder, V2.15 OSC 52 copy verbs, V2.16 commit-message drafting, V2.17 away summary +
-> `/btw`. The typography of the feed itself has since moved to [`104`](104-the-page.md).
+> checkpoint restore). Still open, in this file's own numbering: V2.4 thinking blocks, V2.7
+> @-mention autocomplete, V2.9 recall citations (J13's UX face), V2.11 provenance gutter,
+> V2.16 commit-message drafting, V2.17 away summary + `/btw`. V2.6, V2.8, V2.12, V2.14 and
+> V2.15 landed 2026-09-06 (status below). The typography of the feed itself has since moved
+> to [`104`](104-the-page.md).
 
 > Planning overlay, 2026-08-10. Where this file speaks for the conversation pane's
 > streaming feed it wins; elsewhere the usual chain applies
@@ -93,8 +93,11 @@ was never an ask).
 - **V2.1 landed.** `tool.output` bus event + `bashTool` `onOutput` tap (engine, minimal);
   `tail-follow.ts` renders a ≤3-line dim tail with `\r`/ANSI sanitizing, middle-elision, and a
   deterministic ░▒▓█ byte-count mark. Render-only per the Amp refinement: only the tool's final
-  output reaches the model. Remaining seam: `coreTools` (cli wiring) does not yet pass
-  `onOutput` through to the agent bus; reported, not wired.
+  output reaches the model. ~~Remaining seam: `coreTools` (cli wiring) does not yet pass
+  `onOutput` through to the agent bus; reported, not wired.~~ 2026-09-06: the seam was
+  already wired in `compose.ts`; A18's engine half stamps each chunk with the running call
+  id through `Agent.reportToolOutput` and proves the order and the untouched final result in
+  `cli/compose.test.ts` (see the A18 landed entry in `95`).
 - **V2.2 landed.** `diff-render.ts` (own LCS unified diff, no dependency) previews write/edit
   asks as a bounded, scrollable diff computed from tool args vs current file content; asks for
   non-write tools are unchanged. The Gemini edit-in-`$EDITOR` refinement stays deferred to I4.
@@ -104,6 +107,102 @@ was never an ask).
   panes interrupt instead. **Remaining:** checkpoint-paired file restore, which needs per-user-turn
   checkpoint tags plus a `Checkpoints.restoreTo` API and cli wiring (E3 seam), then the fork
   port restores files alongside the conversation.
+- **V2.12 landed (2026-09-06, OSC title + progress).** `tui/osc.ts` produces every escape as
+  a string (`setTitle`, `pushTitle`/`popTitle` via XTWINOPS 22/23, `setProgress` for OSC 9;4,
+  `copyToClipboard` for OSC 52) and `terminalSupport(facts)` is the one pure detector:
+  progress only under `WT_SESSION` or ConEmu (`ConEmuANSI=ON` / `ConEmuPID`), title and
+  clipboard on every live terminal, everything silent when stdout is not a TTY or `TERM=dumb`.
+  `TerminalReporter` dedupes writes; `app.ts` reports the focused session's title and C64
+  lifecycle after each paint (`▒` working, `█` needs-you, `▓` finished-unseen, `x` failed, no
+  glyph idle, ascii fallbacks at tier 0), pushes the old title at boot and pops it on exit.
+  `AppOptions.terminal` is the seam (`write`, `facts`); no config option. Tests:
+  `osc.test.ts` (14).
+  *Assumptions Jordan may reverse:* the title shape `<glyph> <session> · keywork`; tmux gets
+  titles and OSC 52 unguarded (tmux forwards both with its defaults); no `NO_COLOR` gating
+  since color and titles are unrelated facts; restore relies on the terminal's title stack,
+  terminals without XTWINOPS keep the last title.
+- **V2.15 landed (2026-09-06, copy verbs via OSC 52).** `tui/copy-commands.ts` registers
+  `/copy-message` (aliases `copy`, `copy-reply`), `/copy-code` (`copy-block`) and
+  `/copy-diff` (`copy-hunk`) from `app.ts` beside the doctor and flavor commands, so they
+  reach the palette and the editor's slash tray. Sources: the newest assistant entry; the last
+  fenced block of the newest reply that has one, fence lines stripped; the pending ask's diff
+  first, otherwise the last write/edit hunk rebuilt from the tool call's recorded arguments.
+  The payload is base64 of the UTF-8 bytes, asserted byte-exact; the clipboard is never read.
+  Windows takes the same OSC 52 write (Windows Terminal honors it). Tests:
+  `copy-commands.test.ts` (12), plus a collision check in `command-coverage.test.ts`.
+  *Assumptions Jordan may reverse:* no pane-local keys yet, since bindings live in
+  `app-actions.ts` / `app-core.ts` (the input-power lane's files this round); the proposal is
+  `leader y` message, `leader shift+y` code block, `leader d` diff, all free in the leader
+  table. A write's hunk is rendered as one all-add hunk. Diff text uses `+`/`-`/space prefixes
+  with the codebase's own `@@ -a,b +c,d @@` header; the pane's padded rendering stays its own.
+- **V2.8 landed (2026-09-06, `!` shell escape).** A prompt that starts with `!` followed by
+  a non-space character is a command; a bare `!` or `! text` stays prompt text for the model.
+  `tui/shell-escape.ts` holds the parser and `guardedShellEscape(seams)`, a runner that walks
+  the same gate the agent walks for its own bash calls: the policy resolver first (deny wins
+  before anyone is asked), then the pane's ask on a silent policy for a mutating tool, then
+  `guard.beforeMutation` (checkpoint), then the agent's own `bash` tool instance. It is a
+  guarded port, never a second executor: no spawn happens outside the tool. The call carries a
+  `user-shell-N` id and renders as a tool entry stamped with the user voice glyph
+  (`ToolRun.provenance = "user"`, transcript-view picks the stamp). Output is render-only
+  through the existing `tool.output` tail. Idle panes run it inside `Agent.hold`, so the pane
+  reads as working and enter queues behind it; busy panes queue `!cmd` as a prompt, and the
+  model peels leading shell escapes off the queue at each turn settle before the next prompt
+  starts, which keeps FIFO order and lets the queue rows show it. `alt+enter` steers it
+  (interrupt, run next). `esc` aborts a running command. `bashTool` now spawns with
+  `KEYWORK=1` in the child environment (`harnessSpawnOptions`); nothing was copied, so
+  `NOTICE` is unchanged. **Model context decision:** the result reaches the model as a
+  user-provenance message (`$ cmd` followed by the trimmed output), recorded through the new
+  `ConversationPorts.recordShellEscape` seam, which `session-panes.ts` wires to
+  `attachment.append(textMessage("user", …))` after the turn's own messages are persisted.
+  That makes resume, fork, compaction and bot switches all see it. The live agent's context
+  picks it up on the next rebuild only, because injecting into a running agent's history
+  needs an `Agent` seam and `agent.ts` belongs to another lane this round. Tests:
+  `shell-escape.test.ts` (9: parser, gate order, deny before ask, decline, checkpoint,
+  missing tool), `conversation-model.test.ts` "! shell escape" (10: real `bashTool` `!echo hi`
+  as one user-provenance entry, ask gate with y and n, `!rm -rf` denied by the same resolver
+  the agent's call hits, bare `!`, busy queueing with record order, steer promotion,
+  idle-pane record, no model bound, no port notice, esc abort), `tools.test.ts` (1: the
+  `KEYWORK` marker). **Crossing (wired by the lead, 2026-09-06):** `compose-panes.ts` passes
+  `AppOptions.shellEscape`, built as `guardedShellEscape` over `coreTools(composition.scope)`
+  and the preset resolver, and `app.ts` threads it into `SessionPaneDeps`
+  (`compose-panes.test` "runs a prompt-line shell escape through the workspace bash tool
+  under the pane guard"). The persistent shell session (`shell-session.ts`) does not carry
+  the `KEYWORK` marker yet.
+  *Assumptions Jordan may reverse:* the session record is a user text message rather than a
+  tool-call pair, since a tool result needs an assistant tool call to hang from and the user
+  issued this one; the record lands after the turn it followed; a `!` line typed with no model
+  bound still runs (the shell needs no provider); the gate's permission decisions are handed
+  to an optional `onDecision` hook rather than emitted on the bus.
+- **V2.6 landed (2026-09-06, queue editing).** With the prompt empty and prompts queued,
+  `alt+↑` enters queue editing on the newest row and `alt+↓` on the oldest; inside, `↑`/`↓`
+  pick, `shift+↑`/`shift+↓` move the row, `backspace` (or `delete`) cancels it, `enter`
+  promotes it to steer (cancel, resend as steer, which interrupts the running turn), `esc`
+  leaves, and any other key leaves and is handled as usual. The selected `⋯` row renders
+  inverted in the accent and a hint row spells the grammar; the busy prompt hint now mentions
+  `alt+↑`, and the help overlay's prompt keys list `!cmd`, `alt+up` and `tab`. The queue
+  stays the engine's: moves are cancel plus resend from the first displaced row on, so the
+  agent's ids and `queue.changed` events remain the truth. Steer rows are pinned at the
+  front (the engine sorts them there anyway), so a move that would cross one is refused.
+  Tests: `conversation-model.test.ts` "queue editing" (7: entry points and clamping, empty
+  prompt and empty queue guards, cancel, move with the transcript and the session log
+  (`bindSessionLifecycle` with an in-memory `append`) in the final order, promote-to-steer,
+  steer pinning, exit on other keys) and `conversation-pane.test.ts` (1: inverted row and
+  hint).
+  *Assumptions Jordan may reverse:* `alt` as the queue modifier (it already means steer on
+  enter); `enter` rather than `alt+enter` as the promote key inside the mode; moving a row
+  re-mints its id, which a future engine `reorder` seam would avoid.
+- **V2.14 landed (2026-09-06, large-paste placeholders).** A paste of more than six lines
+  (`pasteCollapseLines = 6`, pinned in tests) renders in the prompt as `[pasted #N, M lines]`
+  and the full text is submitted; several pastes in one prompt number `#1`, `#2`, …, and
+  numbering restarts after each submit. `tab` with the cursor on a placeholder expands it in
+  place. `PasteVault` (`tui/paste-placeholder.ts`) holds the texts; `PromptEditor.paste`
+  collapses, enter expands. The WP-5 contract holds: paste never submits, CRLF normalizes,
+  embedded newlines stay literal, pastes at or under the threshold are untouched. Tests:
+  `prompt-editor.test.ts` (4) and `conversation-model.test.ts` "large-paste placeholders" (5:
+  threshold, never-submit, numbering with full-text submit, tab expand, restart).
+  *Assumptions Jordan may reverse:* the threshold of six; placeholders are plain text in the
+  buffer, so backspace eats them a character at a time and a hand-typed placeholder for a
+  number the vault never held is submitted literally.
 
 ## Ordering instinct (pre-survey)
 

@@ -211,6 +211,16 @@ describe("bash", () => {
     expect(output).toContain("hello");
   });
 
+  it("marks the child environment with KEYWORK=1 so scripts can tell they run under the harness", async () => {
+    const cwd = await workspace();
+    const shell = detectShell();
+    const readMarker = shell.name === "powershell" ? "echo $env:KEYWORK" : "echo $KEYWORK";
+
+    const output = await bashTool(cwd, shell).execute({ command: readMarker });
+
+    expect(output.trim()).toBe("1");
+  });
+
   it("includes the exit code on failure", async () => {
     const cwd = await workspace();
 

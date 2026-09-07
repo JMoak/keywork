@@ -1,0 +1,24 @@
+╭────────────────────────────────╭─────────────────────────────────────────────────────────────────╮
+│ session tree                   │ session-1                                                       │
+│ ░ no sessions yet              │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │                                                                 │
+│                                │ › dictated words burst long arrive words burst long arrive      │
+│                                │ words burst long arrive words burst long arrive words burst     │
+│                                │ long arrive words burst long arrive words burst long arrive     │
+│                                │ words burst long arrive words burst long arrive words burst     │
+│                                │ long arrive words burst long arrive words burst long arrive     │
+│                                │ wor▌                                                            │
+╰────────────────────────────────╰─────────────────────────────────────────────────────────────────╯
+ keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · / commands                                      r 

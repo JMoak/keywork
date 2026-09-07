@@ -19,7 +19,13 @@ import {
 import { recordingProvider } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { type BotMemory, botBootstrapBudget, botMemory, userVaultPath } from "./bot-memory.ts";
+import {
+  type BotMemory,
+  botBootstrapBudget,
+  botMemory,
+  botSkillAuthor,
+  userVaultPath,
+} from "./bot-memory.ts";
 import { type Composition, composeAgents, composeWorkspace } from "./compose.ts";
 import {
   citationTrail,
@@ -62,10 +68,20 @@ async function declaredWorkspace(): Promise<{ cwd: string; userRoot: string }> {
   return { cwd, userRoot: join(cwd, "user-keywork") };
 }
 
-async function fixture(
-  options: { trusted?: boolean; roster?: BotDefinition[]; bindings?: Record<string, string> } = {},
-): Promise<Fixture> {
+interface FixtureOptions {
+  trusted?: boolean;
+  roster?: BotDefinition[] | ((cwd: string) => BotDefinition[]);
+  bindings?: Record<string, string>;
+  seed?: (cwd: string) => Promise<void>;
+}
+
+async function fixture(options: FixtureOptions = {}): Promise<Fixture> {
   const { cwd, userRoot } = await declaredWorkspace();
+  await options.seed?.(cwd);
+  const roster =
+    typeof options.roster === "function"
+      ? options.roster(cwd)
+      : (options.roster ?? [reviewer, scout]);
   const trusted = options.trusted ?? true;
   const composition = await composeWorkspace({
     cwd,
@@ -79,8 +95,9 @@ async function fixture(
     projectTrusted: trusted,
     userRoot,
     memory: composition.memory,
-    roster: options.roster ?? [reviewer, scout],
+    roster,
     bindingOf: (sessionId) => bindings.get(sessionId),
+    skills: composition.extensions.skills,
   });
   await bots.prepare();
   return { cwd, userRoot, composition, bindings, bots };
@@ -499,5 +516,147 @@ describe("the learning policy", () => {
       { slug: "scout", swept: false, skipped: "no-layer" },
     ]);
     expect(existsSync(join(fx.cwd, ".keywork", "memory", "bots"))).toBe(false);
+  });
+});
+
+describe("the skills level", () => {
+  const routineBody = "Build with `make build-old`, then run the checks.\n";
+  const botSkill = `---\ndescription: Build routine\nauthored_by: keywork/routinier\n---\n${routineBody}`;
+  const humanSkill =
+    "---\ndescription: Hand-written build notes\n---\nBuild with `make build-old`.\n";
+  const release = "shipped: `bun run check` then `bun run test` then `git tag v1`";
+
+  function routinier(cwd: string): BotDefinition {
+    const dir = join(cwd, ".keywork", "bots", "routinier");
+    return bot("routinier", { learning: "skills", sigil: "R", dir, file: join(dir, "bot.md") });
+  }
+
+  async function seedSkills(cwd: string): Promise<{ botFile: string; humanFile: string }> {
+    const botDir = join(cwd, ".keywork", "bots", "routinier", "skills", "build");
+    const humanDir = join(cwd, ".keywork", "skills", "manual-build");
+    await mkdir(botDir, { recursive: true });
+    await mkdir(humanDir, { recursive: true });
+    const botFile = join(botDir, "SKILL.md");
+    const humanFile = join(humanDir, "SKILL.md");
+    await writeFile(botFile, botSkill, "utf8");
+    await writeFile(humanFile, humanSkill, "utf8");
+    return { botFile, humanFile };
+  }
+
+  function patchCall(callId: string, name: string) {
+    return toolCallTurn({
+      type: "tool-call",
+      callId,
+      name: "skill_patch",
+      arguments: { name, oldText: "make build-old", newText: "make build-new" },
+    });
+  }
+
+  it("self-patches a stale bot skill in the bot's own dir and leaves the human skill byte-identical", async () => {
+    let files: { botFile: string; humanFile: string } | undefined;
+    const fx = await fixture({
+      roster: (cwd) => [routinier(cwd), reviewer],
+      bindings: { a: "routinier" },
+      seed: async (cwd) => {
+        files = await seedSkills(cwd);
+      },
+    });
+    if (files === undefined) throw new Error("seed did not run");
+    const definition = routinier(fx.cwd);
+    expect(fx.bots.skillsFor(reviewer)).toBeUndefined();
+    expect(() => fx.composition.skills.find("build")).toThrow(/unknown skill/);
+    const agents = composeAgents(fx.composition, { bots: fx.bots });
+    const provider = new MockProvider([
+      patchCall("c1", "build"),
+      patchCall("c2", "manual-build"),
+      textTurn("done"),
+    ]);
+    const agent = agents.build({
+      provider,
+      guard: { confirm: async () => true },
+      sessionId: "a",
+      bot: definition,
+    });
+    await agent.send("fix the build skill");
+    const results = agent
+      .history()
+      .flatMap((message) => message.parts)
+      .filter((part) => part.type === "tool-result");
+    expect(results.map((part) => part.isError)).toEqual([false, true]);
+    expect(await readFile(files.botFile, "utf8")).toContain("make build-new");
+    expect(await readFile(files.botFile, "utf8")).toContain('authored_by: "keywork/routinier"');
+    expect(await readFile(files.humanFile, "utf8")).toBe(humanSkill);
+    expect(fx.bots.skillsFor(definition)?.find("build").body).toContain("make build-new");
+    expect(() => fx.composition.skills.find("build")).toThrow(/unknown skill/);
+  });
+
+  it("proposes a skill from a recurring routine once, and approving creates it under the bot", async () => {
+    const fx = await fixture({
+      roster: (cwd) => [routinier(cwd)],
+      bindings: { a: "routinier" },
+    });
+    const definition = routinier(fx.cwd);
+    const flush = fx.bots.flushTarget("a");
+    await flush?.remember(release);
+    const judge = () => ({
+      id: "fake:closing",
+      proposePromotions: async () => [],
+      classifyPair: async () => ({ relation: "distinct" as const, confidence: 1 }),
+    });
+    expect(await fx.bots.sweep(judge)).toEqual([
+      expect.objectContaining({ slug: "routinier", genesis: { proposed: [], remembered: [] } }),
+    ]);
+    await flush?.remember(`again ${release}`);
+    const swept = await fx.bots.sweep(judge);
+    expect(swept[0]?.swept && swept[0].genesis.proposed).toHaveLength(1);
+    const pane = memoryPanePort(fx.composition.memory, undefined, undefined, fx.bots);
+    const inputs = await pane.load();
+    expect(inputs.inbox).toEqual([
+      expect.objectContaining({
+        kind: "proposal",
+        title: "R new skill bun-run-check",
+        detail: "3 steps, seen 2 times",
+      }),
+    ]);
+    await pane.approve(inputs.inbox[0]?.id ?? "");
+    const created = join(definition.dir, "skills", "bun-run-check", "SKILL.md");
+    const content = await readFile(created, "utf8");
+    expect(content).toContain(`authored_by: "${botSkillAuthor("routinier")}"`);
+    expect(content).toContain("1. `bun run check`\n2. `bun run test`\n3. `git tag v1`");
+    expect(fx.bots.skillsFor(definition)?.find("bun-run-check").file).toBe(created);
+    expect(existsSync(join(fx.cwd, ".keywork", "skills"))).toBe(false);
+    await flush?.remember(`third ${release}`);
+    const again = await fx.bots.sweep(judge);
+    expect(again[0]?.swept && again[0].genesis.proposed).toEqual([]);
+    expect((await pane.load()).inbox).toEqual([]);
+  });
+
+  it("feeds the bot's skill telemetry to its sweep so a churning skill is flagged with counts", async () => {
+    const fx = await fixture({
+      roster: (cwd) => [routinier(cwd)],
+      bindings: { a: "routinier" },
+      seed: async (cwd) => {
+        await seedSkills(cwd);
+      },
+    });
+    const definition = routinier(fx.cwd);
+    const library = fx.bots.skillsFor(definition);
+    if (library === undefined) throw new Error("expected a bot library");
+    await library.patch("build", "make build-old", "make build-new");
+    await library.patch("build", "make build-new", "make build-newer");
+    await fx.bots.flushTarget("a")?.remember("craft");
+    const judge = () => ({
+      id: "fake:closing",
+      proposePromotions: async () => [],
+      classifyPair: async () => ({ relation: "distinct" as const, confidence: 1 }),
+    });
+    await fx.bots.sweep(judge);
+    const pane = memoryPanePort(fx.composition.memory, undefined, undefined, fx.bots);
+    expect((await pane.load()).inbox).toEqual([
+      expect.objectContaining({
+        title: "R rework skill build",
+        detail: "0 uses, 2 patches, 0 rewrites",
+      }),
+    ]);
   });
 });

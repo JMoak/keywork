@@ -20,6 +20,7 @@ import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
 import type { Titler } from "./conversation-model.ts";
 import type { TranscriptElevation } from "./conversation-pane.ts";
+import { copyCommands } from "./copy-commands.ts";
 import {
   crashLogFile,
   doctorCommands,
@@ -47,6 +48,12 @@ import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { DigestTreatment, GardenHeat } from "./memory-rows.ts";
 import { Animator } from "./motion.ts";
+import {
+  type TerminalFacts,
+  TerminalReporter,
+  terminalSupport,
+  type WindowTitleState,
+} from "./osc.ts";
 import type { PresetsPort } from "./overlays/index.ts";
 import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
 import type { PaneIntents } from "./pane.ts";
@@ -63,7 +70,7 @@ import {
   type SessionPort,
   sessionEscrow,
 } from "./session-attachment.ts";
-import { SessionPanes } from "./session-panes.ts";
+import { type SessionPaneDeps, SessionPanes } from "./session-panes.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import type { ThemeOverrides } from "./theme.ts";
 import {
@@ -99,6 +106,7 @@ export interface AppOptions {
   glyphs?: GlyphSupport;
   focusOutline?: FocusOutline;
   agentFactory?: AgentFactory;
+  shellEscape?: SessionPaneDeps["shellEscape"];
   afterTurn?: AfterTurn;
   compact?: Compactor;
   closers?: readonly Closer[];
@@ -124,10 +132,16 @@ export interface AppOptions {
   mcp?: McpPanePort;
   notices?: NoticeSource;
   extensions?: ExtensionsPort;
+  terminal?: TerminalSeams;
 }
 
 export interface NoticeSource {
   subscribe(post: (text: string) => void): () => void;
+}
+
+export interface TerminalSeams {
+  write?: (bytes: string) => void;
+  facts?: TerminalFacts;
 }
 
 export async function runApp(options: AppOptions = {}): Promise<void> {
@@ -159,6 +173,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       ? undefined
       : attachOnFork(options.sessionTrees, options.sessions, escrow);
   const glyphs = options.glyphs ?? detectCapabilities();
+  const terminal = terminalOf(options, glyphs);
   const sessions = new SessionPanes({
     core: () => core,
     escrow,
@@ -169,6 +184,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
     glyphs,
     ...definedOnly({
       agentFactory: options.agentFactory,
+      shellEscape: options.shellEscape,
       sessions: options.sessions,
       trees,
       checkpoints: options.checkpoints,
@@ -218,6 +234,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       fileIndex.dispose();
       paneSessions.closeAll();
       escrow.releaseAll();
+      terminal.reporter.end();
       renderer.destroy();
       options.workspace?.seal();
       void runClosers(
@@ -250,6 +267,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
         },
         options.scrim === "on",
       );
+      terminal.reporter.report(focusedWindowTitle(sessions));
     } catch (cause) {
       recordCrash("render", cause);
     }
@@ -262,7 +280,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       core.postNotice(recoveredNotice);
     }
   };
-  registerHostCommands(core, options, sessions, flavors, render);
+  registerHostCommands(core, options, sessions, flavors, render, terminal);
   core.registry.addSource(() => arcJumpCommands(core, arcIndex.listed()));
   const bots = options.bots;
   if (bots !== undefined) core.registry.addSource(() => botJumpCommands(core, bots));
@@ -295,6 +313,7 @@ export async function runApp(options: AppOptions = {}): Promise<void> {
       exit(1);
     },
   });
+  terminal.reporter.begin();
   renderer.auto();
   core.bindNotify(render);
   core.start();
@@ -427,8 +446,17 @@ function registerHostCommands(
   sessions: SessionPanes,
   flavors: FlavorSwitch,
   render: () => void,
+  terminal: Terminal,
 ): void {
   const notice = (text: string): void => core.postNotice(text);
+  for (const command of copyCommands({
+    conversation: () => sessions.focused()?.pane.model,
+    write: terminal.write,
+    notice,
+    clipboard: terminal.clipboard,
+  })) {
+    core.registry.register(command);
+  }
   for (const command of doctorCommands({
     logFile: crashLogFile,
     exists: (path) => statKind(path)?.isFile() === true,
@@ -452,6 +480,28 @@ function registerHostCommands(
   ]) {
     if (text !== undefined) notice(text);
   }
+}
+
+interface Terminal {
+  readonly reporter: TerminalReporter;
+  readonly write: (bytes: string) => void;
+  readonly clipboard: boolean;
+}
+
+function terminalOf(options: AppOptions, glyphs: GlyphSupport): Terminal {
+  const write = options.terminal?.write ?? ((bytes: string) => void process.stdout.write(bytes));
+  const support = terminalSupport(options.terminal?.facts);
+  return {
+    reporter: new TerminalReporter(write, support, glyphs),
+    write,
+    clipboard: support.clipboard,
+  };
+}
+
+function focusedWindowTitle(sessions: SessionPanes): WindowTitleState {
+  const focused = sessions.focused();
+  if (focused === undefined) return { state: "idle" };
+  return { name: focused.pane.titled() ?? focused.id, state: focused.pane.lifecycle() };
 }
 
 function botLookup(

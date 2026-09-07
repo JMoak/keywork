@@ -151,3 +151,48 @@ describe("PromptEditor", () => {
     });
   });
 });
+
+describe("large-paste placeholders", () => {
+  const seven = ["a", "b", "c", "d", "e", "f", "g"].join("\n");
+
+  it("collapses a paste past six lines into a numbered placeholder and submits the full text", () => {
+    const editor = new PromptEditor(() => {}, []);
+    editor.paste("intro ");
+    editor.paste(seven);
+    expect(editor.value).toBe("intro [pasted #1, 7 lines]");
+    expect(editor.handleKey(parseChord("return"), undefined)).toEqual({
+      submit: `intro ${seven}`,
+      behavior: "queue",
+    });
+  });
+
+  it("numbers placeholders within a prompt and starts over after clear", () => {
+    const editor = new PromptEditor(() => {}, []);
+    editor.paste(seven);
+    editor.paste(seven);
+    expect(editor.value).toBe("[pasted #1, 7 lines][pasted #2, 7 lines]");
+    editor.clear();
+    editor.paste(seven);
+    expect(editor.value).toBe("[pasted #1, 7 lines]");
+  });
+
+  it("expands the placeholder at the cursor and leaves other text alone", () => {
+    const editor = new PromptEditor(() => {}, []);
+    editor.paste(seven);
+    editor.paste(" tail");
+    expect(editor.expandPlaceholderAtCursor()).toBe(false);
+    editor.buffer.home();
+    expect(editor.expandPlaceholderAtCursor()).toBe(true);
+    expect(editor.value).toBe(`${seven} tail`);
+  });
+
+  it("does not expand a placeholder whose text it never held", () => {
+    const editor = new PromptEditor(() => {}, []);
+    editor.paste("[pasted #9, 40 lines]");
+    expect(editor.expandPlaceholderAtCursor()).toBe(false);
+    expect(editor.handleKey(parseChord("return"), undefined)).toEqual({
+      submit: "[pasted #9, 40 lines]",
+      behavior: "queue",
+    });
+  });
+});

@@ -26,6 +26,7 @@ import {
 import { firstConversation } from "./first-conversation.ts";
 import { gardenHeatInk, gardenHeatLead } from "./garden-heat.ts";
 import { gaugeBar, gaugeBare, gaugeRamp, gaugeSteps, gaugeTile } from "./gauge-forms.ts";
+import { injectionCitizenship } from "./injection-citizenship.ts";
 import { livePlayground } from "./live-playground.ts";
 import { longSession } from "./long-session.ts";
 import { lspLoop } from "./lsp-loop.ts";
@@ -78,6 +79,7 @@ export const scenarios: readonly Scenario[] = [
   statusTips,
   discovery,
   defectRepros,
+  injectionCitizenship,
   pointerTour,
   pointerOff,
   trayTour,

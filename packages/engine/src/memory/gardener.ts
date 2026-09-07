@@ -1,3 +1,5 @@
+import type { SkillDefinition } from "../extensions/skills.ts";
+import type { SkillActivity, SkillTelemetrySnapshot } from "../skills/telemetry.ts";
 import { InvalidTitleError, titleKey } from "./naming.ts";
 import { isEntityPath, type Note, noteWriteTarget } from "./notes.ts";
 import { tokenize } from "./search.ts";
@@ -41,6 +43,8 @@ export interface CurationThresholds {
   pairSimilarityFloor: number;
   emaAlpha: number;
   sessionRecallCap: number;
+  skillChurn: number;
+  skillIdleDays: number;
 }
 
 export const defaultCurationThresholds: CurationThresholds = {
@@ -50,7 +54,18 @@ export const defaultCurationThresholds: CurationThresholds = {
   pairSimilarityFloor: 0.3,
   emaAlpha: 0.3,
   sessionRecallCap: 1,
+  skillChurn: 2,
+  skillIdleDays: 30,
 };
+
+export type SkillEvidenceEntry = Pick<SkillDefinition, "name" | "authoredBy">;
+
+export interface SkillEvidence {
+  skills: readonly SkillEvidenceEntry[];
+  telemetry: SkillTelemetrySnapshot;
+}
+
+export type SkillReviewReason = "unused" | "churning";
 
 export type ProposalRejection =
   | "unknown-entry"
@@ -74,11 +89,13 @@ export interface GardenerOptions {
   judgment?: CurationJudgmentPort;
   thresholds?: Partial<CurationThresholds>;
   proposeOnly?: boolean;
+  now?: () => Date;
 }
 
 export interface SweepOptions {
   dates?: string[];
   entryTokenBudget?: number;
+  skills?: SkillEvidence;
 }
 
 export function entryTokens(entry: Pick<DailyEntryCandidate, "text">): number {
@@ -91,6 +108,7 @@ export class Gardener {
   private readonly judgment: CurationJudgmentPort | undefined;
   private readonly thresholds: CurationThresholds;
   private readonly proposeOnly: boolean;
+  private readonly now: () => Date;
   private readonly recallsBySession = new Map<string, Map<string, number>>();
 
   constructor(options: GardenerOptions) {
@@ -99,6 +117,7 @@ export class Gardener {
     this.judgment = options.judgment;
     this.thresholds = { ...defaultCurationThresholds, ...options.thresholds };
     this.proposeOnly = options.proposeOnly ?? false;
+    this.now = options.now ?? (() => new Date());
   }
 
   recordRecall(noteName: string, sessionId: string): void {
@@ -122,6 +141,7 @@ export class Gardener {
     await this.promoteFromDailyLogs(options, report, proposals);
     await this.curateNotePairs(report, proposals);
     await this.foldUsefulness(report);
+    this.reviewSkills(options.skills, proposals);
     this.proposeUnlinkedMentions(await this.store.listNotes(), proposals);
     report.flagged = (await this.inbox.propose(proposals)).map((item) => item.key);
     await this.store.recordAudit(auditSummary(report));
@@ -318,6 +338,38 @@ export class Gardener {
     });
   }
 
+  private reviewSkills(evidence: SkillEvidence | undefined, proposals: ReviewProposal[]): void {
+    if (evidence === undefined) return;
+    for (const skill of evidence.skills) {
+      const activity = evidence.telemetry[skill.name];
+      if (skill.authoredBy === undefined || activity === undefined) continue;
+      const reason = this.skillReviewReason(activity);
+      if (reason === undefined) continue;
+      proposals.push({
+        kind: "skill-review",
+        skill: skill.name,
+        reason,
+        uses: activity.counts.use,
+        patches: activity.counts.patch,
+        rewrites: activity.counts.rewrite,
+      });
+    }
+  }
+
+  private skillReviewReason(activity: SkillActivity): SkillReviewReason | undefined {
+    const { counts } = activity;
+    if (counts.patch + counts.rewrite >= this.thresholds.skillChurn) return "churning";
+    if (counts.use === 0 && this.idleDays(activity) >= this.thresholds.skillIdleDays)
+      return "unused";
+    return undefined;
+  }
+
+  private idleDays(activity: SkillActivity): number {
+    const last = Date.parse(activity.lastActivityAt);
+    if (Number.isNaN(last)) return 0;
+    return (this.now().getTime() - last) / dayMs;
+  }
+
   private proposeUnlinkedMentions(notes: Note[], proposals: ReviewProposal[]): void {
     const targets = notes.map((note) => ({
       note,
@@ -345,6 +397,7 @@ export class Gardener {
 }
 
 const minimumMentionLength = 3;
+const dayMs = 86_400_000;
 
 interface TaintableEntry {
   id: string;

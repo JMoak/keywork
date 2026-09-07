@@ -2,7 +2,7 @@ import { Agent, MockProvider, type Tool, textTurn, toolCallTurn } from "@keywork
 import { describe, expect, it } from "vitest";
 import { lifecycleChrome, rampColor } from "./chroma.ts";
 import type { ConversationModel } from "./conversation-model.ts";
-import { ConversationPane } from "./conversation-pane.ts";
+import { ConversationPane, queueEditHint } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
 import { Animator, type Scheduler, tempos } from "./motion.ts";
 import type { PaneContext } from "./pane.ts";
@@ -603,5 +603,40 @@ describe("the gauge override", () => {
     modelOf(pane).submitText("go");
     await modelOf(pane).lastSend;
     expect(pane.liveStatus({ instruments: "calm" })).toMatch(/^[⡀-⣿█][⡀-⣿█·] \d/);
+  });
+});
+
+describe("queue editing rows", () => {
+  it("highlights the selected queued row and shows the queue grammar while editing", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "c1", name: "slow", arguments: {} }),
+        textTurn("after"),
+        textTurn("re: one"),
+        textTurn("re: two"),
+      ]),
+      tools: [gatedTool(gate)],
+    });
+    const pane = new ConversationPane("session-1", agent, () => {});
+    modelOf(pane).submitText("go");
+    while (modelOf(pane).activeTool() === undefined) await new Promise((r) => setTimeout(r, 0));
+    modelOf(pane).submitText("one");
+    modelOf(pane).submitText("two");
+
+    pane.handleKey(parseChord("alt+up"), undefined);
+    const rows = frameRows(pane.view(context(true)));
+    expect(rows).toContain(queueEditHint);
+    expect(rows.some((row) => row.startsWith("⋯ two") && row.length > "⋯ two".length)).toBe(true);
+    expect(rows).toContain("⋯ one");
+
+    pane.handleKey(parseChord("escape"), undefined);
+    expect(frameRows(pane.view(context(true)))).not.toContain(queueEditHint);
+    release();
+    await pane.settled();
+    pane.dispose();
   });
 });
