@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -16,6 +16,7 @@ import {
 import { defineTool } from "./define.ts";
 
 const settleAfterExitMs = 100;
+const harnessMarker = { KEYWORK: "1" } as const;
 
 const schema = z.object({
   command: z.string().min(1).describe("Shell command to execute."),
@@ -43,6 +44,11 @@ export function detectShell(platform: NodeJS.Platform = process.platform): Shell
     args: (command) => ["-NoProfile", "-NonInteractive", "-Command", command],
     name: "powershell",
   };
+}
+
+export function harnessSpawnOptions(cwd: string): SpawnOptions {
+  const options = shellSpawnOptions(cwd);
+  return { ...options, env: { ...options.env, ...harnessMarker } };
 }
 
 export function bashTool(
@@ -78,7 +84,7 @@ function execute(
 ): Promise<string> {
   signal?.throwIfAborted();
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(shell.file, shell.args(command), shellSpawnOptions(cwd));
+    const child = spawn(shell.file, shell.args(command), harnessSpawnOptions(cwd));
     const closed = childClosed(child);
     const output = new BoundedOutput(onOutput);
     let terminationReason: TerminationReason | undefined;

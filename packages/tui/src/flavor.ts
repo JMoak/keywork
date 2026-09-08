@@ -1,6 +1,6 @@
 import { type Flavor, parseFlavor } from "@keywork/shared";
 import type { CommandRegistry } from "./commands.ts";
-import { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
+import { keyworkNight, type Theme, type ThemeOverrides } from "./theme.ts";
 
 export type { Flavor } from "@keywork/shared";
 
@@ -18,8 +18,15 @@ export function themeOf(flavor: Flavor): Theme {
   return flavor.tokens;
 }
 
-export function startupFlavors(overrides: ThemeOverrides = {}): Flavor[] {
-  return [parseFlavor({ ...keyworkNightFlavor, tokens: resolveTheme(overrides) })];
+export function startupFlavors(
+  overrides: ThemeOverrides = {},
+  closet: readonly Flavor[] = [],
+  wear: string = keyworkNightFlavor.name,
+): Flavor[] {
+  const wardrobe = [keyworkNightFlavor, ...closet];
+  const worn = wardrobe.find((flavor) => flavor.name === wear) ?? keyworkNightFlavor;
+  const dressed = parseFlavor({ ...worn, tokens: { ...worn.tokens, ...overrides } });
+  return [dressed, ...wardrobe.filter((flavor) => flavor !== worn)];
 }
 
 export class FlavorSwitch {

@@ -2,5 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src"],
-  "references": [{ "path": "../shared" }, { "path": "../engine" }, { "path": "../tui" }]
+  "references": [
+    { "path": "../shared" },
+    { "path": "../engine" },
+    { "path": "../server" },
+    { "path": "../tui" }
+  ]
 }

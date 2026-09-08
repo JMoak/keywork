@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { countOccurrences, toUnixEol } from "@keywork/shared";
 import { z } from "zod";
+import { type AfterSave, annotatedResult } from "./after-save.ts";
 import { confinedPath, type ToolScope } from "./confine.ts";
 import { defineTool } from "./define.ts";
 
@@ -11,13 +12,13 @@ const schema = z.object({
   replaceAll: z.boolean().optional().describe("Replace every occurrence instead of exactly one."),
 });
 
-export function editTool(scope: ToolScope, onSaved?: (path: string) => void) {
+export function editTool(scope: ToolScope, afterSave?: AfterSave) {
   return defineTool({
     name: "edit",
     description: "Replace exact text in a file. oldText must match exactly once unless replaceAll.",
     schema,
     mutates: true,
-    run: async ({ path, oldText, newText, replaceAll = false }) => {
+    run: async ({ path, oldText, newText, replaceAll = false }, signal) => {
       const target = confinedPath(scope, path);
       const raw = await readFile(target, "utf8");
       const crlf = raw.includes("\r\n");
@@ -34,9 +35,8 @@ export function editTool(scope: ToolScope, onSaved?: (path: string) => void) {
       }
       const edited = content.replaceAll(search, toUnixEol(newText));
       await writeFile(target, crlf ? edited.replaceAll("\n", "\r\n") : edited, "utf8");
-      onSaved?.(target);
       const label = occurrences === 1 ? "1 occurrence" : `${occurrences} occurrences`;
-      return `Replaced ${label} in ${path}`;
+      return annotatedResult(`Replaced ${label} in ${path}`, afterSave, target, signal);
     },
   });
 }

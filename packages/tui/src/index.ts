@@ -1,4 +1,4 @@
-export { type AppOptions, runApp } from "./app.ts";
+export { type AppOptions, type NoticeSource, runApp } from "./app.ts";
 export type { FocusedArcPort } from "./arc-commands.ts";
 export {
   type ArcPicker,
@@ -84,6 +84,18 @@ export {
 export type { CompactionHook, ForkOutcome, Titler } from "./conversation-model.ts";
 export type { TranscriptElevation } from "./conversation-pane.ts";
 export { type CrashLogFacts, crashLogFacts, crashLogFile } from "./crash-log.ts";
+export {
+  type ChangedFile,
+  checkpointBaseline,
+  type DiffBaseline,
+  type DiffPort,
+  type GitRunner,
+  gitHeadBaseline,
+  noBaselineNotice,
+  type ReadWorkingFile,
+  untrustedNotice,
+  workingFileReader,
+} from "./diff-model.ts";
 export type {
   ConversationTarget,
   ExtensionCommandEntry,
@@ -118,6 +130,13 @@ export type {
   SavedConnection,
   VerificationOutcome,
 } from "./inference-port.ts";
+export {
+  applyKeybindings,
+  type KeybindingSource,
+  resolveBindings,
+  watchKeybindings,
+} from "./keybindings.ts";
+export type { BindingSpec } from "./keymap.ts";
 export {
   type MarkdownRow,
   type MarkdownSpan,
@@ -181,6 +200,7 @@ export {
   type TempoSpec,
   tempos,
 } from "./motion.ts";
+export { parseColorReplies, type TerminalColors } from "./osc.ts";
 export type { PresetsPort } from "./overlays/index.ts";
 export {
   type PageGrammar,
@@ -203,15 +223,21 @@ export type {
   SessionAttachment,
   SessionPort,
   SessionTurn,
+  ThinkingSwitch,
 } from "./session-attachment.ts";
 export type { SessionTreeView } from "./session-tree-model.ts";
 export type { SessionTreePaneSeams, SessionTreePort } from "./session-tree-pane.ts";
-export type {
-  SessionLiveness,
-  SessionOverviewItem,
-  SessionOverviewRow,
-  SessionPresence,
+export {
+  type OverviewRow,
+  type SessionGroupBy,
+  type SessionGroupRow,
+  type SessionLiveness,
+  type SessionOverviewItem,
+  type SessionOverviewRow,
+  type SessionPresence,
+  sessionGroupings,
 } from "./sessions-overview-model.ts";
+export { guardedShellEscape, type ShellEscapePort, type ShellEscapeSeams } from "./shell-escape.ts";
 export {
   type SlugInk,
   type SlugPart,
@@ -221,6 +247,15 @@ export {
   slugParts,
   slugWords,
 } from "./slug-ink.ts";
+export {
+  type ColorTransport,
+  colorsFromEnv,
+  detectTerminalColors,
+  queryTerminalColors,
+  stdioColorTransport,
+  systemFlavor,
+  systemFlavorName,
+} from "./system-theme.ts";
 export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
 export { curatedTips, rotatingTip, type Tip, type TipSignals, tipRotationMs } from "./tips.ts";
 export { type TitleBarState, type TitleSpan, titleBar, titleSpans } from "./title-bar.ts";

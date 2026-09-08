@@ -1,7 +1,7 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   extensionState,
@@ -9,15 +9,21 @@ import {
   messageText,
   type Provider,
   type ProviderRequest,
+  processExists,
   type SessionEntry,
   SessionStore,
+  type TurnDelta,
   tapJournal,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { recordingProvider } from "@keywork/engine/testing";
+import {
+  installLanguageServerShim,
+  type LanguageServerShim,
+  recordingProvider,
+} from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { composeAgents, composeWorkspace } from "./compose.ts";
 import { conclude, exitCodeOf, type HeadlessOutcome, type RunOptions, runHeadless } from "./run.ts";
 
@@ -1024,5 +1030,213 @@ describe("keywork run --bot", () => {
     });
     expect(exitCodeOf(outcome)).toBe(2);
     expect(lines.map((line) => JSON.parse(line).type)).toEqual(["run.finished"]);
+  });
+});
+
+describe("language diagnostics in headless runs", () => {
+  const editCall = (oldText: string, newText: string) =>
+    toolCallTurn({
+      type: "tool-call",
+      callId: `call-${oldText}`,
+      name: "edit",
+      arguments: { path: "cache.ts", oldText, newText },
+    });
+
+  async function workspaceWithCache(): Promise<string> {
+    const cwd = await tempDir();
+    await writeFile(join(cwd, "cache.ts"), "const a = 1;\n");
+    return cwd;
+  }
+
+  async function fixtureOnPath(): Promise<LanguageServerShim> {
+    const dir = await tempDir();
+    const shim = installLanguageServerShim(dir, "typescript-language-server", "basic");
+    vi.stubEnv("PATH", `${dir}${delimiter}${process.env.PATH ?? ""}`);
+    return shim;
+  }
+
+  async function toolOutputs(options: Partial<RunOptions>): Promise<string[]> {
+    const outputs: string[] = [];
+    await headless({
+      prompt: "break then fix",
+      cwd: await workspaceWithCache(),
+      json: true,
+      projectTrusted: true,
+      permissions: () => "allow",
+      provider: new MockProvider([
+        editCall("1", "BROKEN"),
+        editCall("BROKEN", "2"),
+        textTurn("done"),
+      ]),
+      print: (line) => {
+        const event = JSON.parse(line);
+        if (event.type === "tool.finished") outputs.push(event.output);
+      },
+      ...options,
+    });
+    return outputs;
+  }
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("with lsp off, every request and tool result is byte-identical to a run without the key", async () => {
+    await fixtureOnPath();
+    const runs = await Promise.all(
+      [{}, { lsp: "off" as const }].map(async (options) => {
+        const cwd = await workspaceWithCache();
+        const provider = recordingProvider([editCall("1", "BROKEN"), textTurn("done")]);
+        const outputs: string[] = [];
+        await headless({
+          prompt: "break it",
+          cwd,
+          json: true,
+          projectTrusted: true,
+          permissions: () => "allow",
+          provider,
+          print: (line) => {
+            const event = JSON.parse(line);
+            if (event.type === "tool.finished") outputs.push(event.output);
+          },
+          ...options,
+        });
+        return {
+          requests: JSON.stringify(provider.requests).replaceAll(
+            JSON.stringify(cwd).slice(1, -1),
+            "<cwd>",
+          ),
+          outputs,
+        };
+      }),
+    );
+    expect(runs[1]).toEqual(runs[0]);
+    expect(runs[0]?.outputs).toEqual(["Replaced 1 occurrence in cache.ts"]);
+  });
+
+  it("with auto and the fixture on PATH, the breaking edit carries the block and the fix carries none", async () => {
+    const shim = await fixtureOnPath();
+    const outputs = await toolOutputs({ lsp: "auto" });
+    expect(outputs).toEqual([
+      [
+        "Replaced 1 occurrence in cache.ts",
+        "",
+        "diagnostics (typescript) · 1 error · 1 warning",
+        "cache.ts:1:11 · Cannot find name 'BROKEN'.",
+      ].join("\n"),
+      "Replaced 1 occurrence in cache.ts",
+    ]);
+    const pid = Number(await readFile(shim.marker, "utf8"));
+    expect(processExists(pid)).toBe(false);
+  });
+
+  it("streams diagnostics.published beside the tool events", async () => {
+    await fixtureOnPath();
+    const events: Array<Record<string, unknown>> = [];
+    await headless({
+      prompt: "break it",
+      cwd: await workspaceWithCache(),
+      json: true,
+      projectTrusted: true,
+      lsp: "auto",
+      permissions: () => "allow",
+      provider: new MockProvider([editCall("1", "BROKEN"), textTurn("done")]),
+      print: (line) => events.push(JSON.parse(line)),
+    });
+    const published = events.find((event) => event.type === "diagnostics.published");
+    expect(published).toMatchObject({ count: 2, path: expect.stringContaining("cache.ts") });
+    expect(events.indexOf(published ?? {})).toBeLessThan(
+      events.findIndex((event) => event.type === "tool.finished"),
+    );
+  });
+
+  it("spawns nothing in an untrusted workspace even with auto on", async () => {
+    const shim = await fixtureOnPath();
+    const outputs = await toolOutputs({ lsp: "auto", projectTrusted: false });
+    expect(outputs).toEqual([
+      "Replaced 1 occurrence in cache.ts",
+      "Replaced 1 occurrence in cache.ts",
+    ]);
+    expect(existsSync(shim.marker)).toBe(false);
+  });
+
+  it("notices a missing server once on stderr and keeps the edit result plain", async () => {
+    const errors: string[] = [];
+    const outputs = await toolOutputs({
+      lsp: { typescript: { command: ["keywork-absent-language-server"], extensions: [".ts"] } },
+      printError: (line) => errors.push(line),
+    });
+    expect(outputs).toEqual([
+      "Replaced 1 occurrence in cache.ts",
+      "Replaced 1 occurrence in cache.ts",
+    ]);
+    expect(errors).toEqual([
+      "keywork run: no typescript language server on PATH · diagnostics off for .ts",
+    ]);
+  });
+});
+
+describe("visible thinking in headless runs", () => {
+  const thoughtfulTurn = (): TurnDelta[] => [
+    { type: "visible-thinking", text: "weighing it" },
+    ...textTurn("answer"),
+  ];
+
+  async function requestOf(
+    cwd: string,
+    thinking: RunOptions["thinking"],
+  ): Promise<ProviderRequest | undefined> {
+    const provider = recordingProvider([thoughtfulTurn()]);
+    await headless({
+      prompt: "think",
+      cwd,
+      json: true,
+      provider,
+      print: () => {},
+      ...(thinking !== undefined && { thinking }),
+    });
+    return provider.requests[0];
+  }
+
+  it("asks for thinking only when the config says on and leaves the off request byte-identical", async () => {
+    const cwd = await tempDir();
+    const on = await requestOf(cwd, "on");
+    const off = await requestOf(cwd, "off");
+    const unset = await requestOf(cwd, undefined);
+    expect(on?.thinking).toBe(true);
+    expect(off).not.toHaveProperty("thinking");
+    expect(JSON.stringify(off)).toBe(JSON.stringify(unset));
+    expect(JSON.stringify({ ...on, thinking: undefined })).toBe(JSON.stringify(unset));
+  });
+
+  it("streams thinking as its own turn.delta kind and keeps it out of the plain answer", async () => {
+    const cwd = await tempDir();
+    const lines: string[] = [];
+    await headless({
+      prompt: "think",
+      cwd,
+      json: true,
+      thinking: "on",
+      provider: new MockProvider([thoughtfulTurn()]),
+      print: (line) => lines.push(line),
+    });
+    const events = lines.map((line) => JSON.parse(line) as { type: string; delta?: TurnDelta });
+    const deltas = events.filter((event) => event.type === "turn.delta").map((e) => e.delta);
+    expect(deltas.slice(0, 2)).toEqual([
+      { type: "visible-thinking", text: "weighing it" },
+      { type: "text", text: "answer" },
+    ]);
+    expect(events.find((event) => event.type === "run.finished")).toMatchObject({
+      message: "answer",
+    });
+
+    const plain: string[] = [];
+    await headless({
+      prompt: "think",
+      cwd,
+      json: false,
+      thinking: "on",
+      provider: new MockProvider([thoughtfulTurn()]),
+      print: (line) => plain.push(line),
+    });
+    expect(plain).toEqual(["answer"]);
   });
 });

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   type Agent,
@@ -6,6 +6,7 @@ import {
   modelReferenceOf,
   type ToolCallPart,
   type ToolGuard,
+  textMessage,
 } from "@keywork/engine";
 import { toError } from "@keywork/shared";
 import type { AppCore } from "./app-core.ts";
@@ -13,7 +14,7 @@ import type { FocusedArcPort } from "./arc-commands.ts";
 import { type ArcIndex, seedArcFromOrigin } from "./arc-index.ts";
 import type { ArcsPort } from "./arcs.ts";
 import type { FocusedBotPort } from "./bot-commands.ts";
-import type { BotEntry } from "./bots.ts";
+import type { BotEntry, BotSummary } from "./bots.ts";
 import type { GlyphSupport } from "./capability.ts";
 import type { CommandRegistry } from "./commands.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
@@ -39,6 +40,7 @@ import {
   startFreshSession,
 } from "./session-attachment.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
+import type { ShellEscapePort } from "./shell-escape.ts";
 
 export interface SessionPaneDeps {
   core(): AppCore;
@@ -60,6 +62,10 @@ export interface SessionPaneDeps {
   compact?: Compactor;
   arcs?: ArcsPort;
   botOf?: (name: string) => BotEntry | undefined;
+  botSpend?: (name: string) => Promise<BotSummary | undefined>;
+  now?: () => number;
+  shellEscape?: (guard: ToolGuard) => ShellEscapePort;
+  spillFile?: (sessionId: string, spillId: string) => string | undefined;
 }
 
 export interface SessionControls {
@@ -120,6 +126,15 @@ export class SessionPanes {
       if (pane instanceof ConversationPane && pane.model.busy) busy += 1;
     }
     return busy;
+  }
+
+  awaiting(): readonly string[] {
+    const titles: string[] = [];
+    for (const id of this.controls.keys()) {
+      const pane = this.deps.core().panes.get(id);
+      if (pane instanceof ConversationPane && pane.awaitingYou()) titles.push(pane.titled() ?? id);
+    }
+    return titles;
   }
 
   currentModel(): string | undefined {
@@ -222,6 +237,15 @@ class PaneSession implements SessionControls {
           promptDraft,
         ),
       ...(initial.failure !== undefined && { idleNotice: initial.failure }),
+      ...(deps.botSpend !== undefined && { botSpend: deps.botSpend }),
+      ...(deps.botOf !== undefined && { botOf: deps.botOf }),
+      ...(deps.now !== undefined && { now: deps.now }),
+      ...(deps.shellEscape !== undefined && {
+        shellEscape: deps.shellEscape(this.guard),
+        recordShellEscape: (transcript: string) => this.recordShellEscape(transcript),
+      }),
+      spillFile: (spillId) => this.spillOnDisk(spillId),
+      openFile: (path, options) => deps.core().intents.openFile(path, options),
     };
     this.pane = new ConversationPane(
       id,
@@ -235,6 +259,7 @@ class PaneSession implements SessionControls {
         glyphs: deps.glyphs,
         animator: deps.animator,
         siblingTitles: () => siblingTitles(deps.core(), id),
+        ...(deps.botOf !== undefined && { botOf: deps.botOf }),
         ...(deps.masthead !== undefined && { masthead: deps.masthead }),
         ...(deps.gauge !== undefined && { gauge: deps.gauge }),
         ...(deps.elevation !== undefined && { elevation: deps.elevation }),
@@ -307,6 +332,16 @@ class PaneSession implements SessionControls {
     if (this.live === undefined || this.pane.arc === arc) return;
     this.pane.arc = arc;
     this.notify();
+  }
+
+  private spillOnDisk(spillId: string): string | undefined {
+    const sessionId = this.pane.sessionId;
+    const path = sessionId === undefined ? undefined : this.deps.spillFile?.(sessionId, spillId);
+    return path !== undefined && existsSync(path) ? path : undefined;
+  }
+
+  private async recordShellEscape(transcript: string): Promise<void> {
+    await this.live?.append(textMessage("user", transcript));
   }
 
   private wire(attachment: SessionAttachment, agent: Agent | undefined): void {

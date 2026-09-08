@@ -1,3 +1,5 @@
+import type { SkillDefinition } from "../extensions/skills.ts";
+import type { SkillActivity, SkillTelemetrySnapshot } from "../skills/telemetry.ts";
 import { InvalidTitleError, titleKey } from "./naming.ts";
 import { isEntityPath, type Note, noteWriteTarget } from "./notes.ts";
 import { tokenize } from "./search.ts";
@@ -41,6 +43,8 @@ export interface CurationThresholds {
   pairSimilarityFloor: number;
   emaAlpha: number;
   sessionRecallCap: number;
+  skillChurn: number;
+  skillIdleDays: number;
 }
 
 export const defaultCurationThresholds: CurationThresholds = {
@@ -50,7 +54,18 @@ export const defaultCurationThresholds: CurationThresholds = {
   pairSimilarityFloor: 0.3,
   emaAlpha: 0.3,
   sessionRecallCap: 1,
+  skillChurn: 2,
+  skillIdleDays: 30,
 };
+
+export type SkillEvidenceEntry = Pick<SkillDefinition, "name" | "authoredBy">;
+
+export interface SkillEvidence {
+  skills: readonly SkillEvidenceEntry[];
+  telemetry: SkillTelemetrySnapshot;
+}
+
+export type SkillReviewReason = "unused" | "churning";
 
 export type ProposalRejection =
   | "unknown-entry"
@@ -73,10 +88,18 @@ export interface GardenerOptions {
   inbox?: Pick<MemoryStore, "propose">;
   judgment?: CurationJudgmentPort;
   thresholds?: Partial<CurationThresholds>;
+  proposeOnly?: boolean;
+  now?: () => Date;
 }
 
 export interface SweepOptions {
   dates?: string[];
+  entryTokenBudget?: number;
+  skills?: SkillEvidence;
+}
+
+export function entryTokens(entry: Pick<DailyEntryCandidate, "text">): number {
+  return Math.ceil(entry.text.length / 4);
 }
 
 export class Gardener {
@@ -84,6 +107,8 @@ export class Gardener {
   private readonly inbox: Pick<MemoryStore, "propose">;
   private readonly judgment: CurationJudgmentPort | undefined;
   private readonly thresholds: CurationThresholds;
+  private readonly proposeOnly: boolean;
+  private readonly now: () => Date;
   private readonly recallsBySession = new Map<string, Map<string, number>>();
 
   constructor(options: GardenerOptions) {
@@ -91,6 +116,8 @@ export class Gardener {
     this.inbox = options.inbox ?? options.store;
     this.judgment = options.judgment;
     this.thresholds = { ...defaultCurationThresholds, ...options.thresholds };
+    this.proposeOnly = options.proposeOnly ?? false;
+    this.now = options.now ?? (() => new Date());
   }
 
   recordRecall(noteName: string, sessionId: string): void {
@@ -111,9 +138,10 @@ export class Gardener {
     const report = emptyReport();
     if (!this.store.trusted) return { ...report, inert: true };
     const proposals: ReviewProposal[] = [];
-    await this.promoteFromDailyLogs(options.dates, report, proposals);
+    await this.promoteFromDailyLogs(options, report, proposals);
     await this.curateNotePairs(report, proposals);
     await this.foldUsefulness(report);
+    this.reviewSkills(options.skills, proposals);
     this.proposeUnlinkedMentions(await this.store.listNotes(), proposals);
     report.flagged = (await this.inbox.propose(proposals)).map((item) => item.key);
     await this.store.recordAudit(auditSummary(report));
@@ -121,13 +149,16 @@ export class Gardener {
   }
 
   private async promoteFromDailyLogs(
-    dates: string[] | undefined,
+    options: SweepOptions,
     report: SweepReport,
     proposals: ReviewProposal[],
   ): Promise<void> {
     if (this.judgment === undefined) return;
-    const entries = await this.dailyEntries(dates ?? (await this.store.listDailyDates()));
-    const candidates = entries.filter(isTrustedCandidate);
+    const entries = await this.dailyEntries(options.dates ?? (await this.store.listDailyDates()));
+    const candidates = newestWithinBudget(
+      entries.filter(isTrustedCandidate),
+      options.entryTokenBudget,
+    );
     if (candidates.length === 0) return;
     const byId = new Map(entries.map((entry) => [entry.id, entry]));
     for (const proposal of await this.judgment.proposePromotions(candidates)) {
@@ -149,7 +180,7 @@ export class Gardener {
     if (entry.provenance === "untrusted") return reject("tainted-source");
     if (proposal.confidence < this.thresholds.review) return;
     if ((await this.store.readNote(proposal.title)) !== undefined) return reject("already-exists");
-    if (proposal.confidence < this.thresholds.promote) {
+    if (this.proposeOnly || proposal.confidence < this.thresholds.promote) {
       proposals.push({
         kind: "borderline-promotion",
         title: proposal.title,
@@ -226,7 +257,7 @@ export class Gardener {
   ): Promise<void> {
     const { keep, retire } = resolveKeep(a, b, verdict);
     const withinBlastRadius = keep.provenance === "agent" && retire.provenance === "agent";
-    if (!withinBlastRadius || verdict.confidence < this.thresholds.act) {
+    if (this.proposeOnly || !withinBlastRadius || verdict.confidence < this.thresholds.act) {
       proposals.push(
         verdict.relation === "duplicate"
           ? {
@@ -274,7 +305,7 @@ export class Gardener {
       const note = byName.get(name);
       if (note === undefined) continue;
       report.usefulness[name] = value;
-      if (note.provenance !== "agent") continue;
+      if (this.proposeOnly || note.provenance !== "agent") continue;
       if (Math.abs((note.usefulness ?? 0) - value) < 1e-9) continue;
       await this.stampUsefulness(note, value);
     }
@@ -307,6 +338,38 @@ export class Gardener {
     });
   }
 
+  private reviewSkills(evidence: SkillEvidence | undefined, proposals: ReviewProposal[]): void {
+    if (evidence === undefined) return;
+    for (const skill of evidence.skills) {
+      const activity = evidence.telemetry[skill.name];
+      if (skill.authoredBy === undefined || activity === undefined) continue;
+      const reason = this.skillReviewReason(activity);
+      if (reason === undefined) continue;
+      proposals.push({
+        kind: "skill-review",
+        skill: skill.name,
+        reason,
+        uses: activity.counts.use,
+        patches: activity.counts.patch,
+        rewrites: activity.counts.rewrite,
+      });
+    }
+  }
+
+  private skillReviewReason(activity: SkillActivity): SkillReviewReason | undefined {
+    const { counts } = activity;
+    if (counts.patch + counts.rewrite >= this.thresholds.skillChurn) return "churning";
+    if (counts.use === 0 && this.idleDays(activity) >= this.thresholds.skillIdleDays)
+      return "unused";
+    return undefined;
+  }
+
+  private idleDays(activity: SkillActivity): number {
+    const last = Date.parse(activity.lastActivityAt);
+    if (Number.isNaN(last)) return 0;
+    return (this.now().getTime() - last) / dayMs;
+  }
+
   private proposeUnlinkedMentions(notes: Note[], proposals: ReviewProposal[]): void {
     const targets = notes.map((note) => ({
       note,
@@ -334,6 +397,7 @@ export class Gardener {
 }
 
 const minimumMentionLength = 3;
+const dayMs = 86_400_000;
 
 interface TaintableEntry {
   id: string;
@@ -345,6 +409,22 @@ interface TaintableEntry {
 
 function isTrustedCandidate(entry: TaintableEntry): entry is DailyEntryCandidate {
   return entry.provenance !== "untrusted";
+}
+
+function newestWithinBudget(
+  entries: DailyEntryCandidate[],
+  budget: number | undefined,
+): DailyEntryCandidate[] {
+  if (budget === undefined) return entries;
+  const kept: DailyEntryCandidate[] = [];
+  let spent = 0;
+  for (const entry of [...entries].reverse()) {
+    const cost = entryTokens(entry);
+    if (spent + cost > budget) break;
+    spent += cost;
+    kept.unshift(entry);
+  }
+  return kept;
 }
 
 function emptyReport(): SweepReport {

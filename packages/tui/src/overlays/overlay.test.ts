@@ -18,7 +18,7 @@ import {
 import { PaletteOverlay } from "./palette.ts";
 import { PresetOverlay, type PresetsPort } from "./preset.ts";
 
-const screen: Screen = { width: 120, height: 40 };
+const screen: Screen = { width: 120, height: 48 };
 
 class ThreeRows extends RowOverlay {
   readonly kind = "help" as const;

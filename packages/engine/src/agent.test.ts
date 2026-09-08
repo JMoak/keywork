@@ -282,6 +282,51 @@ describe("Agent end-to-end with mock provider", () => {
     expect(gates).toEqual(["denied:headless"]);
   });
 
+  it("announces an ask before consulting the guard and labels the answer with the gate it names", async () => {
+    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: { a: 1 } }),
+      textTurn("Understood."),
+    ]);
+    const order: string[] = [];
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool],
+      guard: {
+        confirm: async () => {
+          order.push("confirm");
+          return { approved: true, gate: "user" };
+        },
+        gate: "headless",
+      },
+    });
+    agent.bus.on("gate.ask", ({ ask }) => order.push(`ask:${ask.tool}:${ask.rule}`));
+    agent.bus.on("gate.permission", ({ decision }) =>
+      order.push(`${decision.verdict}:${decision.gate}`),
+    );
+
+    await agent.send("Change something");
+
+    expect(order).toEqual(["ask:scribble:default", "confirm", "granted:user"]);
+  });
+
+  it("stays silent about asks when no guard can answer them", async () => {
+    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+      textTurn("Understood."),
+    ]);
+    const agent = new Agent({ provider, tools: [mutatingTool] });
+    let asks = 0;
+    agent.bus.on("gate.ask", () => {
+      asks += 1;
+    });
+
+    await agent.send("Change something");
+
+    expect(asks).toBe(0);
+  });
+
   it("announces standing injections once, before the first turn, after subscribers attach", async () => {
     const provider = new MockProvider([textTurn("one"), textTurn("two")]);
     const agent = new Agent({
@@ -814,6 +859,47 @@ function lastUserText(messages: readonly Message[]): string {
   const last = messages.at(-1);
   return last === undefined ? "" : messageText(last);
 }
+
+describe("Agent visible thinking", () => {
+  function recordingProvider(requests: Record<string, unknown>[]): Provider {
+    return {
+      name: "recording",
+      stream: (request) => {
+        requests.push({ ...request });
+        return streamOf([
+          { type: "visible-thinking", text: "First, " },
+          { type: "visible-thinking", text: "consider." },
+          { type: "text", text: "Done." },
+          { type: "done", usage: { inputTokens: 1, outputTokens: 1 } },
+        ]);
+      },
+    };
+  }
+
+  it("carries the thinking flag only once switched on and keeps the streamed reasoning as its own part", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const agent = new Agent({ provider: recordingProvider(requests) });
+    expect(agent.thinking()).toBe(false);
+    await agent.send("one");
+    expect("thinking" in (requests[0] ?? {})).toBe(false);
+
+    agent.setThinking(true);
+    await agent.send("two");
+    expect(requests[1]?.thinking).toBe(true);
+    expect(agent.history().at(-1)?.parts).toEqual([
+      { type: "visible-thinking", text: "First, consider." },
+      { type: "text", text: "Done." },
+    ]);
+
+    agent.setThinking(false);
+    await agent.send("three");
+    expect("thinking" in (requests[2] ?? {})).toBe(false);
+  });
+
+  it("starts with thinking on when constructed that way", () => {
+    expect(new Agent({ provider: new MockProvider([]), thinking: true }).thinking()).toBe(true);
+  });
+});
 
 describe("Agent turn queue", () => {
   it("delivers three queued prompts after the turn, in order, each as its own turn, staying busy throughout", async () => {

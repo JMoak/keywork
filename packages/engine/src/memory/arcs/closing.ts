@@ -8,8 +8,11 @@ import type {
 } from "../gardener.ts";
 import type { Note } from "../notes.ts";
 
+export type ClosingSubject = { kind: "arc" } | { kind: "bot"; slug: string; sigil: string };
+
 export interface ClosingAgentOptions {
   provider: Provider;
+  subject?: ClosingSubject | undefined;
   direction?: string | undefined;
   onDegrade?: ((reason: string) => void) | undefined;
 }
@@ -27,7 +30,7 @@ export function closingJudgment(options: ClosingAgentOptions): CurationJudgmentP
       try {
         const reply = await complete(
           options.provider,
-          promotionInstruction(options.direction),
+          promotionInstruction(options.subject ?? arcSubject, options.direction),
           describeEntries(entries),
         );
         return parsePromotions(reply);
@@ -41,7 +44,7 @@ export function closingJudgment(options: ClosingAgentOptions): CurationJudgmentP
       try {
         const reply = await complete(
           options.provider,
-          pairInstruction(options.direction),
+          pairInstruction(options.subject ?? arcSubject, options.direction),
           describePair(a, b),
         );
         return parseVerdict(reply);
@@ -55,25 +58,42 @@ export function closingJudgment(options: ClosingAgentOptions): CurationJudgmentP
 
 const distinctVerdict: PairVerdict = { relation: "distinct", confidence: 0 };
 
-const promotionLead =
-  "You are the closing distiller for a keywork arc. Read the arc's daily log entries and " +
-  "propose the durable notes worth keeping in the workspace garden. Reply with only a JSON " +
-  'array of objects shaped {"entryId": string, "title": string, "body": string, ' +
-  '"confidence": number from 0 to 1}. entryId must be one of the ids given. Propose nothing ' +
-  "when nothing is durable.";
+const arcSubject: ClosingSubject = { kind: "arc" };
 
-const pairLead =
-  "You curate a keywork memory garden. Decide how note a relates to note b. Reply with only " +
+const promotionShape =
+  'Reply with only a JSON array of objects shaped {"entryId": string, "title": string, ' +
+  '"body": string, "confidence": number from 0 to 1}. entryId must be one of the ids given. ' +
+  "Propose nothing when nothing is durable.";
+
+const arcPromotionLead =
+  "You are the closing distiller for a keywork arc. Read the arc's daily log entries and " +
+  `propose the durable notes worth keeping in the workspace garden. ${promotionShape}`;
+
+const pairShape =
+  "Decide how note a relates to note b. Reply with only " +
   'a JSON object shaped {"relation": "duplicate" | "supersedes" | "contradiction" | ' +
   '"distinct", "confidence": number from 0 to 1, "keep": "a" | "b" (optional), ' +
   '"mergedBody": string (optional, for duplicates)}.';
 
-function promotionInstruction(direction: string | undefined): string {
-  return withDirection(promotionLead, direction);
+const arcPairLead = `You curate a keywork memory garden. ${pairShape}`;
+
+function promotionInstruction(subject: ClosingSubject, direction: string | undefined): string {
+  if (subject.kind === "arc") return withDirection(arcPromotionLead, direction);
+  return (
+    `You are the closing distiller for ${botName(subject)}, a keywork bot. Read the craft ` +
+    "entries from its own daily log and propose the durable working notes about how this bot " +
+    "does its job well for this person: habits, preferences it was taught, routines that worked. " +
+    `Workspace facts belong elsewhere; keep to craft. ${promotionShape}`
+  );
 }
 
-function pairInstruction(direction: string | undefined): string {
-  return withDirection(pairLead, direction);
+function pairInstruction(subject: ClosingSubject, direction: string | undefined): string {
+  if (subject.kind === "arc") return withDirection(arcPairLead, direction);
+  return `You curate the craft notes of ${botName(subject)}, a keywork bot. ${pairShape}`;
+}
+
+function botName(subject: Extract<ClosingSubject, { kind: "bot" }>): string {
+  return `${subject.sigil} ${subject.slug}`;
 }
 
 function withDirection(lead: string, direction: string | undefined): string {

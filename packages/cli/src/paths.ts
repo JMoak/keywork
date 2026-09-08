@@ -35,6 +35,21 @@ export function workspaceStateFile(identity: WorkspaceIdentity): string {
   return join(keyworkHome(), "workspaces", `${identity}.json`);
 }
 
+export function skillTelemetryFile(
+  identity: WorkspaceIdentity,
+  userRoot: string = homedir(),
+): string {
+  return join(keyworkHome(userRoot), "skills", `${identity}.json`);
+}
+
+export function botSkillTelemetryFile(
+  identity: WorkspaceIdentity,
+  slug: string,
+  userRoot: string = homedir(),
+): string {
+  return join(keyworkHome(userRoot), "skills", identity, `bot-${slug}.json`);
+}
+
 export interface StateMigration {
   from: number;
   migrate: (stateHome: string) => void;
@@ -70,8 +85,8 @@ export function ensureStateLayout(
   return version;
 }
 
-export function keyworkHome(): string {
-  return join(homedir(), ".keywork");
+export function keyworkHome(userRoot: string = homedir()): string {
+  return join(userRoot, ".keywork");
 }
 
 interface StateLayoutMarker {

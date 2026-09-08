@@ -1,11 +1,17 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   type Agent,
+  type BotDefinition,
+  type Checkpoints,
   type ContextBudget,
   type CurationJudgmentPort,
   closingJudgment,
   compactNow,
   contextBudgetFor,
+  coreTools,
   declaredContextWindow,
   type MemoryFlush,
   type Provider,
@@ -22,17 +28,31 @@ import {
   type AgentFactory,
   type AppOptions,
   type Compactor,
+  checkpointBaseline,
   crashLogFacts,
   crashLogFile,
+  type DiffPort,
   detectCapabilities,
+  detectTerminalColors,
   type ExtensionsPort,
+  type GitRunner,
+  gitHeadBaseline,
+  guardedShellEscape,
+  type NoticeSource,
+  noBaselineNotice,
   readinessNotice,
   runApp,
+  stdioColorTransport,
+  systemFlavor,
+  type TerminalColors,
+  untrustedNotice,
   type WorkspacePort,
   type WorkspaceSetupPort,
   type WorkspacesPort,
+  workingFileReader,
 } from "@keywork/tui";
 import { arcService, arcsUnavailable, type ClosingRequest } from "./arcs.ts";
+import { type BotMemory, botMemory } from "./bot-memory.ts";
 import { botService } from "./bots.ts";
 import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
 import {
@@ -44,18 +64,32 @@ import {
 import { inferencePort } from "./inference/port.ts";
 import { closingRole, namingRole, roleProvider } from "./inference/roles.ts";
 import type { LiveInference } from "./inference-state.ts";
+import { fileKeybindings } from "./keybindings.ts";
 import { type DeferredMaterialization, deferredMaterialization } from "./materialize.ts";
 import { mcpPanePort } from "./mcp.ts";
-import { citationTrail, memoryPanePort, sweepOnClose } from "./memory.ts";
-import { defaultSessionDir, workspaceIdentity, workspaceStateFile } from "./paths.ts";
+import {
+  citationTrail,
+  type MemoryAccess,
+  memoryPanePort,
+  skillEvidenceOf,
+  sweepOnClose,
+} from "./memory.ts";
+import {
+  defaultSessionDir,
+  skillTelemetryFile,
+  workspaceIdentity,
+  workspaceStateFile,
+} from "./paths.ts";
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
 import {
   boundSessionCounts,
+  type SessionChangeFeed,
   sessionChangeFeed,
   sessionPort,
   sessionTreePort,
 } from "./sessions/ports.ts";
 import { listSessions } from "./sessions/store.ts";
+import { userConfigDir } from "./user-config.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
 import { workspaceSetupPort } from "./workspace-setup.ts";
 import { type WorkspaceRecall, workspacesPort } from "./workspaces.ts";
@@ -77,6 +111,7 @@ export interface PanesSeams {
   createRenderer?: AppOptions["createRenderer"];
   exit?: (code: number) => void;
   reopen?: (slug: string | undefined) => void;
+  terminalColors?: () => Promise<TerminalColors | undefined>;
 }
 
 export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Promise<void> {
@@ -112,8 +147,10 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
     }),
   });
   const exit = seams.exit ?? ((code: number) => process.exit(code));
+  const colors = await (seams.terminalColors ?? processTerminalColors)();
   await runApp({
     ...app,
+    flavors: [systemFlavor(colors)],
     ...(seams.createRenderer !== undefined && { createRenderer: seams.createRenderer }),
     exit: (code) => {
       if (pendingReopen !== undefined && seams.reopen !== undefined) {
@@ -143,6 +180,7 @@ export interface PanesOptions {
 
 export async function composePanes(options: PanesOptions): Promise<AppOptions> {
   const { cwd, projectTrusted, workspaceSlug, config, materialize, presets } = options;
+  const notices = noticeFeed();
   const composition = await composeWorkspace({
     cwd,
     projectTrusted,
@@ -151,12 +189,15 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     mcpServers: config.mcpServers,
     repoMap: config.repoMap,
     models: config.models,
+    lsp: config.lsp,
     onFileSaved: materialize === undefined ? undefined : (path) => materialize.fileSaved(path),
+    notice: notices.post,
     userRoot: options.userRoot,
     checkpointsGitDir: options.checkpointsGitDir,
     reportCheckpointsUnavailable: options.reportCheckpointsUnavailable,
   });
   const { checkpoints, extensions, mcp, memory } = composition;
+  const port = composition.languagePort;
   const citations = citationTrail(memory, () => composition.bootstrap);
   const setup = options.workspaceSetup;
   const stores = new Map<string, SessionStore>();
@@ -175,7 +216,24 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     unavailable:
       setup === undefined ? undefined : () => readinessNotice(setup.readiness()) ?? arcsUnavailable,
   });
-  const agents = composeAgents(composition, { permissions: presets?.resolver, arcs, citations });
+  const botLayers = botMemory({
+    cwd,
+    projectTrusted,
+    workspaceSlug,
+    userRoot: options.userRoot ?? homedir(),
+    memory,
+    roster: extensions.bots,
+    bindingOf: (sessionId) => stores.get(sessionId)?.botBinding(),
+    skills: extensions.skills,
+  });
+  await botLayers.prepare();
+  const agents = composeAgents(composition, {
+    permissions: presets?.resolver,
+    arcs,
+    bots: botLayers,
+    citations,
+    thinking: config.thinking === "on",
+  });
   const bots = botService({
     cwd,
     projectTrusted,
@@ -184,16 +242,17 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     roster: extensions.bots,
     namer: () => namingProvider(options),
   });
-  const closingProviderFor = (arc: string): Provider | undefined => {
+  const closingProvider = (sessionIds: readonly string[]): Provider | undefined => {
     const state = options.inference?.current();
     const fromRole =
       state === undefined ? undefined : roleProvider(state.runtime, state.config, closingRole);
     if (fromRole !== undefined) return fromRole;
-    return arcs.bindings
-      .sessionsBoundTo(arc)
+    return sessionIds
       .map((sessionId) => agents.providerOf(sessionId))
       .find((provider) => provider !== undefined);
   };
+  const closingProviderFor = (arc: string): Provider | undefined =>
+    closingProvider(arcs.bindings.sessionsBoundTo(arc));
   const closingSeam = (request: ClosingRequest): CurationJudgmentPort | undefined => {
     const provider = closingProviderFor(request.arc);
     if (provider === undefined) return undefined;
@@ -203,6 +262,22 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       onDegrade: request.onDegrade,
     });
   };
+  const botJudgment = (bot: BotDefinition): CurationJudgmentPort | undefined => {
+    const bound = [...stores.values()]
+      .filter((store) => store.botBinding() === bot.name)
+      .map((store) => store.header.id);
+    const provider = closingProvider(bound);
+    if (provider === undefined) return undefined;
+    return closingJudgment({
+      provider,
+      subject: { kind: "bot", slug: bot.name, sigil: bot.sigil },
+    });
+  };
+  const workspaceSkillEvidence = () =>
+    skillEvidenceOf(
+      composition.skills,
+      skillTelemetryFile(workspaceIdentity(cwd, workspaceSlug), options.userRoot ?? homedir()),
+    );
   return {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
@@ -226,15 +301,41 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
-    closers: [() => sweepOnClose(memory()), ...(mcp === undefined ? [] : [() => mcp.stop()])],
+    spillFile: (sessionId, spillId) => stores.get(sessionId)?.spills().path(spillId),
+    shellEscape: (guard) =>
+      guardedShellEscape({
+        tools: () => coreTools(composition.scope),
+        guard,
+        ...(presets?.resolver !== undefined && { permissions: presets.resolver }),
+      }),
+    closers: [
+      async () => sweepOnClose(memory(), await workspaceSkillEvidence()),
+      async () => {
+        await botLayers.sweep(botJudgment);
+      },
+      ...(mcp === undefined ? [] : [() => mcp.stop()]),
+      ...(port === undefined ? [] : [() => port.dispose()]),
+    ],
+    notices,
+    terminalPane: { trusted: projectTrusted },
     extensions: extensionsView(extensions, cwd),
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
+    ...(config.flavor !== undefined && { flavor: config.flavor }),
+    keybindings: fileKeybindings({
+      userDir: userConfigDir(),
+      projectDir: join(cwd, ".keywork"),
+      projectTrusted,
+    }),
     ...(config.pointer !== undefined && { pointer: config.pointer }),
     ...(config.masthead !== undefined && { masthead: config.masthead }),
     ...(config.motion !== undefined && { motion: config.motion }),
     ...(config.tips !== undefined && { tips: config.tips }),
     ...(config.scrim !== undefined && { scrim: config.scrim }),
     ...(config.dim !== undefined && { dim: config.dim }),
+    ...(config.notifications !== undefined && { notifications: config.notifications }),
+    ...(projectTrusted && {
+      inbox: reviewInboxFeed(changes, () => stagedCount(memory, botLayers)),
+    }),
     doctorReport: async () => {
       const { doctorReport, renderDoctorReport, workspaceDoctorFacts } = await import(
         "./doctor.ts"
@@ -244,13 +345,17 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
         doctorReport(detectCapabilities(), options.inference?.current().runtime.registry, {
           ...facts,
           crashLog: crashLogFacts(crashLogFile),
+          ...(composition.languagePort !== undefined && {
+            languageServers: composition.languagePort.facts(),
+          }),
         }),
       );
     },
     ...(config.page !== undefined && { page: config.page }),
     ...(checkpoints !== undefined && { checkpoints }),
+    diff: diffPort(cwd, projectTrusted, checkpoints),
     ...(projectTrusted && {
-      memory: memoryPanePort(memory, arcs.registry, arcs.port.airlock),
+      memory: memoryPanePort(memory, arcs.registry, arcs.port.airlock, botLayers),
     }),
     ...(mcp !== undefined && { mcp: mcpPanePort(mcp) }),
     ...(options.workspaces !== undefined && { workspaces: options.workspaces }),
@@ -314,6 +419,10 @@ function inferenceSeams(
       sessionId: () => seams?.sessionId(),
       onRetrieval: (disclosure) => seams?.discloseRetrieval(disclosure),
       bot: composition.extensions.bots.find((candidate) => candidate.name === botName),
+      spills: () => {
+        const sessionId = seams?.sessionId();
+        return sessionId === undefined ? undefined : stores.get(sessionId)?.spills();
+      },
     });
     tapJournal(agent.bus, () => {
       const sessionId = seams?.sessionId();
@@ -350,6 +459,33 @@ function settleAfterTurn(
     if (settlement.history !== undefined) changed(sessionId);
     return settlement;
   };
+}
+
+function reviewInboxFeed(
+  changes: SessionChangeFeed,
+  count: () => Promise<number>,
+): NonNullable<AppOptions["inbox"]> {
+  return {
+    subscribe: (listener) => {
+      let reported: number | undefined;
+      const refresh = (): void => {
+        void count().then((waiting) => {
+          if (waiting === reported) return;
+          reported = waiting;
+          listener(waiting);
+        });
+      };
+      const stop = changes.subscribe(refresh);
+      refresh();
+      return stop;
+    },
+  };
+}
+
+async function stagedCount(memory: MemoryAccess, bots: BotMemory): Promise<number> {
+  const workspace = memory();
+  const staged = workspace === undefined ? 0 : (await workspace.store.listStaged()).length;
+  return staged + (await bots.staged()).length;
 }
 
 function compactOnRequest(
@@ -401,5 +537,54 @@ function extensionsView(extensions: WorkspaceExtensions, cwd: string): Extension
         ),
     })),
     failures: extensions.failures.map((failure) => `${failure.file}: ${failure.reason}`),
+  };
+}
+
+function processTerminalColors(): Promise<TerminalColors | undefined> {
+  return detectTerminalColors({
+    env: process.env,
+    tty: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    transport: stdioColorTransport(process.stdin, process.stdout),
+  });
+}
+
+function diffPort(cwd: string, trusted: boolean, checkpoints: Checkpoints | undefined): DiffPort {
+  const readFile = workingFileReader(cwd);
+  if (!trusted) return { unavailable: untrustedNotice, readFile };
+  if (checkpoints !== undefined) return { baseline: checkpointBaseline(checkpoints), readFile };
+  if (!existsSync(join(cwd, ".git"))) return { unavailable: noBaselineNotice, readFile };
+  return { baseline: gitHeadBaseline(gitRunnerIn(cwd), readFile), readFile };
+}
+
+function gitRunnerIn(cwd: string): GitRunner {
+  return (args) =>
+    new Promise((resolvePromise, rejectPromise) => {
+      const child = spawn("git", args, { cwd, windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", rejectPromise);
+      child.on("close", (code) => {
+        if (code === 0) resolvePromise(stdout);
+        else rejectPromise(new Error(`git ${args[0]} failed: ${stderr.trim() || `exit ${code}`}`));
+      });
+    });
+}
+
+function noticeFeed(): NoticeSource & { post: (text: string) => void } {
+  const posts = new Set<(text: string) => void>();
+  return {
+    post: (text) => {
+      for (const post of posts) post(text);
+    },
+    subscribe: (post) => {
+      posts.add(post);
+      return () => posts.delete(post);
+    },
   };
 }

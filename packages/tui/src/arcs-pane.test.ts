@@ -240,7 +240,7 @@ describe("ArcsPane two levels", () => {
     const { pane } = paneOver(world, { drilled: { kind: "arc", slug: "dock-v2" } });
     await pane.settled();
     expect(pane.model.level()).toBe("sessions");
-    expect(pane.model.sessions.rows().map((row) => row.id)).toEqual(["s1", "s2"]);
+    expect(pane.model.sessions.sessionRows().map((row) => row.id)).toEqual(["s1", "s2"]);
   });
 });
 

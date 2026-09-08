@@ -1,8 +1,17 @@
-import type { Agent, ToolCallPart } from "@keywork/engine";
+import {
+  type Agent,
+  type BusEvent,
+  coalesceDeltas,
+  type EngineEvents,
+  frameTick,
+  type SpillReference,
+  type TickScheduler,
+  type ToolCallPart,
+} from "@keywork/engine";
 import type { MarkdownSpan } from "./markdown.ts";
 import { TailFollow } from "./tail-follow.ts";
 
-export type TranscriptEntry = UserEntry | AssistantEntry | ToolEntry | NoticeEntry;
+export type TranscriptEntry = UserEntry | AssistantEntry | ThinkingEntry | ToolEntry | NoticeEntry;
 
 export interface UserEntry {
   kind: "user";
@@ -13,6 +22,12 @@ export interface UserEntry {
 export interface AssistantEntry {
   kind: "assistant";
   text: string;
+}
+
+export interface ThinkingEntry {
+  kind: "thinking";
+  text: string;
+  folded: boolean;
 }
 
 export interface ToolEntry {
@@ -27,11 +42,14 @@ export interface NoticeEntry {
   text: string;
 }
 
+export type ToolProvenance = "agent" | "user";
+
 export interface ToolRun {
   name: string;
   subject: string;
   args: string;
   replay: boolean;
+  provenance?: ToolProvenance;
   startedAtMs: number;
   folded: boolean;
   live?: string | undefined;
@@ -40,6 +58,7 @@ export interface ToolRun {
   durationMs?: number;
   outputChars?: number;
   detail?: string[];
+  spill?: SpillReference;
 }
 
 export type TranscriptBus = Agent["bus"];
@@ -55,29 +74,21 @@ export class TranscriptFeed {
   constructor(
     private readonly notify: () => void,
     private readonly now: () => number = Date.now,
+    private readonly tick: TickScheduler = frameTick,
   ) {}
 
   follow(bus: TranscriptBus): () => void {
-    const stops = [
-      bus.on("turn.started", ({ userText, replay, entryId }) =>
-        this.startTurn(userText, replay === true, entryId),
-      ),
-      bus.on("turn.delta", ({ delta }) => {
-        if (delta.type === "text") this.streamText(delta.text);
-      }),
-      bus.on("tool.started", ({ call, replay }) => this.startTool(call, replay === true)),
-      bus.on("tool.output", ({ chunk, callId }) => this.tailTool(chunk, callId)),
-      bus.on("tool.finished", ({ callId, output, isError }) =>
-        this.settleTool(callId, output, isError),
-      ),
-      bus.on("turn.completed", () => this.endTurn()),
-      bus.on("turn.interrupted", () => {
-        this.endTurn();
-        this.post("info", "· interrupted");
-      }),
-    ];
+    const coalescer = coalesceDeltas((event) => this.absorb(event), this.tick);
+    const relay = <K extends FollowedEvent>(type: K) =>
+      bus.on(type, (payload: EngineEvents[K]) => {
+        const event = { type, payload } as BusEvent;
+        if (this.countsAsActivity(event)) this.activity += 1;
+        coalescer.push(event);
+      });
+    const stops = followedEvents.map(relay);
     return () => {
       for (const stop of stops) stop();
+      coalescer.flush();
     };
   }
 
@@ -89,6 +100,15 @@ export class TranscriptFeed {
     return this.turnStartedAtMs === undefined
       ? undefined
       : Math.max(0, this.now() - this.turnStartedAtMs);
+  }
+
+  beginUserTool(call: ToolCallPart): void {
+    this.activity += 1;
+    this.startTool(call, false, "user");
+  }
+
+  finishUserTool(callId: string, output: string, isError: boolean): void {
+    this.settleTool({ callId, output, isError });
   }
 
   post(kind: NoticeEntry["kind"], text: string): void {
@@ -111,6 +131,11 @@ export class TranscriptFeed {
   }
 
   toggleFold(entry: TranscriptEntry): boolean {
+    if (entry.kind === "thinking") {
+      entry.folded = !entry.folded;
+      this.notify();
+      return true;
+    }
     if (entry.kind !== "tool" || entry.run?.detail === undefined) return false;
     entry.run.folded = !entry.run.folded;
     this.notify();
@@ -124,13 +149,62 @@ export class TranscriptFeed {
   }
 
   disclosableIndices(): number[] {
-    return this.entries.flatMap((entry, index) =>
-      entry.kind === "tool" && entry.run?.detail !== undefined ? [index] : [],
-    );
+    return this.entries.flatMap((entry, index) => (disclosable(entry) ? [index] : []));
   }
 
   promptIndices(): number[] {
     return this.entries.flatMap((entry, index) => (entry.kind === "user" ? [index] : []));
+  }
+
+  private countsAsActivity(event: BusEvent): boolean {
+    switch (event.type) {
+      case "turn.delta":
+        return (
+          event.payload.delta.type === "text" || event.payload.delta.type === "visible-thinking"
+        );
+      case "tool.started":
+        return true;
+      case "tool.output":
+        return this.liveRun(event.payload.callId) !== undefined;
+      default:
+        return false;
+    }
+  }
+
+  private absorb(event: BusEvent): void {
+    switch (event.type) {
+      case "turn.started": {
+        const { userText, replay, entryId } = event.payload;
+        this.startTurn(userText, replay === true, entryId);
+        break;
+      }
+      case "turn.delta":
+        this.streamDelta(event.payload.delta);
+        break;
+      case "tool.started":
+        this.startTool(event.payload.call, event.payload.replay === true);
+        break;
+      case "tool.output":
+        this.tailTool(event.payload.chunk, event.payload.callId);
+        break;
+      case "tool.finished":
+        this.settleTool(event.payload);
+        break;
+      case "turn.completed":
+        this.endTurn();
+        break;
+      case "turn.interrupted":
+        this.endTurn();
+        this.post("info", "· interrupted");
+        break;
+      default:
+        break;
+    }
+  }
+
+  private streamDelta(delta: EngineEvents["turn.delta"]["delta"]): void {
+    if (delta.type === "text") this.streamText(delta.text);
+    if (delta.type === "visible-thinking") this.streamThinking(delta.text);
   }
 
   private startTurn(text: string, replay: boolean, entryId: string | undefined): void {
@@ -149,7 +223,6 @@ export class TranscriptFeed {
   }
 
   private streamText(text: string): void {
-    this.activity += 1;
     const last = this.entries.at(-1);
     if (last?.kind === "assistant") {
       last.text += text;
@@ -162,36 +235,47 @@ export class TranscriptFeed {
     this.notify();
   }
 
-  private startTool(call: ToolCallPart, replay: boolean): void {
+  private streamThinking(text: string): void {
+    const last = this.entries.at(-1);
+    if (last?.kind === "thinking") last.text += text;
+    else this.entries.push({ kind: "thinking", text, folded: true });
+    this.notify();
+  }
+
+  private startTool(call: ToolCallPart, replay: boolean, provenance?: ToolProvenance): void {
     this.endStream();
     const run: ToolRun = {
       name: call.name,
       subject: toolSubject(call.arguments),
       args: compactJson(call.arguments),
       replay,
+      ...(provenance !== undefined && { provenance }),
       startedAtMs: this.now(),
       folded: true,
     };
     const entry: ToolEntry = { kind: "tool", text: toolRowText(run), failed: false, run };
     this.running.set(call.callId, { entry, run, tail: new TailFollow() });
     this.entries.push(entry);
-    this.activity += 1;
     this.notify();
   }
 
-  private tailTool(chunk: string, callId: string | undefined): void {
+  private liveRun(callId: string | undefined): RunningTool | undefined {
     const running =
       (callId === undefined ? undefined : this.running.get(callId)) ??
       [...this.running.values()].at(-1);
-    if (running === undefined || running.run.replay) return;
+    return running === undefined || running.run.replay ? undefined : running;
+  }
+
+  private tailTool(chunk: string, callId: string | undefined): void {
+    const running = this.liveRun(callId);
+    if (running === undefined) return;
     running.tail.push(chunk);
     running.run.live = running.tail.rows(liveLineLimit).at(-1);
     running.entry.text = toolRowText(running.run);
-    this.activity += 1;
     this.notify();
   }
 
-  private settleTool(callId: string, output: string, isError: boolean): void {
+  private settleTool({ callId, output, isError, spill }: EngineEvents["tool.finished"]): void {
     const running = this.running.get(callId);
     if (running === undefined) return;
     this.running.delete(callId);
@@ -199,9 +283,10 @@ export class TranscriptFeed {
     run.durationMs = Math.max(0, this.now() - run.startedAtMs);
     run.outcome = isError ? "failed" : "done";
     if (isError) run.reason = firstLine(output);
-    run.outputChars = output.length;
+    run.outputChars = spill?.bytes ?? output.length;
     run.detail = detailLines(output);
     run.live = undefined;
+    if (spill !== undefined) run.spill = spill;
     entry.failed = isError;
     entry.text = toolRowText(run);
     this.notify();
@@ -216,7 +301,7 @@ export function toolRowSpans(run: ToolRun): MarkdownSpan[] {
       { text: ` · ${run.live ?? "running"}`, tone: "meta" },
     ];
   }
-  const meta = [durationText(run), sizeText(run)]
+  const meta = [durationText(run), sizeText(run), elisionText(run)]
     .filter((part) => part !== undefined)
     .map((part) => ` · ${part}`)
     .join("");
@@ -231,6 +316,10 @@ export function toolRowSpans(run: ToolRun): MarkdownSpan[] {
   return spans;
 }
 
+export function thinkingRowSpans(entry: ThinkingEntry): MarkdownSpan[] {
+  return [{ text: `thinking · ${wordCount(entry.text)}`, tone: "meta" }];
+}
+
 export function compactJson(value: unknown): string {
   const text = JSON.stringify(value) ?? "";
   return text.length > 60 ? `${text.slice(0, 60)}…` : text;
@@ -242,9 +331,31 @@ interface RunningTool {
   tail: TailFollow;
 }
 
+const followedEvents = [
+  "turn.started",
+  "turn.delta",
+  "tool.started",
+  "tool.output",
+  "tool.finished",
+  "turn.completed",
+  "turn.interrupted",
+] as const;
+
+type FollowedEvent = (typeof followedEvents)[number];
+
 const streamSettleSteps = 4;
 const liveLineLimit = 120;
 const detailLineLimit = 12;
+
+function disclosable(entry: TranscriptEntry): boolean {
+  if (entry.kind === "thinking") return true;
+  return entry.kind === "tool" && entry.run?.detail !== undefined;
+}
+
+function wordCount(text: string): string {
+  const words = text.split(/\s+/).filter((word) => word !== "").length;
+  return words === 1 ? "1 word" : `${words} words`;
+}
 
 function toolRowText(run: ToolRun): string {
   return toolRowSpans(run)
@@ -274,7 +385,13 @@ function durationText(run: ToolRun): string | undefined {
 
 function sizeText(run: ToolRun): string | undefined {
   if (run.outputChars === undefined || run.outputChars < 1000) return undefined;
-  return `${(run.outputChars / 1000).toFixed(1)}k`;
+  if (run.outputChars < 1_000_000) return `${(run.outputChars / 1000).toFixed(1)}k`;
+  return `${(run.outputChars / 1_000_000).toFixed(1)}M`;
+}
+
+function elisionText(run: ToolRun): string | undefined {
+  const spill = run.spill;
+  return spill === undefined ? undefined : `elided ${spill.elidedFrom}..${spill.elidedTo}`;
 }
 
 function detailLines(output: string): string[] {

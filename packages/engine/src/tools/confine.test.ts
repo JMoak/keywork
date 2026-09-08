@@ -176,12 +176,12 @@ describe("file tools over a widened scope", () => {
   it("reports saved files to the tap", async () => {
     const saved: string[] = [];
     const scope = toolScope(root, [linked]);
-    await writeTool(scope, (path) => saved.push(path)).execute({
+    await writeTool(scope, async (path) => void saved.push(path)).execute({
       path: "a.txt",
       content: "one",
     });
     await writeFile(join(linked, "b.txt"), "two");
-    await editTool(scope, (path) => saved.push(path)).execute({
+    await editTool(scope, async (path) => void saved.push(path)).execute({
       path: join(linked, "b.txt"),
       oldText: "two",
       newText: "three",

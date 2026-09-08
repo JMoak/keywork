@@ -1,0 +1,32 @@
+╭──────────────────────────────────────╭───────────────────────────────────────────────────────────────────────────────╮
+│ session tree · 1 session             │ session-1                                                                     │
+│ ▓ set total to BROKEN in cache.ts ·  │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │                                                                               │
+│                                      │ █ set total to BROKEN in cache.ts                                             │
+│                                      │ ▓ Renaming the constant's initializer to BROKEN.                              │
+│                                      │ ░ edit cache.ts · ~·· · done                                                  │
+│                                      │ ▓ The server flagged BROKEN; I will put a real value back.                    │
+│                                      │ █ now fix it                                                                  │
+│                                      │ ▓ Restoring a real value.                                                     │
+│                                      │ ░ edit cache.ts · ~·· · done                                                  │
+│                                      │   ─────────────────────────────────────────────────────────────────────────── │
+│                                      │   {"path":"cache.ts","oldText":"BROKEN","newText":"2"}                        │
+│                                      │   Replaced 1 occurrence in cache.ts                                           │
+│                                      │ ▓ Clean now, no diagnostics on cache.ts.                                      │
+│                                      │ disclose · tab toggles · shift+tab older · esc done                           │
+│                                      │ › ▌                                                                           │
+╰──────────────────────────────────────╰───────────────────────────────────────────────────────────────────────────────╯
+ keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · / commands                                                        tab 

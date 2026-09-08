@@ -22,6 +22,8 @@ export interface AppProbeOptions
       | "createMemoryPane"
       | "createMcpPane"
       | "createWorkspacesPane"
+      | "createDiffPane"
+      | "createTerminalPane"
       | "isDirectory"
       | "undo"
       | "presets"

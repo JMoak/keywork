@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { textMessage } from "../messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "../mock-provider.ts";
 import { defineTool } from "../tools/define.ts";
 import { replaySession } from "./replay.ts";
+import { defaultToolOutputBudget } from "./spill.ts";
 import { SessionStore } from "./store.ts";
 
 type RecordedEvent = { type: string; payload: Record<string, unknown> };
@@ -103,6 +104,66 @@ describe("replaySession", () => {
     replaySession(store, bus);
 
     expect(comparable(replayEvents)).toEqual(comparable(liveEvents));
+  });
+
+  it("replays a spilled tool result identically whether or not the spill file survives", async () => {
+    const firehose = defineTool({
+      name: "firehose",
+      description: "emits several megabytes",
+      schema: z.object({}),
+      run: async () => "0123456789\n".repeat(300_000),
+    });
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "c1", name: "firehose", arguments: {} }),
+      textTurn("read it"),
+    ]);
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+    const agent = new Agent({ provider, tools: [firehose], spills: store.spills() });
+    const liveEvents = record(agent.bus);
+    await agent.send("go");
+    for (const message of agent.history()) await store.append(message);
+
+    const recorded = await readFile(file, "utf8");
+    const finished = liveEvents.find((event) => event.type === "tool.finished");
+    const stored = (await SessionStore.open(file)).messages()[2]?.parts[0];
+    expect(stored?.type === "tool-result" && Buffer.byteLength(stored.output)).toBeLessThanOrEqual(
+      defaultToolOutputBudget,
+    );
+    expect(recorded).toContain(`"spill":${JSON.stringify(finished?.payload.spill)}`);
+
+    const spillPresent = new EventBus<EngineEvents>();
+    const withSpill = record(spillPresent);
+    replaySession(await SessionStore.open(file), spillPresent);
+    await store.spills().remove();
+    const spillGone = new EventBus<EngineEvents>();
+    const withoutSpill = record(spillGone);
+    replaySession(await SessionStore.open(file), spillGone);
+
+    expect(comparable(withoutSpill)).toEqual(comparable(withSpill));
+    expect(comparable(withSpill)).toEqual(comparable(liveEvents));
+    expect(await readFile(file, "utf8")).toBe(recorded);
+  });
+
+  it("replays visible thinking ahead of the answer it preceded", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    await store.append(textMessage("user", "why"));
+    await store.append({
+      role: "assistant",
+      parts: [
+        { type: "visible-thinking", text: "Weighing it." },
+        { type: "text", text: "Because." },
+      ],
+    });
+
+    const bus = new EventBus<EngineEvents>();
+    const events = record(bus);
+    replaySession(store, bus);
+
+    expect(events.filter((event) => event.type === "turn.delta").map((e) => e.payload)).toEqual([
+      { delta: { type: "visible-thinking", text: "Weighing it." }, replay: true },
+      { delta: { type: "text", text: "Because." }, replay: true },
+    ]);
   });
 
   it("replays the compacted context, not the summarized history", async () => {

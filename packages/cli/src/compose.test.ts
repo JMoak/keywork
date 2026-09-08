@@ -64,7 +64,14 @@ describe("composeWorkspace", () => {
     expect(composition.cwd).toBe(cwd);
     expect(composition.memory()).toBeUndefined();
     expect(composition.mcp).toBeUndefined();
-    expect(composition.extensions).toEqual({ commands: [], bots: [], skills: [], failures: [] });
+    expect(composition.extensions.commands).toEqual([]);
+    expect(composition.extensions.bots).toEqual([]);
+    expect(composition.extensions.failures).toEqual([]);
+    expect(composition.extensions.skills.map((skill) => [skill.name, skill.source])).toEqual([
+      ["lint", "bundled"],
+      ["test", "bundled"],
+      ["typecheck", "bundled"],
+    ]);
     expect(composition.systemPromptFor(undefined).length).toBeGreaterThan(0);
   });
 
@@ -159,6 +166,34 @@ describe("composeAgents", () => {
       await shell.close();
     }
     expect(outputs[0]?.trim().endsWith("nested")).toBe(true);
+  });
+
+  it("streams bash output to the bus as tool.output in order, leaving the final result whole", async () => {
+    const composition = await composedIn(await tempDir());
+    const chunks: { chunk: string; callId?: string | undefined }[] = [];
+    const finished: string[] = [];
+    const agent = composeAgents(composition, { permissions: () => "allow" }).build({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "c1",
+          name: "bash",
+          arguments: { command: "echo one; sleep 0.3; echo two; sleep 0.3; echo three" },
+        }),
+        textTurn("done"),
+      ]),
+      guard: {},
+    });
+    agent.bus.on("tool.output", (event) => chunks.push(event));
+    agent.bus.on("tool.finished", ({ output }) => finished.push(output));
+
+    await agent.send("count");
+
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+    expect(chunks.every((event) => event.callId === "c1")).toBe(true);
+    const streamed = chunks.map((event) => event.chunk).join("");
+    expect(streamed.replace(/\r/g, "")).toBe("one\ntwo\nthree\n");
+    expect(finished[0]?.replace(/\r/g, "")).toBe("one\ntwo\nthree");
   });
 
   it("gives default agents the composed system prompt for their model and bots their own", async () => {
@@ -455,12 +490,94 @@ describe("repo map composition", () => {
     const composition = await composedIn(cwd, { projectTrusted: true });
     expect(composition.systemPromptFor(undefined)).not.toContain("second.ts");
     await writeFile(join(cwd, "second.ts"), "export const second = 2;", "utf8");
-    composition.onFileSaved?.(join(cwd, "second.ts"));
+    await composition.afterSave?.(join(cwd, "second.ts"));
     const deadline = Date.now() + 5_000;
     while (!composition.systemPromptFor(undefined).includes("second.ts")) {
       if (Date.now() > deadline) throw new Error("map never refreshed");
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     expect(composition.systemPromptFor(undefined)).toContain("second.ts: second");
+  });
+});
+
+describe("language servers in the composition", () => {
+  it("opens no port unless the workspace is trusted and lsp is on", async () => {
+    const cwd = await declaredWorkspace();
+    expect((await composedIn(cwd, { projectTrusted: true })).languagePort).toBeUndefined();
+    expect(
+      (await composedIn(cwd, { projectTrusted: true, lsp: "off" })).languagePort,
+    ).toBeUndefined();
+    expect(
+      (await composedIn(cwd, { projectTrusted: false, lsp: "auto" })).languagePort,
+    ).toBeUndefined();
+    const on = await composedIn(cwd, { projectTrusted: true, lsp: "auto" });
+    expect(on.languagePort?.facts().servers.map((server) => server.language)).toEqual([
+      "typescript",
+      "python",
+      "go",
+      "rust",
+    ]);
+    await on.languagePort?.dispose();
+  });
+
+  it("lets a user table extend the built-ins per language", async () => {
+    const cwd = await declaredWorkspace();
+    const composition = await composedIn(cwd, {
+      projectTrusted: true,
+      lsp: { zig: { command: ["zls"], extensions: [".zig"] } },
+    });
+    const zig = composition.languagePort
+      ?.facts()
+      .servers.find((server) => server.language === "zig");
+    expect(zig).toEqual({ language: "zig", command: "zls", state: "idle" });
+    expect(composition.languagePort?.languageOf("main.ts")).toBe("typescript");
+    await composition.languagePort?.dispose();
+  });
+
+  it("notices a missing server once per language and keeps the edit result plain", async () => {
+    const cwd = await declaredWorkspace();
+    const notices: string[] = [];
+    const composition = await composedIn(cwd, {
+      projectTrusted: true,
+      repoMap: "off",
+      lsp: {
+        typescript: { command: ["keywork-absent-language-server"], extensions: [".ts", ".tsx"] },
+      },
+      notice: (text) => notices.push(text),
+    });
+    await writeFile(join(cwd, "a.ts"), "BROKEN");
+    expect(await composition.afterSave?.(join(cwd, "a.ts"))).toBeUndefined();
+    expect(await composition.afterSave?.(join(cwd, "a.ts"))).toBeUndefined();
+    expect(notices).toEqual([
+      "no typescript language server on PATH · diagnostics off for .ts .tsx",
+    ]);
+    await composition.languagePort?.dispose();
+  });
+
+  it("logs a throwing save observer instead of failing the save", async () => {
+    const cwd = await declaredWorkspace();
+    const logged: unknown[] = [];
+    const composition = await composedIn(cwd, {
+      projectTrusted: true,
+      repoMap: "off",
+      onFileSaved: () => {
+        throw new Error("materialize melted");
+      },
+      diagnosticsLog: () => ({
+        log: (level, event, payload) => logged.push({ level, event, payload }),
+      }),
+    });
+    await writeFile(join(cwd, "a.ts"), "fine");
+    expect(await composition.afterSave?.(join(cwd, "a.ts"))).toBeUndefined();
+    expect(logged).toEqual([
+      {
+        level: "error",
+        event: "afterSave.failed",
+        payload: {
+          path: join(cwd, "a.ts"),
+          error: expect.objectContaining({ message: "materialize melted" }),
+        },
+      },
+    ]);
   });
 });

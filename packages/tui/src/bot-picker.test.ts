@@ -68,6 +68,12 @@ describe("bot rows", () => {
     expect(describeBotRow({ kind: "bot", bot: scout, current: true })).toBe(
       "S scout · reads before writing · 2 sessions · current",
     );
+    expect(
+      describeBotRow({ kind: "bot", bot: { ...scout, costNanos: 3_000_000 }, current: true }),
+    ).toBe("S scout · reads before writing · 2 sessions · $0.003 · current");
+    expect(
+      describeBotRow({ kind: "bot", bot: { ...scout, costNanos: 3_000_000 }, current: true }),
+    ).toBe("S scout · reads before writing · 2 sessions · $0.003 · current");
     expect(describeBotRow({ kind: "bot", bot: reviewer, current: false })).toBe(
       "⚖ reviewer · global · no sessions",
     );

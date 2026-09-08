@@ -6,6 +6,7 @@ export const auditFile = "curation.md";
 export const stagingDir = ".staging";
 export const dailyDir = "daily";
 export const arcsDir = "arcs";
+export const botsDir = "bots";
 
 export class PathOutsideVaultError extends Error {
   constructor(readonly path: string) {
@@ -104,9 +105,7 @@ export class VaultFiles {
   }
 
   private isStructuralDir(name: string, rel: string): boolean {
-    return (
-      hiddenDirs.has(name) || rel === dailyDir || rel === arcsDir || this.reserved.has(`${rel}/`)
-    );
+    return hiddenDirs.has(name) || layerDirs.has(rel) || this.reserved.has(`${rel}/`);
   }
 
   private isStructuralFile(rel: string): boolean {
@@ -160,3 +159,4 @@ export function isVaultRelativePath(path: string): boolean {
 }
 
 const hiddenDirs = new Set([stagingDir, ".obsidian"]);
+const layerDirs = new Set([dailyDir, arcsDir, botsDir]);

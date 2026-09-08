@@ -320,6 +320,26 @@ describe("chat return delta", () => {
     expect(io.out).toContain("since you were here: 1 new in the workspace: [[Fresh Rule]]");
   });
 
+  it("tells a bot-bound session what its bot learned, under the bot's sigil", async () => {
+    const { options, cwd } = await world();
+    const vault = await trustedVault(cwd);
+    await seedHelperBot(cwd);
+    await chat(
+      options(new MockProvider([textTurn("first")]), { projectTrusted: true }),
+      scriptedIo({ lines: ["/bot helper", "one"] }),
+    );
+    const layer = join(vault, "bots", "helper");
+    await mkdir(layer, { recursive: true });
+    await writeFile(
+      join(layer, "Terse Reviews.md"),
+      "---\ncreated: 2099-01-01T00:00:00.000Z\nprovenance: agent\n---\nshort\n",
+    );
+
+    const io = scriptedIo({ lines: [] });
+    await chat(options(new MockProvider([]), { projectTrusted: true, resume: true }), io);
+    expect(io.out).toContain("since you were here: 1 learned by H helper: [[Terse Reviews]]");
+  });
+
   it("says nothing on resume when nothing changed, and nothing on a fresh session", async () => {
     const { options, cwd } = await world();
     await trustedVault(cwd);
@@ -521,5 +541,25 @@ describe("chat turn queue", () => {
 
     expect(io.out).toContain("usage: /steer <prompt>");
     expect(io.out).toContain("usage: /queue <prompt>");
+  });
+});
+
+describe("visible thinking in the REPL", () => {
+  const dim = (text: string) =>
+    `${String.fromCharCode(27)}[2m${text}${String.fromCharCode(27)}[22m`;
+
+  it("prints thinking dimmed ahead of the answer and asks for it only when the config says on", async () => {
+    const { options } = await world();
+    const provider = recordingProvider([
+      [{ type: "visible-thinking", text: "hmm" }, ...textTurn("answer")],
+    ]);
+    const io = scriptedIo({ lines: ["think"] });
+    await chat(options(provider, { thinking: "on" }), io);
+    expect(provider.requests[0]?.thinking).toBe(true);
+    expect(io.streamed.join("")).toBe(`${dim("hmm")}\nanswer`);
+
+    const quiet = recordingProvider([textTurn("answer")]);
+    await chat(options(quiet), scriptedIo({ lines: ["think"] }));
+    expect(quiet.requests[0]).not.toHaveProperty("thinking");
   });
 });

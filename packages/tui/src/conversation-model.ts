@@ -2,16 +2,21 @@ import {
   type Agent,
   type ContextReading,
   type Message,
+  type QueuedPrompt,
   QueuedPromptCancelledError,
   type SendBehavior,
+  type SpillReference,
+  type TickScheduler,
   type ToolCallPart,
 } from "@keywork/engine";
 import { toError } from "@keywork/shared";
+import { type BotEntry, type BotSummary, describeBotSpend, learningPolicyReadout } from "./bots.ts";
 import type { FileReader } from "./diff-render.ts";
 import type { Chord } from "./keys.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
 import { type AskDiffWindow, MutationAsk, type PendingAsk } from "./mutation-ask.ts";
 import { columnPage, type PageGrammar } from "./page.ts";
+import type { FileOpenOptions } from "./pane.ts";
 import {
   type CommandSuggestion,
   type CommandsPort,
@@ -19,6 +24,12 @@ import {
   PromptEditor,
 } from "./prompt-editor.ts";
 import { SessionLedger } from "./session-ledger.ts";
+import {
+  type ShellEscapePort,
+  shellEscapeCall,
+  shellEscapeCommand,
+  shellEscapeTranscript,
+} from "./shell-escape.ts";
 import { type ToolRun, type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
 import { TranscriptNavigation } from "./transcript-navigation.ts";
 import { type TranscriptLine, TranscriptView } from "./transcript-view.ts";
@@ -37,9 +48,20 @@ export interface ConversationPorts {
   forkAtPrompt?: (promptId: string, draft: string) => Promise<ForkOutcome>;
   idleNotice?: string;
   now?: () => number;
+  botSpend?: (bot: string) => Promise<BotSummary | undefined>;
+  botOf?: (bot: string) => BotEntry | undefined;
+  shellEscape?: ShellEscapePort;
+  recordShellEscape?: (transcript: string) => Promise<void>;
+  frameTick?: TickScheduler;
+  spillFile?: (spillId: string) => string | undefined;
+  openFile?: (path: string, options: FileOpenOptions) => void;
 }
 
+export type QueueMove = -1 | 1;
+
 export type CompactionHook = (instructions: string) => Promise<void>;
+
+export type ThinkingChangeHook = (level: "on" | "off") => Promise<void>;
 
 export type SettledOutcome = "finished" | "failed";
 
@@ -67,10 +89,14 @@ export class ConversationModel {
   private unfollow: () => void = () => {};
   private afterTurn: (() => Promise<void>) | undefined;
   private compaction: CompactionHook | undefined;
+  private thinkingChange: ThinkingChangeHook | undefined;
   private settledListener: ((outcome: SettledOutcome) => void) | undefined;
   private titleRequested = false;
   private retrievalDisclosed = false;
   private disposed = false;
+  private shellSequence = 0;
+  private shellAbort: AbortController | undefined;
+  private queueCursor: number | undefined;
 
   constructor(
     agent: Agent | undefined,
@@ -80,7 +106,7 @@ export class ConversationModel {
     private readonly ports?: ConversationPorts,
   ) {
     const touch = () => this.touch();
-    this.feed = new TranscriptFeed(touch, ports?.now);
+    this.feed = new TranscriptFeed(touch, ports?.now, ports?.frameTick);
     this.editor = new PromptEditor(touch, conversationCommands, commands);
     this.ask = new MutationAsk(touch, ports?.readFile);
     this.navigation = new TranscriptNavigation(this.feed, touch);
@@ -100,7 +126,8 @@ export class ConversationModel {
   }
 
   get busy(): boolean {
-    return !this.disposed && (this.agent?.busy() ?? false);
+    if (this.disposed) return false;
+    return this.shellAbort !== undefined || (this.agent?.busy() ?? false);
   }
 
   get activity(): number {
@@ -124,7 +151,22 @@ export class ConversationModel {
   }
 
   queued(): readonly string[] {
-    return this.agent?.queued().map((prompt) => prompt.text) ?? [];
+    return this.queuedPrompts().map((prompt) => prompt.text);
+  }
+
+  queuedPrompts(): readonly QueuedPrompt[] {
+    return this.agent?.queued() ?? [];
+  }
+
+  queueSelection(): number | undefined {
+    const cursor = this.queueCursor;
+    const count = this.queuedPrompts().length;
+    if (cursor === undefined || count === 0) return undefined;
+    return Math.min(cursor, count - 1);
+  }
+
+  editingQueue(): boolean {
+    return this.queueSelection() !== undefined;
   }
 
   suggestions(): readonly CommandSuggestion[] {
@@ -165,6 +207,12 @@ export class ConversationModel {
     return this.navigation.disclosing();
   }
 
+  cursoredSpill(): SpillReference | undefined {
+    const at = this.navigation.viewport().foldCursor;
+    const entry = at === undefined ? undefined : this.entries[at];
+    return entry?.kind === "tool" ? entry.run?.spill : undefined;
+  }
+
   visibleTranscript(
     width: number,
     rows: number,
@@ -183,15 +231,21 @@ export class ConversationModel {
   handleKey(chord: Chord, sequence: string | undefined, viewport = defaultKeyViewport): boolean {
     if (this.ask.pending !== undefined) return this.ask.handleKey(chord, viewport.askRows);
     if (this.navigation.backtracking()) return this.handleBacktrackKey(chord, sequence, viewport);
+    if (this.editingQueue()) return this.handleQueueKey(chord, sequence, viewport);
+    if (isOpenSpillKey(chord) && this.cursoredSpill() !== undefined)
+      return this.openCursoredSpill();
     if (this.navigation.disclosing() && chord.name !== "tab") {
       this.navigation.exitDisclosure();
       if (chord.name === "escape") return true;
     }
     const primed = this.navigation.takeEscapePrime();
     if (chord.name === "tab" && this.editor.slashQuery() === undefined) {
-      if (!this.editor.isEmpty()) return false;
+      if (!this.editor.isEmpty()) return this.editor.expandPlaceholderAtCursor();
       return chord.shift ? this.navigation.stepFoldCursor() : this.navigation.toggleCursoredFold();
     }
+    const queueEntry = queueEntryDirection(chord);
+    if (queueEntry !== undefined && this.editor.isEmpty())
+      return this.enterQueueEditing(queueEntry);
     const edited = this.editor.handleKey(chord, sequence);
     if (edited !== "pass") return this.applyEdit(edited);
     switch (chord.name) {
@@ -217,7 +271,13 @@ export class ConversationModel {
 
   submitText(text: string, behavior: SendBehavior = "queue"): void {
     const trimmed = text.trim();
-    if (trimmed === "" || this.agent === undefined || this.disposed) return;
+    if (trimmed === "" || this.disposed) return;
+    const command = shellEscapeCommand(trimmed);
+    if (command !== undefined) {
+      this.submitShell(trimmed, command, behavior);
+      return;
+    }
+    if (this.agent === undefined) return;
     this.editor.remember(trimmed);
     this.navigation.snapToLive();
     this.send(trimmed, behavior);
@@ -257,6 +317,10 @@ export class ConversationModel {
     this.compaction = hook;
   }
 
+  bindThinkingChange(hook: ThinkingChangeHook): void {
+    this.thinkingChange = hook;
+  }
+
   onSettled(listener: (outcome: SettledOutcome) => void): void {
     this.settledListener = listener;
   }
@@ -265,6 +329,7 @@ export class ConversationModel {
     const previous = this.agent;
     if (previous === agent) return;
     if (previous !== undefined) this.ledger.retire(previous);
+    if (previous !== undefined) agent.setThinking(previous.thinking());
     this.ask.denyAll();
     this.follow(agent);
     if (previous !== undefined) agent.adoptQueue(previous);
@@ -282,6 +347,7 @@ export class ConversationModel {
 
   dispose(): void {
     this.disposed = true;
+    this.shellAbort?.abort();
     this.unfollow();
     this.ask.close();
     this.feed.endStream();
@@ -332,9 +398,74 @@ export class ConversationModel {
 
   private settleAfterTurn(): Promise<void> {
     this.touch();
-    return (this.afterTurn?.() ?? Promise.resolve()).catch((cause: unknown) => {
-      if (!this.disposed) this.feed.post("error", toError(cause).message);
+    return this.drainQueuedShellEscapes()
+      .then((transcripts) => this.settleThenRecord(transcripts))
+      .catch((cause: unknown) => {
+        if (!this.disposed) this.feed.post("error", toError(cause).message);
+      });
+  }
+
+  private async settleThenRecord(transcripts: readonly string[]): Promise<void> {
+    await this.afterTurn?.();
+    for (const transcript of transcripts) await this.ports?.recordShellEscape?.(transcript);
+  }
+
+  private async drainQueuedShellEscapes(): Promise<string[]> {
+    const transcripts: string[] = [];
+    for (;;) {
+      const agent = this.agent;
+      const next = agent?.queued()[0];
+      const command = next === undefined ? undefined : shellEscapeCommand(next.text);
+      if (agent === undefined || next === undefined || command === undefined) return transcripts;
+      agent.cancelQueued(next.id);
+      transcripts.push(await this.runShell(command));
+    }
+  }
+
+  private submitShell(text: string, command: string, behavior: SendBehavior): void {
+    if (this.ports?.shellEscape === undefined) {
+      this.feed.post("info", noShellNotice);
+      return;
+    }
+    this.editor.remember(text);
+    this.navigation.snapToLive();
+    const agent = this.agent;
+    if (agent?.busy() === true) {
+      this.send(text, behavior);
+      return;
+    }
+    this.lastSend = this.runShellNow(agent, command)
+      .then(
+        (transcript) => this.ports?.recordShellEscape?.(transcript),
+        (cause: unknown) => this.reportTurnFailure(cause),
+      )
+      .then(() => this.reportRest());
+    this.touch();
+  }
+
+  private async runShellNow(agent: Agent | undefined, command: string): Promise<string> {
+    if (agent === undefined) return this.runShell(command);
+    let transcript = "";
+    await agent.hold(async () => {
+      transcript = await this.runShell(command);
     });
+    return transcript;
+  }
+
+  private async runShell(command: string): Promise<string> {
+    const port = this.ports?.shellEscape;
+    this.shellSequence += 1;
+    const call = shellEscapeCall(command, this.shellSequence);
+    const controller = new AbortController();
+    this.shellAbort = controller;
+    this.feed.beginUserTool(call);
+    this.touch();
+    const result = await (
+      port?.run(call, controller.signal) ?? Promise.resolve(noShellResult)
+    ).catch((cause: unknown) => ({ output: toError(cause).message, isError: true }));
+    if (this.shellAbort === controller) this.shellAbort = undefined;
+    this.feed.finishUserTool(call.callId, result.output, result.isError);
+    return shellEscapeTranscript(command, result.output);
   }
 
   private reportRest(): void {
@@ -373,7 +504,7 @@ export class ConversationModel {
   private applyEdit(outcome: Exclude<EditorOutcome, "pass">): boolean {
     if (outcome === "handled") return true;
     if ("submit" in outcome) {
-      if (this.agent === undefined) return true;
+      if (this.agent === undefined && shellEscapeCommand(outcome.submit) === undefined) return true;
       this.editor.clear();
       this.submitText(outcome.submit, outcome.behavior);
       return true;
@@ -390,7 +521,7 @@ export class ConversationModel {
     const argument = rest.join(" ").trim();
     switch (verb.toLowerCase()) {
       case "cost":
-        this.feed.post("info", this.ledger.costReport(this.agent));
+        this.reportCost();
         return true;
       case "context":
         this.feed.post("info", this.ledger.contextReport(this.agent));
@@ -398,14 +529,71 @@ export class ConversationModel {
       case "compact":
         this.compactNow(argument);
         return true;
+      case "thinking":
+        this.toggleThinking(argument);
+        return true;
+      case "policy":
+        return this.reportBotPolicy() || (this.commands?.run(typed) ?? false);
       default:
         return this.commands?.run(typed) ?? false;
     }
   }
 
+  private reportBotPolicy(): boolean {
+    const bot = this.ledger.bot;
+    const entry = bot === undefined ? undefined : this.ports?.botOf?.(bot);
+    if (entry === undefined) return false;
+    this.feed.post("info", learningPolicyReadout(entry));
+    return true;
+  }
+
+  private toggleThinking(argument: string): void {
+    const agent = this.agent;
+    if (agent === undefined) {
+      this.feed.post("info", "no model bound · nothing to think with");
+      return;
+    }
+    const requested = thinkingSwitchFrom(argument) ?? (agent.thinking() ? "off" : "on");
+    agent.setThinking(requested === "on");
+    this.feed.post("info", thinkingNotices[requested]);
+    this.lastSend = (this.thinkingChange?.(requested) ?? Promise.resolve()).catch(
+      (cause: unknown) => {
+        if (!this.disposed) this.feed.post("error", toError(cause).message);
+      },
+    );
+  }
+
+  private reportCost(): void {
+    const report = this.ledger.costReport(this.agent);
+    const bot = this.ledger.bot;
+    const botSpend = this.ports?.botSpend;
+    if (bot === undefined || botSpend === undefined) {
+      this.feed.post("info", report);
+      return;
+    }
+    void botSpend(bot).then((summary) => {
+      this.feed.post(
+        "info",
+        summary === undefined ? report : `${report}\n${describeBotSpend(summary)}`,
+      );
+    });
+  }
+
+  private openCursoredSpill(): boolean {
+    const spill = this.cursoredSpill();
+    if (spill === undefined) return false;
+    const path = this.ports?.spillFile?.(spill.id);
+    const open = this.ports?.openFile;
+    if (path === undefined) this.feed.post("info", `spill ${spill.id} is not on disk any more`);
+    else if (open === undefined) this.feed.post("info", noFilePaneNotice);
+    else open(path, { byteRange: { from: spill.elidedFrom, to: spill.elidedTo } });
+    return true;
+  }
+
   private handleEscape(primed: boolean): boolean {
     if (this.navigation.scrollBack > 0) return this.navigation.snapToLive();
     if (this.busy) {
+      this.shellAbort?.abort();
       this.agent?.interrupt();
       return true;
     }
@@ -438,6 +626,94 @@ export class ConversationModel {
         this.navigation.exitBacktrack();
         return this.handleKey(chord, sequence, viewport);
     }
+  }
+
+  private enterQueueEditing(direction: QueueMove): boolean {
+    const count = this.queuedPrompts().length;
+    if (count === 0) return false;
+    this.queueCursor = direction === -1 ? count - 1 : 0;
+    this.touch();
+    return true;
+  }
+
+  private exitQueueEditing(): void {
+    this.queueCursor = undefined;
+    this.touch();
+  }
+
+  private handleQueueKey(
+    chord: Chord,
+    sequence: string | undefined,
+    viewport: KeyViewport,
+  ): boolean {
+    switch (chord.name) {
+      case "escape":
+        this.exitQueueEditing();
+        return true;
+      case "up":
+      case "down": {
+        const direction: QueueMove = chord.name === "up" ? -1 : 1;
+        return chord.shift ? this.moveSelectedQueued(direction) : this.stepQueueCursor(direction);
+      }
+      case "backspace":
+      case "delete":
+        return this.cancelSelectedQueued();
+      case "return":
+      case "enter":
+        return this.promoteSelectedQueued();
+      default:
+        this.exitQueueEditing();
+        return this.handleKey(chord, sequence, viewport);
+    }
+  }
+
+  private stepQueueCursor(direction: QueueMove): boolean {
+    const selected = this.queueSelection();
+    if (selected === undefined) return true;
+    const last = this.queuedPrompts().length - 1;
+    this.queueCursor = Math.min(last, Math.max(0, selected + direction));
+    this.touch();
+    return true;
+  }
+
+  private cancelSelectedQueued(): boolean {
+    const prompt = this.selectedQueued();
+    if (prompt === undefined) return true;
+    this.agent?.cancelQueued(prompt.id);
+    if (!this.editingQueue()) this.queueCursor = undefined;
+    this.touch();
+    return true;
+  }
+
+  private moveSelectedQueued(direction: QueueMove): boolean {
+    const agent = this.agent;
+    const from = this.queueSelection();
+    if (agent === undefined || from === undefined) return true;
+    const prompts = [...agent.queued()];
+    const to = from + direction;
+    if (to < 0 || to >= prompts.length) return true;
+    const first = Math.min(from, to);
+    const reordered = swapped(prompts, from, to).slice(first);
+    if (reordered.some((prompt) => prompt.behavior === "steer")) return true;
+    for (const prompt of prompts.slice(first)) agent.cancelQueued(prompt.id);
+    for (const prompt of reordered) this.send(prompt.text, "queue");
+    this.queueCursor = to;
+    this.touch();
+    return true;
+  }
+
+  private promoteSelectedQueued(): boolean {
+    const prompt = this.selectedQueued();
+    if (prompt === undefined) return true;
+    this.agent?.cancelQueued(prompt.id);
+    this.exitQueueEditing();
+    this.send(prompt.text, "steer");
+    return true;
+  }
+
+  private selectedQueued(): QueuedPrompt | undefined {
+    const selected = this.queueSelection();
+    return selected === undefined ? undefined : this.queuedPrompts()[selected];
   }
 
   private forkSelectedPrompt(): void {
@@ -481,9 +757,42 @@ export class ConversationModel {
 }
 
 const noForkPointNotice = "no fork point there";
+const noShellNotice = "no shell here · ! needs a workspace runtime";
+const noFilePaneNotice = "can't open the spill · no file panes here";
+
+function isOpenSpillKey(chord: Chord): boolean {
+  return chord.name === "o" && !chord.ctrl && !chord.meta && !chord.shift;
+}
+const noShellResult = { output: "no shell here", isError: true } as const;
+
+function queueEntryDirection(chord: Chord): QueueMove | undefined {
+  if (!chord.meta || chord.ctrl) return undefined;
+  if (chord.name === "up") return -1;
+  if (chord.name === "down") return 1;
+  return undefined;
+}
+
+function swapped<T>(items: readonly T[], from: number, to: number): T[] {
+  const copy = [...items];
+  const moved = copy[from] as T;
+  copy[from] = copy[to] as T;
+  copy[to] = moved;
+  return copy;
+}
+
+const thinkingNotices = {
+  on: "thinking shown · tab unfolds it · /thinking hides it again",
+  off: "thinking hidden · requests go out as before",
+} as const;
+
+function thinkingSwitchFrom(argument: string): "on" | "off" | undefined {
+  const word = argument.trim().toLowerCase();
+  return word === "on" || word === "off" ? word : undefined;
+}
 
 const conversationCommands: readonly CommandSuggestion[] = [
   { name: "cost", description: "token and cost breakdown for this session" },
   { name: "context", description: "how full the context is and where compaction fires" },
   { name: "compact", description: "fold older context into a summary: /compact [focus]" },
+  { name: "thinking", description: "show or hide the model's reasoning: /thinking [on|off]" },
 ];

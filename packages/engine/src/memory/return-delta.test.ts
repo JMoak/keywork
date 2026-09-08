@@ -157,3 +157,33 @@ describe("gatherReturnDelta", () => {
     expect(await gatherReturnDelta({ since, workspace: untrusted })).toEqual([]);
   });
 });
+
+describe("the bot line", () => {
+  it("lists what the bound bot learned, tagged with its sigil, after the arc line", () => {
+    const lines = returnDelta({
+      since,
+      workspaceNotes: [noteOf("Fresh Rule", "2026-08-21T10:00:00.000Z")],
+      arc: { slug: "dock-v2", notes: [noteOf("Arc Find", "2026-08-21T11:00:00.000Z")] },
+      bot: {
+        slug: "reviewer",
+        sigil: "⚖",
+        notes: [
+          noteOf("Terse Reviews", "2026-08-22T00:00:00.000Z"),
+          noteOf("Old Habit", "2026-08-01T00:00:00.000Z"),
+        ],
+      },
+    });
+    expect(lines).toEqual([
+      "1 new in #dock-v2: [[Arc Find]]",
+      "1 learned by ⚖ reviewer: [[Terse Reviews]]",
+      "1 new in the workspace: [[Fresh Rule]]",
+    ]);
+  });
+
+  it("stays byte-identical without a bot", () => {
+    const inputs = { since, workspaceNotes: [noteOf("Fresh Rule", "2026-08-21T10:00:00.000Z")] };
+    expect(returnDelta({ ...inputs, bot: { slug: "reviewer", sigil: "⚖", notes: [] } })).toEqual(
+      returnDelta(inputs),
+    );
+  });
+});

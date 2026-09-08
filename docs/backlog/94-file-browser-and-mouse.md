@@ -19,10 +19,10 @@
 | C30 | **done** | `BrowserPane`; `/browse [dir]` (alias `/files`), `leader f` summon-or-focus, files open via `PaneIntents` into the main area. |
 | C31 | **done** | `/browse` opens docked (existing dock side, else left); expansion state deliberately not persisted. |
 | C32 | **done** | `PaneIntents` (`openFile`/`focusPane`) on `AppCore`, injected into browser factory; `/open <dir>` redirects to the browser via injectable `isDirectory`. |
-| C33 | open | second pass as specced. |
+| C33 | **done** | `gitignore.ts` (`OWN` matcher: nested `.gitignore` files, negation, directory-only, anchored, `**`, classes, escapes) drives `BrowserRow.ignored`, painted `textDim` while staying navigable and openable; `file-index.ts` (`FileIndex`, bounded to 2000 entries / depth 8 over the same `BrowserDisk`, skips `.git` and ignored dirs) feeds `fileJumpSource` into the palette's go mode through `PaneIntents.openFile`, gated by `fileJumpsAllowed(readiness)`; `debounce.ts` (`Debounce` over an injectable `DebounceTiming`) reloads the browser 150 ms after the last `watchDirectory` event on any loaded directory. Closed out 2026-09-06, see below. |
 | H1, H2, H3 | **done** | `AppCore.handleMouse` spine + `pointer.ts`; overlay frames as shared pure functions; split-node `ratio` with min-size clamping, `leader shift+./,` resize verbs, `grow`/`shrink` commands; probe `click`/`hover`/`scroll`. |
 | H5 | **done** | Delivered as FR1.1 (2026-08-16, [`101`](101-feedback-round-4.md)): title-row grab, ghost-rect drop previews, `Layout.dropTargetAt`/`applyDrop` sharing the keyboard verbs' primitives. |
-| H4 | half | Dock boundary columns drag-resize (`dockHandleAt`/`dragDockEdge`, FR round 4); interior split borders still have no grip. The ~1-cell chrome offset H4 was told to account for is gone: C35 (2026-08-16) made `layout.rects` the drawn geometry and border-aligned the overlays, so the remaining half can hit-test raw rect coordinates. |
+| H4 | **done** | Dock boundary columns drag-resize (`dockHandleAt`/`dragDockEdge`, FR round 4); interior split borders drag-resize through `Layout.splitHandleAt`/`dragSplitHandle` (a `SplitHandle` path of `first`/`second` steps into the main tree, nested splits included) and `PanePointer.routeSplitResize`, which claims the grip on `down`, retiles live on `drag`, and releases on `up` or `drag-end`; ratios land on the same `steppedRatio` lattice the keyboard `grow`/`shrink` verbs use. Closed out 2026-09-06, see below. |
 | H6 | open | Folds into Track L's terminal pass; `pointer: "on" \| "off"` config option not yet built. |
 
 **Improvement pass (2026-08-10, two-pronged review → applied, 207 tests / 20 files green).**
@@ -36,6 +36,49 @@ Craft: one declarative action table drives bindings/help/sticky/dispatch/command
 a discriminated union; factory types derived `AppCoreOptions` → `AppProbeOptions`; `index.ts`
 trimmed to the real public surface; `Layout.dock()` exposes `ratio`. Deferred (reviewed, not
 defects): incremental filtering, notify batching/render coalescing (C2's perf-budget work).
+
+**C33 closed out (2026-09-06).** The browser now takes a `BrowserDisk` seam
+(`readDirectory`, optional `readIgnoreFile`, optional `watchDirectory`) instead of a bare
+reader; `realBrowserDisk` is the fs-backed default and `browserDiskOf` still accepts a plain
+reader so existing call sites and tests keep their shape. Ignore rules load per directory
+as each `.gitignore` is discovered, scoped to that directory, deeper files winning, and an
+ignored ancestor ignores everything under it (negations included, as git does). The palette
+index walks breadth-first, directories first, and is lazy: nothing is read until the first
+palette search, and nothing at all while the workspace readiness is `undecided` or
+`refused`. Evidence: `gitignore.test.ts` (pattern semantics, nested files, three
+property-style rounds over random paths), `debounce.test.ts` ("fires once after the quiet
+period following a burst", "arms one timer per burst"), `browser-model.test.ts` ("marks
+matching entries ignored without hiding them", "keeps ignored entries navigable and
+openable", "watches each loaded directory and reloads once after a burst settles", "keeps
+the cursor row across a watch-triggered reload"), `browser-pane.test.ts` ("paints .gitignore
+matches dim while leaving them openable"), `file-index.test.ts` ("caps the entry count at
+the pinned limit", "stops descending past the depth limit", "fuzzy-matches a typed path in
+go mode and enter opens the file pane"). Crossings: `app.ts` gained one `FileIndex` over
+`process.cwd()` registered as a palette source and disposed on exit; `app-core.ts`, `layout.ts`
+and `pointer.ts` untouched. Pi's ignore handling was not lifted: it leans on the `ignore`
+npm package, which would be a new dependency, so the matcher is `OWN` and `NOTICE` is
+unchanged.
+
+**C33 follow-up (2026-09-07).** `FileIndex` now watches every directory its walk read
+through the same `BrowserDisk.watchDirectory` seam and re-walks 150 ms after the last change
+(`Debounce` over an injected `DebounceTiming`), so a file created after launch is jumpable
+without a restart; a change landing mid-walk queues exactly one more walk, and watchers for
+directories the next walk no longer reaches are closed. `app.ts` needs no change, it already
+hands the index `realBrowserDisk`. Evidence: `file-index.test.ts` ("re-walks once after a
+burst of watcher events settles", "queues one more walk when a change lands mid-walk",
+"drops watchers on directories that vanished and closes them all on dispose").
+
+Assumptions Jordan may reverse:
+- Matching is case-sensitive and reads only `.gitignore` files at or below the browser root
+  (no `.git/info/exclude`, no global excludes, no parent-of-root ignore files).
+- The palette index builds once per run; `FileIndex.refresh()` exists but nothing calls it
+  yet, so files created after the first palette search wait for a restart to become jumpable.
+- File jump commands are named by their root-relative path, so `/src/app.ts` typed in
+  command mode also opens the file; registered commands still win a name clash.
+- The index skips `.git` and gitignored entries but keeps other dotfiles, and lists at most
+  2000 files eight directories deep.
+- Watch events reload the whole loaded tree (same path as `r`), one fs watcher per loaded
+  directory, closed on refresh and dispose.
 
 ## State of mouse input (2026-08-16)
 
@@ -105,10 +148,40 @@ fuzz walk includes a random drag-drop branch holding the exact-tiling invariant.
    key-fallback reserved for panes with no scroll model of their own. Session-tree
    advanced behaviors (click drills, click-and-drag reorder, per-row affordances) ride
    on the same grammar afterward.
-3. **H4 interior split borders**: extend the dock-edge drag mechanism; the geometry
-   blocker is gone.
+3. ~~**H4 interior split borders**: extend the dock-edge drag mechanism; the geometry
+   blocker is gone.~~ Done 2026-09-06, see the H4 closeout below.
 4. **H6 terminal-reality pass** with Track L (`pointer: "off"` escape hatch, SGR
    validation on Windows Terminal/kitty/alacritty/ghostty/tmux).
+
+**H4 closeout (2026-09-06, uncommitted).** The interior grip was already in the tree from the
+sweep that landed `splitHandleAt`, `dragSplitHandle`, and `routeSplitResize`; this pass audited
+it against the H4 acceptance line and filled the evidence gaps. The grip is one cell wide on a
+column seam (the row above the lower pane, leaving that pane's title row to the pane-drag
+gesture) and two cells on a row seam (both border columns); hit-testing walks the main tree with
+raw `layout.rects` geometry, and a zoomed scene returns no handle. The dock edge keeps
+`dockHandleAt`/`dragDockEdge`: unifying the two would have traded two fifteen-line routines for
+a discriminated handle type and saved nothing. Evidence: `layout.test.ts` "holds the tiling
+invariant and the min-size floor at every dragged position on a nested seam" (every y on a
+120x40 screen), "zooms and unzooms byte-identically over a dragged ratio", "round-trips a
+dragged ratio through the persisted layout state"; `workflows-layout.test.ts` "drags a nested
+horizontal seam live, commits on release, and stays gapless at every position", "drags the
+outer vertical seam without stealing focus from the pane under it", "persists a dragged ratio
+through the workspace file and survives zoom unchanged" (probe drives `AppCore.handleMouse`,
+restores from `workspaceState()`); `pointer-routing.test.ts` "commits a seam drag on drag-end
+just as on up, then hands the next press back to the panes". Lane gate: the three TUI files
+and the two CLI files this lane touched ran 164 and 70 tests green; biome clean on every touched
+file; `tsc --build` clean on them (the eight remaining errors sit in other lanes' in-progress
+`compose.ts`, `browser-model.test.ts`, and `browser-pane.ts`).
+
+Assumptions Jordan may reverse:
+
+1. No cursor-style hint. OpenTUI 0.5.1 has `MousePointerStyle` on `renderer.setCursorStyle`,
+   but `app.ts` exposes no pointer-style seam and applies the same style to the whole pointer
+   plane, so a hint would mean a per-move `setCursorStyle` call from the adapter. Skipped for
+   now; it is a small adapter change if wanted.
+2. The dock edge and the interior seams stay two mechanisms (see above).
+3. A column seam's grip is one cell (the border row) so the lower pane's title row keeps the
+   H5 pane-drag gesture; a row seam's grip is two cells.
 
 ## Why now
 

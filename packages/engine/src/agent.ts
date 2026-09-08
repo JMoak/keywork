@@ -2,13 +2,21 @@ import { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } fro
 import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
-import type { ContextInjection, PermissionDecision, PermissionGate } from "./session/journal.ts";
+import type {
+  AskRule,
+  ContextInjection,
+  PermissionDecision,
+  PermissionGate,
+} from "./session/journal.ts";
+import type { SpillStore } from "./session/spill.ts";
 import { findTool, type Tool } from "./tools.ts";
 
 export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
 
+export type Confirmation = boolean | { approved: boolean; gate: ConfirmingGate };
+
 export interface ToolGuard {
-  confirm?(call: ToolCallPart): Promise<boolean>;
+  confirm?(call: ToolCallPart): Promise<Confirmation>;
   gate?: ConfirmingGate;
   beforeMutation?(): Promise<void>;
 }
@@ -18,9 +26,26 @@ export type PermissionResolver = (call: ToolCallPart) => ToolPermission | undefi
 export type ToolSource = () => readonly Tool[];
 
 export type ActionRecall = (call: ToolCallPart) => Promise<string | undefined>;
+export type SpillSource = () => SpillStore | undefined;
+
+export interface DelegatedTurn {
+  userText: string;
+  signal: AbortSignal;
+  bus: EventBus<EngineEvents>;
+}
+
+export interface DelegatedOutcome {
+  message: Message;
+  usage: Usage;
+  interrupted: boolean;
+  history?: readonly Message[];
+}
+
+export type TurnDelegate = (turn: DelegatedTurn) => Promise<DelegatedOutcome>;
 
 export interface AgentOptions {
   provider: Provider;
+  turns?: TurnDelegate;
   systemPrompt?: string;
   tools?: readonly Tool[] | ToolSource;
   bus?: EventBus<EngineEvents>;
@@ -29,6 +54,8 @@ export interface AgentOptions {
   permissions?: PermissionResolver;
   standingInjections?: readonly ContextInjection[];
   actionRecall?: ActionRecall;
+  thinking?: boolean;
+  spills?: SpillStore | SpillSource;
 }
 
 export interface SendOptions {
@@ -58,6 +85,8 @@ interface AssistantTurn {
   failure?: Error;
 }
 
+type ToolOutcome = EngineEvents["tool.finished"];
+
 export class Agent {
   readonly bus: EventBus<EngineEvents>;
   readonly provider: Provider;
@@ -67,7 +96,10 @@ export class Agent {
   private readonly guard: ToolGuard | undefined;
   private readonly permissions: PermissionResolver | undefined;
   private readonly actionRecall: ActionRecall | undefined;
+  private readonly spills: SpillSource;
+  private readonly turns: TurnDelegate | undefined;
   private readonly pending: PendingPrompt[] = [];
+  private running: ToolCallPart | undefined;
   private unannouncedInjections: readonly ContextInjection[];
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
   private costTotals: CostRollup = emptyCostRollup();
@@ -75,6 +107,7 @@ export class Agent {
   private holding = false;
   private settler: TurnSettler | undefined;
   private checkpointed = false;
+  private thinkingRequested: boolean;
 
   constructor(options: AgentOptions) {
     this.provider = options.provider;
@@ -85,7 +118,18 @@ export class Agent {
     this.guard = options.guard;
     this.permissions = options.permissions;
     this.actionRecall = options.actionRecall;
+    this.spills = spillSource(options.spills);
+    this.turns = options.turns;
     this.unannouncedInjections = options.standingInjections ?? [];
+    this.thinkingRequested = options.thinking ?? false;
+  }
+
+  thinking(): boolean {
+    return this.thinkingRequested;
+  }
+
+  setThinking(requested: boolean): void {
+    this.thinkingRequested = requested;
   }
 
   history(): readonly Message[] {
@@ -114,6 +158,15 @@ export class Agent {
 
   interrupt(): void {
     this.active?.abort();
+  }
+
+  runningCall(): ToolCallPart | undefined {
+    return this.running;
+  }
+
+  reportToolOutput(chunk: string): void {
+    const callId = this.running?.callId;
+    this.bus.emit("tool.output", { chunk, ...(callId !== undefined && { callId }) });
   }
 
   send(userText: string, options: SendOptions = {}): Promise<Message> {
@@ -223,7 +276,9 @@ export class Agent {
       this.messages.push(textMessage("user", userText));
       this.announceStandingInjections();
       this.bus.emit("turn.started", { userText });
-      return await this.runUntilFinalMessage(controller.signal);
+      return await (this.turns === undefined
+        ? this.runUntilFinalMessage(controller.signal)
+        : this.runDelegatedTurn(this.turns, userText, controller.signal));
     } catch (cause) {
       const error = errorOf(cause);
       this.bus.emit("engine.error", { error });
@@ -256,6 +311,20 @@ export class Agent {
       await this.executeToolCalls(calls, signal);
       if (signal.aborted) return this.finishInterrupted(turn.message);
     }
+  }
+
+  private async runDelegatedTurn(
+    delegate: TurnDelegate,
+    userText: string,
+    signal: AbortSignal,
+  ): Promise<Message> {
+    const outcome = await delegate({ userText, signal, bus: this.bus });
+    this.totals = addUsage(this.totals, outcome.usage);
+    this.costTotals = withTurnCost(this.costTotals, outcome.usage, this.provider.modelId);
+    if (outcome.history === undefined) this.messages.push(outcome.message);
+    else this.messages.splice(0, this.messages.length, ...outcome.history);
+    if (outcome.interrupted) return this.finishInterrupted(outcome.message);
+    return this.finishCompleted({ ...outcome, interrupted: false });
   }
 
   private finishCompleted(turn: AssistantTurn): Message {
@@ -314,6 +383,7 @@ export class Agent {
       systemPrompt: this.systemPrompt,
       messages: [...this.messages],
       tools: this.tools(),
+      ...(this.thinkingRequested && { thinking: true }),
       signal,
     };
     try {
@@ -332,7 +402,9 @@ export class Agent {
     for (const call of calls) {
       if (signal.aborted) return;
       this.bus.emit("tool.started", { call });
-      const result = await this.executeToolCall(call, signal);
+      this.running = call;
+      const result = await this.bounded(await this.executeToolCall(call, signal));
+      this.running = undefined;
       this.bus.emit("tool.finished", result);
       this.messages.push({
         role: "tool",
@@ -341,10 +413,14 @@ export class Agent {
     }
   }
 
-  private async executeToolCall(
-    call: ToolCallPart,
-    signal: AbortSignal,
-  ): Promise<{ callId: string; output: string; isError: boolean }> {
+  private async bounded(outcome: ToolOutcome): Promise<ToolOutcome> {
+    const spills = this.spills();
+    if (spills === undefined) return outcome;
+    const { output, spill } = await spills.keep(outcome.output);
+    return { ...outcome, output, ...(spill !== undefined && { spill }) };
+  }
+
+  private async executeToolCall(call: ToolCallPart, signal: AbortSignal): Promise<ToolOutcome> {
     try {
       const tool = findTool(this.tools(), call.name);
       const policyVerdict = this.permissions?.(call);
@@ -356,14 +432,16 @@ export class Agent {
       }
       if (verdict === "ask") {
         const guardAsked = this.guard?.confirm !== undefined;
-        const approved = await this.confirmWithGuard(call);
+        if (guardAsked) this.emitAsk(call, gate);
+        const answer = await this.confirmWithGuard(call);
+        const answeredBy = answer.gate ?? this.guard?.gate ?? "user";
         this.emitPermissionDecision(
           call,
-          approved ? "granted" : "denied",
-          guardAsked ? (this.guard?.gate ?? "user") : gate,
+          answer.approved ? "granted" : "denied",
+          guardAsked ? answeredBy : gate,
         );
-        if (!approved) {
-          return { callId: call.callId, output: declinedOutput(this.guard?.gate), isError: true };
+        if (!answer.approved) {
+          return { callId: call.callId, output: declinedOutput(answeredBy), isError: true };
         }
       } else {
         this.emitPermissionDecision(call, "granted", gate);
@@ -392,8 +470,17 @@ export class Agent {
     });
   }
 
-  private confirmWithGuard(call: ToolCallPart): Promise<boolean> {
-    return this.guard?.confirm?.(call) ?? Promise.resolve(true);
+  private emitAsk(call: ToolCallPart, rule: AskRule): void {
+    this.bus.emit("gate.ask", {
+      ask: { tool: call.name, callId: call.callId, arguments: call.arguments, rule },
+    });
+  }
+
+  private async confirmWithGuard(
+    call: ToolCallPart,
+  ): Promise<{ approved: boolean; gate: ConfirmingGate | undefined }> {
+    const answer = await (this.guard?.confirm?.(call) ?? Promise.resolve(true));
+    return typeof answer === "boolean" ? { approved: answer, gate: undefined } : answer;
   }
 
   private async checkpointOnce(): Promise<void> {
@@ -411,6 +498,11 @@ function toolSource(tools: readonly Tool[] | ToolSource | undefined): ToolSource
   if (typeof tools === "function") return tools;
   const fixed = tools ?? [];
   return () => fixed;
+}
+
+function spillSource(spills: SpillStore | SpillSource | undefined): SpillSource {
+  if (typeof spills === "function") return spills;
+  return () => spills;
 }
 
 function defaultPermission(tool: Tool): ToolPermission {
@@ -448,6 +540,9 @@ function applyDelta(message: Message, delta: TurnDelta, usage: Usage): Usage {
     case "redacted-thinking":
       message.parts.push(delta.part);
       return usage;
+    case "visible-thinking":
+      appendVisibleThinking(message, delta.text);
+      return usage;
     case "done":
       return delta.usage;
   }
@@ -460,4 +555,13 @@ function appendText(message: Message, text: string): void {
     return;
   }
   message.parts.push({ type: "text", text });
+}
+
+function appendVisibleThinking(message: Message, text: string): void {
+  const last = message.parts.at(-1);
+  if (last?.type === "visible-thinking") {
+    last.text += text;
+    return;
+  }
+  message.parts.push({ type: "visible-thinking", text });
 }

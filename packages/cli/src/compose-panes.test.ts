@@ -94,8 +94,8 @@ describe("composePanes", () => {
     expect((await declared.app.memory?.load())?.layers.map((layer) => layer.id)).toEqual([
       "workspace",
     ]);
-    expect(bare.app.closers).toHaveLength(1);
-    expect(declared.app.closers).toHaveLength(1);
+    expect(bare.app.closers).toHaveLength(2);
+    expect(declared.app.closers).toHaveLength(2);
   });
 
   it("passes the workspace setup port through and phrases arc refusals from its readiness", async () => {
@@ -125,6 +125,26 @@ describe("composePanes", () => {
     expect(app.titler).toBeDefined();
     expect(app.inference?.choices().length).toBeGreaterThan(0);
     expect(app.connections).toBe(inference.connections);
+  });
+
+  it("runs a prompt-line shell escape through the workspace bash tool under the pane guard", async () => {
+    const asked: string[] = [];
+    const { app } = await composedIn(await tempDir());
+    const port = app.shellEscape?.({
+      confirm: async (call) => {
+        asked.push((call.arguments as { command: string }).command);
+        return true;
+      },
+    });
+    const result = await port?.run({
+      type: "tool-call",
+      callId: "user-shell-1",
+      name: "bash",
+      arguments: { command: "echo wired" },
+    });
+    expect(asked).toEqual(["echo wired"]);
+    expect(result?.isError).toBe(false);
+    expect(result?.output.trim()).toBe("wired");
   });
 
   it("passes the workspaces port and the config's theme and page through", async () => {

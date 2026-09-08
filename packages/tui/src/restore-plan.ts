@@ -75,6 +75,8 @@ async function restorable(
     case "memory":
     case "mcp":
     case "workspaces":
+    case "terminal":
+    case "diff":
       return true;
   }
 }

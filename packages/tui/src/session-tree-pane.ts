@@ -1,4 +1,4 @@
-import { fg, StyledText, Text } from "@opentui/core";
+import { fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import { type ArcOrdinals, arcInk } from "./arcs.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
@@ -25,10 +25,14 @@ import {
   type SessionTreeView,
 } from "./session-tree-model.ts";
 import {
+  groupByHint,
+  groupRowLine,
+  type OverviewRow,
   overviewRowLine,
   overviewRowParts,
+  type SessionGroupBy,
+  type SessionGroupRow,
   type SessionOverviewItem,
-  type SessionOverviewRow,
   type SessionPresence,
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
@@ -47,6 +51,8 @@ export interface SessionTreePort {
 
 export interface SessionTreePaneSeams {
   sessionId?: string;
+  groupBy?: SessionGroupBy;
+  botSigil?: (name: string) => string | undefined;
   presence?: SessionPresence;
   now?: () => number;
   arcOrdinal?: ArcOrdinals;
@@ -98,6 +104,8 @@ export class SessionTreePane implements Pane {
       },
       {
         currentSession,
+        ...(seams.groupBy !== undefined && { groupBy: seams.groupBy }),
+        ...(seams.botSigil !== undefined && { botSigil: seams.botSigil }),
         ...(seams.presence !== undefined && { presence: seams.presence }),
         ...(seams.now !== undefined && { now: seams.now }),
       },
@@ -131,9 +139,11 @@ export class SessionTreePane implements Pane {
   }
 
   describe(): PaneDescriptor {
+    const groupBy = this.overview.groupBy();
     return {
       kind: "session-tree",
       ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
+      ...(groupBy !== "none" && { groupBy }),
     };
   }
 
@@ -173,20 +183,20 @@ export class SessionTreePane implements Pane {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
     const labelLine = this.labelLine(theme, focused);
+    const hintLine = this.groupingHint(theme, innerWidth);
     const tray = this.tray.open
       ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
       : undefined;
-    this.lastPageRows = Math.max(
-      0,
-      paneContentHeight(context) - (labelLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
-    );
+    const trailing = (labelLine === undefined ? 0 : 1) + (hintLine === undefined ? 0 : 1);
+    this.lastPageRows = Math.max(0, paneContentHeight(context) - trailing - (tray?.rows ?? 0));
     const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
-    this.trayFirstRow = 2 + body.length + (labelLine === undefined ? 0 : 1);
+    this.trayFirstRow = 2 + body.length + trailing;
     return paneChrome(
       context,
       this.title(),
       ...body,
       ...(labelLine === undefined ? [] : [labelLine]),
+      ...(hintLine === undefined ? [] : [hintLine]),
       ...(tray?.children ?? []),
     );
   }
@@ -268,6 +278,12 @@ export class SessionTreePane implements Pane {
     return trayCommandsPressing((chord) => this.handleKey(chord), table);
   }
 
+  private groupingHint(theme: Theme, width: number): PaneChild | undefined {
+    const grouping = this.paneLevel === "overview" && this.tasks.failure() === undefined;
+    if (!grouping || this.overview.sessionCount() < 2) return undefined;
+    return paneLine(groupByHint(this.overview.groupBy()), theme.textDim, width);
+  }
+
   private labelLine(theme: Theme, focused: boolean) {
     if (!this.model.labeling) return undefined;
     const caret = focused ? "▌" : "";
@@ -293,11 +309,12 @@ export async function focusOrOpenSession(sessionId: string, opener: SessionOpene
 }
 
 export function overviewRowView(
-  row: SessionOverviewRow,
+  row: OverviewRow,
   theme: Theme,
   width: number,
   arcInkOf: (slug: string) => string,
 ): PaneChild {
+  if (row.kind === "group") return groupRowView(row, theme, width, arcInkOf);
   const color = row.current ? theme.accentSoft : theme.text;
   const { lead, title, age, arcTag, counts } = overviewRowParts(row, false);
   const chunks = [
@@ -310,11 +327,34 @@ export function overviewRowView(
   return Text({ content: new StyledText(clipSpans(chunks, width)) });
 }
 
+export function groupRowView(
+  row: SessionGroupRow,
+  theme: Theme,
+  width: number,
+  arcInkOf: (slug: string) => string,
+): PaneChild {
+  const facts = fg(theme.textDim)(groupRowLine(row).slice(row.label.length));
+  const chunks = [...groupLabelChunks(row, theme, arcInkOf), facts];
+  return Text({ content: new StyledText(clipSpans(chunks, width)) });
+}
+
 export const overviewTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "open the selected session", key: "enter" },
   { name: "entries", description: "browse the selected session's entries", key: "l" },
+  { name: "group", description: "group by none · arc · bot", key: "g" },
   { name: "refresh", description: "reload the sessions list", key: "r" },
 ];
+
+function groupLabelChunks(
+  row: SessionGroupRow,
+  theme: Theme,
+  arcInkOf: (slug: string) => string,
+): TextChunk[] {
+  if (row.member === undefined) return [fg(theme.textDim)(row.label)];
+  if (row.axis === "arc") return slugChunks(row.label, slugInk(theme, arcInkOf(row.member)));
+  const sigil = row.sigil === undefined ? [] : [fg(theme.text)(`${row.sigil} `)];
+  return [...sigil, ...slugChunks(row.member, slugInk(theme, theme.text))];
+}
 
 export const entriesTray: readonly KeyedTrayCommand[] = [
   { name: "fork", description: "fork at the selected entry", key: "f" },

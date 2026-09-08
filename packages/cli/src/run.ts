@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   type Agent,
@@ -7,6 +8,7 @@ import {
   type EngineEvents,
   type EventBus,
   type JournalTap,
+  type LanguagePort,
   type McpRegistry,
   type Message,
   messageText,
@@ -19,7 +21,14 @@ import {
   type ToolGuard,
   tapJournal,
 } from "@keywork/engine";
-import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
+import type {
+  KeyworkConfig,
+  LspConfig,
+  McpServerConfig,
+  ModelCapabilitiesConfig,
+  PromptsConfig,
+} from "@keywork/shared";
+import { botMemory } from "./bot-memory.ts";
 import type { WorkspaceExtensions } from "./commands.ts";
 import { composeAgents, composeWorkspace } from "./compose.ts";
 import { type ExitClass, exitCodes } from "./dispatch.ts";
@@ -43,7 +52,9 @@ export interface RunOptions {
   permissions?: PermissionResolver;
   mcpServers?: Record<string, McpServerConfig>;
   repoMap?: "auto" | "off";
+  lsp?: LspConfig;
   models?: ModelCapabilitiesConfig;
+  thinking?: KeyworkConfig["thinking"];
   signal?: AbortSignal;
   print?: (line: string) => void;
   printError?: (line: string) => void;
@@ -108,6 +119,7 @@ interface HeadlessRun {
   journal: JournalTap | undefined;
   diagnostics: DiagnosticsLog | undefined;
   mcp: McpRegistry | undefined;
+  languagePort: LanguagePort | undefined;
 }
 
 async function openRun(
@@ -115,6 +127,7 @@ async function openRun(
   provider: Provider,
   io: HeadlessIo,
 ): Promise<HeadlessRun | { refused: string }> {
+  const diagnosticsRef: { current: DiagnosticsLog | undefined } = { current: undefined };
   const composition = await composeWorkspace({
     cwd: options.cwd,
     projectTrusted: options.projectTrusted === true,
@@ -124,6 +137,9 @@ async function openRun(
     repoMap: options.repoMap,
     models: options.models,
     checkpoints: "off",
+    lsp: options.lsp,
+    notice: (text) => io.printError(`keywork run: ${text}`),
+    diagnosticsLog: () => diagnosticsRef.current,
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
   });
   reportExtensionFailures(composition.extensions, io);
@@ -131,19 +147,43 @@ async function openRun(
   if (typeof bot === "string") return { refused: bot };
   const store = await openSessionStore(options);
   if (bot !== undefined) await store?.appendBotBinding(bot.name);
+  const bots = botMemory({
+    cwd: options.cwd,
+    projectTrusted: options.projectTrusted === true,
+    workspaceSlug: options.workspaceSlug,
+    userRoot: options.userRoot ?? homedir(),
+    memory: composition.memory,
+    roster: composition.extensions.bots,
+    bindingOf: () => store?.botBinding(),
+  });
+  await bots.prepare();
   const shell = new ShellSession(options.cwd);
-  const agent = composeAgents(composition, { permissions: options.permissions }).build({
+  const agent = composeAgents(composition, {
+    permissions: options.permissions,
+    bots,
+    thinking: options.thinking === "on",
+  }).build({
     provider,
     guard: headlessGuard,
     shell,
     bot,
     sessionId: store?.header.id,
+    spills: () => store?.spills(),
   });
   const journal = store === undefined ? undefined : tapJournal(agent.bus, store);
   const diagnostics = options.debug === true ? await openDiagnostics(options) : undefined;
+  diagnosticsRef.current = diagnostics;
   diagnostics?.tap(agent.bus);
   diagnostics?.log("info", "run.started", { cwd: options.cwd, provider: provider.name });
-  return { agent, shell, store, journal, diagnostics, mcp: composition.mcp };
+  return {
+    agent,
+    shell,
+    store,
+    journal,
+    diagnostics,
+    mcp: composition.mcp,
+    languagePort: composition.languagePort,
+  };
 }
 
 interface TurnTrace {
@@ -159,6 +199,7 @@ const forwardedEvents = [
   "tool.output",
   "tool.finished",
   "context.injected",
+  "diagnostics.published",
   "turn.completed",
 ] as const;
 
@@ -221,6 +262,7 @@ function tearDown(run: HeadlessRun): Promise<string[]> {
         for (const message of run.agent.history()) await run.store.append(message);
       },
     ],
+    ["stopping language servers", async () => run.languagePort?.dispose()],
     ["flushing the debug log", async () => run.diagnostics?.flush()],
     ["stopping MCP servers", async () => run.mcp?.stop()],
   ]);

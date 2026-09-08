@@ -135,6 +135,8 @@ const commands: Record<CommandName, Command> = {
   trust: (context) => runTrust("trust", context),
   untrust: (context) => runTrust("untrust", context),
   doctor: runDoctor,
+  serve: runServe,
+  attach: runAttach,
 };
 
 async function openCommandContext(
@@ -224,7 +226,9 @@ async function runChat(context: CommandContext, { values }: ParsedInvocation): P
     ...(config.prompts !== undefined && { prompts: config.prompts }),
     ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
     ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
+    ...(config.lsp !== undefined && { lsp: config.lsp }),
     ...(config.models !== undefined && { models: config.models }),
+    ...(config.thinking !== undefined && { thinking: config.thinking }),
     ...(values.resume !== undefined && { resumeId: values.resume }),
     ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
   });
@@ -267,11 +271,94 @@ async function runHeadlessPrompt(
       ...(config.prompts !== undefined && { prompts: config.prompts }),
       ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
       ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
+      ...(config.lsp !== undefined && { lsp: config.lsp }),
       ...(config.models !== undefined && { models: config.models }),
+      ...(config.thinking !== undefined && { thinking: config.thinking }),
       ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
     });
     return exitCodeOf(outcome);
   });
+}
+
+async function runServe(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
+  const { io, cwd, projectTrusted, workspaceSlug } = context;
+  const port = parsePort(values.port);
+  if (port === "invalid") {
+    io.printError(`keywork serve: --port wants a whole number from 0 to 65535 (0 picks a free port)
+
+${usage}`);
+    return exitCodes.usage;
+  }
+  const preset = values.preset;
+  if (preset !== undefined && !isPresetName(preset)) {
+    io.printError(
+      `keywork serve: no preset named "${preset}" (options: ${presetOrder.join(" · ")})`,
+    );
+    return exitCodes.usage;
+  }
+  const { config, runtime } = (await context.openInference()).current();
+  const bound = runtime.resolve({ override: values.model, default: config.model });
+  if (!bound.ok) {
+    io.printError(
+      `${bound.failure.message} · ${nextActionFor(bound.failure, shellCommands)}
+
+${connectHint}`,
+    );
+    return exitCodes.unresolved;
+  }
+  const { serve } = await import("./serve.ts");
+  return untilInterrupted((signal) =>
+    serve({
+      cwd,
+      projectTrusted,
+      workspaceSlug,
+      port,
+      provider: runtime.provider(bound.binding),
+      permissions: headlessPermissions(preset, config.permissions),
+      sessionDir: values["session-dir"],
+      prompts: config.prompts,
+      mcpServers: config.mcpServers,
+      repoMap: config.repoMap,
+      lsp: config.lsp,
+      models: config.models,
+      thinking: config.thinking,
+      signal,
+      print: io.print,
+      printError: io.printError,
+    }),
+  );
+}
+
+async function runAttach(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
+  const { io } = context;
+  const { attach, choosePane } = await import("./attach.ts");
+  const choice = choosePane(values.pane);
+  if (choice.kind === "refused") {
+    const reason = `keywork attach: ${choice.reason}`;
+    io.printError(
+      choice.usage
+        ? `${reason}
+
+${usage}`
+        : reason,
+    );
+    return exitCodes.usage;
+  }
+  return attach({
+    pane: choice.pane,
+    session: values.session,
+    url: values.url,
+    token: values.token,
+    cwd: context.cwd,
+    workspaceSlug: context.workspaceSlug,
+    printError: io.printError,
+  });
+}
+
+function parsePort(raw: string | undefined): number | undefined | "invalid" {
+  if (raw === undefined) return undefined;
+  const port = Number(raw);
+  return Number.isInteger(port) && port >= 0 && port <= 65535 ? port : "invalid";
 }
 
 function headlessPermissions(
@@ -414,6 +501,11 @@ function parseInvocationArgs(args: readonly string[]) {
       resume: { type: "string" },
       "session-dir": { type: "string" },
       workspace: { type: "string" },
+      port: { type: "string" },
+      pane: { type: "string" },
+      session: { type: "string" },
+      url: { type: "string" },
+      token: { type: "string" },
     },
   });
 }

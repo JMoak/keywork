@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { actionCommandNames, actionCovering, appActions } from "./app-actions.ts";
 import { memberTray } from "./arc-pane.ts";
 import { arcSessionsTray, arcsTray } from "./arcs-pane.ts";
+import { copyCommands } from "./copy-commands.ts";
 import { parseChord } from "./keys.ts";
 import { memoryTray } from "./memory-pane.ts";
 import type { Pane } from "./pane.ts";
@@ -29,6 +30,8 @@ function fullyEquippedProbe(): AppProbe {
     createMemoryPane: (id) => stubPane(id),
     createMcpPane: (id) => stubPane(id),
     createWorkspacesPane: (id) => stubPane(id),
+    createDiffPane: (id) => stubPane(id),
+    createTerminalPane: (id) => stubPane(id),
     isDirectory: () => false,
     undo: { undo: async () => true, redo: async () => true },
     presets: {
@@ -89,6 +92,14 @@ describe("command coverage", () => {
 
   it("keeps command names and aliases collision-free", () => {
     const probe = fullyEquippedProbe();
+    for (const command of copyCommands({
+      conversation: () => undefined,
+      write: () => {},
+      notice: () => {},
+      clipboard: false,
+    })) {
+      expect(probe.core.registry.register(command)).toEqual({ kind: "registered" });
+    }
     const seen = new Map<string, string>();
     const collisions: string[] = [];
     for (const command of probe.core.registry.all()) {

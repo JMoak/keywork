@@ -5,8 +5,10 @@ import { inkAt } from "./motion.ts";
 import { columnPage, type PageGrammar, proseWidth } from "./page.ts";
 import {
   type AssistantEntry,
+  type ThinkingEntry,
   type ToolRun,
   type TranscriptEntry,
+  thinkingRowSpans,
   toolRowSpans,
 } from "./transcript-feed.ts";
 import { clipSpans, wrap } from "./width.ts";
@@ -51,86 +53,68 @@ export interface Frame {
 export type MarkdownRenderer = typeof renderMarkdown;
 
 export class TranscriptView {
-  private readonly cache = new WeakMap<TranscriptEntry, CachedEntry>();
+  private readonly index = new RowIndex();
 
   constructor(private readonly markdown: MarkdownRenderer = renderMarkdown) {}
 
   frame(source: TranscriptSource, geometry: FrameGeometry, viewport: Viewport): Frame {
     const { entries } = source;
-    const layout = layoutOf(geometry);
-    const rawLinesAt = (at: number): TranscriptLine[] => {
-      const entry = entries[at];
-      return entry === undefined
-        ? []
-        : this.linesOf(entry, layout, source.streamingProgress(entry));
-    };
-    const countAt = (at: number): number => rawLinesAt(at).length;
-    const linesAt = (at: number): TranscriptLine[] => highlighted(at, viewport, rawLinesAt(at));
-    let total = 0;
-    for (let at = 0; at < entries.length; at += 1) total += countAt(at);
+    const layout = this.index.adopt(layoutOf(geometry));
+    this.index.sync(entries, (entry, slot) => this.settled(entry, slot, layout, source));
+    const countAt = (at: number): number => this.index.countAt(at);
+    const linesAt = (at: number): TranscriptLine[] =>
+      highlighted(at, viewport, this.linesAt(at, layout, source));
     const scrollBack =
       viewport.revealAt === undefined
-        ? anchoredScrollBack(viewport, total)
+        ? anchoredScrollBack(viewport, this.index.total)
         : revealScroll(entries.length, countAt, viewport.revealAt, geometry.rows);
     return {
       ...windowFromEnd(entries.length, countAt, linesAt, scrollBack, geometry.rows),
-      total,
+      total: this.index.total,
     };
   }
 
-  private linesOf(
-    entry: TranscriptEntry,
-    layout: Layout,
-    streaming: number | undefined,
-  ): TranscriptLine[] {
-    const stamp = stampFor(entry, layout.marks, streaming);
-    const cached = this.cache.get(entry);
-    const next =
-      cached !== undefined && sameLayout(cached.layout, layout)
-        ? this.refreshed(cached, entry, layout, stamp)
-        : this.rendered(entry, layout, stamp);
-    this.cache.set(entry, next);
-    return streaming === undefined ? next.lines : withStreamCursor(next.lines, layout.marks);
+  private linesAt(at: number, layout: Layout, source: TranscriptSource): TranscriptLine[] {
+    const slot = this.index.slotAt(at);
+    if (slot === undefined) return [];
+    const streaming = source.streamingProgress(slot.entry);
+    const stamped = restamped(slot, stampFor(slot.entry, layout.marks, streaming));
+    this.index.replace(at, stamped);
+    return streaming === undefined ? stamped.lines : withStreamCursor(stamped.lines, layout.marks);
   }
 
-  private refreshed(
-    cached: CachedEntry,
+  private settled(
     entry: TranscriptEntry,
+    slot: Slot | undefined,
     layout: Layout,
-    stamp: string,
-  ): CachedEntry {
-    if (entry.kind === "assistant") return this.flowed(cached, entry, layout, stamp);
-    return sameShape(cached.shape, shapeOf(entry))
-      ? restamped(cached, stamp)
-      : this.rendered(entry, layout, stamp);
+    source: TranscriptSource,
+  ): Slot {
+    const stamp = stampFor(entry, layout.marks, source.streamingProgress(entry));
+    if (slot === undefined || slot.entry !== entry) return this.rendered(entry, layout, stamp);
+    if (entry.kind === "assistant") return this.flowed(slot, entry, layout, stamp);
+    return this.rendered(entry, layout, stamp);
   }
 
-  private rendered(entry: TranscriptEntry, layout: Layout, stamp: string): CachedEntry {
+  private rendered(entry: TranscriptEntry, layout: Layout, stamp: string): Slot {
     const shape = shapeOf(entry);
     if (entry.kind === "assistant") {
       const blocks = markdownBlocks(entry.text).map((source) => this.block(source, entry, layout));
-      return { layout, shape, blocks, lines: stampHead(blockLines(blocks), stamp) };
+      return { entry, shape, blocks, lines: stampHead(blockLines(blocks), stamp) };
     }
     const lines = entryLines(entry, layout).map((line) => railed(line, entry));
-    return { layout, shape, blocks: [], lines: stampHead(lines, stamp) };
+    return { entry, shape, blocks: [], lines: stampHead(lines, stamp) };
   }
 
-  private flowed(
-    cached: CachedEntry,
-    entry: AssistantEntry,
-    layout: Layout,
-    stamp: string,
-  ): CachedEntry {
+  private flowed(slot: Slot, entry: AssistantEntry, layout: Layout, stamp: string): Slot {
     const text = entry.text;
-    if (text === cached.shape.text) return restamped(cached, stamp);
-    const settled = text.startsWith(cached.shape.text) ? cached.blocks.slice(0, -1) : [];
+    const settled = text.startsWith(slot.shape.text) ? slot.blocks.slice(0, -1) : [];
     const settledLength = settled.reduce((sum, block) => sum + block.source.length + 1, 0);
-    const tail = cached.blocks.at(-1);
+    const tail = slot.blocks.at(-1);
     const grown = markdownBlocks(text.slice(settledLength)).map((source) =>
       source === tail?.source ? tail : this.block(source, entry, layout),
     );
     const blocks = [...settled, ...grown];
-    return { layout, shape: shapeOf(entry), blocks, lines: stampHead(blockLines(blocks), stamp) };
+    return { entry, shape: shapeOf(entry), blocks, lines: stampHead(blockLines(blocks), stamp) };
   }
 
   private block(source: string, entry: TranscriptEntry, layout: Layout): RenderedBlock {
@@ -215,11 +199,54 @@ interface RenderedBlock {
   lines: TranscriptLine[];
 }
 
-interface CachedEntry {
-  layout: Layout;
+interface Slot {
+  entry: TranscriptEntry;
   shape: Shape;
   blocks: RenderedBlock[];
   lines: TranscriptLine[];
+}
+
+type SlotRenderer = (entry: TranscriptEntry, current: Slot | undefined) => Slot;
+
+class RowIndex {
+  total = 0;
+  private slots: Slot[] = [];
+  private layout: Layout | undefined;
+
+  adopt(layout: Layout): Layout {
+    if (this.layout !== undefined && sameLayout(this.layout, layout)) return this.layout;
+    this.layout = layout;
+    this.slots = [];
+    this.total = 0;
+    return layout;
+  }
+
+  sync(entries: readonly TranscriptEntry[], render: SlotRenderer): void {
+    this.truncate(entries.length);
+    for (let at = 0; at < entries.length; at += 1) {
+      const entry = entries[at] as TranscriptEntry;
+      const slot = this.slots[at];
+      if (slot !== undefined && slot.entry === entry && sameShape(slot.shape, entry)) continue;
+      this.replace(at, render(entry, slot));
+    }
+  }
+
+  countAt(at: number): number {
+    return this.slots[at]?.lines.length ?? 0;
+  }
+
+  slotAt(at: number): Slot | undefined {
+    return this.slots[at];
+  }
+
+  replace(at: number, slot: Slot): void {
+    this.total += slot.lines.length - this.countAt(at);
+    this.slots[at] = slot;
+  }
+
+  private truncate(count: number): void {
+    while (this.slots.length > count) this.total -= this.slots.pop()?.lines.length ?? 0;
+  }
 }
 
 function layoutOf(geometry: FrameGeometry): Layout {
@@ -247,12 +274,27 @@ function shapeOf(entry: TranscriptEntry): Shape {
   return {
     text: entry.text,
     failed: entry.kind === "tool" && entry.failed,
-    folded: entry.kind === "tool" ? entry.run?.folded !== false : true,
+    folded: foldedOf(entry),
   };
 }
 
-function sameShape(left: Shape, right: Shape): boolean {
-  return left.text === right.text && left.failed === right.failed && left.folded === right.folded;
+function foldedOf(entry: TranscriptEntry): boolean {
+  switch (entry.kind) {
+    case "tool":
+      return entry.run?.folded !== false;
+    case "thinking":
+      return entry.folded;
+    default:
+      return true;
+  }
+}
+
+function sameShape(shape: Shape, entry: TranscriptEntry): boolean {
+  return (
+    shape.text === entry.text &&
+    shape.failed === (entry.kind === "tool" && entry.failed) &&
+    shape.folded === foldedOf(entry)
+  );
 }
 
 function blockLines(blocks: readonly RenderedBlock[]): TranscriptLine[] {
@@ -269,9 +311,9 @@ function stampHead(lines: TranscriptLine[], stamp: string): TranscriptLine[] {
   return lines;
 }
 
-function restamped(cached: CachedEntry, stamp: string): CachedEntry {
-  if (cached.lines[0]?.stamp === stamp) return cached;
-  return { ...cached, lines: stampHead([...cached.lines], stamp) };
+function restamped(slot: Slot, stamp: string): Slot {
+  if (slot.lines[0]?.stamp === stamp) return slot;
+  return { ...slot, lines: stampHead([...slot.lines], stamp) };
 }
 
 function stampFor(entry: TranscriptEntry, marks: PageMarks, streaming: number | undefined): string {
@@ -282,7 +324,10 @@ function stampFor(entry: TranscriptEntry, marks: PageMarks, streaming: number | 
       return streaming === undefined
         ? `${marks.voice.agent} `
         : `${inkAt(marks.streamRamp, streaming)} `;
+    case "thinking":
+      return `${marks.voice.agent} `;
     case "tool":
+      return `${entry.run?.provenance === "user" ? marks.voice.user : marks.voice.machine} `;
     case "error":
       return `${marks.voice.machine} `;
     case "info":
@@ -332,6 +377,8 @@ function entryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {
       return entry.run === undefined
         ? transcriptLines([entry], layout.body)
         : toolEntryLines(entry.run, entry.failed, layout);
+    case "thinking":
+      return thinkingEntryLines(entry, layout);
     case "error":
       return transcriptLines([entry], layout.body);
     case "user":
@@ -340,26 +387,35 @@ function entryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {
   }
 }
 
+function thinkingEntryLines(entry: ThinkingEntry, layout: Layout): TranscriptLine[] {
+  const spans = clipSpans(thinkingRowSpans(entry), layout.body, { text: "…", tone: "meta" });
+  const row: TranscriptLine = { kind: "thinking", failed: false, text: spanText(spans), spans };
+  if (entry.folded) return [row];
+  const gutter = " ".repeat(layout.page.proseGutter);
+  const body = entry.text
+    .split("\n")
+    .flatMap((line) => wrap(line, layout.prose))
+    .map((text) => metaLine("thinking", text === "" ? "" : `${gutter}${text}`));
+  return [row, ruleLine("thinking", layout), ...body];
+}
+
+function ruleLine(kind: TranscriptLine["kind"], layout: Layout): TranscriptLine {
+  const text = layout.marks.rule.repeat(Math.max(1, Math.min(layout.body, layout.prose)));
+  return { kind, failed: false, text, spans: [{ text, tone: "rule" }] };
+}
+
+function metaLine(kind: TranscriptLine["kind"], text: string): TranscriptLine {
+  return { kind, failed: false, text, spans: [{ text, tone: "meta" }] };
+}
+
 function toolEntryLines(run: ToolRun, failed: boolean, layout: Layout): TranscriptLine[] {
   const spans = clipSpans(toolRowSpans(run), layout.body, { text: "…", tone: "meta" });
   const row: TranscriptLine = { kind: "tool", failed, text: spanText(spans), spans };
   if (run.folded || run.detail === undefined) return [row];
-  const ruleText = layout.marks.rule.repeat(Math.max(1, Math.min(layout.body, layout.prose)));
-  const rule: TranscriptLine = {
-    kind: "tool",
-    failed: false,
-    text: ruleText,
-    spans: [{ text: ruleText, tone: "rule" }],
-  };
   const detail = [...(run.args === "{}" ? [] : [run.args]), ...run.detail]
     .flatMap((line) => wrap(line, layout.body))
-    .map((text) => ({
-      kind: "tool" as const,
-      failed: false,
-      text,
-      spans: [{ text, tone: "meta" as const }],
-    }));
-  return [row, rule, ...detail];
+    .map((text) => metaLine("tool", text));
+  return [row, ruleLine("tool", layout), ...detail];
 }
 
 function proseEntryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {

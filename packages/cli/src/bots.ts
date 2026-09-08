@@ -5,10 +5,14 @@ import {
   type BotDefinition,
   botFileName,
   botsDir,
+  type CostRollup,
   type Frontmatter,
+  groupCosts,
+  knownCostNanos,
   type LayerRoots,
   loadBots,
   type Provider,
+  type SessionStore,
   serializeDocument,
   suggestBotName,
 } from "@keywork/engine";
@@ -129,26 +133,55 @@ function entryOf(bot: BotDefinition): BotEntry {
     name: bot.name,
     sigil: bot.sigil,
     source: bot.source,
+    learning: bot.learning,
     ...(bot.description !== undefined && { description: bot.description }),
     ...(bot.model !== undefined && { model: bot.model }),
   };
 }
 
-type BotUsage = Pick<BotSummary, "sessions" | "lastUsed">;
+type BotUsage = Pick<BotSummary, "sessions" | "lastUsed" | "costNanos">;
+
+type BoundStore = readonly [SessionStore, string];
 
 async function botUsage(sessionDir: string): Promise<Map<string, BotUsage>> {
-  const usage = new Map<string, BotUsage>();
   const { stores } = await scanSessions(sessionDir);
-  for (const store of stores) {
-    const bot = store.botBinding();
-    if (bot === undefined) continue;
-    const seen = usage.get(bot) ?? { sessions: 0 };
-    const lastActivity = store.stats().lastActivityAt;
-    const lastUsed =
-      seen.lastUsed === undefined || seen.lastUsed < lastActivity ? lastActivity : seen.lastUsed;
-    usage.set(bot, { sessions: seen.sessions + 1, lastUsed });
+  const bound = boundStores(stores);
+  const costs = botCosts(bound);
+  const usage = new Map<string, BotUsage>();
+  for (const [store, bot] of bound) {
+    const seen = usage.get(bot);
+    usage.set(bot, {
+      sessions: (seen?.sessions ?? 0) + 1,
+      lastUsed: latest(seen?.lastUsed, store.stats().lastActivityAt),
+      ...knownSpend(costs.get(bot)),
+    });
   }
   return usage;
+}
+
+export function boundStores(stores: readonly SessionStore[]): BoundStore[] {
+  return stores.flatMap((store) => {
+    const bot = store.botBinding();
+    return bot === undefined ? [] : [[store, bot] as const];
+  });
+}
+
+export function botCosts(bound: readonly BoundStore[]): Map<string, CostRollup> {
+  const botOf = new Map(bound.map(([store, bot]) => [store.header.id, bot]));
+  const sources = bound.map(([store]) => ({
+    sessionId: store.header.id,
+    entries: store.entries(),
+  }));
+  return groupCosts(sources, (sessionId) => botOf.get(sessionId) ?? "");
+}
+
+function latest(seen: string | undefined, activity: string): string {
+  return seen === undefined || seen < activity ? activity : seen;
+}
+
+function knownSpend(rollup: CostRollup | undefined): Pick<BotUsage, "costNanos"> {
+  const costNanos = rollup === undefined ? undefined : knownCostNanos(rollup);
+  return costNanos === undefined ? {} : { costNanos };
 }
 
 function scopeRoot(roots: BotRoots, scope: BotScope): string {

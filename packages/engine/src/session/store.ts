@@ -23,7 +23,9 @@ import {
   type SessionInfoEntry,
   type SessionTreeNode,
   sessionFormatVersion,
+  type ThinkingLevelChangeEntry,
 } from "./entries.ts";
+import { SpillStore } from "./spill.ts";
 
 export interface SessionStats {
   entries: number;
@@ -60,6 +62,7 @@ export class SessionStore {
   private leaf: string | null = null;
   private headerOnDisk: Promise<void> | undefined;
   private writes: Promise<unknown> = Promise.resolve();
+  private spillStore: SpillStore | undefined;
 
   private constructor(
     readonly file: string,
@@ -124,6 +127,11 @@ export class SessionStore {
     return this.appendEntry({ type: "session_info", name });
   }
 
+  spills(): SpillStore {
+    this.spillStore ??= SpillStore.beside(this.file);
+    return this.spillStore;
+  }
+
   name(): string | undefined {
     return this.log.findLast((entry): entry is SessionInfoEntry => entry.type === "session_info")
       ?.name;
@@ -137,6 +145,16 @@ export class SessionStore {
     return this.activePath().findLast(
       (entry): entry is ModelChangeEntry => entry.type === "model_change",
     );
+  }
+
+  async appendThinkingLevelChange(thinkingLevel: string): Promise<ThinkingLevelChangeEntry> {
+    return this.appendEntry({ type: "thinking_level_change", thinkingLevel });
+  }
+
+  thinkingLevel(): string | undefined {
+    return this.activePath().findLast(
+      (entry): entry is ThinkingLevelChangeEntry => entry.type === "thinking_level_change",
+    )?.thinkingLevel;
   }
 
   appendArcBinding(arc: string | undefined): Promise<BindingEntry> {

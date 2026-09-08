@@ -5,8 +5,14 @@ import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { SessionTreeView } from "./session-tree-model.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
-import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
+import {
+  overviewRowLine,
+  type SessionGroupBy,
+  type SessionOverviewItem,
+  type SessionPresence,
+} from "./sessions-overview-model.ts";
 import { press } from "./testing/index.ts";
+import { describePaneTree, paneContext } from "./testing/workflow-probe.ts";
 
 interface TreeWorld {
   items: SessionOverviewItem[];
@@ -142,6 +148,8 @@ function manualFrames(): ManualFrames {
 interface PaneSetup {
   presence?: SessionPresence;
   sessionId?: string;
+  groupBy?: SessionGroupBy;
+  now?: () => number;
   forkResult?: () => Promise<string | undefined>;
   notify?: () => void;
   frames?: ManualFrames;
@@ -158,6 +166,9 @@ function paneOver(world: TreeWorld, setup: PaneSetup = {}) {
     () => world.items[0]?.id,
     {
       ...(setup.sessionId !== undefined && { sessionId: setup.sessionId }),
+      ...(setup.groupBy !== undefined && { groupBy: setup.groupBy }),
+      ...(setup.now !== undefined && { now: setup.now }),
+      botSigil: (name) => (name === "reviewer" ? "⚖" : undefined),
       ...(setup.presence !== undefined && { presence: setup.presence }),
       ...(setup.frames !== undefined && { scheduleFrame: setup.frames.scheduleFrame }),
     },
@@ -171,7 +182,7 @@ describe("SessionTreePane two levels", () => {
     const { pane } = paneOver(world);
     await pane.settled();
     expect(pane.level()).toBe("overview");
-    expect(pane.overview.rows().map((row) => row.id)).toEqual(["s1", "s2"]);
+    expect(pane.overview.sessionRows().map((row) => row.id)).toEqual(["s1", "s2"]);
     expect(pane.title()).toBe(" session tree · 2 sessions ");
   });
 
@@ -203,13 +214,13 @@ describe("SessionTreePane two levels", () => {
     const { pane } = paneOver(world);
     await pane.settled();
     press(pane, "j", "j");
-    expect(pane.overview.cursorRow()?.id).toBe("s3");
+    expect(pane.overview.cursorSession()).toBe("s3");
     press(pane, "l");
     await pane.settled();
     press(pane, "j", "backspace");
     await pane.settled();
     expect(pane.level()).toBe("overview");
-    expect(pane.overview.cursorRow()?.id).toBe("s3");
+    expect(pane.overview.cursorSession()).toBe("s3");
   });
 
   it("labels keep the typed case: Shift+H then i reads back Hi", async () => {
@@ -419,7 +430,7 @@ describe("SessionTreePane push refresh", () => {
     frames.runPending();
     await pane.settled();
     expect(world.overviewLoads).toBe(2);
-    expect(pane.overview.rows().map((row) => row.id)).toEqual(["s2", "s1"]);
+    expect(pane.overview.sessionRows().map((row) => row.id)).toEqual(["s2", "s1"]);
   });
 
   it("a pushed change refreshes the drilled entry tree, not the overview", async () => {
@@ -565,6 +576,7 @@ describe("SessionTreePane command tray", () => {
     expect(pane.tray.matches().map((command) => command.name)).toEqual([
       "open",
       "entries",
+      "group",
       "refresh",
     ]);
     press(pane, "enter");
@@ -619,5 +631,80 @@ describe("SessionTreePane command tray", () => {
     press(pane, "shift+l", "/");
     expect(pane.tray.open).toBe(false);
     expect(pane.model.labeling).toBe(true);
+  });
+});
+
+describe("SessionTreePane group-by", () => {
+  function groupedWorld(): TreeWorld {
+    const world = worldOf("s1", "s2", "s3", "s4");
+    world.items = [
+      { ...itemOf("s1", 40), bot: "reviewer", arc: "dock-v2" },
+      { ...itemOf("s2", 30), arc: "dock-v2" },
+      { ...itemOf("s3", 20), bot: "scout" },
+      { ...itemOf("s4", 10), bot: "reviewer" },
+    ];
+    return world;
+  }
+
+  function contents(node: unknown, into: string[] = []): string[] {
+    const record = node as { content?: unknown; children?: unknown[] };
+    if (typeof record.content === "string") into.push(record.content);
+    else if (record.content !== undefined) into.push(String(record.content));
+    for (const child of record.children ?? []) contents(child, into);
+    return into;
+  }
+
+  it("g cycles none · arc · bot, and the descriptor carries the axis so it revives", async () => {
+    const { pane } = paneOver(groupedWorld());
+    await pane.settled();
+    expect(pane.describe()).toEqual({ kind: "session-tree" });
+    press(pane, "g");
+    expect(pane.overview.groupBy()).toBe("arc");
+    expect(pane.describe()).toEqual({ kind: "session-tree", groupBy: "arc" });
+    press(pane, "g");
+    expect(pane.describe()).toEqual({ kind: "session-tree", groupBy: "bot" });
+    press(pane, "g");
+    expect(pane.describe()).toEqual({ kind: "session-tree" });
+  });
+
+  it("revives grouped by bot with sigil-led headers, newest group first, unbound last", async () => {
+    const { pane } = paneOver(groupedWorld(), { groupBy: "bot", now: () => 60_000 });
+    await pane.settled();
+    expect(pane.overview.rows().map((row) => overviewRowLine(row, false))).toEqual([
+      "⚖ reviewer · 2 sessions · now",
+      "░ title-s1 · now #dock-v2",
+      "░ title-s4 · now",
+      "S scout · 1 session · now",
+      "░ title-s3 · now",
+      "no bot · 1 session · now",
+      "░ title-s2 · now #dock-v2",
+    ]);
+  });
+
+  it("keeps the grouping and the cursored session across a refresh", async () => {
+    const world = groupedWorld();
+    const { pane } = paneOver(world, { groupBy: "bot" });
+    await pane.settled();
+    press(pane, "j", "j");
+    expect(pane.overview.cursorSession()).toBe("s3");
+    world.items = [...world.items].reverse();
+    pane.refresh();
+    await pane.settled();
+    expect(pane.overview.groupBy()).toBe("bot");
+    expect(pane.overview.cursorSession()).toBe("s3");
+  });
+
+  it("names the key in a footer hint once there is something to group", async () => {
+    const { pane } = paneOver(groupedWorld());
+    await pane.settled();
+    const lines = contents(describePaneTree(pane.view(paneContext())));
+    expect(lines).toContain("g · group by arc or bot");
+    press(pane, "g", "g");
+    expect(contents(describePaneTree(pane.view(paneContext())))).toContain("g · grouped by bot");
+    const { pane: lone } = paneOver(worldOf("only"));
+    await lone.settled();
+    expect(contents(describePaneTree(lone.view(paneContext())))).not.toContain(
+      "g · group by arc or bot",
+    );
   });
 });

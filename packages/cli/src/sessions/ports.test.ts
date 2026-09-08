@@ -118,6 +118,27 @@ describe("sessionPort", () => {
     expect((await listSessions(dir)).sessions[0]?.title).toBe("tidy-title");
   });
 
+  it("persists the thinking switch once per change and serves it back on the attachment", async () => {
+    const dir = await tempDir();
+    const changed: string[] = [];
+    const port = sessionPort(dir, ".", { onChange: (sessionId) => changed.push(sessionId) });
+    const created = await port.create();
+    expect(created?.thinking).toBeUndefined();
+
+    await created?.recordThinking?.("on");
+    await created?.recordThinking?.("on");
+    await created?.recordThinking?.("off");
+    expect(changed).toEqual([created?.id, created?.id]);
+
+    const reopened = await port.open(created?.id ?? "");
+    expect(reopened?.thinking).toBe("off");
+    const levels = (await storeOf(dir, created?.id))
+      .entries()
+      .filter((entry) => entry.type === "thinking_level_change")
+      .map((entry) => (entry as { thinkingLevel: string }).thinkingLevel);
+    expect(levels).toEqual(["on", "off"]);
+  });
+
   it("persists an arc binding as an entry and serves it back on the attachment and the overview", async () => {
     const dir = await tempDir();
     const bound: Array<[string, string | undefined]> = [];

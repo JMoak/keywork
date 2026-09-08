@@ -5,7 +5,8 @@
 > inline as **⟨J⟩**: the entity merge (Q-B1, PD21.1), the scope layout (PD21.2), the
 > group-by toggle (Q-B2), the `notes` default (Q-B5), and the two-verb policy-row model
 > (Q-B8). Q-B3 is set aside, Q-B6 stays open for discussion, Q-B4 and Q-B7 stand as
-> reversible assumptions of the 2026-09-03 round. This file wins over
+> reversible assumptions of the 2026-09-03 round. J26 (the PD22 layer) and J27 through the
+> `skills` level landed 2026-09-06; the ledger records them. This file wins over
 > [`105`](105-inference-resolution.md) and below where it speaks; the ledger at the end
 > records what the tree actually does.
 >
@@ -335,7 +336,7 @@ searchable; bootstrap respects the split budget; a workspace fact written by a b
 the workspace/arc layer, not the bot layer (flush fixture); untrusted vault inert.
 **Strategy:** `OWN` over the J17 shapes; rides landed J3/J4/J6/J13 seams.
 
-### J27 (2pt): Learning policy (implements PD23)
+### J27 (2pt): Learning policy (implements PD23; `off`, `notes`, and `skills` landed 2026-09-06, `self` open)
 The `learning` levels: `notes` (session-end digest tagging + bot-scoped Gardener
 micro-sweep, budget capped, proposals only), `skills` (J10 hooks scoped to the bot's
 `skills/` dir; genesis gates from 98 idea 11), `self` (instruction-change proposals against
@@ -488,3 +489,318 @@ e2e 40/40.
    theme or NO_COLOR knob yet, so those two captures wait on one.
 6. `agent:` in command frontmatter became `bot:` with no alias.
 7. Pane-tray rows for bots were not added; the palette and go overlay carry the family.
+
+### J26 · bot memory layer · landed 2026-09-06
+
+- **The layer.** `engine/memory/bots/registry.ts` mirrors the arc registry: `BotRegistry` over a
+  vault root, `bots/<slug>/` with `MOC.md` as the bot's graph entity (frontmatter `bot`, `status`
+  `active` or `retired`, `created`), lazy `materialize(slug)` on the first write, `retireBot` as
+  the status verb, and `botStore(slug)` as a `MemoryStore` over the sub-vault that stamps every
+  note it writes with `learned_by: "[[bots/<slug>/MOC]]"` (`Note.learnedBy` reads it back as the
+  slug; `NoteInput.learnedBy` stamps a note a bot writes into another layer). `bots/` joined
+  `arcs/` and `daily/` as a structural directory, so the workspace walk never sees a bot note.
+- **Recall.** `engine/memory/bots/recall.ts`: `BotRecall` composes over any `MemorySearcher` (the
+  arc-composed one in practice), adds the active bot's hits boosted twice, tags them
+  `{ layer: "bot", bot }`, applies the superseded floor, and hides nothing. Other bots' layers
+  stay out of ambient recall and are reachable through `searchBot`. `MemoryLayerRef` gained the
+  bot variant and `searchHitLayer` yields `bot:<slug>`, so J13 citation events carry the layer
+  with no further change. `botBootstrapLayer` selects the MOC first, then pinned, then most
+  useful, within whatever budget it is handed.
+- **Composition.** `cli/bot-memory.ts` resolves a bot's layer from its scope: project bots in the
+  workspace vault (trusted only), global bots once in the user vault at
+  `~/.keywork/memory/bots/<slug>/`, `learning: off` nothing at all. It wraps the session's
+  searcher, supplies the flush target, and precomputes the bootstrap split per learning bot: the
+  bot slice gets a quarter of the 4096-token bootstrap budget and the workspace slice gets the
+  rest minus what the bot slice actually used, so an empty layer costs the workspace nothing.
+  Composed prompts carry workspace + bot slices; a bot with its own body gets only its own slice
+  appended. The standing injection `memory-bootstrap · scope bot:<slug>` announces it and the
+  slice's notes are recorded as bootstrap recalls on the session ledger at the first turn. The
+  same `composeAgents({ bots })` serves the panes app, `keywork run --bot`, and the chat REPL;
+  the binding is read from the session store, so resume and mid-session switches follow.
+- **Flush.** The prompt gains the bot clause only while a learning bot is bound: lines that start
+  with `bot:` are craft and land in the bot layer's daily log (materializing the layer on the
+  way); unprefixed lines are work and land in the workspace or active arc layer through the
+  unchanged path, same provenance, taint, staging, and redaction. `isMemoryFlushPrompt` still
+  recognizes the composed prompt for replay.
+- **Digest.** Bot-layer staged items ride the existing memory-pane inbox with the sigil as the
+  row tag (`⚖ Hostile Habit.md`); approve and discard route to the owning bot store. No new door,
+  no new counter. Bot layers are not yet listed as memory-pane layers (C68).
+- **Evidence.** `engine/memory/bots/registry.test` (lazy MOC, `learned_by`, workspace walk,
+  retire, slug, untrusted inert), `recall.test` (two sessions one bot, other bot ambient-invisible
+  yet searchable, arc tags kept beneath, retired skipped, untrusted inert, budget), `flush.test`
+  (clause routing, write-only-where-landed, unbound prompt byte-identical, partition),
+  `cli/bot-memory.test` (cross-session recall through `memory_search`, `bot:reviewer` citations
+  in the ledger and audit, unbound byte-for-byte on prompt, tools, flush prompt, daily write and
+  files, split budget in the built prompt, swapped-prompt slice, `learning: off` zero cost,
+  content rule at flush, slice refresh after learning, global bot in the user vault, untrusted
+  inert, digest tag and approve routing).
+
+**Gate (lane-run, 2026-09-06):** `bun run check:types` clean outside other lanes' in-flight
+TUI/doctor/run edits; `biome check` clean on every touched file; vitest
+`packages/engine packages/cli` 1550 passed with the 6 failures all in other lanes' files
+(`doctor.test`, `run.test`); `bot-memory.test` 13/13 across three runs. The lead runs the full gate.
+
+### Assumptions Jordan may reverse (2026-09-06)
+
+8. Q-B3 taken as recommended: a global bot's layer lives once in the user vault
+   (`~/.keywork/memory/bots/<slug>/`) and follows the user across workspaces; the user vault is
+   treated as trusted. The content rule is what keeps workspace facts out of it.
+9. The bot bootstrap share is a fixed quarter of the workspace bootstrap budget (1024 of 4096
+   tokens), adaptive downward only: the workspace slice reclaims whatever the bot slice leaves.
+   No config knob; the absolute readout waits for J27's `/policy`.
+10. Craft is routed by a `bot:` line prefix the flush prompt asks the model to use. A forgotten
+    prefix puts a craft line in the work layer, never a work fact in the bot layer, which is the
+    safe direction under the content rule.
+11. Bot recall and the bot flush ride the workspace's memory seams: a bound session in a directory
+    with no workspace declaration gets no bot layer either, global bot or not.
+12. `learned_by` uses the PD21.2 wikilink form rather than a bare slug. The bot store stamps its
+    own notes; `NoteInput.learnedBy` is the hook for bot-authored notes elsewhere, and no live
+    path writes those yet (daily-to-note promotion inside the layer is J27's micro-sweep).
+13. Bootstrap slices are computed once at composition and refreshed in-process after each bot
+    flush; notes added to a layer from outside the app show up at the next launch, as the
+    workspace slice does today.
+14. `memory_search` searches bot-layer notes but not bot-layer daily entries, matching the arc
+    layer; the daily search stays on the workspace log.
+
+### C68 · bot identity across surfaces · part 1 landed 2026-09-06
+
+- **Title bar (PD24.2).** `TitleBarState.bot` (`sigil` + `name`) renders in the PD19 detail
+  zone as a `bot` span, first in the tail: `█ auth-retry-fix #dock-v2 · ⚖ reviewer · $0.012 ·
+  plan`. Broadsheet and column show `sigil name`; clipping and masthead keep the sigil alone.
+  The shedding order under width pressure is now bot name → arc tag → mode word → telemetry →
+  sigil, then the fitted name, then the stamp. Tail ink is `textMid` (`pane-chrome.ts`
+  `tailInk`). `ConversationPane` composes it from `ledger.bot` through a `botOf` option that
+  `session-panes.ts` threads from the existing `SessionPaneDeps.botOf`; a bot whose definition
+  is gone falls back to `defaultSigil`. Identity is text, so glyph tier 0 and `NO_COLOR` keep
+  it legible by construction.
+- **Sessions overview group-by (PD24.3, Q-B2).** `SessionsOverviewModel` carries `groupBy`
+  (`none · arc · bot`); `g` cycles it in the pane (pane-local key, no leader chord; tray row
+  `group`). Rows become `OverviewRow = SessionOverviewRow | SessionGroupRow`: headers are
+  unselectable, keyed `group:<axis>:<member>`, and read `⚖ reviewer · 2 sessions · 3m`,
+  `#dock-v2 · 1 session · 1m`, `no bot · 2 sessions · 2m`. Groups order by their newest
+  session, sessions most-recent-first inside, the unbound remainder last; an axis with nothing
+  bound renders flat (no lone `no bot` header). The cursor stays on the same session across
+  a grouping change and a refresh. The axis persists through the `session-tree` descriptor
+  (`groupBy`, parsed back against an allow-list) and the `PaneRequest`/factory, so it survives
+  a workspace restore. A dim footer `g · group by arc or bot` / `g · grouped by bot` appears
+  once the overview holds two or more sessions. Bot group labels take the sigil from the
+  roster via `SessionTreePaneSeams.botSigil`; `SessionOverviewItem.bot` comes from the CLI
+  summary's `store.botBinding()`.
+- **Per-bot cost (PD24.4).** `cli/bots.ts` `boundStores` + `botCosts` run the engine's
+  `groupCosts` over every bot-bound session's entries; `knownCostNanos` lands on
+  `BotSummary.costNanos` only when every turn priced. Picker rows read `S scout · reads
+  before writing · 2 sessions · $0.0030 · current`; `/cost` in a bound pane appends `bot ⚖
+  reviewer · $0.0123 across 3 sessions` through a new `ConversationPorts.botSpend` seam wired
+  from `BotsPort.list()` (`app.ts` `botSpendLookup`), and stays byte-identical for unbound panes.
+- **Design language.** One clarification under the chroma section: bot identity is sigil and
+  name, never hue; hue stays the arc's.
+- **Waits on J26 (Q-B6 open):** the bot tag on bot-layer items in the memory pane and digest,
+  and the `/bot <slug>` briefing. The design-language line already names the memory-item tag
+  so J26 has its grammar.
+- **Evidence.** `title-bar.test` (bot zone across tiers, with and without an arc, shedding
+  order, monochrome, span tagging), `sessions-overview-model.test` (grouping, ordering,
+  header skipping, refresh survival, hint text), `session-tree-pane.test` (g cycle, descriptor
+  round-trip, revive grouped, refresh, footer hint, tray), `workspace-state.test` (groupBy
+  parse + rejection), `bot-picker.test` (cost fact), `conversation-model.test` (`/cost` bot
+  line), `cli/bots.test` (per-bot rollup equals `groupCosts` exactly; an unpriced turn leaves
+  the cost unknown). `arc-pane`, `arcs-pane`, `workflows-panes` tests moved to `sessionRows()`
+  / `cursorSession()`.
+- **Goldens.** None recaptured. `tray-tour/entity-tray.txt` will move by one row (the new
+  `group` tray entry); `bun run e2e tray-tour --update-goldens` refreshes it. The footer hint
+  shows only at two or more sessions, so the chrome-states captures (one session) are unchanged.
+- **Crossings (additive):** `pane.ts` / `pane-kinds.ts` / `workspace-state.ts` `groupBy` on the
+  `session-tree` descriptor, `app.ts` factory + `botSpend` wiring, `session-panes.ts` two
+  pass-throughs, `conversation-model.ts` `reportCost`, `arc-pane.ts` / `arcs-pane.ts` read
+  session rows through `sessionRows()` / `cursorSession()` / `withoutArcTag`.
+
+**Gate (lane-run):** `bun run check:types` clean; vitest `packages/tui` + `cli/bots.test`
+1552 passed (95 files); biome clean on `packages/tui/src` and the touched cli files. Full gate
+lead-run.
+
+### Assumptions Jordan may reverse (2026-09-06, C68 part 1)
+
+1. Shedding rank: bot name before the arc tag (PD24.2's wording), sigil after telemetry, so the
+   sigil is the last tail zone standing before the fitted name.
+2. The bot shows at every tier (sigil-only below column); the arc stays broadsheet-only as PD19
+   decided, because nothing else carries bot identity while the border hue carries the arc's.
+3. Bot ink in the title tail is `textMid`, the same rung as telemetry.
+4. Unbound sessions form the last group (`no arc` / `no bot`) rather than sorting by recency
+   with the bound groups; an axis with nothing bound renders flat.
+5. Group headers carry `label · n sessions · age of newest`; session rows stay unchanged (no
+   per-row bot sigil), since the group label is where PD24.2 places bot identity.
+6. The footer hint appears at two or more sessions, the point where grouping means something.
+7. Per-bot cost surfaces only when every bound turn is priced (`knownCostNanos`), mirroring the
+   session rows; partial totals stay off rather than reading as the whole.
+8. `/cost` reports the bot line through `BotsPort.list()` (a session-dir scan) rather than a
+   dedicated cost port.
+
+### J27 · learning policy · `notes` level landed 2026-09-06 (`skills` and `self` wait on J10)
+
+- **The micro-sweep.** `engine/memory/bots/sweep.ts` `sweepBotLayer({ registry, slug, judgment })`
+  runs the J7 Gardener over the bot's own store in a new `proposeOnly` mode: every promotion
+  the judgment port returns lands in the bot's inbox as a `borderline-promotion`, every pair
+  action becomes a merge or supersession proposal, and usefulness is reported but never
+  stamped. The only files a sweep touches are `.staging/` sidecars and the layer's own
+  `curation.md` audit line. Layers that never materialized, retired layers, and untrusted vaults
+  are skipped with a named reason (`no-layer`, `retired`, `inert`) and no write at all.
+- **The cap.** `botSweepTokenBudget = 1024`. `SweepOptions.entryTokenBudget` (new on the Gardener,
+  unset for the workspace sweep) hands the judgment port only the newest daily entries that fit,
+  in log order, and skips the port entirely when nothing fits. `entryTokens` is the same
+  `ceil(length / 4)` estimate notes already use.
+- **Approve lands the note.** The J11 kernel now lands an approved `borderline-promotion` as an
+  agent note through the same write path as `writeNote` (provenance, confidence, redaction, the
+  store's `learned_by` stamp, one revertable ledger entry); a promotion whose note appeared in
+  the meantime is dropped without a write. Until now approving a promotion only cleared it,
+  which would have left the notes level with nothing to learn from.
+- **Wiring.** `BotMemory.sweep(judgmentFor)` sweeps every bot with a layer, skipping any bot the
+  lookup gives no judgment for. `compose-panes.ts` adds it as a second closer after the
+  workspace sweep; the judgment is `closingJudgment` over the shared `closing` role provider,
+  falling back to the provider of a session bound to that bot (the arc close's provider rule,
+  now shared as `closingProvider`).
+- **The digest.** Bot-layer proposals ride the memory-pane inbox J26 already tags with the sigil
+  (`⚖ Terse Reviews` as a `promotion` row); approve routes to the owning bot store, and the
+  workspace vault never sees the note. `returnDelta` gains an optional bot line, `1 learned by
+  ⚖ reviewer: [[Terse Reviews]]`, after the arc line and before the workspace line, with
+  `gatherReturnDelta({ bots, bot })` reading the layer; no caller passes it yet (see assumptions).
+- **`/policy`.** In a bot-bound pane the conversation model answers `/policy` itself through a
+  new `ConversationPorts.botOf` seam (threaded from the existing `SessionPaneDeps.botOf`, no
+  `app.ts` change) and prints `learning · ⚖ reviewer · notes` followed by one row per level,
+  the current one marked `▸`. `skills` and `self` read "not built yet, runs as notes" so a bot
+  declared at either level is never mistaken for a finished one. `BotEntry.learning` is now
+  stamped by the CLI's `entryOf`. An unbound pane falls through to the command port exactly as
+  before, so `/policy` there is still `unknown command /policy`; the command is not in the
+  suggestion tray for the same reason.
+- **Evidence.** `engine/memory/gardener.test` (propose-only routes a confident promotion to the
+  inbox and touches only staging plus the audit; a confident agent merge becomes a proposal;
+  usefulness reported unstamped; budget keeps the newest entries that fit in log order; nothing
+  fits skips the port), `bots/sweep.test` (proposals never notes, approve lands with
+  `learned_by`, the cap pinned at 1024 with a 12-entry log, no-layer / retired / inert write
+  nothing), `store.test` (approved promotion lands as an agent note and reverts; a note that
+  arrived first wins), `return-delta.test` (bot line placement and sigil; byte-identical without
+  a bot), `cli/bot-memory.test` ("the learning policy": `off` session changes only the workspace
+  daily and grows no `bots/` dir while a sneaky judgment is never consulted; `notes` sweep
+  proposes into the bot inbox, the digest row reads `⚖ Terse Reviews`, approve lands in the bot
+  layer only; unmaterialized layers skipped without a write), `tui/conversation-model.test`
+  ("/policy": full readout, `self` marked not built yet, unbound pane unchanged),
+  `cli/bots.test` (`learning` on entries), `cli/compose-panes.test` (two closers).
+- **Crossings (additive):** `engine/memory/store.ts` (`promotionDeltas`, `noteContent` /
+  `noteDeltas` split out of `writeNote`, approve subject is the landed path), `engine/index.ts`
+  exports, `cli/bots.ts` `entryOf.learning`, `cli/compose-panes.ts` closer + `closingProvider`,
+  `tui/bots.ts` `BotEntry.learning` + `learningPolicyReadout`, `tui/session-panes.ts` one
+  pass-through, `tui/conversation-model.ts` `/policy` case.
+
+**Gate (lane-run, 2026-09-06):** `bun run check:types` clean; biome clean on every touched
+file; vitest over the touched files (`engine/memory/**`, `cli/bot-memory`, `cli/bots`,
+`cli/memory`, `cli/compose-panes`, `tui/conversation-model`, `tui/bot-commands`,
+`tui/session-panes`) 514 passed across 36 files. The lead runs the full gate.
+
+### Assumptions Jordan may reverse (2026-09-06, J27 notes)
+
+1. "Proposals only" is read strictly: the bot sweep never writes a note, merge, supersession, or
+   usefulness stamp on its own, even inside the agent-only blast radius PD22.4 would allow.
+   Loosening it is one flag (`proposeOnly: false`) on the sweep's Gardener.
+2. The sweep cap is 1024 entry tokens per bot per close, newest entries first; older craft that
+   never fit waits for a quieter close. No config knob.
+3. The bot sweep reuses the arc `closingJudgment` port unchanged, so its prompt still speaks of
+   "a keywork arc"; a craft-flavoured instruction is a follow-up on `closing.ts` (arc territory).
+4. Approving a `borderline-promotion` now lands the note everywhere, workspace included; the
+   old approve-as-dismiss behaviour is gone since discard already covers it.
+5. `/policy` prints only the learning level; the J-D8 bootstrap slice readout (1024 of 4096
+   tokens) is still owed and needs the CLI budget to reach the pane.
+6. The return-delta bot line exists in the engine but no surface passes a bot yet; `chat.ts`
+   "since you were here" and the arc pane are the candidates, both outside this lane.
+7. A bot declared `skills` or `self` runs as `notes` at runtime (J26 already did this); the
+   readout says so rather than refusing the level.
+
+### J27 · learning policy · `skills` level landed 2026-09-06 (`self` open)
+
+- **The Gardener reads skill telemetry.** `Gardener.sweep({ skills })` takes a `SkillEvidence`
+  snapshot (`{ name, authoredBy }` per skill plus the `readSkillTelemetry` snapshot) and turns it
+  into `skill-review` proposals, one per agent-authored skill that is either churning (patches
+  plus rewrites at or above `skillChurn`, default 2) or unused (zero uses and no activity for
+  `skillIdleDays`, default 30, measured against the Gardener's clock). The proposal cites the
+  counts (`uses`, `patches`, `rewrites`) and the inbox row reads `rework skill release-tag ·
+  4 uses, 2 patches, 1 rewrites` or `retire skill old-routine`. Skills without the
+  `authored_by` marker are never proposed on, the blast-radius rule J7 already keeps, and the
+  Gardener still writes no skill file: approving a review only clears the row. The workspace
+  closer (`compose-panes.ts`, `chat.ts`) now hands `sweepOnClose` the evidence built by
+  `skillEvidenceOf(composition.skills, skillTelemetryFile(...))`.
+- **Skill genesis.** `skills/genesis.ts` reads a command sequence out of a daily entry
+  (backticked commands in order, or `$ `-prompted lines), normalizes whitespace, and fingerprints
+  the ordered sequence (sha256, 16 hex). A sequence needs two or more commands to count, and
+  `recurringSequences` needs two distinct entries carrying the same fingerprint before anything
+  fires. `bots/skill-genesis.ts` runs that over the bot layer's whole daily log, skips fingerprints
+  already in the layer's reserved `skill-genesis.json`, proposes a `skill-proposal` (`name`,
+  `fingerprint`, `commands` as one redactable string, `occurrences`) through the store's inbox,
+  then records the fingerprints and one audit line (`skill genesis: proposed 1`). The fingerprint
+  is remembered at proposal time, so a declined pattern never re-fires and a second bot with the
+  same routine gets its own single proposal from its own ledger. No model call is involved, so the
+  judgment cap stays the 1024 entry tokens the notes level set.
+- **The bot library.** `BotMemory.skillsFor(bot)` exists only for a bot declared `skills` with a
+  layer: a `SkillLibrary` over the bot's own `.keywork/bots/<slug>/skills/` (discovered through the
+  new `discoverSkillsUnder`) plus the workspace skills it does not shadow, with a `SkillGenesis`
+  root at the bot's dir, convention `skills`, author `keywork/<slug>`, and its own telemetry file
+  (`~/.keywork/skills/<identity>/bot-<slug>.json`). `composeAgents` gives a bound session that
+  library's tools in place of the workspace library's, so a stale bot skill self-patches through
+  the unchanged J10 path and lands in the bot's dir, while the workspace library never sees the bot
+  skill. `BotMemory.sweep` passes the library's skills and telemetry as evidence to the bot sweep,
+  and `BotMemory.approve` lands an approved `skill-proposal` by creating the skill through the
+  library (`skillDescriptionFor` / `skillBodyFor`, a numbered command list) before clearing the
+  row; a name the library already holds is left alone. The memory pane's approve routes bot rows
+  through it.
+- **Two notes-lane follow-ups.** `closingJudgment` takes a `subject`: `{ kind: "bot", slug, sigil }`
+  swaps both prompts for craft wording ("the closing distiller for ⚖ reviewer, a keywork bot ...
+  keep to craft") and drops the arc steer clause; the arc wording is byte-identical without it.
+  The chat REPL's "since you were here" now passes the bound bot and its registry to
+  `gatherReturnDelta`, so a resumed bot-bound session prints `1 learned by H helper: [[Terse
+  Reviews]]`.
+- **`/policy`.** `skills` reads `keeps routines in its own skills dir, self-patched, proposed from
+  recurring commands`; `self` still reads `not built yet, runs as notes`.
+- **Evidence.** `skills/genesis.test` (extraction, normalization, distinct-occurrence gate, order
+  sensitivity, naming fallback), `memory/gardener.test` "skill telemetry" (churning and unused
+  proposed with counts, fresh and human skills skipped, staging-only writes, no re-stage while
+  pending), `bots/sweep.test` "at the skills level" (one occurrence proposes nothing, two propose
+  exactly one, discard then a third occurrence proposes nothing, a second bot gets its own,
+  notes level silent, judgment under the cap with genesis on, telemetry review in the bot inbox),
+  `arcs/closing.test` (arc versus bot wording), `cli/bot-memory.test` "the skills level"
+  (self-patch lands in the bot dir with the author kept while the human workspace skill is
+  byte-identical and the workspace library never sees the bot skill; genesis proposal row
+  `R new skill bun-run-check · 3 steps, seen 2 times`, approve creates the skill under the bot
+  with `authored_by: "keywork/routinier"` and no `.keywork/skills/` appears, the third
+  occurrence proposes nothing; churning bot skill flagged `R rework skill build · 0 uses, 2
+  patches, 0 rewrites`), `cli/chat.test` (bot line on resume), `cli/memory.test` (`sweepOnClose`
+  with evidence stages a review), `tui/conversation-model.test` (`/policy` readout).
+- **Crossings (additive):** `memory/staging.ts` two proposal kinds and keys; `extensions/skills.ts`
+  `discoverSkillsUnder`; `cli/memory.ts` inbox rows for both kinds, `skillEvidenceOf`,
+  `sweepOnClose(memory, skills?)`, approve routed through `BotMemory.approve`; `cli/compose.ts`
+  `skillToolsFor` takes the library a bot session resolves; `cli/paths.ts` `botSkillTelemetryFile`;
+  `engine/index.ts` exports.
+
+**Gate (lane-run, 2026-09-06):** `bun run check:types` clean outside other lanes' in-flight TUI
+test edits; biome clean on every touched file; vitest over the touched files 225 engine
+(`skills/**`, `memory/gardener`, `memory/bots/**`, `arcs/closing`, `staging`, `store`,
+`extensions/**`) plus 96 CLI (`bot-memory`, `chat`, `memory`, `compose-panes`, `bots`) plus 70
+`tui/conversation-model`, all passing. The lead runs the full gate.
+
+### Assumptions Jordan may reverse (2026-09-06, J27 skills)
+
+1. A bot's skills live beside its definition at `.keywork/bots/<slug>/skills/` (the user root for a
+   global bot), the git-able place a person already edits. The memory vault's `bots/<slug>/` was
+   the other reading of PD23 and would have parsed a `SKILL.md` as a note.
+2. "Command sequence" means two or more backticked or `$ `-prompted commands in one daily entry;
+   a lone command never seeds a skill. Order is part of the fingerprint.
+3. The fingerprint is remembered when the proposal is staged, so approve, discard, and a proposal
+   that is still pending all count as "proposed once ever". Fingerprints live in the bot layer's
+   reserved `skill-genesis.json` and go through the store's ledgered reserved write.
+4. Approving a `skill-review` only clears the row. The Gardener proposes; retiring or rewriting a
+   skill stays a human act (or the bot's own `skill_rewrite` mid-run).
+5. Review thresholds are `skillChurn: 2` and `skillIdleDays: 30` on the Gardener's threshold
+   record; no config knob.
+6. A proposed skill is named after its first command (`bun-run-check`), falling back to
+   `routine-<fingerprint>`; a name the bot library already holds means approve creates nothing.
+7. The bot library also lists workspace skills it does not shadow, so a bot can still load and, when
+   they carry the marker, repair shared skills; its genesis root is only ever its own dir.
+8. Bot skill telemetry is per workspace identity and bot (`~/.keywork/skills/<identity>/bot-<slug>.json`),
+   so a global bot's counts do not follow it across workspaces.
+9. The bot closing prompt has no steer clause; direction is an arc-close affordance.
+10. `self` still runs as `notes`; the readout says so.

@@ -19,6 +19,7 @@
       },
       "dependencies": {
         "@keywork/engine": "workspace:*",
+        "@keywork/server": "workspace:*",
         "@keywork/shared": "workspace:*",
         "@keywork/tui": "workspace:*",
       },
@@ -33,6 +34,14 @@
     },
     "packages/extensions": {
       "name": "@keywork/extensions",
+      "version": "0.0.1",
+      "dependencies": {
+        "@keywork/engine": "workspace:*",
+        "@keywork/shared": "workspace:*",
+      },
+    },
+    "packages/server": {
+      "name": "@keywork/server",
       "version": "0.0.1",
       "dependencies": {
         "@keywork/engine": "workspace:*",
@@ -82,6 +91,8 @@
     "@keywork/engine": ["@keywork/engine@workspace:packages/engine"],
 
     "@keywork/extensions": ["@keywork/extensions@workspace:packages/extensions"],
+
+    "@keywork/server": ["@keywork/server@workspace:packages/server"],
 
     "@keywork/shared": ["@keywork/shared@workspace:packages/shared"],
 

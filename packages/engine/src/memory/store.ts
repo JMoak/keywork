@@ -28,6 +28,7 @@ import {
   firstString,
   isDailyDate,
   isEntityPath,
+  learnedByLink,
   mocContent,
   type Note,
   noteName,
@@ -63,6 +64,7 @@ export interface MemoryStoreOptions {
   secrets?: Record<string, string>;
   reservedPaths?: readonly string[];
   ledgerCapacity?: number;
+  learnedBy?: string;
 }
 
 export interface NoteInput {
@@ -77,6 +79,7 @@ export interface NoteInput {
   supersedes?: string;
   delivered?: string;
   distilledFrom?: string;
+  learnedBy?: string;
   anchor?: CheckpointAnchor;
 }
 
@@ -124,6 +127,8 @@ interface WriteTarget {
   name: string;
 }
 
+type PromotionReview = Extract<StagedItem, { kind: "borderline-promotion" }>;
+
 export class MemoryStore {
   readonly trusted: boolean;
   private readonly files: VaultFiles;
@@ -131,6 +136,7 @@ export class MemoryStore {
   private readonly now: () => Date;
   private readonly secrets: NamedSecret[];
   private readonly ledgerCapacity: number;
+  private readonly learnedBy: string | undefined;
   private readonly log: LedgerEntry[] = [];
   private turn: Promise<unknown> = Promise.resolve();
 
@@ -141,6 +147,7 @@ export class MemoryStore {
     this.now = options.now ?? (() => new Date());
     this.secrets = Object.entries(options.secrets ?? {}).map(([name, value]) => ({ name, value }));
     this.ledgerCapacity = options.ledgerCapacity ?? defaultLedgerCapacity;
+    this.learnedBy = options.learnedBy;
   }
 
   async listNotes(): Promise<Note[]> {
@@ -227,16 +234,12 @@ export class MemoryStore {
   async writeNote(input: NoteInput): Promise<WriteResult> {
     this.gate();
     return this.serialized(async () => {
-      const body = this.redact(input.body);
       const target = await this.resolveWriteTarget(input);
       const supersedes = await this.resolveSupersedes(input);
-      const frontmatter = await this.noteFrontmatter(input, target, supersedes);
-      const content = ensureTrailingNewline(serializeDocument(frontmatter, body));
+      const content = await this.noteContent(input, target, supersedes);
       if (input.provenance === "untrusted")
         return this.stage("note", target.path, content, supersedes);
-      const deltas = [await this.delta(target.path, content)];
-      if (supersedes !== undefined)
-        deltas.push(await this.supersededStamp(supersedes, target.name));
+      const deltas = await this.noteDeltas(target, content, supersedes);
       const op: LedgerOp = deltas[0]?.before === null ? "create" : "edit";
       return this.commit(op, deltas, target.path, false);
     });
@@ -300,7 +303,8 @@ export class MemoryStore {
         ...(await this.landingDeltas(item)),
         ...(await this.staging.removalDeltas(item)),
       ];
-      const result = await this.commit("approve", deltas, stagedSubjectPath(item), false);
+      const landed = deltas[0]?.path ?? stagedSubjectPath(item);
+      const result = await this.commit("approve", deltas, landed, false);
       await this.audit(`approved ${describeStaged(item)}`);
       return result;
     });
@@ -412,6 +416,7 @@ export class MemoryStore {
     const existing = await this.files.read(target.path);
     const inherited = existing === null ? {} : parseDocument(existing, target.path).frontmatter;
     const aliases = this.noteAliases(input, target, inherited);
+    const learnedBy = input.learnedBy ?? this.learnedBy;
     return {
       ...inherited,
       provenance: input.provenance,
@@ -426,6 +431,7 @@ export class MemoryStore {
         valid_from: input.delivered,
       }),
       ...(input.distilledFrom !== undefined && { distilled_from: `[[${input.distilledFrom}]]` }),
+      ...(learnedBy !== undefined && { learned_by: learnedByLink(learnedBy) }),
       ...(input.anchor !== undefined && anchorFrontmatter(input.anchor)),
     };
   }
@@ -473,7 +479,39 @@ export class MemoryStore {
     return this.commit("create", stagedWriteDeltas(meta, content), target, true);
   }
 
+  private async noteContent(
+    input: NoteInput,
+    target: WriteTarget,
+    supersedes: string | undefined,
+  ): Promise<string> {
+    const frontmatter = await this.noteFrontmatter(input, target, supersedes);
+    return ensureTrailingNewline(serializeDocument(frontmatter, this.redact(input.body)));
+  }
+
+  private async noteDeltas(
+    target: WriteTarget,
+    content: string,
+    supersedes: string | undefined,
+  ): Promise<FileDelta[]> {
+    const deltas = [await this.delta(target.path, content)];
+    if (supersedes !== undefined) deltas.push(await this.supersededStamp(supersedes, target.name));
+    return deltas;
+  }
+
+  private async promotionDeltas(promotion: PromotionReview): Promise<FileDelta[]> {
+    if ((await this.readNote(promotion.title)) !== undefined) return [];
+    const input: NoteInput = {
+      title: promotion.title,
+      body: promotion.body,
+      provenance: "agent",
+      confidence: promotion.confidence,
+    };
+    const target = await this.resolveWriteTarget(input);
+    return this.noteDeltas(target, await this.noteContent(input, target, undefined), undefined);
+  }
+
   private async landingDeltas(item: StagedItem): Promise<FileDelta[]> {
+    if (item.kind === "borderline-promotion") return this.promotionDeltas(item);
     if (!isStagedWrite(item)) return [];
     const before = await this.files.read(item.target);
     const after = item.kind === "daily" ? `${before ?? ""}${item.content}` : item.content;

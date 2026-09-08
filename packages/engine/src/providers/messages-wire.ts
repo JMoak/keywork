@@ -15,6 +15,8 @@ export interface MessagesRequestShape {
   maxTokens: number;
 }
 
+export const thinkingBudgetTokens = 16_000;
+
 export function toMessagesRequest(
   request: ProviderRequest,
   model: string,
@@ -27,13 +29,32 @@ export function toMessagesRequest(
     max_tokens: shape.maxTokens,
     stream: true,
     cache_control: automaticPromptCache,
+    ...(request.thinking === true && { thinking: thinkingConfig(model, shape.maxTokens) }),
     ...(system !== "" && { system }),
     messages: toWireMessages(request.messages, owner),
     ...(request.tools.length > 0 && { tools: request.tools.map(toWireTool) }),
   };
 }
 
+export function thinkingConfig(model: string, maxTokens: number): object {
+  return takesThinkingBudget(model)
+    ? { type: "enabled", budget_tokens: Math.min(thinkingBudgetTokens, maxTokens - 1) }
+    : { type: "adaptive", display: "summarized" };
+}
+
 const automaticPromptCache = { type: "ephemeral" } as const;
+
+// Claude 4.6 and later reject budget_tokens and default thinking text to
+// omitted; every earlier Claude only thinks when given a budget.
+const adaptiveThinkingSince = 4.6;
+
+function takesThinkingBudget(model: string): boolean {
+  const id = model.slice(model.lastIndexOf("/") + 1).toLowerCase();
+  if (/^claude-\d-/.test(id)) return true;
+  const generation = /^claude-(?:haiku|sonnet|opus)-(\d+)(?:-(\d+))?/.exec(id);
+  if (generation === null) return false;
+  return Number(`${generation[1]}.${generation[2] ?? "0"}`) < adaptiveThinkingSince;
+}
 
 interface WireMessage {
   role: "user" | "assistant";

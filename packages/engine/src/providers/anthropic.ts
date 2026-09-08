@@ -143,12 +143,12 @@ async function* assembleTurn(
       case "content_block_start":
         openBlock(event.content_block, index, calls, thinking);
         break;
-      case "content_block_delta":
-        if (event.delta?.type === "text_delta" && event.delta.text) {
-          yield { type: "text", text: event.delta.text };
-        }
+      case "content_block_delta": {
+        const shown = shownDelta(event.delta);
+        if (shown !== undefined) yield shown;
         extendBlock(event.delta, index, calls, thinking);
         break;
+      }
       case "content_block_stop":
         yield* closeBlock(index, owner, calls, thinking);
         break;
@@ -188,6 +188,14 @@ function openBlock(
     default:
       return;
   }
+}
+
+function shownDelta(delta: WireDelta | undefined): TurnDelta | undefined {
+  if (delta?.type === "text_delta" && delta.text) return { type: "text", text: delta.text };
+  if (delta?.type === "thinking_delta" && delta.thinking) {
+    return { type: "visible-thinking", text: delta.thinking };
+  }
+  return undefined;
 }
 
 function extendBlock(

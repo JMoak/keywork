@@ -6,10 +6,13 @@ import { join } from "node:path";
 import { ConfigError, canonicalPath } from "@keywork/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  botSkillTelemetryFile,
   defaultSessionDir,
   ensureStateLayout,
+  keyworkHome,
   projectKey,
   StateLayoutError,
+  skillTelemetryFile,
   snapshotGitDir,
   stateLayoutVersion,
   workspaceIdentity,
@@ -139,6 +142,20 @@ describe("workspaceIdentity for named workspaces (PD10)", () => {
     expect(snapshotGitDir(root, "frontend")).toBe(
       join(homedir(), ".keywork", "snapshots", workspaceIdentity(root, "frontend")),
     );
+  });
+});
+
+describe("skill telemetry files", () => {
+  it("live under the injected user root, and under the home directory only by default", () => {
+    expect(skillTelemetryFile("abc123", "/scratch/user")).toBe(
+      join("/scratch/user", ".keywork", "skills", "abc123.json"),
+    );
+    expect(botSkillTelemetryFile("abc123", "muse", "/scratch/user")).toBe(
+      join("/scratch/user", ".keywork", "skills", "abc123", "bot-muse.json"),
+    );
+    expect(skillTelemetryFile("abc123")).toBe(join(keyworkHome(), "skills", "abc123.json"));
+    expect(keyworkHome("/scratch/user")).toBe(join("/scratch/user", ".keywork"));
+    expect(keyworkHome()).toBe(join(homedir(), ".keywork"));
   });
 });
 

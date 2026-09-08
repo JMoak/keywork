@@ -2,13 +2,18 @@ export {
   Agent,
   type AgentOptions,
   addUsage,
+  type Confirmation,
   type ConfirmingGate,
+  type DelegatedOutcome,
+  type DelegatedTurn,
   type PermissionResolver,
   QueuedPromptCancelledError,
   type SendOptions,
+  type SpillSource,
   type ToolGuard,
   type ToolPermission,
   type ToolSource,
+  type TurnDelegate,
   type TurnSettler,
 } from "./agent.ts";
 export { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
@@ -21,7 +26,22 @@ export {
   undeclaredCapabilities,
   withDeclaredCapabilities,
 } from "./capabilities.ts";
-export { Checkpoints, type CheckpointsOptions, UnknownCheckpointError } from "./checkpoints.ts";
+export {
+  type ChangedPath,
+  type CheckpointReads,
+  Checkpoints,
+  type CheckpointsOptions,
+  UnknownCheckpointError,
+} from "./checkpoints.ts";
+export {
+  type BusEvent,
+  coalesceDeltas,
+  type DeltaCoalescer,
+  type EventSink,
+  frameTick,
+  frameTickMs,
+  type TickScheduler,
+} from "./coalesce.ts";
 export {
   type DiagnosticsLevel,
   type DiagnosticsLine,
@@ -58,7 +78,9 @@ export {
   type TemplateSegment,
 } from "./extensions/markdown-commands.ts";
 export {
+  bundledSkillsRoot,
   discoverSkills,
+  discoverSkillsUnder,
   type SkillDefinition,
   type SkillLoad,
   skillConventionDirs,
@@ -99,6 +121,34 @@ export {
   type ResolutionFailureCode,
   type ResolutionRequest,
 } from "./inference/types.ts";
+export {
+  type DiagnosticsObserverOptions,
+  type DiagnosticsPublication,
+  diagnosticsObserver,
+} from "./lsp/after-save.ts";
+export { diagnosticsBlock } from "./lsp/format.ts";
+export { resolveOnPath, type SpawnLike } from "./lsp/path.ts";
+export {
+  type Diagnostic,
+  defaultLanguageBudgets,
+  type IdleScheduler,
+  idleLanguageFacts,
+  type LanguageBudgets,
+  type LanguageFacts,
+  type LanguagePort,
+  type LanguagePortOptions,
+  type LanguageServerFact,
+  languagePort,
+  type ServerState,
+} from "./lsp/port.ts";
+export {
+  builtInLanguageServers,
+  type LanguageServerSetting,
+  type LanguageServerSpec,
+  type LanguageServerTable,
+  languageOf,
+  languageServersFor,
+} from "./lsp/servers.ts";
 export {
   connectStdioServer,
   McpAbortedError,
@@ -169,7 +219,11 @@ export {
   type ArcBindingListener,
   ArcBindings,
 } from "./memory/arcs/bindings.ts";
-export { type ClosingAgentOptions, closingJudgment } from "./memory/arcs/closing.ts";
+export {
+  type ClosingAgentOptions,
+  type ClosingSubject,
+  closingJudgment,
+} from "./memory/arcs/closing.ts";
 export { ArcCloseDraft } from "./memory/arcs/draft.ts";
 export {
   ArcOpenQuestions,
@@ -190,7 +244,10 @@ export {
   type ArcSearchHit,
   arcBootstrapLayer,
   arcLayer,
+  botLayer,
   defaultArcBoost,
+  isLayeredHit,
+  type LayeredSearchHit,
   type MemoryLayerRef,
   searchHitLayer,
   workspaceLayer,
@@ -226,6 +283,34 @@ export {
   selectWithinBudget,
 } from "./memory/bootstrap.ts";
 export {
+  BotRecall,
+  type BotRecallOptions,
+  type BotRecallOutcome,
+  botBootstrapLayer,
+  defaultBotBoost,
+} from "./memory/bots/recall.ts";
+export {
+  type BotLayerRecord,
+  type BotLayerStatus,
+  BotRegistry,
+  type BotRegistryOptions,
+  botGenesisFile,
+  MissingBotLayerError,
+  validateBotSlug,
+} from "./memory/bots/registry.ts";
+export {
+  proposeSkillGenesis,
+  rememberedFingerprints,
+  type SkillGenesisReport,
+} from "./memory/bots/skill-genesis.ts";
+export {
+  type BotSweepOptions,
+  type BotSweepReport,
+  type BotSweepSkip,
+  botSweepTokenBudget,
+  sweepBotLayer,
+} from "./memory/bots/sweep.ts";
+export {
   type CitationChain,
   type CitationChainHop,
   type CitationEvent,
@@ -244,7 +329,11 @@ export {
   type UsefulnessSink,
 } from "./memory/citations.ts";
 export {
+  type BotFlushTarget,
+  type BotLearnings,
   backtrackFlushClause,
+  botFlushClause,
+  botLinePrefix,
   type FlushOutcome,
   flushPrompt,
   isMemoryFlushPrompt,
@@ -253,6 +342,7 @@ export {
   type MemoryFlushOptions,
   memoryFlushPrompt,
   noReplyToken,
+  partitionBotLines,
   shouldFlush,
 } from "./memory/flush.ts";
 export {
@@ -266,12 +356,16 @@ export {
   type CurationThresholds,
   type DailyEntryCandidate,
   defaultCurationThresholds,
+  entryTokens,
   Gardener,
   type GardenerOptions,
   type PairRelation,
   type PairVerdict,
   type PromotionProposal,
   type ProposalRejection,
+  type SkillEvidence,
+  type SkillEvidenceEntry,
+  type SkillReviewReason,
   type SweepOptions,
   type SweepReport,
 } from "./memory/gardener.ts";
@@ -300,10 +394,14 @@ export {
 } from "./memory/ledger.ts";
 export { canonicalEntityPath, InvalidTitleError, titleKey } from "./memory/naming.ts";
 export {
+  botMocLink,
+  botMocName,
   type DailyEntry,
   extractWikilinks,
   InvalidDailyDateError,
   isEntityPath,
+  learnedByLink,
+  learnedBySlug,
   type Note,
   type NoteWriteTarget,
   noteName,
@@ -328,6 +426,7 @@ export {
 } from "./memory/recall-tools.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
 export {
+  type BotIdentity,
   type GatherReturnDeltaOptions,
   gatherReturnDelta,
   type ReturnDeltaInputs,
@@ -387,6 +486,7 @@ export {
   type ProviderStateOwner,
   type RedactedThinkingPart,
   type Role,
+  type SpillReference,
   type TextPart,
   type ThinkingPart,
   type ToolCallPart,
@@ -394,6 +494,7 @@ export {
   textMessage,
   toolCalls,
   type Usage,
+  type VisibleThinkingPart,
 } from "./messages.ts";
 export {
   MockProvider,
@@ -416,6 +517,7 @@ export {
   sessionCost,
   withTurnCost,
 } from "./pricing.ts";
+export { processExists } from "./proc.ts";
 export {
   buildSystemPrompt,
   loadProjectInstructions,
@@ -520,6 +622,7 @@ export {
   type ThinkingLevelChangeEntry,
 } from "./session/entries.ts";
 export {
+  type AskRule,
   type ContextInjection,
   type ExtensionState,
   extensionState,
@@ -527,6 +630,7 @@ export {
   type JournalEvent,
   type JournalTap,
   journalEvents,
+  type PermissionAsk,
   type PermissionDecision,
   type PermissionGate,
   type PermissionVerdict,
@@ -544,11 +648,72 @@ export {
   type TurnSettlement,
 } from "./session/settle.ts";
 export {
+  type BoundedToolOutput,
+  type ByteRange,
+  boundToolOutput,
+  defaultToolOutputBudget,
+  elisionMarker,
+  removeSessionFiles,
+  SpillStore,
+  spillDirFor,
+} from "./session/spill.ts";
+export {
   type BranchSummaryInput,
   type CompactionInput,
   type SessionStats,
   SessionStore,
 } from "./session/store.ts";
+export {
+  type AgentAuthoredSkill,
+  authoredByKey,
+  authorOf,
+  claimAgentAuthored,
+  keyworkAuthor,
+  ProtectedSkillError,
+  SkillAlreadyExistsError,
+} from "./skills/authorship.ts";
+export {
+  type CommandOccurrence,
+  commandSequenceOf,
+  genesisRecurrenceFloor,
+  genesisSequenceFloor,
+  type RecurringSequence,
+  recurringSequences,
+  type SkillProposal,
+  sequenceFingerprint,
+  skillBodyFor,
+  skillDescriptionFor,
+  skillNameFor,
+  skillProposalFor,
+} from "./skills/genesis.ts";
+export {
+  ReferenceOutsideSkillError,
+  type SkillChange,
+  type SkillChangeKind,
+  type SkillGenesis,
+  SkillGenesisUnavailableError,
+  SkillLibrary,
+  type SkillLibraryOptions,
+  SkillPatchError,
+  type SkillView,
+  UnknownSkillError,
+} from "./skills/library.ts";
+export {
+  readSkillTelemetry,
+  type SkillActivity,
+  type SkillEventCounts,
+  SkillTelemetry,
+  type SkillTelemetryEvent,
+  type SkillTelemetryOptions,
+  type SkillTelemetrySnapshot,
+  skillTelemetryEvents,
+} from "./skills/telemetry.ts";
+export {
+  clippedToBudget,
+  defaultSkillOutputBudget,
+  type SkillToolOptions,
+  skillLibraryTools,
+} from "./skills/tools.ts";
 export {
   fitTitle,
   kebabTitle,
@@ -556,6 +721,12 @@ export {
   suggestTitle,
   type TitleContext,
 } from "./titles.ts";
+export {
+  type AfterSave,
+  annotatedResult,
+  type ComposeAfterSaveOptions,
+  composeAfterSave,
+} from "./tools/after-save.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
 export { confinedPath, scopeContains, type ToolScope, toolScope } from "./tools/confine.ts";
 export { type CoreToolOptions, coreTools, type MemoryRecall } from "./tools/core.ts";
@@ -563,6 +734,8 @@ export { defineTool } from "./tools/define.ts";
 export { editTool } from "./tools/edit.ts";
 export { readTool } from "./tools/read.ts";
 export {
+  type InteractiveShell,
+  openInteractiveShell,
   persistentBashTool,
   type ShellRunOptions,
   ShellSession,

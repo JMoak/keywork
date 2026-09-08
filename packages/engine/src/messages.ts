@@ -28,6 +28,11 @@ export interface RedactedThinkingPart {
   owner?: ProviderStateOwner;
 }
 
+export interface VisibleThinkingPart {
+  type: "visible-thinking";
+  text: string;
+}
+
 export function ownedBy(
   part: RedactedThinkingPart,
   owner: ProviderStateOwner | undefined,
@@ -47,11 +52,19 @@ export interface ToolCallPart {
   arguments: unknown;
 }
 
+export interface SpillReference {
+  id: string;
+  bytes: number;
+  elidedFrom: number;
+  elidedTo: number;
+}
+
 export interface ToolResultPart {
   type: "tool-result";
   callId: string;
   output: string;
   isError: boolean;
+  spill?: SpillReference;
 }
 
 export type Part =
@@ -59,6 +72,7 @@ export type Part =
   | ImagePart
   | ThinkingPart
   | RedactedThinkingPart
+  | VisibleThinkingPart
   | ToolCallPart
   | ToolResultPart;
 

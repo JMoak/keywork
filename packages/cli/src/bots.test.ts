@@ -1,11 +1,27 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { loadBots, type Provider, SessionStore, textTurn } from "@keywork/engine";
+import {
+  emptyCostRollup,
+  knownCostNanos,
+  loadBots,
+  type Provider,
+  SessionStore,
+  textMessage,
+  textTurn,
+} from "@keywork/engine";
 import { recordingProvider } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { type BotRoots, botCommand, botDefinitionText, botService, createBot } from "./bots.ts";
+import {
+  type BotRoots,
+  botCommand,
+  botCosts,
+  botDefinitionText,
+  botService,
+  boundStores,
+  createBot,
+} from "./bots.ts";
 
 const scratch = scratchDirs("keywork-cli-bots-");
 
@@ -90,17 +106,62 @@ describe("botService", () => {
 
     const service = botService({ ...roots, sessionDir, roster });
     expect(service.defined()).toEqual([
-      { name: "scout", sigil: "S", source: "project", description: "reads first" },
+      {
+        name: "scout",
+        sigil: "S",
+        source: "project",
+        learning: "notes",
+        description: "reads first",
+      },
     ]);
     const listed = await service.list();
     expect(listed[0]).toMatchObject({ name: "scout", sessions: 2 });
     expect(listed[0]?.lastUsed).toBeDefined();
 
     const created = await service.create({ slug: "critic", scope: "project" });
-    expect(created).toEqual({ name: "critic", sigil: "C", source: "project" });
+    expect(created).toEqual({ name: "critic", sigil: "C", source: "project", learning: "notes" });
     expect(service.defined().map((bot) => bot.name)).toEqual(["critic", "scout"]);
     expect(roster.map((bot) => bot.name)).toEqual(["critic", "scout"]);
     expect(service.suggestSlug).toBeUndefined();
+  });
+
+  it("rolls each bot's cost up from its bound sessions, exactly as groupCosts does", async () => {
+    const roots = await rootsOf();
+    const sessionDir = await scratch();
+    await seedBot(roots.cwd, "scout", "---\ndescription: reads first\n---\n");
+    await seedBot(roots.cwd, "critic", "---\ndescription: pushes back\n---\n");
+    const roster = (await loadBots({ projectRoot: roots.cwd, userRoot: roots.userRoot })).bots;
+    const priced = async (file: string, bot: string, costUsd: number) => {
+      const store = await SessionStore.create(join(sessionDir, file), roots.cwd);
+      await store.appendBotBinding(bot);
+      await store.append(textMessage("assistant", "ok"), {
+        inputTokens: 5,
+        outputTokens: 5,
+        costUsd,
+      });
+      return store;
+    };
+    const stores = [
+      await priced("a.jsonl", "scout", 0.001),
+      await priced("b.jsonl", "scout", 0.002),
+      await priced("c.jsonl", "critic", 0.004),
+    ];
+    const unpriced = await SessionStore.create(join(sessionDir, "d.jsonl"), roots.cwd);
+    await unpriced.appendBotBinding("critic");
+    await unpriced.append(textMessage("assistant", "?"), { inputTokens: 5, outputTokens: 5 });
+    stores.push(unpriced);
+
+    const listed = await botService({ ...roots, sessionDir, roster }).list();
+    const byName = new Map(listed.map((bot) => [bot.name, bot]));
+    expect(byName.get("scout")).toMatchObject({ sessions: 2, costNanos: 3_000_000 });
+    expect(byName.get("critic")).toMatchObject({ sessions: 2 });
+    expect(byName.get("critic")?.costNanos).toBeUndefined();
+
+    const rollups = botCosts(boundStores(stores));
+    expect(knownCostNanos(rollups.get("scout") ?? emptyCostRollup())).toBe(
+      byName.get("scout")?.costNanos,
+    );
+    expect(rollups.get("critic")).toMatchObject({ nanos: 4_000_000, unpricedTurns: 1 });
   });
 
   it("proposes a slug through the naming provider and stays quiet when none is bound", async () => {

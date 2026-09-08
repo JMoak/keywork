@@ -429,6 +429,25 @@ describe("sweepOnClose", () => {
     expect(audit).toContain("gardener sweep");
   });
 
+  it("hands skill evidence to the Gardener so a churning agent skill reaches the inbox", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    await sweepOnClose(memory, {
+      skills: [{ name: "release-tag", authoredBy: "keywork" }],
+      telemetry: {
+        "release-tag": {
+          counts: { use: 1, view: 0, reference: 0, patch: 2, rewrite: 0, create: 1 },
+          lastActivityAt: "2026-09-01T00:00:00.000Z",
+        },
+      },
+    });
+    const items = await memory.store.listStaged();
+    expect(items).toEqual([
+      expect.objectContaining({ kind: "skill-review", skill: "release-tag", reason: "churning" }),
+    ]);
+  });
+
   it("is silent over an untrusted vault and without memory at all", async () => {
     const memory = openWorkspaceMemory(await declaredWorkspace(), false);
     await expect(sweepOnClose(memory)).resolves.toBeUndefined();

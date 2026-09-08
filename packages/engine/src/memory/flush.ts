@@ -22,18 +22,53 @@ export function isNoReply(message: Message): boolean {
 export const backtrackFlushClause =
   "This session backtracked at least once. For each abandoned attempt, state what was tried and why it was wrong, so the approach is not repeated.";
 
-export function flushPrompt(backtracked: boolean): string {
-  return backtracked ? [memoryFlushPrompt, backtrackFlushClause].join("\n") : memoryFlushPrompt;
+export const botLinePrefix = "bot:";
+
+export function botFlushClause(slug: string): string {
+  return [
+    `You are working as the bot "${slug}". Also state what you learned about doing this job and how the user likes it done; start each of those lines with "${botLinePrefix}".`,
+    "Lines about the project or its code stay unprefixed: they belong to the project, not to the bot.",
+  ].join(" ");
+}
+
+export function flushPrompt(backtracked: boolean, bot?: string): string {
+  return [
+    memoryFlushPrompt,
+    ...(backtracked ? [backtrackFlushClause] : []),
+    ...(bot === undefined ? [] : [botFlushClause(bot)]),
+  ].join("\n");
 }
 
 export function isMemoryFlushPrompt(text: string): boolean {
-  return text === memoryFlushPrompt || text === flushPrompt(true);
+  return text === memoryFlushPrompt || text.startsWith(`${memoryFlushPrompt}\n`);
+}
+
+export interface BotLearnings {
+  craft: string;
+  work: string;
+}
+
+export function partitionBotLines(text: string): BotLearnings {
+  const craft: string[] = [];
+  const work: string[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(botLinePrefix)) craft.push(trimmed.slice(botLinePrefix.length).trim());
+    else work.push(line);
+  }
+  return { craft: craft.filter((line) => line !== "").join("\n"), work: work.join("\n").trim() };
+}
+
+export interface BotFlushTarget {
+  slug: string;
+  remember(text: string): Promise<void>;
 }
 
 export interface MemoryFlushOptions {
   provider: Provider;
   store: MemoryStore;
   dailyStore?: () => MemoryStore;
+  bot?: () => BotFlushTarget | undefined;
   systemPrompt?: string;
 }
 
@@ -47,6 +82,7 @@ export class MemoryFlush {
   private readonly provider: Provider;
   private readonly store: MemoryStore;
   private readonly dailyStore: () => MemoryStore;
+  private readonly bot: () => BotFlushTarget | undefined;
   private readonly systemPrompt: string;
   private latched = false;
   private backtracked = false;
@@ -55,6 +91,7 @@ export class MemoryFlush {
     this.provider = options.provider;
     this.store = options.store;
     this.dailyStore = options.dailyStore ?? (() => options.store);
+    this.bot = options.bot ?? (() => undefined);
     this.systemPrompt = options.systemPrompt ?? "";
   }
 
@@ -82,14 +119,27 @@ export class MemoryFlush {
   }
 
   private async flush(conversation: readonly Message[]): Promise<FlushOutcome> {
-    const prompt = textMessage("user", flushPrompt(this.backtracked));
+    const bot = this.bot();
+    const prompt = textMessage("user", flushPrompt(this.backtracked, bot?.slug));
     this.backtracked = false;
     const reply = await this.streamReply([...conversation, prompt]);
     const messages = [prompt, reply];
     const text = messageText(reply).trim();
     if (text === "" || text === noReplyToken) return { flushed: true, persisted: false, messages };
+    const persisted = bot === undefined ? await this.keep(text) : await this.keepAs(bot, text);
+    return { flushed: true, persisted, messages };
+  }
+
+  private async keep(text: string): Promise<boolean> {
     await this.dailyStore().appendDaily(text, "agent");
-    return { flushed: true, persisted: true, messages };
+    return true;
+  }
+
+  private async keepAs(bot: BotFlushTarget, text: string): Promise<boolean> {
+    const { craft, work } = partitionBotLines(text);
+    if (work !== "") await this.dailyStore().appendDaily(work, "agent");
+    if (craft !== "") await bot.remember(craft);
+    return work !== "" || craft !== "";
   }
 
   private async streamReply(messages: Message[]): Promise<Message> {

@@ -4,10 +4,10 @@
 │ ╭──────────────────────────────────╮ │                                                                               │
 │ │ ▸ open     open the select…enter │ │                                                                               │
 │ │   entries  browse the selected…l │ │                                                                               │
+│ │   group    group by none · arc…g │ │                                                                               │
 │ │   refresh  reload the sessions…r │ │                                                                               │
 │ ╰──────────────────────────────────╯ │                                                                               │
 │ : ▌                                  │                                                                               │
-│                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │

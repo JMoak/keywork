@@ -12,6 +12,7 @@ export const patternFile = "scripts/guardrail-patterns.json";
 export { patternTable };
 
 export function findGuardrailViolations(content: string, kind: ScanKind = "code"): string[] {
+  if (!screenFor(kind).test(content)) return [];
   return patternsFor(kind)
     .filter(({ pattern }) => pattern.test(content))
     .map(({ name }) => name);
@@ -44,6 +45,19 @@ const scannedExtensions = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|json|ya?ml|sh|ps1|md
 
 const everywherePatterns = compile(patternTable.everywhere);
 const codePatterns = [...everywherePatterns, ...compile(patternTable.codeOnly)];
+// Bun 1.3.9 segfaults in JavaScriptCore's regex JIT once a dozen compiled patterns run per
+// file; one case-insensitive alternation per kind screens first, and only screened-in
+// content meets the individual patterns that name the violation.
+const everywhereScreen = union(patternTable.everywhere);
+const codeScreen = union([...patternTable.everywhere, ...patternTable.codeOnly]);
+
+function union(entries: ReadonlyArray<{ pattern: string }>): RegExp {
+  return new RegExp(entries.map(({ pattern }) => `(?:${pattern})`).join("|"), "i");
+}
+
+function screenFor(kind: ScanKind): RegExp {
+  return kind === "prose" ? everywhereScreen : codeScreen;
+}
 
 function compile(
   entries: ReadonlyArray<{ name: string; pattern: string; flags: string }>,

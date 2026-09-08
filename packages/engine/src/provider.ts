@@ -5,6 +5,7 @@ export type TurnDelta =
   | { type: "text"; text: string }
   | { type: "tool-call"; call: ToolCallPart }
   | { type: "redacted-thinking"; part: RedactedThinkingPart }
+  | { type: "visible-thinking"; text: string }
   | { type: "done"; usage: Usage };
 
 export interface ToolDefinition {
@@ -17,6 +18,7 @@ export interface ProviderRequest {
   systemPrompt: string;
   messages: readonly Message[];
   tools: readonly ToolDefinition[];
+  thinking?: boolean;
   signal?: AbortSignal;
 }
 

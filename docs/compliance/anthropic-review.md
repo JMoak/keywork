@@ -71,6 +71,29 @@ Every box is checked with the command that proves it and the result observed on 
   (`x-api-key` beside `anthropic-version`) that proves the legitimate header pair passes.
   Existing patterns are byte-identical. `bun run check:guardrails` is green on the tree.
 
+## Re-run 2026-09-06 (G4 visible thinking)
+
+Diff scope: `packages/engine/src/providers/anthropic.ts` (a `thinking_delta` now also yields a
+display-only `visible-thinking` delta), `packages/engine/src/providers/messages-wire.ts` (a
+`thinking` request field added only when the request opts in), `messages.ts` / `provider.ts`
+(the new part and delta), plus session, schema, and TUI files that never touch the wire.
+
+- [x] **Zero OAuth code paths.** The G1 scan above, re-run over `anthropic.ts` and
+  `messages-wire.ts`, still returns nothing.
+- [x] **Zero subscription endpoints or client-ID spoofing.** `rg "anthropic\.com|claude\.ai|claude\.com" packages/`
+  still lists only `api.anthropic.com/v1` and the console key page in `builtins.ts`.
+- [x] **No headers imitating Claude Code.** The header set is untouched; the only request change is
+  a body field (`thinking`), asserted absent by default in `anthropic.test.ts` "asks for
+  thinking only when the request opts in and leaves the default body byte-identical". No
+  `anthropic-beta` header was added (the `display: "updates"` beta was deliberately not used).
+- [x] **Key handling is never logged.** No new code path reads the key; the 401 test still passes.
+- [x] **Credential precedence, `/connect`, user docs, influencer code.** Unchanged by this diff;
+  `NOTICE` untouched.
+- [x] **CI guard.** `scripts/guardrail-patterns.json` untouched; the pattern self-tests in
+  `scripts/checks.test.ts` pass. `bun run check:guardrails` reports no violations (run with
+  `BUN_JSC_useRegExpJIT=false` on the reviewing machine, whose Bun 1.3.9 crashes in the
+  regex JIT mid-scan; the repo pins Bun 1.3.14).
+
 ## Deviation of record
 
 The overlay named the official `@anthropic-ai/sdk`. The landed provider uses keywork's own

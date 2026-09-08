@@ -397,6 +397,63 @@ the Gardener (J7). Human-authored and bundled skills are never auto-modified.
 **Accept:** E2E: fixture skill with a stale command self-patches mid-run and the fix
 persists; human-authored fixture skill provably untouchable; telemetry increments.
 **Strategy:** `LIFT:hermes` contracts, reimplemented in TypeScript; depends on D1 + D7.
+**Landed (2026-09-06):** `packages/engine/src/skills/` over D7's discovery walk, `OWN`
+code from the Hermes contracts (attribution recorded in `NOTICE`). Provenance is a
+frontmatter key: `authored_by: keywork` marks a skill as agent-created, and
+`SkillDefinition.authoredBy` carries it. Frontmatter won over a sidecar because the
+marker then travels with the file wherever it is copied, shows in any editor, and gives a
+person a one-line opt-in for a skill they want the agent to maintain. Protection is by
+construction: `authorship.ts` owns the only two writers, and both take an
+`AgentAuthoredSkill` that exists only when `claimAgentAuthored(file)` has re-read the file
+from disk and found the marker at write time (the discovery snapshot is never trusted for
+this), every revision re-serializes with the marker kept, and creation opens with the
+exclusive flag so an existing file is never overwritten. Bundled skills and anything
+without the marker therefore have no write path at all. `SkillLibrary` holds the live
+skill set, so a patch is visible to the next `skill` load in the same run, and reports
+each change through `onChange` as a `FileDelta` with before/after hashes (the seam for
+J11's `S±` chip and revert). Tools, all `defineTool`, all budget-clipped: `skill` (use;
+its listing is a live getter so a freshly created skill appears at once), `skills_list`
+(metadata plus a repairable/protected tag), `skill_view` (SKILL.md plus its reference
+files, or one reference file by relative path confined to the skill dir), `skill_patch`
+(exact-once old/new text on the body), `skill_rewrite` (whole body, optional
+description), and `skill_create` (only offered when a genesis root exists; the trusted
+project root's `.keywork/skills/`). The when-to-patch and when-to-create guidance lives in
+the tool descriptions, so no prompt plumbing changed. Telemetry: `SkillTelemetry` counts
+use/view/reference/patch/rewrite/create per skill with a last-activity timestamp,
+persisted atomically to `~/.keywork/skills/<workspace identity>.json` (machine-local, so
+the git-able skills dir stays clean) and readable without the library through
+`readSkillTelemetry(file)`. `compose.ts` builds one library per composition and the CLI
+passes it in place of the old `skillTool` wiring.
+Evidence: `skills/tools.test.ts` "patches a stale agent skill mid-run, persists the fix,
+and cannot touch a human skill" (a real `Agent` over `MockProvider`: stale command fails,
+`skill_patch` lands, the fixed command runs, the next `skill` load and a fresh
+`discoverSkills` both see the fix, the human-authored fixture is byte-identical after the
+same run, and the telemetry file shows `use: 2, patch: 1`); "creates a skill from a
+discovered workflow that later sessions can load"; `library.test.ts` covers the on-disk
+authorship re-check, unique-match patching, rewrite fallback, genesis refusing to
+overwrite or accept hostile names, and reference-path confinement; `telemetry.test.ts`
+covers persistence, reopen, and the reader's handling of absent and malformed files.
+Crossings: `extensions/layers.ts` exports `validatedName`; `paths.ts` gains
+`skillTelemetryFile`; `Composition` gains `skills: SkillLibrary`.
+Follow-ups: J7 Gardener reads `readSkillTelemetry` for stale/archive marking of
+agent-created skills (not wired; gardener.ts is J27's file this round); J27's `skills`
+level passes a bot-scoped `SkillGenesis` (`bots/<slug>/skills/`, author
+`keywork/<slug>`) and applies the 98 idea-11 genesis gates, which the library leaves to
+its caller; J11 subscribes to `onChange` for the `S±` chip and one-key revert; per-skill
+`platforms`/required-toolsets hiding from Hermes' frontmatter is not built.
+Follow-up landed (2026-09-06): the Gardener hookup and the bot-scoped genesis are in
+(`106-bots.md`, "J27 · learning policy · `skills` level"): `Gardener.sweep({ skills })` turns
+`readSkillTelemetry` counts into `skill-review` proposals (churning at 2 patches plus rewrites,
+unused after 30 idle days, agent-authored skills only, proposal-only), the workspace closer
+feeds it, and J27's `skills` level runs the library over `.keywork/bots/<slug>/skills/` with
+author `keywork/<slug>` and the idea-11 genesis gates. Still open here: J11's `onChange`
+subscription and the `platforms` hiding.
+Assumptions Jordan may reverse: the marker name `authored_by` and value `keywork`; a
+person adding the marker to their own skill is an opt-in rather than a mistake; patch and
+rewrite are `mutates: true` and so sit behind the ordinary ask gate by default (the
+vision's "never blocked mid-turn" is then a permission-policy choice, not a bypass);
+telemetry lives under `~/.keywork/skills/` rather than beside the skills; creation only
+in the trusted project root, never at user scope; the 16k-character output budget.
 
 ### J11 (3pt): Write gating (implements J-D4)
 The four J-D4 layers as one artifact, mechanism and visual design together: provenance
@@ -699,6 +756,150 @@ deltas coalesce per frame tick per pane; pane rendering virtualizes to visible r
 frame time flat; spill opens in the file pane at the right range; JSONL replay
 byte-identical with and without spilling.
 **Strategy:** `OWN`.
+
+**Landed (2026-09-06), engine half:** `packages/engine/src/session/spill.ts` and
+`packages/engine/src/coalesce.ts`, `OWN`. A tool result over `defaultToolOutputBudget`
+(64 KiB of UTF-8; about 16k tokens, so one result stays under the keep-recent reserve of
+`context-budget.ts` and compaction never has to split it, while bash's own 30k-character
+cap in `command-run.ts` sits well under it) is held as head plus tail around an elision
+marker, three quarters head, one quarter tail, split on character boundaries so no
+multi-byte character is ever cut. `boundToolOutput(output, spillId, budget)` is the pure
+form; `SpillStore.keep(output)` writes the full output first and returns the bounded form
+with a `SpillReference { id, bytes, elidedFrom, elidedTo }` (byte offsets of the elided
+region in the full output, so a pane can open the spill at exactly that range).
+`ToolResultPart` and the `tool.finished` event carry the reference as an additive `spill`
+field, so the JSONL shape is unchanged for every entry that never spilled (no version
+bump). Layout: `<session>.spills/<uuid>.txt` beside `<session>.jsonl` in the same session
+directory (`spillDirFor`); `sessionFileNames` only lists `.jsonl`, so the directory never
+reads as a session, and `removeSessionFiles(file)` drops the JSONL and its spills in one
+call. `SpillStore.readRange(id, { offset, length })` is the ranged read, returning exact
+bytes and a short read at the end of the file. `Agent` takes `spills` (a `SpillStore` or a
+lazy `SpillSource`, mirroring the lazy `sessionId` panes already pass) and bounds every
+tool outcome, error paths included, before the `tool.finished` event and before the
+result joins the history, so the provider request carries the bounded form and the model
+never sees the spill. Replay emits the stored bounded output plus the reference and never
+touches the spill file, which is what makes it byte-identical with or without the spill
+on disk. `SessionStore.spills()` hands out the store for its own file.
+Delta coalescing: `coalesceDeltas(sink, tick)` merges runs of consecutive `turn.delta`
+text, `turn.delta` visible-thinking, and `tool.output` events for the same target (per
+call id, with replay and live kept apart) into one event per tick, keeps order across
+targets by merging only adjacent runs, passes every other event through at once after
+flushing what came before it, and arms exactly one tick per batch. `frameTick` is the
+16 ms default; the tick is injectable so tests step it by hand. Not wired into the tui
+(another lane owns `conversation-model.ts`).
+The V2.1 seam: `coreTools` already handed `onToolOutput` to the bus, but without a call
+id; the 96 status note was stale. `Agent.reportToolOutput(chunk)` now stamps the running
+call's id, `compose.ts` calls it, and `AgentBuildSpec` gained an additive `spills` field.
+Evidence: `session/spill.test.ts` "pins the budget at 64 KiB and leaves anything at or
+under it untouched", "keeps head plus tail under budget with the marker and a spill
+reference", "never splits a multi-byte character at either boundary", "spills one file for
+an oversized output and hands back the bounded form", "reads exact bytes at a range,
+including both ends and past the end", "removing a session removes its JSONL and its
+spills together"; `agent-bounds.test.ts` "keeps a firehose result under budget in memory,
+writes one spill, and sends the bounded form" (a 3.3 MB mock tool; the captured provider
+request is under 1.25x the budget with JSON escaping and under one fortieth of the
+firehose), "leaves results whole when no spill store is wired", "stamps live tool output
+with the running call"; `session/replay.test.ts` "replays a spilled tool result
+identically whether or not the spill file survives"; `coalesce.test.ts` "merges
+same-target deltas within a tick into one event and holds them until the tick", "keeps
+order across targets, merging only runs of the same target", "passes non-delta events
+through at once, flushing what came before them first", "never waits past the tick and
+arms exactly one tick per batch", "keeps replayed and live deltas apart and leaves the
+incoming payloads untouched"; `cli/compose.test.ts` "streams bash output to the bus as
+tool.output in order, leaving the final result whole" (a real bash fixture with sleeps
+between echoes; every chunk carries the call id and the final result is byte-equal to the
+unstreamed one).
+Crossings: `messages.ts` gains `SpillReference` and `ToolResultPart.spill`; `bus.ts`
+`tool.finished` gains `spill`; `Agent` gains `spills`, `runningCall()`,
+`reportToolOutput()`; `SessionStore` gains `spills()`; `compose.ts` `AgentBuildSpec` gains
+`spills`; the three build sites (`compose-panes.ts` agent factory, `run.ts`, `chat.ts`) pass
+the session's spill store (wired by the lead, 2026-09-06), so bounding is live in the CLI.
+Follow-ups: the pane half of A18 (virtualized rows, the coalescer hooked between the bus
+and `conversation-model.ts`, opening a spill in the file pane at `elidedFrom..elidedTo`
+through `readRange`); `cli/sessions/command.ts`
+empty-session cleanup calls `removeSessionFiles` instead of `unlink`; bash's 30k-character
+tool cap could lift to the engine budget now that overflow spills instead of vanishing.
+Assumptions Jordan may reverse: 64 KiB as the budget and the 3:1 head-to-tail split; bytes
+rather than tokens as the unit (byte offsets are what a ranged read needs); bounding only
+when a spill store is wired, so an in-memory agent keeps whole results; error outputs are
+bounded the same way as successes; one spill file per result named by a fresh UUID rather
+than by call id (call ids come from providers and are not guaranteed filename-safe); the
+16 ms frame tick; `tool-call`, `done`, and redacted-thinking deltas flush and pass through
+rather than merging.
+
+**Landed (2026-09-07), pane half:** `OWN`, in `packages/tui/src/transcript-feed.ts`,
+`transcript-view.ts`, `conversation-model.ts`, `conversation-pane.ts`, `file-model.ts`,
+`session-panes.ts`, with one additive field on `FileOpenOptions` in `pane.ts`.
+Coalescer hookup: `TranscriptFeed.follow(bus)` no longer applies bus events directly. Every
+followed event is relayed into `coalesceDeltas(absorb, tick)` and the feed applies whatever
+the coalescer hands back, so a burst of `turn.delta` text, visible thinking, or `tool.output`
+for one target lands as one appended text and one `notify` per tick, while `turn.started`,
+`tool.started`, `tool.finished`, `turn.completed`, and `turn.interrupted` flush what is
+pending and apply at once, in order. The tick is the engine's `frameTick` (16 ms) by default
+and injectable through `TranscriptFeed`'s third constructor argument and
+`ConversationPorts.frameTick`, so tests step it by hand. Unfollowing flushes the pending run
+into the feed before the listeners drop, so an agent swap never loses the last frame's text.
+`activity` still counts raw events at the relay (text and thinking deltas, tool starts, live
+tool output), so the work glyph keeps its cadence and the goldens their stamps.
+Virtualized rows: `TranscriptView` replaced its per-entry `WeakMap` with a `RowIndex`, an
+array of slots aligned to the transcript, each holding the entry it was rendered from, its
+shape (text, failed, folded), its wrapped lines and, for assistant entries, the markdown
+blocks the incremental streaming path already kept. A frame adopts the layout (a width, prose
+measure, gutter, or marks change drops every slot), then syncs the index: an entry whose slot
+holds the same object and the same shape costs three comparisons; a new, replaced, or mutated
+entry is laid out again and the running `total` moves by the difference; a truncated
+transcript drops its trailing slots. `windowFromEnd` then reads counts from the index and
+materializes only the visible entries, where the streaming stamp and cursor are applied.
+Scroll anchoring, `revealAt`, backtrack and fold highlighting, and the returned `total` are
+unchanged. Spill open: `ToolRun.spill` carries the `SpillReference` from `tool.finished`
+(replay included), the collapsed row reads `bash cat big · 1.2s · 3.4M · elided
+49116..3407791 · done` (size is the spill's full byte count when one exists), and with the
+fold cursor on that row (`shift+tab`) the key `o` opens the spill file in a file pane through
+`ConversationPorts.openFile` with `byteRange: { from: elidedFrom, to: elidedTo }`; the
+disclosure hint grows `· o opens the spill` only when the cursored row has one, and outside
+that case `o` stays prompt text. `FileModel` honors `byteRange` by scrolling to the line that
+holds `from` (UTF-8 bytes counted on the raw content, so CRLF endings and multi-byte
+characters land on the right line) and honors the diff lane's `line` (one-based) the same
+way. `ConversationPorts.spillFile(id)` resolves the path; `session-panes.ts` fills it from a
+new optional `SessionPaneDeps.spillFile(sessionId, spillId)` and answers `undefined` unless
+the file exists, so a spill that was swept posts `spill <id> is not on disk any more` instead
+of a file pane showing a read failure.
+Evidence: `transcript-feed.test.ts` "folds a burst of same-target deltas into one render and
+one appended text per tick" (1,000 deltas, zero renders and zero entries before the step,
+one render, one entry, `streamingProgress` still 0 after it, one tick armed), "passes
+non-delta events through at once, behind the deltas already pending", "flushes what is still
+pending when the feed stops following", "carries the spill reference on the run and shows
+the elided range on the row"; `transcript-view.test.ts` "lays out O(visible) rows per frame
+over a 10,000-entry transcript" (10,000 layouts on the first frame at a width, then 100
+streaming frames cost 100 block layouts, 100 scrolled-back frames cost zero, one replaced
+entry costs one, a width change costs a full pass again) and "keeps the frame identical to a
+fresh view through growth, mutation, and truncation"; `conversation-model.test.ts` "spill
+open" (opens at the elided byte range, missing file posts the notice, `o` types when no spill
+row is cursored); `conversation-pane.test.ts` "names the spill key in the disclosure hint when
+the cursored row spilled"; `file-model.test.ts` "opening at a place" (byte offset across
+CRLF and a multi-byte character, past-the-end clamps, one-based line). Three existing tests
+that asserted mid-stream state now step the tick. `bun run e2e elevation-turn-age
+elevation-scroll-map elevation-chrome discovery long-session`: the three elevation goldens
+verified unchanged; `long-session` has no goldens and its session-tree entry counts vary run
+to run on the baseline as well; `discovery`'s `help-overlay.txt` differs only by the new
+leader chords another lane added to the keymap (`ctrl+k g diff pane` and two rows below it).
+Crossings: `ConversationPorts` gains `frameTick`, `spillFile`, `openFile`; `SessionPaneDeps`
+gains `spillFile`; `FileOpenOptions` gains `byteRange`; `ToolRun` gains `spill`;
+`TranscriptFeed` takes a `TickScheduler`. The CLI does not yet supply
+`SessionPaneDeps.spillFile`; the one-line wiring in `compose-panes.ts` is
+`(sessionId, id) => stores.get(sessionId)?.spills().path(id)`, and until it lands the key
+posts the missing-spill notice.
+Follow-ups: a spill over `FileModel`'s 20 MB cap still fails to open (a `readRange`-backed
+window pane would lift that); the elided range is only scrolled to, never highlighted, in
+the file pane; the index sync is a linear scan of three comparisons per entry, which is
+where a per-entry revision from the feed would go if a 100k-entry transcript ever shows it;
+`Frame.total` still requires every entry laid out once per width, so the first frame after a
+resize is a full pass.
+Assumptions Jordan may reverse: `o` as the pane-local key, live only under the fold cursor
+and only when the row spilled; the row wording `elided a..b` beside the full byte size; the
+tick flushing on unfollow rather than dropping; activity counted per raw event rather than
+per frame; `line` honored in `FileModel` on this lane's side since the diff lane opens with
+it.
 
 ## Non-goals (v1)
 

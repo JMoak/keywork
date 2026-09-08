@@ -1,9 +1,12 @@
 import { fitTitle } from "@keywork/engine";
 import { arcTag } from "./arcs.ts";
+import type { BotEntry } from "./bots.ts";
 import { type PageThresholds, type PageTier, pageTierThresholds, resolvePage } from "./page.ts";
 import { width } from "./width.ts";
 
-export type TitleZone = "stamp" | "slug" | "name" | "arc" | "telemetry" | "mode" | "joint";
+export type TitleZone = "stamp" | "slug" | "name" | "arc" | "bot" | "telemetry" | "mode" | "joint";
+
+export type TitleBot = Pick<BotEntry, "sigil" | "name">;
 
 export interface TitleSpan {
   readonly text: string;
@@ -14,6 +17,7 @@ export interface TitleBarState {
   readonly name: string;
   readonly stamp?: string | undefined;
   readonly arc?: string | undefined;
+  readonly bot?: TitleBot | undefined;
   readonly telemetry?: string | undefined;
   readonly modeWord?: string | undefined;
   readonly siblings?: readonly string[] | undefined;
@@ -51,10 +55,16 @@ export function isLabelZone(zone: TitleZone): boolean {
 const frameCells = 4;
 const joint = " · ";
 
+interface BotZone {
+  sigil: string;
+  name?: string | undefined;
+}
+
 interface Zones {
   stamp: string | undefined;
   name: string;
   arc: string | undefined;
+  bot: BotZone | undefined;
   telemetry: string | undefined;
   modeWord: string | undefined;
 }
@@ -67,9 +77,15 @@ function zonesAt(tier: PageTier, focused: boolean, state: TitleBarState): Zones 
     stamp: emptyToUndefined(state.stamp),
     name: state.name,
     arc: tier === "broadsheet" ? emptyToUndefined(state.arc) : undefined,
+    bot: botZoneAt(compact, state.bot),
     telemetry: compact ? undefined : emptyToUndefined(telemetryShown),
     modeWord: tier === "broadsheet" ? emptyToUndefined(state.modeWord) : undefined,
   };
+}
+
+function botZoneAt(compact: boolean, bot: TitleBot | undefined): BotZone | undefined {
+  if (bot === undefined) return undefined;
+  return compact ? { sigil: bot.sigil } : { sigil: bot.sigil, name: bot.name };
 }
 
 function fitZones(zones: Zones, room: number, siblings: readonly string[]): TitleSpan[] {
@@ -101,22 +117,43 @@ function stampSpans(stamp: string | undefined): TitleSpan[] {
 
 function tailSpans(zones: Zones): TitleSpan[] {
   const tail: TitleSpan[] = [];
+  if (zones.bot !== undefined) tail.push(span(joint, "joint"), span(botText(zones.bot), "bot"));
   if (zones.telemetry !== undefined)
     tail.push(span(joint, "joint"), span(zones.telemetry, "telemetry"));
   if (zones.modeWord !== undefined) tail.push(span(joint, "joint"), span(zones.modeWord, "mode"));
   return tail;
 }
 
+function botText(bot: BotZone): string {
+  return bot.name === undefined ? bot.sigil : `${bot.sigil} ${bot.name}`;
+}
+
+const sheddingOrder: readonly ((zones: Zones) => Zones | undefined)[] = [
+  shedBotName,
+  without("arc"),
+  without("modeWord"),
+  without("telemetry"),
+  without("bot"),
+];
+
 function trims(zones: Zones): Zones[] {
   const attempts = [zones];
-  const shed = (zone: keyof Zones): void => {
-    const last = attempts.at(-1) as Zones;
-    if (last[zone] !== undefined) attempts.push({ ...last, [zone]: undefined });
-  };
-  shed("arc");
-  shed("modeWord");
-  shed("telemetry");
+  for (const shed of sheddingOrder) {
+    const next = shed(attempts.at(-1) as Zones);
+    if (next !== undefined) attempts.push(next);
+  }
   return attempts;
+}
+
+function shedBotName(zones: Zones): Zones | undefined {
+  if (zones.bot?.name === undefined) return undefined;
+  return { ...zones, bot: { sigil: zones.bot.sigil } };
+}
+
+function without(
+  zone: "arc" | "modeWord" | "telemetry" | "bot",
+): (zones: Zones) => Zones | undefined {
+  return (zones) => (zones[zone] === undefined ? undefined : { ...zones, [zone]: undefined });
 }
 
 function span(text: string, zone: TitleZone): TitleSpan {

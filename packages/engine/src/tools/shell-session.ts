@@ -254,3 +254,38 @@ function exitCodeIn(line: string, sentinel: string): number | undefined {
   const code = Number.parseInt(line.slice(sentinel.length).trim(), 10);
   return Number.isNaN(code) ? undefined : code;
 }
+
+export interface InteractiveShell {
+  readonly shellName: string;
+  write(text: string): void;
+  onOutput(listener: (chunk: string) => void): () => void;
+  onExit(listener: (code: number | null) => void): () => void;
+  kill(): Promise<void>;
+}
+
+export function openInteractiveShell(cwd: string, shell: Shell = detectShell()): InteractiveShell {
+  const live = spawnShell(cwd, shell);
+  const { child } = live;
+  const onExit = (listener: (code: number | null) => void): (() => void) => {
+    const handler = (code: number | null) => listener(code);
+    child.on("close", handler);
+    return () => child.off("close", handler);
+  };
+  return {
+    shellName: shell.name,
+    write: (text) => {
+      child.stdin?.write(text);
+    },
+    onOutput: (listener) => {
+      const handler = (chunk: Buffer) => listener(chunk.toString());
+      child.stdout?.on("data", handler);
+      child.stderr?.on("data", handler);
+      return () => {
+        child.stdout?.off("data", handler);
+        child.stderr?.off("data", handler);
+      };
+    },
+    onExit,
+    kill: () => killTree(child, live.closed).catch(() => undefined),
+  };
+}

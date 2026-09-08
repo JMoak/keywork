@@ -2,7 +2,6 @@ import { join } from "node:path";
 import {
   ArcRecall,
   type ArcRegistry,
-  type ArcSearchHit,
   AskGateLedger,
   type AuditEntry,
   type BootstrapInjection,
@@ -12,6 +11,7 @@ import {
   citationUsefulnessFeed,
   type EmbeddingsPort,
   Gardener,
+  type LayeredSearchHit,
   type LedgerEntry,
   MemoryGraph,
   type MemoryRecall,
@@ -23,7 +23,10 @@ import {
   parseCitationEvents,
   type RecallTap,
   type RetrievalSource,
+  readSkillTelemetry,
   type SearchHit,
+  type SkillEvidence,
+  type SkillLibrary,
   type StagedItem,
   type StagedWrite,
   titleKey,
@@ -44,6 +47,7 @@ import type {
   NoteRelationView,
 } from "@keywork/tui";
 import type { ArcService } from "./arcs.ts";
+import type { BotMemory, BotStagedItem } from "./bot-memory.ts";
 
 export interface WorkspaceMemory {
   vaultRoot: string;
@@ -92,13 +96,15 @@ export function memoryRecall(
   sessionId?: SessionKey,
   onRetrieval?: (disclosure: string) => void,
   arcs?: ArcService,
+  bots?: BotMemory,
 ): MemoryRecall | undefined {
   if (memory === undefined) return undefined;
   const workspace = recallSearch(memory, onRetrieval);
+  if (sessionId === undefined) return { store: memory.store, search: workspace };
+  const layered =
+    arcs === undefined ? workspace : arcs.searcher(workspace, sessionId, memory.embeddings);
   const search =
-    arcs === undefined || sessionId === undefined
-      ? workspace
-      : arcs.searcher(workspace, sessionId, memory.embeddings);
+    bots === undefined ? layered : bots.searcher(layered, sessionId, memory.embeddings);
   return { store: memory.store, search };
 }
 
@@ -110,6 +116,7 @@ export interface CitationTrail {
   forSession(sessionId: string): CitationLedger;
   tapFor(sessionKey: SessionKey | undefined): RecallTap;
   recordReply(sessionId: string, replyText: string): void;
+  recordBootstrap(sessionId: string, injection: BootstrapInjection): void;
   citedNotes(arc: string): Promise<string[]>;
   release(sessionId: string): void;
 }
@@ -169,6 +176,9 @@ export function citationTrail(
     recordReply: (sessionId, replyText) => {
       forSession(sessionId).recordReply(replyText);
     },
+    recordBootstrap: (sessionId, injection) => {
+      forSession(sessionId).recordBootstrap(injection);
+    },
     citedNotes: async (arc) => {
       const layer = arcLayerId(arc);
       return [...new Set([...liveCitations(layer), ...(await persistedCitations(layer))])];
@@ -214,7 +224,17 @@ export function withMemoryPrompt(systemPrompt: string, injection: string): strin
   return injection === "" ? systemPrompt : `${systemPrompt}\n\n${injection}`;
 }
 
-export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise<void> {
+export async function skillEvidenceOf(
+  library: SkillLibrary,
+  telemetryFile: string,
+): Promise<SkillEvidence> {
+  return { skills: library.skills(), telemetry: await readSkillTelemetry(telemetryFile) };
+}
+
+export async function sweepOnClose(
+  memory: WorkspaceMemory | undefined,
+  skills?: SkillEvidence,
+): Promise<void> {
   if (memory === undefined) return;
   const failures: Error[] = [];
   const attempt = (work: () => Promise<unknown>): Promise<void> =>
@@ -224,7 +244,7 @@ export async function sweepOnClose(memory: WorkspaceMemory | undefined): Promise
         failures.push(toError(cause));
       },
     );
-  await attempt(() => memory.gardener.sweep());
+  await attempt(() => memory.gardener.sweep(skills === undefined ? {} : { skills }));
   if (memory.store.trusted) await attempt(() => memory.askGate.proposePreferences(memory.store));
   if (failures.length > 0) {
     throw new AggregateError(
@@ -240,19 +260,28 @@ export function memoryPanePort(
   memory: MemoryAccess,
   arcs?: ArcRegistryAccess,
   airlock?: ArcAirlockPort,
+  bots?: BotMemory,
 ): MemoryPanePort {
   const store = (): MemoryStore => {
     const opened = memory();
     if (opened === undefined) throw new Error("memory isn't set up here yet · /init sets it up");
     return opened.store;
   };
+  const botStaged = async (id: string): Promise<BotStagedItem | undefined> =>
+    (await botStagedItems(bots)).find(({ item }) => item.id === id);
+  const stagedOwner = async (id: string): Promise<MemoryStore> => {
+    const owned = await botStaged(id);
+    return owned === undefined ? store() : owned.registry.botStore(owned.bot.name);
+  };
   const recalls = new WeakMap<ArcRegistry, ArcRecall>();
   return {
-    load: () => loadInputs(memory(), arcs?.(), airlock),
+    load: () => loadInputs(memory(), arcs?.(), airlock, bots),
     approve: async (id) => {
-      await store().approve(id);
+      const owned = await botStaged(id);
+      if (owned !== undefined && bots !== undefined) await bots.approve(owned);
+      else await store().approve(id);
     },
-    discard: (id) => store().discard(id),
+    discard: async (id) => (await stagedOwner(id)).discard(id),
     revert: (ledgerId) => store().revert(ledgerId),
     query: (text, arc) => askMemory(memory(), arcs?.(), recalls, text, arc),
     ...(airlock !== undefined && { airlock }),
@@ -263,6 +292,10 @@ export const workspaceLayerId = "workspace";
 
 export function arcLayerId(slug: string): string {
   return `arc:${slug}`;
+}
+
+export function botLayerId(slug: string): string {
+  return `bot:${slug}`;
 }
 
 export function curingStage(note: Note): CuringStage {
@@ -285,6 +318,7 @@ async function loadInputs(
   memory: WorkspaceMemory | undefined,
   registry: ArcRegistry | undefined,
   airlock: ArcAirlockPort | undefined,
+  bots: BotMemory | undefined,
 ): Promise<MemoryPaneInputs> {
   if (memory === undefined || !memory.store.trusted) return emptyMemoryPane;
   const recalls = memory.gardener.recallsSinceSweep();
@@ -295,7 +329,10 @@ async function loadInputs(
   return {
     layers: layers.map((loaded) => loaded.layer),
     notes: layers.flatMap((loaded) => loaded.notes),
-    inbox: (await memory.store.listStaged()).map(inboxView),
+    inbox: [
+      ...(await memory.store.listStaged()).map(inboxView),
+      ...(await botStagedItems(bots)).map(botInboxView),
+    ],
     ledger: [...memory.store.ledger().map(ledgerOpView), ...audit.map(auditView)],
     gardener: { state: "idle", ...lastSweep(audit) },
     airlocks: await waitingDigests(
@@ -401,6 +438,15 @@ function relationsOf(graph: MemoryGraph, note: Note): NoteRelationView[] {
   });
 }
 
+async function botStagedItems(bots: BotMemory | undefined): Promise<BotStagedItem[]> {
+  return bots === undefined ? [] : bots.staged();
+}
+
+function botInboxView({ bot, item }: BotStagedItem): InboxItemView {
+  const view = inboxView(item);
+  return { ...view, title: `${bot.sigil} ${view.title}` };
+}
+
 function inboxView(item: StagedItem): InboxItemView {
   const base = { id: item.id, created: item.created } as const;
   switch (item.kind) {
@@ -474,6 +520,22 @@ function inboxView(item: StagedItem): InboxItemView {
         title: `allow ${item.toolShape} without asking`,
         provenance: "user",
         detail: `approved ${item.approvals} times in a row`,
+      };
+    case "skill-proposal":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `new skill ${item.name}`,
+        provenance: "agent",
+        detail: `${item.commands.split("\n").length} steps, seen ${item.occurrences} times`,
+      };
+    case "skill-review":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `${item.reason === "churning" ? "rework" : "retire"} skill ${item.skill}`,
+        provenance: "agent",
+        detail: `${item.uses} uses, ${item.patches} patches, ${item.rewrites} rewrites`,
       };
   }
 }
@@ -574,7 +636,13 @@ function workspaceHit(hit: SearchHit): MemoryQueryHit {
   };
 }
 
-function layeredHit(hit: ArcSearchHit, boost: number): MemoryQueryHit {
-  if (hit.layer === "workspace") return workspaceHit(hit);
-  return { ...workspaceHit(hit), layer: arcLayerId(hit.arc), boost };
+function layeredHit(hit: LayeredSearchHit, boost: number): MemoryQueryHit {
+  switch (hit.layer) {
+    case "workspace":
+      return workspaceHit(hit);
+    case "arc":
+      return { ...workspaceHit(hit), layer: arcLayerId(hit.arc), boost };
+    case "bot":
+      return { ...workspaceHit(hit), layer: botLayerId(hit.bot), boost };
+  }
 }

@@ -9,6 +9,7 @@ describe("scenario registry", () => {
       "cold-start",
       "first-conversation",
       "tiling-tour",
+      "lsp-loop",
       "chroma-sweep",
       "chrome-states",
       "chrome-states-ascii",
@@ -43,9 +44,12 @@ describe("scenario registry", () => {
       "status-tips",
       "discovery",
       "defect-repros",
+      "injection-citizenship",
       "pointer-tour",
       "pointer-off",
       "tray-tour",
+      "terminal-mirror",
+      "diff-pane",
       "live-playground",
     ]);
   });
@@ -56,6 +60,7 @@ describe("scenario registry", () => {
       "cold-start",
       "first-conversation",
       "tiling-tour",
+      "lsp-loop",
       "chroma-sweep",
       "chrome-states",
       "chrome-states-ascii",
@@ -90,9 +95,12 @@ describe("scenario registry", () => {
       "status-tips",
       "discovery",
       "defect-repros",
+      "injection-citizenship",
       "pointer-tour",
       "pointer-off",
       "tray-tour",
+      "terminal-mirror",
+      "diff-pane",
     ]);
   });
 

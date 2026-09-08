@@ -347,7 +347,7 @@ function labelSpans(span: TitleSpan, ink: string, theme: Theme): RowSpan[] {
 }
 
 function tailInk(span: TitleSpan, theme: Theme): string {
-  return span.zone === "telemetry" ? theme.textMid : theme.textDim;
+  return span.zone === "telemetry" || span.zone === "bot" ? theme.textMid : theme.textDim;
 }
 
 function groundInk(

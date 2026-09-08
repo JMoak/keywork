@@ -40,6 +40,7 @@ file that currently owns each topic; the file itself says what it amends.
 | Code audit and its waves | [`111`](111-code-audit.md) |
 | Workspace readiness and `/init`, the `/connect` surface, the arc pane and its fold primitive, dock pins, memory browser scoping | [`112`](112-feel-and-look-wave.md) |
 | The own title row and needs-you chrome, gap / borderless / corner chrome, the arc airlock digest, arc jump rows, the verified e2e baseline | [`113`](113-arcs-and-chrome-wave.md) |
+| Where to resume from | [`115`](115-open-ledger.md) (read first; cites the owner of each item) |
 | LSP: the engine port, the diagnostics-in-tool-result moment, server posture, F4a / F4b / F5 | [`114`](114-lsp.md) (scoping; F4 / F5 in [`60`](60-code-intel.md) superseded) |
 
 ## Workstreams
@@ -54,7 +55,7 @@ file that currently owns each topic; the file itself says what it amends.
 | [`50-trust.md`](50-trust.md) | E: trust & safety | 5 | 10 |
 | [`60-code-intel.md`](60-code-intel.md) | F: code intelligence | 5 | 10 |
 | [`70-anthropic.md`](70-anthropic.md) | G: Anthropic (API-key provider; G1 + G2 landed 2026-09-03, ledger inside) | 2 | 3 |
-| [`80-p2-reach.md`](80-p2-reach.md) | P2: server, attach, workspaces; external-surface posture (2026-08-10) | 7 | 20 |
+| [`80-p2-reach.md`](80-p2-reach.md) | P2: server, attach, workspaces; external-surface posture (2026-08-10); P2.1 server landed 2026-09-06; P2.2 attach and P2.4 notifications landed 2026-09-07 | 7 | 20 |
 
 ## Overlays
 
@@ -83,6 +84,7 @@ Each row says what the file decides and when it binds; the detail lives in the f
 | [`112-feel-and-look-wave.md`](112-feel-and-look-wave.md) | Ledger + scoping (2026-08-22); wins where it speaks | Landed: workspace readiness + `/init` (arcs-initiation root cause), lazy memory, `/connect` connections screen, C71 dock pins, C70 the arc pane in two parts (docked node, then the fold primitive: held panes, `space` / `a`, folded-and-waiting rows, held restore), C72 the memory browser (garden / note / ledger lenses, the `?` question box with why-lines, prompt cut, one-key revert) (2026-08-23); open: C72-c heat candidates; decisions ledger at the end. 3 tasks, +11. |
 | [`113-arcs-and-chrome-wave.md`](113-arcs-and-chrome-wave.md) | Plan + ledger (2026-08-30); wins where it speaks | Lanes W1 to W5 over the fully specified leftovers; W2 (C69 own title row, C66 rung, C50 remainder) and W3 (J18 digest surface, arc jump rows) landed 2026-08-30; e2e baseline corrected (11 of 13 scenarios were red at `bccb058`); open decisions and reversible assumptions listed. |
 | [`114-lsp.md`](114-lsp.md) | Scoping overlay (2026-09-03); nothing built | LSP behind an engine `LanguagePort`: three options sized (A diagnostics only, recommended and default `off`; B read tools; C OpenCode-shaped, refused for v1), the after-save seam, diagnostics as text in the tool result, PATH-only user-installed servers, cost budgets, F4a / F4b / F5 tasks with a stdio fixture server, Q-L1 to Q-L5 for Jordan. |
+| [`115-open-ledger.md`](115-open-ledger.md) | Running pickup list (2026-09-07); decides nothing | Read first when resuming: gate state, pickup order, every unbuilt item and every open call with the overlay that owns it. Strike as things land. |
 
 ### Archived
 

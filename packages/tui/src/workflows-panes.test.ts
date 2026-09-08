@@ -236,11 +236,11 @@ describe("session tree", () => {
     await probe.settled();
     const pane = treePane(probe);
     expect(pane.level()).toBe("overview");
-    expect(pane.overview.rows().map((row) => [row.id, row.liveness])).toEqual([
+    expect(pane.overview.sessionRows().map((row) => [row.id, row.liveness])).toEqual([
       ["sess-session-1", "attached"],
       ["idle-1", "idle"],
     ]);
-    expect(pane.overview.cursorRow()?.id).toBe("sess-session-1");
+    expect(pane.overview.cursorSession()).toBe("sess-session-1");
     expect(probe.snapshot().panes.find((pane2) => pane2.id === "tree-1")?.title).toContain(
       "2 sessions",
     );
@@ -259,7 +259,7 @@ describe("session tree", () => {
     probe.command("tree");
     probe.keys("r");
     await probe.settled();
-    expect(treePane(probe).overview.rows()).toEqual([]);
+    expect(treePane(probe).overview.sessionRows()).toEqual([]);
     expect(probe.snapshot().panes.find((pane) => pane.id === "tree-1")?.title).toBe("session tree");
   });
 
@@ -287,7 +287,7 @@ describe("session tree", () => {
     probe.keys("escape");
     await probe.settled();
     expect(pane.level()).toBe("overview");
-    expect(pane.overview.cursorRow()?.id).toBe("idle-1");
+    expect(pane.overview.cursorSession()).toBe("idle-1");
   });
 
   it("enter over a session with an open pane focuses that pane instead of duplicating", async () => {
@@ -329,7 +329,7 @@ describe("session tree", () => {
     await waitFor(() => {
       expect(
         treePane(probe)
-          .overview.rows()
+          .overview.sessionRows()
           .map((row) => row.id),
       ).toEqual(["fresh-1", "sess-session-1", "idle-1"]);
     });
@@ -345,7 +345,7 @@ describe("session tree", () => {
     await waitFor(() => {
       expect(
         treePane(probe)
-          .overview.rows()
+          .overview.sessionRows()
           .map((row) => row.id),
       ).toEqual(["forked-1", "sess-session-1", "idle-1"]);
     });
@@ -444,7 +444,7 @@ describe("session tree", () => {
     expect(paneIds(restored)).toEqual(["tree-1", "session-1"]);
     const pane = treePane(restored);
     expect(pane.level()).toBe("overview");
-    expect(pane.overview.rows().map((row) => row.id)).toEqual(["sess-session-1"]);
+    expect(pane.overview.sessionRows().map((row) => row.id)).toEqual(["sess-session-1"]);
     expect(pane.describe()).toEqual({ kind: "session-tree", sessionId: "sess-session-1" });
   });
 

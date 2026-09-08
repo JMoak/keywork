@@ -150,7 +150,7 @@ describe("ArcsPaneModel keys", () => {
     press(model, "j", "enter");
     expect(model.level()).toBe("sessions");
     expect(model.drilled()).toEqual({ kind: "arc", slug: "infra" });
-    expect(model.sessions.rows().map((row) => row.id)).toEqual(["s3"]);
+    expect(model.sessions.sessionRows().map((row) => row.id)).toEqual(["s3"]);
     press(model, "escape");
     expect(model.level()).toBe("arcs");
     expect(model.cursor).toBe(1);
@@ -166,7 +166,7 @@ describe("ArcsPaneModel keys", () => {
     const { model } = modelOver();
     press(model, "j", "j", "l");
     expect(model.drilled()).toEqual({ kind: "unbound" });
-    expect(model.sessions.rows().map((row) => row.id)).toEqual(["s4"]);
+    expect(model.sessions.sessionRows().map((row) => row.id)).toEqual(["s4"]);
   });
 
   it("names a new arc inline and validates the slug before creating", () => {
@@ -246,6 +246,6 @@ describe("ArcsPaneModel keys", () => {
     );
     model.setInputs(arcs, items);
     expect(model.level()).toBe("sessions");
-    expect(model.sessions.rows().map((row) => row.id)).toEqual(["s1", "s2"]);
+    expect(model.sessions.sessionRows().map((row) => row.id)).toEqual(["s1", "s2"]);
   });
 });

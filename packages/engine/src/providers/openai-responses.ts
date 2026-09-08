@@ -91,6 +91,12 @@ async function* assembleTurn(
           yield { type: "text", text: event.delta };
         }
         break;
+      case "response.reasoning_summary_text.delta":
+      case "response.reasoning_text.delta":
+        if (typeof event.delta === "string" && event.delta !== "") {
+          yield { type: "visible-thinking", text: event.delta };
+        }
+        break;
       case "response.output_item.done":
         yield* completedItem(event.item, owner);
         break;

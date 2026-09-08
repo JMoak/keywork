@@ -84,8 +84,15 @@ Hermes Agent (https://github.com/NousResearch/hermes-agent)
 Copyright (c) 2025 Nous Research
 Licensed under the MIT License (full text below).
 
-Adaptations: none yet. keywork's self-healing-skills tasks plan adaptations of its skill
-mechanisms (reimplemented in TypeScript); entries will be recorded here as code lands.
+Adaptations:
+- J10 (packages/engine/src/skills/): the self-healing skills contracts adapted from
+  Hermes Agent's documented design: execution-time self-patching of a skill whose
+  command fails (surgical old/new text patch first, whole-body rewrite as the fallback),
+  progressive-disclosure loading (list metadata, view one skill, read one reference
+  file), autonomous skill creation after complex successes, error-derived workflows and
+  user corrections, per-skill view/use/patch telemetry feeding curation, and the
+  blast-radius invariant that only agent-created skills are ever modified.
+  Reimplemented in TypeScript from the documented design; no code copied.
 
 ---
 

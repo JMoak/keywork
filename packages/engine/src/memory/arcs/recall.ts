@@ -15,9 +15,14 @@ import {
 } from "../search.ts";
 import { type ArcRegistry, MissingArcError } from "./registry.ts";
 
-export type MemoryLayerRef = { layer: "workspace" } | { layer: "arc"; arc: string };
+export type MemoryLayerRef =
+  | { layer: "workspace" }
+  | { layer: "arc"; arc: string }
+  | { layer: "bot"; bot: string };
 
-export type ArcSearchHit = SearchHit & MemoryLayerRef;
+export type LayeredSearchHit = SearchHit & MemoryLayerRef;
+
+export type ArcSearchHit = LayeredSearchHit;
 
 export const workspaceLayer = "workspace";
 
@@ -25,10 +30,24 @@ export function arcLayer(slug: string): string {
   return `arc:${slug}`;
 }
 
+export function botLayer(slug: string): string {
+  return `bot:${slug}`;
+}
+
+export function isLayeredHit(hit: SearchHit): hit is LayeredSearchHit {
+  return "layer" in hit;
+}
+
 export function searchHitLayer(hit: SearchHit): string | undefined {
-  if (!("layer" in hit)) return undefined;
-  const tagged = hit as ArcSearchHit;
-  return tagged.layer === "workspace" ? workspaceLayer : arcLayer(tagged.arc);
+  if (!isLayeredHit(hit)) return undefined;
+  switch (hit.layer) {
+    case "workspace":
+      return workspaceLayer;
+    case "arc":
+      return arcLayer(hit.arc);
+    case "bot":
+      return botLayer(hit.bot);
+  }
 }
 
 export interface ArcRecallOutcome {

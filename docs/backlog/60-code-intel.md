@@ -12,6 +12,17 @@ Curated skills/commands (D5/D7 formats) for the TS toolchain: `typecheck` (tsc),
 the prompt body so the model reads results well. Not core code; content.
 **Accept:** skills invoke correctly in a fixture TS repo via mock conversation.
 **Strategy:** `OWN` content.
+**Landed 2026-09-07:** three bundled skills at `packages/engine/src/skills/bundled/`
+(`typecheck`, `lint`, `test`), each a human-authored `SKILL.md` (no `authored_by`) with
+output-reading hints, beside a `resolve.ts` that reads the manifest and lockfile and prints
+`tool:` / `command:` / `reason:` (`toolchain.ts` holds the detection). `layers.ts` gained the
+`bundled` source beneath project and user (`LayerRoots.bundledRoot`, exported
+`bundledSkillsRoot`). Evidence: `extensions/skills.test.ts` "bundled skills" (2),
+`skills/bundled/bundled.test.ts` (4 resolution rows: vitest+biome, bun test+eslint, scripted
+npm, bare; 3 mock conversations through the `skill` and `bash` tools asserting the resolved
+command text). Open crossing: `loadWorkspaceExtensions` in `packages/cli/src/commands.ts` does
+not pass `bundledRoot` yet, so the three stay dark in the app until that one line lands
+together with the `skills: []` expectation in `compose.test.ts`.
 
 ### F2 (3pt): Repo map: extraction & ranking
 Blessed extension: parse TS/JS (ts-morph or SWC) for exported symbols/signatures; rank by
@@ -28,7 +39,7 @@ Token-budgeted map injection via D2 context hook: configurable budget, shrink-to
 **Strategy:** `LIFT:aider` policy ideas.
 
 ### F4 (3pt): LSP lifecycle
-**Scoped by [`114`](114-lsp.md) (2026-09-03):** rewritten there as F4a (port lifecycle, 2pt) + F4b (after-save seam and diagnostics block, 1pt); the sizes and acceptance in 114 replace these.
+**Scoped by [`114`](114-lsp.md) (2026-09-03):** rewritten there as F4a (port lifecycle, 2pt) + F4b (after-save seam and diagnostics block, 1pt); the sizes and acceptance in 114 replace these. F4a/F4b landed 2026-09-06 (114 ledger).
 Blessed extension: spawn/manage `vtsls` (or `typescript-language-server`; pick by eval,
 document): initialize handshake, doc sync driven by file-change events, health monitoring,
 graceful degradation when the server dies (agent falls back to F1/F2 silently and never blocks
@@ -38,7 +49,7 @@ loop continues without it.
 **Strategy:** `OWN` design; consult `LIFT:opencode` MIT LSP layer where useful.
 
 ### F5 (2pt): LSP as agent tools
-**Scoped by [`114`](114-lsp.md) (2026-09-03):** option B there; lands only after F4a / F4b and a dogfooding note.
+**Scoped by [`114`](114-lsp.md) (2026-09-03):** option B there; F4a/F4b landed 2026-09-06, so F5 now waits only on the dogfooding note in the 114 ledger.
 Expose `diagnostics` (post-edit errors/warnings, push-after-write as context hint),
 `symbol_lookup` (definition/references/hover) as registered tools; the after-edit diagnostics
 push is the killer feature: the model sees the type error the moment it writes it.

@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import {
   type Agent,
   type BotDefinition,
@@ -20,11 +21,14 @@ import {
   type TurnSettlement,
 } from "@keywork/engine";
 import {
+  type KeyworkConfig,
+  type LspConfig,
   type McpServerConfig,
   type ModelCapabilitiesConfig,
   type PromptsConfig,
   toError,
 } from "@keywork/shared";
+import { type BotMemory, botMemory } from "./bot-memory.ts";
 import {
   commandRuntime,
   parseSlashLine,
@@ -38,8 +42,8 @@ import {
   composeAgents,
   composeWorkspace,
 } from "./compose.ts";
-import { citationTrail, sweepOnClose } from "./memory.ts";
-import { defaultSessionDir } from "./paths.ts";
+import { citationTrail, skillEvidenceOf, sweepOnClose } from "./memory.ts";
+import { defaultSessionDir, skillTelemetryFile, workspaceIdentity } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
 import { openOrResumeSession } from "./sessions/store.ts";
 import {
@@ -65,7 +69,9 @@ export interface ChatOptions {
   presets?: PresetPort;
   mcpServers?: Record<string, McpServerConfig>;
   repoMap?: "auto" | "off";
+  lsp?: LspConfig;
   models?: ModelCapabilitiesConfig;
+  thinking?: KeyworkConfig["thinking"];
   userRoot?: string;
   checkpointsGitDir?: string;
 }
@@ -157,6 +163,7 @@ class Repl {
     readonly store: SessionStore,
     readonly composition: Composition,
     readonly agents: AgentComposition,
+    readonly bots: BotMemory,
     readonly guard: ToolGuard,
     readonly runtime: CommandRuntime,
     seeded: readonly Message[],
@@ -186,6 +193,7 @@ class Repl {
       bot,
       history,
       sessionId: this.store.header.id,
+      spills: this.store.spills(),
     });
     wireStreamingOutput(agent, this.io);
     agent.settleTurnsWith(() => this.afterTurn(agent));
@@ -254,9 +262,19 @@ class Repl {
 
   async close(): Promise<void> {
     await this.composition.mcp?.stop();
-    await sweepOnClose(this.composition.memory()).catch((cause: unknown) => {
+    await this.composition.languagePort?.dispose();
+    await this.sweepMemory().catch((cause: unknown) => {
       this.io.printError(`memory sweep failed: ${toError(cause).message}`);
     });
+  }
+
+  private async sweepMemory(): Promise<void> {
+    const telemetryFile = skillTelemetryFile(
+      workspaceIdentity(this.options.cwd, this.options.workspaceSlug),
+      this.options.userRoot,
+    );
+    const evidence = await skillEvidenceOf(this.composition.skills, telemetryFile);
+    await sweepOnClose(this.composition.memory(), evidence);
   }
 }
 
@@ -279,6 +297,8 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     repoMap: options.repoMap,
     models: options.models,
     reportCheckpointsUnavailable: (message) => io.print(`can't undo: ${message}`),
+    lsp: options.lsp,
+    notice: (text) => io.print(text),
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
     ...(options.checkpointsGitDir !== undefined && {
       checkpointsGitDir: options.checkpointsGitDir,
@@ -288,12 +308,29 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
   const guard = mutationGuard(io, composition.checkpoints);
   const citations = citationTrail(composition.memory, () => composition.bootstrap);
   citations.forSession(opened.store.header.id);
+  const bots = botMemory({
+    cwd: options.cwd,
+    projectTrusted: options.projectTrusted === true,
+    workspaceSlug: options.workspaceSlug,
+    userRoot: options.userRoot ?? homedir(),
+    memory: composition.memory,
+    roster: composition.extensions.bots,
+    bindingOf: () => opened.store.botBinding(),
+    skills: composition.extensions.skills,
+  });
+  await bots.prepare();
   const repl = new Repl(
     options,
     io,
     opened.store,
     composition,
-    composeAgents(composition, { permissions: options.permissions, citations }),
+    composeAgents(composition, {
+      permissions: options.permissions,
+      bots,
+      citations,
+      thinking: options.thinking === "on",
+    }),
+    bots,
     guard,
     commandRuntime(options.cwd, guard),
     opened.seeded,
@@ -308,7 +345,14 @@ async function printReturnDelta(repl: Repl): Promise<void> {
   const memory = repl.composition.memory();
   if (memory === undefined) return;
   const since = repl.store.stats().lastActivityAt;
-  const lines = await gatherReturnDelta({ since, workspace: memory.store }).catch(() => []);
+  const bot = repl.activeBot;
+  const registry = bot === undefined ? undefined : repl.bots.registryFor(bot);
+  const lines = await gatherReturnDelta({
+    since,
+    workspace: memory.store,
+    ...(bot !== undefined &&
+      registry !== undefined && { bots: registry, bot: { slug: bot.name, sigil: bot.sigil } }),
+  }).catch(() => []);
   if (lines.length > 0) repl.io.print(`since you were here: ${lines.join(" · ")}`);
 }
 
@@ -483,8 +527,14 @@ function answerFor(key: KeyPress): Answer | undefined {
 }
 
 function wireStreamingOutput(agent: Agent, io: ChatIo): void {
+  const thinking = thinkingStream(io);
   agent.bus.on("turn.delta", ({ delta, replay }) => {
-    if (replay !== true && delta.type === "text") io.write(delta.text);
+    if (replay === true) return;
+    if (delta.type === "visible-thinking") thinking.write(delta.text);
+    if (delta.type === "text") {
+      thinking.close();
+      io.write(delta.text);
+    }
   });
   agent.bus.on("tool.output", ({ chunk, replay }) => {
     if (replay !== true) io.write(chunk);
@@ -496,9 +546,34 @@ function wireStreamingOutput(agent: Agent, io: ChatIo): void {
     if (replay !== true) io.print(`  ${isError ? "✗" : "✓"} ${firstLine(output, 100)}`);
   });
   agent.bus.on("turn.completed", ({ replay }) => {
-    if (replay !== true) io.print("");
+    if (replay === true) return;
+    thinking.close();
+    io.print("");
   });
   agent.bus.on("turn.interrupted", () => io.print("\n(interrupted)"));
+}
+
+interface ThinkingStream {
+  write(text: string): void;
+  close(): void;
+}
+
+function thinkingStream(io: ChatIo): ThinkingStream {
+  let open = false;
+  return {
+    write: (text) => {
+      open = true;
+      io.write(dimmed(text));
+    },
+    close: () => {
+      if (open) io.write("\n");
+      open = false;
+    },
+  };
+}
+
+function dimmed(text: string): string {
+  return `\u001b[2m${text}\u001b[22m`;
 }
 
 function greet(repl: Repl, seededCount: number): void {

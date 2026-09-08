@@ -16,6 +16,7 @@ import {
 } from "./chrome-states.ts";
 import { coldStart } from "./cold-start.ts";
 import { defectRepros } from "./defect-repros.ts";
+import { diffPane } from "./diff-pane.ts";
 import { discovery } from "./discovery.ts";
 import {
   elevationArcStamps,
@@ -26,8 +27,10 @@ import {
 import { firstConversation } from "./first-conversation.ts";
 import { gardenHeatInk, gardenHeatLead } from "./garden-heat.ts";
 import { gaugeBar, gaugeBare, gaugeRamp, gaugeSteps, gaugeTile } from "./gauge-forms.ts";
+import { injectionCitizenship } from "./injection-citizenship.ts";
 import { livePlayground } from "./live-playground.ts";
 import { longSession } from "./long-session.ts";
+import { lspLoop } from "./lsp-loop.ts";
 import { mastheadLadder } from "./masthead-ladder.ts";
 import { memoryAirlockTail, memoryBrowser } from "./memory-browser.ts";
 import { pageTiers } from "./page-tiers.ts";
@@ -35,6 +38,7 @@ import { pointerOff } from "./pointer-off.ts";
 import { pointerTour } from "./pointer-tour.ts";
 import { sessionLifecycle } from "./session-lifecycle.ts";
 import { statusTips } from "./status-tips.ts";
+import { terminalMirror } from "./terminal-mirror.ts";
 import { tilingTour } from "./tiling-tour.ts";
 import { trayTour } from "./tray-tour.ts";
 
@@ -42,6 +46,7 @@ export const scenarios: readonly Scenario[] = [
   coldStart,
   firstConversation,
   tilingTour,
+  lspLoop,
   chromaSweep,
   chromeStatesTiered,
   chromeStatesAscii,
@@ -76,9 +81,12 @@ export const scenarios: readonly Scenario[] = [
   statusTips,
   discovery,
   defectRepros,
+  injectionCitizenship,
   pointerTour,
   pointerOff,
   trayTour,
+  terminalMirror,
+  diffPane,
   livePlayground,
 ];
 

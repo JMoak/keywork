@@ -15,6 +15,33 @@ const keymap = () =>
     },
   });
 
+describe("Keymap.rebind", () => {
+  it("swaps the whole table in one step", () => {
+    const map = keymap();
+    map.rebind({ leader: "ctrl+k", timeoutMs: 500, bindings: { "pane.split": "ctrl+t" } });
+    expect(map.press(parseChord("ctrl+t"), 0)).toEqual({ type: "action", action: "pane.split" });
+    expect(map.press(parseChord("ctrl+q"), 0)).toEqual({ type: "pass" });
+    expect(map.timeoutMs).toBe(500);
+    expect(map.describe("pane.split")).toBe("ctrl+t");
+  });
+
+  it("keeps the old table when the new one fails to compile", () => {
+    const map = keymap();
+    expect(() =>
+      map.rebind({ bindings: { "pane.split": "ctrl+q", "app.quit": "ctrl+q" } }),
+    ).toThrow(KeymapError);
+    expect(map.press(parseChord("ctrl+q"), 0)).toEqual({ type: "action", action: "app.quit" });
+  });
+
+  it("disarms a pending leader so stale scopes never fire", () => {
+    const map = keymap();
+    map.press(parseChord("ctrl+k"), 0);
+    map.rebind({ leader: "ctrl+k", bindings: { "pane.split": "leader s" } });
+    expect(map.armed(1)).toBe(false);
+    expect(map.press(parseChord("s"), 1)).toEqual({ type: "pass" });
+  });
+});
+
 describe("parseChord", () => {
   it("parses modifiers in any order", () => {
     expect(parseChord("ctrl+shift+p")).toEqual({ name: "p", ctrl: true, shift: true, meta: false });

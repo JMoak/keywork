@@ -1120,6 +1120,42 @@ describe("interior split borders", () => {
     }
     expect([...dragged].sort((l, r) => l - r)).toEqual([...keyed].sort((l, r) => l - r));
   });
+
+  it("holds the tiling invariant and the min-size floor at every dragged position on a nested seam", () => {
+    const heights = new Set<number>();
+    for (let y = 0; y < screen.height; y += 1) {
+      const layout = layoutWith("a", "b", "c");
+      layout.dragSplitHandle({ path: ["second"] }, 70, y, screen);
+      assertExactTiling(layout);
+      heights.add(layout.rects(screen).get("b")?.height ?? 0);
+    }
+    expect(Math.min(...heights)).toBeGreaterThanOrEqual(minPaneSize.height);
+    expect(heights.size).toBeGreaterThan(1);
+  });
+
+  it("zooms and unzooms byte-identically over a dragged ratio", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.dragSplitHandle({ path: [] }, 80, 5, screen);
+    layout.dragSplitHandle({ path: ["second"] }, 100, 12, screen);
+    const before = JSON.stringify([layout.toJSON(), [...layout.rects(screen)]]);
+    layout.focus("c");
+    layout.zoomToggle();
+    expect(layout.splitHandleAt(80, 5, screen)).toBeUndefined();
+    layout.zoomToggle();
+    expect(JSON.stringify([layout.toJSON(), [...layout.rects(screen)]])).toBe(before);
+  });
+
+  it("round-trips a dragged ratio through the persisted layout state", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.dragSplitHandle({ path: [] }, 80, 5, screen);
+    layout.dragSplitHandle({ path: ["second"] }, 100, 12, screen);
+    const state = Layout.parse(JSON.parse(JSON.stringify(layout.toJSON())));
+    if (state === undefined) throw new Error("unparseable layout state");
+    const revived = new Layout();
+    revived.load(state);
+    expect([...revived.rects(screen)]).toEqual([...layout.rects(screen)]);
+    assertExactTiling(revived);
+  });
 });
 
 describe("Layout drag commits are keyboard-reachable", () => {

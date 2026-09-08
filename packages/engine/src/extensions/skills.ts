@@ -1,7 +1,9 @@
 import type { Dirent } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { authorOf } from "../skills/authorship.ts";
 import { defineTool } from "../tools/define.ts";
 import type { Tool } from "../tools.ts";
 import {
@@ -23,6 +25,7 @@ export interface SkillDefinition {
   file: string;
   source: LayerSource;
   convention: string;
+  authoredBy: string | undefined;
 }
 
 export interface SkillLoad {
@@ -32,8 +35,21 @@ export interface SkillLoad {
 
 export const skillConventionDirs = [".keywork/skills", ".claude/skills", ".cursor/skills"];
 
+export const bundledSkillsRoot = fileURLToPath(new URL("../skills/bundled/", import.meta.url));
+
 export async function discoverSkills(roots: LayerRoots): Promise<SkillLoad> {
   const { items, failures } = await loadLayered(roots, skillConventions, buildSkill);
+  return { skills: items, failures };
+}
+
+export async function discoverSkillsUnder(
+  root: string,
+  convention: string,
+  source: LayerSource,
+): Promise<SkillLoad> {
+  const roots: LayerRoots = source === "user" ? { userRoot: root } : { projectRoot: root };
+  const conventions: ExtensionConventions = { dirs: [convention], discover: skillFilesUnder };
+  const { items, failures } = await loadLayered(roots, conventions, buildSkill);
   return { skills: items, failures };
 }
 
@@ -75,6 +91,7 @@ function buildSkill(definition: MarkdownDefinition): SkillDefinition {
     file: definition.file,
     source: definition.source,
     convention: definition.convention,
+    authoredBy: authorOf(definition.frontmatter),
   };
 }
 

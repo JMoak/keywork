@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { discoverSkills, skillTool } from "./skills.ts";
+import { bundledSkillsRoot, discoverSkills, skillTool } from "./skills.ts";
 
 const scratch = scratchDirs("keywork-skills-");
 const directoryLinksSupported = await probeDirectoryLinkSupport();
@@ -105,6 +105,34 @@ describe("discoverSkills", () => {
   });
 });
 
+describe("bundled skills", () => {
+  it("loads typecheck, lint and test from the bundled layer beneath project and user", async () => {
+    const project = await scratchRoot();
+    await seedSkill(project, ".keywork/skills/lint", "project lint wins");
+    const { skills, failures } = await discoverSkills({
+      projectRoot: project,
+      bundledRoot: bundledSkillsRoot,
+    });
+    expect(failures).toEqual([]);
+    expect(skills.map((skill) => [skill.name, skill.source, skill.convention])).toEqual([
+      ["lint", "project", ".keywork/skills"],
+      ["test", "bundled", "bundled"],
+      ["typecheck", "bundled", "bundled"],
+    ]);
+  });
+
+  it("ships the three human-authored recipes with descriptions and resolvers", async () => {
+    const { skills } = await discoverSkills({ bundledRoot: bundledSkillsRoot });
+    expect(skills.map((skill) => skill.name)).toEqual(["lint", "test", "typecheck"]);
+    for (const skill of skills) {
+      expect(skill.authoredBy).toBeUndefined();
+      expect(skill.description).not.toBe("");
+      expect(skill.body).toContain("resolve.ts");
+      expect(skill.dir).toBe(join(bundledSkillsRoot, skill.name));
+    }
+  });
+});
+
 describe("skillTool", () => {
   const skills = [
     {
@@ -115,6 +143,7 @@ describe("skillTool", () => {
       file: "/repo/.keywork/skills/deploy/SKILL.md",
       source: "project" as const,
       convention: ".keywork/skills",
+      authoredBy: undefined,
     },
   ];
 

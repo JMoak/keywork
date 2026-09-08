@@ -71,7 +71,9 @@ function replayAssistantMessage(
   pendingCalls: Map<string, ToolCallPart>,
 ): void {
   for (const part of message.parts) {
-    if (part.type === "text") bus.emit("turn.delta", { delta: part, replay: true });
+    if (part.type === "text" || part.type === "visible-thinking") {
+      bus.emit("turn.delta", { delta: part, replay: true });
+    }
     if (part.type === "tool-call") {
       bus.emit("turn.delta", { delta: { type: "tool-call", call: part }, replay: true });
       pendingCalls.set(part.callId, part);
@@ -98,6 +100,7 @@ function replayToolResults(
       callId: part.callId,
       output: part.output,
       isError: part.isError,
+      ...(part.spill !== undefined && { spill: part.spill }),
       replay: true,
     });
   }

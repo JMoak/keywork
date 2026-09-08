@@ -33,6 +33,28 @@ describe("toResponsesRequest", () => {
     });
   });
 
+  it("asks for a reasoning summary only when thinking is on", () => {
+    expect("reasoning" in wire()).toBe(false);
+    expect(wire({ thinking: true })).toMatchObject({ reasoning: { summary: "auto" } });
+  });
+
+  it("never sends visible thinking back as input", () => {
+    const body = wire({
+      messages: [
+        textMessage("user", "hi"),
+        {
+          role: "assistant",
+          parts: [
+            { type: "visible-thinking", text: "shown reasoning" },
+            { type: "text", text: "answer" },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain("shown reasoning");
+    expect(body.input).toHaveLength(2);
+  });
+
   it("falls back to neutral instructions when no system prompt exists", () => {
     expect(wire({ systemPrompt: "" }).instructions).toBe("You are a helpful assistant.");
   });

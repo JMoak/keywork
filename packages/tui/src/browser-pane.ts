@@ -1,9 +1,12 @@
 import {
+  type BrowserDisk,
   BrowserModel,
   type BrowserRow,
+  browserDiskOf,
   type ReadDirectory,
-  readDirectoryFromDisk,
+  realBrowserDisk,
 } from "./browser-model.ts";
+import type { DebounceTiming } from "./debounce.ts";
 import type { Chord } from "./keys.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
@@ -27,10 +30,15 @@ export class BrowserPane implements Pane {
     rootPath: string,
     notify: () => void,
     intents: PaneIntents,
-    readDirectory: ReadDirectory = readDirectoryFromDisk,
+    disk: BrowserDisk | ReadDirectory = realBrowserDisk,
+    timing?: DebounceTiming,
   ) {
-    this.model = new BrowserModel(rootPath, readDirectory, notify, (path) =>
-      intents.openFile(path),
+    this.model = new BrowserModel(
+      rootPath,
+      browserDiskOf(disk),
+      notify,
+      (path) => intents.openFile(path),
+      timing,
     );
   }
 
@@ -100,6 +108,6 @@ function rowText(row: BrowserRow): string {
 
 function rowInk(row: BrowserRow, theme: Theme): string {
   if (row.load === "failed") return theme.error;
-  if (row.hidden) return theme.textDim;
+  if (row.hidden || row.ignored) return theme.textDim;
   return row.kind === "dir" ? theme.accentSoft : theme.text;
 }

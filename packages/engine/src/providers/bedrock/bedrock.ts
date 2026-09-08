@@ -120,6 +120,7 @@ function converseBlock(part: Part): object[] {
       ];
     case "thinking":
     case "redacted-thinking":
+    case "visible-thinking":
       return [];
   }
 }

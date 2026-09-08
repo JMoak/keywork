@@ -23,6 +23,7 @@ export function toResponsesRequest(
     stream: true,
     store: false,
     include: ["reasoning.encrypted_content"],
+    ...(request.thinking === true && { reasoning: { summary: "auto" } }),
     instructions: request.systemPrompt === "" ? defaultInstructions : request.systemPrompt,
     input: request.messages.flatMap((message) => toInputItems(message, owner)),
     ...(request.tools.length > 0 && { tools: request.tools.map(toWireTool) }),

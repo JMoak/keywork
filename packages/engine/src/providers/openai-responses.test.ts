@@ -61,6 +61,25 @@ describe("OpenAiResponsesProvider", () => {
     ]);
   });
 
+  it("streams reasoning summary text as visible thinking ahead of the answer", async () => {
+    const lines = [
+      '{"type":"response.reasoning_summary_text.delta","delta":"Weighing "}',
+      '{"type":"response.reasoning_summary_text.delta","delta":"options."}',
+      '{"type":"response.reasoning_summary_text.delta","delta":""}',
+      '{"type":"response.output_text.delta","delta":"Go."}',
+      '{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}',
+    ];
+    const deltas = await collect(
+      provider(async () => sseResponse(lines)).stream({ ...simpleRequest, thinking: true }),
+    );
+    expect(deltas).toEqual([
+      { type: "visible-thinking", text: "Weighing " },
+      { type: "visible-thinking", text: "options." },
+      { type: "text", text: "Go." },
+      { type: "done", usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+  });
+
   it("ignores reasoning items without encrypted content", async () => {
     const lines = [
       '{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","summary":[]}}',

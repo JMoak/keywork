@@ -1,6 +1,6 @@
-import type { Message, ToolCallPart, Usage } from "./messages.ts";
+import type { Message, SpillReference, ToolCallPart, Usage } from "./messages.ts";
 import type { TurnDelta } from "./provider.ts";
-import type { ContextInjection, PermissionDecision } from "./session/journal.ts";
+import type { ContextInjection, PermissionAsk, PermissionDecision } from "./session/journal.ts";
 
 export type SendBehavior = "steer" | "queue";
 
@@ -18,11 +18,13 @@ interface LiveEvents {
   "queue.changed": { queued: readonly QueuedPrompt[] };
   "tool.started": { call: ToolCallPart };
   "tool.output": { chunk: string; callId?: string };
-  "tool.finished": { callId: string; output: string; isError: boolean };
+  "tool.finished": { callId: string; output: string; isError: boolean; spill?: SpillReference };
+  "gate.ask": { ask: PermissionAsk };
   "gate.permission": { decision: PermissionDecision };
   "gate.preset": { from: string; to: string };
   "session.mode": { mode: string };
   "context.injected": { injection: ContextInjection };
+  "diagnostics.published": { path: string; count: number };
   "shell.reset": Record<never, never>;
   "engine.error": { error: Error };
 }

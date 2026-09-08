@@ -42,6 +42,7 @@ describe("toChatRequest image parts", () => {
       parts: [
         { type: "thinking", thinking: "quietly", signature: "sig==" },
         { type: "redacted-thinking", data: "opaque==" },
+        { type: "visible-thinking", text: "shown reasoning" },
         { type: "text", text: "answer" },
       ],
     };

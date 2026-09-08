@@ -104,6 +104,97 @@ diagnostics, CLI-inference and scripts areas; the full suite ran 3259 passed / 1
 with 9 failures all inside the bots lane's in-progress `agents → bots` rename
 (`cli/src/{chat,commands,compose,compose-panes}.test.ts`), none in this lane's files.
 
+### G4 · visible thinking · landed 2026-09-06 (uncommitted)
+
+Built in the same round as the bots, LSP, and audit lanes, touching the neutral message
+format, the four providers, the session store, the shared schema, and the conversation pane.
+
+- **A distinct part, never re-sent.** `VisibleThinkingPart` (`type: "visible-thinking"`,
+  `messages.ts`) and the matching `TurnDelta` carry reasoning text for display only. The
+  agent folds streamed deltas into one part ahead of the answer text, so it persists in the
+  session and replays. Every wire mapping drops it: `messages-wire.ts` and `responses-wire.ts`
+  through their `default` arms, `chat-wire.ts` by construction, `bedrock.ts` through its
+  exhaustive switch. The owned `redacted-thinking` signature handling and the current-turn-only
+  replay policy are byte-for-byte unchanged.
+- **The switch.** `ProviderRequest.thinking?: boolean` is present only when on; `Agent` holds
+  it (`thinking()` / `setThinking()`, `AgentOptions.thinking`) and omits the key otherwise, so
+  an off request is the same object as before. Config `thinking: "on" | "off"` (shared schema,
+  `.describe()`-justified) seeds every agent through `composeAgents` in `compose-panes.ts`.
+- **Anthropic.** `toMessagesRequest` adds `thinking` only when asked, in the shape the model's
+  generation accepts: Claude 4.6 and later get `{ type: "adaptive", display: "summarized" }`
+  (those models reject `budget_tokens` and default the text to omitted); Haiku 4.5, Sonnet 4.5,
+  and every earlier Claude get `{ type: "enabled", budget_tokens: min(16000, max_tokens - 1) }`.
+  `thinking_delta` text streams as a visible-thinking delta whenever the wire carries it,
+  beside the unchanged owned block. Headers, endpoint, and credential handling untouched; the
+  G2 checklist re-ran on the diff (`docs/compliance/anthropic-review.md`, 2026-09-06 section).
+- **Responses.** `reasoning: { summary: "auto" }` is requested only when on;
+  `response.reasoning_summary_text.delta` (and `response.reasoning_text.delta`) stream into
+  the same part. The encrypted reasoning item round-trips as before.
+- **Chat-completions and Bedrock: no request change.** Neither wire carries reasoning text
+  today (no `reasoning_content` on the chat stream assembler, no `reasoningContent` on the
+  Converse assembler), so the option is inert there and documented as such rather than
+  guessed at.
+- **`/thinking [on|off]`** lives beside `/cost` and `/compact` in the conversation model:
+  toggles the live agent, posts `thinking shown · tab unfolds it · /thinking hides it again`
+  or `thinking hidden · requests go out as before`, and records the switch through the
+  attachment as the existing Pi-shaped `thinking_level_change` entry (`thinkingLevel: "on"
+  | "off"`, `SessionStore.appendThinkingLevelChange` / `thinkingLevel()`), which the session
+  tree already renders as `thinking → on`. Resume restores it in `adoptSession`; `/model`,
+  `/bot-switch`, and compaction rebuilds carry it across `swapAgent`.
+- **The pane.** A `thinking` transcript entry renders as one `textMid` row under the agent
+  stamp, `thinking · N words`, folded by default; Tab (the existing latest-fold / fold-cursor
+  idiom) or a click unfolds it into the reasoning as meta prose under a faint rule, wrapped to
+  the prose measure. Replayed sessions show it the same way.
+- **Evidence.** `anthropic.test.ts` ("asks for thinking only when the request opts in and
+  leaves the default body byte-identical", the block-order fixture now yields the visible
+  delta), `messages-wire.test.ts` ("requests thinking only when asked, in the shape each Claude
+  generation accepts", "caps the thinking budget", "never sends visible thinking, even to the
+  model that produced it", plus the mid-session switch trio now carrying a visible part),
+  `responses-wire.test.ts` ("asks for a reasoning summary only when thinking is on", "never
+  sends visible thinking back as input"), `openai-responses.test.ts` ("streams reasoning
+  summary text as visible thinking"), `chat-wire.test.ts` and `bedrock.test.ts` (exact-body
+  assertions with a visible part present), `agent.test.ts` ("carries the thinking flag only
+  once switched on"), `store-thinking.test.ts`, `replay.test.ts` ("replays visible thinking
+  ahead of the answer"), `transcript-feed.test.ts` ("folds streamed thinking into one entry
+  ahead of the answer and unfolds it on the latest-fold key"), `transcript-view.test.ts`
+  ("thinking parts" trio), `conversation-model.test.ts` ("/thinking" trio),
+  `session-attachment.test.ts` ("restores the session's thinking switch on adopt"),
+  `ports.test.ts` ("persists the thinking switch once per change").
+
+**Gate (lane-run, 2026-09-06):** biome clean on every file this lane owns; `tsc --build` clean
+except two errors inside other lanes' in-progress files (`cli/src/memory.ts`,
+`cli/src/compose-panes.ts` closers); vitest 195 files / 2800 passed, 1 skipped across engine,
+tui, shared, and the CLI session and composition areas; `check:prose` ok. `bun run
+check:guardrails` segfaults inside Bun 1.3.9 on this machine at startup, so the same scan ran
+under Node (`node --experimental-strip-types scripts/check-guardrails.ts`): `check:guardrails ok`.
+
+**Assumptions Jordan may reverse**
+
+1. Request shape follows the model generation rather than the spec's literal
+   `budget_tokens`, because Claude 4.6+ returns 400 on `budget_tokens` and hides the text unless
+   `display: "summarized"` is sent. The cut is 4.6; unrecognised ids get the adaptive shape.
+2. Budget for the older models is 16,000 tokens, clamped under `max_tokens`; not configurable.
+3. Visible thinking arrives whenever the wire carries it, on or off, so a proxy that enables
+   thinking through `decorations.body` shows it too. The request is what the switch governs.
+4. The session entry reuses `thinking_level_change` with `"on" | "off"` instead of a new
+   `thinking_change` type, to avoid a format bump; levels could become budgets later.
+5. ~~Headless `keywork run` and the REPL `chat` do not read `config.thinking` yet: they compose
+   from individual options, not the config object, and have no fold to show. Follow-up.~~
+   Landed 2026-09-06 (uncommitted): `RunOptions.thinking` and `ChatOptions.thinking` take the
+   config value (`KeyworkConfig["thinking"]`), `main.ts` forwards `config.thinking` beside
+   `models` and `lsp`, and both paths hand `composeAgents` the same `thinking: === "on"` the
+   panes do, so the request is the pane request byte for byte when on and the old request when
+   off or unset. `keywork run --json` needed no new event kind: thinking already rides
+   `turn.delta` as `delta.type: "visible-thinking"`, and plain mode prints only the answer
+   (`messageText` skips the part). The REPL prints thinking dimmed (SGR 2) ahead of the answer
+   with one newline between, and nothing when the stream carries none. Tests: `run.test.ts`
+   "asks for thinking only when the config says on and leaves the off request byte-identical",
+   "streams thinking as its own turn.delta kind and keeps it out of the plain answer";
+   `chat.test.ts` "prints thinking dimmed ahead of the answer and asks for it only when the
+   config says on". No `/thinking` in the REPL yet: the switch is config-only there.
+6. The folded row counts words, not tokens, and the pane shows no separate streaming cue for
+   thinking; the count grows live instead.
+
 ### Deviations of record (decided by Jordan 2026-09-03 unless marked open)
 
 1. **Official SDK deferred, reversible.** G1 said "via the official `@anthropic-ai/sdk`". The

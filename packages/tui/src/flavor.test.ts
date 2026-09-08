@@ -66,6 +66,28 @@ describe("startupFlavors", () => {
   it("refuses overrides that sink below the contrast floor, helpfully", () => {
     expect(() => startupFlavors({ text: "#20222e" })).toThrow(/text on background/);
   });
+
+  it("wears the named closet flavor first and keeps the rest hanging", () => {
+    const [worn, ...rest] = startupFlavors({}, [firstLight], "first-light");
+    expect(worn).toEqual(firstLight);
+    expect(rest).toEqual([keyworkNightFlavor]);
+  });
+
+  it("lays overrides over the worn flavor, whichever it is", () => {
+    const [worn] = startupFlavors(
+      { accent: "#1f8a99", ramp: ["#1f8a99"] },
+      [firstLight],
+      "first-light",
+    );
+    expect(worn?.tokens.accent).toBe("#1f8a99");
+    expect(worn?.tokens.background).toBe(firstLight.tokens.background);
+  });
+
+  it("falls back to keywork-night when the named flavor is not in the closet", () => {
+    const [worn, ...rest] = startupFlavors({}, [firstLight], "neo-tokyo");
+    expect(worn).toEqual(keyworkNightFlavor);
+    expect(rest).toEqual([firstLight]);
+  });
 });
 
 describe("flavor hot-swap", () => {
