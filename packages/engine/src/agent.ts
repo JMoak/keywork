@@ -2,14 +2,21 @@ import { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } fro
 import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
-import type { ContextInjection, PermissionDecision, PermissionGate } from "./session/journal.ts";
+import type {
+  AskRule,
+  ContextInjection,
+  PermissionDecision,
+  PermissionGate,
+} from "./session/journal.ts";
 import type { SpillStore } from "./session/spill.ts";
 import { findTool, type Tool } from "./tools.ts";
 
 export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
 
+export type Confirmation = boolean | { approved: boolean; gate: ConfirmingGate };
+
 export interface ToolGuard {
-  confirm?(call: ToolCallPart): Promise<boolean>;
+  confirm?(call: ToolCallPart): Promise<Confirmation>;
   gate?: ConfirmingGate;
   beforeMutation?(): Promise<void>;
 }
@@ -425,14 +432,16 @@ export class Agent {
       }
       if (verdict === "ask") {
         const guardAsked = this.guard?.confirm !== undefined;
-        const approved = await this.confirmWithGuard(call);
+        if (guardAsked) this.emitAsk(call, gate);
+        const answer = await this.confirmWithGuard(call);
+        const answeredBy = answer.gate ?? this.guard?.gate ?? "user";
         this.emitPermissionDecision(
           call,
-          approved ? "granted" : "denied",
-          guardAsked ? (this.guard?.gate ?? "user") : gate,
+          answer.approved ? "granted" : "denied",
+          guardAsked ? answeredBy : gate,
         );
-        if (!approved) {
-          return { callId: call.callId, output: declinedOutput(this.guard?.gate), isError: true };
+        if (!answer.approved) {
+          return { callId: call.callId, output: declinedOutput(answeredBy), isError: true };
         }
       } else {
         this.emitPermissionDecision(call, "granted", gate);
@@ -461,8 +470,17 @@ export class Agent {
     });
   }
 
-  private confirmWithGuard(call: ToolCallPart): Promise<boolean> {
-    return this.guard?.confirm?.(call) ?? Promise.resolve(true);
+  private emitAsk(call: ToolCallPart, rule: AskRule): void {
+    this.bus.emit("gate.ask", {
+      ask: { tool: call.name, callId: call.callId, arguments: call.arguments, rule },
+    });
+  }
+
+  private async confirmWithGuard(
+    call: ToolCallPart,
+  ): Promise<{ approved: boolean; gate: ConfirmingGate | undefined }> {
+    const answer = await (this.guard?.confirm?.(call) ?? Promise.resolve(true));
+    return typeof answer === "boolean" ? { approved: answer, gate: undefined } : answer;
   }
 
   private async checkpointOnce(): Promise<void> {

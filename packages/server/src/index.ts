@@ -1,4 +1,12 @@
 export {
+  type AnswerOutcome,
+  AskQueue,
+  type AskQueueOptions,
+  type AskVerdict,
+  defaultAskTimeoutMs,
+  type PendingAsk,
+} from "./asks.ts";
+export {
   type ClientSeams,
   type Delay,
   type EventStreamOptions,
@@ -36,6 +44,7 @@ export {
   type Route,
   type RouteSpec,
   routes,
+  type WorkspaceInfo,
 } from "./openapi.ts";
 export {
   createKeyworkServer,

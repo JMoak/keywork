@@ -5,7 +5,7 @@ import { MockProvider } from "@keywork/engine";
 import { createKeyworkServer, EventLog, type Fetch, writeServerTicket } from "@keywork/server";
 import { memorySessionHost } from "@keywork/server/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { attach, attachedLabel, choosePane, mountedWorkspace } from "./attach.ts";
+import { attach, attachedLabel, choosePane, mountedWorkspace, ticketCandidates } from "./attach.ts";
 
 const token = "attach-test-token";
 const url = "http://127.0.0.1:4770";
@@ -122,5 +122,24 @@ describe("mounting surface", () => {
     });
     const tree = await mountedWorkspace("session-tree", undefined).load();
     expect(tree).toMatchObject({ panes: [{ id: "tree-1", kind: "session-tree" }] });
+  });
+});
+
+describe("ticketCandidates", () => {
+  it("looks for the workspace ticket before the user-level fallback, unless a file is given", () => {
+    const [workspace, fallback] = ticketCandidates({
+      cwd: "/work",
+      workspaceSlug: undefined,
+      ticketFile: undefined,
+    });
+    const posix = (path: string | undefined): string => path?.split("\\").join("/") ?? "";
+    expect(posix(workspace)).toMatch(/\/\.keywork\/workspaces\/[0-9a-f]{12}\/server\.json$/);
+    expect(posix(fallback)).toMatch(/\/\.keywork\/server\.json$/);
+    expect(
+      ticketCandidates({ cwd: undefined, workspaceSlug: undefined, ticketFile: undefined }),
+    ).toEqual([fallback]);
+    expect(
+      ticketCandidates({ cwd: "/work", workspaceSlug: undefined, ticketFile: "/t.json" }),
+    ).toEqual(["/t.json"]);
   });
 });

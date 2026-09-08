@@ -284,7 +284,7 @@ async function runServe(context: CommandContext, { values }: ParsedInvocation): 
   const { io, cwd, projectTrusted, workspaceSlug } = context;
   const port = parsePort(values.port);
   if (port === "invalid") {
-    io.printError(`keywork serve: --port wants a whole number from 1 to 65535
+    io.printError(`keywork serve: --port wants a whole number from 0 to 65535 (0 picks a free port)
 
 ${usage}`);
     return exitCodes.usage;
@@ -349,6 +349,8 @@ ${usage}`
     session: values.session,
     url: values.url,
     token: values.token,
+    cwd: context.cwd,
+    workspaceSlug: context.workspaceSlug,
     printError: io.printError,
   });
 }
@@ -356,7 +358,7 @@ ${usage}`
 function parsePort(raw: string | undefined): number | undefined | "invalid" {
   if (raw === undefined) return undefined;
   const port = Number(raw);
-  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : "invalid";
+  return Number.isInteger(port) && port >= 0 && port <= 65535 ? port : "invalid";
 }
 
 function headlessPermissions(

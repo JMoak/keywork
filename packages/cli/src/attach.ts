@@ -14,7 +14,7 @@ import {
   type ServerFeed,
   serverFeed,
 } from "./remote-ports.ts";
-import { serverTicketFile } from "./serve.ts";
+import { serverTicketFile, ticketFilesFor } from "./serve.ts";
 
 export type AttachablePaneKind = "conversation" | "session-tree";
 
@@ -63,6 +63,8 @@ export interface AttachOptions {
   url?: string | undefined;
   token?: string | undefined;
   ticketFile?: string | undefined;
+  cwd?: string | undefined;
+  workspaceSlug?: string | undefined;
   printError: (line: string) => void;
 }
 
@@ -73,11 +75,13 @@ export interface AttachSeams {
 }
 
 export async function attach(options: AttachOptions, seams: AttachSeams = {}): Promise<number> {
-  const ticketFile = options.ticketFile ?? serverTicketFile();
-  const ticket = resolveServerTicket({ file: ticketFile, url: options.url, token: options.token });
+  const ticketFiles = ticketCandidates(options);
+  const ticket = ticketFiles
+    .map((file) => resolveServerTicket({ file, url: options.url, token: options.token }))
+    .find((candidate) => candidate !== undefined);
   if (ticket === undefined) {
     options.printError(
-      `keywork attach: no server ticket at ${ticketFile} · run keywork serve first, or pass --url and --token`,
+      `keywork attach: no server ticket at ${ticketFiles.join(" or ")} · run keywork serve first, or pass --url and --token`,
     );
     return 1;
   }
@@ -90,6 +94,14 @@ export async function attach(options: AttachOptions, seams: AttachSeams = {}): P
   const feed = serverFeed(client);
   await feed.open();
   return mount(client, feed, options, seams);
+}
+
+export function ticketCandidates(
+  options: Pick<AttachOptions, "ticketFile" | "cwd" | "workspaceSlug">,
+): string[] {
+  if (options.ticketFile !== undefined) return [options.ticketFile];
+  if (options.cwd === undefined) return [serverTicketFile()];
+  return ticketFilesFor(options.cwd, options.workspaceSlug);
 }
 
 export function attachedLabel(ticket: Pick<ServerTicket, "url">): string {

@@ -14,9 +14,14 @@ export interface RouteSpec {
 
 export type JsonSchema = Record<string, unknown>;
 
+export interface WorkspaceInfo {
+  anchor: string;
+  identity: string;
+}
+
 export interface OpenApiDocument {
   openapi: "3.1.0";
-  info: { title: string; version: string; description: string };
+  info: { title: string; version: string; description: string; workspace?: WorkspaceInfo };
   servers: Array<{ url: string }>;
   paths: Record<string, Partial<Record<Lowercase<HttpMethod>, OpenApiOperation>>>;
   components: {
@@ -42,6 +47,13 @@ const promptBody: JsonSchema = {
   type: "object",
   required: ["text"],
   properties: { text: { type: "string", minLength: 1 } },
+  additionalProperties: false,
+};
+
+const askAnswerBody: JsonSchema = {
+  type: "object",
+  required: ["verdict"],
+  properties: { verdict: { type: "string", enum: ["granted", "denied"] } },
   additionalProperties: false,
 };
 
@@ -83,7 +95,8 @@ export const routes = [
     method: "GET",
     path: "/sessions/{id}",
     operationId: "readSession",
-    summary: "One session with its messages.",
+    summary:
+      "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`.",
     authenticated: true,
     responses: { "200": "The session.", "404": "No session has that id." },
   },
@@ -92,7 +105,7 @@ export const routes = [
     path: "/sessions/{id}/prompt",
     operationId: "promptSession",
     summary:
-      "Append a user prompt and run a turn. The turn runs headless: any `ask` gate answers no and is reported as a `gate.permission` event. Progress arrives on /events.",
+      "Append a user prompt and run a turn. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events.",
     authenticated: true,
     requestBody: promptBody,
     responses: {
@@ -112,13 +125,40 @@ export const routes = [
       "404": "No session has that id.",
     },
   },
+  {
+    method: "GET",
+    path: "/asks",
+    operationId: "listAsks",
+    summary: "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first.",
+    authenticated: true,
+    responses: { "200": "The pending asks." },
+  },
+  {
+    method: "POST",
+    path: "/asks/{callId}",
+    operationId: "answerAsk",
+    summary:
+      'Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: "user"`.',
+    authenticated: true,
+    requestBody: askAnswerBody,
+    responses: {
+      "200": "The ask was settled.",
+      "400": 'The body is not `{ verdict: "granted" | "denied" }`.',
+      "404": "No ask with that callId is pending.",
+      "409": "That ask was already answered or timed out.",
+    },
+  },
 ] as const satisfies readonly RouteSpec[];
 
 export type Route = (typeof routes)[number];
 
 export type OperationId = Route["operationId"];
 
-export function openApiDocument(serverUrl: string, version: string): OpenApiDocument {
+export function openApiDocument(
+  serverUrl: string,
+  version: string,
+  workspace?: WorkspaceInfo,
+): OpenApiDocument {
   const paths: OpenApiDocument["paths"] = {};
   for (const route of routes) {
     const item = paths[route.path] ?? {};
@@ -132,6 +172,7 @@ export function openApiDocument(serverUrl: string, version: string): OpenApiDocu
       version,
       description:
         "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
+      ...(workspace !== undefined && { workspace }),
     },
     servers: [{ url: serverUrl }],
     paths,
@@ -169,7 +210,7 @@ function operationOf(route: RouteSpec): OpenApiOperation {
   return {
     operationId: route.operationId,
     summary: route.summary,
-    ...(route.path.includes("{id}") && { parameters: [sessionIdParameter] }),
+    ...(pathParametersOf(route.path).length > 0 && { parameters: pathParametersOf(route.path) }),
     ...(route.requestBody !== undefined && {
       requestBody: {
         required: true,
@@ -181,9 +222,11 @@ function operationOf(route: RouteSpec): OpenApiOperation {
   };
 }
 
-const sessionIdParameter: JsonSchema = {
-  name: "id",
-  in: "path",
-  required: true,
-  schema: { type: "string" },
-};
+function pathParametersOf(path: string): JsonSchema[] {
+  return [...path.matchAll(/\{(\w+)\}/g)].map(([, name]) => ({
+    name,
+    in: "path",
+    required: true,
+    schema: { type: "string" },
+  }));
+}

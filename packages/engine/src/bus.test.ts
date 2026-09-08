@@ -12,6 +12,7 @@ const documentedEvents = [
   "tool.started",
   "tool.output",
   "tool.finished",
+  "gate.ask",
   "gate.permission",
   "gate.preset",
   "session.mode",

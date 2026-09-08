@@ -1,3 +1,4 @@
+import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
 import type { BusEnvelope } from "./events.ts";
 import type { AbortOutcome, PromptOutcome, SessionDetail, SessionSummary } from "./host.ts";
 import { readServerTicket, type ServerTicket } from "./token.ts";
@@ -9,6 +10,8 @@ export interface KeyworkClient {
   createSession(): Promise<SessionSummary>;
   prompt(id: string, text: string): Promise<PromptOutcome>;
   abort(id: string): Promise<AbortOutcome>;
+  asks(): Promise<readonly PendingAsk[]>;
+  answerAsk(callId: string, verdict: AskVerdict): Promise<AnswerOutcome>;
   events(options?: EventStreamOptions): AsyncIterable<BusEnvelope>;
 }
 
@@ -101,6 +104,17 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       if (response.status === 404) return "missing";
       const outcome = await json<{ interrupted: boolean }>(response);
       return outcome.interrupted ? "aborted" : "idle";
+    },
+    asks: async () => {
+      const listed = await json<{ asks: PendingAsk[] }>(await request("GET", "/asks"));
+      return listed.asks;
+    },
+    answerAsk: async (callId, verdict) => {
+      const response = await request("POST", `/asks/${encodeURIComponent(callId)}`, { verdict });
+      if (response.status === 404) return "missing";
+      if (response.status === 409) return "already-settled";
+      await json(response);
+      return "settled";
     },
     events: (options = {}) =>
       resumingEvents(

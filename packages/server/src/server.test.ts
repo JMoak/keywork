@@ -28,7 +28,14 @@ interface Harness {
 }
 
 function harness(
-  options: { provider?: Provider; tools?: readonly Tool[]; capacity?: number } = {},
+  options: {
+    provider?: Provider;
+    tools?: readonly Tool[];
+    capacity?: number;
+    asks?: "queue" | "headless";
+    askTimeoutMs?: number;
+    workspace?: { anchor: string; identity: string };
+  } = {},
 ) {
   const log = new EventLog({
     ...(options.capacity !== undefined && { capacity: options.capacity }),
@@ -38,8 +45,16 @@ function harness(
     log,
     provider: options.provider ?? new MockProvider([]),
     ...(options.tools !== undefined && { tools: options.tools }),
+    ...(options.asks !== undefined && { asks: options.asks }),
+    ...(options.askTimeoutMs !== undefined && { askTimeoutMs: options.askTimeoutMs }),
   });
-  const server = createKeyworkServer({ token, host, log, version: "0.0.1-test" });
+  const server = createKeyworkServer({
+    token,
+    host,
+    log,
+    version: "0.0.1-test",
+    ...(options.workspace !== undefined && { workspace: options.workspace }),
+  });
   const call = (path: string, init: RequestInit = {}) =>
     server.fetch(
       new Request(`${origin}${path}`, {
@@ -83,6 +98,9 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
   "tool.started": { call: { type: "tool-call", callId: "c1", name: "echo", arguments: { a: 1 } } },
   "tool.output": { chunk: "line\n", callId: "c1" },
   "tool.finished": { callId: "c1", output: "line\n", isError: false },
+  "gate.ask": {
+    ask: { tool: "bash", callId: "c2", arguments: { command: "rm x" }, rule: "default" },
+  },
   "gate.permission": {
     decision: { tool: "bash", callId: "c2", verdict: "denied", gate: "headless" },
   },
@@ -368,3 +386,108 @@ function hangingProvider(): Provider {
     },
   };
 }
+
+describe("asks", () => {
+  const scribble: Tool = {
+    name: "scribble",
+    description: "writes",
+    parameters: { type: "object" },
+    mutates: true,
+    execute: async () => "written",
+  };
+  const askingTurns = () =>
+    new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "c1", name: "scribble", arguments: { path: "a" } }),
+      textTurn("done"),
+    ]);
+  const post = (h: Harness, path: string, body: string) =>
+    h.call(path, { method: "POST", headers: { "content-type": "application/json" }, body });
+
+  it("announces the ask, lists it, and resumes the turn with the client's verdict as gate user", async () => {
+    const h = harness({ provider: askingTurns(), tools: [scribble], asks: "queue" });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, JSON.stringify({ text: "write it" }));
+    const asked = await collect(reader, (event) => event === "gate.ask");
+    expect(JSON.parse(asked.at(-1)?.data ?? "{}").payload.ask).toEqual({
+      tool: "scribble",
+      callId: "c1",
+      arguments: { path: "a" },
+      rule: "default",
+    });
+    const listed = (await (await h.call("/asks")).json()) as { asks: unknown[] };
+    expect(listed.asks).toEqual([
+      expect.objectContaining({
+        sessionId: id,
+        callId: "c1",
+        tool: "scribble",
+        arguments: { path: "a" },
+      }),
+    ]);
+    expect((await post(h, "/asks/c1", "{}")).status).toBe(400);
+    expect((await post(h, "/asks/nope", JSON.stringify({ verdict: "granted" }))).status).toBe(404);
+    const answered = await post(h, "/asks/c1", JSON.stringify({ verdict: "granted" }));
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toEqual({ callId: "c1", settled: true });
+    const decided = await collect(reader, (event) => event === "gate.permission");
+    expect(JSON.parse(decided.at(-1)?.data ?? "{}").payload.decision).toEqual({
+      tool: "scribble",
+      callId: "c1",
+      verdict: "granted",
+      gate: "user",
+    });
+    await collect(reader, (event) => event === "turn.completed");
+    expect((await post(h, "/asks/c1", JSON.stringify({ verdict: "denied" }))).status).toBe(409);
+    expect(await (await h.call("/asks")).json()).toEqual({ asks: [] });
+    await reader.close();
+    const read = (await (await h.call(`/sessions/${id}`)).json()) as { messages: Message[] };
+    expect(read.messages[2]?.parts[0]).toMatchObject({ output: "written", isError: false });
+  });
+
+  it("times out an unanswered ask as a headless denial", async () => {
+    const h = harness({
+      provider: askingTurns(),
+      tools: [scribble],
+      asks: "queue",
+      askTimeoutMs: 20,
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, JSON.stringify({ text: "write it" }));
+    const decided = await collect(reader, (event) => event === "gate.permission");
+    expect(JSON.parse(decided.at(-1)?.data ?? "{}").payload.decision).toMatchObject({
+      verdict: "denied",
+      gate: "headless",
+    });
+    await reader.close();
+  });
+});
+
+describe("the document and session detail", () => {
+  it("names the workspace it serves and parameterizes every path segment", async () => {
+    const workspace = { anchor: "/work", identity: "abc123def456" };
+    const h = harness({ workspace });
+    const doc = (await (await h.server.fetch(new Request(`${origin}/doc`))).json()) as {
+      info: { workspace?: unknown };
+      paths: Record<string, Record<string, { parameters?: Array<{ name: string }> }>>;
+    };
+    expect(doc.info.workspace).toEqual(workspace);
+    expect(doc.paths["/asks/{callId}"]?.post?.parameters).toEqual([
+      { name: "callId", in: "path", required: true, schema: { type: "string" } },
+    ]);
+  });
+
+  it("reports asOf as the latest event id the messages reflect", async () => {
+    const h = harness({ provider: new MockProvider([textTurn("hi")]) });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await h.call(`/sessions/${id}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: "hello" }),
+    });
+    const frames = await collect(reader, (event) => event === "turn.completed");
+    await reader.close();
+    const detail = (await (await h.call(`/sessions/${id}`)).json()) as { asOf: number };
+    expect(detail.asOf).toBe(Number(frames.at(-1)?.id));
+  });
+});

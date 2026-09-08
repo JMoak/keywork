@@ -31,7 +31,10 @@ to stderr. `--json` prints one JSON object per line to stdout and nothing else.
 ### Permissions without a person
 
 A headless run has no one to ask, so any tool call the active policy would *ask* about is
-refused and recorded as a `gate.permission` with `gate: "headless"`. Your configured preset
+refused and recorded as a `gate.permission` with `gate: "headless"`. The bus also carries a
+`gate.ask` for that call, but `--json` leaves it out: the refusal follows at once, so the
+decision line already says everything. (Under `keywork serve` the same ask waits for a client
+to answer through `POST /asks/{callId}`.) Your configured preset
 still applies (`careful` · `standard` · `open`); to let a script mutate, say so for that run:
 
 ```sh

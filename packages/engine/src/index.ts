@@ -2,6 +2,7 @@ export {
   Agent,
   type AgentOptions,
   addUsage,
+  type Confirmation,
   type ConfirmingGate,
   type DelegatedOutcome,
   type DelegatedTurn,
@@ -621,6 +622,7 @@ export {
   type ThinkingLevelChangeEntry,
 } from "./session/entries.ts";
 export {
+  type AskRule,
   type ContextInjection,
   type ExtensionState,
   extensionState,
@@ -628,6 +630,7 @@ export {
   type JournalEvent,
   type JournalTap,
   journalEvents,
+  type PermissionAsk,
   type PermissionDecision,
   type PermissionGate,
   type PermissionVerdict,

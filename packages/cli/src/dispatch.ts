@@ -15,7 +15,7 @@ Usage:
   keywork link <dir>                                        widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust
   keywork doctor                                            show what your terminal supports
-  keywork serve [--port <n>] [--model <model>]
+  keywork serve [--port <n>|0] [--model <model>]
                 [--preset careful|standard|open]
                 [--session-dir <dir>]                       HTTP + SSE server on 127.0.0.1
   keywork attach [--pane conversation|session-tree] [--session <id>]

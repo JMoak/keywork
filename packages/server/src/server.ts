@@ -1,3 +1,4 @@
+import type { AskVerdict } from "./asks.ts";
 import type { EventLog } from "./events.ts";
 import type { SessionHost } from "./host.ts";
 import {
@@ -6,6 +7,7 @@ import {
   openApiDocument,
   type Route,
   routes,
+  type WorkspaceInfo,
 } from "./openapi.ts";
 import { eventStreamResponse } from "./sse.ts";
 import { bearerMatches } from "./token.ts";
@@ -18,6 +20,7 @@ export interface ServerOptions {
   log: EventLog;
   version: string;
   url?: string;
+  workspace?: WorkspaceInfo;
 }
 
 export interface KeyworkServer {
@@ -56,7 +59,7 @@ function routeHandlers(
 ): Record<OperationId, RouteHandler> {
   const { host, log } = options;
   return {
-    getDocument: async () => json(200, openApiDocument(url, options.version)),
+    getDocument: async () => json(200, openApiDocument(url, options.version, options.workspace)),
     streamEvents: async (request) => eventStreamResponse(log, request, streams),
     listSessions: async () => json(200, { sessions: await host.list() }),
     createSession: async () => json(201, await host.create()),
@@ -78,7 +81,31 @@ function routeHandlers(
         ? missingSession()
         : json(200, { sessionId: id, interrupted: outcome === "aborted" });
     },
+    listAsks: async () => json(200, { asks: await host.asks() }),
+    answerAsk: async (request, { callId }) => {
+      const verdict = await askVerdictOf(request);
+      if (verdict === undefined) {
+        return json(400, { error: 'the body must be { verdict: "granted" | "denied" }' });
+      }
+      const outcome = await host.answerAsk(callId ?? "", verdict);
+      if (outcome === "missing") return json(404, { error: "no ask with that callId is pending" });
+      if (outcome === "already-settled") {
+        return json(409, { error: "that ask was already answered or timed out" });
+      }
+      return json(200, { callId, settled: true });
+    },
   };
+}
+
+async function askVerdictOf(request: Request): Promise<AskVerdict | undefined> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return undefined;
+  }
+  const verdict = (body as { verdict?: unknown } | null)?.verdict;
+  return verdict === "granted" || verdict === "denied" ? verdict : undefined;
 }
 
 interface RouteMatch {

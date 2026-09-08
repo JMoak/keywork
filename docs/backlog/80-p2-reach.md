@@ -326,6 +326,87 @@ terminal reporter; `session-panes.ts`: `SessionPanes.awaiting()` beside `busyCou
 - The inbox feed recounts on every session change because the memory store has no change
   feed of its own; the count is cheap (one directory listing).
 
+### S0 · S1: serve discovery and the ask queue
+
+Requested by keywork-app (its `docs/plan.md` server lane), built here under keywork's rules so
+every surface benefits: the app, `keywork attach`, and any Tier-2 client.
+
+#### S0 · S1 ledger (landed 2026-09-07)
+
+**What landed.**
+
+*Discovery (S0).* `keywork serve --port 0` binds an ephemeral port (`parsePort` accepts 0; the
+usage line says so). The ticket now lives per workspace at
+`~/.keywork/workspaces/<identity>/server.json` (`workspaceTicketFile`, keyed by the same
+`workspaceIdentity` that keys sessions and snapshots) and is also written to the old
+`~/.keywork/server.json` for one release as a fallback read path (`ticketFilesFor` returns both;
+remove the second entry to end the compatibility window). Before listening, `serve` reads each
+candidate ticket and health-checks it (`answersAsKeywork`: `GET /doc` with a 1.5 s timeout,
+answered by a document whose `info.title` is `keywork`): a live server makes the new serve
+refuse with `keywork serve: a keywork server for this workspace is already listening at <url> ·
+attach to it, or stop it first` and exit 2 (`alreadyServingExit`); a dead or foreign ticket is
+removed and the start proceeds, so a crash never blocks the next launch. `keywork attach` with
+no `--url`/`--token` tries the workspace ticket first, then the user-level one
+(`ticketCandidates`; `main.ts` passes `cwd` and `workspaceSlug`). `/doc` `info` gains
+`workspace: { anchor, identity }` (`workspaceInfoOf`), so a client can confirm which workspace a
+server serves; `ServerOptions.workspace` carries it and `listen` passes it through.
+
+*The ask queue (S1).* The engine gained one event, `gate.ask` `{ ask: { tool, callId,
+arguments, rule } }`, emitted right before the guard is consulted whenever the policy would ask
+and a guard exists to answer; `rule` is `policy` or `default`. `ToolGuard.confirm` may now
+resolve `{ approved, gate }` as well as a boolean (`Confirmation`), so the gate label follows the
+answer rather than the guard: `user` for an answered ask, `headless` for a timeout. The server
+package gained `AskQueue` (`asks.ts`): `guardFor(sessionId)` yields a guard whose `confirm`
+parks the call until `answer(callId, verdict)` or the timeout (`defaultAskTimeoutMs`, 120 s;
+`HostOptions.askTimeoutMs` overrides it), `list()` for the pending set, `close()` settles
+everything as headless denials. `fileSessionHost` and the testing memory host (`asks: "queue"`)
+both build agents on it. Routes:
+
+| Route | Auth | Answer |
+|---|---|---|
+| `GET /asks` | bearer | `{ asks: [{ sessionId, callId, tool, arguments, askedAt }] }`, oldest first |
+| `POST /asks/{callId}` body `{ verdict: "granted" \| "denied" }` | bearer | 200 `{ callId, settled: true }`; 400 on a bad body; 404 when nothing by that id is pending; 409 when it was already answered or timed out |
+
+`GET /sessions/{id}` gains `asOf`, the event log's latest id at the moment the messages were
+read, so a client that opened `/events` before fetching history drops buffered envelopes with
+`id <= asOf`. The typed client (`client.ts`) gained `asks()` and `answerAsk()`.
+
+*Doc correction.* `docs/events.md` claimed a refused tool never fires `tool.started`. The engine
+emits `tool.started` in `executeToolCalls` before `executeToolCall` decides the gate, so the
+true refusal sequence is `tool.started` → `gate.permission{denied}` → `tool.finished{isError}`;
+the doc now says so, and names where `gate.ask` sits in that sequence. The engine was left as
+is: announcing the call before the gate is what lets a client show the ask on the very row that
+will carry the outcome.
+
+**Evidence.** `agent.test.ts` (+2): the ask precedes the guard and the decision carries the
+guard's named gate; no ask without a guard. `bus.test.ts`: the vocabulary check demands the new
+section. `server.test.ts` (+4): announce → list → 400/404 → answer → `gate.permission{user}` →
+409 → the tool ran; the timeout as headless; `/doc` workspace and `{callId}` path parameter;
+`asOf` equals the last streamed id. `serve.test.ts`: the rewritten ask test (answered as `user`,
+timed out as `headless` with `askTimeoutMs: 20`) and the discovery test (both tickets written
+under a temp `userRoot`, `/doc` workspace matches, a second serve exits 2 naming the URL, both
+tickets removed on shutdown, a stale ticket replaced). `attach.test.ts` (+1): candidate order.
+`main.test.ts` rows unchanged (`--port http` still exits 2).
+
+**Crossings.** `packages/engine`: `bus.ts` (`gate.ask`), `journal.ts` (`PermissionAsk`,
+`AskRule`), `agent.ts` (`Confirmation`, `emitAsk`), `index.ts` exports. `packages/server`:
+`asks.ts` (new), `host.ts` (`asks`, `answerAsk`, `asOf`), `openapi.ts` (two routes,
+`WorkspaceInfo`, path parameters derived from the path), `server.ts`, `events.ts`, `client.ts`,
+`testing.ts`, `index.ts`. `packages/cli`: `serve.ts`, `attach.ts`, `main.ts`, `dispatch.ts`.
+`docs/events.md`, `docs/headless.md`. `NOTICE` unchanged; all `OWN`.
+
+**Assumptions Jordan may reverse.**
+- Both ticket files are written during the compatibility window; a terminal `keywork attach`
+  from another workspace still finds the user-level one and may attach to the wrong server, as
+  before. Dropping the second file ends that.
+- The health check trusts `info.title === "keywork"`; a non-keywork listener on a recycled port
+  is treated as stale and its ticket removed.
+- The ask timeout is an option on `HostOptions`, not a config key: no `.describe()`d surface yet.
+  A `--ask-timeout` flag on `serve` is a one-line follow-up if wanted.
+- `keywork run --json` does not forward `gate.ask`: the headless guard refuses at once, so the
+  stream would carry an ask and its denial back to back.
+- `AskQueue` remembers the last 200 settled ids to answer 409 rather than 404 for late answers.
+
 ### P2.5 (2pt): HTML export & sharing
 `/export` static HTML of a session branch (self-contained, themed); optional gist upload.
 **Strategy:** `LIFT:pi`.

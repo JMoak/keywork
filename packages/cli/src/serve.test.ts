@@ -4,11 +4,25 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Message, MockProvider, SessionStore, textTurn, toolCallTurn } from "@keywork/engine";
-import { createKeyworkServer, EventLog, readServerTicket } from "@keywork/server";
+import {
+  createKeyworkServer,
+  EventLog,
+  readServerTicket,
+  writeServerTicket,
+} from "@keywork/server";
 import { memorySessionHost, sseReader } from "@keywork/server/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterAll, describe, expect, it } from "vitest";
-import { fileSessionHost, type HostOptions, serve } from "./serve.ts";
+import {
+  alreadyServingExit,
+  fileSessionHost,
+  type HostOptions,
+  serve,
+  serverTicketFile,
+  ticketFilesFor,
+  workspaceInfoOf,
+  workspaceTicketFile,
+} from "./serve.ts";
 import { scanSessions } from "./sessions/store.ts";
 
 const tempDir = scratchDirs("keywork-serve-");
@@ -110,8 +124,8 @@ describe("fileSessionHost", () => {
     await server.close();
   });
 
-  it("flags a headless ask as denied on the stream instead of blocking", async () => {
-    const options = await hostOptions(
+  it("routes an ask to a client and resumes with its verdict, or times out as headless", async () => {
+    const askingTurns = () =>
       new MockProvider([
         toolCallTurn({
           type: "tool-call",
@@ -120,25 +134,72 @@ describe("fileSessionHost", () => {
           arguments: { command: "rm x" },
         }),
         textTurn("gave up"),
-      ]),
-    );
-    options.permissions = () => "ask";
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-    await call(`/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify({ text: "rm" }) });
+      ]);
+    const answered = await hostOptions(askingTurns());
+    answered.permissions = () => "ask";
+    const first = serverOver(answered);
+    const { id } = (await (await first.call("/sessions", { method: "POST" })).json()) as {
+      id: string;
+    };
+    const reader = sseReader(await first.call("/events"));
+    await first.call(`/sessions/${id}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: "rm" }),
+    });
+    for (;;) {
+      const frame = await reader.next();
+      if (frame.event !== "gate.ask") continue;
+      expect(JSON.parse(frame.data).payload.ask).toMatchObject({
+        tool: "bash",
+        callId: "c1",
+        rule: "policy",
+      });
+      break;
+    }
+    const pending = (await (await first.call("/asks")).json()) as { asks: unknown[] };
+    expect(pending.asks).toHaveLength(1);
+    const settled = await first.call("/asks/c1", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ verdict: "denied" }),
+    });
+    expect(settled.status).toBe(200);
     for (;;) {
       const frame = await reader.next();
       if (frame.event !== "gate.permission") continue;
       expect(JSON.parse(frame.data).payload.decision).toMatchObject({
-        gate: "headless",
+        gate: "user",
         verdict: "denied",
         tool: "bash",
       });
       break;
     }
     await reader.close();
-    await server.close();
+    await first.server.close();
+
+    const unanswered = await hostOptions(askingTurns());
+    unanswered.permissions = () => "ask";
+    unanswered.askTimeoutMs = 20;
+    const second = serverOver(unanswered);
+    const created = (await (await second.call("/sessions", { method: "POST" })).json()) as {
+      id: string;
+    };
+    const stream = sseReader(await second.call("/events"));
+    await second.call(`/sessions/${created.id}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: "rm" }),
+    });
+    for (;;) {
+      const frame = await stream.next();
+      if (frame.event !== "gate.permission") continue;
+      expect(JSON.parse(frame.data).payload.decision).toMatchObject({
+        gate: "headless",
+        verdict: "denied",
+      });
+      break;
+    }
+    await stream.close();
+    await second.server.close();
   });
 });
 
@@ -205,5 +266,56 @@ describe("memorySessionHost parity", () => {
     expect(await host.prompt("nope", "hi")).toBe("missing");
     expect(await host.abort("nope")).toBe("missing");
     expect(await host.read("nope")).toBeUndefined();
+  });
+});
+
+describe("serve discovery", () => {
+  async function startServe(cwd: string, userRoot: string, port = 0) {
+    const options = await hostOptions(new MockProvider([]));
+    const out: string[] = [];
+    const errors: string[] = [];
+    const interrupts = new AbortController();
+    const finished = serve({
+      ...options,
+      cwd,
+      userRoot,
+      port,
+      signal: interrupts.signal,
+      print: (line) => out.push(line),
+      printError: (line) => errors.push(line),
+    });
+    return { out, errors, interrupts, finished };
+  }
+
+  it("writes the workspace ticket and the user-level fallback, refuses a second serve beside a live one, and clears a stale ticket", async () => {
+    const cwd = await tempDir();
+    const userRoot = await tempDir();
+    const first = await startServe(cwd, userRoot);
+    while (first.out.length < 4) await new Promise((resolve) => setTimeout(resolve, 5));
+    const url = first.out[0]?.replace("listening on ", "") ?? "";
+    const files = ticketFilesFor(cwd, undefined, userRoot);
+    expect(first.out.slice(2)).toEqual(files.map((file) => `ticket ${file}`));
+    expect(files[0]).toBe(workspaceTicketFile(cwd, undefined, userRoot));
+    expect(files[1]).toBe(serverTicketFile(userRoot));
+    for (const file of files) expect(readServerTicket(file)?.url).toBe(url);
+    const doc = (await (await fetch(`${url}/doc`)).json()) as {
+      info: { workspace: { anchor: string; identity: string } };
+    };
+    expect(doc.info.workspace).toEqual(workspaceInfoOf(cwd));
+
+    const second = await startServe(cwd, userRoot);
+    expect(await second.finished).toBe(alreadyServingExit);
+    expect(second.errors[0]).toContain(`already listening at ${url}`);
+
+    first.interrupts.abort();
+    expect(await first.finished).toBe(0);
+    for (const file of files) expect(readServerTicket(file)).toBeUndefined();
+
+    writeServerTicket(files[0] ?? "", { url, token: "stale" });
+    const third = await startServe(cwd, userRoot);
+    while (third.out.length < 4) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(readServerTicket(files[0] ?? "")?.token).not.toBe("stale");
+    third.interrupts.abort();
+    expect(await third.finished).toBe(0);
   });
 });

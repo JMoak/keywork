@@ -7,25 +7,29 @@ import {
   type Provider,
   SessionStore,
   ShellSession,
-  type ToolGuard,
   tapJournal,
 } from "@keywork/engine";
 import {
+  AskQueue,
   EventLog,
   issueToken,
   listen,
+  readServerTicket,
   removeServerTicket,
+  type ServerTicket,
   type SessionDetail,
   type SessionHost,
   type SessionSummary,
+  type WorkspaceInfo,
   writeServerTicket,
 } from "@keywork/server";
-import type {
-  KeyworkConfig,
-  LspConfig,
-  McpServerConfig,
-  ModelCapabilitiesConfig,
-  PromptsConfig,
+import {
+  type KeyworkConfig,
+  type LspConfig,
+  type McpServerConfig,
+  type ModelCapabilitiesConfig,
+  type PromptsConfig,
+  resolveAnchor,
 } from "@keywork/shared";
 import { persistNewMessages } from "./chat.ts";
 import {
@@ -34,7 +38,7 @@ import {
   composeAgents,
   composeWorkspace,
 } from "./compose.ts";
-import { defaultSessionDir, keyworkHome } from "./paths.ts";
+import { defaultSessionDir, keyworkHome, workspaceIdentity } from "./paths.ts";
 import {
   findSession,
   listSessions,
@@ -47,6 +51,7 @@ import { keyworkVersion } from "./version.ts";
 export interface ServeOptions extends HostOptions {
   port?: number | undefined;
   ticketFile?: string | undefined;
+  fetch?: typeof fetch | undefined;
   signal: AbortSignal;
   print: (line: string) => void;
   printError: (line: string) => void;
@@ -57,6 +62,7 @@ export interface HostOptions {
   projectTrusted: boolean;
   provider: Provider;
   permissions: PermissionResolver;
+  askTimeoutMs?: number | undefined;
   workspaceSlug?: string | undefined;
   sessionDir?: string | undefined;
   userRoot?: string | undefined;
@@ -69,35 +75,100 @@ export interface HostOptions {
   notice?: ((text: string) => void) | undefined;
 }
 
-export function serverTicketFile(): string {
-  return join(keyworkHome(), "server.json");
+export function serverTicketFile(userRoot?: string): string {
+  return join(keyworkHome(userRoot), "server.json");
 }
 
+export function workspaceTicketFile(cwd: string, slug?: string, userRoot?: string): string {
+  return join(keyworkHome(userRoot), "workspaces", workspaceIdentity(cwd, slug), "server.json");
+}
+
+export function ticketFilesFor(cwd: string, slug?: string, userRoot?: string): string[] {
+  return [workspaceTicketFile(cwd, slug, userRoot), serverTicketFile(userRoot)];
+}
+
+export const alreadyServingExit = 2;
+
 export async function serve(options: ServeOptions): Promise<number> {
+  const ticketFiles =
+    options.ticketFile === undefined
+      ? ticketFilesFor(options.cwd, options.workspaceSlug, options.userRoot)
+      : [options.ticketFile];
+  const running = await runningServerAmong(ticketFiles, options.fetch ?? fetch);
+  if (running !== undefined) {
+    options.printError(
+      `keywork serve: a keywork server for this workspace is already listening at ${running.url} · attach to it, or stop it first`,
+    );
+    return alreadyServingExit;
+  }
   const log = new EventLog();
   const host = fileSessionHost({ ...options, log, notice: options.printError });
   const token = issueToken();
-  const ticketFile = options.ticketFile ?? serverTicketFile();
   let server: Awaited<ReturnType<typeof listen>>;
   try {
-    server = await listen({ token, host, log, version: keyworkVersion, port: options.port });
+    server = await listen({
+      token,
+      host,
+      log,
+      version: keyworkVersion,
+      port: options.port,
+      workspace: workspaceInfoOf(options.cwd, options.workspaceSlug),
+    });
   } catch (cause) {
     options.printError(`keywork serve: ${cause instanceof Error ? cause.message : String(cause)}`);
     await host.close();
     return 1;
   }
-  writeServerTicket(ticketFile, { url: server.url, token });
+  for (const file of ticketFiles) writeServerTicket(file, { url: server.url, token });
   options.print(`listening on ${server.url}`);
   options.print(`token ${token}`);
-  options.print(`ticket ${ticketFile}`);
+  for (const file of ticketFiles) options.print(`ticket ${file}`);
   await untilAborted(options.signal);
   await server.close();
-  removeServerTicket(ticketFile);
+  for (const file of ticketFiles) removeServerTicket(file);
   return 0;
 }
 
+export function workspaceInfoOf(cwd: string, slug?: string): WorkspaceInfo {
+  return { anchor: resolveAnchor(cwd).root, identity: workspaceIdentity(cwd, slug) };
+}
+
+export async function runningServerAmong(
+  ticketFiles: readonly string[],
+  fetcher: typeof fetch,
+): Promise<ServerTicket | undefined> {
+  for (const file of ticketFiles) {
+    const ticket = readServerTicket(file);
+    if (ticket === undefined) continue;
+    if (await answersAsKeywork(ticket, fetcher)) return ticket;
+    removeServerTicket(file);
+  }
+  return undefined;
+}
+
+export async function answersAsKeywork(
+  ticket: ServerTicket,
+  fetcher: typeof fetch,
+): Promise<boolean> {
+  try {
+    const response = await fetcher(`${ticket.url}/doc`, {
+      signal: AbortSignal.timeout(healthCheckTimeoutMs),
+    });
+    if (!response.ok) return false;
+    const document = (await response.json()) as { info?: { title?: unknown } };
+    return document.info?.title === "keywork";
+  } catch {
+    return false;
+  }
+}
+
+const healthCheckTimeoutMs = 1500;
+
 export function fileSessionHost(options: HostOptions & { log: EventLog }): SessionHost {
-  const sessions = new LiveSessions(options);
+  const asks = new AskQueue({
+    ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
+  });
+  const sessions = new LiveSessions(options, asks);
   return {
     list: () => sessions.list(),
     read: (id) => sessions.read(id),
@@ -113,18 +184,24 @@ export function fileSessionHost(options: HostOptions & { log: EventLog }): Sessi
       if (live !== undefined) return live.interrupt();
       return (await sessions.stored(id)) === undefined ? "missing" : "idle";
     },
-    close: () => sessions.close(),
+    asks: async () => asks.list(),
+    answerAsk: async (callId, verdict) => asks.answer(callId, verdict),
+    close: async () => {
+      asks.close();
+      await sessions.close();
+    },
   };
 }
-
-const headlessGuard: ToolGuard = { confirm: async () => false, gate: "headless" };
 
 class LiveSessions {
   private readonly live = new Map<string, LiveSession>();
   private readonly sessionDir: string;
   private workspace: Promise<{ composition: Composition; agents: AgentComposition }> | undefined;
 
-  constructor(private readonly options: HostOptions & { log: EventLog }) {
+  constructor(
+    private readonly options: HostOptions & { log: EventLog },
+    private readonly asks: AskQueue,
+  ) {
     this.sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
   }
 
@@ -139,7 +216,7 @@ class LiveSessions {
 
   async read(id: string): Promise<SessionDetail | undefined> {
     const live = this.liveOnly(id);
-    if (live !== undefined) return live.detail();
+    if (live !== undefined) return live.detail(this.options.log.latestId());
     const store = await this.stored(id);
     if (store === undefined) return undefined;
     return {
@@ -147,6 +224,7 @@ class LiveSessions {
       cwd: store.header.cwd,
       live: false,
       messages: store.messages(),
+      asOf: this.options.log.latestId(),
     };
   }
 
@@ -187,7 +265,7 @@ class LiveSessions {
     const shell = new ShellSession(this.options.cwd);
     const agent = agents.build({
       provider: this.options.provider,
-      guard: headlessGuard,
+      guard: this.asks.guardFor(store.header.id),
       shell,
       history: store.messages(),
       sessionId: store.header.id,
@@ -271,12 +349,13 @@ class LiveSession {
     };
   }
 
-  detail(): SessionDetail {
+  detail(asOf: number): SessionDetail {
     return {
       ...this.summary(),
       cwd: this.store.header.cwd,
       live: true,
       messages: this.agent.history(),
+      asOf,
     };
   }
 

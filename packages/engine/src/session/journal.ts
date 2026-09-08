@@ -12,6 +12,15 @@ export interface PermissionDecision {
   gate: PermissionGate;
 }
 
+export type AskRule = Extract<PermissionGate, "policy" | "default">;
+
+export interface PermissionAsk {
+  tool: string;
+  callId: string;
+  arguments: unknown;
+  rule: AskRule;
+}
+
 export type InjectionSource =
   | "memory-bootstrap"
   | "memory-recall"

@@ -1,4 +1,5 @@
 import { Agent, type Provider, type Tool, type ToolGuard } from "@keywork/engine";
+import { AskQueue } from "./asks.ts";
 import type { EventLog } from "./events.ts";
 import type { SessionDetail, SessionHost, SessionSummary } from "./host.ts";
 
@@ -60,12 +61,18 @@ export interface MemoryHostOptions {
   provider: Provider;
   tools?: readonly Tool[];
   now?: () => Date;
+  asks?: "queue" | "headless";
+  askTimeoutMs?: number;
 }
 
 export function memorySessionHost(options: MemoryHostOptions): SessionHost {
   const agents = new Map<string, Agent>();
   const detachers: Array<() => void> = [];
   const now = options.now ?? (() => new Date());
+  const asks = new AskQueue({
+    now,
+    ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
+  });
   const summaryOf = (id: string, agent: Agent): SessionSummary => ({
     id,
     title: `session ${id}`,
@@ -83,6 +90,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         cwd: "/memory",
         live: true,
         messages: agent.history(),
+        asOf: options.log.latestId(),
       };
       return detail;
     },
@@ -90,7 +98,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
       const id = `s${agents.size + 1}`;
       const agent = new Agent({
         provider: options.provider,
-        guard: headlessGuard,
+        guard: options.asks === "queue" ? asks.guardFor(id) : headlessGuard,
         ...(options.tools !== undefined && { tools: options.tools }),
       });
       agents.set(id, agent);
@@ -110,7 +118,10 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
       agent.interrupt();
       return "aborted";
     },
+    asks: async () => asks.list(),
+    answerAsk: async (callId, verdict) => asks.answer(callId, verdict),
     close: async () => {
+      asks.close();
       for (const agent of agents.values()) agent.interrupt();
       for (const detach of detachers) detach();
       agents.clear();

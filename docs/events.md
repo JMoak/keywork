@@ -106,9 +106,11 @@ Fires whenever the list of prompts waiting behind the active turn changes.
 
 ## Tool lifecycle
 
-Approval is expressed by `gate.permission`; a tool that is refused never fires
-`tool.started`. There is no separate request event: the call is visible on `turn.delta` as a
-`tool-call` delta before the gate decides.
+`tool.started` fires before the gate decides, so a refused call still announces itself: the
+sequence for a refusal is `tool.started`, then `gate.permission` with `verdict: "denied"`, then
+`tool.finished` with `isError: true` carrying the refusal text. When the policy would ask and
+a guard can answer, `gate.ask` fires between `tool.started` and the decision. The call is
+also visible earlier on `turn.delta` as a `tool-call` delta.
 
 ### tool.started
 
@@ -141,6 +143,20 @@ Fires when a tool returns or throws.
 | `spill` | `SpillReference`, optional | Present when the output was clipped: `{ id, bytes, elidedFrom, elidedTo }` names the spill file beside the session. |
 
 ## Gate and session state
+
+### gate.ask
+
+Fires when the active policy would ask about a tool call and a guard exists to answer. The
+turn waits on the answer; over `keywork serve` a client answers with `POST /asks/{callId}`
+and an unanswered ask times out as a headless denial. Never fired when no guard can answer,
+and never replayed.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `ask` | `PermissionAsk` | `{ tool, callId, arguments, rule }`. |
+
+`rule` says why the gate is asking: `policy` (a configured rule says ask) or `default` (the
+tool mutates and no rule covers it).
 
 ### gate.permission
 
