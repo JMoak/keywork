@@ -4,7 +4,7 @@
 
 `░ ▒ ▓ █ ▓ ▒ ░`
 
-**a coding-agent harness you play like an instrument.**
+**work should be easy.**
 
 [quickstart](#quickstart) · [why keywork](#why-keywork) · [how it fits together](#how-it-fits-together) · [docs](docs/README.md) · [backlog](docs/backlog/README.md)
 
@@ -16,10 +16,10 @@
 
 </div>
 
-Split your terminal into panes, run an agent in each one, and fork a conversation the same
-way you'd branch a repo. keywork treats driving coding agents like a game you actually get
-good at: everything is on the keyboard, and the defaults look great before you've touched
-a config file. What the agent is allowed to do is always on screen.
+keywork is a keyboard-first workspace for coding agents. Split your terminal into panes,
+run an agent in each one, and fork a conversation the same way you'd branch a repo.
+Your conversations, files, and changes are a few keys away, with defaults that feel at home
+before you've touched a config file. What the agent is allowed to do is always on screen.
 
 <!-- screenshot: tiled workspace (conversation + diff + session tree). launch-critical, lands with the M2 demo -->
 

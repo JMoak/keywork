@@ -22,9 +22,9 @@ export const npmBinPath = "bin/keywork.js";
 
 export function npmManifestFor(inputs: NpmManifestInputs): NpmManifest {
   return {
-    name: "keywork",
+    name: "keywork-cli",
     version: inputs.version,
-    description: "a coding-agent harness you play like an instrument",
+    description: "work should be easy. a keyboard-first workspace for coding agents.",
     license: "FSL-1.1-MIT",
     type: "module",
     bin: { keywork: npmBinPath },

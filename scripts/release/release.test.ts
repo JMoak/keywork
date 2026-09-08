@@ -139,7 +139,7 @@ describe("npm manifest", () => {
       opentuiVersion: "0.5.1",
       treeSitterVersion: "0.25.10",
     });
-    expect(manifest.name).toBe("keywork");
+    expect(manifest.name).toBe("keywork-cli");
     expect(manifest.version).toBe("0.1.0");
     expect(manifest.bin).toEqual({ keywork: "bin/keywork.js" });
     expect(manifest.dependencies).toEqual({
