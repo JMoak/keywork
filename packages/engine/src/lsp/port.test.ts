@@ -31,6 +31,7 @@ interface Harness {
   trace: string;
   log: LogLine[];
   spawns: () => number;
+  pids: number[];
   missing: string[];
 }
 
@@ -43,13 +44,20 @@ async function harness(
   const log: LogLine[] = [];
   const missing: string[] = [];
   let spawns = 0;
+  const pids: number[] = [];
   const spawnFixture: SpawnLike = (_file, _args, options) => {
     spawns += 1;
-    return spawn(process.execPath, [lspFixtureServerPath, profile, shim.marker, shim.trace], {
-      cwd: options.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const child = spawn(
+      process.execPath,
+      [lspFixtureServerPath, profile, shim.marker, shim.trace],
+      {
+        cwd: options.cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    if (child.pid !== undefined) pids.push(child.pid);
+    return child;
   };
   const port = languagePort(toolScope(cwd), {
     servers: { typescript: { command: [shimName, "--stdio"], extensions: [".ts"] } },
@@ -60,7 +68,16 @@ async function harness(
     budgets: { initializeMs: 5_000, diagnosticsMs: 2_000 },
     ...overrides,
   });
-  return { port, cwd, marker: shim.marker, trace: shim.trace, log, missing, spawns: () => spawns };
+  return {
+    port,
+    cwd,
+    marker: shim.marker,
+    trace: shim.trace,
+    log,
+    missing,
+    pids,
+    spawns: () => spawns,
+  };
 }
 
 async function saved(harness: Harness, name: string, text: string) {
@@ -163,8 +180,8 @@ describe("languagePort", () => {
       event: "lsp.failed",
       payload: { language: "typescript", reason: expect.stringContaining("initialize") },
     });
-    const pid = await fixturePid(world.marker);
-    await waitFor(() => !processExists(pid));
+    expect(world.pids).toHaveLength(1);
+    await waitFor(() => world.pids.every((pid) => !processExists(pid)));
     expect((await saved(world, "b.ts", "BROKEN")).diagnostics).toEqual([]);
     expect(world.spawns()).toBe(1);
     await world.port.dispose();

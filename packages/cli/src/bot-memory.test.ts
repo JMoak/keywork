@@ -18,7 +18,7 @@ import {
 } from "@keywork/engine";
 import { recordingProvider } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   type BotMemory,
   botBootstrapBudget,
@@ -360,14 +360,28 @@ describe("the content rule at flush", () => {
     const fx = await fixture({ bindings: { a: "reviewer" } });
     const registry = requireRegistry(fx.bots, reviewer);
     expect(fx.bots.bootstrapFor(reviewer)?.own.text).toBe("");
+    await registry.materialize("reviewer");
+    const store = registry.botStore("reviewer");
+    const selected = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const listNotes = store.listNotes.bind(store);
+    vi.spyOn(store, "listNotes").mockImplementationOnce(async () => {
+      const selection = await listNotes();
+      selected.resolve();
+      await resume.promise;
+      return selection;
+    });
     const target = fx.bots.flushTarget("a");
     await target?.remember("prefers terse comments");
+    await selected.promise;
     await registry.botStore("reviewer").writeNote({
       title: "Terse Reviews",
       body: "terse\n",
       provenance: "agent",
     });
-    await fx.bots.prepare();
+    const preparing = fx.bots.prepare();
+    resume.resolve();
+    await preparing;
     expect(fx.bots.bootstrapFor(reviewer)?.own.text).toContain("[[Terse Reviews]]");
   });
 });

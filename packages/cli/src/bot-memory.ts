@@ -174,7 +174,10 @@ export function botMemory(options: BotMemoryOptions): BotMemory {
   return {
     prepare: async () => {
       await Promise.all([
-        ...layers().map(({ bot }) => load(bot)),
+        ...layers().map(async ({ bot }) => {
+          await loading.get(bot.name);
+          await load(bot);
+        }),
         ...options.roster.filter(learnsSkills).map(openLibrary),
       ]);
     },
