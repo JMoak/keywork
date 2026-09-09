@@ -54,6 +54,7 @@ async function harness(
         cwd: options.cwd,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        detached: process.platform !== "win32",
       },
     );
     if (child.pid !== undefined) pids.push(child.pid);
