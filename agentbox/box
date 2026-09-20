@@ -1,0 +1,226 @@
+#!/bin/sh
+# box: every agent box, from any directory.
+#
+#   box init [name]      declare a box for the repo you are standing in
+#   box                  open the agent on this repo (starts the box if needed)
+#   box run "<prompt>"   one headless run
+#   box sh               the same shell the agent has
+#   box up               build and start
+#   box check            prove the box is sealed and wired
+#   box denied           domains the gate refused, most frequent first
+#   box aws              refresh temporary AWS credentials from your host profile
+#   box list             every declared box
+#   box <anything else>  passed to docker compose for this box: down, logs gate, ps, ...
+#   box compose <args>   the same, for compose commands that share a name with one above
+#
+# It is sugar. Everything it runs is plain docker compose, and `box config` prints the model.
+# It copies values from your machine into env files. It never shares a file, key, or cache.
+set -eu
+
+main() {
+  home=$(script_home)
+  secrets="$home/.env"
+  case "${1:-open}" in
+    init) shift; declare_box "$@" ;;
+    list) list_boxes ;;
+    open) start_if_stopped; compose exec agent harness ;;
+    run) shift; start_if_stopped; compose exec agent harness run "$@" ;;
+    sh) start_if_stopped; compose exec agent bash ;;
+    up) compose up -d --build ;;
+    check) start_if_stopped; compose exec -T agent agentbox-check ;;
+    denied) refused_domains ;;
+    aws) refresh_aws_credentials ;;
+    compose) shift; compose "$@" ;;
+    *) compose "$@" ;;
+  esac
+}
+
+# ---- running a box ----
+
+compose() {
+  box=$(current_box)
+  set -- --env-file "$secrets" --env-file "$box" -p "box-$(box_name "$box")" "$@"
+  if [ -f "$home/compose.override.yaml" ]; then set -- -f "$home/compose.override.yaml" "$@"; fi
+  if [ -n "$(setting REPO_URL "$box")" ]; then set -- -f "$home/compose.clone.yaml" "$@"; fi
+  docker compose -f "$home/compose.yaml" "$@"
+}
+
+start_if_stopped() {
+  [ -n "$(compose ps --quiet --status running agent 2> /dev/null)" ] || compose up -d --build
+}
+
+current_box() {
+  if [ -n "${BOX:-}" ]; then
+    require_box "$home/boxes/$BOX.env"
+    return
+  fi
+  repo=$(git rev-parse --show-toplevel 2> /dev/null || true)
+  for candidate in "$home"/boxes/*.env; do
+    if [ -f "$candidate" ] && [ -n "$repo" ] && [ "$(setting WORKSPACE "$candidate")" = "$repo" ]; then
+      echo "$candidate"
+      return
+    fi
+  done
+  fail "no box is declared for ${repo:-this directory}. Run 'box init' in the repo, or set BOX=<name>."
+}
+
+require_box() {
+  [ -f "$1" ] || fail "no such box: $1. 'box list' shows the declared ones."
+  echo "$1"
+}
+
+box_name() {
+  basename "$1" .env
+}
+
+list_boxes() {
+  for candidate in "$home"/boxes/*.env; do
+    [ -f "$candidate" ] || continue
+    target=$(setting REPO_URL "$candidate")
+    printf '%-20s %s\n' "$(box_name "$candidate")" "${target:-$(setting WORKSPACE "$candidate")}"
+  done
+}
+
+refused_domains() {
+  compose logs --no-log-prefix gate \
+    | sed -n 's/.*filtered domain "\([^"]*\)".*/\1/p' | sort | uniq -c | sort -rn
+}
+
+refresh_aws_credentials() {
+  profile=$(setting AWS_PROFILE "$secrets")
+  aws configure export-credentials ${profile:+--profile "$profile"} --format env-no-export \
+    | while IFS='=' read -r key value; do
+        case "$key" in
+          AWS_ACCESS_KEY_ID | AWS_SECRET_ACCESS_KEY | AWS_SESSION_TOKEN) remember "$key" "$value" "$secrets" > /dev/null ;;
+        esac
+      done
+  echo "box: fresh AWS credentials written to $secrets"
+  compose up -d agent
+}
+
+# ---- declaring a box ----
+
+declare_box() {
+  [ -f "$secrets" ] || { cp "$home/.env.example" "$secrets"; echo "box: created $secrets; add your secrets to it."; }
+  mkdir -p "$home/boxes"
+  case "${1:-}" in
+    http*://* | git@*) declare_clone_box "$@" ;;
+    *) declare_live_box "$@" ;;
+  esac
+  echo
+  echo "Next: box up, then box check."
+}
+
+declare_live_box() {
+  repo=$(git rev-parse --show-toplevel 2> /dev/null) || fail "run 'box init' inside the repo the agent should work on."
+  require_plain_clone "$repo"
+  box="$home/boxes/${1:-$(basename "$repo")}.env"
+  : >> "$box"
+  remember WORKSPACE "$repo" "$box"
+  remember HOST_UID "$(id -u)" "$box"
+  remember HOST_GID "$(id -g)" "$box"
+  remember GIT_AUTHOR_NAME "$(git -C "$repo" config user.name || true)" "$box"
+  remember GIT_AUTHOR_EMAIL "$(git -C "$repo" config user.email || true)" "$box"
+  remember GITHUB_REPOS "$(github_repo "$(git -C "$repo" remote get-url origin 2> /dev/null || true)")" "$box"
+  remember TOOLS "$(declared_tools "$repo")" "$box"
+}
+
+declare_clone_box() {
+  name=${2:-$(basename "$1" .git)}
+  box="$home/boxes/$name.env"
+  : >> "$box"
+  remember REPO_URL "$1" "$box"
+  remember WORKSPACE unused "$box"
+  remember HOST_UID "$(id -u)" "$box"
+  remember HOST_GID "$(id -g)" "$box"
+  remember GIT_AUTHOR_NAME "$(git config --global user.name || true)" "$box"
+  remember GIT_AUTHOR_EMAIL "$(git config --global user.email || true)" "$box"
+  remember GITHUB_REPOS "$(github_repo "$1")" "$box"
+  echo "  TOOLS is yours to set in $box: there is no checkout on this machine to read it from."
+}
+
+require_plain_clone() {
+  [ -d "$1/.git" ] || fail "$1 keeps .git elsewhere (a worktree or submodule). The box guards .git/config and .git/hooks by path, so use a clone box instead: box init <repo-url>"
+  mkdir -p "$1/.git/hooks"
+}
+
+github_repo() {
+  echo "$1" \
+    | sed -n -E 's#^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+/[^/]+)$#\2#p' \
+    | sed 's/\.git$//'
+}
+
+declared_tools() {
+  if [ -f "$1/.tool-versions" ]; then
+    asdf_tools "$1/.tool-versions"
+  else
+    echo "$(node_version "$1") $(python_version "$1") $(go_version "$1")" | xargs
+  fi
+}
+
+asdf_tools() {
+  sed -e 's/#.*//' -e 's/^nodejs /node /' -e 's/^golang /go /' "$1" \
+    | awk 'NF >= 2 { printf "%s@%s ", $1, $2 }' | xargs
+}
+
+node_version() {
+  if [ -f "$1/.nvmrc" ]; then pinned node "$(cat "$1/.nvmrc")"
+  elif [ -f "$1/.node-version" ]; then pinned node "$(cat "$1/.node-version")"
+  elif [ -f "$1/package.json" ]; then pinned node "$(node --version 2> /dev/null || true)"
+  fi
+}
+
+python_version() {
+  if [ -f "$1/.python-version" ]; then pinned python "$(head -n 1 "$1/.python-version")"
+  elif [ -f "$1/pyproject.toml" ] || [ -f "$1/requirements.txt" ]; then
+    pinned python "$(python3 --version 2> /dev/null | cut -d ' ' -f 2)"
+  fi
+}
+
+go_version() {
+  if [ -f "$1/go.mod" ]; then pinned go "$(sed -n -E 's/^go ([0-9.]+).*/\1/p' "$1/go.mod")"; fi
+}
+
+pinned() {
+  version=$(echo "$2" | tr -d 'v[:space:]')
+  case "$version" in
+    [0-9]*) echo "$1@$version" ;;
+  esac
+}
+
+# ---- env files ----
+
+setting() {
+  sed -n "s/^$1=//p" "$2" 2> /dev/null | tail -n 1
+}
+
+remember() {
+  [ -n "$2" ] || return 0
+  awk -v key="$1" -v value="$2" '
+    BEGIN { line = key "=" value }
+    index($0, key "=") == 1 { print line; written = 1; next }
+    { print }
+    END { if (!written) print line }
+  ' "$3" > "$3.tmp"
+  mv "$3.tmp" "$3"
+  echo "  $1=$2"
+}
+
+script_home() {
+  self=$0
+  while [ -L "$self" ]; do
+    target=$(readlink "$self")
+    case "$target" in
+      /*) self=$target ;;
+      *) self=$(dirname "$self")/$target ;;
+    esac
+  done
+  cd "$(dirname "$self")" && pwd
+}
+
+fail() {
+  echo "box: $1" >&2
+  exit 1
+}
+
+main "$@"

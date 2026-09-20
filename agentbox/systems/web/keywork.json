@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "web": {
+      "transport": "http",
+      "url": "http://web.box:8080/mcp"
+    }
+  }
+}

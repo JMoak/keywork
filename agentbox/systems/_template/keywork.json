@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "SYSTEM": {
+      "transport": "http",
+      "url": "http://SYSTEM.box:8080/mcp"
+    }
+  },
+  "permissions": {
+    "tools": {
+      "SYSTEM__get_record": "allow"
+    }
+  }
+}

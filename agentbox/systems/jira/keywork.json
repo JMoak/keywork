@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jira": {
+      "transport": "http",
+      "url": "http://jira.box:8080/mcp"
+    }
+  }
+}

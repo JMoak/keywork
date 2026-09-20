@@ -42,6 +42,7 @@ file that currently owns each topic; the file itself says what it amends.
 | The own title row and needs-you chrome, gap / borderless / corner chrome, the arc airlock digest, arc jump rows, the verified e2e baseline | [`113`](113-arcs-and-chrome-wave.md) |
 | Where to resume from | [`115`](115-open-ledger.md) (read first; cites the owner of each item) |
 | LSP: the engine port, the diagnostics-in-tool-result moment, server posture, F4a / F4b / F5 | [`114`](114-lsp.md) (scoping; F4 / F5 in [`60`](60-code-intel.md) superseded) |
+| agentbox (keywork in a container: gate, brokers, systems, host declarations) | [`116`](116-agentbox.md) (scoping); the box itself in [`../../agentbox/`](../../agentbox/README.md) |
 
 ## Workstreams
 
@@ -85,6 +86,7 @@ Each row says what the file decides and when it binds; the detail lives in the f
 | [`113-arcs-and-chrome-wave.md`](113-arcs-and-chrome-wave.md) | Plan + ledger (2026-08-30); wins where it speaks | Lanes W1 to W5 over the fully specified leftovers; W2 (C69 own title row, C66 rung, C50 remainder) and W3 (J18 digest surface, arc jump rows) landed 2026-08-30; e2e baseline corrected (11 of 13 scenarios were red at `bccb058`); open decisions and reversible assumptions listed. |
 | [`114-lsp.md`](114-lsp.md) | Scoping overlay (2026-09-03); nothing built | LSP behind an engine `LanguagePort`: three options sized (A diagnostics only, recommended and default `off`; B read tools; C OpenCode-shaped, refused for v1), the after-save seam, diagnostics as text in the tool result, PATH-only user-installed servers, cost budgets, F4a / F4b / F5 tasks with a stdio fixture server, Q-L1 to Q-L5 for Jordan. |
 | [`115-open-ledger.md`](115-open-ledger.md) | Running pickup list (2026-09-07); decides nothing | Read first when resuming: gate state, pickup order, every unbuilt item and every open call with the overlay that owns it. Strike as things land. |
+| [`116-agentbox.md`](116-agentbox.md) | Scoping overlay (2026-09-17); nothing built | keywork in a container (`agentbox/`): what the box is, the source facts that shaped it, AB1 Bedrock through a signing broker, AB2 honest MCP denial hint, AB3 allow a whole MCP server, AB4 published image, AB5 first boot; Q-AB1 to Q-AB3 for Jordan. |
 
 ### Archived
 

@@ -1,0 +1,72 @@
+name: agentbox
+
+include:
+  - systems/github/compose.yaml
+  - systems/jira/compose.yaml
+  - systems/web/compose.yaml
+
+services:
+  agent:
+    build:
+      context: ./agent
+      args:
+        KEYWORK_VERSION: ${KEYWORK_VERSION:-v0.1.1}
+        BASE_IMAGE: ${BASE_IMAGE:-debian:bookworm-slim}
+        TOOLS: ${TOOLS:-}
+        APT_PACKAGES: ${APT_PACKAGES:-}
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 4096
+    restart: unless-stopped
+    environment:
+      AGENTBOX_SYSTEMS: ${COMPOSE_PROFILES:-}
+      AGENTBOX_KNOWN_SECRETS: AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+      AGENT_MODEL: ${AGENT_MODEL:-}
+      REPO_URL: ${REPO_URL:-}
+      GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-}
+      GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-}
+      GIT_COMMITTER_NAME: ${GIT_AUTHOR_NAME:-}
+      GIT_COMMITTER_EMAIL: ${GIT_AUTHOR_EMAIL:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      HTTP_PROXY: http://gate.box:3128
+      HTTPS_PROXY: http://gate.box:3128
+      NO_PROXY: .box,localhost,127.0.0.1
+      http_proxy: http://gate.box:3128
+      https_proxy: http://gate.box:3128
+      no_proxy: .box,localhost,127.0.0.1
+      JAVA_TOOL_OPTIONS: -Dhttp.proxyHost=gate.box -Dhttp.proxyPort=3128 -Dhttps.proxyHost=gate.box -Dhttps.proxyPort=3128 -Dhttp.nonProxyHosts=*.box|localhost
+      GIT_TERMINAL_PROMPT: "0"
+      HUSKY: "0"
+      LEFTHOOK: "0"
+    volumes:
+      - ${WORKSPACE:?declare a box first with box init}:/workspace
+      - ${WORKSPACE}/.git/config:/workspace/.git/config:ro
+      - ${WORKSPACE}/.git/hooks:/workspace/.git/hooks:ro
+      - ./systems:/etc/agentbox/systems:ro
+      - home:/home/dev
+
+  gate:
+    build: ./gate
+    environment:
+      GATE_EXTRA_DOMAINS: bedrock-runtime.${AWS_REGION:-us-east-1}.amazonaws.com ${GATE_EXTRA_DOMAINS:-}
+    volumes:
+      - ./gate/allowed-domains.txt:/etc/gate/allowed-domains.txt:ro
+    networks:
+      default:
+        aliases: [gate.box]
+      outside:
+    restart: unless-stopped
+
+networks:
+  default:
+    internal: true
+  outside:
+
+volumes:
+  home:

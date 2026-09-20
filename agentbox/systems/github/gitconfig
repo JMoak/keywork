@@ -1,0 +1,4 @@
+[url "http://git-github.box:8080/"]
+	insteadOf = https://github.com/
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/

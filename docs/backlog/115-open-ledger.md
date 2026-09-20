@@ -32,6 +32,7 @@ timing) and two reruns passed: a flake to pin before the next lane lands on top.
 | J14 sync self-reconciliation | [95](95-memory-and-skills.md) | 3 | nothing built |
 | V2.7 @-mention, V2.11 provenance gutter, V2.16 commit drafting, V2.17 away summary + `/btw`, V2.5 compaction offer | [96](96-conversation-enrichment.md) | 1–2 each | no code for any |
 | FR6.18 enterprise security scoping doc | [101](101-feedback-round-4.md) | 2 | a document |
+| AB2 honest MCP denial hint, AB5 agentbox first boot | [116](116-agentbox.md) | 1 each | AB1 and AB3 wait on Q-AB1 / Q-AB2 |
 | Audit phase 3 crumbs | [111](111-code-audit.md) | 1 | `isPresetName` guards in `presets.ts`, `clip` in `mcp-pane-model.ts`, five-field copy in `cli/src/mcp.ts` |
 
 ## Waiting on Jordan

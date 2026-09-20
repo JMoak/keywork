@@ -1,0 +1,29 @@
+services:
+  mcp-github:
+    profiles: [github]
+    build: .
+    environment:
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN:-}
+    networks:
+      default:
+        aliases: [github.box]
+      github-out:
+    restart: unless-stopped
+
+  git-github:
+    profiles: [github]
+    image: caddy:2.11.4-alpine
+    entrypoint: ["/bin/sh", "/etc/git-broker/start.sh"]
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPOS: ${GITHUB_REPOS:?name the repos the agent may push to, e.g. acme/api|acme/web}
+    volumes:
+      - ./git-broker:/etc/git-broker:ro
+    networks:
+      default:
+        aliases: [git-github.box]
+      github-out:
+    restart: unless-stopped
+
+networks:
+  github-out:

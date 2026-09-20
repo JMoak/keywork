@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "tools": {
+      "read": "allow",
+      "write": "allow",
+      "edit": "allow",
+      "bash": "allow"
+    }
+  },
+  "mcpServers": {}
+}

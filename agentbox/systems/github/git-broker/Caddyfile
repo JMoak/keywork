@@ -1,0 +1,31 @@
+{
+	auto_https off
+	admin off
+}
+
+(to_github) {
+	reverse_proxy https://github.com {
+		header_up Host github.com
+		header_up Authorization "Basic {$GITHUB_BASIC_AUTH}"
+	}
+}
+
+:8080 {
+	log
+
+	@push expression path('*/git-receive-pack') || query({'service': 'git-receive-pack'})
+	@named_repo path_regexp ^/({$GITHUB_REPOS})(\.git)?/
+
+	handle @push {
+		handle @named_repo {
+			import to_github
+		}
+		handle {
+			respond "agentbox: pushes are limited to GITHUB_REPOS" 403
+		}
+	}
+
+	handle {
+		import to_github
+	}
+}

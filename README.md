@@ -94,6 +94,20 @@ keywork sessions tree         # inspect and fork session trees
 keywork trust                 # grant this workspace the next rung of trust
 ```
 
+### In a container
+
+[`agentbox/`](agentbox/README.md) runs keywork in a Linux box on Amazon Bedrock, for Mac and
+Linux, already connected to GitHub, Jira, and any internal system you wrap as an MCP server.
+The agent gets your project's toolchain, no route to the internet beyond an allowlist, and
+none of your GitHub or Jira tokens.
+
+```sh
+alias box=~/src/keywork/agentbox/box
+cd ~/src/my-repo && box init     # then add your secrets to agentbox/.env
+box up && box check              # builds the box and proves it is sealed
+box                              # keywork, on this repo
+```
+
 ## How it fits together
 
 Underneath, keywork is a headless engine that emits typed events on an internal bus, and
@@ -121,6 +135,7 @@ test` are green and the acceptance criteria in [`docs/backlog/`](docs/backlog/) 
 | [`docs/vision.md`](docs/vision.md) | The ten binding design decisions (D1–D10) |
 | [`docs/design-language.md`](docs/design-language.md) | The visual vocabulary: the `░▒▓█` density ramp, motion, the status line |
 | [`docs/modes.md`](docs/modes.md) | Plan · Recall · Agent modes |
+| [`agentbox/`](agentbox/README.md) | keywork in a container: Bedrock, an allowlisted network, credentials held by brokers, MCP systems as directories |
 | [`docs/backlog/`](docs/backlog/README.md) | The canonical task list, in execution order |
 | [`docs/README.md`](docs/README.md) | The research behind it all, and what we took from each influence |
 

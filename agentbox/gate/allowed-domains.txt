@@ -1,0 +1,22 @@
+# Every domain the agent may reach. A line allows the domain and its subdomains.
+# After editing: docker compose restart gate
+# To see what was refused: docker compose logs gate | grep -i filtered
+
+# package registries
+registry.npmjs.org
+pypi.org
+files.pythonhosted.org
+proxy.golang.org
+sum.golang.org
+crates.io
+static.crates.io
+index.crates.io
+repo.maven.apache.org
+plugins.gradle.org
+
+# toolchain downloads for mise at runtime
+nodejs.org
+
+# github.com is absent on purpose. Git goes through the git broker, which only pushes to
+# GITHUB_REPOS. Allowing the domain here would let the agent push anywhere with any token it
+# is handed, so add it only if you accept that.

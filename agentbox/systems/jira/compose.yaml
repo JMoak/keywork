@@ -1,0 +1,17 @@
+services:
+  mcp-jira:
+    profiles: [jira]
+    image: ghcr.io/sooperset/mcp-atlassian:v0.23.1
+    command: ["--transport", "streamable-http", "--port", "8080"]
+    environment:
+      JIRA_URL: ${JIRA_URL:-}
+      JIRA_USERNAME: ${JIRA_USERNAME:-}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+    networks:
+      default:
+        aliases: [jira.box]
+      jira-out:
+    restart: unless-stopped
+
+networks:
+  jira-out:

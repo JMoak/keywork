@@ -1,0 +1,11 @@
+# Clone boxes: the agent works in its own clone, and nothing it touches is on your filesystem.
+# `box init https://github.com/acme/api` declares one, and `box` adds this file for it.
+services:
+  agent:
+    volumes: !override
+      - ./systems:/etc/agentbox/systems:ro
+      - home:/home/dev
+      - workspace:/workspace
+
+volumes:
+  workspace:

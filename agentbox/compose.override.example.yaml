@@ -1,0 +1,38 @@
+# Personal additions. Copy to compose.override.yaml, keep the recipes you want, delete the rest.
+# `box` loads the file for every box, and git ignores it.
+
+services:
+  agent:
+    volumes:
+      # Other repos the agent may read and never change.
+      - ~/src/design-system:/references/design-system:ro
+
+      # Dependency directories that belong to the box. Your host keeps its own copy, so Mac and
+      # Linux builds never mix, installs skip the slow bind mount, and nothing the agent
+      # installs there can run on your machine.
+      - node_modules:/workspace/node_modules
+      - venv:/workspace/.venv
+
+  # Services your tests need. Anything on the default network with a .box alias is reachable
+  # from the agent (postgres.box:5432) and from nowhere else.
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_PASSWORD: box
+    networks:
+      default:
+        aliases: [postgres.box]
+
+  # A door from your machine into the box, for a dev server the agent starts on port 3000.
+  # The agent has no published ports because its only network has no route to the host.
+  # With several boxes running, give each its own host port.
+  door:
+    image: caddy:2.11.4-alpine
+    command: caddy reverse-proxy --from :3000 --to agent:3000
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [default, outside]
+
+volumes:
+  node_modules:
+  venv:

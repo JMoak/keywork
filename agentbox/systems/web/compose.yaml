@@ -1,0 +1,14 @@
+# Lets the agent read any web page as text. Off unless `web` is in COMPOSE_PROFILES, because it
+# trades safety for reach: a URL can carry data out, and a page can carry instructions in.
+services:
+  mcp-web:
+    profiles: [web]
+    build: .
+    networks:
+      default:
+        aliases: [web.box]
+      web-out:
+    restart: unless-stopped
+
+networks:
+  web-out:

@@ -1,0 +1,15 @@
+services:
+  mcp-SYSTEM:
+    profiles: [SYSTEM]
+    build: .
+    environment:
+      SYSTEM_BASE_URL: ${SYSTEM_BASE_URL:-}
+      SYSTEM_API_TOKEN: ${SYSTEM_API_TOKEN:-}
+    networks:
+      default:
+        aliases: [SYSTEM.box]
+      SYSTEM-out:
+    restart: unless-stopped
+
+networks:
+  SYSTEM-out:
