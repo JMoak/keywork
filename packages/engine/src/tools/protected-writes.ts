@@ -10,9 +10,11 @@ export interface FileToolOptions {
   afterSave?: AfterSave | undefined;
   vault?: MemoryStore | undefined;
   origin?: OriginSource | undefined;
+  session?: SessionSource | undefined;
 }
 
 export type OriginSource = () => PromptOrigin | undefined;
+export type SessionSource = () => string | undefined;
 
 export type WriteTarget = OpenFile | VaultNote;
 
@@ -55,9 +57,10 @@ export async function proposeVaultNote(
   content: string,
   path: string,
   origin?: OriginSource,
+  session?: SessionSource,
 ): Promise<string> {
   const provenance: Provenance = origin?.() === undefined ? "agent" : "untrusted";
-  await target.vault.proposeNoteFile(target.note, content, provenance);
+  await target.vault.proposeNoteFile(target.note, content, provenance, session?.());
   return `staged ${path} as a memory proposal with provenance ${provenance}; it lands once the user approves it in the review inbox`;
 }
 

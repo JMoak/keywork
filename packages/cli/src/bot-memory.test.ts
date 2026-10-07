@@ -246,7 +246,7 @@ describe("an unbound session", () => {
         join(fx.cwd, ".keywork", "memory", "daily", `${new Date().toISOString().slice(0, 10)}.md`),
         "utf8",
       );
-      expect(daily).toContain("[prov: agent] bot: not a bot");
+      expect(daily).toContain("[prov: agent, session: unbound] bot: not a bot");
     }
     expect(vaultsBefore).toEqual([false, true]);
     expect(existsSync(join(plain.cwd, ".keywork", "memory", "bots"))).toBe(false);

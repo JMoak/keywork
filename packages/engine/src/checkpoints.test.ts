@@ -261,6 +261,17 @@ describe("Checkpoints", () => {
     expect(store.takeTurnTag()).toBeUndefined();
   });
 
+  it("drops a tag the previous turn left behind when a new turn begins", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "v1" });
+    await store.captureTree();
+
+    store.beginTurn();
+
+    expect(store.takeTurnTag()).toBeUndefined();
+  });
+
   it("does not mint a turn tag from restoreTo or undo", async () => {
     const { worktree, gitDir } = await scratchProject();
     const store = await Checkpoints.open({ worktree, gitDir });

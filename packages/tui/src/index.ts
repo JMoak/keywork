@@ -220,6 +220,7 @@ export type {
   AgentFactory,
   AgentSeams,
   Compactor,
+  ForgetTarget,
   RewoundPrompt,
   SessionAttachment,
   SessionPort,

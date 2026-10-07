@@ -80,6 +80,24 @@ describe("MemoryFlush", () => {
     expect(recall).toContain("Split ratios were decided 60/40");
   });
 
+  it("stamps the flushing session into the daily marker so forget can find it", async () => {
+    const { store } = await openVault();
+    const flush = new MemoryFlush({
+      provider: new MockProvider([textTurn("The dock keeps a third of the width.")]),
+      store,
+      session: "sess-7",
+    });
+    await flush.flushNow(longConversation);
+    expect(await store.readDaily("2026-08-10")).toEqual([
+      {
+        time: "14:30",
+        provenance: "agent",
+        session: "sess-7",
+        text: "The dock keeps a third of the width.",
+      },
+    ]);
+  });
+
   it("flushes on demand for the arc airlock, ignoring the budget, and skips an empty conversation", async () => {
     const { store, root } = await openVault();
     const flush = new MemoryFlush({

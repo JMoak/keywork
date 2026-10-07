@@ -36,8 +36,12 @@ describe("PromptEditor", () => {
     type(prompt, "hi there!");
     expect(press(prompt, "backspace")).toBe("handled");
     expect(prompt.value).toBe("hi there");
-    expect(press(prompt, "return")).toEqual({ submit: "hi there", behavior: "queue" });
-    expect(press(prompt, "alt+return")).toEqual({ submit: "hi there", behavior: "steer" });
+    expect(press(prompt, "return")).toEqual({ submit: "hi there", behavior: "queue", images: [] });
+    expect(press(prompt, "alt+return")).toEqual({
+      submit: "hi there",
+      behavior: "steer",
+      images: [],
+    });
     prompt.clear();
     expect(prompt.value).toBe("");
   });
@@ -181,7 +185,7 @@ describe("PromptEditor", () => {
 
       const sent = cleared("held", "one");
       press(sent, "up");
-      expect(press(sent, "return")).toEqual({ submit: "held", behavior: "queue" });
+      expect(press(sent, "return")).toEqual({ submit: "held", behavior: "queue", images: [] });
       sent.clear();
       press(sent, "up");
       expect(sent.value).toBe("one");
@@ -244,6 +248,7 @@ describe("large-paste placeholders", () => {
     expect(editor.handleKey(parseChord("return"), undefined)).toEqual({
       submit: `intro ${seven}`,
       behavior: "queue",
+      images: [],
     });
   });
 
@@ -279,6 +284,7 @@ describe("large-paste placeholders", () => {
     expect(editor.handleKey(parseChord("return"), undefined)).toEqual({
       submit: `look: ${seven}`,
       behavior: "queue",
+      images: [],
     });
   });
 
@@ -289,6 +295,7 @@ describe("large-paste placeholders", () => {
     expect(editor.handleKey(parseChord("return"), undefined)).toEqual({
       submit: "[pasted #9, 40 lines]",
       behavior: "queue",
+      images: [],
     });
   });
 });
@@ -330,7 +337,11 @@ describe("PromptEditor @-mentions", () => {
     type(prompt, "@readme");
     expect(press(prompt, "return")).toBe("handled");
     expect(prompt.value).toBe("@docs/readme.md ");
-    expect(press(prompt, "return")).toEqual({ submit: "@docs/readme.md", behavior: "queue" });
+    expect(press(prompt, "return")).toEqual({
+      submit: "@docs/readme.md",
+      behavior: "queue",
+      images: [],
+    });
   });
 
   it("dismisses on esc without touching the text, and enter then sends", () => {
@@ -341,13 +352,21 @@ describe("PromptEditor @-mentions", () => {
     expect(prompt.suggestions()).toEqual([]);
     type(prompt, ".ts");
     expect(prompt.suggestions()).toEqual([]);
-    expect(press(prompt, "return")).toEqual({ submit: "ping @app.ts", behavior: "queue" });
+    expect(press(prompt, "return")).toEqual({
+      submit: "ping @app.ts",
+      behavior: "queue",
+      images: [],
+    });
   });
 
   it("sends on enter when the typed path is already complete", () => {
     const prompt = mentioning();
     type(prompt, "see @src/app.ts");
-    expect(press(prompt, "return")).toEqual({ submit: "see @src/app.ts", behavior: "queue" });
+    expect(press(prompt, "return")).toEqual({
+      submit: "see @src/app.ts",
+      behavior: "queue",
+      images: [],
+    });
   });
 
   it("accepts a clicked tray row", () => {
@@ -365,5 +384,83 @@ describe("PromptEditor @-mentions", () => {
     type(prompt, "me@app");
     expect(prompt.suggestions()).toEqual([]);
     expect(prompt.completing()).toBe(false);
+  });
+});
+
+describe("PromptEditor send modes and chips", () => {
+  const image = {
+    part: { type: "image" as const, mediaType: "image/png", data: "AAAA" },
+    bytes: 2048,
+    format: "png",
+  };
+
+  it("sends now on ctrl+enter and carries no images by default", () => {
+    const prompt = editor();
+    type(prompt, "go");
+    expect(press(prompt, "ctrl+return")).toEqual({ submit: "go", behavior: "now", images: [] });
+  });
+
+  it("renders an attached image as a chip and hands the part over on send", () => {
+    const prompt = editor();
+    type(prompt, "look");
+    prompt.attachImage(image);
+    expect(prompt.value).toBe("look [image #1, png 2 KB] ");
+    expect(prompt.attachedImages()).toEqual([image.part]);
+    type(prompt, "closely");
+    expect(press(prompt, "return")).toEqual({
+      submit: "look  closely",
+      behavior: "queue",
+      images: [image.part],
+    });
+    prompt.clear();
+    expect(prompt.attachedImages()).toEqual([]);
+  });
+
+  it("refuses to send a chip with no words around it", () => {
+    const prompt = editor();
+    prompt.attachImage(image);
+    expect(press(prompt, "return")).toBe("handled");
+  });
+
+  it("keeps chips through ctrl+c and up, like pastes", () => {
+    const prompt = editor();
+    prompt.attachImage(image);
+    type(prompt, "see");
+    press(prompt, "ctrl+c");
+    expect(prompt.value).toBe("");
+    press(prompt, "up");
+    expect(prompt.value).toBe("[image #1, png 2 KB] see");
+    expect(prompt.attachedImages()).toEqual([image.part]);
+  });
+
+  it("sets flushed prompts aside so up walks them back newest first", () => {
+    const prompt = editor();
+    prompt.remember("sent earlier");
+    prompt.holdAside(["older queued", "newest queued"]);
+    expect(prompt.value).toBe("");
+    press(prompt, "up");
+    expect(prompt.value).toBe("newest queued");
+    press(prompt, "up");
+    expect(prompt.value).toBe("older queued");
+    press(prompt, "up");
+    expect(prompt.value).toBe("sent earlier");
+    press(prompt, "down");
+    press(prompt, "down");
+    expect(prompt.value).toBe("newest queued");
+  });
+
+  it("expands pastes for the external editor and takes the edit back whole", () => {
+    const prompt = editor();
+    type(prompt, "intro ");
+    prompt.paste("l1\nl2\nl3\nl4\nl5\nl6\nl7");
+    expect(prompt.value).toBe("intro [pasted #1, 7 lines]");
+    expect(prompt.draftForEditing()).toBe("intro l1\nl2\nl3\nl4\nl5\nl6\nl7");
+    prompt.replaceDraft("rewritten\noutside");
+    expect(prompt.value).toBe("rewritten\noutside");
+    expect(press(prompt, "return")).toEqual({
+      submit: "rewritten\noutside",
+      behavior: "queue",
+      images: [],
+    });
   });
 });

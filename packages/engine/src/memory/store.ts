@@ -38,6 +38,7 @@ import {
   parseDailyEntries,
   parseNote,
   stemName,
+  withoutDailyEntries,
 } from "./notes.ts";
 import { type NamedSecret, redactForPersistence } from "./redaction.ts";
 import {
@@ -82,6 +83,7 @@ export interface NoteInput {
   distilledFrom?: string;
   learnedBy?: string;
   anchor?: CheckpointAnchor;
+  session?: string;
 }
 
 export interface WriteResult {
@@ -129,6 +131,7 @@ interface WriteTarget {
 }
 
 type PromotionReview = Extract<StagedItem, { kind: "borderline-promotion" }>;
+type ForgetReview = Extract<StagedItem, { kind: "forget-proposal" }>;
 
 export class MemoryStore {
   readonly vaultRoot: string;
@@ -252,23 +255,41 @@ export class MemoryStore {
     return this.files.isNotePath(path);
   }
 
+  async annotateNote(name: string, stamp: Frontmatter): Promise<WriteResult> {
+    this.gate();
+    return this.serialized(async () => {
+      const path = await this.resolveNotePath(name);
+      const raw = path === undefined ? null : await this.files.read(path);
+      if (path === undefined || raw === null) throw new MissingNoteError(name);
+      const { frontmatter, body } = parseDocument(raw, path);
+      const stamped = ensureTrailingNewline(serializeDocument({ ...frontmatter, ...stamp }, body));
+      return this.commit("edit", [fileDelta(path, raw, stamped)], path, false);
+    });
+  }
+
   async proposeNoteFile(
     path: string,
     content: string,
     provenance: Provenance = "agent",
+    session?: string,
   ): Promise<WriteResult> {
     this.gate();
     if (!this.files.isNotePath(path)) throw new ReservedPathError(path, "not an atomic note path");
     return this.serialized(() =>
-      this.stage("note", path, this.stampedProposal(path, content, provenance)),
+      this.stage("note", path, this.stampedProposal(path, content, provenance, session)),
     );
   }
 
-  async appendDaily(text: string, provenance: Provenance): Promise<WriteResult> {
+  async appendDaily(text: string, provenance: Provenance, session?: string): Promise<WriteResult> {
     this.gate();
     return this.serialized(async () => {
       const path = dailyPath(dailyDateOf(this.now()));
-      const entry = dailyEntryLines(this.redact(text), provenance, dailyTimeOf(this.now()));
+      const entry = dailyEntryLines(
+        this.redact(text),
+        provenance,
+        dailyTimeOf(this.now()),
+        session,
+      );
       if (provenance === "untrusted") return this.stage("daily", path, entry);
       const before = await this.files.read(path);
       const delta = fileDelta(path, before, `${before ?? ""}${entry}`);
@@ -452,6 +473,7 @@ export class MemoryStore {
       ...(input.distilledFrom !== undefined && { distilled_from: `[[${input.distilledFrom}]]` }),
       ...(learnedBy !== undefined && { learned_by: learnedByLink(learnedBy) }),
       ...(input.anchor !== undefined && anchorFrontmatter(input.anchor)),
+      ...sessionOrigin(inherited, input.session),
     };
   }
 
@@ -507,9 +529,14 @@ export class MemoryStore {
     return ensureTrailingNewline(serializeDocument(frontmatter, this.redact(input.body)));
   }
 
-  private stampedProposal(path: string, content: string, provenance: Provenance): string {
+  private stampedProposal(
+    path: string,
+    content: string,
+    provenance: Provenance,
+    session: string | undefined,
+  ): string {
     const { frontmatter, body } = parseDocument(content, path);
-    const stamped = { ...frontmatter, provenance };
+    const stamped = { ...frontmatter, provenance, ...sessionOrigin({}, session) };
     return this.redact(ensureTrailingNewline(serializeDocument(stamped, body)));
   }
 
@@ -535,8 +562,26 @@ export class MemoryStore {
     return this.noteDeltas(target, await this.noteContent(input, target, undefined), undefined);
   }
 
+  private async forgetDeltas(forget: ForgetReview): Promise<FileDelta[]> {
+    const deltas: FileDelta[] = [];
+    for (const name of forget.notes) {
+      const path = await this.resolveNotePath(name);
+      const raw = path === undefined ? null : await this.files.read(path);
+      if (path !== undefined && raw !== null) deltas.push(fileDelta(path, raw, null));
+    }
+    for (const [date, indexes] of dailyEntryIndexesByDate(forget.entries)) {
+      const path = dailyPath(date);
+      const raw = await this.files.read(path);
+      if (raw === null) continue;
+      const kept = withoutDailyEntries(raw, indexes);
+      deltas.push(fileDelta(path, raw, kept.trim() === "" ? null : kept));
+    }
+    return deltas;
+  }
+
   private async landingDeltas(item: StagedItem): Promise<FileDelta[]> {
     if (item.kind === "borderline-promotion") return this.promotionDeltas(item);
+    if (item.kind === "forget-proposal") return this.forgetDeltas(item);
     if (!isStagedWrite(item)) return [];
     const before = await this.files.read(item.target);
     const after = item.kind === "daily" ? `${before ?? ""}${item.content}` : item.content;
@@ -617,6 +662,29 @@ export class MemoryStore {
 function entityLookupKeys(name: string): string[] {
   const canonical = canonicalEntityPath(name.replace(/^entities\//, ""));
   return [titleKey(`entities/${canonical}`)];
+}
+
+function sessionOrigin(inherited: Frontmatter, session: string | undefined): Frontmatter {
+  if (session === undefined) return {};
+  const origin = firstString(inherited.origin_session);
+  if (origin === undefined) return { origin_session: session };
+  if (origin === session) return {};
+  const revisedBy = asStringArray(inherited.revised_by);
+  return revisedBy.includes(session) ? {} : { revised_by: [...revisedBy, session] };
+}
+
+function dailyEntryIndexesByDate(entryIds: readonly string[]): Map<string, Set<number>> {
+  const byDate = new Map<string, Set<number>>();
+  for (const id of entryIds) {
+    const divide = id.lastIndexOf("#");
+    const date = id.slice(0, divide);
+    const index = Number(id.slice(divide + 1));
+    if (divide === -1 || !isDailyDate(date) || !Number.isInteger(index)) continue;
+    const indexes = byDate.get(date) ?? new Set<number>();
+    indexes.add(index);
+    byDate.set(date, indexes);
+  }
+  return byDate;
 }
 
 function ensureTrailingNewline(text: string): string {

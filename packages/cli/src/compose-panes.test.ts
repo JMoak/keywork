@@ -71,7 +71,12 @@ describe("composePanes", () => {
 
   it("settles turns only for sessions it attached", async () => {
     const { app } = await composedIn(await tempDir());
-    const turn = { sessionId: "ghost", history: [], agent: {} as never };
+    const turn = {
+      sessionId: "ghost",
+      history: [],
+      agent: {} as never,
+      phase: "after-turn" as const,
+    };
     await expect(app.afterTurn?.(turn)).resolves.toBeUndefined();
     await expect(app.compact?.(turn, "")).rejects.toThrow("no session store for this pane");
   });

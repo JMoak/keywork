@@ -32,6 +32,19 @@ Adaptations:
   points (never at tool results), iterative structured summaries that fold the
   previous summary, cumulative read/modified file tracking in compaction details,
   and serialized-conversation summarization input with tool-result truncation.
+- 40 D1/D2/D3 (packages/engine/src/extensions/hooks.ts, host.ts, discover.ts,
+  extension-entries.ts): the extension API shape adapted from Pi's documented extension
+  system (docs/extensions.md in the published package): a default-export factory receiving
+  an api object, the hook vocabulary (session_start, session_before_fork,
+  session_before_compact, session_tree, before_agent_start, agent_start/end/settled,
+  message_start/update/end, input, context, tool_call with block-or-modify results,
+  tool_result, tool_execution_start/update/end, before_provider_request,
+  after_provider_response, model_select, user_bash, project_trust, resources_discover),
+  registerTool/registerCommand/registerShortcut/registerFlag, discovery from a global and a
+  project extensions directory, and custom session entries replayed on session start to
+  reconstruct extension state. Reimplemented in TypeScript from the documented design; no
+  code copied. Quarantine semantics, the trust gate on the project layer, the hook deadline
+  and the serialized dispatch queue are keywork's own.
 - E6 (packages/shared/src/trust/store.ts): workspace trust store adapted from Pi's
   trust-manager: per-path persisted trust decisions in a JSON map, canonicalized
   paths, nearest-ancestor resolution via dirname walking, session-only grants, and

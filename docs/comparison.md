@@ -108,10 +108,11 @@ SW15 moves it to OpenCode v2's ordered model); `AGENTS.md` instructions; skills
 (`engine/src/skills`; SW16 brings them to spec); headless `keywork run`; token and cost
 visibility (A15, `/show-costs`); Windows in the CI matrix. In part: themes (one token set, live
 flavor swap and the `system` flavor; the C49 gallery is open); extensibility (markdown
-commands, skills, bots and MCP work; the TypeScript extension host, 40 D1, is still a stub in
-`packages/extensions`). Open: the external-editor escape hatch (C7's `ctrl+g`, ledgered to I4;
-no `$EDITOR` code in the tree). Unverified: image input (the engine has an image message part;
-no TUI paste path was found).
+commands, skills, bots and MCP work; the TypeScript extension host, 40 D1 to D3, landed
+2026-10-07 in `engine/src/extensions/host.ts` with `packages/extensions` as the authoring
+surface, not yet wired into `keywork chat` / `run`). Landed 2026-10-07: the external-editor
+escape hatch (C7's `ctrl+g`, `tui/external-editor.ts`); image input (the TUI pastes image
+paths and clipboard images as chips and `Agent.send` carries them as image parts).
 
 ---
 

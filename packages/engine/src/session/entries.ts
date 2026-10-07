@@ -197,8 +197,18 @@ function selectedContextEntries(path: readonly SessionEntry[]): SessionEntry[] {
   const kept =
     keptFrom === -1
       ? []
-      : contextBefore.slice(keptFrom).filter((entry) => entry.type !== "compaction");
+      : contextBefore
+          .slice(keptFrom)
+          .filter((entry) => entry.type !== "compaction")
+          .map(withoutThinkingBoundToTheOldPrefix);
   return [compaction, ...kept, ...path.slice(index + 1)];
+}
+
+function withoutThinkingBoundToTheOldPrefix(entry: SessionEntry): SessionEntry {
+  if (entry.type !== "message") return entry;
+  const parts = entry.message.parts.filter((part) => part.type !== "redacted-thinking");
+  if (parts.length === entry.message.parts.length) return entry;
+  return { ...entry, message: { ...entry.message, parts } };
 }
 
 export function contextMessages(entries: readonly SessionEntry[]): Message[] {

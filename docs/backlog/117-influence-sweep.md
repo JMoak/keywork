@@ -1,6 +1,8 @@
 # 117: The influence sweep
 
-> **Kind:** research overlay + work plan (2026-10-02); nothing below is built. Six research lanes
+> **Kind:** research overlay + work plan (2026-10-02); written before anything was built, and
+> since then phases 1 to 4 and SW9 landed 2026-10-02 and SW11 plus four lanes landed 2026-10-07
+> (ledgers from "Landing ledger" down; SW10 and the scope-first remainder stay open). Six research lanes
 > (Pi; OpenCode + OpenTUI; Claude Code, Codex, Gemini and the provider APIs; the wider ecosystem
 > and protocols; memory and skills; terminal feel and the Bun runtime) swept what shipped since
 > the August research set. Every candidate here was checked against the tree: **confirmed** means
@@ -385,14 +387,232 @@ Run together as four lanes with disjoint files. Gate after the lanes: `bun run c
 | Gate terminate | ✅ | `engine/src/agent.ts` (`ToolGuard.declineEndsRun`), `cli/src/run.ts`, `fixtures/headless/denied.jsonl` | a headless decline ends the run after the tool result with no further model call; later calls in the same reply settle as skipped so history stays paired; exit 4 unchanged, stderr says the run stopped there; interactive runs unchanged |
 | ContextEditEntry | ✅ | `engine/src/session/entries.ts`, `store.ts` (`appendContextEdit`), `NOTICE` (Pi line) | `type: "context_edit"` with `targetId` and `replacement: null \| content`, applied on the active path after compaction, latest edit per target wins, branch-relative; keywork's own rule: removing one half of a tool call / result pair removes the other; no `/forget` UI yet (needs a prompt picker and an agent rebuild like `/undo`) |
 
-Still open from the four phases: SW9 (OpenTUI 0.5.14, bumped and under its own gate, see below), SW10 (Bun, decision 117-3), SW11 (the terminal pane spike, waits on SW9 and the Bun call), the scope-first items not named above (sandbox runtime spike, mid-run compaction, MCP OAuth and elicitation routing, Pi Durable note, codemode note, the memory items, cache warming, ACP).
+| Thinking replay (deviation 3) | ✅ 2026-10-07 | `providers/claude-models.ts` (`preserved-thinking`), `providers/messages-wire.ts` (`thinkingReplayFor`), `session/entries.ts` (keep-tail strip) | prior-turn owned thinking replayed unchanged on Opus 4.5+, Sonnet 4.6+, Fable 5+, Mythos 5+ when a thinking config is on the wire, so the second request's prefix is the first's byte for byte; Haiku, older ids, and thinking-off requests keep the current-turn drop; the B7 keep-tail projection strips blocks bound to the pre-compaction prefix so a compacted history never replays a signature the API rejects; closes the SW6 `messages changed` finding; 70 deviation 3 amended, compliance re-run 2026-10-07 |
+| Mid-run compaction | ✅ 2026-10-07 | `agent.ts` (`settleToolBatchesWith`), `session/settle.ts` (`phase`), `tui/src/session-attachment.ts`, `conversation-model.ts`, `cli/src/compose-panes.ts` (forwards the phase) | after each tool batch, with no stream open, the pane persists the turn so far and runs B7 if the projected context is past the mark; the running agent adopts the compacted projection before its next call; no flush mid-turn, the after-turn settler never compacts twice; S3.1 amended in 108, reversal in 109 |
+| `/forget` | ✅ 2026-10-07 | new `tui/src/forget.ts`, `core-commands.ts`, `conversation-model.ts` (`beginForget`, `pickerHint`), `transcript-navigation.ts` (picker purpose), `transcript-feed.ts` (`ToolRun.callId`, `forgettableIndices`), `session-attachment.ts` (`forget` port), `cli/src/sessions/ports.ts` | `/forget [replacement]` opens the backtrack picker over saved prompts and tool rows, appends a `context_edit` (`null` or the typed line) for the picked entry on the active path, rebuilds the agent on the edited projection through the `/undo` adopt seam, and posts one confirming line; the store's pair rule removes the other half of a tool call / result; refused while a turn runs |
+| Cache warming | note only, 2026-10-07 | this file, "Cache warming: the options note" below | not built: it cannot win without a config key, and a key that spends while the user is away needs Jordan's call |
+
+Still open from the four phases: SW9 (OpenTUI 0.5.14, bumped and under its own gate, see below), SW10 (Bun, decision 117-3), SW11 (the terminal pane spike, waits on SW9 and the Bun call), the scope-first items not named above (sandbox runtime spike, MCP OAuth and elicitation routing, Pi Durable note, codemode note, the memory items, ACP; mid-run compaction and the cache-warming note landed 2026-10-07, see the lane section at the end).
 
 ### SW9 (2026-10-02): OpenTUI 0.5.1 → 0.5.14
 
 Landed: `packages/tui/package.json` and `bun.lock`. Gate on the new version: `bun run check` clean, vitest 302 files / 4229 tests, e2e 47 of 47 (one run showed `terminal-mirror` flaking on masked timing widths under full-run load; it passes in isolation and passed twice before the bump, so it is a timing flake to pin, not a regression). One behaviour change found: since 0.5.14 OpenTUI writes OSC 8 hyperlinks only when its own XTVERSION probe recognises the terminal, so SW22 links need both OpenTUI's check and keywork's to agree; the `file-links` scenarios answer XTVERSION as kitty to prove the emission. On a terminal OpenTUI cannot name (Windows Terminal unless it answers XTVERSION in a recognised shape, untested) links stay off; the native library has a `setHyperlinksCapability` symbol the JS layer does not bind, so making them work there needs an upstream change or a binding. The native double / triple-click selection added in 0.5.7 did not disturb the pointer scenarios.
 
+### Memory lane (2026-10-07): the scope-first "Memory" bullet
+
+All five items landed (`OWN`; the Hermes items are designed from the curator doc, no code
+copied), plus the single-vault rung of J14. Detail and evidence in
+`95-memory-and-skills.md` "Memory lane, 2026-10-07"; invariants 8 and 9 and the "Skills
+beside the vault" section in `docs/memory.md`.
+
+| Item | Landed | Where | Notes |
+|---|---|---|---|
+| drift check | ✅ | new `engine/src/memory/drift.ts`, `store.ts` (`annotateNote`), `staging.ts` (`drift-review`), new `cli/src/memory-command.ts` | one bounded provider question per touched note; verdict stamped as frontmatter `drift` map plus a `curation.md` line with evidence; body never edited; stale → one Gardener proposal; `keywork memory drift [range]` |
+| memory forget | ✅ | `notes.ts`, `store.ts`, new `memory/forget.ts`, `staging.ts` (`forget-proposal`), `flush.ts` | `origin_session` / `revised_by` on notes, session inside the daily marker; dry run default, `--apply` stages one proposal; approval removes through the ledger, revert restores; mixed provenance refused with a reason; `compose.ts` / `protected-writes.ts` still need to pass the session (outside the lane) |
+| curator hygiene | ✅ | new `engine/src/skills/curator.ts`, `library.ts`, `gardener.ts` (pinned skip) | archive folder `.keywork/skills-archive/<name>/<stamp>/`, actor ledger `ledger.jsonl`, `metadata.pinned`, dry run by default, agent-authored only |
+| skill history | ✅ | new `cli/src/skills-command.ts`, `dispatch.ts`, `main.ts` | `keywork skills history <name> [--restore <stamp>]`, `pin`, `unpin`, `archive`, `curate` |
+| memory-off control | ✅ seam + stub | new `engine/src/memory/recall-probe.ts` | J4's corpus had no code: `memoryOffControl`, `compareAgainstMemoryOff` (lift), four-note corpus stub with a multi-hop case as the graph-leg target |
+| J14 first rung | ✅ | `engine/src/memory/search.ts` (`reconcile`) | outside edits re-embedded, deleted notes leave no ghost, no rebuild command; multi-host half still open |
+
+### SW11 (2026-10-07): the real terminal pane
+
+Landed: new `engine/src/tools/pty.ts` (`probePtySupport`, `interactiveShell`, the one
+`Bun.*` surface, read through `globalThis.Bun`), new `tui/src/terminal-backend.ts`
+(`TerminalBackend` = `pty` | `pipes`, `chooseTerminalBackend`), `terminal-surface.ts`
+(`TerminalSurface` over OpenTUI's `EmbeddedTerminalRenderable`, frame-surviving subclass),
+`terminal-shell.ts` (`PtyShell`), `terminal-pane.ts` (backend chosen once per pane; pipe
+shells carry `· pipes` and a first-line reason), `terminal-model.ts` (`banner`),
+`testing/fake-terminal-backend.ts`, `app.ts` (factory now built where the renderer is in
+scope, `TerminalPanePort.pty`), engine `index.ts`; docs `windows.md` and the C15 ledger in
+`30-tui.md`. Tests: 4361 vitest (62 in the terminal and pty files), e2e `terminal-mirror`
+and `terminal-hygiene` pass. Mirror mode (the C14/C15 agent `bash` mirror) is untouched.
+
+The Bun question, answered for this task: the `Bun.spawn({ terminal })` call exists, in
+exactly one small file, behind a structural probe, so a Node build reports "this runtime
+has no Bun.Terminal" and runs the pipe shell; the exit stays one file (swap the opener for
+`node-pty` or Node's future pty) and the renderable side is already OpenTUI's Node path.
+
+**Windows verdict.** No pty: `bun-types@1.3.14` documents the `terminal` option as POSIX
+only (the "ConPTY at 1.3.14" sentence in SW11's task text was wrong), and on this machine
+Bun 1.3.9 throws `PTY not supported on this platform` from `new Bun.Terminal`. The probe
+refuses `win32` before touching Bun, so ConPTY, `\r` translation and Windows 10 mouse
+never come up; the failure is one line and the pipe shell stays the Windows shell, which
+`docs/windows.md` now says in a table.
+
+**Linux verification (not run here; acceptance is by construction plus the fake-backend
+tests).** On Linux with the pinned Bun 1.3.14 in a trusted workspace: (1) `/terminal shell`
+and the title reads `terminal · shell · bash` (or `zsh`), with no `· pipes` and no
+`· pipes:` line; (2) the shell's own prompt appears and `ls` colors; (3) `vim` opens, `i`,
+typing, `escape`, `:q!` returns to the prompt with the screen restored; (4) `htop` draws,
+`F10` or `q` leaves; (5) `sleep 30` then `ctrl+c` interrupts; `ctrl+d` prints
+`· shell exited (0) · enter restarts it` and `enter` brings a new prompt; (6) `tput cols`
+equals the pane's content width and changes after `leader .`; (7) `ctrl+k h` leaves the
+pane, typing goes to the prompt editor, `ctrl+k l` returns; (8) `leader x` on the pane and
+`ps -ef | grep -- -i` shows no leftover shell; the same after `ctrl+q` with a shell open.
+Risks only Linux can settle: the frame-survival subclass relies on OpenTUI 0.5.14's
+`destroyRecursively` iterating a copy of the children and on `add()` reparenting (both
+read from the shipped source), and the yoga box must honour the explicit `width`/`height`
+the pane sets on the renderable each frame.
+
+Not built, by choice: focus-in/out escapes to the child and keyboard scrollback of the pty
+surface (OpenTUI 0.5.14 exposes neither publicly), mouse into the pty (94's refusals),
+`ctrl+q` as pty input (keywork's quit wins), a `TERM` other than `xterm-256color`.
+
 ## Where the tree stands (end of 2026-10-02)
 
 Four phases landed in one day on top of the sweep: 29 tasks (SW1 to SW9, SW12 to SW26, V2.7, V2.11, V2.16, V2.17, P2.5, P2.6, E9, gate terminate, ContextEditEntry, AB2, AB3), all uncommitted, 186 files changed. Gate: `bun run check` clean, vitest 302 files / 4229 tests (1 skipped), e2e 47 of 47. Jordan reviews and commits.
 
-Calls waiting on Jordan after the day: 117-3 Bun (and installing the pinned 1.3.14 locally; the PATH `bun` is 1.3.9 and segfaults on Ctrl+C in the e2e harness, pre-existing); whether agent tool rows flip to ▓ (V2.11, one line plus goldens); the SW3 / SW5 live smoke with a real key (`docs/live-smoke/anthropic.md` steps 6 and 7) and the compliance sign-off line; the SW6 finding that keep-all models will likely report `messages changed` after tool turns because the deviation-3 replay policy drops thinking; the SW15 choices (no-match keeps the built-in posture, project layer contributes no permissions, agentbox systems allow their whole server); whether to persist injection origin (P2.6); `keywork secret set` and migrating existing plaintext credentials (E9); the `/forget` UI for context edits.
+Calls waiting on Jordan after the day: 117-3 Bun (and installing the pinned 1.3.14 locally; the PATH `bun` is 1.3.9 and segfaults on Ctrl+C in the e2e harness, pre-existing); whether agent tool rows flip to ▓ (V2.11, one line plus goldens); the SW3 / SW5 live smoke with a real key (`docs/live-smoke/anthropic.md` steps 6 and 7) and the compliance sign-off line; ~~the SW6 finding that keep-all models will likely report `messages changed` after tool turns because the deviation-3 replay policy drops thinking~~ (closed 2026-10-07: thinking replays per generation, 70 deviation 3 amended); the SW15 choices (no-match keeps the built-in posture, project layer contributes no permissions, agentbox systems allow their whole server); whether to persist injection origin (P2.6); `keywork secret set` and migrating existing plaintext credentials (E9); ~~the `/forget` UI for context edits~~ (landed 2026-10-07).
+
+## 2026-10-07: the context-economy lane
+
+Three builds and one note from the scope-first list, landed uncommitted on top of the four
+phases. Rows added to the landing ledger above (thinking replay, mid-run compaction, `/forget`,
+cache warming). Gate for the lane's files: biome and vitest green on every file it touched;
+the repo-wide `check:types` run carried errors in other lanes' in-progress files
+(`engine/src/memory/*`, `engine/src/skills/curator.ts`) and one biome format diff in the
+hooks lane's `agent.ts`, none in this lane's code.
+
+**Assumptions Jordan may reverse**
+
+1. The replay cut is the generation that preserves prior-turn thinking (Opus 4.5, Sonnet 4.6,
+   Fable 5, Mythos 5 and later), read off the prompt-caching page, not the narrower 5.5
+   generation the task named. On a model that strips prior thinking server-side, replaying it
+   costs cache; on one that keeps it, dropping it costs cache. The table has one row per
+   family and a narrower cut is a four-number edit.
+2. A request with no thinking config (thinking off on Opus 5, Sonnet 5, the 4.x line) keeps
+   the current-turn-only drop even on a preserving model, because the API documents a strip
+   when thinking is off and the lane could not verify the alternative live.
+3. Mid-run compaction rebuilds the running agent's in-memory history from the store projection
+   rather than swapping the agent, because the turn is in flight and `swapAgent` is an
+   between-turns operation; the after-turn rebuild seam is untouched. `keywork chat` keeps
+   after-turn-only settlement.
+4. `/forget` keeps the transcript row as it was and says so in its confirmation line; a visual
+   mark on forgotten rows was deliberately left out (one line of `transcript-view` later if
+   wanted).
+
+### Cache warming: the options note
+
+**What shipped elsewhere (on report, from the sweep's Pi and OpenCode lanes, not re-fetched).**
+Pi 1.0 and OpenCode v2 both keep the prompt cache alive across the gap after a turn by
+re-sending the finished request to the provider shortly before the cache entry would expire,
+as long as the user is still around; both expose it as a setting rather than an always-on
+behaviour, and neither showed the spend as its own line in the sweep's reading.
+
+**What the API offers.** The prompt-caching page's keep-alive: re-send the previous request
+with `max_tokens: 0` and `stream` off while idle. It refreshes the 5-minute entry, bills one
+cache read of the whole prefix and no output tokens, and is rejected with `stream: true`,
+structured outputs, forced `tool_choice`, or inside a batch. keywork's Anthropic provider
+streams every request, so warming needs a second, non-streaming request path in
+`anthropic.ts` (same headers, same body minus `stream`, `max_tokens: 0`), which the compliance
+checklist would re-run on. The alternative is the 1-hour TTL (`cache_control.ttl: "1h"`),
+which writes at 2x instead of 1.25x and needs no idle traffic at all.
+
+**What it costs.** One keep-alive every ~4.5 minutes reads the full prefix once. For a 100k-token
+prefix, from `pricing.ts` (USD):
+
+| model | one keep-alive (read) | one cold miss (write) | keep-alives a miss is worth |
+|---|---:|---:|---:|
+| claude-fable-5-1 | $0.025 | $1.25 | 50 (about 3.75 h of idle) |
+| claude-opus-5-5 | $0.020 | $0.50 | 25 (about 1.9 h) |
+| claude-sonnet-5-5 | $0.020 | $0.25 | 12 (about 56 min) |
+| claude-haiku-4-5 | $0.010 | $0.125 | 12 (about 56 min) |
+
+Warming pays only if the user comes back inside that window, and every keep-alive is spent
+whether or not they do. The 1-hour TTL costs 0.75x of one write up front (the extra over the
+5-minute write) and covers the first hour with no further traffic, which beats keep-alives on
+Sonnet and Haiku for any gap over ~40 minutes and loses on Fable 5.1 for any gap under three
+hours, where reads are nearly free.
+
+**How the honest-cost line would show it.** A keep-alive is not a turn, so it never folds into
+turn cost. `/cost` would gain its own row (`warm · 6 keep-alives · $0.15`), the title-bar `$`
+would include it, and the per-model lines would carry a `warm` column; the session entry
+would be a `custom` `cache_warm` record so replay and `sessionCost` agree with the live
+ledger. The context gauge is unaffected (nothing enters context).
+
+**Recommendation: do not build it now, and not without a key.** The D9 test is whether the
+behaviour can ship with no option. It cannot: warming spends money while the user is away,
+with no turn to attribute it to, and the right bound differs by model (near-free on Fable 5.1,
+roughly break-even on Haiku), by key (metered personal key versus a team's), and by habit
+(lid closed for the night versus a coffee). Any built-in default is a policy someone will need
+to turn off, which is exactly the option D9 says must be justified first. The justified shape,
+if Jordan wants it: one key, `cacheWarming: "off" | "<minutes>"`, off by default, Anthropic
+only, the `.describe()` saying it spends while idle and naming the per-model read price; plus
+the non-streaming request path, the `cache_warm` entry, and a live check that `max_tokens: 0`
+behaves as documented on the 5.5 generation. Until then the cheaper lever is already in hand:
+the thinking replay above removes the self-inflicted miss after every tool turn, which on
+Fable 5.1 was worth more than any keep-alive schedule.
+
+## 2026-10-07: the feel-polish lane (group 3 extended)
+
+Six small items, no options, one e2e scenario (`feel-polish`, goldens `after-editor` and
+`image-chip`). Gate for the lane: the touched suites plus the full vitest run and e2e.
+
+| Item | Landed | Where | Notes |
+|---|---|---|---|
+| C7 `ctrl+g` external editor | ✅ | new `tui/src/external-editor.ts`, `renderer-hold.ts`; `app-actions.ts` (`prompt.editor`, `/editor`), `app-core.ts`, `app.ts`, `osc.ts` (`refresh`) | `$VISUAL`, `$EDITOR`, then `notepad` / `vi`; renderer suspended with keywork's modes popped and pushed back; draft never lost; see the C7 ledger in `30-tui.md` |
+| Cost in the terminal title | ✅ | `osc.ts` (`WindowTitleState.spend`), `notifications.ts` (`terminalFocused`), `session-ledger.ts` (`spendSummary` public), `conversation-pane.ts` (`spend()`), `app.ts` | while the terminal is unfocused the title reads `█ name · $0.42 · keywork` (stamp · name · telemetry · app, the PD19 order); the spend is `/cost`'s first figure (`formatCostNanos`, or `in▸out` when unpriced); a focused terminal keeps the calm title; needs focus reporting, so a terminal without mode 1004 never shows it |
+| Send-now key | ✅ | `prompt-editor.ts` (`SendMode`, `holdAside`), `conversation-model.ts` (`setQueueAside`), `overlays/help.ts`, the busy prompt hint | `ctrl+enter` cancels every queued prompt, sends the composer as steer (interrupt and run), posts `N queued prompts set aside · up on an empty prompt brings them back`; the newest flushed prompt becomes the SW18 draft and older ones join history, so Up walks them all back; `alt+enter` keeps the queue as before; nothing in the model drops a queued prompt silently (moves and `dispose` were already explicit) |
+| `/bug` diagnostics bundle | ✅ | new `tui/src/bug-bundle.ts`; `app.ts` (`AppOptions.bugReport`, `EventRecorder` over every agent bus); `cli/src/compose-panes.ts` (version, config, dir) | writes `~/.keywork/bug-reports/bug-<stamp>.json` with version, OS, Bun, terminal facts, the config with secret-looking keys stripped and `redactForPersistence` over the whole text, the last 60 bus events as type plus a contents-free detail, the focused session's last 20 messages as shapes (type and length, tool names, never text) and its last 5 error lines redacted; prints the path into the session; nothing is uploaded |
+| Image paste | ✅ TUI half | new `tui/src/image-paste.ts`; `prompt-editor.ts` (`ImageVault`, chips), `conversation-pane.ts` (`handlePaste` with `PasteFacts`), `app-core.ts` (`/image [path]`, `ctrl+v`), `app.ts` (OpenTUI 0.5.14 `createHostClipboard`) | a pasted png / jpg / gif / webp path (bare, quoted, escaped or `file://`) becomes `[image #n, png 24 KB]`; `ctrl+v` and a bare `/image` read the OS clipboard through OpenTUI's host clipboard; `/image <path>` attaches a file; 5 MB cap; the chip survives Ctrl+C and Up; at send the `ImagePart` is built and the words go out with `the image stayed behind · this build's engine sends text only`, because `Agent.send` takes a string and `agent.ts` is outside this lane |
+| V2.5 compaction offer | ✅ | new `tui/src/compaction-offer.ts`; `conversation-model.ts` (`offerCompaction`) | one info line once per crossing of the flush line; never auto-runs; see the V2.5 ledger in `96` |
+
+Terminal support, stated plainly:
+
+- External editor: any terminal, since the renderer suspends and the child inherits the
+  tty; Windows Terminal with `notepad` works without `$EDITOR`; over SSH the editor runs on
+  the remote side as expected.
+- Cost in the title: needs focus reporting (mode 1004), which Windows Terminal, kitty,
+  Ghostty, WezTerm, iTerm2, foot, VTE and xterm send; without it the terminal reads as
+  focused forever and the title stays calm. Under tmux the title needs `set -g set-titles on`.
+- Image paste: bracketed paste carries text in every terminal, so the path route works
+  wherever a file manager drops or copies a path (Explorer "Copy as path" into Windows
+  Terminal, Finder drag into iTerm2 or Terminal.app, kitty and Ghostty drag-drop). No terminal
+  hands image bytes through a paste event; OpenTUI's `PasteMetadata.mimeType` is honored if
+  one ever does. `ctrl+v` reaches keywork in kitty, Ghostty, WezTerm, foot and iTerm2 (their
+  paste chord lives elsewhere); Windows Terminal and most VTE terminals take `ctrl+v` as
+  paste, so `/image` is the door there. The host clipboard read is OpenTUI's native backend;
+  where it reports unsupported the notice points at `/image <path>`.
+
+Open: the engine hop for images (`Agent.send` accepting a `Message` so the built `ImagePart`
+rides the user turn; the TUI already hands `images` on every submission); the C7 kill-ring.
+
+## MCP lane (2026-10-07): stopped early at the user's wrap-up call
+
+Scope was two builds from the scope-first list: elicitation through the S1 ask queue (3pt)
+and MCP OAuth to the 2026 rules (5pt). The lane was halted before either build was wired, so
+only the first coherent piece landed; nothing half-built is left in the tree.
+
+**Landed.** `engine/src/mcp/elicitation.ts` with `elicitation.test.ts` (5 tests): the pure
+layer that turns an `InputRequiredResult` into typed elicitation requests and shapes the
+answers back. Spec revision relied on: MCP `2026-07-28`, pages `basic/patterns/mrtr`,
+`client/elicitation`, `schema`. Field names: `resultType: "input_required"`, `inputRequests`
+(server-keyed map of `{ method: "elicitation/create", params }`), `requestState` (opaque,
+echoed verbatim), retry params carry top-level `inputResponses` keyed like `inputRequests`
+plus `requestState` (`InputResponseRequestParams`); elicitation params `mode` (`form`, or
+absent meaning form, or `url`), `message`, `requestedSchema` (flat object of string /
+number / integer / boolean / enum via `enum` or `oneOf` `const`, multi-select via `array` of
+`items.enum` / `anyOf` `const`), `url`; answers `{ action: "accept" | "decline" | "cancel",
+content? }`; client capability `elicitation: { form: {}, url: {} }` under
+`_meta["io.modelcontextprotocol/clientCapabilities"]`. The module refuses sampling and roots
+requests and non-http(s) elicitation URLs with the existing `McpInputRequiredError`.
+
+**Not built.** The `McpSession.callTool` retry loop, the `elicit` option on the stdio and
+http transports and the registry, the ask-gate adapter (a synthetic `ToolCallPart` through
+`guard.confirm` so the TUI prompt and `GET /asks` both see it; yes accepts with schema
+defaults, no declines; headless answers no), the fixture's modern-era elicitation tools, and
+the whole OAuth build (401 challenge parsing, RFC 9728 and RFC 8414 discovery with the
+path-aware order, CIMD then dynamic registration, PKCE S256, RFC 9207 `iss` check, RFC 8707
+`resource`, refresh on 401, loopback callback on `127.0.0.1` with a random port, credentials
+through E9's `SecretVault`, `keywork mcp login`, pane rows). SW12's behavior is unchanged:
+`input_required` still fails with a clear message.
+
+**Design decisions taken so far, for whoever resumes.** Tokens keyed by issuer and canonical
+resource together (RFC 8707 audience makes an issuer-only key share tokens across two servers
+behind one AS); DCR client credentials keyed by issuer per the spec's authorization-server
+binding rule; a connection never starts the interactive flow on its own (the reconciler
+retries on a timer), it fails with a sign-in hint and `keywork mcp login <server>` runs the
+flow; the loopback link is printed, never opened. Wiring the handler and vault into the
+registry needs one line each in `cli/src/compose.ts` (`startMcpRegistry`) and the guard
+sites in `chat.ts` / `compose-panes.ts`, which are outside this lane's files; `keywork mcp`
+needs a `commandNames` entry in `cli/src/dispatch.ts` and a case in `main.ts`.

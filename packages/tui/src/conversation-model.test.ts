@@ -17,11 +17,12 @@ import {
   toolCallTurn,
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
+import { compactionOfferNotice } from "./compaction-offer.ts";
 import { ConversationModel, type ConversationPorts } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
 import type { FileOpenOptions } from "./pane.ts";
-import { bindSessionLifecycle } from "./session-attachment.ts";
+import { bindSessionLifecycle, type ForgetTarget } from "./session-attachment.ts";
 import { guardedShellEscape } from "./shell-escape.ts";
 import type { ToolEntry } from "./transcript-feed.ts";
 
@@ -1793,5 +1794,221 @@ describe("ConversationModel away summary", () => {
     expect(model.entries.at(-1)?.kind).not.toBe("info");
     model.terminalFocusChanged(true);
     expect(model.entries.at(-1)?.text).toMatch(/^while you were away: changed src\/parser.ts/);
+  });
+});
+
+describe("/forget", () => {
+  function forgettingModel(
+    agent: Agent,
+    calls: [ForgetTarget, string | null][],
+  ): ConversationModel {
+    const model = new ConversationModel(agent, () => {});
+    model.bindForget(async (target, replacement) => {
+      calls.push([target, replacement]);
+      return { forgotten: true, note: `forgot ${target.kind}` };
+    });
+    return model;
+  }
+
+  it("picks the newest saved prompt, forgets it through the hook, and confirms once", async () => {
+    const calls: [ForgetTarget, string | null][] = [];
+    const agent = new Agent({ provider: new MockProvider([textTurn("re: new")]) });
+    const model = forgettingModel(agent, calls);
+    agent.bus.emit("turn.started", { userText: "old prompt", replay: true, entryId: "u-old" });
+    model.submitText("new prompt");
+    await model.lastSend;
+    model.adoptPromptId("u-new");
+
+    model.beginForget(undefined);
+    expect(model.backtracking()).toBe(true);
+    expect(model.pickerHint()).toBe("forget · ↑ older · ↓ newer · enter forgets it · esc cancel");
+    model.handleKey(parseChord("up"), undefined);
+    model.handleKey(parseChord("return"), undefined);
+    await model.lastForget;
+
+    expect(calls).toEqual([[{ kind: "prompt", promptId: "u-old" }, null]]);
+    expect(model.backtracking()).toBe(false);
+    expect(model.pickerHint()).toBe(
+      "backtrack · ↑ older · ↓ newer · enter edit & fork · esc cancel",
+    );
+    expect(model.entries.at(-1)).toEqual({ kind: "info", text: "forgot prompt" });
+  });
+
+  it("forgets a tool result by its call id with the typed replacement", async () => {
+    const calls: [ForgetTarget, string | null][] = [];
+    const agent = new Agent({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "c1", name: "echo", arguments: { text: "hi" } }),
+        textTurn("done"),
+      ]),
+      tools: [echoTool],
+    });
+    const model = forgettingModel(agent, calls);
+    type(model, "use echo");
+    await submit(model);
+    model.adoptPromptId("u1");
+
+    model.beginForget("[redacted]");
+    model.handleKey(parseChord("return"), undefined);
+    await model.lastForget;
+
+    expect(calls).toEqual([[{ kind: "tool", callId: "c1" }, "[redacted]"]]);
+  });
+
+  it("explains when there is no store, nothing saved yet, or a turn still running", async () => {
+    const bare = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
+    bare.beginForget(undefined);
+    expect(bare.entries.at(-1)).toEqual({ kind: "info", text: "can't forget · no session store" });
+
+    const calls: [ForgetTarget, string | null][] = [];
+    const idle = forgettingModel(new Agent({ provider: new MockProvider([textTurn("a")]) }), calls);
+    idle.submitText("unsaved");
+    await idle.lastSend;
+    idle.beginForget(undefined);
+    expect(idle.backtracking()).toBe(false);
+    expect(idle.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "nothing to forget yet · prompts and tool results show up here once saved",
+    });
+
+    const { open, opened } = gate();
+    const busy = forgettingModel(new Agent({ provider: gatedProvider(opened, ["a"]) }), calls);
+    busy.submitText("one");
+    busy.beginForget(undefined);
+    expect(busy.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "turn still running · esc to interrupt",
+    });
+    open();
+    await drained(busy);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("send now", () => {
+  function busyModel(replies: string[]) {
+    const { open, opened } = gate();
+    const agent = new Agent({ provider: gatedProvider(opened, replies) });
+    const model = new ConversationModel(agent, () => {});
+    model.submitText("first");
+    return { model, agent, open };
+  }
+
+  it("ctrl+enter interrupts the turn, sets the queue aside and sends the prompt as steer", async () => {
+    const { model, open } = busyModel(["re: first", "re: urgent"]);
+    model.submitText("queued a");
+    model.submitText("queued b");
+    expect(model.queued()).toEqual(["queued a", "queued b"]);
+
+    type(model, "urgent");
+    model.handleKey(parseChord("ctrl+return"), undefined);
+    expect(model.queued()).toEqual(["urgent"]);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "2 queued prompts set aside · up on an empty prompt brings them back",
+    });
+
+    open();
+    await drained(model);
+    const texts = model.entries.map((entry) => entry.text);
+    expect(texts).toEqual([
+      "first",
+      "2 queued prompts set aside · up on an empty prompt brings them back",
+      "· interrupted",
+      "urgent",
+      "re: urgent",
+    ]);
+  });
+
+  it("brings the set-aside prompts back through up on an empty prompt", async () => {
+    const { model, open } = busyModel(["re: first", "re: now"]);
+    model.submitText("queued a");
+    model.submitText("queued b");
+    type(model, "now");
+    model.handleKey(parseChord("ctrl+return"), undefined);
+    open();
+    await drained(model);
+
+    expect(model.input).toBe("");
+    model.handleKey(parseChord("up"), undefined);
+    expect(model.input).toBe("queued b");
+    model.handleKey(parseChord("up"), undefined);
+    expect(model.input).toBe("now");
+    model.handleKey(parseChord("up"), undefined);
+    expect(model.input).toBe("queued a");
+  });
+
+  it("says nothing about the queue when there was nothing queued", async () => {
+    const { model, open } = busyModel(["re: first", "re: now"]);
+    type(model, "now");
+    model.handleKey(parseChord("ctrl+return"), undefined);
+    expect(model.entries.some((entry) => entry.kind === "info")).toBe(false);
+    open();
+    await drained(model);
+    expect(model.entries.map((entry) => entry.text)).toEqual([
+      "first",
+      "· interrupted",
+      "now",
+      "re: now",
+    ]);
+  });
+});
+
+describe("compaction offer", () => {
+  const tinyWindow = { input: ["text" as const], toolCalls: true, contextWindow: 4000 };
+
+  it("offers /compact once when a turn settles past the flush line and never repeats", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("ok"), textTurn("ok again"), textTurn("still")], {
+        capabilities: tinyWindow,
+      }),
+    });
+    const model = new ConversationModel(agent, () => {});
+    model.bindCompaction(async () => {});
+    model.submitText("short");
+    await drained(model);
+    expect(model.entries.some((entry) => entry.kind === "info")).toBe(false);
+
+    model.submitText("x".repeat(14_050));
+    await drained(model);
+    const reading = model.contextReading();
+    expect(reading !== undefined && reading.used > reading.flushAt).toBe(true);
+    expect(reading !== undefined && reading.used <= reading.compactAt).toBe(true);
+    expect(
+      model.entries.filter((entry) => entry.kind === "info").map((entry) => entry.text),
+    ).toEqual([compactionOfferNotice]);
+
+    model.submitText("one more");
+    await drained(model);
+    expect(model.entries.filter((entry) => entry.kind === "info").length).toBe(1);
+  });
+
+  it("stays silent when no compaction hook is bound", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("ok")], { capabilities: tinyWindow }),
+    });
+    const model = new ConversationModel(agent, () => {});
+    model.submitText("x".repeat(14_050));
+    await drained(model);
+    expect(model.entries.some((entry) => entry.kind === "info")).toBe(false);
+  });
+});
+
+describe("image chips at send time", () => {
+  it("sends the image beside the words as one user message", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("seen")]) });
+    const model = new ConversationModel(agent, () => {});
+    model.editor.attachImage({
+      part: { type: "image", mediaType: "image/png", data: "AAAA" },
+      bytes: 10,
+      format: "png",
+    });
+    type(model, "what is this");
+    await submit(model);
+    expect(model.entries.map((entry) => entry.text)).toEqual(["what is this", "seen"]);
+    expect(agent.history()[0]?.parts).toEqual([
+      { type: "text", text: "what is this" },
+      { type: "image", mediaType: "image/png", data: "AAAA" },
+    ]);
   });
 });

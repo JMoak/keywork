@@ -741,3 +741,44 @@ describe("suggestion tray prefix", () => {
     expect(slash).not.toContain("@exit");
   });
 });
+
+describe("image paste into the prompt", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+  function pane(files: Record<string, Uint8Array>): ConversationPane {
+    return new ConversationPane(
+      "session-1",
+      new Agent({ provider: new MockProvider([]) }),
+      () => {},
+      undefined,
+      undefined,
+      { readImage: (path) => files[path] },
+    );
+  }
+
+  it("turns a pasted image path into a chip and leaves other pastes as text", () => {
+    const subject = pane({ "/shots/one.png": png });
+    subject.handlePaste("/shots/one.png");
+    expect(subject.model.input).toBe("[image #1, png 4 B] ");
+    expect(subject.model.editor.attachedImages()).toEqual([
+      { type: "image", mediaType: "image/png", data: Buffer.from(png).toString("base64") },
+    ]);
+    subject.handlePaste("/shots/missing.png");
+    expect(subject.model.input).toBe("[image #1, png 4 B] /shots/missing.png");
+  });
+
+  it("attaches terminal-supplied image bytes and direct attachments alike", () => {
+    const subject = pane({});
+    subject.handlePaste("", { mimeType: "image/jpeg", kind: "binary", bytes: png });
+    subject.attachImage({
+      part: { type: "image", mediaType: "image/gif", data: "AA" },
+      bytes: 1,
+      format: "gif",
+    });
+    expect(subject.model.input).toBe("[image #1, jpg 4 B] [image #2, gif 1 B] ");
+  });
+
+  it("reports no spend before the first turn", () => {
+    expect(pane({}).spend()).toBeUndefined();
+  });
+});

@@ -63,6 +63,10 @@ export class Notifier {
     private readonly inboxThreshold = defaultInboxThreshold,
   ) {}
 
+  get terminalFocused(): boolean {
+    return this.focused;
+  }
+
   focusChanged(event: FocusEvent): void {
     this.focused = event === "focus-in";
     if (this.focused) this.notifiedThisStretch = { ask: false, inbox: false };

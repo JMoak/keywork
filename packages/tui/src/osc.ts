@@ -20,6 +20,7 @@ export type FocusEvent = "focus-in" | "focus-out";
 export interface WindowTitleState {
   readonly name?: string | undefined;
   readonly state: LifecycleState;
+  readonly spend?: string | undefined;
 }
 
 export interface TerminalColors {
@@ -85,7 +86,9 @@ export function themeChangeReported(bytes: string): boolean {
 }
 
 export function windowTitle(title: WindowTitleState, glyphs: GlyphSupport): string {
-  const name = title.name === undefined ? appName : `${title.name} · ${appName}`;
+  const name = [title.name, blankAsAbsent(title.spend), appName]
+    .filter((zone): zone is string => zone !== undefined)
+    .join(" · ");
   const mark = stateMarks[title.state];
   return mark === undefined ? name : `${resolveMark(mark, glyphs)} ${name}`;
 }
@@ -159,6 +162,11 @@ export class TerminalReporter {
     if (this.support.title) this.write(popTitle);
   }
 
+  refresh(): void {
+    this.lastTitle = undefined;
+    this.lastProgress = "clear";
+  }
+
   private reportTitle(text: string): void {
     if (!this.support.title || text === this.lastTitle) return;
     this.lastTitle = text;
@@ -175,6 +183,10 @@ export class TerminalReporter {
 const appName = "keywork";
 
 const csi = "\x1b[";
+
+function blankAsAbsent(text: string | undefined): string | undefined {
+  return text === undefined || text.trim() === "" ? undefined : text;
+}
 
 const stateMarks: Readonly<Partial<Record<LifecycleState, TieredMark>>> = {
   working: { tier1: "▒", tier0: ":" },

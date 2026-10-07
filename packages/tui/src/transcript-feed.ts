@@ -9,6 +9,7 @@ import {
   type ToolCallPart,
 } from "@keywork/engine";
 import type { SpanLinker } from "./file-references.ts";
+import { isForgettable } from "./forget.ts";
 import type { MarkdownSpan } from "./markdown.ts";
 import { TailFollow } from "./tail-follow.ts";
 import {
@@ -55,6 +56,7 @@ export type ToolProvenance = "agent" | "user" | "external";
 
 export interface ToolRun {
   name: string;
+  callId?: string;
   subject: string;
   args: string;
   fullArgs?: string;
@@ -182,6 +184,10 @@ export class TranscriptFeed {
     return this.entries.flatMap((entry, index) => (entry.kind === "user" ? [index] : []));
   }
 
+  forgettableIndices(): number[] {
+    return this.entries.flatMap((entry, index) => (isForgettable(entry) ? [index] : []));
+  }
+
   private countsAsActivity(event: BusEvent): boolean {
     switch (event.type) {
       case "turn.delta":
@@ -281,6 +287,7 @@ export class TranscriptFeed {
     this.endStream();
     const run: ToolRun = {
       name: call.name,
+      callId: call.callId,
       subject: toolSubject(call.arguments),
       args: compactJson(call.arguments),
       fullArgs: JSON.stringify(call.arguments) ?? "",

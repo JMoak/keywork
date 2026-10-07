@@ -24,7 +24,7 @@
 │                                 │ ctrl+k v  tool rows: low · medium · high (cycle) │                                 │
 │                                 │ ctrl+k f                            file browser │                                 │
 │                                 │ ctrl+k t                            session tree │                                 │
-│                                 │        ↑↓ scroll · 16 below · esc closes         │                                 │
+│                                 │        ↑↓ scroll · 19 below · esc closes         │                                 │
 │                                 │                                                  │                                 │
 │                                 ╰──────────────────────────────────────────────────╯                                 │
 │                                      │ › ▌                                                                           │

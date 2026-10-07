@@ -28,6 +28,13 @@ import {
 } from "./conversation-model.ts";
 import type { DiffLine } from "./diff-render.ts";
 import { fileLinker, type LinkableSpan, linkSpans } from "./file-references.ts";
+import {
+  type ImageFileReader,
+  imageFromPaste,
+  type PastedImage,
+  type PasteFacts,
+  readImageFile,
+} from "./image-paste.ts";
 import type { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import type { MarkdownSpan } from "./markdown.ts";
@@ -83,6 +90,7 @@ export interface ConversationPaneOptions {
   gauge?: GaugeStyle;
   elevation?: TranscriptElevation;
   hyperlinks?: boolean;
+  readImage?: ImageFileReader;
 }
 
 export type TranscriptElevation = "arc-stamps" | "turn-age" | "scroll-map" | "chrome";
@@ -106,6 +114,7 @@ export class ConversationPane implements Pane {
   private readonly mastheadEnabled: boolean;
   private readonly gaugeOverride: GaugeStyle | undefined;
   private readonly elevation: TranscriptElevation | undefined;
+  private readonly readImage: ImageFileReader;
   private unseen: SettledOutcome | undefined;
   private pulseInk = 1;
   private pulsing = false;
@@ -136,6 +145,7 @@ export class ConversationPane implements Pane {
     this.mastheadEnabled = options?.masthead !== "off";
     this.gaugeOverride = options?.gauge;
     this.elevation = options?.elevation;
+    this.readImage = options?.readImage ?? readImageFile;
     if (options?.hyperlinks === true) this.model.feed.link = fileLinker(process.cwd());
     this.model.onSettled((outcome) => {
       if (!this.lastFocused) this.unseen = outcome;
@@ -188,8 +198,21 @@ export class ConversationPane implements Pane {
     });
   }
 
-  handlePaste(text: string): boolean {
-    return this.model.paste(text);
+  handlePaste(text: string, facts?: PasteFacts): boolean {
+    if (this.model.pendingAsk !== undefined) return true;
+    const image = imageFromPaste(text, facts, this.readImage);
+    if (image === undefined) return this.model.paste(text);
+    this.attachImage(image);
+    return true;
+  }
+
+  attachImage(image: PastedImage): void {
+    this.model.editor.attachImage(image);
+  }
+
+  spend(): string | undefined {
+    const spend = this.model.spendSummary();
+    return spend === "" ? undefined : spend;
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
@@ -632,12 +655,7 @@ export class ConversationPane implements Pane {
 
   private keyHint(theme: Theme) {
     if (this.model.backtracking()) {
-      return [
-        Text({
-          content: "backtrack · ↑ older · ↓ newer · enter edit & fork · esc cancel",
-          fg: theme.accent,
-        }),
-      ];
+      return [Text({ content: this.model.pickerHint(), fg: theme.accent })];
     }
     if (this.model.disclosing()) {
       const spill = this.model.cursoredSpill() === undefined ? "" : " · o opens the spill";
@@ -901,7 +919,8 @@ function alternatedLetters(
   return new StyledText(chunks.length === 0 ? [fg(ink)(" ")] : chunks);
 }
 
-const busyPromptHint = "enter queues · alt+enter steers · alt+↑ edits the queue · esc interrupts";
+const busyPromptHint =
+  "enter queues · alt+enter steers · ctrl+enter sends now · alt+↑ edits the queue · esc interrupts";
 
 function queuedSegment(count: number): string {
   return count === 0 ? "" : `${count} queued`;

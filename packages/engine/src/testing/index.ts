@@ -57,3 +57,7 @@ export function installLanguageServerShim(
   }
   return { dir, marker, trace };
 }
+
+export const extensionFixturesDir = fileURLToPath(
+  new URL("./extension-fixtures/", import.meta.url),
+);

@@ -23,6 +23,8 @@ export interface MessagesRequestShape {
 
 export const thinkingBudgetTokens = 16_000;
 
+export type ThinkingReplay = "every-turn" | "current-turn";
+
 export function toMessagesRequest(
   request: ProviderRequest,
   model: string,
@@ -31,6 +33,7 @@ export function toMessagesRequest(
 ): object {
   const inPlace = claudeSupports(model, "mid-conversation-tools");
   const thinking = thinkingConfig(model, shape.maxTokens, request.thinking === true);
+  const replay = thinkingReplayFor(model, thinking !== undefined);
   const effort = topLevelEffort(request, model);
   const system = systemText(request, inPlace);
   const tools = offeredTools(request, inPlace);
@@ -42,7 +45,7 @@ export function toMessagesRequest(
     ...(thinking !== undefined && { thinking }),
     ...(effort !== undefined && { output_config: { effort } }),
     ...(system !== "" && { system }),
-    messages: toWireMessages(request, model, owner, inPlace),
+    messages: toWireMessages(request, model, owner, inPlace, replay),
     ...(tools.length > 0 && { tools: tools.map(toWireTool) }),
     ...(request.cacheDiagnostics !== undefined && {
       diagnostics: { previous_message_id: request.cacheDiagnostics.previousResponseId },
@@ -67,6 +70,12 @@ export function thinkingConfig(
 
 export function showsProgressUpdates(model: string, thinkingShown: boolean): boolean {
   return !thinkingShown && claudeSupports(model, "progress-updates");
+}
+
+export function thinkingReplayFor(model: string, thinkingConfigured: boolean): ThinkingReplay {
+  return thinkingConfigured && claudeSupports(model, "preserved-thinking")
+    ? "every-turn"
+    : "current-turn";
 }
 
 const automaticPromptCache = { type: "ephemeral" } as const;
@@ -116,8 +125,9 @@ function toWireMessages(
   model: string,
   owner: ProviderStateOwner,
   inPlace: boolean,
+  replay: ThinkingReplay,
 ): WireMessage[] {
-  const turns = conversationTurns(request.messages, owner);
+  const turns = conversationTurns(request.messages, owner, replay);
   const efforts = claudeSupports(model, "per-message-effort") ? (request.effortChanges ?? []) : [];
   const systemBlocks = inPlace ? positionedSystemBlocks(request) : [];
   const leading = efforts.map((change) => ({
@@ -143,13 +153,17 @@ function toWireMessages(
     .concat(leading.filter((item) => item.slot === turns.length).map((item) => item.message));
 }
 
-function conversationTurns(messages: readonly Message[], owner: ProviderStateOwner): Turn[] {
-  const currentTurnBegins = messages.findLastIndex((message) => message.role === "user");
+function conversationTurns(
+  messages: readonly Message[],
+  owner: ProviderStateOwner,
+  replay: ThinkingReplay,
+): Turn[] {
+  const thinkingReplayedFrom = replay === "every-turn" ? 0 : currentTurnStart(messages);
   const turns: Turn[] = [];
   messages.forEach((message, index) => {
     const role = wireRoleOf(message);
     if (role === undefined) return;
-    const content = contentOf(message, owner, index > currentTurnBegins);
+    const content = contentOf(message, owner, index >= thinkingReplayedFrom);
     if (content.length === 0) return;
     const previous = turns.at(-1);
     if (previous?.role === role) {
@@ -160,6 +174,10 @@ function conversationTurns(messages: readonly Message[], owner: ProviderStateOwn
     }
   });
   return turns;
+}
+
+function currentTurnStart(messages: readonly Message[]): number {
+  return messages.findLastIndex((message) => message.role === "user") + 1;
 }
 
 function wireRoleOf(message: Message): WireRole | undefined {
@@ -174,14 +192,18 @@ function wireRoleOf(message: Message): WireRole | undefined {
   }
 }
 
-function contentOf(message: Message, owner: ProviderStateOwner, inCurrentTurn: boolean): object[] {
+function contentOf(
+  message: Message,
+  owner: ProviderStateOwner,
+  thinkingReplayed: boolean,
+): object[] {
   switch (message.role) {
     case "system":
       return [];
     case "user":
       return message.parts.flatMap(userBlock);
     case "assistant":
-      return message.parts.flatMap((part) => assistantBlock(part, owner, inCurrentTurn));
+      return message.parts.flatMap((part) => assistantBlock(part, owner, thinkingReplayed));
     case "tool":
       return message.parts.flatMap((part) =>
         part.type === "tool-result" ? [toolResultBlock(part)] : [],
@@ -235,14 +257,18 @@ function userBlock(part: Part): object[] {
   }
 }
 
-function assistantBlock(part: Part, owner: ProviderStateOwner, inCurrentTurn: boolean): object[] {
+function assistantBlock(
+  part: Part,
+  owner: ProviderStateOwner,
+  thinkingReplayed: boolean,
+): object[] {
   switch (part.type) {
     case "text":
       return part.text === "" ? [] : [{ type: "text", text: part.text }];
     case "tool-call":
       return [toolUseBlock(part)];
     case "redacted-thinking":
-      return inCurrentTurn && ownedBy(part, owner) ? replayedThinking(part) : [];
+      return thinkingReplayed && ownedBy(part, owner) ? replayedThinking(part) : [];
     default:
       return [];
   }

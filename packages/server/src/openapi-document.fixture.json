@@ -1,0 +1,327 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "keywork",
+    "version": "0.0.0-fixture",
+    "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
+    "workspace": {
+      "anchor": "C:/work/anchor",
+      "identity": "anchor-identity"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:4770"
+    }
+  ],
+  "paths": {
+    "/doc": {
+      "get": {
+        "operationId": "getDocument",
+        "summary": "This OpenAPI 3.1 document.",
+        "responses": {
+          "200": {
+            "description": "The document."
+          }
+        },
+        "security": []
+      }
+    },
+    "/events": {
+      "get": {
+        "operationId": "streamEvents",
+        "summary": "Server-sent events: every bus envelope as `event: <type>` plus `data: <envelope json>`. Send `Last-Event-ID` to resume from a retained id (0 replays everything still retained); without it the stream starts live.",
+        "responses": {
+          "200": {
+            "description": "An open text/event-stream."
+          }
+        }
+      }
+    },
+    "/sessions": {
+      "get": {
+        "operationId": "listSessions",
+        "summary": "Session summaries, newest first.",
+        "responses": {
+          "200": {
+            "description": "The summaries."
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSession",
+        "summary": "Create an empty session in this workspace.",
+        "responses": {
+          "201": {
+            "description": "The new session's summary."
+          }
+        }
+      }
+    },
+    "/sessions/{id}": {
+      "get": {
+        "operationId": "readSession",
+        "summary": "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/prompt": {
+      "post": {
+        "operationId": "promptSession",
+        "summary": "Append a user prompt and run a turn. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The prompt was accepted; watch /events for the turn."
+          },
+          "400": {
+            "description": "The body is not `{ text }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/inject": {
+      "post": {
+        "operationId": "injectPrompt",
+        "summary": "Submit a prompt from a client outside keywork, such as a voice assistant or another LLM window. It runs exactly like a typed prompt: it starts a turn when the session is idle and joins the back of the queue when a turn is running. `turn.started` and `queue.changed` carry `origin: { kind: \"external\", client }`, the turn answers to the same permission policy and ask queue, and any memory note it proposes is staged with provenance `untrusted`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text", "client"],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "client": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._-]{1,64}$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The prompt was accepted; `queued` is true when it waits behind a running turn."
+          },
+          "400": {
+            "description": "The body is not `{ text, client }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/abort": {
+      "post": {
+        "operationId": "abortSession",
+        "summary": "Interrupt the session's running turn, if any.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Whether a turn was interrupted."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/asks": {
+      "get": {
+        "operationId": "listAsks",
+        "summary": "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first.",
+        "responses": {
+          "200": {
+            "description": "The pending asks."
+          }
+        }
+      }
+    },
+    "/asks/{callId}": {
+      "post": {
+        "operationId": "answerAsk",
+        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"`.",
+        "parameters": [
+          {
+            "name": "callId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["verdict"],
+                "properties": {
+                  "verdict": {
+                    "type": "string",
+                    "enum": ["granted", "denied"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The ask was settled."
+          },
+          "400": {
+            "description": "The body is not `{ verdict: \"granted\" | \"denied\" }`."
+          },
+          "404": {
+            "description": "No ask with that callId is pending."
+          },
+          "409": {
+            "description": "That ask was already answered or timed out."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BusEnvelope": {
+        "type": "object",
+        "required": ["id", "ts", "sessionId", "type", "payload"],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "turn.started",
+              "turn.delta",
+              "turn.completed",
+              "turn.interrupted",
+              "queue.changed",
+              "tool.started",
+              "tool.output",
+              "tool.finished",
+              "gate.ask",
+              "gate.permission",
+              "gate.preset",
+              "session.mode",
+              "context.injected",
+              "diagnostics.published",
+              "shell.reset",
+              "extension.notice",
+              "engine.error"
+            ]
+          },
+          "payload": {}
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ]
+}

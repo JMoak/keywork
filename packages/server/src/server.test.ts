@@ -109,6 +109,7 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
   "context.injected": { injection: { source: "memory-recall", id: "n1", scope: "workspace" } },
   "diagnostics.published": { path: "src/a.ts", count: 2 },
   "shell.reset": { replay: true },
+  "extension.notice": { extension: "counter", level: "info", message: "counted 3" },
   "engine.error": { error: new Error("boom") },
 };
 

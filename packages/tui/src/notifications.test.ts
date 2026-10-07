@@ -186,3 +186,14 @@ describe("Notifier", () => {
     expect(writes).toEqual(["\x07"]);
   });
 });
+
+describe("Notifier focus", () => {
+  it("starts focused and tracks focus events", () => {
+    const { subject } = notifier();
+    expect(subject.terminalFocused).toBe(true);
+    subject.focusChanged("focus-out");
+    expect(subject.terminalFocused).toBe(false);
+    subject.focusChanged("focus-in");
+    expect(subject.terminalFocused).toBe(true);
+  });
+});

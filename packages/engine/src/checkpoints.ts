@@ -150,6 +150,10 @@ export class Checkpoints implements CheckpointReads {
     return tag;
   }
 
+  beginTurn(): void {
+    this.turnTag = undefined;
+  }
+
   restoreTo(tree: string): Promise<void> {
     return this.serialized(async () => {
       await this.assertKnownTree(tree);

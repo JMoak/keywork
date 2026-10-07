@@ -16,6 +16,8 @@ export interface ActionTarget {
   summon(kind: SummonableKind): void;
   toggleHelp(): void;
   openPalette(initialQuery?: string): void;
+  editPromptExternally(): void;
+  attachClipboardImage(): void;
   shutdown(): void;
 }
 
@@ -259,6 +261,21 @@ export const appActions: Record<string, AppAction> = {
       description: "open the command palette",
       aliases: ["commands"],
     },
+  },
+  "prompt.editor": {
+    chords: "ctrl+g",
+    help: "edit the prompt in $VISUAL or $EDITOR (notepad on Windows)",
+    invoke: (target) => target.editPromptExternally(),
+    command: {
+      name: "editor",
+      description: "edit the prompt in $VISUAL or $EDITOR, notepad on Windows: /editor",
+    },
+  },
+  "prompt.image": {
+    chords: "ctrl+v",
+    help: "attach the clipboard image where the terminal lets ctrl+v through · a pasted png or jpg path attaches too",
+    invoke: (target) => target.attachClipboardImage(),
+    coveredBy: "image",
   },
   "app.quit": {
     chords: "ctrl+q",

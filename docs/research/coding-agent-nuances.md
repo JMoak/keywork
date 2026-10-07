@@ -213,7 +213,7 @@ in-repo dossiers. See `docs/influencers/` for the Pi/OpenCode deep dives and
 | 2.1.261, 2026-09-04 | `bashOutputMaxChars` | not triaged; keywork's cap is a fixed 30,000 chars (`tools/command-run.ts`) |
 | 2.1.261, 2026-09-04 | `/skill-doctor`: unused skills and the context cost of each | not triaged |
 | 2.1.269, 2026-09-11 | the Bash tool result carries a diff of files the command changed | taken: SW13 |
-| 2.1.275, 2026-09-17 | a send-now key that interrupts and flushes the queue | not triaged; steer (`alt+enter`) and V2.6 promote-to-steer are landed |
+| 2.1.275, 2026-09-17 | a send-now key that interrupts and flushes the queue | taken 2026-10-07: `ctrl+enter` (117 feel-polish lane); steer (`alt+enter`) keeps the queue |
 | 2.1.277, 2026-09-18 | reads `AGENTS.md` when no `CLAUDE.md` exists | already covered: keywork reads `AGENTS.md` (`engine/src/prompt.ts`) |
 | 2.1.283, 2026-09-25 | `/doctor prompt-audit` | not triaged |
 | 2.1.284 | memory text neutralized before it reaches the model (per 117) | taken: SW8 |
@@ -224,7 +224,7 @@ in-repo dossiers. See `docs/influencers/` for the Pi/OpenCode deep dives and
 | Version, date | Behavior | keywork |
 |---|---|---|
 | 0.148, 2026-08-18 | `/export` to Markdown | not triaged; P2.5 HTML export is open |
-| 0.148, 2026-08-18 | `codex exec fork`; cost in the status line and terminal title | not triaged |
+| 0.148, 2026-08-18 | `codex exec fork`; cost in the status line and terminal title | cost in the title taken 2026-10-07 (unfocused terminal only, 117 feel-polish lane); `exec fork` not triaged |
 | 0.149, 2026-08-20 | `codex agents` dashboard, `codex queue` | not triaged |
 | 0.150, 2026-08-26 | `/copy` picker (full response, one code block, blockquote) | already landed as V2.15 copy verbs |
 | 0.150, 2026-08-26 | automatic task titles | already landed (B2 titles, PD20 titling) |

@@ -53,6 +53,7 @@ describe("scenario registry", () => {
       "file-links",
       "file-links-off",
       "diff-pane",
+      "feel-polish",
       "live-playground",
     ]);
   });
@@ -107,6 +108,7 @@ describe("scenario registry", () => {
       "file-links",
       "file-links-off",
       "diff-pane",
+      "feel-polish",
     ]);
   });
 

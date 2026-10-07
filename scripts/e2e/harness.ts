@@ -316,6 +316,10 @@ function buildStage(context: StageContext): Stage {
       await app.setup.mockInput.typeText(text);
       await sleep(0);
     },
+    paste: async (text) => {
+      await app.setup.mockInput.pasteBracketedText(text);
+      await sleep(0);
+    },
     click: async (x, y) => {
       await app.setup.mockMouse.click(x, y);
       await sleep(0);

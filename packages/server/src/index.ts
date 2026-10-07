@@ -39,14 +39,24 @@ export type {
 } from "./host.ts";
 export { type ListeningServer, type ListenOptions, listen, loopback } from "./listen.ts";
 export {
+  type HttpMethod,
+  type JsonSchema,
   type OpenApiDocument,
   type OperationId,
   openApiDocument,
   type Route,
   type RouteSpec,
+  routeFamilies,
   routes,
   type WorkspaceInfo,
 } from "./openapi.ts";
+export type {
+  HandlersOf,
+  RouteContext,
+  RouteFamily,
+  RouteHandler,
+  RouteParams,
+} from "./routes/family.ts";
 export {
   createKeyworkServer,
   defaultPort,

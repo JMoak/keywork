@@ -1,13 +1,16 @@
 import {
   type Agent,
+  compactionDue,
   type EffortLevel,
   type Message,
   modelReferenceOf,
+  type SettlePhase,
   type ToolGuard,
   type TurnSettlement,
 } from "@keywork/engine";
 import type { Titler } from "./conversation-model.ts";
 import type { ConversationPane } from "./conversation-pane.ts";
+import { forgetInSession } from "./forget.ts";
 import type { CheckpointsPort } from "./fork.ts";
 import { promptUndo } from "./prompt-undo.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
@@ -23,6 +26,8 @@ export interface RewoundPrompt {
   history: readonly Message[];
   restore(): readonly Message[];
 }
+
+export type ForgetTarget = { kind: "prompt"; promptId: string } | { kind: "tool"; callId: string };
 
 export interface SessionAttachment {
   id: string;
@@ -42,6 +47,10 @@ export interface SessionAttachment {
   bindArc?(slug: string | undefined): Promise<void>;
   bindBot?(name: string | undefined): Promise<void>;
   rewindBefore?(promptId: string): RewoundPrompt | undefined;
+  forget?(
+    target: ForgetTarget,
+    replacement: string | null,
+  ): Promise<readonly Message[] | undefined>;
 }
 
 export interface SessionPort {
@@ -68,6 +77,7 @@ export interface SessionTurn {
   sessionId: string;
   history: readonly Message[];
   agent: Agent;
+  phase: SettlePhase;
 }
 
 export type AfterTurn = (turn: SessionTurn) => Promise<TurnSettlement | undefined>;
@@ -241,10 +251,11 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
   const { pane, attachment } = options;
   let persisted = attachment.history.length;
   let modelRecorded = attachment.modelReference !== undefined;
-  const turnOf = (agent: Agent): SessionTurn => ({
+  const turnOf = (agent: Agent, phase: SettlePhase): SessionTurn => ({
     sessionId: attachment.id,
     history: agent.history(),
     agent,
+    phase,
   });
   const apply = (settlement: TurnSettlement | undefined, agent: Agent): void => {
     if (settlement === undefined || pane.disposed()) return;
@@ -264,9 +275,7 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
     const reference = modelReferenceOf(agent.provider) ?? options.modelInForce?.();
     if (reference !== undefined) await attachment.recordModel?.(reference);
   };
-  pane.bindAfterTurn(async () => {
-    const agent = pane.currentAgent();
-    if (agent === undefined) return;
+  const persistNewMessages = async (agent: Agent): Promise<void> => {
     const history = agent.history();
     if (history.length > persisted) await recordModelOnce(agent);
     while (persisted < history.length) {
@@ -276,26 +285,40 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
       persisted += 1;
       if (message.role === "user" && receipt !== undefined) pane.adoptPromptId(receipt.entryId);
     }
-    apply(await options.afterTurn?.(turnOf(agent)), agent);
+  };
+  const adoptForLiveAgent = (history: readonly Message[]): boolean => {
+    const agent = pane.currentAgent();
+    return agent !== undefined && adopt(history, agent);
+  };
+  pane.bindAfterTurn(async () => {
+    const agent = pane.currentAgent();
+    if (agent === undefined) return;
+    await persistNewMessages(agent);
+    apply(await options.afterTurn?.(turnOf(agent, "after-turn")), agent);
+  });
+  pane.model.bindToolBatchSettler(async () => {
+    const agent = pane.currentAgent();
+    if (agent === undefined || options.afterTurn === undefined) return undefined;
+    const reading = pane.model.ledger.contextReading(agent);
+    if (reading === undefined || !compactionDue(reading)) return undefined;
+    await persistNewMessages(agent);
+    const settlement = await options.afterTurn(turnOf(agent, "between-tool-batches"));
+    if (settlement?.history !== undefined) persisted = settlement.history.length;
+    return settlement;
   });
   pane.bindThinkingChange((level) => attachment.recordThinking?.(level) ?? Promise.resolve());
   pane.bindEffortChange((level) => attachment.recordEffort?.(level) ?? Promise.resolve());
   pane.model.bindPromptUndo(
-    promptUndo({
-      attachment,
-      checkpoints: options.checkpoints,
-      adopt: (history) => {
-        const agent = pane.currentAgent();
-        return agent !== undefined && adopt(history, agent);
-      },
-    }),
+    promptUndo({ attachment, checkpoints: options.checkpoints, adopt: adoptForLiveAgent }),
   );
+  const forget = forgetInSession({ attachment, adopt: adoptForLiveAgent });
+  if (forget !== undefined) pane.model.bindForget(forget);
   const compact = options.compact;
   if (compact === undefined) return;
   pane.bindCompaction(async (instructions) => {
     const agent = pane.currentAgent();
     if (agent === undefined) return;
-    apply(await compact(turnOf(agent), instructions), agent);
+    apply(await compact(turnOf(agent, "after-turn"), instructions), agent);
   });
 }
 

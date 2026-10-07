@@ -537,6 +537,24 @@ function inboxView(item: StagedItem): InboxItemView {
         provenance: "agent",
         detail: `${item.uses} uses, ${item.patches} patches, ${item.rewrites} rewrites`,
       };
+    case "drift-review":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `${item.note} looks stale against ${item.against}`,
+        provenance: "agent",
+        detail: item.reason,
+        note: item.note,
+      };
+    case "forget-proposal":
+      return {
+        ...base,
+        kind: "proposal",
+        title: `forget session ${item.session}`,
+        provenance: "user",
+        detail: `${item.notes.length} notes, ${item.entries.length} daily entries`,
+        ...(item.notes[0] !== undefined && { note: item.notes[0] }),
+      };
   }
 }
 

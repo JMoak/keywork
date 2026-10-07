@@ -94,3 +94,31 @@ describe("maxOutputTokensFor", () => {
     expect(maxOutputTokensFor("claude-test", 32_000)).toBe(32_000);
   });
 });
+
+describe("preserved thinking", () => {
+  it("names the generations that keep prior-turn thinking in context", () => {
+    for (const model of [
+      "claude-opus-4-5",
+      "claude-opus-5-5",
+      "claude-sonnet-4-6",
+      "claude-sonnet-5-5",
+      "claude-fable-5",
+      "claude-fable-5-1",
+      "claude-mythos-5-1",
+    ]) {
+      expect(claudeSupports(model, "preserved-thinking")).toBe(true);
+    }
+  });
+
+  it("leaves every Haiku, the older Opus and Sonnet, and unplaceable ids on the drop policy", () => {
+    for (const model of [
+      "claude-haiku-4-5",
+      "claude-opus-4-1",
+      "claude-sonnet-4-5",
+      "claude-3-5-sonnet-20241022",
+      "claude-test",
+    ]) {
+      expect(claudeSupports(model, "preserved-thinking")).toBe(false);
+    }
+  });
+});

@@ -4,6 +4,7 @@ import {
   type EngineEvents,
   EventBus,
   knownCostNanos,
+  messageText,
   SessionStore,
   textMessage,
 } from "@keywork/engine";
@@ -398,5 +399,39 @@ describe("cost capture", () => {
 
     const overview = await sessionTreePort(dir).overview?.();
     expect(overview?.at(0)?.costNanos).toBeUndefined();
+  });
+});
+
+describe("sessionPort context edits", () => {
+  it("forgets a prompt or a tool result on the active path and serves the edited context", async () => {
+    const dir = await tempDir();
+    const changed: string[] = [];
+    const port = sessionPort(dir, ".", { onChange: (sessionId) => changed.push(sessionId) });
+    const attachment = await port.create();
+    const prompt = await attachment?.append(textMessage("user", "my key is sk-123"));
+    await attachment?.append({
+      role: "assistant",
+      parts: [{ type: "tool-call", callId: "c1", name: "read", arguments: { path: "secret" } }],
+    });
+    await attachment?.append({
+      role: "tool",
+      parts: [{ type: "tool-result", callId: "c1", output: "hunter2", isError: false }],
+    });
+    await attachment?.append(textMessage("assistant", "noted"));
+    changed.length = 0;
+
+    const afterTool = await attachment?.forget?.({ kind: "tool", callId: "c1" }, null);
+    expect(afterTool?.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const afterPrompt = await attachment?.forget?.(
+      { kind: "prompt", promptId: prompt?.entryId ?? "" },
+      "my key is [redacted]",
+    );
+    expect(afterPrompt?.map(messageText)).toEqual(["my key is [redacted]", "noted"]);
+    expect(changed).toHaveLength(2);
+
+    expect(await attachment?.forget?.({ kind: "tool", callId: "nope" }, null)).toBeUndefined();
+    expect(await attachment?.forget?.({ kind: "prompt", promptId: "nope" }, null)).toBeUndefined();
+    const reopened = await storeOf(dir, attachment?.id);
+    expect(reopened.messages().map(messageText)).toEqual(["my key is [redacted]", "noted"]);
   });
 });

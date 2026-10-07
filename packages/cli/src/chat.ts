@@ -503,7 +503,10 @@ function mutationGuard(io: ChatIo, checkpoints: Checkpoints | undefined): ToolGu
       alwaysAllow = answer === "always";
       return answer !== "deny";
     },
-    ...(checkpoints !== undefined && { beforeMutation: () => checkpoints.capture() }),
+    ...(checkpoints !== undefined && {
+      beforeMutation: () => checkpoints.capture(),
+      beforeTurn: () => checkpoints.beginTurn(),
+    }),
   };
 }
 

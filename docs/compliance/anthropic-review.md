@@ -142,6 +142,35 @@ touch the wire.
   turn on Opus 5.5 in [`../live-smoke/anthropic.md`](../live-smoke/anthropic.md) step 6 is what
   proves or disproves the prefix-binding 400; the mock tests prove the wire shape only.
 
+## Re-run 2026-10-07 (117 context economy: thinking replay per generation)
+
+Diff scope: `packages/engine/src/providers/messages-wire.ts` (prior-turn owned thinking blocks
+are replayed on models that preserve them, current-turn-only elsewhere; `thinkingReplayFor`),
+`packages/engine/src/providers/claude-models.ts` (one `preserved-thinking` row in the generation
+table), `packages/engine/src/session/entries.ts` (the keep-tail projection strips thinking bound
+to the pre-compaction prefix), plus agent, session, TUI, and CLI files for mid-run compaction and
+`/forget` that never touch the wire. `anthropic.ts` is untouched.
+
+- [x] **Zero OAuth code paths.** The G1 scan, re-run over `anthropic.ts`, `messages-wire.ts`,
+  and `claude-models.ts`, returns nothing.
+- [x] **Zero subscription endpoints or client-ID spoofing.** No host, path, or header changed.
+- [x] **No headers imitating Claude Code.** The header set is byte-identical; the beta list from
+  the 2026-10-02 review is unchanged (no `thinking-binding-controls-*` beta was added: the lane
+  strips stale blocks itself instead of asking the API to drop them, and decision 117-1 does not
+  list that beta). The only request change is which assistant `thinking` blocks ride in
+  `messages`, and only blocks the same provider and model produced are ever sent (IR-13 kept).
+- [x] **Key handling is never logged.** No new code path reads the key; the 401 test still passes.
+- [x] **No forced `tool_choice`, no `budget_tokens` on the 5.5 generation.** Unchanged;
+  `messages-wire.test.ts` "never sends a forced tool_choice or a thinking budget" still passes.
+- [x] **Credential precedence, `/connect`, user docs, influencer code.** Unchanged; `NOTICE`
+  untouched. The replay rule was written from the public prompt-caching page ("thinking blocks
+  and the messages cache") and the Claude Fable 5.1 migration notes on preserved thinking and
+  keep-tail compaction (read 2026-10-07).
+- [x] **CI guard.** `scripts/guardrail-patterns.json` untouched; `check:guardrails` green.
+- [ ] **Live smoke on a post-2026-08-31 key.** Still not run. The prefix-binding check is what
+  proves the stripped keep-tail is accepted after a compaction; the mock tests prove the wire
+  shape only.
+
 ## Deviation of record
 
 The overlay named the official `@anthropic-ai/sdk`. The landed provider uses keywork's own

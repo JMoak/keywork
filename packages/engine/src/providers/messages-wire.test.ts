@@ -505,3 +505,66 @@ describe("cache diagnostics on the Messages wire", () => {
     ).toEqual({ previous_message_id: "msg_1" });
   });
 });
+
+describe("thinking replay across turns", () => {
+  const ownedOn = (model: string) => ({ provider: "anthropic", model });
+  const thinkingBlock = (signature: string) =>
+    JSON.stringify({ type: "thinking", thinking: "", signature });
+  const toolTurn = (model: string): Message[] => [
+    textMessage("user", "list the repo"),
+    {
+      role: "assistant",
+      parts: [
+        { type: "redacted-thinking", data: thinkingBlock("s-plan"), owner: ownedOn(model) },
+        { type: "tool-call", callId: "t1", name: "bash", arguments: { command: "ls" } },
+      ],
+    },
+    { role: "tool", parts: [{ type: "tool-result", callId: "t1", output: "src", isError: false }] },
+    {
+      role: "assistant",
+      parts: [
+        { type: "redacted-thinking", data: thinkingBlock("s-answer"), owner: ownedOn(model) },
+        { type: "text", text: "one folder: src" },
+      ],
+    },
+  ];
+  const signaturesIn = (body: WireBody) =>
+    body.messages.flatMap((message) =>
+      message.content.flatMap((block) =>
+        "signature" in block ? [(block as { signature: string }).signature] : [],
+      ),
+    );
+
+  it("keeps the prefix byte-stable across turns on a model that preserves thinking", () => {
+    const first = wireFor(opus55, toolTurn(opus55));
+    const second = wireFor(opus55, [...toolTurn(opus55), textMessage("user", "now test it")]);
+
+    expect(signaturesIn(first)).toEqual(["s-plan", "s-answer"]);
+    expect(second.messages.slice(0, first.messages.length)).toEqual(first.messages);
+  });
+
+  it("drops the earlier turn's thinking on a model that strips it server-side", () => {
+    const haiku = "claude-haiku-4-5";
+    const second = wireFor(haiku, [...toolTurn(haiku), textMessage("user", "now test it")], {
+      thinking: true,
+    });
+    expect(signaturesIn(second)).toEqual([]);
+    const midLoop = wireFor(haiku, toolTurn(haiku).slice(0, 3), { thinking: true });
+    expect(signaturesIn(midLoop)).toEqual(["s-plan"]);
+  });
+
+  it("falls back to current-turn replay when the request carries no thinking config", () => {
+    const opus5 = "claude-opus-5";
+    const history = [...toolTurn(opus5), textMessage("user", "again")];
+    expect(signaturesIn(wireFor(opus5, history))).toEqual([]);
+    expect(signaturesIn(wireFor(opus5, history, { thinking: true }))).toEqual([
+      "s-plan",
+      "s-answer",
+    ]);
+  });
+
+  it("never replays another model's blocks even where thinking is preserved", () => {
+    const history = toolTurn("claude-sonnet-5-5");
+    expect(signaturesIn(wireFor(opus55, history))).toEqual([]);
+  });
+});

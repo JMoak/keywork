@@ -20,7 +20,8 @@ assets through `import(…, { with: { type: "file" } })`, which is exactly what
 | `keywork-darwin-x64` | `macos-15-intel` |
 
 Every asset has a `<asset>.sha256` beside it and the release carries a combined
-`SHA256SUMS`. The npm fallback (`dist/npm`, package `keywork`, `bin` = the bundled CLI that
+`SHA256SUMS`. The npm fallback (`dist/npm`, package `keywork-cli` since `keywork` is another
+project's name on the registry, `bin` = the bundled CLI that
 runs on an installed Bun with `@opentui/core` as a normal dependency) is built on every
 release and published only when the repository variable `NPM_PUBLISH` is `true` and an
 `NPM_TOKEN` secret exists.

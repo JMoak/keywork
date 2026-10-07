@@ -5,6 +5,7 @@ import type { SessionTreePort } from "./session-tree-pane.ts";
 
 export interface CheckpointsPort {
   capture(): Promise<void>;
+  beginTurn?(): void;
   undo(): Promise<boolean>;
   redo(): Promise<boolean>;
   restoreTo(tree: string): Promise<void>;

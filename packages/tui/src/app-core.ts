@@ -28,10 +28,19 @@ import {
 import { BotCreateModel, type BotCreateSeed } from "./bot-create-model.ts";
 import { botChoiceOf } from "./bot-picker.ts";
 import type { BotsPort } from "./bots.ts";
-import { CommandRegistry } from "./commands.ts";
+import { CommandRegistry, type CommandSpec } from "./commands.ts";
 import { ConnectModel } from "./connect-model.ts";
+import { ConversationPane } from "./conversation-pane.ts";
 import { registerCoreCommands } from "./core-commands.ts";
+import type { EditorResult, ExternalEditor } from "./external-editor.ts";
 import type { Direction, Rect, Screen } from "./geometry.ts";
+import {
+  type ClipboardPort,
+  type ClipboardRead,
+  type ImageFileReader,
+  imageFromFile,
+  type PasteFacts,
+} from "./image-paste.ts";
 import { type InferenceCommandSeams, runModelCommand } from "./inference-commands.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import { type InitialPane, initialWorkspace } from "./initial-workspace.ts";
@@ -125,6 +134,9 @@ export interface AppCoreOptions extends PaneFactories {
   currentEffort?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;
   tips?: TipsOption;
+  externalEditor?: ExternalEditor;
+  clipboard?: ClipboardPort;
+  readImage?: ImageFileReader;
   restoreWorkspace?: WorkspaceState;
   initialWorkspace?: readonly InitialPane[];
   saveWorkspace?: (state: WorkspaceState) => void;
@@ -185,9 +197,11 @@ export class AppCore implements ActionTarget {
   private notify: () => void = () => {};
   private workspaceDirty = false;
   private lastSavedWorkspace = "";
+  private editingExternally = false;
 
   constructor(readonly options: AppCoreOptions) {
     registerCoreCommands(this);
+    this.registry.register(imageCommand(this));
   }
 
   bindNotify(notify: () => void): void {
@@ -249,13 +263,57 @@ export class AppCore implements ActionTarget {
     this.persistWorkspace();
   }
 
-  handlePaste(text: string): void {
+  handlePaste(text: string, facts?: PasteFacts): void {
     if (this.overlay !== undefined) {
       this.overlay.handlePaste(pastedLine(text));
       return;
     }
     const id = this.layout.focused();
-    if (id !== undefined) this.panes.get(id)?.handlePaste?.(text);
+    const pane = id === undefined ? undefined : this.panes.get(id);
+    if (pane instanceof ConversationPane) pane.handlePaste(text, facts);
+    else pane?.handlePaste?.(text);
+  }
+
+  editPromptExternally(): void {
+    const edit = this.options.externalEditor;
+    const pane = this.promptPane("the external editor");
+    if (pane === undefined || this.editingExternally) return;
+    if (edit === undefined) {
+      this.postNotice("no external editor here");
+      return;
+    }
+    const editor = pane.model.editor;
+    this.editingExternally = true;
+    this.settle(
+      edit(editor.draftForEditing())
+        .then((result) => this.adoptEditedDraft(pane, result))
+        .finally(() => {
+          this.editingExternally = false;
+        }),
+    );
+  }
+
+  attachClipboardImage(): void {
+    const clipboard = this.options.clipboard;
+    const pane = this.promptPane("the clipboard image");
+    if (pane === undefined) return;
+    if (clipboard === undefined) {
+      this.postNotice("no host clipboard here · /image <path> attaches a file instead");
+      return;
+    }
+    this.settle(clipboard.read().then((read) => this.adoptClipboard(pane, read)));
+  }
+
+  attachImageFile(path: string): void {
+    const pane = this.promptPane("an image");
+    if (pane === undefined) return;
+    const image = imageFromFile(path, this.options.readImage);
+    if (image === undefined) {
+      this.postNotice(`no image at ${path} · png, jpg, gif or webp up to 5 MB`);
+      return;
+    }
+    pane.attachImage(image);
+    this.notify();
   }
 
   handleMouse(event: PointerEvent): boolean {
@@ -762,6 +820,48 @@ export class AppCore implements ActionTarget {
     this.overlay = new BotCreateOverlay(model, this.overlaySeams);
   }
 
+  private promptPane(what: string): ConversationPane | undefined {
+    const focused = this.layout.focused();
+    const pane = focused === undefined ? undefined : this.panes.get(focused);
+    if (!(pane instanceof ConversationPane)) {
+      this.postNotice(`${what} needs a conversation prompt · focus one first`);
+      return undefined;
+    }
+    if (pane.model.pendingAsk !== undefined) {
+      this.postNotice("answer the pending ask first");
+      return undefined;
+    }
+    return pane;
+  }
+
+  private adoptEditedDraft(pane: ConversationPane, result: EditorResult): void {
+    switch (result.kind) {
+      case "edited":
+        pane.model.editor.replaceDraft(result.text);
+        return;
+      case "unchanged":
+        return;
+      case "failed":
+        this.postNotice(`editor · ${result.reason} · your draft is untouched`);
+    }
+  }
+
+  private adoptClipboard(pane: ConversationPane, read: ClipboardRead): void {
+    switch (read.kind) {
+      case "image":
+        pane.attachImage(read.image);
+        return;
+      case "text":
+        pane.handlePaste(read.text);
+        return;
+      case "empty":
+        this.postNotice("the clipboard holds no image or text");
+        return;
+      case "unsupported":
+        this.postNotice("the host clipboard is out of reach here · /image <path> attaches a file");
+    }
+  }
+
   private readonly overlaySeams = {
     dismiss: (): void => {
       this.overlay = undefined;
@@ -1012,4 +1112,19 @@ export class AppCore implements ActionTarget {
 function describedAs(pane: Pane): string {
   const descriptor: PaneDescriptor | undefined = pane.describe?.();
   return JSON.stringify(descriptor ?? null);
+}
+
+function imageCommand(core: AppCore): CommandSpec {
+  const shortcut = core.keymap.describe("prompt.image");
+  return {
+    name: "image",
+    aliases: ["attach-image"],
+    description: "attach an image to the prompt: /image [path] · no path reads the clipboard",
+    ...(shortcut !== undefined && { shortcut }),
+    run: (args) => {
+      const path = args?.trim() ?? "";
+      if (path === "") core.attachClipboardImage();
+      else core.attachImageFile(path);
+    },
+  };
 }

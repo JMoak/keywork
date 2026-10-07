@@ -74,6 +74,6 @@ compaction token estimates all see the projection. keywork's own rule on top of 
 removes one half of a tool call / result pair, the other half leaves context too. API:
 `SessionStore.appendContextEdit(targetId, replacement)` (message and custom-message targets
 only); clone carries edits on the cloned path; the tree, `keywork sessions` and HTML export
-describe them as `forgot <id>` / `rewrote <id>`. Tests: `store-context-edit.test.ts`. No TUI
-command yet (`/forget <n>` needs a prompt-ordinal picker and an agent rebuild like `/undo`, left
-for a later task). `NOTICE` records the Pi adaptation.
+describe them as `forgot <id>` / `rewrote <id>`. Tests: `store-context-edit.test.ts`. The TUI
+command landed 2026-10-07 (`/forget [replacement]` over the backtrack picker, 117 context-economy
+lane). `NOTICE` records the Pi adaptation.

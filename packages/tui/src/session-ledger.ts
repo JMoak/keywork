@@ -82,7 +82,7 @@ export class SessionLedger {
     return contextReadout(reading).join("\n");
   }
 
-  private spendSummary(agent: Agent): string {
+  spendSummary(agent: Agent): string {
     const { usage, cost } = this.sessionTotals(agent);
     const known = knownCostNanos(cost);
     if (known !== undefined) return formatCostNanos(known);

@@ -26,6 +26,7 @@ export const engineEventTypes = [
   "context.injected",
   "diagnostics.published",
   "shell.reset",
+  "extension.notice",
   "engine.error",
 ] as const satisfies readonly EngineEventType[];
 

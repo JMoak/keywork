@@ -229,7 +229,10 @@ class PaneSession implements SessionControls {
     const checkpoints = deps.checkpoints;
     this.guard = {
       confirm: (call) => this.pane.confirmMutation(call),
-      ...(checkpoints !== undefined && { beforeMutation: () => checkpoints.capture() }),
+      ...(checkpoints !== undefined && {
+        beforeMutation: () => checkpoints.capture(),
+        beforeTurn: () => checkpoints.beginTurn?.(),
+      }),
     };
     const initial = buildAgent(
       deps.agentFactory,

@@ -24,6 +24,7 @@ import {
   elevationScrollMap,
   elevationTurnAge,
 } from "./elevation.ts";
+import { feelPolish } from "./feel-polish.ts";
 import { fileLinksOff, fileLinksOn } from "./file-links.ts";
 import { firstConversation } from "./first-conversation.ts";
 import { gardenHeatInk, gardenHeatLead } from "./garden-heat.ts";
@@ -92,6 +93,7 @@ export const scenarios: readonly Scenario[] = [
   fileLinksOn,
   fileLinksOff,
   diffPane,
+  feelPolish,
   livePlayground,
 ];
 

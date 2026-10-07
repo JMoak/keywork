@@ -32,6 +32,12 @@ interface LiveEvents {
   "context.injected": { injection: ContextInjection };
   "diagnostics.published": { path: string; count: number };
   "shell.reset": Record<never, never>;
+  "extension.notice": {
+    extension: string;
+    level: "info" | "warn" | "error";
+    message: string;
+    detail?: unknown;
+  };
   "engine.error": { error: Error };
 }
 

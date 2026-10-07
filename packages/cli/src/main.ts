@@ -132,6 +132,8 @@ const commands: Record<CommandName, Command> = {
   link: runLink,
   workspace: runWorkspace,
   bot: runBot,
+  memory: runMemory,
+  skills: runSkills,
   trust: (context) => runTrust("trust", context),
   untrust: (context) => runTrust("untrust", context),
   doctor: runDoctor,
@@ -456,6 +458,48 @@ async function runBot(
   );
 }
 
+async function runMemory(
+  context: CommandContext,
+  { positionals, values }: ParsedInvocation,
+): Promise<number> {
+  const { memoryCommand } = await import("./memory-command.ts");
+  return memoryCommand(
+    positionals,
+    {
+      cwd: context.cwd,
+      trusted: context.projectTrusted,
+      workspaceSlug: context.workspaceSlug,
+    },
+    commandIo(context),
+    { session: values.session, apply: values.apply },
+    { provider: () => defaultProvider(context) },
+  );
+}
+
+async function runSkills(
+  context: CommandContext,
+  { positionals, values }: ParsedInvocation,
+): Promise<number> {
+  const { skillsCommand } = await import("./skills-command.ts");
+  return skillsCommand(
+    positionals,
+    {
+      cwd: context.cwd,
+      projectTrusted: context.projectTrusted,
+      userRoot: homedir(),
+      workspaceSlug: context.workspaceSlug,
+    },
+    commandIo(context),
+    { apply: values.apply, restore: values.restore },
+  );
+}
+
+async function defaultProvider(context: CommandContext) {
+  const { config, runtime } = (await context.openInference()).current();
+  const resolution = runtime.resolve({ default: config.model });
+  return resolution.ok ? runtime.provider(resolution.binding) : undefined;
+}
+
 async function runTrust(action: "trust" | "untrust", context: CommandContext): Promise<number> {
   const { trustCommand } = await import("./trust.ts");
   return trustCommand(action, context.cwd, context.trustStore, commandIo(context));
@@ -515,6 +559,8 @@ function parseInvocationArgs(args: readonly string[]) {
       token: { type: "string" },
       tree: { type: "boolean", default: false },
       out: { type: "string" },
+      apply: { type: "boolean", default: false },
+      restore: { type: "string" },
     },
   });
 }

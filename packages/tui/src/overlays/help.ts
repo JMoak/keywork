@@ -24,7 +24,11 @@ export interface HelpPage {
 
 export const promptKeys: readonly HelpRow[] = [
   { keys: "enter", help: "send · queues behind a running turn" },
-  { keys: "alt+enter", help: "steer · interrupts the turn and sends now" },
+  { keys: "alt+enter", help: "steer · interrupts the turn and sends now · the queue stays" },
+  {
+    keys: "ctrl+enter",
+    help: "send now · interrupts the turn and sets the queue aside · up brings those back",
+  },
   { keys: "shift+enter", help: "newline in the prompt" },
   { keys: "esc", help: "interrupt the running turn" },
   { keys: "!cmd", help: "run a shell command through the bash gate · shown as your tool call" },

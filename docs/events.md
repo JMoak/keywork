@@ -214,6 +214,20 @@ Fires after a file save when the language port publishes diagnostics for it.
 Fires when the session's shell state was reset. The payload has no fields beyond the
 optional `replay`.
 
+### extension.notice
+
+Fires when the extension host has something to say about one extension: a quarantine (level
+`error`, the message names the extension, the phase and the thrown reason), or a line the
+extension wrote through its own logger. A consumer that toasts shows `error` and `warn`;
+`info` belongs in a log. Not journaled; a resumed session does not replay notices.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `extension` | `string` | The extension's name (its file stem). |
+| `level` | `"info" \| "warn" \| "error"` | How loud the notice is. |
+| `message` | `string` | One readable line. |
+| `detail` | `unknown` | Optional structured context the extension attached. |
+
 ### engine.error
 
 Fires when a listener throws, when a turn fails, or when post-turn settling fails. A listener

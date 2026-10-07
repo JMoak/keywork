@@ -4,15 +4,19 @@ import type { Viewport } from "./transcript-view.ts";
 export interface NavigableFeed {
   readonly entries: readonly TranscriptEntry[];
   promptIndices(): number[];
+  forgettableIndices(): number[];
   disclosableIndices(): number[];
   toggleFold(entry: TranscriptEntry): boolean;
   toggleLatestFold(): boolean;
 }
 
+export type PickerPurpose = "fork" | "forget";
+
 export class TranscriptNavigation {
   scrollBack = 0;
   private framedTotal: number | undefined;
   private backtrackAt: number | undefined;
+  private purpose: PickerPurpose = "fork";
   private foldCursor: number | undefined;
   private revealAt: number | undefined;
   private escapePrimed = false;
@@ -64,27 +68,40 @@ export class TranscriptNavigation {
   }
 
   enterBacktrack(): boolean {
-    const newest = this.feed.promptIndices().at(-1);
+    return this.enterPicker("fork");
+  }
+
+  enterPicker(purpose: PickerPurpose): boolean {
+    const newest = this.candidatesFor(purpose).at(-1);
     if (newest === undefined) return false;
+    this.purpose = purpose;
     this.reveal(newest, "backtrack");
     return true;
   }
 
+  pickerPurpose(): PickerPurpose | undefined {
+    return this.backtracking() ? this.purpose : undefined;
+  }
+
   stepBacktrack(direction: -1 | 1): void {
-    const prompts = this.feed.promptIndices();
-    const position = prompts.indexOf(this.backtrackAt ?? -1);
+    const candidates = this.candidatesFor(this.purpose);
+    const position = candidates.indexOf(this.backtrackAt ?? -1);
     const next = position + direction;
-    if (position === -1 || next >= prompts.length) {
+    if (position === -1 || next >= candidates.length) {
       this.exitBacktrack();
       return;
     }
-    const target = prompts[next];
+    const target = candidates[next];
     if (target !== undefined) this.reveal(target, "backtrack");
   }
 
   selectedPrompt(): UserEntry | undefined {
-    const entry = this.backtrackAt === undefined ? undefined : this.feed.entries[this.backtrackAt];
+    const entry = this.selectedEntry();
     return entry?.kind === "user" ? entry : undefined;
+  }
+
+  selectedEntry(): TranscriptEntry | undefined {
+    return this.backtrackAt === undefined ? undefined : this.feed.entries[this.backtrackAt];
   }
 
   exitBacktrack(): void {
@@ -125,6 +142,10 @@ export class TranscriptNavigation {
     this.revealAt = undefined;
     this.framedTotal = undefined;
     this.escapePrimed = false;
+  }
+
+  private candidatesFor(purpose: PickerPurpose): number[] {
+    return purpose === "fork" ? this.feed.promptIndices() : this.feed.forgettableIndices();
   }
 
   private reveal(at: number, as: "backtrack" | "fold"): void {

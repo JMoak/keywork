@@ -3,7 +3,7 @@
 > **Status (2026-08-22, D-04 close-out check):** not closed; the file stays in place.
 > Landed: V2.1 (tail-follow), V2.2 (diff preview), V2.3 (markdown + code fences, `markdown.ts`
 > / `highlighter.ts`), V2.5 (context gauge + cost line, `context-gauge.ts`; the at-threshold
-> compaction offer is not built), V2.10 (retrieval disclosure), V2.13 (backtrack-fork with
+> compaction offer landed 2026-10-07, `compaction-offer.ts`), V2.10 (retrieval disclosure), V2.13 (backtrack-fork with
 > checkpoint restore). Still open, in this file's own numbering: V2.4 thinking blocks, V2.9
 > recall citations (J13's UX face). V2.11 provenance gutter landed 2026-10-02. V2.6, V2.8, V2.12, V2.14 and
 > V2.15 landed 2026-09-06; V2.7 @-mention autocomplete, V2.16 commit-message drafting and
@@ -278,6 +278,16 @@ was never an ask).
   fallback, clean tree, no model, no clipboard, git failure, the cap, diff-only git calls).
   *Assumptions Jordan may reverse:* untracked files are not in the draft (plain `git diff`
   leaves them out); the bound session model drafts, there is no cheap-tier pick yet.
+- **V2.5 compaction offer landed (2026-10-07).** When a turn settles with the context
+  estimate past the memory-flush line and not yet past the compaction line
+  (`compaction-offer.ts`, `compactionOfferDue`), one info line offers `/compact [focus]` and
+  says keywork compacts on its own at the line. It never runs anything, fires once per
+  crossing (so never twice in a turn, and not again until the reading falls back below the
+  flush line), and stays silent when no compaction hook is bound. Tests:
+  `compaction-offer.test.ts` (4) and `conversation-model.test.ts` "compaction offer" (2, a
+  4000-token declared window).
+  *Assumptions Jordan may reverse:* the offer line is the flush line rather than a fraction
+  of the compaction line; a long stretch above the line gets one offer, not one per turn.
 
 ## Ordering instinct (pre-survey)
 

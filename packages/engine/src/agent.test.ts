@@ -651,6 +651,32 @@ describe("Agent end-to-end with mock provider", () => {
     expect(events).toEqual(["interrupted"]);
   });
 
+  it("carries images beside the prompt text, queued or not", async () => {
+    const provider = new MockProvider([textTurn("one"), textTurn("two")]);
+    const agent = new Agent({ provider });
+    const image = { type: "image" as const, mediaType: "image/png", data: "AAAA" };
+
+    const first = agent.send("look", { images: [image] });
+    const second = agent.send("and this", { images: [image] });
+    await Promise.all([first, second]);
+
+    const prompts = agent.history().filter((message) => message.role === "user");
+    expect(prompts.map((message) => message.parts)).toEqual([
+      [{ type: "text", text: "look" }, image],
+      [{ type: "text", text: "and this" }, image],
+    ]);
+  });
+
+  it("clears the checkpoint turn tag through the guard when a turn begins", async () => {
+    const provider = new MockProvider([textTurn("ok")]);
+    const began: string[] = [];
+    const agent = new Agent({ provider, guard: { beforeTurn: () => began.push("turn") } });
+
+    await agent.send("go");
+
+    expect(began).toEqual(["turn"]);
+  });
+
   it("seeds history so a resumed conversation continues in place", async () => {
     const provider = new MockProvider([textTurn("welcome back")]);
     const agent = new Agent({
@@ -1319,5 +1345,79 @@ describe("Agent settlement seam", () => {
     expect(fresh).toEqual(["two", "three"]);
     expect(previous.busy()).toBe(false);
     expect(next.busy()).toBe(false);
+  });
+});
+
+describe("Agent tool batch settlement", () => {
+  function twoBatchConversation(seen: string[][]): Agent {
+    const scripted = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "b1", name: "echo", arguments: { text: "one" } }),
+      toolCallTurn({ type: "tool-call", callId: "b2", name: "echo", arguments: { text: "two" } }),
+      textTurn("all done"),
+    ]);
+    const recording: Provider = {
+      name: "recording",
+      stream: (request) => {
+        seen.push(request.messages.map((message) => `${message.role}:${messageText(message)}`));
+        return scripted.stream(request);
+      },
+    };
+    return new Agent({ provider: recording, tools: [echoTool] });
+  }
+
+  it("settles after each tool batch with the stream closed and hands the next call the rebuilt history", async () => {
+    const seen: string[][] = [];
+    const agent = twoBatchConversation(seen);
+    const settledAt: number[] = [];
+    agent.settleToolBatchesWith(async (history) => {
+      settledAt.push(history.length);
+      if (settledAt.length !== 1) return undefined;
+      return [textMessage("user", "folded: earlier work"), ...history.slice(1)];
+    });
+
+    const reply = await agent.send("go");
+
+    expect(messageText(reply)).toBe("all done");
+    expect(settledAt).toEqual([3, 5]);
+    expect(seen.map((messages) => messages[0])).toEqual([
+      "user:go",
+      "user:folded: earlier work",
+      "user:folded: earlier work",
+    ]);
+    expect(seen[1]).toHaveLength(3);
+    expect(agent.history().map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    expect(messageText(agent.history()[0] as Message)).toBe("folded: earlier work");
+  });
+
+  it("keeps the turn going and announces the failure when the batch settler throws", async () => {
+    const seen: string[][] = [];
+    const agent = twoBatchConversation(seen);
+    const errors: string[] = [];
+    agent.bus.on("engine.error", ({ error }) => errors.push(error.message));
+    agent.settleToolBatchesWith(async () => {
+      throw new Error("summary model down");
+    });
+
+    expect(messageText(await agent.send("go"))).toBe("all done");
+    expect(errors).toEqual(["summary model down", "summary model down"]);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("never runs the batch settler on a turn without tool calls", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("plain")]) });
+    let settled = 0;
+    agent.settleToolBatchesWith(async () => {
+      settled += 1;
+      return undefined;
+    });
+    await agent.send("hi");
+    expect(settled).toBe(0);
   });
 });

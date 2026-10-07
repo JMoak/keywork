@@ -1,4 +1,5 @@
-import type { SendBehavior } from "@keywork/engine";
+import type { ImagePart, SendBehavior } from "@keywork/engine";
+import { ImageVault, type PastedImage } from "./image-paste.ts";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import {
@@ -22,16 +23,25 @@ export interface CommandsPort {
   run(name: string): boolean;
 }
 
+export type SendMode = SendBehavior | "now";
+
+export interface Submission {
+  submit: string;
+  behavior: SendMode;
+  images: readonly ImagePart[];
+}
+
 export type EditorOutcome =
   | "handled"
   | "pass"
-  | { submit: string; behavior: SendBehavior }
+  | Submission
   | { command: string; chosen: string | undefined };
 
 export class PromptEditor {
   readonly buffer = new InputBuffer();
   selectedSuggestion = 0;
   private readonly pastes = new PasteVault();
+  private readonly images = new ImageVault();
   private readonly history: string[] = [];
   private historyIndex: number | undefined;
   private clearedDraft: ClearedDraft | undefined;
@@ -60,6 +70,7 @@ export class PromptEditor {
     if (this.onClearedDraft()) this.clearedDraft = undefined;
     this.buffer.clear();
     this.pastes.clear();
+    this.images.clear();
     this.historyIndex = undefined;
     this.selectedSuggestion = 0;
     this.notify();
@@ -67,15 +78,47 @@ export class PromptEditor {
 
   clearKeepingDraft(): EditorOutcome {
     if (this.buffer.isEmpty()) return "pass";
-    this.clearedDraft = { text: this.value, pastes: this.pastes.snapshot() };
+    this.clearedDraft = this.draftSnapshot();
     this.historyIndex = undefined;
     this.clear();
     return "handled";
   }
 
+  holdAside(prompts: readonly string[]): void {
+    const newest = prompts.at(-1);
+    if (newest === undefined) return;
+    for (const prompt of prompts.slice(0, -1)) this.remember(prompt);
+    this.clearedDraft = { text: newest, pastes: new Map(), images: new Map() };
+    this.historyIndex = undefined;
+    this.notify();
+  }
+
+  draftForEditing(): string {
+    return this.pastes.expandAll(this.value);
+  }
+
+  replaceDraft(text: string): void {
+    this.buffer.load(text);
+    this.pastes.clear();
+    this.clearedDraft = undefined;
+    this.historyIndex = undefined;
+    this.selectedSuggestion = 0;
+    this.notify();
+  }
+
   paste(text: string): void {
     const normalized = text.replace(/\r\n?/g, "\n");
     this.edit(() => this.buffer.insert(this.pastes.collapse(normalized)));
+  }
+
+  attachImage(image: PastedImage): void {
+    const chip = this.images.attach(image);
+    const padded = this.value === "" || this.value.endsWith(" ") ? chip : ` ${chip}`;
+    this.edit(() => this.buffer.insert(`${padded} `));
+  }
+
+  attachedImages(): readonly ImagePart[] {
+    return this.images.imagesIn(this.value);
   }
 
   expandPlaceholderAtCursor(): boolean {
@@ -146,9 +189,7 @@ export class PromptEditor {
       case "return":
       case "enter": {
         if (chord.shift) return this.edit(() => this.buffer.newline());
-        const text = this.pastes.expandAll(this.value).trim();
-        if (text === "") return "handled";
-        return { submit: text, behavior: chord.meta ? "steer" : "queue" };
+        return this.submission(sendModeOf(chord));
       }
       case "backspace":
         return this.edit(() => this.buffer.backspace());
@@ -168,6 +209,22 @@ export class PromptEditor {
         if (!isPrintable(chord, sequence)) return "pass";
         return this.edit(() => this.buffer.insert(sequence));
     }
+  }
+
+  private submission(behavior: SendMode): EditorOutcome {
+    const expanded = this.pastes.expandAll(this.value);
+    const images = this.images.imagesIn(expanded);
+    const text = this.images.strip(expanded).trim();
+    if (text === "") return "handled";
+    return { submit: text, behavior, images };
+  }
+
+  private draftSnapshot(): ClearedDraft {
+    return {
+      text: this.value,
+      pastes: this.pastes.snapshot(),
+      images: this.images.snapshot(),
+    };
   }
 
   private handleSlashKey(chord: Chord): EditorOutcome {
@@ -309,6 +366,7 @@ export class PromptEditor {
     if (draft !== undefined) {
       this.buffer.load(draft.text);
       this.pastes.restore(draft.pastes);
+      this.images.restore(draft.images);
     } else {
       this.buffer.load(this.history[this.historyIndex ?? -1] ?? "");
     }
@@ -338,10 +396,16 @@ export class PromptEditor {
 interface ClearedDraft {
   readonly text: string;
   readonly pastes: ReadonlyMap<number, string>;
+  readonly images: ReadonlyMap<number, PastedImage>;
 }
 
 function isClearChord(chord: Chord): boolean {
   return chord.ctrl && !chord.meta && !chord.shift && chord.name === "c";
+}
+
+function sendModeOf(chord: Chord): SendMode {
+  if (chord.ctrl) return "now";
+  return chord.meta ? "steer" : "queue";
 }
 
 const suggestionLimit = 5;

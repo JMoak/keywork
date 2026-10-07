@@ -2,12 +2,15 @@ import { join } from "node:path";
 import {
   type EffortLevel,
   isEffortLevel,
+  type MessageEntry,
   parseReference,
   replaySession,
+  type SessionEntry,
   SessionStore,
   type Usage,
 } from "@keywork/engine";
 import type {
+  ForgetTarget,
   RewoundPrompt,
   SessionAttachment,
   SessionOverviewItem,
@@ -196,7 +199,32 @@ function attachmentOf(
       seams.onChange?.(store.header.id);
     },
     rewindBefore: (promptId) => rewindBefore(store, promptId),
+    forget: async (target, replacement) => {
+      const entry = contextEditTarget(store, target);
+      if (entry === undefined) return undefined;
+      await store.appendContextEdit(entry.id, replacement);
+      seams.onChange?.(store.header.id);
+      return store.messages();
+    },
   };
+}
+
+function contextEditTarget(store: SessionStore, target: ForgetTarget): MessageEntry | undefined {
+  const onPath = store.activePath().filter(isMessageEntry);
+  if (target.kind === "prompt") {
+    return onPath.find((entry) => entry.id === target.promptId && entry.message.role === "user");
+  }
+  return onPath.find(
+    (entry) =>
+      entry.message.role === "tool" &&
+      entry.message.parts.some(
+        (part) => part.type === "tool-result" && part.callId === target.callId,
+      ),
+  );
+}
+
+function isMessageEntry(entry: SessionEntry): entry is MessageEntry {
+  return entry.type === "message";
 }
 
 function rewindBefore(store: SessionStore, promptId: string): RewoundPrompt | undefined {

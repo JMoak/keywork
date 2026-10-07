@@ -70,6 +70,7 @@ export interface MemoryFlushOptions {
   dailyStore?: () => MemoryStore;
   bot?: () => BotFlushTarget | undefined;
   systemPrompt?: string;
+  session?: string;
 }
 
 export interface FlushOutcome {
@@ -84,6 +85,7 @@ export class MemoryFlush {
   private readonly dailyStore: () => MemoryStore;
   private readonly bot: () => BotFlushTarget | undefined;
   private readonly systemPrompt: string;
+  private readonly session: string | undefined;
   private latched = false;
   private backtracked = false;
 
@@ -93,6 +95,7 @@ export class MemoryFlush {
     this.dailyStore = options.dailyStore ?? (() => options.store);
     this.bot = options.bot ?? (() => undefined);
     this.systemPrompt = options.systemPrompt ?? "";
+    this.session = options.session;
   }
 
   noteBacktrack(): void {
@@ -131,13 +134,13 @@ export class MemoryFlush {
   }
 
   private async keep(text: string): Promise<boolean> {
-    await this.dailyStore().appendDaily(text, "agent");
+    await this.dailyStore().appendDaily(text, "agent", this.session);
     return true;
   }
 
   private async keepAs(bot: BotFlushTarget, text: string): Promise<boolean> {
     const { craft, work } = partitionBotLines(text);
-    if (work !== "") await this.dailyStore().appendDaily(work, "agent");
+    if (work !== "") await this.dailyStore().appendDaily(work, "agent", this.session);
     if (craft !== "") await bot.remember(craft);
     return work !== "" || craft !== "";
   }

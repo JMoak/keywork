@@ -1,11 +1,24 @@
 import {
+  type AgentHooks,
+  proceedWith,
+  type ToolCallRuling,
+  toolsThroughHooks,
+} from "./agent-hooks.ts";
+import {
   type EngineEvents,
   EventBus,
   type PromptOrigin,
   type QueuedPrompt,
   type SendBehavior,
 } from "./bus.ts";
-import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
+import {
+  type ImagePart,
+  type Message,
+  promptMessage,
+  type ToolCallPart,
+  toolCalls,
+  type Usage,
+} from "./messages.ts";
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type {
   CacheMiss,
@@ -34,6 +47,7 @@ export interface ToolGuard {
   gate?: ConfirmingGate;
   declineEndsRun?: boolean;
   beforeMutation?(): Promise<void>;
+  beforeTurn?(): void;
 }
 
 export type ToolPermission = "allow" | "ask" | "deny";
@@ -63,6 +77,7 @@ export interface AgentOptions {
   turns?: TurnDelegate;
   systemPrompt?: string;
   tools?: readonly Tool[] | ToolSource;
+  hooks?: AgentHooks;
   bus?: EventBus<EngineEvents>;
   history?: readonly Message[];
   guard?: ToolGuard;
@@ -78,9 +93,14 @@ export interface SendOptions {
   behavior?: SendBehavior;
   signal?: AbortSignal;
   origin?: PromptOrigin;
+  images?: readonly ImagePart[];
 }
 
 export type TurnSettler = () => Promise<void>;
+
+export type ToolBatchSettler = (
+  history: readonly Message[],
+) => Promise<readonly Message[] | undefined>;
 
 export class QueuedPromptCancelledError extends Error {
   constructor(id: string) {
@@ -90,6 +110,7 @@ export class QueuedPromptCancelledError extends Error {
 }
 
 interface PendingPrompt extends QueuedPrompt {
+  images: readonly ImagePart[];
   signal: AbortSignal | undefined;
   resolve(message: Message): void;
   reject(error: Error): void;
@@ -107,7 +128,9 @@ type ToolOutcome = EngineEvents["tool.finished"];
 export class Agent {
   readonly bus: EventBus<EngineEvents>;
   readonly provider: Provider;
-  private readonly systemPrompt: string;
+  private readonly baseSystemPrompt: string;
+  private systemPrompt: string;
+  private readonly hooks: AgentHooks;
   private readonly tools: ToolSource;
   private readonly messages: Message[];
   private readonly guard: ToolGuard | undefined;
@@ -124,6 +147,7 @@ export class Agent {
   private active: AbortController | undefined;
   private holding = false;
   private settler: TurnSettler | undefined;
+  private toolBatchSettler: ToolBatchSettler | undefined;
   private checkpointed = false;
   private declineEndedRun = false;
   private thinkingRequested: boolean;
@@ -134,8 +158,10 @@ export class Agent {
 
   constructor(options: AgentOptions) {
     this.provider = options.provider;
-    this.systemPrompt = options.systemPrompt ?? "";
-    this.tools = toolSource(options.tools);
+    this.baseSystemPrompt = options.systemPrompt ?? "";
+    this.systemPrompt = this.baseSystemPrompt;
+    this.hooks = options.hooks ?? {};
+    this.tools = toolsThroughHooks(toolSource(options.tools), this.hooks);
     this.bus = options.bus ?? new EventBus();
     this.messages = [...(options.history ?? [])];
     this.guard = options.guard;
@@ -215,15 +241,20 @@ export class Agent {
   }
 
   send(userText: string, options: SendOptions = {}): Promise<Message> {
-    if (this.idle()) return this.runTurn(userText, options.signal, options.origin);
+    const images = options.images ?? [];
+    if (this.idle()) return this.runTurn(userText, options.signal, options.origin, images);
     const behavior = options.behavior ?? "queue";
-    const settled = this.enqueue(userText, behavior, options.signal, options.origin);
+    const settled = this.enqueue(userText, behavior, options.signal, options.origin, images);
     if (behavior === "steer") this.active?.abort();
     return settled;
   }
 
   settleTurnsWith(settler: TurnSettler | undefined): void {
     this.settler = settler;
+  }
+
+  settleToolBatchesWith(settler: ToolBatchSettler | undefined): void {
+    this.toolBatchSettler = settler;
   }
 
   hold(work: () => Promise<void>): Promise<void> {
@@ -256,6 +287,7 @@ export class Agent {
     behavior: SendBehavior,
     signal: AbortSignal | undefined,
     origin: PromptOrigin | undefined,
+    images: readonly ImagePart[],
   ): Promise<Message> {
     return new Promise((resolve, reject) => {
       const prompt: PendingPrompt = {
@@ -263,6 +295,7 @@ export class Agent {
         text,
         behavior,
         ...(origin !== undefined && { origin }),
+        images,
         signal,
         resolve,
         reject,
@@ -285,7 +318,10 @@ export class Agent {
     const next = this.pending.shift();
     if (next === undefined) return;
     this.announceQueue();
-    void this.runTurn(next.text, next.signal, next.origin).then(next.resolve, next.reject);
+    void this.runTurn(next.text, next.signal, next.origin, next.images).then(
+      next.resolve,
+      next.reject,
+    );
   }
 
   private async holdThenDrain(work: () => Promise<void>): Promise<void> {
@@ -316,6 +352,7 @@ export class Agent {
     userText: string,
     signal: AbortSignal | undefined,
     origin?: PromptOrigin,
+    images: readonly ImagePart[] = [],
   ): Promise<Message> {
     const controller = new AbortController();
     this.active = controller;
@@ -325,9 +362,10 @@ export class Agent {
     signal?.addEventListener("abort", forwardAbort, { once: true });
     try {
       this.checkpointed = false;
+      this.guard?.beforeTurn?.();
       this.turnCacheMiss = undefined;
       this.marks.restateEffort(this.effortRequested, this.messages.length);
-      this.messages.push(textMessage("user", userText));
+      this.remember(promptMessage(userText, images));
       this.announceStandingInjections();
       this.bus.emit("turn.started", { userText, ...(origin !== undefined && { origin }) });
       return await (this.turns === undefined
@@ -347,6 +385,7 @@ export class Agent {
 
   private async runUntilFinalMessage(signal: AbortSignal): Promise<Message> {
     while (true) {
+      this.systemPrompt = await this.systemPromptThroughHooks();
       const turn = await this.streamAssistantTurn(signal);
       this.totals = addUsage(this.totals, turn.usage);
       this.costTotals = withTurnCost(this.costTotals, turn.usage, this.provider.modelId);
@@ -359,13 +398,25 @@ export class Agent {
         this.keepPartialMessage(turn.message);
         return this.finishInterrupted(turn.message);
       }
-      this.messages.push(turn.message);
+      this.remember(turn.message);
 
       const calls = toolCalls(turn.message);
       if (calls.length === 0) return this.finishCompleted(turn);
       const ending = await this.executeToolCalls(calls, signal);
       if (signal.aborted) return this.finishInterrupted(turn.message);
       if (ending === "declined") return this.finishDeclined(turn);
+      await this.settleToolBatch();
+    }
+  }
+
+  private async settleToolBatch(): Promise<void> {
+    const settler = this.toolBatchSettler;
+    if (settler === undefined) return;
+    try {
+      const rebuilt = await settler(this.history());
+      if (rebuilt !== undefined) this.messages.splice(0, this.messages.length, ...rebuilt);
+    } catch (cause) {
+      this.bus.emit("engine.error", { error: errorOf(cause) });
     }
   }
 
@@ -377,8 +428,11 @@ export class Agent {
     const outcome = await delegate({ userText, signal, bus: this.bus });
     this.totals = addUsage(this.totals, outcome.usage);
     this.costTotals = withTurnCost(this.costTotals, outcome.usage, this.provider.modelId);
-    if (outcome.history === undefined) this.messages.push(outcome.message);
-    else this.messages.splice(0, this.messages.length, ...outcome.history);
+    if (outcome.history === undefined) this.remember(outcome.message);
+    else {
+      this.messages.splice(0, this.messages.length, ...outcome.history);
+      this.hooks.messageAppended?.(outcome.message);
+    }
     if (outcome.interrupted) return this.finishInterrupted(outcome.message);
     return this.finishCompleted({ ...outcome, interrupted: false });
   }
@@ -400,18 +454,33 @@ export class Agent {
   }
 
   private keepPartialMessage(message: Message): void {
-    if (message.parts.length > 0) this.messages.push(message);
+    if (message.parts.length > 0) this.remember(message);
   }
 
   private settleOrphanedToolCalls(message: Message, output = "interrupted before execution"): void {
     const settled = this.settledCallIds();
     for (const call of toolCalls(message)) {
       if (settled.has(call.callId)) continue;
-      this.messages.push({
+      this.remember({
         role: "tool",
         parts: [{ type: "tool-result", callId: call.callId, output, isError: true }],
       });
     }
+  }
+
+  private remember(message: Message): void {
+    this.messages.push(message);
+    this.hooks.messageAppended?.(message);
+  }
+
+  private systemPromptThroughHooks(): Promise<string> {
+    return (
+      this.hooks.systemPrompt?.(this.baseSystemPrompt) ?? Promise.resolve(this.baseSystemPrompt)
+    );
+  }
+
+  private ruleOnToolCall(call: ToolCallPart): Promise<ToolCallRuling> {
+    return this.hooks.toolCall?.(call) ?? Promise.resolve(proceedWith(call));
   }
 
   private settledCallIds(): Set<string> {
@@ -466,14 +535,20 @@ export class Agent {
     signal: AbortSignal,
   ): Promise<"continue" | "declined"> {
     this.declineEndedRun = false;
-    for (const call of calls) {
+    for (const requested of calls) {
       if (signal.aborted) return "continue";
+      const ruling = await this.ruleOnToolCall(requested);
+      const call = ruling.kind === "proceed" ? ruling.call : requested;
       this.bus.emit("tool.started", { call });
       this.running = call;
-      const result = await this.bounded(await this.executeToolCall(call, signal));
+      const result = await this.bounded(
+        ruling.kind === "refuse"
+          ? refusedByExtension(call, ruling.reason)
+          : await this.executeToolCall(call, signal),
+      );
       this.running = undefined;
       this.bus.emit("tool.finished", result);
-      this.messages.push({
+      this.remember({
         role: "tool",
         parts: [{ type: "tool-result", ...result }],
       });
@@ -577,6 +652,10 @@ function spillSource(spills: SpillStore | SpillSource | undefined): SpillSource 
 
 function defaultPermission(tool: Tool): ToolPermission {
   return tool.mutates === true ? "ask" : "allow";
+}
+
+function refusedByExtension(call: ToolCallPart, reason: string): ToolOutcome {
+  return { callId: call.callId, output: `refused by extension ${reason}`, isError: true };
 }
 
 function declinedOutput(gate: ConfirmingGate | undefined): string {

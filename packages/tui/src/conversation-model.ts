@@ -3,6 +3,7 @@ import {
   type ContextReading,
   type EffortLevel,
   effortLevels,
+  type ImagePart,
   isEffortLevel,
   type Message,
   type QueuedPrompt,
@@ -11,11 +12,14 @@ import {
   type SpillReference,
   type TickScheduler,
   type ToolCallPart,
+  type TurnSettlement,
 } from "@keywork/engine";
 import { toError } from "@keywork/shared";
 import { type AwayStretch, AwayWatch, awayDigest } from "./away-summary.ts";
 import { type BotEntry, type BotSummary, describeBotSpend, learningPolicyReadout } from "./bots.ts";
+import { CompactionOffer, compactionOfferNotice } from "./compaction-offer.ts";
 import type { FileReader } from "./diff-render.ts";
+import { type ForgetHook, type ForgetOutcome, forgetPickerHint, forgetTargetOf } from "./forget.ts";
 import type { Chord } from "./keys.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
 import { attachMentionedFiles, promptAsTyped } from "./mention-attachments.ts";
@@ -28,6 +32,7 @@ import {
   type CommandsPort,
   type EditorOutcome,
   PromptEditor,
+  type SendMode,
 } from "./prompt-editor.ts";
 import type { PromptUndoHook, StagedUndo } from "./prompt-undo.ts";
 import { SessionLedger } from "./session-ledger.ts";
@@ -70,6 +75,8 @@ export type QueueMove = -1 | 1;
 
 export type CompactionHook = (instructions: string) => Promise<void>;
 
+export type ToolBatchHook = () => Promise<TurnSettlement | undefined>;
+
 export type ThinkingChangeHook = (level: "on" | "off") => Promise<void>;
 
 export type EffortChangeHook = (level: EffortLevel) => Promise<void>;
@@ -94,6 +101,7 @@ export class ConversationModel {
   lastTitle: Promise<unknown> = Promise.resolve();
   lastFork: Promise<unknown> = Promise.resolve();
   lastUndo: Promise<unknown> = Promise.resolve();
+  lastForget: Promise<unknown> = Promise.resolve();
   lastAside: Promise<unknown> = Promise.resolve();
   private readonly ask: MutationAsk;
   private readonly away = new AwayWatch();
@@ -103,6 +111,9 @@ export class ConversationModel {
   private unfollow: () => void = () => {};
   private afterTurn: (() => Promise<void>) | undefined;
   private compaction: CompactionHook | undefined;
+  private toolBatchSettle: ToolBatchHook | undefined;
+  private forget: ForgetHook | undefined;
+  private forgetReplacement: string | null = null;
   private thinkingChange: ThinkingChangeHook | undefined;
   private effortChange: EffortChangeHook | undefined;
   private promptUndo: PromptUndoHook | undefined;
@@ -114,6 +125,7 @@ export class ConversationModel {
   private shellSequence = 0;
   private shellAbort: AbortController | undefined;
   private queueCursor: number | undefined;
+  private readonly compactionOffer = new CompactionOffer();
 
   constructor(
     agent: Agent | undefined,
@@ -204,6 +216,10 @@ export class ConversationModel {
     return this.ledger.usageSummary(this.agent);
   }
 
+  spendSummary(): string {
+    return this.agent === undefined ? "" : this.ledger.spendSummary(this.agent);
+  }
+
   contextReading(): ContextReading | undefined {
     return this.ledger.contextReading(this.agent);
   }
@@ -287,10 +303,11 @@ export class ConversationModel {
     return this.navigation.scrollBy(delta);
   }
 
-  submitText(text: string, behavior: SendBehavior = "queue"): void {
+  submitText(text: string, mode: SendMode = "queue", images: readonly ImagePart[] = []): void {
     const trimmed = text.trim();
     if (trimmed === "" || this.disposed) return;
     this.stagedUndo = undefined;
+    const behavior = mode === "now" ? this.setQueueAside() : mode;
     const command = shellEscapeCommand(trimmed);
     if (command !== undefined) {
       this.submitShell(trimmed, command, behavior);
@@ -299,7 +316,7 @@ export class ConversationModel {
     if (this.agent === undefined) return;
     this.editor.remember(trimmed);
     this.navigation.snapToLive();
-    this.send(this.withMentionedFiles(trimmed), behavior);
+    this.send(this.withMentionedFiles(trimmed), behavior, images);
   }
 
   confirmMutation(call: ToolCallPart): Promise<boolean> {
@@ -334,6 +351,31 @@ export class ConversationModel {
 
   bindCompaction(hook: CompactionHook): void {
     this.compaction = hook;
+  }
+
+  bindToolBatchSettler(hook: ToolBatchHook): void {
+    this.toolBatchSettle = hook;
+  }
+
+  bindForget(hook: ForgetHook): void {
+    this.forget = hook;
+  }
+
+  beginForget(replacement: string | undefined): void {
+    if (this.forget === undefined) {
+      this.feed.post("info", "can't forget · no session store");
+      return;
+    }
+    if (this.busy) {
+      this.feed.post("info", turnRunningNotice);
+      return;
+    }
+    this.forgetReplacement = replacement ?? null;
+    if (!this.navigation.enterPicker("forget")) this.feed.post("info", nothingToForgetNotice);
+  }
+
+  pickerHint(): string {
+    return this.navigation.pickerPurpose() === "forget" ? forgetPickerHint : forkPickerHint;
   }
 
   bindThinkingChange(hook: ThinkingChangeHook): void {
@@ -442,7 +484,9 @@ export class ConversationModel {
   private follow(agent: Agent): void {
     this.unfollow();
     this.agent?.settleTurnsWith(undefined);
+    this.agent?.settleToolBatchesWith(undefined);
     agent.settleTurnsWith(() => this.settleAfterTurn());
+    agent.settleToolBatchesWith(() => this.settleToolBatch());
     const stops = [
       this.feed.follow(agent.bus),
       agent.bus.on("turn.completed", ({ replay }) => {
@@ -457,10 +501,10 @@ export class ConversationModel {
     this.agent = agent;
   }
 
-  private send(text: string, behavior: SendBehavior): void {
+  private send(text: string, behavior: SendBehavior, images: readonly ImagePart[] = []): void {
     if (this.agent === undefined) return;
     this.lastSend = this.agent
-      .send(text, { behavior })
+      .send(text, { behavior, images })
       .then(
         () => undefined,
         (cause: unknown) => this.reportTurnFailure(cause),
@@ -481,6 +525,13 @@ export class ConversationModel {
       .catch((cause: unknown) => {
         if (!this.disposed) this.feed.post("error", toError(cause).message);
       });
+  }
+
+  private async settleToolBatch(): Promise<readonly Message[] | undefined> {
+    const settlement = await this.toolBatchSettle?.();
+    if (settlement === undefined || this.disposed) return undefined;
+    for (const notice of settlement.notices) this.feed.post("info", notice);
+    return settlement.history;
   }
 
   private async settleThenRecord(transcripts: readonly string[]): Promise<void> {
@@ -551,8 +602,27 @@ export class ConversationModel {
     if (!this.busy) {
       this.away.turnSettled();
       this.settledListener?.(this.outcome());
+      this.offerCompaction();
     }
     this.touch();
+  }
+
+  private offerCompaction(): void {
+    if (this.compaction === undefined) return;
+    if (this.compactionOffer.crossed(this.contextReading())) {
+      this.feed.post("info", compactionOfferNotice);
+    }
+  }
+
+  private setQueueAside(): SendBehavior {
+    const agent = this.agent;
+    if (agent === undefined) return "steer";
+    const aside = agent.queued();
+    for (const { id } of aside) agent.cancelQueued(id);
+    if (aside.length === 0) return "steer";
+    this.editor.holdAside(aside.map((prompt) => promptAsTyped(prompt.text)));
+    this.feed.post("info", queueAsideNotice(aside.length));
+    return "steer";
   }
 
   private welcomeBack(stretch: AwayStretch | undefined): void {
@@ -625,7 +695,7 @@ export class ConversationModel {
     if ("submit" in outcome) {
       if (this.agent === undefined && shellEscapeCommand(outcome.submit) === undefined) return true;
       this.editor.clear();
-      this.submitText(outcome.submit, outcome.behavior);
+      this.submitText(outcome.submit, outcome.behavior, outcome.images);
       return true;
     }
     const ran =
@@ -770,7 +840,8 @@ export class ConversationModel {
         return true;
       case "return":
       case "enter":
-        this.forkSelectedPrompt();
+        if (this.navigation.pickerPurpose() === "forget") this.forgetSelectedEntry();
+        else this.forkSelectedPrompt();
         return true;
       default:
         this.navigation.exitBacktrack();
@@ -887,6 +958,29 @@ export class ConversationModel {
     }
   }
 
+  private forgetSelectedEntry(): void {
+    const entry = this.navigation.selectedEntry();
+    const replacement = this.forgetReplacement;
+    this.navigation.exitBacktrack();
+    const target = entry === undefined ? undefined : forgetTargetOf(entry);
+    const forget = this.forget;
+    if (target === undefined || forget === undefined) return;
+    if (this.busy) {
+      this.feed.post("info", turnRunningNotice);
+      return;
+    }
+    this.lastForget = forget(target, replacement).then(
+      (outcome) => this.reportForget(outcome),
+      (cause: unknown) => {
+        if (!this.disposed) this.feed.post("error", toError(cause).message);
+      },
+    );
+  }
+
+  private reportForget(outcome: ForgetOutcome): void {
+    if (!this.disposed) this.feed.post("info", outcome.note);
+  }
+
   private reportFork(outcome: ForkOutcome): void {
     if (this.disposed) return;
     if (!outcome.forked) this.feed.post("info", noForkPointNotice);
@@ -934,6 +1028,14 @@ export class ConversationModel {
 }
 
 const noForkPointNotice = "no fork point there";
+
+function queueAsideNotice(count: number): string {
+  return `${count === 1 ? "1 queued prompt" : `${count} queued prompts`} set aside · up on an empty prompt brings them back`;
+}
+
+const nothingToForgetNotice =
+  "nothing to forget yet · prompts and tool results show up here once saved";
+const forkPickerHint = "backtrack · ↑ older · ↓ newer · enter edit & fork · esc cancel";
 const turnRunningNotice = "turn still running · esc to interrupt";
 const alreadyStagedNotice = "already undone · send to keep it or /redo to bring it back";
 const nothingToUndoNotice = "nothing to undo here";

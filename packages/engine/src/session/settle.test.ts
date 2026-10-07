@@ -220,3 +220,82 @@ describe("compactNow", () => {
     });
   });
 });
+
+describe("settleTurn between tool batches", () => {
+  async function midTurnSession(): Promise<SessionStore> {
+    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), ".");
+    await store.append(textMessage("user", `read the big file ${"q".repeat(300)}`));
+    await store.append({
+      role: "assistant",
+      parts: [{ type: "tool-call", callId: "big", name: "read", arguments: { path: "big.txt" } }],
+    });
+    await store.append({
+      role: "tool",
+      parts: [{ type: "tool-result", callId: "big", output: "b".repeat(3000), isError: false }],
+    });
+    return store;
+  }
+
+  it("compacts before the next model call, defers the flush to after the turn, and never compacts twice", async () => {
+    const store = await midTurnSession();
+    const budget = contextBudgetFor(500);
+    expect(readStore(store, budget).used).toBeGreaterThan(budget.window);
+    const flushProvider = new MockProvider([textTurn("would be a flushed fact")]);
+    const flush = new MemoryFlush({ provider: flushProvider, store: await trustedVault() });
+
+    const midTurn = await settleTurn({
+      store,
+      provider: new MockProvider([textTurn("## Goal\nfolded mid-turn")]),
+      history: store.messages(),
+      budget,
+      flush,
+      phase: "between-tool-batches",
+    });
+
+    expect(midTurn.compacted?.summary).toBe("## Goal\nfolded mid-turn");
+    expect(midTurn.flushed).toEqual([]);
+    expect(flushProvider.remaining()).toBe(1);
+    expect(midTurn.history?.map((message) => message.role)).toEqual(["user", "assistant", "tool"]);
+    expect(messageText(midTurn.history?.[0] ?? textMessage("user", ""))).toBe(
+      "## Goal\nfolded mid-turn",
+    );
+
+    await store.append(textMessage("assistant", "the file says b"));
+    expect(store.activePath().map((entry) => entry.type)).toEqual([
+      "message",
+      "message",
+      "message",
+      "compaction",
+      "message",
+    ]);
+
+    const afterTurn = await settleTurn({
+      store,
+      provider: new MockProvider([]),
+      history: store.messages(),
+      budget,
+      flush,
+      phase: "after-turn",
+    });
+    expect(afterTurn.compacted).toBeUndefined();
+    expect(afterTurn.flushed).toHaveLength(2);
+    expect(flushProvider.remaining()).toBe(0);
+  });
+
+  it("stays quiet between batches while the context has room", async () => {
+    const store = await midTurnSession();
+    const settlement = await settleTurn({
+      store,
+      provider: new MockProvider([]),
+      history: store.messages(),
+      budget: contextBudgetFor(200_000),
+      phase: "between-tool-batches",
+    });
+    expect(settlement).toEqual({
+      history: undefined,
+      notices: [],
+      flushed: [],
+      compacted: undefined,
+    });
+  });
+});

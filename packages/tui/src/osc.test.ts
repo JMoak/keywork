@@ -291,3 +291,39 @@ describe("theme reports (mode 2031)", () => {
     expect(themeChangeReported("?997;1n")).toBe(false);
   });
 });
+
+describe("windowTitle spend", () => {
+  it("carries the session spend between the name and the app, beside the stamp", () => {
+    expect(
+      windowTitle({ name: "fix the parser", state: "needs-you", spend: "$0.42" }, unicode),
+    ).toBe("█ fix the parser · $0.42 · keywork");
+    expect(windowTitle({ name: "s", state: "idle", spend: "12▸3" }, unicode)).toBe(
+      "s · 12▸3 · keywork",
+    );
+    expect(windowTitle({ state: "idle", spend: "$1.00" }, unicode)).toBe("$1.00 · keywork");
+  });
+
+  it("drops a blank spend without leaving a joint behind", () => {
+    expect(windowTitle({ name: "s", state: "idle", spend: "" }, unicode)).toBe("s · keywork");
+    expect(windowTitle({ name: "s", state: "idle", spend: undefined }, unicode)).toBe(
+      "s · keywork",
+    );
+  });
+});
+
+describe("TerminalReporter refresh", () => {
+  it("rewrites the same title after a refresh so an editor's title does not stick", () => {
+    const writes: string[] = [];
+    const reporter = new TerminalReporter(
+      (bytes) => writes.push(bytes),
+      { title: true, progress: false, clipboard: true, hyperlinks: false },
+      { glyphTier: 2, nerdFont: false },
+    );
+    reporter.report({ name: "a", state: "idle" });
+    reporter.report({ name: "a", state: "idle" });
+    expect(writes).toEqual([setTitle("a · keywork")]);
+    reporter.refresh();
+    reporter.report({ name: "a", state: "idle" });
+    expect(writes).toEqual([setTitle("a · keywork"), setTitle("a · keywork")]);
+  });
+});

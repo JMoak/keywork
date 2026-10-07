@@ -125,6 +125,16 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       run: (args) => core.openConnect(args),
     }),
     ...undoCommands(core),
+    {
+      name: "forget",
+      description:
+        "take an earlier prompt or tool result out of the model's context: /forget [replacement]",
+      run: (args) => {
+        const conversation = focusedConversation(core);
+        if (conversation === undefined) core.postNotice("nothing to forget · no conversation here");
+        else conversation.beginForget(operandOf(args));
+      },
+    },
     ...exportCommands(core),
     {
       name: "show-costs",

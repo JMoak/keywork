@@ -61,6 +61,21 @@ describe("agent writes into the memory vault", () => {
     expect((await vault.readNote("Deploy Steps"))?.provenance).toBe("agent");
   });
 
+  it("stamps the session that wrote the note as its origin", async () => {
+    const { root, vault } = await workspace();
+    const tools = coreTools(toolScope(root), { vault, session: () => "session-7" });
+
+    await tool(tools, "write").execute({
+      path: ".keywork/memory/Origin.md",
+      content: "Written during one session.\n",
+    });
+
+    const staged = onlyStagedWrite(await vault.listStaged());
+    expect(parseDocument(staged.content, staged.target).frontmatter.origin_session).toBe(
+      "session-7",
+    );
+  });
+
   it("overrides a claimed user provenance with agent", async () => {
     const { vault, tools } = await workspace();
 

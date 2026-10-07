@@ -20,7 +20,7 @@ export function writeTool(scope: ToolScope, options: FileToolOptions = {}) {
     run: async ({ path, content }, signal) => {
       const target = writeTarget(scope, path, options.vault);
       if (target.kind === "vault-note")
-        return proposeVaultNote(target, content, path, options.origin);
+        return proposeVaultNote(target, content, path, options.origin, options.session);
       await mkdir(dirname(target.path), { recursive: true });
       await writeFile(target.path, content, "utf8");
       return annotatedResult(

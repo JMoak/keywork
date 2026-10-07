@@ -24,6 +24,7 @@ export interface Stage {
   readonly sessionDir: string;
   press(...chords: readonly string[]): Promise<void>;
   type(text: string): Promise<void>;
+  paste(text: string): Promise<void>;
   click(x: number, y: number): Promise<void>;
   hover(x: number, y: number): Promise<void>;
   scroll(x: number, y: number, direction: "up" | "down", times?: number): Promise<void>;

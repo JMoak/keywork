@@ -93,6 +93,10 @@ export function textMessage(role: Role, text: string): Message {
   return { role, parts: [{ type: "text", text }] };
 }
 
+export function promptMessage(text: string, images: readonly ImagePart[] = []): Message {
+  return { role: "user", parts: [{ type: "text", text }, ...images] };
+}
+
 export function messageText(message: Message): string {
   return message.parts
     .filter((part): part is TextPart => part.type === "text")

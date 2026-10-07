@@ -412,6 +412,8 @@ escapes.
 
 Requested by keywork-app (its `docs/plan.md` server lane), built here under keywork's rules so
 every surface benefits: the app, `keywork attach`, and any Tier-2 client.
+The rest of that lane (the app's S2 to S9) now lives in [`118`](118-app-surface.md) as the
+route families K1 to K4; this section keeps only what landed.
 
 #### S0 · S1 ledger (landed 2026-09-07)
 

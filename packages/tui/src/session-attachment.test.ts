@@ -3,13 +3,16 @@ import {
   type Message,
   MockProvider,
   messageText,
+  type Tool,
   textMessage,
   textTurn,
+  toolCallTurn,
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { ConversationPane } from "./conversation-pane.ts";
 import { AppProbe } from "./probe.ts";
 import {
+  type AfterTurn,
   adoptSession,
   attachOnFork,
   bindSessionLifecycle,
@@ -359,5 +362,113 @@ describe("bindSessionLifecycle", () => {
     await pane.settled();
     expect(appended.length).toBeGreaterThan(0);
     expect(pane.currentAgent()).toBe(agent);
+  });
+});
+
+describe("bindSessionLifecycle between tool batches", () => {
+  const echo: Tool = {
+    name: "echo",
+    description: "echoes",
+    parameters: { type: "object" },
+    execute: async (args) => `echo: ${(args as { text: string }).text}`,
+  };
+
+  it("persists the batch so far, settles with the between-tool-batches phase, and hands the folded history to the running agent", async () => {
+    const appended: string[] = [];
+    const phases: string[] = [];
+    const attachment: SessionAttachment = {
+      id: "s1",
+      history: [],
+      replay: () => {},
+      append: async (message) => {
+        appended.push(`${message.role}:${messageText(message)}`);
+        return undefined;
+      },
+    };
+    const afterTurn: AfterTurn = async (turn) => {
+      phases.push(`${turn.phase}@${turn.history.length}`);
+      if (turn.phase !== "between-tool-batches") return undefined;
+      return {
+        history: [textMessage("user", "folded"), ...turn.history.slice(1)],
+        notices: ["compacted mid-turn"],
+        flushed: [],
+        compacted: undefined,
+      };
+    };
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const provider = new MockProvider(
+          [
+            toolCallTurn({
+              type: "tool-call",
+              callId: "c1",
+              name: "echo",
+              arguments: { text: "x" },
+            }),
+            textTurn("done"),
+          ],
+          { capabilities: { input: ["text"], toolCalls: true, contextWindow: 8 } },
+        );
+        const agent = new Agent({ provider, tools: [echo] });
+        const pane = new ConversationPane(id, agent, notify, undefined, commands);
+        bindSessionLifecycle({ pane, attachment, afterTurn });
+        return pane;
+      },
+    });
+    probe.type("one").keys("enter");
+    await probe.settled();
+
+    expect(phases).toEqual(["between-tool-batches@3", "after-turn@4"]);
+    expect(appended).toEqual(["user:one", "assistant:", "tool:", "assistant:done"]);
+    const history = probe.model()?.currentAgent()?.history() ?? [];
+    expect(history.map((message) => `${message.role}:${messageText(message)}`)).toEqual([
+      "user:folded",
+      "assistant:",
+      "tool:",
+      "assistant:done",
+    ]);
+    expect(probe.model()?.entries).toContainEqual({ kind: "info", text: "compacted mid-turn" });
+  });
+
+  it("leaves the store alone between batches while the context has room", async () => {
+    const appendedBefore: number[] = [];
+    const phases: string[] = [];
+    const appended: string[] = [];
+    const attachment: SessionAttachment = {
+      id: "s1",
+      history: [],
+      replay: () => {},
+      append: async (message) => {
+        appended.push(message.role);
+        return undefined;
+      },
+    };
+    const afterTurn: AfterTurn = async (turn) => {
+      phases.push(turn.phase);
+      appendedBefore.push(appended.length);
+      return undefined;
+    };
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const provider = new MockProvider([
+          toolCallTurn({ type: "tool-call", callId: "c1", name: "echo", arguments: { text: "x" } }),
+          textTurn("done"),
+        ]);
+        const pane = new ConversationPane(
+          id,
+          new Agent({ provider, tools: [echo] }),
+          notify,
+          undefined,
+          commands,
+        );
+        bindSessionLifecycle({ pane, attachment, afterTurn });
+        return pane;
+      },
+    });
+    probe.type("one").keys("enter");
+    await probe.settled();
+
+    expect(phases).toEqual(["after-turn"]);
+    expect(appendedBefore).toEqual([4]);
   });
 });

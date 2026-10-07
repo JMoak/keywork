@@ -92,6 +92,20 @@ The decision also settles whether calm shows the count at all (today it does; a 
   owned state", `effort-and-cache.test.ts` "render as their own prose entry between tool rows and
   never absorb later text".
 
+- **S3-T2 "never mid-stream, after-turn only", reversed 2026-10-07 (117 mid-run compaction).**
+  The settler waited for the turn to end, so a turn whose tool results crossed the compaction
+  mark had to survive its remaining model calls over budget and fail at the provider wall if it
+  could not. Now the agent settles between tool batches as well (`Agent.settleToolBatchesWith`,
+  wired by `bindSessionLifecycle` to the same `afterTurn` port with `phase:
+  "between-tool-batches"`): messages so far are persisted, B7 runs if the reading is past the
+  mark, and the running agent adopts the compacted projection before its next call. What did
+  not change: no compaction while a stream is open, the flush never runs mid-turn (it waits for
+  the after-turn settler and the latch re-arms as before), `/compact` still refuses while busy,
+  and the after-turn settler compacts at most once more only if a later batch pushed the
+  context back over the mark. The context gauge reads the agent's history, so it drops
+  mid-turn when this fires. Evidence in [`108`](108-survivability-and-launch-rail.md)
+  "Amendment 2026-10-07".
+
 ## Follow-ups (not in this stream)
 
 - Title-bar masthead tier hides telemetry by design; the gauge is reachable via `/context`.

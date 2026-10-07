@@ -230,6 +230,7 @@ export function composeAgents(
         dailyStore: () => options.arcs?.layerStoreFor(sessionId) ?? workspaceStore,
         bot: () => options.bots?.flushTarget(sessionId),
         systemPrompt: composition.systemPromptFor(undefined),
+        session: sessionId,
       });
       flushes.set(sessionId, flush);
       return flush;
@@ -374,6 +375,7 @@ function buildAgent(
       vault: composition.memory()?.store,
       worktree: composition.checkpoints,
       origin: () => self?.turnOrigin(),
+      session: () => resolveSessionKey(spec.sessionId),
       onToolOutput: (chunk) => self?.reportToolOutput(chunk),
       afterSave: composition.afterSaveFor((publication) =>
         self?.bus.emit("diagnostics.published", publication),

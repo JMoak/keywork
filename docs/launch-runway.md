@@ -44,17 +44,37 @@ notes for the 113 ledger; do not fix drive-by in the same session unless it is a
   minute. Practice runs count as the timing evidence.
 - The README's adjacent screenshot: a real terminal at 120x32, seams chrome, three panes,
   one arc hue visible. Capture after the W9 masthead work lands so the poster state shows.
+- **Poster candidate (checked 2026-10-07, 49 capture sets in `artifacts/e2e/`):** no current
+  still meets all four points, because every e2e capture runs the mock provider with empty
+  sessions and the `keywork e2e` status line. Nearest on geometry:
+  `tiling-tour/02-three-panes` (120x32 yes, seams yes, four panes with the tree docked
+  left and three sessions, no arc bound so no hue). Nearest on hue:
+  `arcs/02-split-inherits-arc` (seams yes, `#dock-v2` chip and the purple arc hue on both
+  session rows, but 160x40 and four panes). The poster is a live capture of the real app
+  at 120x32 with one arc bound; the `arcs` scenario's first two steps are the recipe.
+
+### README one-liner drafts (2026-10-07, for Jordan to wordsmith; none of these is in README.md)
+
+Each line is true in the tree today: tiling panes, `/undo` on shadow-git checkpoints, the
+pty-backed terminal pane on Linux and macOS, the memory vault, headless `keywork run`.
+
+1. Split your terminal, run an agent in every pane, and take any turn back with `/undo`.
+2. A tiling workspace for coding agents, with a real shell beside them and an undo key under
+   every edit they make.
+3. Agents in panes, a vault that remembers across sessions, and the same engine in CI as
+   `keywork run`.
 
 ## Open items before the button
 
 | item | state | owner |
 |---|---|---|
 | First tag (`v0.1.0`) | not cut; cut only after the walk passes | Jordan |
-| `ubuntu-24.04-arm` and `macos-15-intel` runner labels | assumed in `release.yml`, unverified against the repo's runner set | whoever runs the first tag |
-| npm package name | `keywork` availability on the registry unchecked; decide name before `NPM_PUBLISH` flips | Jordan |
-| README one-liner | feel-led, Jordan wordsmiths; the draft slot is the first line under the title | Jordan |
+| `ubuntu-24.04-arm` and `macos-15-intel` runner labels | verified 2026-10-07 against the GitHub-hosted runner reference (docs.github.com): all five labels in `release.yml` (`ubuntu-latest`, `ubuntu-24.04-arm`, `windows-latest`, `macos-latest`, `macos-15-intel`) are documented hosted labels; the arm label is the standard free-for-public-repos runner, no `workflow` change needed; still unproven by a run until the first tag | done (label check); first-tag run pending |
+| npm package name | checked 2026-10-07: `keywork` is taken (nirrius/keywork, a Cloudflare Workers library, AGPL-3.0, latest 8.1.19, active); `keywork-cli` is already Jordan's on the registry (`0.1.0-next.0` and `-next.1`, FSL-1.1-MIT, `bin: keywork`), which is the name `scripts/release/npm-manifest.ts` writes; no package exists under the `@keywork` scope and scope ownership cannot be checked without an account; `keywork-agent` is free. `docs/release.md` now says `keywork-cli` | done, unless Jordan wants a different name before `NPM_PUBLISH` flips |
+| README one-liner | feel-led, Jordan wordsmiths; the draft slot is the first line under the title; three drafts above (2026-10-07) | Jordan |
+| Poster screenshot | candidate checked 2026-10-07 (above): no e2e still meets all four spec points; live capture at 120x32 with one arc bound | Jordan, after the walk |
 | Keys section: win32 note | landed 2026-09-02: the README keyboard bullet names the Windows Terminal reality and the `leader i` chord | done |
-| Public-repo sweep | swept 2026-09-02: NOTICE reviewed current, every local doc link resolves, prose check green, tree and history secret scans clean (only the redaction test's documented EXAMPLE fixtures) | done |
+| Public-repo sweep | swept 2026-09-02 and again 2026-10-07: NOTICE current (Pi credited for ContextEditEntry and the 40 D1 to D3 hook vocabulary, OpenCode D5/D6 marked design only, the October memory and skills work is `OWN`), all 72 markdown files under `docs/` plus `README.md` resolve every relative link, prose check green, working tree and full history secret scans clean (hits are the documented EXAMPLE fixtures in the redaction, diagnostics, anthropic, run and bug-bundle tests plus `scripts/guardrail-patterns.json`) | done |
 
 ## The bar, restated
 

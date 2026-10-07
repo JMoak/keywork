@@ -31,7 +31,7 @@ export function editTool(scope: ToolScope, options: FileToolOptions = {}) {
       const raw = await readFile(target.path, "utf8");
       const { content, occurrences } = replaced(raw, request);
       if (target.kind === "vault-note")
-        return proposeVaultNote(target, content, request.path, options.origin);
+        return proposeVaultNote(target, content, request.path, options.origin, options.session);
       await writeFile(target.path, content, "utf8");
       const label = occurrences === 1 ? "1 occurrence" : `${occurrences} occurrences`;
       return annotatedResult(

@@ -1,9 +1,11 @@
 import { statSync } from "node:fs";
+import { release as osRelease } from "node:os";
 import { resolve } from "node:path";
-import { keepAwake, openInteractiveShell } from "@keywork/engine";
+import { keepAwake, openInteractiveShell, probePtySupport } from "@keywork/engine";
 import {
   type CliRenderer,
   createCliRenderer,
+  createHostClipboard,
   type KeyEvent,
   type MouseEvent,
   type PasteEvent,
@@ -17,6 +19,13 @@ import { botJumpCommands } from "./bot-commands.ts";
 import type { BotEntry, BotSummary, BotsPort } from "./bots.ts";
 import { realBrowserDisk } from "./browser-model.ts";
 import { BrowserPane } from "./browser-pane.ts";
+import {
+  type BugBundleFacts,
+  bugCommand,
+  EventRecorder,
+  type RecordedEvent,
+  sessionShape,
+} from "./bug-bundle.ts";
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import { commitDraftCommand, gitIn } from "./commit-draft.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
@@ -39,6 +48,7 @@ import {
   registerExtensions,
   shadowedExtensionNotice,
 } from "./extension-commands.ts";
+import { externalEditorFor } from "./external-editor.ts";
 import { FileIndex, fileJumpSource, fileJumpsAllowed } from "./file-index.ts";
 import { FilePane } from "./file-pane.ts";
 import {
@@ -52,6 +62,7 @@ import type { CheckpointsPort } from "./fork.ts";
 import { FrameCoalescer, type FrameScheduler } from "./frame-scheduler.ts";
 import { fullRect, type Rect, type Screen } from "./geometry.ts";
 import { herdrReporter } from "./herdr.ts";
+import { type ClipboardPort, type ClipboardRead, imageFromBytes } from "./image-paste.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import { applyKeybindings, type KeybindingSource, watchKeybindings } from "./keybindings.ts";
 import { chordOf } from "./keys.ts";
@@ -81,6 +92,7 @@ import type { PaneIntents } from "./pane.ts";
 import { drawnRect } from "./pane-geometry.ts";
 import type { PaneFactories } from "./pane-kinds.ts";
 import { pointerEventOf } from "./pointer.ts";
+import { rendererHold } from "./renderer-hold.ts";
 import { loadRestorePlan, statKind, type WorkspacePort } from "./restore-plan.ts";
 import {
   type AfterTurn,
@@ -99,6 +111,7 @@ import {
   type TerminalPanePort,
   terminalPaneFactory,
 } from "./terminal-pane.ts";
+import { embeddedTerminalSurfaces } from "./terminal-surface.ts";
 import type { ThemeOverrides } from "./theme.ts";
 import {
   appFrame,
@@ -169,6 +182,13 @@ export interface AppOptions {
   terminalPane?: TerminalPanePort;
   notifications?: NotificationPolicy;
   inbox?: InboxSource;
+  bugReport?: BugReportPort;
+}
+
+export interface BugReportPort {
+  version?: string;
+  config?: () => unknown;
+  dir?: string;
 }
 
 export interface NoticeSource {
@@ -218,6 +238,7 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
       : attachOnFork(options.sessionTrees, options.sessions, escrow);
   const glyphs = options.glyphs ?? detectCapabilities();
   const terminal = terminalOf(options, glyphs);
+  const recorder = new EventRecorder();
   const awake = keepAwake();
   const herdr = herdrReporter({ env: options.terminal?.facts?.env ?? process.env });
   const sessions = new SessionPanes({
@@ -232,7 +253,7 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     workspaceFiles: () =>
       fileJumpsAllowed(options.workspaceSetup?.readiness()) ? fileIndex.entries() : [],
     ...definedOnly({
-      agentFactory: options.agentFactory,
+      agentFactory: recordingAgents(options.agentFactory, recorder),
       shellEscape: options.shellEscape,
       spillFile: options.spillFile,
       sessions: options.sessions,
@@ -272,11 +293,35 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
         gap: flavors.active.gap,
       }),
     ...paneFactories(options, sessions, trees, paneSessions, arcIndex, () => core),
+    createTerminalPane: terminalPaneFactory({
+      cwd: process.cwd(),
+      trusted: () => options.terminalPane?.trusted === true,
+      spawn: options.terminalPane?.spawn ?? openInteractiveShell,
+      pty: options.terminalPane?.pty ?? probePtySupport(),
+      surfaces: embeddedTerminalSurfaces(renderer),
+      mirror: mirrorSourceOverPanes(() => core.panes),
+    }),
     ...(options.diff !== undefined && {
       createDiffPane: (id: string, notify: () => void, intents: PaneIntents) =>
         new DiffPane(id, notify, intents, { ...options.diff, changes: fileChanges }),
     }),
     ...hostPorts(options, sessions),
+    externalEditor: externalEditorFor({
+      env: options.terminal?.facts?.env ?? process.env,
+      hold: rendererHold({
+        renderer,
+        write: terminal.write,
+        modes: () => ({
+          focusReporting: terminal.notifier.transport !== "off",
+          themeReports: terminal.interactive && flavors.names().includes(systemFlavorName),
+        }),
+        afterResume: () => {
+          terminal.reporter.refresh();
+          render();
+        },
+      }),
+    }),
+    ...definedOnly({ clipboard: hostClipboardPort() }),
     ...(restore.kind === "restore" && { restoreWorkspace: restore.state }),
     ...(options.workspace !== undefined && {
       saveWorkspace: (state: WorkspaceState) => options.workspace?.save(state),
@@ -337,7 +382,7 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
         },
         options.scrim === "on",
       );
-      terminal.reporter.report(focusedWindowTitle(sessions));
+      terminal.reporter.report(focusedWindowTitle(sessions, terminal.notifier.terminalFocused));
       terminal.notifier.observe(workSnapshot(sessions, inboxWaiting));
       awake.turnRunning(sessions.working());
       herdr.report({ working: sessions.working(), blocked: sessions.awaiting().length > 0 });
@@ -354,6 +399,14 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     }
   };
   registerHostCommands(core, options, sessions, flavors, render, terminal);
+  core.registry.register(
+    bugCommand({
+      facts: () => bugFacts(options, sessions, terminal, glyphs, recorder.recent()),
+      notice: (text) => core.postNotice(text),
+      post: (text) => sessions.postNotice(text),
+      ...definedOnly({ dir: options.bugReport?.dir }),
+    }),
+  );
   core.registry.addSource(() => arcJumpCommands(core, arcIndex.listed()));
   const bots = options.bots;
   if (bots !== undefined) core.registry.addSource(() => botJumpCommands(core, bots));
@@ -438,12 +491,6 @@ function paneFactories(
       new FilePane(id, process.cwd(), path, notify, fileOptions),
     createBrowserPane: (id, root, notify, intents) =>
       new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
-    createTerminalPane: terminalPaneFactory({
-      cwd: process.cwd(),
-      trusted: () => options.terminalPane?.trusted === true,
-      spawn: options.terminalPane?.spawn ?? openInteractiveShell,
-      mirror: mirrorSourceOverPanes(() => core().panes),
-    }),
     ...(trees !== undefined && {
       createSessionTreePane: (id, notify, intents, targetSession, sessionId, groupBy) =>
         new SessionTreePane(id, notify, intents, trees, targetSession, {
@@ -656,10 +703,91 @@ const stdinTap: InputTap = (listener) => {
   return () => void process.stdin.off("data", onData);
 };
 
-function focusedWindowTitle(sessions: SessionPanes): WindowTitleState {
+function focusedWindowTitle(sessions: SessionPanes, terminalFocused: boolean): WindowTitleState {
   const focused = sessions.focused();
   if (focused === undefined) return { state: "idle" };
-  return { name: focused.pane.titled() ?? focused.id, state: focused.pane.lifecycle() };
+  return {
+    name: focused.pane.titled() ?? focused.id,
+    state: focused.pane.lifecycle(),
+    ...(!terminalFocused && { spend: focused.pane.spend() }),
+  };
+}
+
+function recordingAgents(
+  factory: AgentFactory | undefined,
+  recorder: EventRecorder,
+): AgentFactory | undefined {
+  if (factory === undefined) return undefined;
+  return (guard, history, seams, bot) => {
+    const agent = factory(guard, history, seams, bot);
+    recorder.follow(agent.bus);
+    return agent;
+  };
+}
+
+function hostClipboardPort(): ClipboardPort | undefined {
+  try {
+    const host = createHostClipboard();
+    return { read: () => readHostClipboard(host) };
+  } catch {
+    return undefined;
+  }
+}
+
+async function readHostClipboard(
+  host: ReturnType<typeof createHostClipboard>,
+): Promise<ClipboardRead> {
+  const result = await host.read({ preferredTypes: clipboardTypes });
+  if (result.status !== "read")
+    return { kind: result.status === "empty" ? "empty" : "unsupported" };
+  const { mimeType, bytes } = result.representation;
+  if (mimeType === "text/plain") return { kind: "text", text: new TextDecoder().decode(bytes) };
+  const image = imageFromBytes(bytes, mimeType);
+  return image === undefined ? { kind: "unsupported" } : { kind: "image", image };
+}
+
+const clipboardTypes = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "text/plain",
+] as const;
+
+function bugFacts(
+  options: AppOptions,
+  sessions: SessionPanes,
+  terminal: Terminal,
+  glyphs: GlyphSupport,
+  events: readonly RecordedEvent[],
+): BugBundleFacts {
+  const env = options.terminal?.facts?.env ?? process.env;
+  const focused = sessions.focused();
+  const model = focused?.pane.model;
+  return {
+    version: options.bugReport?.version,
+    os: { platform: process.platform, release: osRelease(), arch: process.arch },
+    bun: process.versions.bun,
+    terminal: {
+      TERM: env.TERM,
+      TERM_PROGRAM: env.TERM_PROGRAM,
+      TERM_PROGRAM_VERSION: env.TERM_PROGRAM_VERSION,
+      COLORTERM: env.COLORTERM,
+      windowsTerminal: env.WT_SESSION !== undefined,
+      multiplexer: env.TMUX !== undefined || env.ZELLIJ !== undefined || env.STY !== undefined,
+      ssh: env.SSH_CONNECTION !== undefined || env.SSH_TTY !== undefined,
+      glyphTier: glyphs.glyphTier,
+      notifications: terminal.notifier.transport,
+    },
+    config: options.bugReport?.config?.(),
+    events,
+    ...(model !== undefined && {
+      session: sessionShape(model.currentAgent()?.history() ?? [], model.entries, [], {
+        id: focused?.pane.sessionId,
+        model: sessions.currentModel(),
+      }),
+    }),
+  };
 }
 
 function workSnapshot(sessions: SessionPanes, inbox: number): WorkSnapshot {
@@ -717,7 +845,13 @@ function wireInput(
     render();
   });
   renderer.keyInput.on("paste", (event: PasteEvent) => {
-    contain("paste", () => core.handlePaste(new TextDecoder().decode(event.bytes)));
+    contain("paste", () =>
+      core.handlePaste(new TextDecoder().decode(event.bytes), {
+        mimeType: event.metadata?.mimeType,
+        kind: event.metadata?.kind,
+        bytes: event.bytes,
+      }),
+    );
     render();
   });
   if (pointerOn) {

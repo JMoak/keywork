@@ -7,7 +7,7 @@ import { bashTool, detectShell } from "./bash.ts";
 import { reportingChanges, type WorktreeChanges } from "./command-changes.ts";
 import type { ToolScope } from "./confine.ts";
 import { editTool } from "./edit.ts";
-import type { OriginSource } from "./protected-writes.ts";
+import type { OriginSource, SessionSource } from "./protected-writes.ts";
 import { readTool } from "./read.ts";
 import { persistentBashTool, type ShellSession } from "./shell-session.ts";
 import { writeTool } from "./write.ts";
@@ -26,6 +26,7 @@ export interface CoreToolOptions {
   vault?: MemoryStore | undefined;
   worktree?: WorktreeChanges | undefined;
   origin?: OriginSource | undefined;
+  session?: SessionSource | undefined;
 }
 
 export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool[] {
@@ -33,8 +34,8 @@ export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool
   const vault = options.vault ?? memory?.store;
   const base = [
     readTool(scope),
-    writeTool(scope, { afterSave, vault, origin: options.origin }),
-    editTool(scope, { afterSave, vault, origin: options.origin }),
+    writeTool(scope, { afterSave, vault, origin: options.origin, session: options.session }),
+    editTool(scope, { afterSave, vault, origin: options.origin, session: options.session }),
     reportingChanges(
       shell === undefined
         ? bashTool(scope.cwd, detectShell(), onToolOutput)

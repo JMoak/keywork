@@ -10,6 +10,7 @@ export type ClaudeFeature =
   | "effort"
   | "per-message-effort"
   | "mid-conversation-tools"
+  | "preserved-thinking"
   | "progress-updates"
   | "wide-output";
 
@@ -77,6 +78,12 @@ const firstVersionWith: Record<ClaudeFeature, FirstVersions> = {
     opus: versionOf(4, 8),
     fable: versionOf(5, 1),
     mythos: versionOf(5, 1),
+  },
+  "preserved-thinking": {
+    sonnet: versionOf(4, 6),
+    opus: versionOf(4, 5),
+    fable: versionOf(5),
+    mythos: versionOf(5),
   },
   "progress-updates": {
     sonnet: versionOf(5, 5),

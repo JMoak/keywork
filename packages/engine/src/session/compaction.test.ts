@@ -278,3 +278,44 @@ function capturingProvider(sink: ProviderRequest[], replies: string[]): Provider
     },
   };
 }
+
+describe("thinking across a compaction", () => {
+  const owner = { provider: "anthropic", model: "claude-opus-5-5" };
+  const thinking = (signature: string): Message["parts"][number] => ({
+    type: "redacted-thinking",
+    data: JSON.stringify({ type: "thinking", thinking: "", signature }),
+    owner,
+  });
+  const signaturesIn = (messages: readonly Message[]) =>
+    messages.flatMap((message) =>
+      message.parts.flatMap((part) =>
+        part.type === "redacted-thinking" ? [JSON.parse(part.data).signature as string] : [],
+      ),
+    );
+
+  it("strips thinking bound to the old prefix from the kept tail and keeps blocks made after", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    for (let turn = 1; turn <= 4; turn++) {
+      await store.append(textMessage("user", `question ${turn} ${"x".repeat(200)}`));
+      await store.append({
+        role: "assistant",
+        parts: [thinking(`before-${turn}`), { type: "text", text: `answer ${turn}` }],
+      });
+    }
+    expect(signaturesIn(store.messages())).toHaveLength(4);
+
+    await compactSession(store, new MockProvider([textTurn("## Goal\nfolded")]), {
+      budget: tinyBudget,
+    });
+    expect(signaturesIn(store.messages())).toEqual([]);
+    expect(store.messages().map(messageText)).toContain("answer 4");
+
+    await store.append(textMessage("user", "after the fold"));
+    await store.append({
+      role: "assistant",
+      parts: [thinking("after-1"), { type: "text", text: "fresh" }],
+    });
+    expect(signaturesIn(store.messages())).toEqual(["after-1"]);
+    expect(signaturesIn((await SessionStore.open(store.file)).messages())).toEqual(["after-1"]);
+  });
+});

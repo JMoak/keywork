@@ -1,6 +1,7 @@
 # 116: agentbox
 
-> **Kind:** scoping overlay (2026-09-17); nothing below is built. `agentbox/` at the repo root
+> **Kind:** scoping overlay (2026-09-17); AB2 and AB3 landed 2026-10-02 (117 phase 4), the rest
+> is unbuilt. `agentbox/` at the repo root
 > runs keywork in a Docker Compose box on Amazon Bedrock: an internal network with an
 > allowlisting egress proxy, credentials held by broker containers, MCP systems as directories,
 > and a `box` launcher that declares one box per repo from the developer's machine and proves
