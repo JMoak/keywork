@@ -9,13 +9,28 @@ export interface GlobRule<T> {
   readonly value: T;
 }
 
+export interface PathGlobOptions {
+  readonly caseInsensitive?: boolean;
+}
+
 export function compileGlob(pattern: string): Glob {
-  const matcher = globRegExp(pattern);
-  return {
-    pattern,
-    specificity: literalLength(pattern),
-    test: (value) => matcher.test(value),
-  };
+  return globOver(pattern, anchored(wildcardSource(pattern)));
+}
+
+export function commandGlob(pattern: string): Glob {
+  if (!pattern.endsWith(optionalArgumentsSuffix)) return compileGlob(pattern);
+  const command = wildcardSource(pattern.slice(0, -optionalArgumentsSuffix.length));
+  return globOver(pattern, anchored(`${command}(?: ${anyRun})?`));
+}
+
+export function pathGlob(pattern: string, options: PathGlobOptions = {}): Glob {
+  const slashed = forwardSlashes(pattern);
+  const source = slashed.split(anyDirectoriesSegment).map(wildcardSource).join(anyDirectories);
+  return globOver(pattern, anchored(source, options.caseInsensitive === true ? "i" : ""));
+}
+
+export function forwardSlashes(path: string): string {
+  return path.replaceAll("\\", "/");
 }
 
 export function globMatches(pattern: string, value: string): boolean {
@@ -46,11 +61,25 @@ export function mostSpecificRule<T>(rules: readonly GlobRule<T>[]): GlobRule<T> 
   );
 }
 
-const wildcardSpanningNewlines = "[\\s\\S]*";
+const anyRun = "[\\s\\S]*";
+const anyDirectories = "(?:[\\s\\S]*/)?";
+const anyDirectoriesSegment = /\*\*\//;
+const optionalArgumentsSuffix = " *";
 
-function globRegExp(pattern: string): RegExp {
-  const source = pattern.split("*").map(escapeRegExp).join(wildcardSpanningNewlines);
-  return new RegExp(`^${source}$`);
+function globOver(pattern: string, matcher: RegExp): Glob {
+  return {
+    pattern,
+    specificity: literalLength(pattern),
+    test: (value) => matcher.test(value),
+  };
+}
+
+function anchored(source: string, flags = ""): RegExp {
+  return new RegExp(`^${source}$`, flags);
+}
+
+function wildcardSource(pattern: string): string {
+  return pattern.split("*").map(escapeRegExp).join(anyRun);
 }
 
 function escapeRegExp(literal: string): string {

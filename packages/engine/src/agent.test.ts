@@ -282,6 +282,59 @@ describe("Agent end-to-end with mock provider", () => {
     expect(gates).toEqual(["denied:headless"]);
   });
 
+  it("ends the run at a declined call without another model call when the guard says so", async () => {
+    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
+    const provider = new MockProvider([
+      [
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "c1", name: "scribble", arguments: {} },
+        },
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "c2", name: "echo", arguments: { text: "x" } },
+        },
+        { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
+      ],
+      textTurn("never asked for"),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool, echoTool],
+      guard: { confirm: async () => false, gate: "headless", declineEndsRun: true },
+    });
+    const finished: string[] = [];
+    agent.bus.on("turn.completed", () => finished.push("completed"));
+
+    await agent.send("Change something");
+
+    expect(provider.remaining()).toBe(1);
+    expect(finished).toEqual(["completed"]);
+    expect(orphanedCallIds(agent.history())).toEqual([]);
+    expect(agent.history().at(-1)?.parts[0]).toMatchObject({
+      callId: "c2",
+      output: "skipped: the run ended at a refused call",
+    });
+  });
+
+  it("keeps going after a declined call when the guard leaves the run open", async () => {
+    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+      textTurn("Understood."),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool],
+      guard: { confirm: async () => false, gate: "user" },
+    });
+
+    const reply = await agent.send("Change something");
+
+    expect(provider.remaining()).toBe(0);
+    expect(messageText(reply)).toBe("Understood.");
+  });
+
   it("announces an ask before consulting the guard and labels the answer with the gate it names", async () => {
     const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
     const provider = new MockProvider([

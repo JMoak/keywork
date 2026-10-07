@@ -48,6 +48,12 @@ clock, so every timestamp is deterministic under test.
    A `staged: true` frontmatter flag hides a note from all reads as defense in
    depth. Property-tested: no operation sequence makes an untrusted write
    load-bearing without passing through `approve`.
+   The core `write` / `edit` tools cannot bypass this (117 SW7, 2026-10-02): a note the
+   agent writes under the vault becomes a staged proposal stamped `provenance: agent`
+   whatever its frontmatter claims; the vault's own structure, `AGENTS.md`, `CLAUDE.md`
+   and skill directories are refused with a message that names the right door. Recalled
+   text is neutralized before it reaches the model (SW8: invisible characters stripped,
+   framing lookalikes escaped).
 3. **Every mutation is one-key revertable.** The session ledger records each
    create/edit/approve/discard with full before/after content and hashes (P7).
    `revert` restores the prior content only if the file still matches the

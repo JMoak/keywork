@@ -8,6 +8,7 @@ export interface CheckpointsPort {
   undo(): Promise<boolean>;
   redo(): Promise<boolean>;
   restoreTo(tree: string): Promise<void>;
+  snapshot?(): Promise<string>;
 }
 
 export async function forkAtPrompt(

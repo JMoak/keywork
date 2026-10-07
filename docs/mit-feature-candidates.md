@@ -33,6 +33,13 @@ Research pass surveying permissively-licensed coding agents and agent tooling **
 
 ## 1. Candidate feature table
 
+> **Status pass (2026-10-02, `backlog/117`).** Aider is dormant upstream (last release 0.86.2,
+> 2026-02-12; last push 2026-05-22): rows 1 to 4 stay as design references only. Already
+> landed in keywork: row 1 (repo map, `engine/src/repomap`), row 4's undo half (E3/E4 shadow
+> checkpoints), row 6's permission half (E1 allow/ask/deny), row 7 (`keywork sessions` resume),
+> row 8 (`keywork run` headless), row 10 (cost line with cache tokens), row 13 (Plan mode),
+> row 21 (steer / queue). Row 16 Roo Code is discontinued. Row 22 re-rated below.
+
 | # | Feature | Source | License (verified) | Rating |
 |---|---------|--------|--------------------|--------|
 | 1 | Repo map: ranked codebase map fed as context | Aider | Apache-2.0 | LIFT (algorithm; Python source → likely reimplement in TS, design is documented) |
@@ -56,7 +63,7 @@ Research pass surveying permissively-licensed coding agents and agent tooling **
 | 19 | Restore Checkpoint button per agent message | Zed agent panel | GPL-3.0-or-later | REIMPLEMENT |
 | 20 | Prompt-jump navigation (keys to hop between user prompts in a thread) | Zed agent panel | GPL-3.0-or-later | REIMPLEMENT |
 | 21 | Message editing + queued messages with "steer" interrupt | Zed agent panel | GPL-3.0-or-later | REIMPLEMENT |
-| 22 | ACP (Agent Client Protocol) compatibility as an external-agent surface | Zed / OpenHands ecosystem | Zed GPL; OpenHands MIT; protocol is an open spec | WATCH |
+| 22 | ACP (Agent Client Protocol) compatibility as an external-agent surface | agentclientprotocol.com (SDK Apache-2.0); 1.0 shipped 2026-06-24, 1.10 by 2026-09-30 | Apache-2.0 | READY (post-v1 under D10); see `backlog/117` scope-first |
 | 23 | Local/remote/cloud agent backends behind one UI | OpenHands | MIT | WATCH |
 | 24 | Oracle/subagent + shareable-thread patterns | Amp (Sourcegraph) | **Unverified**: npm says "SEE LICENSE IN LICENSE.md"; assume proprietary | WATCH (ideas only until license verified) |
 | 25 | Fuzzy-finder-everywhere for file/thread/command pickers (fzf-style) | fzf and similar | *Unverified in this pass* (commonly MIT; verify before lifting) | WATCH |

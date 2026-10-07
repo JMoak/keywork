@@ -4,5 +4,6 @@
       "transport": "http",
       "url": "http://github.box:8080/mcp"
     }
-  }
+  },
+  "permissions": [{ "action": "mcp", "resource": "github__*", "effect": "allow" }]
 }

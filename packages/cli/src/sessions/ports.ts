@@ -1,6 +1,14 @@
 import { join } from "node:path";
-import { parseReference, replaySession, SessionStore, type Usage } from "@keywork/engine";
+import {
+  type EffortLevel,
+  isEffortLevel,
+  parseReference,
+  replaySession,
+  SessionStore,
+  type Usage,
+} from "@keywork/engine";
 import type {
+  RewoundPrompt,
   SessionAttachment,
   SessionOverviewItem,
   SessionPort,
@@ -123,6 +131,7 @@ function attachmentOf(
   const name = store.name();
   const selection = store.modelSelection();
   const thinking = thinkingSwitchOf(store.thinkingLevel());
+  const effort = effortOf(store.effort());
   const finishedTurnUsage: Usage[] = [];
   return {
     id: store.header.id,
@@ -131,6 +140,7 @@ function attachmentOf(
       modelReference: `${selection.provider}/${selection.modelId}`,
     }),
     ...(thinking !== undefined && { thinking }),
+    ...(effort !== undefined && { effort }),
     get arc() {
       return store.arcBinding();
     },
@@ -169,6 +179,11 @@ function attachmentOf(
       await store.appendThinkingLevelChange(level);
       seams.onChange?.(store.header.id);
     },
+    recordEffort: async (level) => {
+      if (store.effort() === level) return;
+      await store.appendEffortChange(level);
+      seams.onChange?.(store.header.id);
+    },
     bindArc: async (slug) => {
       if (store.arcBinding() === slug) return;
       await store.appendArcBinding(slug);
@@ -180,7 +195,28 @@ function attachmentOf(
       await store.appendBotBinding(name);
       seams.onChange?.(store.header.id);
     },
+    rewindBefore: (promptId) => rewindBefore(store, promptId),
   };
+}
+
+function rewindBefore(store: SessionStore, promptId: string): RewoundPrompt | undefined {
+  const prompt = store.entry(promptId);
+  if (prompt?.type !== "message" || prompt.message.role !== "user") return undefined;
+  const leaf = store.leafId();
+  moveLeaf(store, prompt.parentId);
+  return {
+    checkpoint: prompt.checkpoint,
+    history: store.messages(),
+    restore: () => {
+      moveLeaf(store, leaf);
+      return store.messages();
+    },
+  };
+}
+
+function moveLeaf(store: SessionStore, entryId: string | null): void {
+  if (entryId === null) store.resetLeaf();
+  else store.branch(entryId);
 }
 
 export async function boundSessionCounts(dir: string): Promise<Map<string, number>> {
@@ -195,6 +231,10 @@ export async function boundSessionCounts(dir: string): Promise<Map<string, numbe
 
 function thinkingSwitchOf(level: string | undefined): ThinkingSwitch | undefined {
   return level === "on" || level === "off" ? level : undefined;
+}
+
+function effortOf(level: string | undefined): EffortLevel | undefined {
+  return level !== undefined && isEffortLevel(level) ? level : undefined;
 }
 
 function overviewItem(summary: SessionSummary): SessionOverviewItem {

@@ -7,6 +7,7 @@ import { scratchDirs } from "@keywork/shared/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createPresetSwitch,
+  permissionsResolver,
   presetCommand,
   presetListing,
   presetResolver,
@@ -30,6 +31,10 @@ afterAll(async () => {
   process.env.USERPROFILE = savedHome.USERPROFILE;
   await rm(home, { recursive: true, force: true });
 });
+
+function readCall(path: string): ToolCallPart {
+  return { type: "tool-call", callId: "c1", name: "read", arguments: { path } };
+}
 
 function bashCall(command: string): ToolCallPart {
   return { type: "tool-call", callId: "c1", name: "bash", arguments: { command } };
@@ -80,7 +85,7 @@ describe("createPresetSwitch", () => {
     expect(openConfig.permissions).toEqual(permissionPresets.open);
     await presets.apply("standard");
     const standardConfig = JSON.parse(await readFile(join(dir, "keywork.json"), "utf8"));
-    expect(standardConfig.permissions).toEqual({});
+    expect(standardConfig.permissions).toEqual([]);
   });
 });
 
@@ -91,6 +96,28 @@ describe("userPresetSwitch", () => {
     const saved = JSON.parse(await readFile(join(home, ".keywork", "keywork.json"), "utf8"));
     expect(saved.permissions).toEqual(permissionPresets.open);
     expect(presets.active()).toBe("open");
+  });
+});
+
+describe("permissionsResolver", () => {
+  it("judges paths relative to the workspace it was given", () => {
+    const workspace = join(tmpdir(), "keywork-resolver-workspace");
+    const resolver = permissionsResolver(
+      [
+        { action: "read", resource: "*", effect: "allow" },
+        { action: "read", resource: "**/.env*", effect: "deny" },
+      ],
+      workspace,
+    );
+    expect(resolver(readCall(join(workspace, ".env")))).toBe("deny");
+    expect(resolver(readCall("apps/.env.local"))).toBe("deny");
+    expect(resolver(readCall(join(workspace, "src", "a.ts")))).toBe("allow");
+  });
+
+  it("keeps the legacy matrix working", () => {
+    const resolver = permissionsResolver({ tools: { bash: "deny" }, bash: { "git *": "allow" } });
+    expect(resolver(bashCall("git status"))).toBe("allow");
+    expect(resolver(bashCall("npm install"))).toBe("deny");
   });
 });
 

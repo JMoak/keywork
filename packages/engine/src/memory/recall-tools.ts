@@ -3,6 +3,7 @@ import { defineTool } from "../tools/define.ts";
 import type { Tool } from "../tools.ts";
 import { searchHitLayer } from "./arcs/recall.ts";
 import type { RecallTap } from "./citations.ts";
+import { neutralizeRecalled } from "./neutralize.ts";
 import { type DailyEntry, isDailyDate, type Note } from "./notes.ts";
 import { type MemorySearcher, type SearchHit, tokenize } from "./search.ts";
 import type { MemoryStore } from "./store.ts";
@@ -146,7 +147,7 @@ function renderDailyHit(hit: DailyHit): string {
 }
 
 function snippet(text: string): string {
-  const line = text.split("\n", 1)[0]?.trim() ?? "";
+  const line = neutralizeRecalled(text.split("\n", 1)[0] ?? "").trim();
   return line.length > snippetLength ? `${line.slice(0, snippetLength)}…` : line;
 }
 
@@ -159,7 +160,7 @@ async function renderDaily(
   const entries = await store.readDaily(date);
   if (entries.length === 0) return `no daily log for ${date}`;
   const lines = entries.flatMap((entry) =>
-    `${entry.time} [${entry.provenance}] ${entry.text}`.split("\n"),
+    `${entry.time} [${entry.provenance}] ${neutralizeRecalled(entry.text)}`.split("\n"),
   );
   return numberedRange(`daily/${date}`, lines, offset, limit);
 }
@@ -171,7 +172,8 @@ function renderNote(note: Note, offset: number, limit: number): string {
     ...(note.pinned ? ["pinned"] : []),
     ...(note.supersededBy === undefined ? [] : [`superseded by [[${note.supersededBy}]]`]),
   ].join(" · ");
-  const body = numberedRange(note.name, note.body.replace(/\n$/, "").split("\n"), offset, limit);
+  const lines = neutralizeRecalled(note.body).replace(/\n$/, "").split("\n");
+  const body = numberedRange(note.name, lines, offset, limit);
   return `${header}\n${body}`;
 }
 

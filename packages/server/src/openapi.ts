@@ -50,6 +50,16 @@ const promptBody: JsonSchema = {
   additionalProperties: false,
 };
 
+const injectBody: JsonSchema = {
+  type: "object",
+  required: ["text", "client"],
+  properties: {
+    text: { type: "string", minLength: 1 },
+    client: { type: "string", pattern: "^[A-Za-z0-9._-]{1,64}$" },
+  },
+  additionalProperties: false,
+};
+
 const askAnswerBody: JsonSchema = {
   type: "object",
   required: ["verdict"],
@@ -111,6 +121,20 @@ export const routes = [
     responses: {
       "202": "The prompt was accepted; watch /events for the turn.",
       "400": "The body is not `{ text }`.",
+      "404": "No session has that id.",
+    },
+  },
+  {
+    method: "POST",
+    path: "/sessions/{id}/inject",
+    operationId: "injectPrompt",
+    summary:
+      'Submit a prompt from a client outside keywork, such as a voice assistant or another LLM window. It runs exactly like a typed prompt: it starts a turn when the session is idle and joins the back of the queue when a turn is running. `turn.started` and `queue.changed` carry `origin: { kind: "external", client }`, the turn answers to the same permission policy and ask queue, and any memory note it proposes is staged with provenance `untrusted`.',
+    authenticated: true,
+    requestBody: injectBody,
+    responses: {
+      "202": "The prompt was accepted; `queued` is true when it waits behind a running turn.",
+      "400": "The body is not `{ text, client }`.",
       "404": "No session has that id.",
     },
   },

@@ -111,6 +111,7 @@ export function refreshingCheckpoints(
     undo: () => announced(port.undo()),
     redo: () => announced(port.redo()),
     restoreTo: (tree) => announced(port.restoreTo(tree)),
+    ...(port.snapshot !== undefined && { snapshot: port.snapshot.bind(port) }),
   };
 }
 
@@ -303,7 +304,7 @@ export class DiffModel extends RowCursor<ChangedFile> {
   }
 }
 
-const mutatingTools: ReadonlySet<string> = new Set(["write", "edit"]);
+const mutatingTools: ReadonlySet<string> = new Set(["write", "edit", "bash"]);
 const hunkHeaderShape = /^@@ -\d+(?:,\d+)? \+(\d+)/;
 
 function diffOf(before: string | undefined, after: string | undefined): DiffLine[] {

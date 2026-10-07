@@ -1,5 +1,6 @@
 import {
   type Agent,
+  type EffortLevel,
   type Message,
   modelReferenceOf,
   type ToolGuard,
@@ -7,6 +8,8 @@ import {
 } from "@keywork/engine";
 import type { Titler } from "./conversation-model.ts";
 import type { ConversationPane } from "./conversation-pane.ts";
+import type { CheckpointsPort } from "./fork.ts";
+import { promptUndo } from "./prompt-undo.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
 
 export interface AppendReceipt {
@@ -15,11 +18,18 @@ export interface AppendReceipt {
 
 export type ThinkingSwitch = "on" | "off";
 
+export interface RewoundPrompt {
+  checkpoint: string | undefined;
+  history: readonly Message[];
+  restore(): readonly Message[];
+}
+
 export interface SessionAttachment {
   id: string;
   name?: string;
   modelReference?: string;
   thinking?: ThinkingSwitch;
+  effort?: EffortLevel;
   arc?: string | undefined;
   bot?: string | undefined;
   history: readonly Message[];
@@ -28,8 +38,10 @@ export interface SessionAttachment {
   rename?(name: string): Promise<void>;
   recordModel?(reference: string): Promise<void>;
   recordThinking?(level: ThinkingSwitch): Promise<void>;
+  recordEffort?(level: EffortLevel): Promise<void>;
   bindArc?(slug: string | undefined): Promise<void>;
   bindBot?(name: string | undefined): Promise<void>;
+  rewindBefore?(promptId: string): RewoundPrompt | undefined;
 }
 
 export interface SessionPort {
@@ -196,6 +208,7 @@ export function adoptSession(
   reconcileTitle(pane, attachment);
   if (agent === undefined) return;
   if (attachment.thinking !== undefined) agent.setThinking(attachment.thinking === "on");
+  if (attachment.effort !== undefined) agent.setEffort(attachment.effort);
   attachment.replay(agent.bus);
 }
 
@@ -221,6 +234,7 @@ export interface SessionLifecycleOptions {
   afterTurn?: AfterTurn;
   compact?: Compactor;
   rebuild?: (history: readonly Message[], agent: Agent) => Agent | undefined;
+  checkpoints?: CheckpointsPort | undefined;
 }
 
 export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
@@ -235,11 +249,14 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
   const apply = (settlement: TurnSettlement | undefined, agent: Agent): void => {
     if (settlement === undefined || pane.disposed()) return;
     for (const notice of settlement.notices) pane.postNotice(notice);
-    if (settlement.history === undefined) return;
-    const next = options.rebuild?.(settlement.history, agent);
-    if (next === undefined) return;
+    if (settlement.history !== undefined) adopt(settlement.history, agent);
+  };
+  const adopt = (history: readonly Message[], agent: Agent): boolean => {
+    const next = options.rebuild?.(history, agent);
+    if (next === undefined) return false;
     persisted = next.history().length;
     pane.swapAgent(next);
+    return true;
   };
   const recordModelOnce = async (agent: Agent): Promise<void> => {
     if (modelRecorded) return;
@@ -262,6 +279,17 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
     apply(await options.afterTurn?.(turnOf(agent)), agent);
   });
   pane.bindThinkingChange((level) => attachment.recordThinking?.(level) ?? Promise.resolve());
+  pane.bindEffortChange((level) => attachment.recordEffort?.(level) ?? Promise.resolve());
+  pane.model.bindPromptUndo(
+    promptUndo({
+      attachment,
+      checkpoints: options.checkpoints,
+      adopt: (history) => {
+        const agent = pane.currentAgent();
+        return agent !== undefined && adopt(history, agent);
+      },
+    }),
+  );
   const compact = options.compact;
   if (compact === undefined) return;
   pane.bindCompaction(async (instructions) => {

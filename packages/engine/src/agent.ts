@@ -1,7 +1,21 @@
-import { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
+import {
+  type EngineEvents,
+  EventBus,
+  type PromptOrigin,
+  type QueuedPrompt,
+  type SendBehavior,
+} from "./bus.ts";
 import { type Message, type ToolCallPart, textMessage, toolCalls, type Usage } from "./messages.ts";
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
-import type { Provider, TurnDelta } from "./provider.ts";
+import type {
+  CacheMiss,
+  DoneDelta,
+  EffortLevel,
+  Provider,
+  ProviderRequest,
+  TurnDelta,
+} from "./provider.ts";
+import { ConversationMarks } from "./request-marks.ts";
 import type {
   AskRule,
   ContextInjection,
@@ -18,6 +32,7 @@ export type Confirmation = boolean | { approved: boolean; gate: ConfirmingGate }
 export interface ToolGuard {
   confirm?(call: ToolCallPart): Promise<Confirmation>;
   gate?: ConfirmingGate;
+  declineEndsRun?: boolean;
   beforeMutation?(): Promise<void>;
 }
 
@@ -55,12 +70,14 @@ export interface AgentOptions {
   standingInjections?: readonly ContextInjection[];
   actionRecall?: ActionRecall;
   thinking?: boolean;
+  effort?: EffortLevel;
   spills?: SpillStore | SpillSource;
 }
 
 export interface SendOptions {
   behavior?: SendBehavior;
   signal?: AbortSignal;
+  origin?: PromptOrigin;
 }
 
 export type TurnSettler = () => Promise<void>;
@@ -100,6 +117,7 @@ export class Agent {
   private readonly turns: TurnDelegate | undefined;
   private readonly pending: PendingPrompt[] = [];
   private running: ToolCallPart | undefined;
+  private origin: PromptOrigin | undefined;
   private unannouncedInjections: readonly ContextInjection[];
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
   private costTotals: CostRollup = emptyCostRollup();
@@ -107,7 +125,12 @@ export class Agent {
   private holding = false;
   private settler: TurnSettler | undefined;
   private checkpointed = false;
+  private declineEndedRun = false;
   private thinkingRequested: boolean;
+  private effortRequested: EffortLevel | undefined;
+  private readonly marks = new ConversationMarks();
+  private previousResponseId: string | null = null;
+  private turnCacheMiss: CacheMiss | undefined;
 
   constructor(options: AgentOptions) {
     this.provider = options.provider;
@@ -122,6 +145,7 @@ export class Agent {
     this.turns = options.turns;
     this.unannouncedInjections = options.standingInjections ?? [];
     this.thinkingRequested = options.thinking ?? false;
+    this.effortRequested = options.effort;
   }
 
   thinking(): boolean {
@@ -130,6 +154,18 @@ export class Agent {
 
   setThinking(requested: boolean): void {
     this.thinkingRequested = requested;
+  }
+
+  effort(): EffortLevel | undefined {
+    return this.effortRequested;
+  }
+
+  setEffort(level: EffortLevel): void {
+    this.effortRequested = level;
+  }
+
+  cacheMiss(): CacheMiss | undefined {
+    return this.turnCacheMiss;
   }
 
   history(): readonly Message[] {
@@ -153,7 +189,12 @@ export class Agent {
   }
 
   queued(): readonly QueuedPrompt[] {
-    return this.pending.map(({ id, text, behavior }) => ({ id, text, behavior }));
+    return this.pending.map(({ id, text, behavior, origin }) => ({
+      id,
+      text,
+      behavior,
+      ...(origin !== undefined && { origin }),
+    }));
   }
 
   interrupt(): void {
@@ -164,15 +205,19 @@ export class Agent {
     return this.running;
   }
 
+  turnOrigin(): PromptOrigin | undefined {
+    return this.origin;
+  }
+
   reportToolOutput(chunk: string): void {
     const callId = this.running?.callId;
     this.bus.emit("tool.output", { chunk, ...(callId !== undefined && { callId }) });
   }
 
   send(userText: string, options: SendOptions = {}): Promise<Message> {
-    if (this.idle()) return this.runTurn(userText, options.signal);
+    if (this.idle()) return this.runTurn(userText, options.signal, options.origin);
     const behavior = options.behavior ?? "queue";
-    const settled = this.enqueue(userText, behavior, options.signal);
+    const settled = this.enqueue(userText, behavior, options.signal, options.origin);
     if (behavior === "steer") this.active?.abort();
     return settled;
   }
@@ -210,12 +255,14 @@ export class Agent {
     text: string,
     behavior: SendBehavior,
     signal: AbortSignal | undefined,
+    origin: PromptOrigin | undefined,
   ): Promise<Message> {
     return new Promise((resolve, reject) => {
       const prompt: PendingPrompt = {
         id: crypto.randomUUID(),
         text,
         behavior,
+        ...(origin !== undefined && { origin }),
         signal,
         resolve,
         reject,
@@ -238,7 +285,7 @@ export class Agent {
     const next = this.pending.shift();
     if (next === undefined) return;
     this.announceQueue();
-    void this.runTurn(next.text, next.signal).then(next.resolve, next.reject);
+    void this.runTurn(next.text, next.signal, next.origin).then(next.resolve, next.reject);
   }
 
   private async holdThenDrain(work: () => Promise<void>): Promise<void> {
@@ -265,17 +312,24 @@ export class Agent {
     this.bus.emit("queue.changed", { queued: this.queued() });
   }
 
-  private async runTurn(userText: string, signal: AbortSignal | undefined): Promise<Message> {
+  private async runTurn(
+    userText: string,
+    signal: AbortSignal | undefined,
+    origin?: PromptOrigin,
+  ): Promise<Message> {
     const controller = new AbortController();
     this.active = controller;
+    this.origin = origin;
     const forwardAbort = () => controller.abort();
     if (signal?.aborted) controller.abort();
     signal?.addEventListener("abort", forwardAbort, { once: true });
     try {
       this.checkpointed = false;
+      this.turnCacheMiss = undefined;
+      this.marks.restateEffort(this.effortRequested, this.messages.length);
       this.messages.push(textMessage("user", userText));
       this.announceStandingInjections();
-      this.bus.emit("turn.started", { userText });
+      this.bus.emit("turn.started", { userText, ...(origin !== undefined && { origin }) });
       return await (this.turns === undefined
         ? this.runUntilFinalMessage(controller.signal)
         : this.runDelegatedTurn(this.turns, userText, controller.signal));
@@ -286,6 +340,7 @@ export class Agent {
     } finally {
       signal?.removeEventListener("abort", forwardAbort);
       this.active = undefined;
+      this.origin = undefined;
       await this.settleThenDrain();
     }
   }
@@ -308,8 +363,9 @@ export class Agent {
 
       const calls = toolCalls(turn.message);
       if (calls.length === 0) return this.finishCompleted(turn);
-      await this.executeToolCalls(calls, signal);
+      const ending = await this.executeToolCalls(calls, signal);
       if (signal.aborted) return this.finishInterrupted(turn.message);
+      if (ending === "declined") return this.finishDeclined(turn);
     }
   }
 
@@ -338,24 +394,22 @@ export class Agent {
     return message;
   }
 
+  private finishDeclined(turn: AssistantTurn): Message {
+    this.settleOrphanedToolCalls(turn.message, "skipped: the run ended at a refused call");
+    return this.finishCompleted(turn);
+  }
+
   private keepPartialMessage(message: Message): void {
     if (message.parts.length > 0) this.messages.push(message);
   }
 
-  private settleOrphanedToolCalls(message: Message): void {
+  private settleOrphanedToolCalls(message: Message, output = "interrupted before execution"): void {
     const settled = this.settledCallIds();
     for (const call of toolCalls(message)) {
       if (settled.has(call.callId)) continue;
       this.messages.push({
         role: "tool",
-        parts: [
-          {
-            type: "tool-result",
-            callId: call.callId,
-            output: "interrupted before execution",
-            isError: true,
-          },
-        ],
+        parts: [{ type: "tool-result", callId: call.callId, output, isError: true }],
       });
     }
   }
@@ -379,16 +433,20 @@ export class Agent {
   private async streamAssistantTurn(signal: AbortSignal): Promise<AssistantTurn> {
     const message: Message = { role: "assistant", parts: [] };
     let usage: Usage = { inputTokens: 0, outputTokens: 0 };
-    const request = {
+    const tools = this.tools();
+    const request: ProviderRequest = {
       systemPrompt: this.systemPrompt,
       messages: [...this.messages],
-      tools: this.tools(),
+      tools,
       ...(this.thinkingRequested && { thinking: true }),
+      ...this.marks.forRequest(tools, this.effortRequested, this.messages.length),
+      cacheDiagnostics: { previousResponseId: this.previousResponseId },
       signal,
     };
     try {
       for await (const delta of this.provider.stream(request)) {
         this.bus.emit("turn.delta", { delta });
+        if (delta.type === "done") this.noteResponse(delta);
         usage = applyDelta(message, delta, usage);
       }
     } catch (cause) {
@@ -398,9 +456,18 @@ export class Agent {
     return { message, usage, interrupted: false };
   }
 
-  private async executeToolCalls(calls: ToolCallPart[], signal: AbortSignal): Promise<void> {
+  private noteResponse(done: DoneDelta): void {
+    if (done.responseId !== undefined) this.previousResponseId = done.responseId;
+    if (done.cacheMiss !== undefined) this.turnCacheMiss = done.cacheMiss;
+  }
+
+  private async executeToolCalls(
+    calls: ToolCallPart[],
+    signal: AbortSignal,
+  ): Promise<"continue" | "declined"> {
+    this.declineEndedRun = false;
     for (const call of calls) {
-      if (signal.aborted) return;
+      if (signal.aborted) return "continue";
       this.bus.emit("tool.started", { call });
       this.running = call;
       const result = await this.bounded(await this.executeToolCall(call, signal));
@@ -410,7 +477,9 @@ export class Agent {
         role: "tool",
         parts: [{ type: "tool-result", ...result }],
       });
+      if (this.declineEndedRun) return "declined";
     }
+    return "continue";
   }
 
   private async bounded(outcome: ToolOutcome): Promise<ToolOutcome> {
@@ -441,6 +510,7 @@ export class Agent {
           guardAsked ? answeredBy : gate,
         );
         if (!answer.approved) {
+          this.declineEndedRun = this.guard?.declineEndsRun === true;
           return { callId: call.callId, output: declinedOutput(answeredBy), isError: true };
         }
       } else {
@@ -542,6 +612,8 @@ function applyDelta(message: Message, delta: TurnDelta, usage: Usage): Usage {
       return usage;
     case "visible-thinking":
       appendVisibleThinking(message, delta.text);
+      return usage;
+    case "progress":
       return usage;
     case "done":
       return delta.usage;

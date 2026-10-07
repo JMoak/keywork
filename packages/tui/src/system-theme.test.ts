@@ -2,16 +2,18 @@ import { EventEmitter } from "node:events";
 import { apcaLc, contrastFailures } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
 import type { DebounceTiming } from "./debounce.ts";
-import { keyworkNightFlavor } from "./flavor.ts";
+import { dressedIn, type Flavor, FlavorSwitch, keyworkNightFlavor } from "./flavor.ts";
 import { colorQueries, type TerminalColors } from "./osc.ts";
 import {
   type ColorTransport,
   colorQueryTimeoutMs,
   colorsFromEnv,
   detectTerminalColors,
+  followTerminalTheme,
   queryTerminalColors,
   stdioColorTransport,
   systemFlavor,
+  systemFlavorName,
   systemTokens,
 } from "./system-theme.ts";
 import { keyworkNight } from "./theme.ts";
@@ -212,6 +214,116 @@ describe("stdioColorTransport", () => {
     expect(output.bytes).toEqual(["query"]);
   });
 });
+
+describe("followTerminalTheme", () => {
+  it("turns palette reports on at start and off on stop", () => {
+    const { terminal, stop } = following(systemCloset());
+    expect(terminal.written).toEqual(["\x1b[?2031h"]);
+    stop();
+    expect(terminal.written).toEqual(["\x1b[?2031h", "\x1b[?2031l"]);
+    expect(terminal.listeners()).toBe(0);
+  });
+
+  it("re-queries the colors when the terminal reports a theme change", () => {
+    const { terminal } = following(systemCloset());
+    terminal.reply("\x1b[?997;2n");
+    expect(terminal.written.at(-1)).toBe(colorQueries());
+  });
+
+  it("re-derives and repaints the worn system flavor from the fresh replies", async () => {
+    const closet = systemCloset();
+    const { terminal, repaints } = following(closet);
+    terminal.reply("\x1b[?997;2n");
+    terminal.reply(lightReply);
+    await settled();
+    expect(closet.active.appearance).toBe("light");
+    expect(closet.active.tokens.background).toBe("#ffffff");
+    expect(repaints()).toBe(1);
+  });
+
+  it("lays the theme overrides over the re-derived flavor", async () => {
+    const closet = systemCloset();
+    const { terminal } = following(closet, (flavor) => dressedIn(flavor, { accent: "#ff8800" }));
+    terminal.reply("\x1b[?997;2n");
+    terminal.reply(lightReply);
+    await settled();
+    expect(closet.active.tokens.accent).toBe("#ff8800");
+  });
+
+  it("keeps an explicitly chosen flavor on screen and refreshes system for later", async () => {
+    const closet = systemCloset();
+    closet.swap(keyworkNightFlavor.name);
+    const { terminal, repaints } = following(closet);
+    terminal.reply("\x1b[?997;2n");
+    terminal.reply(lightReply);
+    await settled();
+    expect(closet.active.name).toBe(keyworkNightFlavor.name);
+    expect(repaints()).toBe(0);
+    expect(closet.swap(systemFlavorName).appearance).toBe("light");
+  });
+
+  it("leaves the flavor alone when the terminal never answers", async () => {
+    const closet = systemCloset();
+    const before = closet.active;
+    const { terminal, repaints } = following(closet);
+    terminal.reply("\x1b[?997;1n");
+    terminal.clock.advance(colorQueryTimeoutMs);
+    await settled();
+    expect(closet.active).toBe(before);
+    expect(repaints()).toBe(0);
+  });
+
+  it("asks once more when the theme flips again mid-query", async () => {
+    const { terminal } = following(systemCloset());
+    terminal.reply("\x1b[?997;2n");
+    terminal.reply("\x1b[?997;1n");
+    expect(terminal.written.filter((bytes) => bytes === colorQueries())).toHaveLength(1);
+    terminal.reply(lightReply);
+    await settled();
+    expect(terminal.written.filter((bytes) => bytes === colorQueries())).toHaveLength(2);
+  });
+
+  it("ignores replies that land after it stopped", async () => {
+    const closet = systemCloset();
+    const before = closet.active;
+    const { terminal, stop, repaints } = following(closet);
+    terminal.reply("\x1b[?997;2n");
+    stop();
+    terminal.clock.advance(colorQueryTimeoutMs);
+    await settled();
+    expect(closet.active).toBe(before);
+    expect(repaints()).toBe(0);
+  });
+});
+
+const lightReply = [
+  reply("11", "rgb:ffff/ffff/ffff"),
+  reply("10", "rgb:0000/0000/0000"),
+  ...tokyoNightAnsi.map((hex, index) => reply(`4;${index}`, hex)),
+].join("");
+
+function systemCloset(): FlavorSwitch {
+  return new FlavorSwitch([systemFlavor(darkTerminal), keyworkNightFlavor]);
+}
+
+function following(closet: FlavorSwitch, dress: (flavor: Flavor) => Flavor = (flavor) => flavor) {
+  const terminal = fakeTerminal();
+  let repaints = 0;
+  const stop = followTerminalTheme({
+    transport: terminal.transport,
+    closet,
+    dress,
+    repaint: () => {
+      repaints += 1;
+    },
+    timing: terminal.clock,
+  });
+  return { terminal, stop, repaints: () => repaints };
+}
+
+function settled(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 interface FakeTerminal {
   transport: ColorTransport;

@@ -68,12 +68,23 @@ function routeHandlers(
       return session === undefined ? missingSession() : json(200, session);
     },
     promptSession: async (request, { id }) => {
-      const text = await promptTextOf(request);
+      const text = promptTextOf(await bodyOf(request));
       if (text === undefined) return json(400, { error: "the body must be { text: string }" });
       const outcome = await host.prompt(id ?? "", text);
       return outcome === "missing"
         ? missingSession()
         : json(202, { sessionId: id, accepted: true });
+    },
+    injectPrompt: async (request, { id }) => {
+      const injection = injectionOf(await bodyOf(request));
+      if (injection === undefined) {
+        return json(400, { error: "the body must be { text: string, client: string }" });
+      }
+      const origin = { kind: "external", client: injection.client } as const;
+      const outcome = await host.inject(id ?? "", injection.text, origin);
+      return outcome === "missing"
+        ? missingSession()
+        : json(202, { sessionId: id, accepted: true, queued: outcome === "queued" });
     },
     abortSession: async (_request, { id }) => {
       const outcome = await host.abort(id ?? "");
@@ -83,7 +94,7 @@ function routeHandlers(
     },
     listAsks: async () => json(200, { asks: await host.asks() }),
     answerAsk: async (request, { callId }) => {
-      const verdict = await askVerdictOf(request);
+      const verdict = askVerdictOf(await bodyOf(request));
       if (verdict === undefined) {
         return json(400, { error: 'the body must be { verdict: "granted" | "denied" }' });
       }
@@ -97,15 +108,36 @@ function routeHandlers(
   };
 }
 
-async function askVerdictOf(request: Request): Promise<AskVerdict | undefined> {
-  let body: unknown;
+async function bodyOf(request: Request): Promise<unknown> {
   try {
-    body = await request.json();
+    return await request.json();
   } catch {
     return undefined;
   }
-  const verdict = (body as { verdict?: unknown } | null)?.verdict;
+}
+
+function promptTextOf(body: unknown): string | undefined {
+  return nonBlank((body as { text?: unknown } | null | undefined)?.text);
+}
+
+function injectionOf(body: unknown): { text: string; client: string } | undefined {
+  const fields = body as { text?: unknown; client?: unknown } | null | undefined;
+  const text = nonBlank(fields?.text);
+  const client = fields?.client;
+  if (text === undefined || typeof client !== "string" || !clientName.test(client))
+    return undefined;
+  return { text, client };
+}
+
+const clientName = /^[A-Za-z0-9._-]{1,64}$/;
+
+function askVerdictOf(body: unknown): AskVerdict | undefined {
+  const verdict = (body as { verdict?: unknown } | null | undefined)?.verdict;
   return verdict === "granted" || verdict === "denied" ? verdict : undefined;
+}
+
+function nonBlank(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
 interface RouteMatch {
@@ -128,17 +160,6 @@ function matchRoute(request: Request): RouteMatch | undefined {
 function patternOf(path: string): RegExp {
   const source = path.replace(/\{(\w+)\}/g, (_match, name: string) => `(?<${name}>[^/]+)`);
   return new RegExp(`^${source}/?$`);
-}
-
-async function promptTextOf(request: Request): Promise<string | undefined> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return undefined;
-  }
-  const text = (body as { text?: unknown } | null)?.text;
-  return typeof text === "string" && text.trim() !== "" ? text : undefined;
 }
 
 class OpenStreams {

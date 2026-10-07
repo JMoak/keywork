@@ -42,6 +42,10 @@ function fixtureServer(profile: string, extraArgs: string[] = []): McpServerConf
   };
 }
 
+function withToken(config: McpServerConfig, token: string): McpServerConfig {
+  return config.transport === "stdio" ? { ...config, env: { TOKEN: token } } : config;
+}
+
 interface FakeConnection extends McpConnection {
   drop(error: Error): void;
   relist(tools: McpTool[]): void;
@@ -53,6 +57,7 @@ function fakeConnection(initialTools: McpTool[]): FakeConnection {
   const toolsChangedHandlers: Array<() => void> = [];
   return {
     serverName: "fake",
+    era: "modern",
     listTools: () => Promise.resolve(tools),
     callTool: (name, args) =>
       Promise.resolve({ text: `${name}:${JSON.stringify(args)}`, isError: false }),
@@ -122,7 +127,7 @@ describe("lazy tool surface", () => {
 
     expect(toolNames(registry)).toEqual([mcpSearchToolName]);
     expect(surfaceTokens(registry)).toBeLessThan(200);
-    const roster = findTool(registry, mcpSearchToolName).description;
+    const roster = await findTool(registry, mcpSearchToolName).execute({});
     expect(roster).toContain("alpha__echo");
     expect(roster).toContain("gamma__add");
     expect(roster).toContain("Echoes the given text back verbatim.");
@@ -225,13 +230,15 @@ describe("lazy tool surface", () => {
     });
     registry.start();
     await waitFor(() => stateOf(registry, "alpha") === "connected");
+    const description = findTool(registry, mcpSearchToolName).description;
     await findTool(registry, mcpSearchToolName).execute({ tools: ["alpha__probe"] });
     expect(toolNames(registry)).toEqual([mcpSearchToolName, "alpha__probe"]);
 
     connection.relist([fakeTool("probe"), fakeTool("sprout")]);
     await waitFor(() => registry.listTools("alpha").length === 2);
 
-    expect(findTool(registry, mcpSearchToolName).description).toContain("alpha__sprout");
+    expect(findTool(registry, mcpSearchToolName).description).toBe(description);
+    expect(await findTool(registry, mcpSearchToolName).execute({})).toContain("alpha__sprout");
     expect(registry.status()[0]?.toolCount).toBe(2);
     expect(toolNames(registry)).toEqual([mcpSearchToolName, "alpha__probe"]);
 
@@ -278,6 +285,29 @@ describe("server lifecycle", () => {
     const status = registry.status().find((candidate) => candidate.name === "mute");
     expect(status?.lastError).toContain("timed out");
     expect(status?.lastError).toContain("retry limit reached");
+  });
+
+  it("reveals secret references before spawning and reports a missing one by name", async () => {
+    const seen: (Record<string, string> | undefined)[] = [];
+    const registry = makeRegistry({
+      servers: {
+        alpha: withToken(fixtureServer("basic"), "secret:alpha-token"),
+        beta: withToken(fixtureServer("basic"), "secret:absent"),
+      },
+      reveal: async (config) => {
+        if (config.transport !== "stdio") return config;
+        seen.push(config.env);
+        if (config.env?.TOKEN === "secret:absent") throw new Error("secret absent is not stored");
+        return { ...config, env: { TOKEN: "revealed" } };
+      },
+      restartDelaysMs: [],
+    });
+    registry.start();
+    const betaError = () => registry.status().find((status) => status.name === "beta")?.lastError;
+    await waitFor(() => stateOf(registry, "alpha") === "connected" && betaError() !== undefined);
+
+    expect(betaError()).toContain("secret absent is not stored");
+    expect(seen).toContainEqual({ TOKEN: "secret:alpha-token" });
   });
 
   it("recovers a crash-once server through backoff", async () => {
@@ -355,7 +385,9 @@ describe("server lifecycle", () => {
 
     await registry.disable("alpha");
     expect(toolNames(registry)).toEqual([mcpSearchToolName]);
-    expect(findTool(registry, mcpSearchToolName).description).toContain("(no connected servers)");
+    expect(await findTool(registry, mcpSearchToolName).execute({})).toContain(
+      "(no connected servers)",
+    );
     expect(registry.status()[0]).toMatchObject({ state: "down", enabled: false, toolCount: 0 });
 
     await registry.enable("alpha");

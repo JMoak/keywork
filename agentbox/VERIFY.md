@@ -75,8 +75,9 @@ asserted by `box check`, so one command settles them.
 
 - [ ] **check** The environment holds no secret besides the known AWS gap below.
 - [ ] A Bedrock turn completes with static keys, and again with credentials from `box aws`.
-- [ ] `box run` refuses an MCP tool that is not allowed and exits 4, then calls it once
-      `<system>__<tool>` is allowed in that system's `keywork.json`.
+- [ ] `box run` calls any tool of an enabled system through its `<system>__*` rule, and
+      the model gets a refusal for one that a later deny rule covers.
+- [ ] The merged `keywork.json` lists the base rules first, then each enabled system's rule.
 - [ ] A clone box (`box init https://github.com/acme/api`, then `BOX=api box up`) clones
       through the git broker, and a full run never touches your filesystem.
 

@@ -63,6 +63,65 @@ ordinary prompt.
 write it causes carries external provenance; unauthorized client rejected.
 **Strategy:** `OWN` on P2.1.
 
+#### P2.6 ledger (landed 2026-10-02)
+
+**What landed.** `POST /sessions/{id}/inject` on the P2.1 server, body
+`{ text, client }` where `client` names the injecting tool (`[A-Za-z0-9._-]{1,64}`, for
+example `wispr-flow`). It is authorized exactly like every other route: the bearer token from
+the ticket file, compared in constant time, a bodiless 401 otherwise. The prompt rides the
+engine's ordinary turn queue through a new `SendOptions.origin`
+(`PromptOrigin = { kind: "external", client }`): on an idle session it starts a turn
+(`202 { sessionId, accepted: true, queued: false }`), behind a running turn it joins the back
+of the queue (`queued: true`) and starts when that turn ends. Queue over steer: the posture
+asks for an injected prompt that runs identically to a typed one, a typed prompt on a busy
+session queues by default, and a voice tool interrupting work in flight is the surprise the
+posture's Tier 0 rules exist to prevent. No new event: `turn.started` and `queue.changed`
+gain an optional `origin`, so every client on `/events` sees the injected prompt as an
+ordinary prompt plus where it came from. Policy: the turn answers to the session's permission
+policy and the S1 ask queue like any other, nothing is elevated, and per the J taint rule any
+memory note it proposes through `write` or `edit` is staged with provenance `untrusted`
+instead of `agent` (`Agent.turnOrigin()` feeds a new `origin` source on the file tools;
+`MemoryStore.proposeNoteFile` takes the provenance). `keywork run` is unchanged.
+
+**Evidence.** `server.test.ts` (+5): an idle inject starts a turn whose `turn.started` carries
+the origin and whose stored messages equal a typed prompt's; a busy inject answers
+`queued: true`, shows in `queue.changed` with its origin, and starts after the running turn is
+interrupted; a missing or wrong token is 401 with nothing recorded and nothing run; seven bad
+bodies are 400 and an unknown session 404; the 401 table gained the route. `serve.test.ts`
+(+1): the file host runs an injected prompt, streams its origin, persists the turn, and
+answers `missing` for an unknown id. `prompt-origin.test.ts` (2, engine): origin on
+`turn.started` and the queue, held only while its turn runs; a note written in an external turn
+stages as `untrusted` and one in a typed turn as `agent`. `/doc` lists the route through the
+existing route-table check.
+
+**Crossings.** `engine`: `bus.ts` (`PromptOrigin`, optional `origin` on `turn.started` and
+`QueuedPrompt`), `agent.ts` (`SendOptions.origin`, `turnOrigin()`), `tools/protected-writes.ts`
+(`OriginSource`, provenance follows the origin), `tools/core.ts`, `write.ts`, `edit.ts` (pass it
+through), `memory/store.ts` (`proposeNoteFile` provenance parameter), `index.ts`. `cli`:
+`compose.ts` (one line wiring `turnOrigin`), `serve.ts` (`inject`, `LiveSession.run` reports
+started or queued). `server`: `host.ts`, `openapi.ts`, `server.ts` (body parsing folded into
+one `bodyOf`), `testing.ts`, `index.ts`. `docs/events.md` and `docs/headless.md`. `NOTICE`
+unchanged; all `OWN`.
+
+**Not built, and why.**
+- The session file does not record a prompt's origin: the user message is stored like any
+  other, so a reopened session or an HTML export shows an injected prompt as typed. Recording
+  it needs a journal entry beside the message (the `context_injection` custom entry is the
+  nearest shape); left for a decision on whether origin is durable state.
+- An attached pane (`keywork attach`) does not show a prompt injected by another client:
+  attach owns `turn.started` locally and relays only the turns it started (P2.2's known limit
+  for any second client), so the injected turn's deltas reach `/events` but not the pane.
+- Taint stops at vault proposals. Memory flushes at settle time and bot memory still stamp
+  `agent`; neither runs off a tool call in the injected turn today.
+
+**Assumptions Jordan may reverse.**
+- A separate route rather than a `provenance` field on `/prompt` (the P2.1 seam note's
+  sketch): `/prompt` stays the keywork client's door, and an external tool cannot land an
+  untagged prompt by leaving a field out of the body it posts to the injection door.
+- `client` is required and self-declared; the token is the only authority, so the name is
+  provenance for people reading the stream, not a credential.
+- Untrusted proposals stage like agent ones; both already wait for review before landing.
+
 ---
 
 ### P2.1 (5pt): HTTP/SSE server wrap
@@ -326,6 +385,29 @@ terminal reporter; `session-panes.ts`: `SessionPanes.awaiting()` beside `busyCou
 - The inbox feed recounts on every session change because the memory store has no change
   feed of its own; the count is cheap (one directory listing).
 
+#### SW24 Herdr self-report (landed 2026-10-02, 117)
+
+Inside a Herdr pane (`HERDR_ENV=1` with `HERDR_PANE_ID` and `HERDR_BIN_PATH` set) keywork
+reports its own state through Herdr's published agent protocol (`add-herdr-support` doc, the
+CLI form; no code from the Herdr repo). `packages/tui/src/herdr.ts` maps the same snapshot the
+notifier reads: `blocked` while any conversation pane has a pending ask, `working` while any
+turn runs, `idle` otherwise. After every paint `app.ts` hands it
+`{ working: sessions.working(), blocked: sessions.awaiting().length > 0 }`; it runs
+`"$HERDR_BIN_PATH" pane report-agent "$HERDR_PANE_ID" --source keywork --agent keywork
+--state <state> --seq <n> -- keywork` only when the state changes, and
+`pane release-agent ... --seq <n>` from `onExit`. `--seq` is `max(Date.now(), last + 1)`, so it
+rises across restarts and never stalls. Reports are fire-and-forget: one child in flight
+(stdio ignored, hidden window, 2s timeout), and states that change meanwhile collapse to the
+latest, dropped entirely when it lands back on what Herdr already has. The resume argv is plain
+`keywork` (workspace restore brings the panes back); Herdr before 0.9.2 ignores it. Outside
+Herdr the reporter is a no-op object; a spawn error (binary missing) silences it for the rest
+of the run; nothing it does can throw into the app. No config key.
+**Evidence:** `herdr.test.ts` (10) with an injected spawner: exact argv, silence for each
+missing or wrong env variable, change-only reporting, latest-state coalescing, a queued state
+that returns to the reported one is dropped, rising `--seq` under a stalled or backward clock,
+release once and quiet after, a missing binary stops further spawns, a throwing spawner never
+escapes.
+
 ### S0 · S1: serve discovery and the ask queue
 
 Requested by keywork-app (its `docs/plan.md` server lane), built here under keywork's rules so
@@ -410,3 +492,72 @@ tickets removed on shutdown, a stale ticket replaced). `attach.test.ts` (+1): ca
 ### P2.5 (2pt): HTML export & sharing
 `/export` static HTML of a session branch (self-contained, themed); optional gist upload.
 **Strategy:** `LIFT:pi`.
+
+#### P2.5 ledger (landed 2026-10-02)
+
+**What landed.** One self-contained HTML file per export, written by keywork's own renderer from
+the session entries. `packages/cli/src/sessions/export-html.ts` (`sessionHtml(session, scope)`)
+renders the active path by default and, with `tree`, every branch: a linear run of entries
+prints in order and each branch point becomes a fork block with one section per child,
+headed `branch n of m` and marked `active` where the leaf lives (the walk only recurses at
+branch points, so a long linear session never deepens the stack). Every entry type has a
+form: user and assistant messages as articles with the provenance glyphs (█ you, ▓ the
+agent, ░ an MCP tool, the `server__tool` shape), assistant text as prose, thinking folded in a
+closed `<details>`, sealed thinking as a one-line note, each tool call as a collapsed row with
+its arguments and its paired result (matched by `callId`; a result with no call prints on its
+own, a call with no result says so), images inline as `data:` URIs only for png, jpeg, gif and
+webp with clean base64, compaction and branch summaries as folds, and `label`, `session_info`,
+`model_change`, `thinking_level_change`, `effort_change`, `binding`, `custom` and
+`custom_message` as quiet marker lines. Each assistant message carries its tokens and cost,
+priced under the model in force at that point (`model_change` entries are tracked along the
+walk, per branch in the tree view); the masthead carries the session total from
+`sessionCost`. The stylesheet is inline and theme-neutral (`color-scheme: light dark` over
+system colors, so it follows the reader's light or dark preference with no script).
+
+**Text stays text.** Every string from the session (prompts, replies,
+thinking, tool names, arguments, outputs, labels, summaries, the title) goes through one
+escaper; invisible and bidi-control characters (the same set `neutralizeRecalled` strips) are
+shown as visible `U+XXXX` chips rather than allowed to reorder the page. A
+`Content-Security-Policy` meta (`default-src 'none'; style-src 'unsafe-inline'; img-src data:`)
+means even a missed escape could not run a script or fetch anything. Nothing is redacted.
+
+**Where it lands.** `packages/cli/src/sessions/export.ts`: beside the session file by default
+(`<session>.html`, `<session>.tree.html` for the whole tree), or to a path the user gives,
+resolved against their folder; a path that is a directory gets the default file name inside
+it. `/export [tree] [path]` in the TUI exports the focused conversation's session through a
+new `AppCoreOptions.exportSession` port that `compose-panes.ts` fills; it uses the live store,
+so a leaf moved by `/undo` exports as the user sees it, and falls back to the file on disk.
+The notice reads `exported → <path>`. `keywork sessions export [id] [--tree] [--out <path>]`
+does the same from the shell (latest session when no id) and prints the same line. Share
+links stay refused: the file is local and nothing uploads.
+
+**Evidence.** `export-html.test.ts` (8) on a fixture session holding every entry type: all
+eleven entry types render, script and attribute payloads in prompts and tool output come out
+escaped with no tag carrying an `on*` attribute and no external reference, a structural check
+finds every tag balanced and no raw angle bracket in text, U+202E shows as a chip, thinking is
+folded and tool calls pair with results, per-turn costs and the session total, safe and unsafe
+images, the inactive branch absent from the path view, and the tree view's branch heads.
+`export.test.ts` (15): file placement for each scope, a given file and a given folder, the
+argument grammar, the live store preferred over the disk copy, an unknown id refused, and
+`keywork sessions export` with and without `--tree --out`. `export-command.test.ts` (5, TUI):
+the focused session and arguments reach the port, the notice, a failure, no session yet, and
+no command when nothing can export. e2e `discovery/slash-completions` golden regenerated (`/ex`
+now offers `/export`).
+
+**Crossings.** `tui/src/app-core.ts` (`SessionExporter`, the option), `app.ts` (option and
+host port pass-through), `core-commands.ts` (`exportCommands`, `focusedSessionId`),
+`probe.ts` (accepts the option); `cli/src/compose-panes.ts` (one line), `main.ts` (`--tree`,
+`--out`), `dispatch.ts` (usage line), `sessions/command.ts` (`export` subcommand).
+`NOTICE` unchanged: the renderer is keywork's own, written from its session entries; no Pi
+code was read or adapted.
+
+**Assumptions Jordan may reverse.**
+- The renderer lives in `packages/cli/src/sessions/` beside the other session commands rather
+  than in the engine, since only the CLI writes files and the TUI reaches it through a port.
+- Prose is shown as preformatted text, not rendered markdown: a markdown renderer would be a
+  dependency or a parser to own, and escaping stays trivially auditable this way.
+- Tool rows are collapsed by default, errors included; the summary line shows the tool, a
+  clipped argument preview and ok, failed or no result.
+- An MCP tool is recognised by the `server__tool` name shape for the ░ glyph; prompts injected
+  through P2.6 are not marked yet because the session file does not record a prompt's origin.
+- Gist upload from the task line is not built; the posture refuses share-link services.

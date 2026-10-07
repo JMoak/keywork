@@ -6,7 +6,9 @@ import {
   colorRepliesComplete,
   copyToClipboard,
   disableFocusReporting,
+  disableThemeReports,
   enableFocusReporting,
+  enableThemeReports,
   focusEventsIn,
   notifyOsc9,
   notifyOsc777,
@@ -21,6 +23,7 @@ import {
   setTitle,
   TerminalReporter,
   terminalSupport,
+  themeChangeReported,
   windowTitle,
 } from "./osc.ts";
 
@@ -76,17 +79,44 @@ describe("terminalSupport", () => {
 
   it("titles and clipboard on every live terminal", () => {
     const linux = terminalSupport({ env: { TERM: "xterm-256color" }, tty: true });
-    expect(linux).toEqual({ title: true, progress: false, clipboard: true });
+    expect(linux).toEqual({ title: true, progress: false, clipboard: true, hyperlinks: false });
     const tmux = terminalSupport({ env: { TERM: "tmux-256color", TMUX: "/tmp/x" }, tty: true });
-    expect(tmux).toEqual({ title: true, progress: false, clipboard: true });
+    expect(tmux).toEqual({ title: true, progress: false, clipboard: true, hyperlinks: false });
   });
 
   it("stays silent on a dumb terminal or a piped stdout", () => {
-    const silent = { title: false, progress: false, clipboard: false };
+    const silent = { title: false, progress: false, clipboard: false, hyperlinks: false };
     expect(terminalSupport({ env: { TERM: "dumb", WT_SESSION: "abc" }, tty: true })).toEqual(
       silent,
     );
     expect(terminalSupport({ env: { WT_SESSION: "abc" }, tty: false })).toEqual(silent);
+  });
+
+  it("opens hyperlinks only on terminals known to support OSC 8", () => {
+    const links = (env: Record<string, string>) => terminalSupport({ env, tty: true }).hyperlinks;
+    expect(links({ WT_SESSION: "abc" })).toBe(true);
+    expect(links({ KITTY_WINDOW_ID: "1" })).toBe(true);
+    expect(links({ TERM: "xterm-kitty" })).toBe(true);
+    expect(links({ TERM: "xterm-ghostty" })).toBe(true);
+    expect(links({ GHOSTTY_RESOURCES_DIR: "/usr/share/ghostty" })).toBe(true);
+    expect(links({ TERM_PROGRAM: "WezTerm" })).toBe(true);
+    expect(links({ TERM_PROGRAM: "iTerm.app" })).toBe(true);
+    expect(links({ TERM: "foot" })).toBe(true);
+    expect(links({ VTE_VERSION: "7600" })).toBe(true);
+    expect(links({ KONSOLE_VERSION: "230804" })).toBe(true);
+    expect(links({ VTE_VERSION: "4800" })).toBe(false);
+    expect(links({ TERM: "xterm-256color" })).toBe(false);
+    expect(links({})).toBe(false);
+  });
+
+  it("keeps hyperlinks off inside multiplexers and over ssh, where the host is unknown", () => {
+    const links = (env: Record<string, string>) => terminalSupport({ env, tty: true }).hyperlinks;
+    expect(links({ WT_SESSION: "abc", TMUX: "/tmp/tmux-1000/default,1,0" })).toBe(false);
+    expect(links({ KITTY_WINDOW_ID: "1", TERM: "screen-256color" })).toBe(false);
+    expect(links({ TERM_PROGRAM: "WezTerm", ZELLIJ: "0" })).toBe(false);
+    expect(links({ KITTY_WINDOW_ID: "1", SSH_CONNECTION: "10.0.0.2 5022 10.0.0.1 22" })).toBe(
+      false,
+    );
   });
 });
 
@@ -188,7 +218,7 @@ describe("windowTitle", () => {
 });
 
 describe("TerminalReporter", () => {
-  function reporter(support = { title: true, progress: true, clipboard: true }) {
+  function reporter(support = { title: true, progress: true, clipboard: true, hyperlinks: false }) {
     const bytes: string[] = [];
     const subject = new TerminalReporter((chunk) => bytes.push(chunk), support, unicode);
     return { bytes, subject };
@@ -216,7 +246,12 @@ describe("TerminalReporter", () => {
   });
 
   it("writes no progress where the terminal has no progress support", () => {
-    const { bytes, subject } = reporter({ title: true, progress: false, clipboard: true });
+    const { bytes, subject } = reporter({
+      title: true,
+      progress: false,
+      clipboard: true,
+      hyperlinks: false,
+    });
     subject.begin();
     subject.report({ name: "s1", state: "working" });
     subject.end();
@@ -224,10 +259,35 @@ describe("TerminalReporter", () => {
   });
 
   it("writes nothing at all on a quiet terminal", () => {
-    const { bytes, subject } = reporter({ title: false, progress: false, clipboard: false });
+    const { bytes, subject } = reporter({
+      title: false,
+      progress: false,
+      clipboard: false,
+      hyperlinks: false,
+    });
     subject.begin();
     subject.report({ name: "s1", state: "working" });
     subject.end();
     expect(bytes).toEqual([]);
+  });
+});
+
+describe("theme reports (mode 2031)", () => {
+  it("toggles the palette-update mode with DECSET and DECRST 2031", () => {
+    expect(enableThemeReports).toBe("\x1b[?2031h");
+    expect(disableThemeReports).toBe("\x1b[?2031l");
+  });
+
+  it("hears the dark and light reports anywhere in a chunk", () => {
+    expect(themeChangeReported("\x1b[?997;1n")).toBe(true);
+    expect(themeChangeReported("\x1b[?997;2n")).toBe(true);
+    expect(themeChangeReported("a\x1b[I\x1b[?997;2nb")).toBe(true);
+  });
+
+  it("ignores the query, other DSR replies and plain keys", () => {
+    expect(themeChangeReported("\x1b[?996n")).toBe(false);
+    expect(themeChangeReported("\x1b[?997;3n")).toBe(false);
+    expect(themeChangeReported("\x1b[0n")).toBe(false);
+    expect(themeChangeReported("?997;1n")).toBe(false);
   });
 });

@@ -24,18 +24,19 @@ export interface PresetSwitch extends PresetPort {
 export interface PresetSwitchOptions {
   initial: PermissionsConfig | undefined;
   persist(permissions: PermissionsConfig): Promise<void>;
+  workspace?: string;
 }
 
 export function createPresetSwitch(options: PresetSwitchOptions): PresetSwitch {
   let permissions = options.initial;
-  let resolver = permissionsResolver(permissions);
+  let resolver = permissionsResolver(permissions, options.workspace);
   return {
     resolver: (call) => resolver(call),
     active: () => activePreset(permissions),
     apply: async (name) => {
       await options.persist(permissionPresets[name]);
       permissions = permissionPresets[name];
-      resolver = permissionsResolver(permissions);
+      resolver = permissionsResolver(permissions, options.workspace);
     },
   };
 }
@@ -51,8 +52,9 @@ export function userPresetSwitch(initial: PermissionsConfig | undefined): Preset
 
 export function permissionsResolver(
   permissions: PermissionsConfig | undefined,
+  workspace: string = process.cwd(),
 ): PermissionResolver {
-  const policy = permissionPolicy(permissions);
+  const policy = permissionPolicy(permissions, { workspace });
   return (call) => policy(call.name, call.arguments);
 }
 

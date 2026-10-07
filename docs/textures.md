@@ -43,7 +43,10 @@ no interleaved escape soup); reconnection never corrupts pane state.
 **Accept:** OSC 52 copy verified against a terminal capability matrix; artificial
 200ms-latency session stays visually coherent in the capture harness.
 **Ratchet:** capability-matrix test enumerates supported terminals and their verified
-escape features.
+escape features. The `terminal-hygiene` e2e (SW26, 2026-10-02) kills keywork with SIGTERM and
+fails if any pushed mode survives: title stack, focus reporting, bracketed paste, mouse
+1000/1002/1003/1006, kitty keyboard flags, alternate screen and palette reports (2031), with
+the title pop landing after the renderer's own title reset.
 
 ## T5: Degraded-terminal grace (PD14's ladder)
 

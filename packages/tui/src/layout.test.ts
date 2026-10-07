@@ -1044,7 +1044,49 @@ describe("Layout focus trail and placed opens", () => {
     layout.close("c");
     expect(layout.recentlyFocused()).toEqual(["a", "b"]);
     layout.load(layout.toJSON());
-    expect(layout.recentlyFocused()).toEqual(["a"]);
+    expect(layout.recentlyFocused()).toEqual(["a", "b"]);
+  });
+
+  it("bounces between the two most recent panes", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("a");
+    expect(layout.focusPrevious()).toBe("c");
+    expect(layout.focusPrevious()).toBe("a");
+    expect(layout.focusPrevious()).toBe("c");
+    expect(layout.recentlyFocused()).toEqual(["c", "a", "b"]);
+  });
+
+  it("stays put with nothing to bounce to and unzooms to reach the last pane", () => {
+    const single = layoutWith("only");
+    expect(single.focusPrevious()).toBeUndefined();
+    expect(single.focused()).toBe("only");
+    const zoomed = layoutWith("a", "b");
+    zoomed.zoomToggle();
+    expect(zoomed.focusPrevious()).toBe("a");
+    expect(zoomed.zoomed()).toBeUndefined();
+  });
+
+  it("focuses the most recently used pane when the focused one closes", () => {
+    const layout = layoutWith("a", "b", "c", "d");
+    layout.focus("a");
+    layout.focus("d");
+    layout.close("d");
+    expect(layout.focused()).toBe("a");
+    layout.close("a");
+    expect(layout.focused()).toBe("c");
+  });
+
+  it("keeps the recent list through a save and drops ids the layout no longer has", () => {
+    const layout = layoutWith("a", "b", "c");
+    layout.focus("a");
+    const saved = layout.toJSON();
+    expect(saved.recent).toEqual(["a", "c", "b"]);
+    const parsed = Layout.parse({ ...saved, recent: ["ghost", "c", 7, "c", "a"] });
+    expect(parsed?.recent).toEqual(["c", "a"]);
+    const restored = new Layout();
+    restored.load(parsed ?? {});
+    expect(restored.focused()).toBe("a");
+    expect(restored.focusPrevious()).toBe("c");
   });
 
   it("opens beside a named pane instead of the focused one, splitting by its shape", () => {
@@ -1171,7 +1213,8 @@ describe("Layout drag commits are keyboard-reachable", () => {
   }
 
   function keyOf(layout: Layout): string {
-    return JSON.stringify(layout.toJSON());
+    const { recent: _history, ...arrangement } = layout.toJSON();
+    return JSON.stringify(arrangement);
   }
 
   function keyboardSteps(layout: Layout): ((on: Layout) => void)[] {

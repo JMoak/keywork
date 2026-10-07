@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { anchorFrontmatter, type CheckpointAnchor } from "./anchors.ts";
 import { type AuditEntry, auditLine, parseAuditLog } from "./audit.ts";
 import { type BootstrapSelection, mostUsefulFirst, selectWithinBudget } from "./bootstrap.ts";
@@ -55,7 +56,7 @@ import {
   stagedSubjectPath,
   stagedWriteDeltas,
 } from "./staging.ts";
-import { auditFile, dailyDir, mocFile, VaultFiles } from "./vault-files.ts";
+import { auditFile, dailyDir, mocFile, ReservedPathError, VaultFiles } from "./vault-files.ts";
 
 export interface MemoryStoreOptions {
   vaultRoot: string;
@@ -130,6 +131,7 @@ interface WriteTarget {
 type PromotionReview = Extract<StagedItem, { kind: "borderline-promotion" }>;
 
 export class MemoryStore {
+  readonly vaultRoot: string;
   readonly trusted: boolean;
   private readonly files: VaultFiles;
   private readonly staging: StagingArea;
@@ -141,7 +143,8 @@ export class MemoryStore {
   private turn: Promise<unknown> = Promise.resolve();
 
   constructor(options: MemoryStoreOptions) {
-    this.files = new VaultFiles(options.vaultRoot, options.reservedPaths);
+    this.vaultRoot = resolve(options.vaultRoot);
+    this.files = new VaultFiles(this.vaultRoot, options.reservedPaths);
     this.staging = new StagingArea(this.files);
     this.trusted = options.trusted;
     this.now = options.now ?? (() => new Date());
@@ -243,6 +246,22 @@ export class MemoryStore {
       const op: LedgerOp = deltas[0]?.before === null ? "create" : "edit";
       return this.commit(op, deltas, target.path, false);
     });
+  }
+
+  isNotePath(path: string): boolean {
+    return this.files.isNotePath(path);
+  }
+
+  async proposeNoteFile(
+    path: string,
+    content: string,
+    provenance: Provenance = "agent",
+  ): Promise<WriteResult> {
+    this.gate();
+    if (!this.files.isNotePath(path)) throw new ReservedPathError(path, "not an atomic note path");
+    return this.serialized(() =>
+      this.stage("note", path, this.stampedProposal(path, content, provenance)),
+    );
   }
 
   async appendDaily(text: string, provenance: Provenance): Promise<WriteResult> {
@@ -486,6 +505,12 @@ export class MemoryStore {
   ): Promise<string> {
     const frontmatter = await this.noteFrontmatter(input, target, supersedes);
     return ensureTrailingNewline(serializeDocument(frontmatter, this.redact(input.body)));
+  }
+
+  private stampedProposal(path: string, content: string, provenance: Provenance): string {
+    const { frontmatter, body } = parseDocument(content, path);
+    const stamped = { ...frontmatter, provenance };
+    return this.redact(ensureTrailingNewline(serializeDocument(stamped, body)));
   }
 
   private async noteDeltas(

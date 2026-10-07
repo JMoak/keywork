@@ -1,5 +1,6 @@
 import {
   describeBinding,
+  describeContextEdit,
   messageText,
   type SessionEntry,
   type SessionTreeNode,
@@ -204,10 +205,14 @@ function entryText(entry: SessionEntry): string {
       return excerpt(entry.content);
     case "thinking_level_change":
       return `thinking → ${entry.thinkingLevel}`;
+    case "effort_change":
+      return `effort → ${entry.effort}`;
     case "model_change":
       return `model → ${entry.provider}/${entry.modelId}`;
     case "binding":
       return describeBinding(entry);
+    case "context_edit":
+      return describeContextEdit(entry);
     case "custom":
       return entry.customType;
   }

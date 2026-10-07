@@ -33,6 +33,7 @@ export function notificationTransport(facts: TerminalFacts = {}): NotificationTr
   const tty = facts.tty ?? process.stdout.isTTY === true;
   if (!tty || env.TERM === "dumb") return "off";
   if (env.TMUX !== undefined) return "bell";
+  if (env.ZELLIJ !== undefined) return "osc777";
   if (speaksOsc777(env)) return "osc777";
   if (speaksOsc9(env)) return "osc9";
   return "bell";

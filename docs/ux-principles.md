@@ -299,7 +299,7 @@ strong argument *and* a principle amendment to overturn.
 
 | Refusal | Rationale |
 |---|---|
-| **No MCP in the core loop** | Pi's measured argument: MCP servers cost 13k–18k tokens of schema at startup and aren't composable. Prefer CLI scripts + Bash + extensions; an extension may bridge MCP for those who need it. |
+| ~~**No MCP in the core loop**~~ | Superseded by D1 (MCP in core with deferred schemas) and, since 2026-10-01, by Pi itself: Pi 1.0 ships MCP built in with lazy `tool_search`. The surviving refusal is the cost: idle servers cost ~0 context (D1), and [`backlog/117`](backlog/117-influence-sweep.md) SW3 keeps activation from busting the prompt cache. |
 | **No Anthropic subscription-OAuth, ever** | Hard ToS guardrail. API-key / Agent-SDK only. Excise any such code paths when lifting from OpenCode's provider layer. |
 | **No embedded editor** | Deep-link to `$EDITOR` (Crush idea). keywork reviews and dispatches; it does not compete with Neovim. |
 | **No mouse-required or mouse-first features** | P1. Mouse support may exist as garnish only. |

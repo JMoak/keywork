@@ -20,6 +20,12 @@ Adaptations:
   context assembly, tree read API, and branched-session cloning with a
   parentSession header reference. Message payloads inside entries are keywork's
   own message shape, not Pi's.
+- 117 ContextEditEntry (packages/engine/src/session/entries.ts, store.ts): the
+  `context_edit` entry from Pi's session format (v0.87.0, docs/session-format.md):
+  an append-only `targetId` + `replacement` (null omits, content replaces) applied
+  to model context on the active branch only, latest edit per target winning,
+  raw history untouched. Keeping tool calls and results paired when an edit
+  removes one half is keywork's own rule.
 - B7 (packages/engine/src/session/compaction.ts): compaction algorithm adapted
   from Pi's documented design (docs/compaction.md in the published package):
   reserve-token trigger, keep-recent backward cut walk with message-boundary cut

@@ -234,7 +234,7 @@ describe("DiffModel", () => {
 });
 
 describe("followMutations", () => {
-  it("announces finished write and edit calls and ignores the rest", () => {
+  it("announces finished write, edit and bash calls and ignores the rest", () => {
     const bus = new EventBus();
     const feed = new FileChangeFeed();
     let announced = 0;
@@ -256,6 +256,9 @@ describe("followMutations", () => {
     bus.emit("tool.finished", { callId: "c2", output: "", isError: false });
     bus.emit("tool.finished", { callId: "c3", output: "", isError: true });
     expect(announced).toBe(2);
+    bus.emit("tool.started", { call: call("c4", "bash") });
+    bus.emit("tool.finished", { callId: "c4", output: "", isError: false });
+    expect(announced).toBe(3);
   });
 });
 

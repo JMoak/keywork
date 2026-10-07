@@ -1,6 +1,9 @@
 import {
   type Agent,
   type ContextReading,
+  type EffortLevel,
+  effortLevels,
+  isEffortLevel,
   type Message,
   type QueuedPrompt,
   QueuedPromptCancelledError,
@@ -10,10 +13,13 @@ import {
   type ToolCallPart,
 } from "@keywork/engine";
 import { toError } from "@keywork/shared";
+import { type AwayStretch, AwayWatch, awayDigest } from "./away-summary.ts";
 import { type BotEntry, type BotSummary, describeBotSpend, learningPolicyReadout } from "./bots.ts";
 import type { FileReader } from "./diff-render.ts";
 import type { Chord } from "./keys.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
+import { attachMentionedFiles, promptAsTyped } from "./mention-attachments.ts";
+import type { MentionSource } from "./mention-completer.ts";
 import { type AskDiffWindow, MutationAsk, type PendingAsk } from "./mutation-ask.ts";
 import { columnPage, type PageGrammar } from "./page.ts";
 import type { FileOpenOptions } from "./pane.ts";
@@ -23,6 +29,7 @@ import {
   type EditorOutcome,
   PromptEditor,
 } from "./prompt-editor.ts";
+import type { PromptUndoHook, StagedUndo } from "./prompt-undo.ts";
 import { SessionLedger } from "./session-ledger.ts";
 import {
   type ShellEscapePort,
@@ -30,6 +37,7 @@ import {
   shellEscapeCommand,
   shellEscapeTranscript,
 } from "./shell-escape.ts";
+import { answerAside } from "./side-question.ts";
 import { type ToolRun, type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
 import { TranscriptNavigation } from "./transcript-navigation.ts";
 import { type TranscriptLine, TranscriptView } from "./transcript-view.ts";
@@ -55,6 +63,7 @@ export interface ConversationPorts {
   frameTick?: TickScheduler;
   spillFile?: (spillId: string) => string | undefined;
   openFile?: (path: string, options: FileOpenOptions) => void;
+  workspaceFiles?: MentionSource;
 }
 
 export type QueueMove = -1 | 1;
@@ -62,6 +71,8 @@ export type QueueMove = -1 | 1;
 export type CompactionHook = (instructions: string) => Promise<void>;
 
 export type ThinkingChangeHook = (level: "on" | "off") => Promise<void>;
+
+export type EffortChangeHook = (level: EffortLevel) => Promise<void>;
 
 export type SettledOutcome = "finished" | "failed";
 
@@ -82,7 +93,10 @@ export class ConversationModel {
   lastSend: Promise<unknown> = Promise.resolve();
   lastTitle: Promise<unknown> = Promise.resolve();
   lastFork: Promise<unknown> = Promise.resolve();
+  lastUndo: Promise<unknown> = Promise.resolve();
+  lastAside: Promise<unknown> = Promise.resolve();
   private readonly ask: MutationAsk;
+  private readonly away = new AwayWatch();
   private readonly navigation: TranscriptNavigation;
   private readonly view = new TranscriptView();
   private agent: Agent | undefined;
@@ -90,6 +104,9 @@ export class ConversationModel {
   private afterTurn: (() => Promise<void>) | undefined;
   private compaction: CompactionHook | undefined;
   private thinkingChange: ThinkingChangeHook | undefined;
+  private effortChange: EffortChangeHook | undefined;
+  private promptUndo: PromptUndoHook | undefined;
+  private stagedUndo: StagedPromptUndo | undefined;
   private settledListener: ((outcome: SettledOutcome) => void) | undefined;
   private titleRequested = false;
   private retrievalDisclosed = false;
@@ -107,7 +124,7 @@ export class ConversationModel {
   ) {
     const touch = () => this.touch();
     this.feed = new TranscriptFeed(touch, ports?.now, ports?.frameTick);
-    this.editor = new PromptEditor(touch, conversationCommands, commands);
+    this.editor = new PromptEditor(touch, conversationCommands, commands, ports?.workspaceFiles);
     this.ask = new MutationAsk(touch, ports?.readFile);
     this.navigation = new TranscriptNavigation(this.feed, touch);
     if (agent === undefined) {
@@ -151,7 +168,7 @@ export class ConversationModel {
   }
 
   queued(): readonly string[] {
-    return this.queuedPrompts().map((prompt) => prompt.text);
+    return this.queuedPrompts().map((prompt) => promptAsTyped(prompt.text));
   }
 
   queuedPrompts(): readonly QueuedPrompt[] {
@@ -219,6 +236,7 @@ export class ConversationModel {
     page: PageGrammar = columnPage,
     marks: PageMarks = defaultPageMarks,
   ): TranscriptLine[] {
+    this.foldAttachments();
     const frame = this.view.frame(
       this.feed,
       { width, rows, page, marks },
@@ -239,7 +257,7 @@ export class ConversationModel {
       if (chord.name === "escape") return true;
     }
     const primed = this.navigation.takeEscapePrime();
-    if (chord.name === "tab" && this.editor.slashQuery() === undefined) {
+    if (chord.name === "tab" && !this.editor.completing()) {
       if (!this.editor.isEmpty()) return this.editor.expandPlaceholderAtCursor();
       return chord.shift ? this.navigation.stepFoldCursor() : this.navigation.toggleCursoredFold();
     }
@@ -272,6 +290,7 @@ export class ConversationModel {
   submitText(text: string, behavior: SendBehavior = "queue"): void {
     const trimmed = text.trim();
     if (trimmed === "" || this.disposed) return;
+    this.stagedUndo = undefined;
     const command = shellEscapeCommand(trimmed);
     if (command !== undefined) {
       this.submitShell(trimmed, command, behavior);
@@ -280,7 +299,7 @@ export class ConversationModel {
     if (this.agent === undefined) return;
     this.editor.remember(trimmed);
     this.navigation.snapToLive();
-    this.send(trimmed, behavior);
+    this.send(this.withMentionedFiles(trimmed), behavior);
   }
 
   confirmMutation(call: ToolCallPart): Promise<boolean> {
@@ -321,6 +340,48 @@ export class ConversationModel {
     this.thinkingChange = hook;
   }
 
+  bindEffortChange(hook: EffortChangeHook): void {
+    this.effortChange = hook;
+  }
+
+  bindPromptUndo(hook: PromptUndoHook): void {
+    this.promptUndo = hook;
+  }
+
+  undoStaged(): boolean {
+    return this.stagedUndo !== undefined;
+  }
+
+  undoLastPrompt(): boolean {
+    const hook = this.promptUndo;
+    const at = this.feed.promptIndices().at(-1);
+    const prompt = at === undefined ? undefined : this.feed.entries[at];
+    if (hook === undefined || at === undefined || prompt?.kind !== "user") return false;
+    if (prompt.entryId === undefined) return false;
+    if (this.stagedUndo !== undefined) this.feed.post("info", alreadyStagedNotice);
+    else if (this.busy) this.feed.post("info", turnRunningNotice);
+    else
+      this.lastUndo = hook(prompt.entryId).then(
+        (staged) => this.stageUndo(staged, at, promptAsTyped(prompt.text)),
+        (cause: unknown) => this.reportUndoFailure(cause),
+      );
+    return true;
+  }
+
+  redoPrompt(): boolean {
+    const staged = this.stagedUndo;
+    if (staged === undefined) return false;
+    this.stagedUndo = undefined;
+    this.lastUndo = staged.undo.cancel().then(
+      () => this.unstage(staged),
+      (cause: unknown) => {
+        this.stagedUndo = staged;
+        this.reportUndoFailure(cause);
+      },
+    );
+    return true;
+  }
+
   onSettled(listener: (outcome: SettledOutcome) => void): void {
     this.settledListener = listener;
   }
@@ -330,6 +391,8 @@ export class ConversationModel {
     if (previous === agent) return;
     if (previous !== undefined) this.ledger.retire(previous);
     if (previous !== undefined) agent.setThinking(previous.thinking());
+    const effort = previous?.effort();
+    if (effort !== undefined) agent.setEffort(effort);
     this.ask.denyAll();
     this.follow(agent);
     if (previous !== undefined) agent.adoptQueue(previous);
@@ -343,6 +406,20 @@ export class ConversationModel {
 
   postNotice(text: string): void {
     if (!this.disposed) this.feed.post("info", text);
+  }
+
+  postAside(text: string): void {
+    if (this.disposed) return;
+    this.feed.entries.push({ kind: "assistant", text, progress: true });
+    this.touch();
+  }
+
+  attend(paneFocused: boolean): void {
+    this.welcomeBack(this.away.attend({ pane: paneFocused }, this.entries.length));
+  }
+
+  terminalFocusChanged(focused: boolean): void {
+    this.welcomeBack(this.away.attend({ terminal: focused }, this.entries.length));
   }
 
   dispose(): void {
@@ -372,6 +449,7 @@ export class ConversationModel {
         if (replay !== true) this.requestTitleOnce();
       }),
       agent.bus.on("queue.changed", () => this.touch()),
+      this.away.follow(agent.bus),
     ];
     this.unfollow = () => {
       for (const stop of stops) stop();
@@ -470,8 +548,49 @@ export class ConversationModel {
 
   private reportRest(): void {
     if (this.disposed) return;
-    if (!this.busy) this.settledListener?.(this.outcome());
+    if (!this.busy) {
+      this.away.turnSettled();
+      this.settledListener?.(this.outcome());
+    }
     this.touch();
+  }
+
+  private welcomeBack(stretch: AwayStretch | undefined): void {
+    if (stretch === undefined || this.disposed) return;
+    const digest = awayDigest(stretch, this.entries, this.ask.pending?.summary);
+    if (digest !== undefined) this.feed.post("info", digest);
+  }
+
+  private withMentionedFiles(prompt: string): string {
+    const read = this.ports?.readFile;
+    const agent = this.agent;
+    if (read === undefined || agent === undefined) return prompt;
+    return attachMentionedFiles(prompt, read, agent.history());
+  }
+
+  private foldAttachments(): void {
+    for (const entry of this.feed.entries) {
+      if (entry.kind === "user") entry.text = promptAsTyped(entry.text);
+    }
+  }
+
+  private askAside(question: string): void {
+    const agent = this.agent;
+    if (agent === undefined) {
+      this.feed.post("info", "no model bound · nothing to ask");
+      return;
+    }
+    if (question === "") {
+      this.feed.post("info", "/btw <question> · asks on the side, kept out of the conversation");
+      return;
+    }
+    this.feed.post("info", `btw · ${question}`);
+    this.lastAside = answerAside(agent.provider, agent.history(), question).then(
+      (answer) => this.postAside(answer === "" ? "(no answer came back)" : answer),
+      (cause: unknown) => {
+        if (!this.disposed) this.feed.post("info", `btw · no answer · ${toError(cause).message}`);
+      },
+    );
   }
 
   private outcome(): SettledOutcome {
@@ -532,6 +651,12 @@ export class ConversationModel {
       case "thinking":
         this.toggleThinking(argument);
         return true;
+      case "effort":
+        this.chooseEffort(argument);
+        return true;
+      case "btw":
+        this.askAside(argument);
+        return true;
       case "policy":
         return this.reportBotPolicy() || (this.commands?.run(typed) ?? false);
       default:
@@ -561,6 +686,31 @@ export class ConversationModel {
         if (!this.disposed) this.feed.post("error", toError(cause).message);
       },
     );
+  }
+
+  private chooseEffort(argument: string): void {
+    const agent = this.agent;
+    if (agent === undefined) {
+      this.feed.post("info", "no model bound · nothing to set effort for");
+      return;
+    }
+    const word = argument.trim().toLowerCase();
+    if (word === "") {
+      this.feed.post(
+        "info",
+        `effort ${agent.effort() ?? "at the provider default"} · ${effortUsage}`,
+      );
+      return;
+    }
+    if (!isEffortLevel(word)) {
+      this.feed.post("error", `unknown effort ${word} · ${effortUsage}`);
+      return;
+    }
+    agent.setEffort(word);
+    this.feed.post("info", `effort ${word} · from your next prompt on`);
+    this.lastSend = (this.effortChange?.(word) ?? Promise.resolve()).catch((cause: unknown) => {
+      if (!this.disposed) this.feed.post("error", toError(cause).message);
+    });
   }
 
   private reportCost(): void {
@@ -728,7 +878,7 @@ export class ConversationModel {
     } else if (prompt.entryId === undefined) {
       this.feed.post("info", noForkPointNotice);
     } else {
-      this.lastFork = fork(prompt.entryId, prompt.text).then(
+      this.lastFork = fork(prompt.entryId, promptAsTyped(prompt.text)).then(
         (outcome) => this.reportFork(outcome),
         (cause: unknown) => {
           if (!this.disposed) this.feed.post("error", toError(cause).message);
@@ -741,6 +891,33 @@ export class ConversationModel {
     if (this.disposed) return;
     if (!outcome.forked) this.feed.post("info", noForkPointNotice);
     else if (outcome.note !== undefined) this.feed.post("info", outcome.note);
+  }
+
+  private stageUndo(undo: StagedUndo | undefined, at: number, text: string): void {
+    if (this.disposed) return;
+    if (undo === undefined) {
+      this.feed.post("info", nothingToUndoNotice);
+      return;
+    }
+    this.stagedUndo = { undo, at, entries: this.feed.entries.splice(at) };
+    this.editor.clearKeepingDraft();
+    this.editor.load(text);
+    this.navigation.snapToLive();
+    this.feed.post(
+      "info",
+      `undone · ${undo.filesNote} · your prompt is back in the composer · /redo brings it all back`,
+    );
+  }
+
+  private unstage(staged: StagedPromptUndo): void {
+    if (this.disposed) return;
+    this.feed.entries.splice(staged.at, 0, ...staged.entries);
+    this.editor.clearKeepingDraft();
+    this.feed.post("info", "redone · the turn and its files are back");
+  }
+
+  private reportUndoFailure(cause: unknown): void {
+    if (!this.disposed) this.feed.post("error", toError(cause).message);
   }
 
   private requestTitleOnce(): void {
@@ -757,6 +934,15 @@ export class ConversationModel {
 }
 
 const noForkPointNotice = "no fork point there";
+const turnRunningNotice = "turn still running · esc to interrupt";
+const alreadyStagedNotice = "already undone · send to keep it or /redo to bring it back";
+const nothingToUndoNotice = "nothing to undo here";
+
+interface StagedPromptUndo {
+  readonly undo: StagedUndo;
+  readonly at: number;
+  readonly entries: readonly TranscriptEntry[];
+}
 const noShellNotice = "no shell here · ! needs a workspace runtime";
 const noFilePaneNotice = "can't open the spill · no file panes here";
 
@@ -782,8 +968,10 @@ function swapped<T>(items: readonly T[], from: number, to: number): T[] {
 
 const thinkingNotices = {
   on: "thinking shown · tab unfolds it · /thinking hides it again",
-  off: "thinking hidden · requests go out as before",
+  off: "thinking hidden · progress notes still show where the model writes them",
 } as const;
+
+const effortUsage = `/effort ${effortLevels.join("|")}`;
 
 function thinkingSwitchFrom(argument: string): "on" | "off" | undefined {
   const word = argument.trim().toLowerCase();
@@ -795,4 +983,9 @@ const conversationCommands: readonly CommandSuggestion[] = [
   { name: "context", description: "how full the context is and where compaction fires" },
   { name: "compact", description: "fold older context into a summary: /compact [focus]" },
   { name: "thinking", description: "show or hide the model's reasoning: /thinking [on|off]" },
+  {
+    name: "effort",
+    description: "how much work each reply gets: /effort [low|medium|high|xhigh|max]",
+  },
+  { name: "btw", description: "ask on the side, kept out of the conversation: /btw <question>" },
 ];

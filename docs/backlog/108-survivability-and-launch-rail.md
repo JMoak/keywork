@@ -140,3 +140,15 @@ nightly and on demand, never on PRs.
 | G3 | ✅ landed (stream 4, 2026-08-21) | `scripts/release/{targets,build,build-npm,npm-manifest}.ts` (+ tests), `release.yml` (5-target matrix built on own runners, checksums, `gh release`, timed `install.sh`, npm publish gated on `NPM_PUBLISH`), `scripts/install.sh` / `install.ps1`, `packaging/` (WT fragment, `.desktop`, macOS `.app` shim), `cli/src/version.ts` + `keywork --version`, `docs/release.md`, README quickstart. Verified locally: Windows binary 125 MB via the script, smoke `--version` ok; npm bundle installs its deps and runs. **Open:** first tag not cut yet (the 60 s measurement prints in the `publish` job); `macos-15-intel`/`ubuntu-24.04-arm` runner labels assumed; macOS launcher needs `+x` in git (`git add --chmod=+x`); npm name `keywork` availability unchecked |
 | FR1.2 | ✅ landed (stream 4, 2026-08-21) | `scripts/soak.ts` + `scripts/soak/{budget,provider}.ts` (+ tests), `Scenario.agentFactory` + `Stage.renderOnce` seams in the e2e harness, `EventBus.listenerCount`, `soak.yml` nightly + dispatch. First run found a real leak: every session attachment's usage listener outlived its pane (`cli/sessions.ts` `replay`) and live panes were never released at quit; fixed (`sessionPort.release` unsubscribes via `onListen`; `paneSessions.closeAll()` in `onExit`). 500-turn run on Windows: heap 36.4 → 33.5 MB, RSS 339 → 342 MB, render p95 0.4 ms, zero residue |
 | S3.1–S3.4 | ✅ landed (stream 3, 2026-08-21) | ledger in [`109-long-session-survivability.md`](109-long-session-survivability.md): engine `context-budget.ts` + `settle.ts`, `Provider.capabilities`, `/compact` · `/context` in panes, `tui/context-gauge.ts` (C55 options round open), `/model` ctx facts + `doctor` context section, per-model cost ledger; e2e `long-session` |
+
+**Amendment 2026-10-02 (117 gate `terminate` outcome).** Exit 4 no longer lets the turn run on
+after the refusal: `ToolGuard.declineEndsRun` (set by the `keywork run` guard) ends the run
+right after the refused call's tool result, with no further model call; later calls in the same
+reply are settled as `skipped: the run ended at a refused call` so history stays paired. The
+`run.finished` message is whatever text the model wrote before the call (often empty, and then
+stdout stays empty); stderr says `so the run stopped there`. Panes and `keywork chat` keep the
+old behavior: the model sees the denial and may continue. Policy `deny` rules do not end a run
+(the model is expected to route around a rule the user wrote); the `serve` ask broker keeps
+the continuing behavior too. Proof: `agent.test.ts` counts model calls on the mock provider,
+`run.test.ts` asserts one script turn left over, the `denied.jsonl` golden lost its second
+turn. `docs/headless.md` exit 4 row updated.

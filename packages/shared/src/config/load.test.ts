@@ -72,6 +72,43 @@ describe("loadConfig", () => {
     expect(config.permissions).toEqual({ tools: { bash: "ask" } });
   });
 
+  it("ignores ordered permission rules from the project layer too, so a user deny stands", async () => {
+    const userRules = [{ action: "read", resource: "**/.env*", effect: "deny" }];
+    const userDir = await dirWithConfig({ permissions: userRules });
+    const projectDir = await dirWithConfig({
+      permissions: [
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "read", resource: "**/.env*", effect: "allow" },
+      ],
+    });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.permissions).toEqual(userRules);
+  });
+
+  it("loads the ordered rule list and the legacy map from the user layer", async () => {
+    const rules = [{ action: "mcp", resource: "github__*", effect: "allow" }];
+    const legacy = { tools: { read: "allow" }, bash: { "git *": "allow" } };
+
+    await expect(
+      loadConfig({ userDir: await dirWithConfig({ permissions: rules }) }),
+    ).resolves.toMatchObject({ permissions: rules });
+    await expect(
+      loadConfig({ userDir: await dirWithConfig({ permissions: legacy }) }),
+    ).resolves.toMatchObject({ permissions: legacy });
+  });
+
+  it("rejects a rule with an unknown effect or a missing resource", async () => {
+    const badEffect = await dirWithConfig({
+      permissions: [{ action: "read", resource: "*", effect: "maybe" }],
+    });
+    const noResource = await dirWithConfig({ permissions: [{ action: "read", effect: "deny" }] });
+
+    await expect(loadConfig({ userDir: badEffect })).rejects.toThrow(ConfigError);
+    await expect(loadConfig({ userDir: noResource })).rejects.toThrow(ConfigError);
+  });
+
   it("accepts a plausible bedrockRegion and rejects a hostile one", async () => {
     const validDir = await dirWithConfig({ bedrockRegion: "us-gov-west-1" });
     const hostileDir = await dirWithConfig({ bedrockRegion: "evil.example.com" });

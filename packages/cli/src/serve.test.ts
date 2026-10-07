@@ -261,6 +261,31 @@ describe("serve", () => {
 });
 
 describe("memorySessionHost parity", () => {
+  it("runs an injected prompt as an ordinary turn tagged with its client, and persists it", async () => {
+    const options = await hostOptions(new MockProvider([textTurn("heard you")]));
+    const { server, host, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+
+    const accepted = await call(`/sessions/${id}/inject`, {
+      method: "POST",
+      body: JSON.stringify({ text: "dictated prompt", client: "wispr-flow" }),
+    });
+    expect(await accepted.json()).toEqual({ sessionId: id, accepted: true, queued: false });
+    const started = await reader.next();
+    expect(JSON.parse(started.data).payload).toEqual({
+      userText: "dictated prompt",
+      origin: { kind: "external", client: "wispr-flow" },
+    });
+    while ((await reader.next()).event !== "turn.completed");
+    await reader.close();
+    expect(await host.inject("nope", "hi", { kind: "external", client: "x" })).toBe("missing");
+    await server.close();
+
+    const { stores } = await scanSessions(options.sessionDir ?? "");
+    expect(stores[0]?.messages().map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
   it("answers the same host contract as the file host for unknown sessions", async () => {
     const host = memorySessionHost({ log: new EventLog(), provider: new MockProvider([]) });
     expect(await host.prompt("nope", "hi")).toBe("missing");

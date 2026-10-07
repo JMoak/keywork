@@ -46,18 +46,28 @@ in a project-layer file changes nothing, proven by a test; `agentbox/compose.yam
 `bedrock` broker service (`aws-sigv4-proxy`) and the agent loses its AWS keys.
 **Open:** Q-AB1.
 
-### AB2 (1pt): honest denial hint for MCP tools
+### ~~AB2 (1pt): honest denial hint for MCP tools~~
 The headless denial hint (`cli/src/run.ts`, the `--preset open` advice) is wrong for an MCP
 tool: `open` covers the four core tools, and `--preset` discards the allow entries that would
 have helped. Name the fix that works: allow `<server>__<tool>` under `permissions.tools`.
 **Accept:** a denied MCP call prints the exact rule to add; a denied core tool keeps today's
 hint; the golden fixture for exit 4 is updated.
+**Landed 2026-10-02 (with 117 SW15):** when any refused tool is an MCP tool, the notice prints
+one ordered rule per refused tool, e.g. `add {"action":"mcp","resource":"github__get_issue",
+"effect":"allow"} to the permissions list in ~/.keywork/keywork.json`; core-only refusals keep
+the `--preset open` hint. The exit-4 golden stream carries only `refused` tool names, so it did
+not change; `cli/src/run.test.ts` covers the plain-mode notice.
 
-### AB3 (2pt): allow a whole MCP server
+### ~~AB3 (2pt): allow a whole MCP server~~
 Exact-name rules mean a box has to list every tool of every system before `keywork run` can
 use them, and the upstream names drift. Let a rule cover one server.
 **Accept:** the chosen form (Q-AB2) allows every tool of one server and nothing else; deny
 still wins; `agentbox/systems/*/keywork.json` shrink to one line each.
+**Landed 2026-10-02 (with 117 SW15):** `{"action": "mcp", "resource": "github__*", "effect":
+"allow"}` covers one server and nothing else. Rules are ordered and the last match wins, so a
+deny placed after the server rule still carves a tool out. Each system's `keywork.json` is one
+rule line, and `agent/entrypoint.sh` now appends permission lists across fragments instead of
+letting jq's `*` replace them.
 
 ### AB4 (2pt): a published image
 `agentbox/agent/Dockerfile` installs keywork with `scripts/install.sh` at build time. Publish
@@ -85,8 +95,9 @@ file and the README banner.
 - **Q-AB1:** is an environment-only endpoint override acceptable under the rule that config
   never supplies a Bedrock base URL? Proposal: yes. The environment is already the only
   Bedrock credential source, so it is already the trust root for this provider.
-- **Q-AB2:** which form for AB3: a `*` suffix in `permissions.tools` keys (`github__*`), or an
-  `allow: true` on the `mcpServers` entry? Proposal: the first. It keeps one rule vocabulary,
-  and `permissions.bash` already uses `*` globs.
+- ~~**Q-AB2:** which form for AB3: a `*` suffix in `permissions.tools` keys (`github__*`), or an
+  `allow: true` on the `mcpServers` entry?~~ **Settled by 117-2 (2026-10-02):** neither; the
+  ordered rule list's `mcp` action takes a `github__*` resource, one rule vocabulary for all
+  tools.
 - **Q-AB3:** should the harness-neutral design doc move into this repo (`docs/agentbox.md`)
   once the OpenCode variant stops being the team's daily driver?

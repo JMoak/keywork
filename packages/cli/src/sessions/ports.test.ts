@@ -139,6 +139,27 @@ describe("sessionPort", () => {
     expect(levels).toEqual(["on", "off"]);
   });
 
+  it("persists effort once per change and serves it back on the attachment", async () => {
+    const dir = await tempDir();
+    const changed: string[] = [];
+    const port = sessionPort(dir, ".", { onChange: (sessionId) => changed.push(sessionId) });
+    const created = await port.create();
+    expect(created?.effort).toBeUndefined();
+
+    await created?.recordEffort?.("low");
+    await created?.recordEffort?.("low");
+    await created?.recordEffort?.("max");
+    expect(changed).toEqual([created?.id, created?.id]);
+
+    const reopened = await port.open(created?.id ?? "");
+    expect(reopened?.effort).toBe("max");
+    const levels = (await storeOf(dir, created?.id))
+      .entries()
+      .filter((entry) => entry.type === "effort_change")
+      .map((entry) => (entry as { effort: string }).effort);
+    expect(levels).toEqual(["low", "max"]);
+  });
+
   it("persists an arc binding as an entry and serves it back on the attachment and the overview", async () => {
     const dir = await tempDir();
     const bound: Array<[string, string | undefined]> = [];

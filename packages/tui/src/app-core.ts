@@ -99,6 +99,8 @@ export interface UndoPort {
   redo(): Promise<boolean>;
 }
 
+export type SessionExporter = (sessionId: string, args: string | undefined) => Promise<string>;
+
 export interface TipsOption {
   enabled: boolean;
   now?: () => number;
@@ -109,6 +111,7 @@ export interface AppCoreOptions extends PaneFactories {
   drawnRect?: (rect: Rect, screen: Screen) => Rect;
   isDirectory?: (path: string) => boolean;
   undo?: UndoPort;
+  exportSession?: SessionExporter;
   presets?: PresetsPort;
   inference?: InferencePort;
   connections?: ConnectionsPort;
@@ -119,6 +122,7 @@ export interface AppCoreOptions extends PaneFactories {
   workspaces?: WorkspacesPort;
   workspaceSetup?: WorkspaceSetupPort;
   currentModel?: () => string | undefined;
+  currentEffort?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;
   tips?: TipsOption;
   restoreWorkspace?: WorkspaceState;
@@ -395,6 +399,22 @@ export class AppCore implements ActionTarget {
     this.touch();
   }
 
+  focusLast(): void {
+    this.layout.focusPrevious();
+    this.touch();
+  }
+
+  cycleVerbosity(): void {
+    const id = this.layout.focused();
+    const pane = id === undefined ? undefined : this.panes.get(id);
+    if (pane?.cycleVerbosity === undefined) {
+      this.postNotice("tool-row detail belongs to conversations · focus one first");
+      return;
+    }
+    pane.cycleVerbosity();
+    this.touch();
+  }
+
   zoomPane(): void {
     this.layout.zoomToggle();
     this.touch();
@@ -494,6 +514,7 @@ export class AppCore implements ActionTarget {
     const seams: InferenceCommandSeams = {
       inference,
       currentModel: this.options.currentModel,
+      currentEffort: this.options.currentEffort,
       switchModel: this.options.switchModel,
       notice: (text) => this.postNotice(text),
       showPicker: (picker) => {

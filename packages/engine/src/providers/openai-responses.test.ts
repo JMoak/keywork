@@ -29,7 +29,7 @@ async function collect(iterable: AsyncIterable<TurnDelta>): Promise<TurnDelta[]>
 }
 
 describe("OpenAiResponsesProvider", () => {
-  it("streams text deltas, completed items, and usage", async () => {
+  it("streams text deltas, completed items, and usage with cached tokens counted once", async () => {
     const lines = [
       '{"type":"response.output_text.delta","delta":"Hel"}',
       '{"type":"response.output_text.delta","delta":"lo"}',
@@ -56,7 +56,7 @@ describe("OpenAiResponsesProvider", () => {
       },
       {
         type: "done",
-        usage: { inputTokens: 7, outputTokens: 9, cacheReadInputTokens: 3 },
+        usage: { inputTokens: 4, outputTokens: 9, cacheReadInputTokens: 3 },
       },
     ]);
   });
@@ -180,5 +180,31 @@ describe("OpenAiResponsesProvider", () => {
     await expect(
       collect(provider(async () => sseResponse(errored)).stream(simpleRequest)),
     ).rejects.toThrow(ProviderStreamError);
+  });
+});
+
+describe("OpenAiResponsesProvider cache diagnostics", () => {
+  it("reports the response id and the classified miss reason from response.completed", async () => {
+    const lines = [
+      '{"type":"response.output_text.delta","delta":"ok"}',
+      '{"type":"response.completed","response":{"id":"resp_2","usage":{"input_tokens":10,"output_tokens":1},"prompt_cache_diagnostics":{"type":"cache_miss","reason":"tools_changed","comparison_reusable_tokens":5629,"cache_missed_tokens":5629}}}',
+    ];
+    const deltas = await collect(provider(async () => sseResponse(lines)).stream(simpleRequest));
+    expect(deltas.at(-1)).toEqual({
+      type: "done",
+      usage: { inputTokens: 10, outputTokens: 1 },
+      responseId: "resp_2",
+      cacheMiss: { cause: "tools changed", missedTokens: 5629 },
+    });
+  });
+
+  it("reports no miss on a cache hit", async () => {
+    const lines = [
+      '{"type":"response.completed","response":{"id":"resp_3","usage":{"input_tokens":1,"output_tokens":1},"prompt_cache_diagnostics":{"type":"cache_hit"}}}',
+    ];
+    const done = (await collect(provider(async () => sseResponse(lines)).stream(simpleRequest))).at(
+      -1,
+    );
+    expect(done).not.toHaveProperty("cacheMiss");
   });
 });

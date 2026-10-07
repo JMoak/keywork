@@ -6,11 +6,13 @@ export interface ActionTarget {
   closePane(): void;
   zoomPane(): void;
   focusToward(direction: Direction): void;
+  focusLast(): void;
   movePane(direction: Direction): void;
   cyclePane(): void;
   pinPane(): void;
   resizeDock(delta: number): void;
   resizePane(delta: number): void;
+  cycleVerbosity(): void;
   summon(kind: SummonableKind): void;
   toggleHelp(): void;
   openPalette(initialQuery?: string): void;
@@ -100,6 +102,13 @@ export const appActions: Record<string, AppAction> = {
       aliases: ["moveright"],
     },
   },
+  "focus.last": {
+    chords: "leader tab",
+    help: "focus the last pane (bounce)",
+    sticky: true,
+    invoke: (target) => target.focusLast(),
+    command: { name: "focus-last", description: "bounce focus to the pane you were just in" },
+  },
   "move.left": {
     chords: "leader shift+h",
     help: "move pane left",
@@ -176,6 +185,16 @@ export const appActions: Record<string, AppAction> = {
     sticky: true,
     invoke: (target) => target.resizePane(-0.05),
     command: { name: "shrink", description: "shrink the focused pane", aliases: ["pane-shrink"] },
+  },
+  "transcript.verbosity": {
+    chords: "leader v",
+    help: "tool rows: low · medium · high (cycle)",
+    sticky: true,
+    invoke: (target) => target.cycleVerbosity(),
+    command: {
+      name: "verbosity",
+      description: "cycle tool-row detail in this conversation: low, medium, high",
+    },
   },
   "browser.summon": {
     chords: "leader f",

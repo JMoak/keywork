@@ -8,8 +8,16 @@ import {
   type TickScheduler,
   type ToolCallPart,
 } from "@keywork/engine";
+import type { SpanLinker } from "./file-references.ts";
 import type { MarkdownSpan } from "./markdown.ts";
 import { TailFollow } from "./tail-follow.ts";
+import {
+  defaultVerbosity,
+  nextVerbosity,
+  type ToolGrouping,
+  toolGroups,
+  type Verbosity,
+} from "./transcript-verbosity.ts";
 
 export type TranscriptEntry = UserEntry | AssistantEntry | ThinkingEntry | ToolEntry | NoticeEntry;
 
@@ -22,6 +30,7 @@ export interface UserEntry {
 export interface AssistantEntry {
   kind: "assistant";
   text: string;
+  progress?: true;
 }
 
 export interface ThinkingEntry {
@@ -42,12 +51,13 @@ export interface NoticeEntry {
   text: string;
 }
 
-export type ToolProvenance = "agent" | "user";
+export type ToolProvenance = "agent" | "user" | "external";
 
 export interface ToolRun {
   name: string;
   subject: string;
   args: string;
+  fullArgs?: string;
   replay: boolean;
   provenance?: ToolProvenance;
   startedAtMs: number;
@@ -66,6 +76,8 @@ export type TranscriptBus = Agent["bus"];
 export class TranscriptFeed {
   readonly entries: TranscriptEntry[] = [];
   activity = 0;
+  verbosity: Verbosity = defaultVerbosity;
+  link: SpanLinker | undefined;
   private readonly running = new Map<string, RunningTool>();
   private stream: { entry: AssistantEntry; steps: number } | undefined;
   private turnStartedAtMs: number | undefined;
@@ -130,7 +142,18 @@ export class TranscriptFeed {
     this.stream = undefined;
   }
 
+  cycleVerbosity(): Verbosity {
+    this.verbosity = nextVerbosity(this.verbosity);
+    this.notify();
+    return this.verbosity;
+  }
+
+  toolGrouping(): ToolGrouping {
+    return toolGroups(this.entries, this.verbosity);
+  }
+
   toggleFold(entry: TranscriptEntry): boolean {
+    if (this.toolGrouping().has(this.entries.indexOf(entry))) return false;
     if (entry.kind === "thinking") {
       entry.folded = !entry.folded;
       this.notify();
@@ -149,7 +172,10 @@ export class TranscriptFeed {
   }
 
   disclosableIndices(): number[] {
-    return this.entries.flatMap((entry, index) => (disclosable(entry) ? [index] : []));
+    const grouping = this.toolGrouping();
+    return this.entries.flatMap((entry, index) =>
+      disclosable(entry) && !grouping.has(index) ? [index] : [],
+    );
   }
 
   promptIndices(): number[] {
@@ -160,7 +186,9 @@ export class TranscriptFeed {
     switch (event.type) {
       case "turn.delta":
         return (
-          event.payload.delta.type === "text" || event.payload.delta.type === "visible-thinking"
+          event.payload.delta.type === "text" ||
+          event.payload.delta.type === "visible-thinking" ||
+          event.payload.delta.type === "progress"
         );
       case "tool.started":
         return true;
@@ -205,6 +233,7 @@ export class TranscriptFeed {
   private streamDelta(delta: EngineEvents["turn.delta"]["delta"]): void {
     if (delta.type === "text") this.streamText(delta.text);
     if (delta.type === "visible-thinking") this.streamThinking(delta.text);
+    if (delta.type === "progress") this.postProgress(delta.text);
   }
 
   private startTurn(text: string, replay: boolean, entryId: string | undefined): void {
@@ -224,7 +253,7 @@ export class TranscriptFeed {
 
   private streamText(text: string): void {
     const last = this.entries.at(-1);
-    if (last?.kind === "assistant") {
+    if (last?.kind === "assistant" && last.progress !== true) {
       last.text += text;
       if (this.stream?.entry === last) this.stream.steps += 1;
     } else {
@@ -232,6 +261,12 @@ export class TranscriptFeed {
       this.entries.push(entry);
       this.stream = { entry, steps: 0 };
     }
+    this.notify();
+  }
+
+  private postProgress(text: string): void {
+    this.endStream();
+    this.entries.push({ kind: "assistant", text, progress: true });
     this.notify();
   }
 
@@ -248,6 +283,7 @@ export class TranscriptFeed {
       name: call.name,
       subject: toolSubject(call.arguments),
       args: compactJson(call.arguments),
+      fullArgs: JSON.stringify(call.arguments) ?? "",
       replay,
       ...(provenance !== undefined && { provenance }),
       startedAtMs: this.now(),
@@ -287,6 +323,7 @@ export class TranscriptFeed {
     run.detail = detailLines(output);
     run.live = undefined;
     if (spill !== undefined) run.spill = spill;
+    if (carriesUntrustedRecall(run.name, output)) run.provenance = "external";
     entry.failed = isError;
     entry.text = toolRowText(run);
     this.notify();
@@ -350,6 +387,15 @@ const detailLineLimit = 12;
 function disclosable(entry: TranscriptEntry): boolean {
   if (entry.kind === "thinking") return true;
   return entry.kind === "tool" && entry.run?.detail !== undefined;
+}
+
+const recallTools: ReadonlySet<string> = new Set(["memory_get", "memory_search"]);
+
+const untrustedRecallLine =
+  /^(?:\[\[[^\]\n]*\]\] · provenance: untrusted\b|(?:- daily\/\S+ |\s*\d+\t)\d{2}:\d{2} \[untrusted\])/m;
+
+function carriesUntrustedRecall(toolName: string, output: string): boolean {
+  return recallTools.has(toolName) && untrustedRecallLine.test(output);
 }
 
 function wordCount(text: string): string {

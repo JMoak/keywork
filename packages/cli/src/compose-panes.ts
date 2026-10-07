@@ -81,6 +81,7 @@ import {
   workspaceStateFile,
 } from "./paths.ts";
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
+import { sessionExporter } from "./sessions/export.ts";
 import {
   boundSessionCounts,
   type SessionChangeFeed,
@@ -297,6 +298,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
     }),
     sessionTrees: sessionTreePort(options.sessionDir, changes),
+    exportSession: sessionExporter(options.sessionDir, cwd, (sessionId) => stores.get(sessionId)),
     arcs: arcs.port,
     bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),

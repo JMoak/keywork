@@ -24,6 +24,7 @@ import {
   elevationScrollMap,
   elevationTurnAge,
 } from "./elevation.ts";
+import { fileLinksOff, fileLinksOn } from "./file-links.ts";
 import { firstConversation } from "./first-conversation.ts";
 import { gardenHeatInk, gardenHeatLead } from "./garden-heat.ts";
 import { gaugeBar, gaugeBare, gaugeRamp, gaugeSteps, gaugeTile } from "./gauge-forms.ts";
@@ -38,6 +39,7 @@ import { pointerOff } from "./pointer-off.ts";
 import { pointerTour } from "./pointer-tour.ts";
 import { sessionLifecycle } from "./session-lifecycle.ts";
 import { statusTips } from "./status-tips.ts";
+import { terminalHygiene } from "./terminal-hygiene.ts";
 import { terminalMirror } from "./terminal-mirror.ts";
 import { tilingTour } from "./tiling-tour.ts";
 import { trayTour } from "./tray-tour.ts";
@@ -86,6 +88,9 @@ export const scenarios: readonly Scenario[] = [
   pointerOff,
   trayTour,
   terminalMirror,
+  terminalHygiene,
+  fileLinksOn,
+  fileLinksOff,
   diffPane,
   livePlayground,
 ];

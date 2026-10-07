@@ -112,6 +112,20 @@ describe("SessionStore", () => {
     expect(store.droppedLines).toBe(0);
   });
 
+  it("closes a torn final line before the next append so neither entry is lost", async () => {
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+    await store.append(textMessage("user", "kept"));
+    await appendFile(file, '{"type":"message","id":"torn', "utf8");
+
+    const reopened = await SessionStore.open(file);
+    await reopened.append(textMessage("assistant", "after the tear"));
+    const again = await SessionStore.open(file);
+
+    expect(again.messages().map(messageText)).toEqual(["kept", "after the tear"]);
+    expect(again.droppedLines).toBe(1);
+  });
+
   it("opens a file with a corrupt mid-file line and reports the drop", async () => {
     const file = await sessionFile();
     const store = await SessionStore.create(file, ".");

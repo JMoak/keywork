@@ -9,7 +9,13 @@ import {
   type ToolCallPart,
   type ToolResultPart,
 } from "../messages.ts";
-import type { ProviderRequest, ToolDefinition } from "../provider.ts";
+import {
+  type EffortLevel,
+  effortInForce,
+  type ProviderRequest,
+  type ToolDefinition,
+} from "../provider.ts";
+import { claudeSupports } from "./claude-models.ts";
 
 export interface MessagesRequestShape {
   maxTokens: number;
@@ -23,100 +29,199 @@ export function toMessagesRequest(
   owner: ProviderStateOwner,
   shape: MessagesRequestShape,
 ): object {
-  const system = systemText(request);
+  const inPlace = claudeSupports(model, "mid-conversation-tools");
+  const thinking = thinkingConfig(model, shape.maxTokens, request.thinking === true);
+  const effort = topLevelEffort(request, model);
+  const system = systemText(request, inPlace);
+  const tools = offeredTools(request, inPlace);
   return {
     model,
     max_tokens: shape.maxTokens,
     stream: true,
     cache_control: automaticPromptCache,
-    ...(request.thinking === true && { thinking: thinkingConfig(model, shape.maxTokens) }),
+    ...(thinking !== undefined && { thinking }),
+    ...(effort !== undefined && { output_config: { effort } }),
     ...(system !== "" && { system }),
-    messages: toWireMessages(request.messages, owner),
-    ...(request.tools.length > 0 && { tools: request.tools.map(toWireTool) }),
+    messages: toWireMessages(request, model, owner, inPlace),
+    ...(tools.length > 0 && { tools: tools.map(toWireTool) }),
+    ...(request.cacheDiagnostics !== undefined && {
+      diagnostics: { previous_message_id: request.cacheDiagnostics.previousResponseId },
+    }),
   };
 }
 
-export function thinkingConfig(model: string, maxTokens: number): object {
-  return takesThinkingBudget(model)
-    ? { type: "enabled", budget_tokens: Math.min(thinkingBudgetTokens, maxTokens - 1) }
-    : { type: "adaptive", display: "summarized" };
+export function thinkingConfig(
+  model: string,
+  maxTokens: number,
+  thinkingShown = true,
+): object | undefined {
+  if (!thinkingShown) {
+    return claudeSupports(model, "progress-updates")
+      ? { type: "adaptive", display: "updates" }
+      : undefined;
+  }
+  return claudeSupports(model, "adaptive-thinking")
+    ? { type: "adaptive", display: "summarized" }
+    : { type: "enabled", budget_tokens: Math.min(thinkingBudgetTokens, maxTokens - 1) };
+}
+
+export function showsProgressUpdates(model: string, thinkingShown: boolean): boolean {
+  return !thinkingShown && claudeSupports(model, "progress-updates");
 }
 
 const automaticPromptCache = { type: "ephemeral" } as const;
 
-// Claude 4.6 and later reject budget_tokens and default thinking text to
-// omitted; every earlier Claude only thinks when given a budget.
-const adaptiveThinkingSince = 4.6;
-
-function takesThinkingBudget(model: string): boolean {
-  const id = model.slice(model.lastIndexOf("/") + 1).toLowerCase();
-  if (/^claude-\d-/.test(id)) return true;
-  const generation = /^claude-(?:haiku|sonnet|opus)-(\d+)(?:-(\d+))?/.exec(id);
-  if (generation === null) return false;
-  return Number(`${generation[1]}.${generation[2] ?? "0"}`) < adaptiveThinkingSince;
-}
+type WireRole = "user" | "assistant";
 
 interface WireMessage {
-  role: "user" | "assistant";
+  role: WireRole | "system";
   content: object[];
+  output_config?: { effort: EffortLevel };
 }
 
-function systemText(request: ProviderRequest): string {
-  return [
-    request.systemPrompt,
-    ...request.messages.filter((message) => message.role === "system").map(messageText),
-  ]
+interface Turn {
+  role: WireRole;
+  content: object[];
+  firstIndex: number;
+  lastIndex: number;
+}
+
+interface PositionedBlocks {
+  at: number;
+  blocks: object[];
+}
+
+function topLevelEffort(request: ProviderRequest, model: string): EffortLevel | undefined {
+  if (!claudeSupports(model, "effort")) return undefined;
+  return claudeSupports(model, "per-message-effort") ? request.effort : effortInForce(request);
+}
+
+function systemText(request: ProviderRequest, inPlace: boolean): string {
+  const folded = inPlace ? [] : request.messages.filter((message) => message.role === "system");
+  return [request.systemPrompt, ...folded.map(messageText)]
     .filter((text) => text !== "")
     .join("\n\n");
 }
 
-function toWireMessages(messages: readonly Message[], owner: ProviderStateOwner): WireMessage[] {
-  const currentTurnBegins = messages.findLastIndex((message) => message.role === "user");
-  const wire = messages.flatMap((message, index) =>
-    toWireMessage(message, owner, index > currentTurnBegins),
+function offeredTools(request: ProviderRequest, inPlace: boolean): readonly ToolDefinition[] {
+  if (!inPlace) return request.tools;
+  const added = new Set(
+    (request.toolAdditions ?? []).flatMap((addition) => addition.tools.map((tool) => tool.name)),
   );
-  return mergeAdjacentRoles(wire);
+  return request.tools.filter((tool) => !added.has(tool.name));
 }
 
-function toWireMessage(
-  message: Message,
+function toWireMessages(
+  request: ProviderRequest,
+  model: string,
   owner: ProviderStateOwner,
-  inCurrentTurn: boolean,
+  inPlace: boolean,
 ): WireMessage[] {
+  const turns = conversationTurns(request.messages, owner);
+  const efforts = claudeSupports(model, "per-message-effort") ? (request.effortChanges ?? []) : [];
+  const systemBlocks = inPlace ? positionedSystemBlocks(request) : [];
+  const leading = efforts.map((change) => ({
+    slot: turnAtOrAfter(turns, change.before),
+    message: effortMessage(change.level),
+  }));
+  const trailing = systemBlocks.flatMap(({ at, blocks }) => {
+    const slot = userTurnHosting(turns, at);
+    return slot === undefined ? [] : [{ slot, blocks }];
+  });
+  return turns
+    .flatMap((turn, slot): WireMessage[] => {
+      const leadingHere = leading.filter((item) => item.slot === slot).map((item) => item.message);
+      const trailingHere = trailing
+        .filter((item) => item.slot === slot)
+        .flatMap((item) => item.blocks);
+      return [
+        ...leadingHere,
+        { role: turn.role, content: turn.content },
+        ...(trailingHere.length > 0 ? [systemMessage(trailingHere)] : []),
+      ];
+    })
+    .concat(leading.filter((item) => item.slot === turns.length).map((item) => item.message));
+}
+
+function conversationTurns(messages: readonly Message[], owner: ProviderStateOwner): Turn[] {
+  const currentTurnBegins = messages.findLastIndex((message) => message.role === "user");
+  const turns: Turn[] = [];
+  messages.forEach((message, index) => {
+    const role = wireRoleOf(message);
+    if (role === undefined) return;
+    const content = contentOf(message, owner, index > currentTurnBegins);
+    if (content.length === 0) return;
+    const previous = turns.at(-1);
+    if (previous?.role === role) {
+      previous.content.push(...content);
+      previous.lastIndex = index;
+    } else {
+      turns.push({ role, content: [...content], firstIndex: index, lastIndex: index });
+    }
+  });
+  return turns;
+}
+
+function wireRoleOf(message: Message): WireRole | undefined {
+  switch (message.role) {
+    case "system":
+      return undefined;
+    case "assistant":
+      return "assistant";
+    case "user":
+    case "tool":
+      return "user";
+  }
+}
+
+function contentOf(message: Message, owner: ProviderStateOwner, inCurrentTurn: boolean): object[] {
   switch (message.role) {
     case "system":
       return [];
     case "user":
-      return withContent("user", message.parts.flatMap(userBlock));
+      return message.parts.flatMap(userBlock);
     case "assistant":
-      return withContent(
-        "assistant",
-        message.parts.flatMap((part) => assistantBlock(part, owner, inCurrentTurn)),
-      );
+      return message.parts.flatMap((part) => assistantBlock(part, owner, inCurrentTurn));
     case "tool":
-      return withContent(
-        "user",
-        message.parts.flatMap((part) =>
-          part.type === "tool-result" ? [toolResultBlock(part)] : [],
-        ),
+      return message.parts.flatMap((part) =>
+        part.type === "tool-result" ? [toolResultBlock(part)] : [],
       );
   }
 }
 
-function withContent(role: WireMessage["role"], content: object[]): WireMessage[] {
-  return content.length === 0 ? [] : [{ role, content }];
+function positionedSystemBlocks(request: ProviderRequest): PositionedBlocks[] {
+  const additions = (request.toolAdditions ?? []).map((addition) => ({
+    at: addition.before,
+    blocks: addition.tools.map(toolAdditionBlock),
+  }));
+  const instructions = request.messages.flatMap((message, index) => {
+    const text = message.role === "system" ? messageText(message) : "";
+    return text === "" ? [] : [{ at: index, blocks: [{ type: "text", text }] }];
+  });
+  return [...instructions, ...additions].sort((left, right) => left.at - right.at);
 }
 
-function mergeAdjacentRoles(messages: readonly WireMessage[]): WireMessage[] {
-  return messages.reduce<WireMessage[]>((merged, message) => {
-    const previous = merged.at(-1);
-    if (previous?.role === message.role) {
-      previous.content.push(...message.content);
-    } else {
-      merged.push({ role: message.role, content: [...message.content] });
-    }
-    return merged;
-  }, []);
+function turnAtOrAfter(turns: readonly Turn[], index: number): number {
+  const slot = turns.findIndex((turn) => turn.lastIndex >= index);
+  return slot === -1 ? turns.length : slot;
+}
+
+function userTurnHosting(turns: readonly Turn[], index: number): number | undefined {
+  const anchor = turns.findLastIndex((turn) => turn.firstIndex < index);
+  const slot = turns.findIndex((turn, at) => at >= anchor && turn.role === "user");
+  return slot === -1 ? undefined : slot;
+}
+
+function effortMessage(level: EffortLevel): WireMessage {
+  return { role: "system", content: [], output_config: { effort: level } };
+}
+
+function systemMessage(blocks: object[]): WireMessage {
+  return { role: "system", content: blocks };
+}
+
+function toolAdditionBlock(tool: ToolDefinition): object {
+  return { type: "tool_addition", tool: { type: "tool_definition", definition: toWireTool(tool) } };
 }
 
 function userBlock(part: Part): object[] {

@@ -62,3 +62,18 @@ coherently; custom-prompt compaction honored; other branches untouched.
 duration; exposed as engine API + headless JSON.
 **Accept:** stats match a known fixture exactly.
 **Strategy:** `LIFT:pi`.
+
+### Context edits (landed 2026-10-02, from 117 scope-first)
+Pi's `ContextEditEntry` (session format v0.87.0): `{"type":"context_edit","targetId","replacement"}`
+appended like any entry. `replacement: null` omits the target from model context, a string or
+part list replaces its content (a string on a tool message rewrites each result's output so the
+call stays answered); the latest edit of a target on the active path wins, and an edit on a
+sibling branch does not apply. Raw history, the tree and stats keep the original. Applied in
+`contextEntriesFor` after compaction selection, so `contextMessages`, `store.messages()` and
+compaction token estimates all see the projection. keywork's own rule on top of Pi: when an edit
+removes one half of a tool call / result pair, the other half leaves context too. API:
+`SessionStore.appendContextEdit(targetId, replacement)` (message and custom-message targets
+only); clone carries edits on the cloned path; the tree, `keywork sessions` and HTML export
+describe them as `forgot <id>` / `rewrote <id>`. Tests: `store-context-edit.test.ts`. No TUI
+command yet (`/forget <n>` needs a prompt-ordinal picker and an agent rebuild like `/undo`, left
+for a later task). `NOTICE` records the Pi adaptation.

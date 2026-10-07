@@ -2,7 +2,7 @@ import type { Dirent } from "node:fs";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { countOccurrences, toUnixEol } from "@keywork/shared";
-import { type LayerSource, validatedName } from "../extensions/layers.ts";
+import type { LayerSource } from "../extensions/layers.ts";
 import type { SkillDefinition } from "../extensions/skills.ts";
 import { type FileDelta, fileDelta } from "../memory/ledger.ts";
 import {
@@ -12,6 +12,7 @@ import {
   keyworkAuthor,
   reviseAgentAuthored,
 } from "./authorship.ts";
+import { validatedSkillDescription, validatedSkillName } from "./spec.ts";
 import type { SkillTelemetry } from "./telemetry.ts";
 
 export interface SkillGenesis {
@@ -130,13 +131,14 @@ export class SkillLibrary {
     const frontmatter =
       description === undefined
         ? { ...claimed.frontmatter }
-        : { ...claimed.frontmatter, description };
+        : { ...claimed.frontmatter, description: validatedSkillDescription(description) };
     return this.revise("rewrite", previous, claimed, frontmatter, body);
   }
 
-  async create(name: string, description: string, body: string): Promise<SkillDefinition> {
+  async create(name: string, summary: string, body: string): Promise<SkillDefinition> {
     if (this.genesis === undefined) throw new SkillGenesisUnavailableError();
-    const skillName = validatedName(name);
+    const skillName = validatedSkillName(name);
+    const description = validatedSkillDescription(summary);
     if (this.byName.has(skillName)) {
       throw new Error(`skill "${skillName}" already exists; patch it instead of creating another`);
     }

@@ -26,6 +26,7 @@ export interface AppProbeOptions
       | "createTerminalPane"
       | "isDirectory"
       | "undo"
+      | "exportSession"
       | "presets"
       | "inference"
       | "connections"

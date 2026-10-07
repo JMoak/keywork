@@ -243,6 +243,31 @@ describe("bindSessionLifecycle", () => {
     expect(recorded).toEqual(["off"]);
   });
 
+  it("restores the session's effort on adopt and records /effort through the attachment", async () => {
+    const recorded: string[] = [];
+    const attachment: SessionAttachment = {
+      ...attachmentOf("s1"),
+      effort: "high",
+      recordEffort: async (level) => {
+        recorded.push(level);
+      },
+    };
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const probe = new AppProbe({
+      createPane: (id, notify, commands) => {
+        const pane = new ConversationPane(id, agent, notify, undefined, commands);
+        adoptSession(pane, agent, attachment);
+        bindSessionLifecycle({ pane, attachment });
+        return pane;
+      },
+    });
+    expect(agent.effort()).toBe("high");
+    probe.type("/effort low").keys("enter");
+    await probe.settled();
+    expect(agent.effort()).toBe("low");
+    expect(recorded).toEqual(["low"]);
+  });
+
   it("hands each persisted prompt's entry id back to the pane", async () => {
     let sequence = 0;
     const attachment: SessionAttachment = {

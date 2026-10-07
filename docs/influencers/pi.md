@@ -9,6 +9,17 @@
 > FSL-1.1-MIT, ideas only, never copy its source.) Keywork must never integrate Anthropic
 > subscription-OAuth; Anthropic access is API-key / Agent-SDK only.
 
+> **Status 2026-10-02.** Pi has moved a long way since this dossier was written (2026-08-09).
+> Earendil acquired it in April 2026; the canonical repo is `earendil-works/pi`, still MIT.
+> The headline change is that Pi reversed on MCP: v0.99.0 (2026-09-29) ships MCP as a built-in
+> extension with lazy `tool_search` and per-tool exposure, plus Codemode (model-written
+> JavaScript in QuickJS calling tools), and v1.0.0 (2026-10-01) hardens both. The anti-MCP
+> passages in §1, §5 and §6 stay as history with dated notes. Pi also shipped
+> `ContextEditEntry`, mid-run compaction, cache-preserving prompt deltas, cache warming, `/bug`
+> and Pi Durable; §7 has the release list. §6 now marks each item landed, open or superseded in
+> keywork. What keywork takes from the new releases is decided in
+> [`docs/backlog/117-influence-sweep.md`](../backlog/117-influence-sweep.md).
+
 ---
 
 ## 1. Philosophy
@@ -35,6 +46,10 @@ unusually crisp and each one is directly relevant to keywork:
   session-branching model. His alternative: small CLI scripts + Bash, because "Bash and code are
   composable"; a browser-automation script set he wrote needs a "225 token" README vs. an
   18k-token MCP server.
+  - *Note 2026-10-02:* Pi 1.0 reversed this. v0.99.0 ships MCP as a built-in extension (stdio
+    and streamable HTTP with OAuth, `mcp.json`, `/mcp`, `pi mcp add|login`), with `tool_search`
+    and per-tool `exposure` so idle servers stay out of context. Earendil's stated reason:
+    "what Pi needs is quite similar to what MCP needs: a sandbox." See §7.
 - **No built-in permission system.** Pi explicitly "does not include a built-in permission
   system for restricting filesystem, process, network, or credential access." Security is
   delegated to containerization (documented patterns: Gondolin extension, plain Docker,
@@ -204,7 +219,8 @@ Omarchy-grade attention to the surrounding environment.
 2. **Self-extension as the primary workflow**: the agent writes its own extensions, hot-reloads
    them, and tests them in-session (`/reload` + `-e file.ts`). No marketplace mentality.
 3. **Deliberate MCP absence with an articulated alternative** (CLI scripts + Bash +
-   extensions), backed by measured token-cost arguments.
+   extensions), backed by measured token-cost arguments. *Note 2026-10-02:* no longer true.
+   Pi 1.0 ships MCP built in, behind lazy `tool_search` and per-tool exposure (§7).
 4. **Four-tool core with the shortest system prompt in the field**: minimalism as a measured
    performance strategy (less context/turn, fewer runs), not just aesthetics.
 5. **Extension-owned UI across modes**: the same extension can pop a `select` dialog in the
@@ -220,49 +236,151 @@ Omarchy-grade attention to the surrounding environment.
 
 Pi is MIT: **code below is liftable with attribution**, not just inspiration. Priorities:
 
+Status as of 2026-10-02 is marked on every item. Task IDs refer to `docs/backlog/`; "91" and
+"92" are the archived ledgers in `docs/backlog/archive/`.
+
 ### P0: foundational, adopt the model
 1. **Four-tool core + minimal system prompt.** Start keywork with `read`/`write`/`edit`/`bash`
    and nothing else; measure context-per-turn as a first-class metric. Lift Pi's tool
    implementations and prompt structure from `packages/coding-agent` as a starting point.
+   **Landed:** A7 and A9 to A12 (91), in `packages/engine/src/tools/` and
+   `packages/engine/src/prompt.ts`. keywork has since added tools past the four (`skill`,
+   memory tools, `mcp_tool_search`).
 2. **Tree sessions (JSONL, `id`/`parentId`, active leaf).** Adopt Pi's session format
    (documented in `session-format.md`) so keywork gets `/tree`, fork, clone, labels, and
    branch summaries. This is Pi's crown jewel and maps perfectly to keywork's
    multi-window/pane values: panes can be leaves of one tree.
+   **Landed:** B1 and B4 to B8 (91, recorded in `NOTICE`), `packages/engine/src/session/`;
+   B7 compaction adapted from Pi's design; `/tree` through C13
+   (`packages/tui/src/session-tree-pane.ts`). Open follow-ups from Pi's newer releases: SW1
+   newline repair and the `ContextEditEntry` scope-first item (117).
 3. **Extension API shape.** The `ExtensionAPI` factory + event-hook design (`tool_call` gates,
    `context` injection, `input` interception, registerTool/Command/Shortcut) is the cleanest
    plugin architecture in any agent. Lift the event taxonomy wholesale; it also cleanly
    replaces MCP, permission popups, and plan mode with user-space code.
+   **Open:** D1 to D4 (`40-extensions.md`); `packages/extensions/src` holds only a version
+   stub and no `registerTool` host exists. The markdown layer beside it landed (D5 to D7, 92).
+   The "replaces MCP" clause is superseded by vision D1.
 
 ### P1: high leverage
 4. **Steer vs. follow-up delivery semantics** (`Enter` / `Alt+Enter`, and
    `steer`/`followUp`/`nextTurn` in the API). Exactly the "fiery-clean keyboard interaction"
    keywork wants: interruption as a first-class, predictable primitive.
+   **Landed:** A8 (91), `send(..., { behavior: "steer" | "queue" })` in
+   `packages/engine/src/agent.ts`. keywork flips Pi's keys: `Enter` queues and `Alt+Enter`
+   steers. No `nextTurn` mode exists.
 5. **RPC JSONL mode with the extension-UI bridge.** Lifting Pi's `protocol` package (or its
    command/event vocabulary) gives keywork headless embedding, IDE integration, and
    pane-orchestration for free. Mind the strict-LF framing lesson.
+   **Superseded** by the P2.1 HTTP + SSE server (landed 2026-09-06, `80-p2-reach.md`) and A13
+   `keywork run --json`; gate prompts cross the wire through the S1 ask queue (landed
+   2026-09-07). An extension-UI bridge waits on D2 (open).
 6. **Namespaced, hot-reloadable keybindings** (`keybindings.json`, action IDs, `/reload`).
    Keywork should be at least this remappable from day one.
+   **Landed:** C4 (`30-tui.md` ledger, 2026-09-07). Action-named overrides in `keywork.json`
+   apply live through a file watch, so no `/reload` is needed.
 7. **Hot reload of extensions/skills/themes.** The `/reload` loop is what makes
    self-extension real.
+   **Open:** D4 (`40-extensions.md`), blocked on the D1 host.
 
 ### P2: take the ideas, adapt the implementation
 8. **pi-tui patterns, not pi-tui itself.** Keywork uses OpenTUI, but steal the contracts:
    width-constrained `render()`, per-component output caching for differential updates,
    `invalidate()` on theme change, `CURSOR_MARKER`-style IME cursor placement, overlay-native
    dialogs, `Focusable`. These are the details behind "no flicker."
+   **Partly landed:** overlay dialogs (`packages/tui/src/overlays/`) and A18 bounded entries
+   with delta coalescing (95). **Open:** IME hardware-cursor placement and the `Ctrl+G`
+   external editor, both in C7 (`30-tui.md`); neither appears in `packages/tui/src`.
 9. **No-MCP-by-default posture.** Follow Pi: keep MCP out of the core loop (an extension can
    always bridge it); prefer CLI scripts + Bash for integrations, citing the token math.
+   **Superseded** by vision D1 (MCP in core, lazily; D8/D10 landed, 92,
+   `packages/engine/src/mcp/`) and by Pi's own reversal in v0.99.0. SW12 (open, 117) brings
+   the client to the 2026 MCP revision.
 10. **Permission gates as extensions, not core**, though keywork may want a thin default gate
     extension shipped-on (Pi's bare-metal default is a taste call keywork can soften).
+    **Superseded** by E1 and E2 as built: the gate resolves inside the agent loop
+    (`packages/shared/src/trust/permissions.ts`) with the `careful · standard · open` presets,
+    since there is no extension host to put it in. SW15 (open, decision 117-2) reorders the
+    rules after OpenCode v2.
 11. **Skills / prompt templates / themes / packages layering**: four escalating customization
     tiers, npm/git distributable.
+    **Landed** for three tiers: skills (D7), prompt templates as markdown commands (D5), and
+    themes as flavors (`packages/shared/src/config/flavor.ts`, C17 ledger in `30-tui.md`).
+    **Unverified** for packages: no backlog task found, and 117 declines marketplaces and
+    registries.
 12. **Supply-chain hygiene:** exact pins, `--ignore-scripts`, release-age gating, offline
     binary builds.
+    **Landed** for exact pins (M0, `scripts/check-pins.ts`), `ignore-scripts=true` (`.npmrc`)
+    and release binaries (`bun run build:binary`, 108). **Unverified** for release-age gating
+    and offline model-data builds: neither appears in the tree and no backlog task names them.
 
 ### Explicitly do NOT take
 - Pi's `/login` subscription-provider flows: **keywork must never implement Anthropic
   subscription-OAuth**. Anthropic access in keywork is API-key / Agent-SDK only.
+  **Landed** as a guardrail: `AGENTS.md` rule 1, enforced by `scripts/check-guardrails.ts`.
+  Pi 1.0's Anthropic "copy code" login falls under the same rule and is declined in 117.
 - The complete absence of any safety rail by default is worth softening (see item 10).
+  **Landed:** E1 and E2 (92) plus the E6 workspace trust store
+  (`packages/shared/src/trust/store.ts`, adapted from Pi's trust-manager per `NOTICE`).
+
+## 7. Since 2026-08-09
+
+Dated facts from Pi's releases and Earendil's posts. keywork's verdict on each lives in
+[`117-influence-sweep.md`](../backlog/117-influence-sweep.md).
+
+- **April 2026:** Earendil acquires Pi
+  ([post](https://mariozechner.at/posts/2026-04-08-ive-sold-out/)). The canonical repo is
+  `earendil-works/pi`, MIT. mariozechner.at has no posts after 2026-05-30.
+- **v0.84.2 (2026-08-14):** fullscreen transcript search (`Ctrl+Shift+F`), a `defaultTools`
+  setting, experimental strict JSON-schema constrained sampling for core tools.
+- **v0.84.3 (2026-08-24):** optional native `powershell` tool on Windows; `/thinking` with
+  session-scoped model and thinking picks (`Ctrl+S` saves); a `session_compact_failed` event;
+  `branch_summary.fromId` now records the source leaf; compaction and summary requests no
+  longer expose tools.
+- **v0.84.4 (2026-08-28):** compaction can run between a tool batch and the next assistant
+  response in the same run (#6879); JSONL repair for session files missing a trailing newline
+  (#8345, keywork's SW1); `ui_prompt_start/end` events, RPC `clear_queue`, terminal-capability
+  overrides.
+- **v0.85.0 (2026-09-04):** per-turn Anthropic thinking effort persists;
+  `SessionManager.inMemory()` restores externally stored entries.
+- **v0.86.0 (2026-09-19):** cache warming (`cacheWarming: off|streaming|idle`, fires only when
+  the model declares a cache lifetime and the avoided cost is at least $0.05); `/bug` with
+  redacted diagnostics; transcript-aware prompt and tool deltas (the first system message
+  records the prompt and tool set and later changes are appended, so the cache prefix
+  survives); per-model compaction budgets; `user_bash` fails closed.
+- **v0.87.0 (2026-09-21):** `ContextEditEntry` (`type: "context_edit"`, `targetId`,
+  `replacement: null | content`), an append-only, branch-relative edit of model context that
+  leaves raw history untouched; `context_with_system`; `finishTurn` replaces
+  `shouldStopAfterTurn`.
+- **v0.99.0 (2026-09-29), the direction shift:** MCP as a built-in extension (stdio and
+  streamable HTTP with OAuth, `mcp.json`, `/mcp`, `pi mcp add|login`); Codemode, where
+  model-written JavaScript runs in QuickJS (`quickjs-wasi`, MIT) and calls tools through
+  `tools.x()`; `tool_search`; per-tool `exposure` of `direct | model-only | codemode | deferred
+  | hidden`; `ctx.executeTool()` for nested calls; virtual models and a classifier model type;
+  `system` theme by default; "Sign in with ChatGPT".
+- **v0.99.2 (2026-09-30):** MCP servers no longer block the first prompt; Anthropic workload
+  identity federation read from SDK env vars.
+- **v1.0.0 (2026-10-01):** fullscreen by default; Codemode prompts about 40% smaller (5.3k to
+  3.3k tokens); an Anthropic "copy code" login, which keywork never adopts under the API-key
+  guardrail; MCP OAuth hardened to RFC 9207. Earendil's reason for MCP, per The Register:
+  "what Pi needs is quite similar to what MCP needs: a sandbox."
+- **Pi Durable (2026-10-01),** npm `@earendil-works/pi-durable` 1.0.0, MIT: a separate harness
+  layer where every model call and tool call is a checkpointed task. Tools declare
+  `replay: "safe"`, `submit()` is idempotent via `requestId`, clients join on a committed-state
+  view followed by deltas, any client can steer, and typed documents commit atomically with
+  the transcript.
+
+Docs at v1.0.0 worth reading: `mcp.md` (§Control tool exposure), `codemode.md`,
+`compaction.md` (§When It Triggers), `session-format.md` (`ContextEditEntry`),
+`extensions.md`, all under `packages/coding-agent/docs/`.
+
+What keywork takes, per 117: SW1 newline repair and SW3 stable prefix as tasks; as scope-first
+items, `ContextEditEntry`, Codemode as the Q-DSH5 answer, Pi Durable as input to P2.3, a gate
+`terminate` outcome, `/bug`, cache warming and mid-run compaction. Declined: every Anthropic
+login path, virtual models, fullscreen by default, and Radius share. Pi's new "Sign in with
+ChatGPT" flow is a watch item: keywork already carries a ChatGPT sign-in adapted from Pi's
+older Codex module (`NOTICE`, `cli/src/codex-login.ts`), and Pi renaming that provider to
+"legacy" means the adapted code may drift from upstream.
 
 ---
 
@@ -281,3 +399,19 @@ Pi is MIT: **code below is liftable with attribution**, not just inspiration. Pr
 - Third-party writeups consulted:
   <https://andrew.ooo/posts/pi-coding-agent-minimal-terminal-harness-review/>,
   <https://www.explainx.ai/blog/pi-minimal-agent-harness-mario-zechner-guide-2026>
+- Added 2026-10-02 (§7):
+  - Mario Zechner, *I've sold out* (2026-04-08):
+    <https://mariozechner.at/posts/2026-04-08-ive-sold-out/>
+  - Releases: <https://github.com/earendil-works/pi/releases/tag/v0.84.2>,
+    <https://github.com/earendil-works/pi/releases/tag/v0.84.3>,
+    <https://github.com/earendil-works/pi/releases/tag/v0.84.4>,
+    <https://github.com/earendil-works/pi/releases/tag/v0.86.0>,
+    <https://github.com/earendil-works/pi/releases/tag/v0.87.0>,
+    <https://github.com/earendil-works/pi/releases/tag/v0.99.0>,
+    <https://github.com/earendil-works/pi/releases/tag/v1.0.0>
+  - Earendil, *Pi 1.0*: <https://earendil.com/posts/pi-1-0/>
+  - Earendil, *Pi Durable*: <https://earendil.com/posts/pi-durable/>
+  - The Register (2026-10-02):
+    <https://www.theregister.com/ai-and-ml/2026/10/02/pi-coding-agent-pulls-a-180-and-adds-mcp-support/5300678>
+  - v1.0.0 docs (`mcp.md`, `codemode.md`, `compaction.md`, `session-format.md`,
+    `extensions.md`): <https://github.com/earendil-works/pi/tree/v1.0.0/packages/coding-agent/docs>

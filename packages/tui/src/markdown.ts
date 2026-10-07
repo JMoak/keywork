@@ -1,3 +1,4 @@
+import { type SpanLinker, unlinked } from "./file-references.ts";
 import { type Highlighter, highlighterFor, type SyntaxClass } from "./highlighter.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
 import { segments, take, width } from "./width.ts";
@@ -24,6 +25,7 @@ export interface MarkdownSpan {
   tone: MarkdownTone;
   bold?: true;
   italic?: true;
+  href?: string;
 }
 
 export interface MarkdownRow {
@@ -36,6 +38,7 @@ export function renderMarkdown(
   proseColumns: number,
   bleedColumns: number,
   marks: PageMarks = defaultPageMarks,
+  link: SpanLinker = unlinked,
 ): MarkdownRow[] {
   const prose = Math.max(1, proseColumns);
   const bleed = Math.max(1, bleedColumns);
@@ -45,14 +48,16 @@ export function renderMarkdown(
     const head = fenceLine.exec(line);
     if (head !== null) {
       if (fence === undefined) {
-        fence = openFence(head[1] ?? "", marks);
+        fence = openFence(head[1] ?? "", marks, link);
         rows.push(fence.head);
       } else {
         fence = undefined;
       }
       continue;
     }
-    rows.push(...(fence === undefined ? blockRows(line, prose, marks) : fence.rows(line, bleed)));
+    rows.push(
+      ...(fence === undefined ? blockRows(line, prose, marks, link) : fence.rows(line, bleed)),
+    );
   }
   return rows;
 }
@@ -92,40 +97,60 @@ interface Fence {
   rows(line: string, bleed: number): MarkdownRow[];
 }
 
-function openFence(language: string, marks: PageMarks): Fence {
+function openFence(language: string, marks: PageMarks, link: SpanLinker): Fence {
   const rail: MarkdownSpan = { text: `${marks.fenceRail} `, tone: "fenceRail" };
   const code = highlighterFor(language);
   return {
     head: fenceHeadRow(rail, language),
-    rows: (line, bleed) => fenceRows(rail, code, line, bleed),
+    rows: (line, bleed) => fenceRows(rail, code, line, bleed, link),
   };
 }
 
-function blockRows(line: string, prose: number, marks: PageMarks): MarkdownRow[] {
+function blockRows(line: string, prose: number, marks: PageMarks, link: SpanLinker): MarkdownRow[] {
   if (line.trim() === "") return [{ spans: [], panel: false }];
   const heading = headingLine.exec(line);
   if (heading !== null) {
-    return headingRows((heading[1] ?? "#").length, heading[2] ?? "", prose, marks);
+    const depth = (heading[1] ?? "#").length;
+    return headingRows(depth, link(inlineSpans(heading[2] ?? "", headingStyle)), prose, marks);
   }
   if (ruleLine.test(line)) return [ruleRow(prose, marks)];
   const bullet = bulletLine.exec(line);
-  if (bullet !== null) return listRows(bullet[1] ?? "", marks.bullet, bullet[2] ?? "", prose);
+  if (bullet !== null) {
+    return listRows(bullet[1] ?? "", marks.bullet, link(bodySpans(bullet[2] ?? "")), prose);
+  }
   const ordered = orderedLine.exec(line);
-  if (ordered !== null)
-    return listRows(ordered[1] ?? "", ordered[2] ?? "", ordered[3] ?? "", prose);
-  return proseRows(inlineSpans(line, { tone: "body" }), prose, []);
+  if (ordered !== null) {
+    return listRows(ordered[1] ?? "", ordered[2] ?? "", link(bodySpans(ordered[3] ?? "")), prose);
+  }
+  return proseRows(link(bodySpans(line)), prose, []);
 }
 
-function headingRows(depth: number, text: string, prose: number, marks: PageMarks): MarkdownRow[] {
+const headingStyle: InlineStyle = { tone: "heading", bold: true };
+
+function bodySpans(text: string): MarkdownSpan[] {
+  return inlineSpans(text, { tone: "body" });
+}
+
+function headingRows(
+  depth: number,
+  content: MarkdownSpan[],
+  prose: number,
+  marks: PageMarks,
+): MarkdownRow[] {
   const weights = marks.headingWeights;
   const weight = weights[Math.min(depth, weights.length) - 1] ?? "";
   const mark: MarkdownSpan = { text: `${weight} `, tone: "headingMark" };
-  return proseRows(inlineSpans(text, { tone: "heading", bold: true }), prose, [mark]);
+  return proseRows(content, prose, [mark]);
 }
 
-function listRows(indent: string, marker: string, text: string, prose: number): MarkdownRow[] {
+function listRows(
+  indent: string,
+  marker: string,
+  content: MarkdownSpan[],
+  prose: number,
+): MarkdownRow[] {
   const lead: MarkdownSpan = { text: `${indent}${marker} `, tone: "listMarker" };
-  return proseRows(inlineSpans(text, { tone: "body" }), prose, [lead]);
+  return proseRows(content, prose, [lead]);
 }
 
 function ruleRow(prose: number, marks: PageMarks): MarkdownRow {
@@ -143,12 +168,13 @@ function fenceRows(
   code: Highlighter,
   line: string,
   bleed: number,
+  link: SpanLinker,
 ): MarkdownRow[] {
   const room = Math.max(1, bleed - width(rail.text));
   const highlighted = code
     .line(line)
     .map((span): MarkdownSpan => ({ text: span.text, tone: span.syntax ?? "fence" }));
-  return hardWrapSpans(highlighted, room).map((spans) => ({
+  return hardWrapSpans(link(highlighted), room).map((spans) => ({
     spans: [{ ...rail }, ...spans],
     panel: true,
   }));
@@ -264,7 +290,8 @@ function appendSpan(spans: MarkdownSpan[], span: MarkdownSpan): void {
     last !== undefined &&
     last.tone === span.tone &&
     last.bold === span.bold &&
-    last.italic === span.italic
+    last.italic === span.italic &&
+    last.href === span.href
   ) {
     last.text += span.text;
     return;

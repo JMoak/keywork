@@ -23,6 +23,10 @@ export function ratesFor(modelId: string): ModelRates | undefined {
   return rateTable.get(canonicalModelId(modelId));
 }
 
+export function retirementOf(modelId: string): string | undefined {
+  return retirements.get(canonicalModelId(modelId));
+}
+
 export function costNanosOf(usage: Usage, modelId: string | undefined): number | undefined {
   if (usage.costUsd !== undefined) return Math.round(usage.costUsd * nanosPerDollar);
   const rates = modelId === undefined ? undefined : ratesFor(modelId);
@@ -128,13 +132,23 @@ const rateTable = new Map<string, ModelRates>(
     "gpt-5.4": listed({ input: 2.5, output: 15, cacheRead: 0.25 }),
     "gpt-5.4-mini": listed({ input: 0.75, output: 4.5, cacheRead: 0.075 }),
     "gpt-5.4-nano": listed({ input: 0.2, output: 1.25, cacheRead: 0.02 }),
+    "gpt-5.6-sol": listed({ input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 }),
+    "gpt-5.6-luna": listed({ input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 }),
+    "gpt-6-astra": listed({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
+    "gpt-6-sol": listed({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }),
+    "gpt-6-luna": listed({ input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }),
+    "gpt-6.1-sol": listed({ input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }),
     "claude-fable-5-1": listed({ input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 }),
+    "claude-mythos-5-1": listed({ input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 }),
     "claude-fable-5": listed({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
+    "claude-mythos-5": listed({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
+    "claude-opus-5-5": listed({ input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }),
     "claude-opus-5": listed({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
     "claude-opus-4-8": listed({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
     "claude-opus-4-7": listed({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
     "claude-opus-4-6": listed({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
     "claude-opus-4-5": listed({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
+    "claude-sonnet-5-5": listed({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }),
     "claude-sonnet-5": listed({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }),
     "claude-sonnet-4-6": listed({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }),
     "claude-sonnet-4-5": listed({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }),
@@ -144,6 +158,8 @@ const rateTable = new Map<string, ModelRates>(
     "amazon.nova-pro-v1:0": listed({ input: 0.8, output: 3.2, cacheRead: 0.2 }),
   }),
 );
+
+const retirements = new Map<string, string>([["claude-sonnet-4-5", "2026-11-30"]]);
 
 interface ListedDollarsPerMillionTokens {
   input: number;

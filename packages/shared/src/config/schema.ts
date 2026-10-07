@@ -31,7 +31,7 @@ const mcpStdioServer = z
     env: z
       .record(z.string(), z.string())
       .describe(
-        "Environment variables handed to the spawned server, typically credentials; treated as secrets: never logged, never echoed in errors, never readable from the project layer.",
+        'Environment variables handed to the spawned server, typically credentials; treated as secrets: never logged, never echoed in errors, never readable from the project layer. A value of "secret:<name>" is read from the OS credential store when the server starts, so this file names the secret instead of holding it (103/E9).',
       )
       .optional(),
     trusted: mcpTrusted.optional(),
@@ -51,7 +51,7 @@ const mcpHttpServer = z
     headers: z
       .record(z.string(), z.string())
       .describe(
-        "Static HTTP headers sent verbatim on every request to the server, typically Authorization; treated as secrets: never logged, never echoed in errors, never readable from the project layer. Static values only; keywork runs no OAuth flow of any kind.",
+        'Static HTTP headers sent verbatim on every request to the server, typically Authorization; treated as secrets: never logged, never echoed in errors, never readable from the project layer. Static values only; keywork runs no OAuth flow of any kind. A value of "secret:<name>" is read from the OS credential store on connect, so this file names the secret instead of holding it (103/E9).',
       )
       .optional(),
     trusted: mcpTrusted.optional(),
@@ -174,23 +174,51 @@ const connection = z
 
 const pageThresholdColumns = z.number().int().min(1);
 
-const permissionAction = z.enum(["allow", "ask", "deny"]);
+const permissionEffect = z.enum(["allow", "ask", "deny"]);
 
-const permissions = z
+const permissionRule = z
+  .object({
+    action: z
+      .string()
+      .min(1)
+      .describe(
+        'The tool the rule governs: read, write, edit, bash, any other registered tool by name, an MCP tool by its full <server>__<tool> name, "mcp" for every MCP tool, or "*" for every tool; exists because a rule must say which calls it speaks for.',
+      ),
+    resource: z
+      .string()
+      .min(1)
+      .describe(
+        'Glob over what the call touches; exists so one tool can be allowed in one place and refused in another. read, write, and edit match the file path relative to the workspace ("**/" spans any number of directories, absolute patterns match absolute paths). bash matches each part of the command: "git status *" also matches a bare "git status". "mcp" matches the full tool name, so "github__*" covers one server. "*" matches anything, including "/" and newlines.',
+      ),
+    effect: permissionEffect.describe(
+      "allow runs without asking, ask confirms first (headless runs answer no), deny refuses without prompting and reaches the model as a refused tool result; exists because graduated trust needs exactly these three outcomes.",
+    ),
+  })
+  .strict();
+
+const permissionRules = z
+  .array(permissionRule)
+  .describe(
+    'Ordered rules, e.g. [{"action": "bash", "resource": "git push *", "effect": "deny"}]; the last matching rule wins, so a narrow exception follows the broad rule it carves out of. A call no rule matches keeps the built-in posture: read-only tools allow, mutating and MCP tools ask. A compound bash command (; && || | & or a newline) is split and every part is judged: any deny denies, then any ask asks, and a part with redirection or substitution (< > ` $ ( )) can never ride an allow rule. Exists so the safety posture is auditable policy instead of scattered flags.',
+  );
+
+const legacyPermissions = z
   .object({
     tools: z
-      .record(z.string(), permissionAction)
+      .record(z.string(), permissionEffect)
       .describe(
-        "Tool name (read, write, edit, bash, or any registered tool) to allow | ask | deny; exists so the safety posture is auditable policy instead of scattered flags. Unlisted tools keep the built-in posture: read-only tools allow, mutating tools ask. deny reaches the model as a refused tool result without ever prompting.",
+        "Legacy shape: tool name to allow | ask | deny. Still read so existing configs keep working; it loads as one rule per tool with resource *, ahead of any bash rules. Write the ordered rule list instead.",
       ),
     bash: z
-      .record(z.string(), permissionAction)
+      .record(z.string(), permissionEffect)
       .describe(
-        'Glob patterns (`*` wildcard) over the full bash command string to allow | ask | deny, e.g. "git status*": "allow"; exists because asking on every trivially safe command makes the gate unusable. `*` spans newlines too, so a line break inside a command cannot dodge a pattern. Any matching deny pattern wins outright; otherwise the most specific matching pattern wins (most literal characters; first declared breaks ties). A matched rule overrides tools.bash. A command containing shell chaining characters (; & | < > ` $ ( ) or a newline) can only match deny rules: "git status; rm -rf /" falls through to tools.bash instead of riding an allow rule.',
+        "Legacy shape: bash command globs to allow | ask | deny, where any matching deny wins and otherwise the most literal pattern wins. Still read so existing configs keep working; it loads as bash rules sorted from least to most literal (the first declared of equally literal patterns last), with every deny moved to the end. Write the ordered rule list instead.",
       ),
   })
   .partial()
   .strict();
+
+const permissions = z.union([permissionRules, legacyPermissions]);
 
 const languageServerSpec = z
   .object({
@@ -334,13 +362,18 @@ export const configSchema = z
       .describe(
         "Legacy provider-name to API-key map from before credentials moved to ~/.keywork/auth.json; still honored so existing setups keep working, but `keywork setup` now writes auth.json, whose entries outrank this map. Saved credentials outrank ambient environment variables; only KEYWORK_-prefixed variables override them. The project config layer is never a credential source.",
       ),
+    secretStore: z
+      .enum(["os", "plaintext"])
+      .describe(
+        'Where /connect and sign-ins keep saved keys: "os" (the default) puts them in the platform credential store (DPAPI on Windows, Secret Service on Linux, Keychain on macOS) and leaves only a name in ~/.keywork/auth.json; "plaintext" writes them into auth.json itself. Exists because some machines have no usable credential store (headless Linux without a keyring, containers) and a user there needs to say so once instead of reading a fallback notice on every save (103/E9). Honored from the user config layer only.',
+      ),
     mcpServers: z
       .record(z.string(), mcpServer)
       .describe(
         "Named MCP server definitions the user mounts globally; exists to feed D8-D10/D14 tool mounting from one validated map (schema only until D8 wires execution). Honored from the user config layer only; a checked-in project file can never register servers or their credentials.",
       ),
     permissions: permissions.describe(
-      "Declarative allow | ask | deny policy for tool execution; exists because graduated trust (workstream E) must live in readable config, not code. Honored from the user config layer only; a checked-in project file can never widen permissions.",
+      "Declarative allow | ask | deny policy for tool execution as an ordered list of {action, resource, effect} rules where the last match wins (the older {tools, bash} map still loads); exists because graduated trust (workstream E) must live in readable config, not code. Honored from the user config layer only; a checked-in project file can never widen permissions.",
     ),
     prompts: prompts.describe(
       "User-scope system-prompt customization: one global prompt plus per-model-pattern overrides; exists because prompt steering is a user preference, not a project artifact. Honored from the user config layer only; a checked-in project file can never inject prompts.",
@@ -353,7 +386,9 @@ export type KeyworkConfig = z.infer<typeof configSchema>;
 export type McpServerConfig = z.infer<typeof mcpServer>;
 export type LanguageServerConfig = z.infer<typeof languageServerSpec>;
 export type LspConfig = NonNullable<KeyworkConfig["lsp"]>;
-export type PermissionAction = z.infer<typeof permissionAction>;
+export type PermissionEffect = z.infer<typeof permissionEffect>;
+export type PermissionRule = z.infer<typeof permissionRule>;
+export type LegacyPermissionsConfig = z.infer<typeof legacyPermissions>;
 export type PermissionsConfig = NonNullable<KeyworkConfig["permissions"]>;
 export type PromptsConfig = NonNullable<KeyworkConfig["prompts"]>;
 export type PromptOverride = z.infer<typeof promptOverride>;

@@ -1,6 +1,8 @@
 import { actionCovering, appActions } from "./app-actions.ts";
 import type { AppCore } from "./app-core.ts";
 import type { CommandSpec } from "./commands.ts";
+import type { ConversationModel } from "./conversation-model.ts";
+import { ConversationPane } from "./conversation-pane.ts";
 import type { TerminalMode } from "./pane.ts";
 import { type PaneKind, paneKindAvailable, paneKindOf } from "./pane-kinds.ts";
 
@@ -123,6 +125,7 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       run: (args) => core.openConnect(args),
     }),
     ...undoCommands(core),
+    ...exportCommands(core),
     {
       name: "show-costs",
       aliases: ["costs", "hide-costs"],
@@ -257,22 +260,64 @@ function dockCommands(core: AppCore): CommandSpec[] {
 }
 
 function undoCommands(core: AppCore): CommandSpec[] {
-  const undo = core.options.undo;
-  if (undo === undefined) return [];
+  const files = core.options.undo;
+  if (files === undefined) return [];
   const announce = (outcome: Promise<boolean>, done: string, empty: string) =>
     core.settle(outcome.then((changed) => core.postNotice(changed ? done : empty)));
+  const conversation = () => focusedConversation(core);
   return [
     {
       name: "undo",
-      description: "undo the last agent file change",
-      run: () => announce(undo.undo(), "files put back", "nothing to undo"),
+      description: "take back your last prompt, its turn and its file changes",
+      run: () => {
+        if (conversation()?.undoLastPrompt() !== true)
+          announce(files.undo(), "files put back", "nothing to undo");
+      },
     },
     {
       name: "redo",
-      description: "redo the last undone change",
-      run: () => announce(undo.redo(), "files redone", "nothing to redo"),
+      description: "bring back what /undo took",
+      run: () => {
+        if (conversation()?.redoPrompt() !== true)
+          announce(files.redo(), "files redone", "nothing to redo");
+      },
     },
   ];
+}
+
+function exportCommands(core: AppCore): CommandSpec[] {
+  const exporter = core.options.exportSession;
+  if (exporter === undefined) return [];
+  return [
+    {
+      name: "export",
+      description: "write this session to a self-contained HTML file: /export [tree] [path]",
+      run: (args) => {
+        const sessionId = focusedSessionId(core);
+        if (sessionId === undefined) core.postNotice("nothing to export · no session here yet");
+        else
+          core.settle(
+            exporter(sessionId, args).then((file) => core.postNotice(`exported → ${file}`)),
+          );
+      },
+    },
+  ];
+}
+
+function focusedSessionId(core: AppCore): string | undefined {
+  for (const id of core.panesFocusedFirst()) {
+    const pane = core.panes.get(id);
+    if (pane instanceof ConversationPane) return pane.sessionId;
+  }
+  return undefined;
+}
+
+function focusedConversation(core: AppCore): ConversationModel | undefined {
+  for (const id of core.panesFocusedFirst()) {
+    const pane = core.panes.get(id);
+    if (pane instanceof ConversationPane) return pane.model;
+  }
+  return undefined;
 }
 
 function jumpCommands(core: AppCore): CommandSpec[] {

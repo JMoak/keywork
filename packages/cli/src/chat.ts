@@ -531,6 +531,7 @@ function wireStreamingOutput(agent: Agent, io: ChatIo): void {
   agent.bus.on("turn.delta", ({ delta, replay }) => {
     if (replay === true) return;
     if (delta.type === "visible-thinking") thinking.write(delta.text);
+    if (delta.type === "progress") io.print(`\n${delta.text}`);
     if (delta.type === "text") {
       thinking.close();
       io.write(delta.text);

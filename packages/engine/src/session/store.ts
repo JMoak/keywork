@@ -7,11 +7,15 @@ import {
   type BranchSummaryEntry,
   buildTree,
   type CompactionEntry,
+  type ContextEditEntry,
+  type ContextReplacement,
   type CustomEntry,
   contextEntriesFor,
   contextMessages,
+  type EffortChangeEntry,
   type FileTrackingDetails,
   foldBinding,
+  isContextEditable,
   type LabelEntry,
   type MessageEntry,
   type ModelChangeEntry,
@@ -60,7 +64,8 @@ export class SessionStore {
   private readonly byId = new Map<string, SessionEntry>();
   private readonly labelByTarget = new Map<string, string>();
   private leaf: string | null = null;
-  private headerOnDisk: Promise<void> | undefined;
+  private fileReady: Promise<void> | undefined;
+  private prepareFile: () => Promise<void> = () => this.writeHeader();
   private writes: Promise<unknown> = Promise.resolve();
   private spillStore: SpillStore | undefined;
 
@@ -88,11 +93,13 @@ export class SessionStore {
   }
 
   static async open(file: string): Promise<SessionStore> {
-    const { entries, droppedLines } = parseFileEntries(await readFile(file, "utf8"));
+    const content = await readFile(file, "utf8");
+    const { entries, droppedLines } = parseFileEntries(content);
     const header = entries.find((entry): entry is SessionHeader => entry.type === "session");
     if (header === undefined) throw new Error(`${file} is not a keywork session file`);
     const store = new SessionStore(file, header, droppedLines);
-    store.headerOnDisk = Promise.resolve();
+    if (endsOnItsOwnLine(content)) store.fileReady = Promise.resolve();
+    else store.prepareFile = () => closeOpenLine(file);
     store.adopt(entries.filter((entry): entry is SessionEntry => entry.type !== "session"));
     return store;
   }
@@ -121,6 +128,17 @@ export class SessionStore {
   async setLabel(targetId: string, label: string | undefined): Promise<LabelEntry> {
     this.requireEntry(targetId);
     return this.appendEntry({ type: "label", targetId, label });
+  }
+
+  async appendContextEdit(
+    targetId: string,
+    replacement: ContextReplacement | null,
+  ): Promise<ContextEditEntry> {
+    const target = this.requireEntry(targetId);
+    if (!isContextEditable(target)) {
+      throw new Error(`session entry ${targetId} is a ${target.type} and adds no model context`);
+    }
+    return this.appendEntry({ type: "context_edit", targetId, replacement });
   }
 
   async setName(name: string): Promise<SessionInfoEntry> {
@@ -155,6 +173,16 @@ export class SessionStore {
     return this.activePath().findLast(
       (entry): entry is ThinkingLevelChangeEntry => entry.type === "thinking_level_change",
     )?.thinkingLevel;
+  }
+
+  async appendEffortChange(effort: string): Promise<EffortChangeEntry> {
+    return this.appendEntry({ type: "effort_change", effort });
+  }
+
+  effort(): string | undefined {
+    return this.activePath().findLast(
+      (entry): entry is EffortChangeEntry => entry.type === "effort_change",
+    )?.effort;
   }
 
   appendArcBinding(arc: string | undefined): Promise<BindingEntry> {
@@ -283,8 +311,8 @@ export class SessionStore {
   }
 
   private materialize(): Promise<void> {
-    this.headerOnDisk ??= this.writeHeader();
-    return this.headerOnDisk;
+    this.fileReady ??= this.prepareFile();
+    return this.fileReady;
   }
 
   private async writeHeader(): Promise<void> {
@@ -341,4 +369,12 @@ function sumUsage(entries: readonly SessionEntry[]): Usage {
     ...(cacheCreation > 0 && { cacheCreationInputTokens: cacheCreation }),
     ...(cacheRead > 0 && { cacheReadInputTokens: cacheRead }),
   };
+}
+
+function endsOnItsOwnLine(content: string): boolean {
+  return content.endsWith("\n");
+}
+
+function closeOpenLine(file: string): Promise<void> {
+  return appendFile(file, "\n", "utf8");
 }

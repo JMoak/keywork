@@ -25,8 +25,11 @@ export function startupFlavors(
 ): Flavor[] {
   const wardrobe = [keyworkNightFlavor, ...closet];
   const worn = wardrobe.find((flavor) => flavor.name === wear) ?? keyworkNightFlavor;
-  const dressed = parseFlavor({ ...worn, tokens: { ...worn.tokens, ...overrides } });
-  return [dressed, ...wardrobe.filter((flavor) => flavor !== worn)];
+  return [dressedIn(worn, overrides), ...wardrobe.filter((flavor) => flavor !== worn)];
+}
+
+export function dressedIn(flavor: Flavor, overrides: ThemeOverrides = {}): Flavor {
+  return parseFlavor({ ...flavor, tokens: { ...flavor.tokens, ...overrides } });
 }
 
 export class FlavorSwitch {
@@ -57,6 +60,14 @@ export class FlavorSwitch {
     if (next === undefined) throw new Error(`no flavor named "${name}"`);
     this.worn = next;
     return next;
+  }
+
+  refit(flavor: Flavor): boolean {
+    if (!this.closet.has(flavor.name)) return false;
+    this.closet.set(flavor.name, flavor);
+    if (this.worn.name !== flavor.name) return false;
+    this.worn = flavor;
+    return true;
   }
 }
 

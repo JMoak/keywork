@@ -1,8 +1,15 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { type Frontmatter, parseDocument, serializeDocument } from "../memory/frontmatter.ts";
+import {
+  type Frontmatter,
+  type FrontmatterMap,
+  isFrontmatterMap,
+  parseDocument,
+  serializeDocument,
+} from "../memory/frontmatter.ts";
 import { writeFileAtomic } from "../memory/vault-files.ts";
 
 export const authoredByKey = "authored_by";
+export const metadataKey = "metadata";
 export const keyworkAuthor = "keywork";
 
 export interface AgentAuthoredSkill {
@@ -21,7 +28,7 @@ export interface SkillRevision {
 export class ProtectedSkillError extends Error {
   constructor(readonly file: string) {
     super(
-      `${file} is protected: only skills whose frontmatter carries "${authoredByKey}" may be changed by the agent; a person owns this one`,
+      `${file} is protected: only skills whose frontmatter carries "${metadataKey}.${authoredByKey}" may be changed by the agent; a person owns this one`,
     );
     this.name = "ProtectedSkillError";
   }
@@ -35,8 +42,7 @@ export class SkillAlreadyExistsError extends Error {
 }
 
 export function authorOf(frontmatter: Frontmatter): string | undefined {
-  const value = frontmatter[authoredByKey];
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+  return nonBlank(metadataOf(frontmatter)[authoredByKey]) ?? nonBlank(frontmatter[authoredByKey]);
 }
 
 export async function claimAgentAuthored(file: string): Promise<AgentAuthoredSkill> {
@@ -72,10 +78,21 @@ export async function createAgentAuthored(
 }
 
 function agentAuthoredDocument(author: string, revision: SkillRevision): string {
+  const { [authoredByKey]: _legacyAuthor, ...frontmatter } = revision.frontmatter;
+  const metadata = { ...metadataOf(frontmatter), [authoredByKey]: author };
   return serializeDocument(
-    { ...revision.frontmatter, [authoredByKey]: author },
+    { ...frontmatter, [metadataKey]: metadata },
     withTrailingNewline(revision.body),
   );
+}
+
+function metadataOf(frontmatter: Frontmatter): FrontmatterMap {
+  const metadata = frontmatter[metadataKey];
+  return isFrontmatterMap(metadata) ? metadata : {};
+}
+
+function nonBlank(value: Frontmatter[string] | undefined): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
 function withTrailingNewline(body: string): string {

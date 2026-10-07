@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  commandGlob,
   compileGlob,
   globMatches,
   globRules,
   mostSpecificMatch,
   mostSpecificRule,
+  pathGlob,
 } from "./glob.ts";
 
 describe("globMatches", () => {
@@ -59,5 +61,45 @@ describe("mostSpecificRule", () => {
     const rules = globRules({ "git *": "ask", "git status*": "allow" });
     expect(mostSpecificRule(rules)?.value).toBe("allow");
     expect(mostSpecificRule([])).toBeUndefined();
+  });
+});
+
+describe("commandGlob", () => {
+  it("lets a trailing space-star also match the bare command", () => {
+    const glob = commandGlob("git status *");
+    expect(glob.test("git status")).toBe(true);
+    expect(glob.test("git status --short")).toBe(true);
+    expect(glob.test("git statusx")).toBe(false);
+  });
+
+  it("behaves like a plain glob otherwise", () => {
+    expect(commandGlob("git status*").test("git statusx")).toBe(true);
+    expect(commandGlob("*rm -rf*").test("echo; rm -rf /")).toBe(true);
+  });
+});
+
+describe("pathGlob", () => {
+  it("lets **/ match zero or more directories", () => {
+    const env = pathGlob("**/.env*");
+    expect(env.test(".env")).toBe(true);
+    expect(env.test(".env.local")).toBe(true);
+    expect(env.test("apps/api/.env")).toBe(true);
+    expect(env.test("apps/env")).toBe(false);
+    expect(pathGlob("src/**/index.ts").test("src/index.ts")).toBe(true);
+    expect(pathGlob("src/**/index.ts").test("src/a/b/index.ts")).toBe(true);
+  });
+
+  it("lets * span directories, the same as everywhere else", () => {
+    expect(pathGlob("src/*").test("src/a/b.ts")).toBe(true);
+    expect(pathGlob("*.md").test("docs/vision.md")).toBe(true);
+  });
+
+  it("reads backslashes in a pattern as separators", () => {
+    expect(pathGlob("secrets\\**").test("secrets/key.pem")).toBe(true);
+  });
+
+  it("ignores case only when asked", () => {
+    expect(pathGlob("**/.env*").test(".ENV")).toBe(false);
+    expect(pathGlob("**/.env*", { caseInsensitive: true }).test(".ENV")).toBe(true);
   });
 });

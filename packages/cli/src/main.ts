@@ -389,7 +389,14 @@ async function runSessions(
   return sessionsCommand(
     positionals,
     values["session-dir"] ?? defaultSessionDir(context.cwd, context.workspaceSlug),
-    { json: values.json, ...commandIo(context), confirm: terminalConfirm() },
+    {
+      json: values.json,
+      tree: values.tree,
+      out: values.out,
+      cwd: context.cwd,
+      ...commandIo(context),
+      confirm: terminalConfirm(),
+    },
   );
 }
 
@@ -506,6 +513,8 @@ function parseInvocationArgs(args: readonly string[]) {
       session: { type: "string" },
       url: { type: "string" },
       token: { type: "string" },
+      tree: { type: "boolean", default: false },
+      out: { type: "string" },
     },
   });
 }

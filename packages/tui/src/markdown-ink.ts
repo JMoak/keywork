@@ -1,4 +1,4 @@
-import { bg, bold, fg, italic, type TextChunk, underline } from "@opentui/core";
+import { bg, bold, fg, italic, link, type TextChunk, underline } from "@opentui/core";
 import type { MarkdownSpan, MarkdownTone } from "./markdown.ts";
 import type { Theme } from "./theme.ts";
 
@@ -9,6 +9,7 @@ export function markdownChunk(span: MarkdownSpan, theme: Theme, panel: boolean):
   if (span.tone === "link") chunk = underline(chunk);
   if (span.tone === "code") chunk = bg(theme.panelLift)(chunk);
   if (panel) chunk = bg(theme.panel)(chunk);
+  if (span.href !== undefined) chunk = link(span.href)(chunk);
   return chunk;
 }
 

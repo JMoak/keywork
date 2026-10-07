@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
   describeBinding,
+  describeContextEdit,
   messageText,
   removeSessionFiles,
   type SessionEntry,
@@ -15,6 +16,7 @@ import {
 } from "../command-io.ts";
 import { exitCodes } from "../dispatch.ts";
 import { excerpt } from "../text.ts";
+import { exportSession } from "./export.ts";
 import {
   findSession,
   latestSessionFile,
@@ -26,6 +28,9 @@ import {
 
 export interface SessionsCommandIo extends CommandIo {
   json?: boolean;
+  tree?: boolean;
+  out?: string | undefined;
+  cwd?: string;
   confirm?: Confirm | undefined;
 }
 
@@ -43,9 +48,11 @@ export async function sessionsCommand(
       return printTree(dir, rest[0], resolved);
     case "fork":
       return forkSession(dir, rest[0], rest[1], resolved);
+    case "export":
+      return exportToHtml(dir, rest[0], io, resolved);
     default:
       resolved.printError(
-        `keywork sessions: unknown subcommand "${subcommand}" (expected list, tree, or fork)`,
+        `keywork sessions: unknown subcommand "${subcommand}" (expected list, tree, fork, or export)`,
       );
       return exitCodes.usage;
   }
@@ -130,10 +137,14 @@ function describeEntry(entry: SessionEntry): string {
       return `named "${entry.name ?? ""}"`;
     case "binding":
       return describeBinding(entry);
+    case "context_edit":
+      return describeContextEdit(entry);
     case "model_change":
       return `model → ${entry.provider}/${entry.modelId}`;
     case "thinking_level_change":
       return `thinking → ${entry.thinkingLevel}`;
+    case "effort_change":
+      return `effort → ${entry.effort}`;
     case "custom":
       return entry.customType;
     case "custom_message":
@@ -157,6 +168,23 @@ async function forkSession(
   const clone = await store.clone(join(dir, newSessionFileName()), fromId);
   io.print(`forked → ${clone.header.id.slice(0, 8)} (${clone.file})`);
   io.print(`resume it with: keywork chat --resume ${clone.header.id.slice(0, 8)}`);
+  return 0;
+}
+
+async function exportToHtml(
+  dir: string,
+  idPrefix: string | undefined,
+  options: SessionsCommandIo,
+  io: ResolvedCommandIo,
+): Promise<number> {
+  const store = await openByPrefix(dir, idPrefix, io);
+  if (store === undefined) return 1;
+  const written = await exportSession(store, {
+    scope: options.tree === true ? "tree" : "path",
+    out: options.out,
+    cwd: options.cwd ?? process.cwd(),
+  });
+  io.print(`exported → ${written}`);
   return 0;
 }
 

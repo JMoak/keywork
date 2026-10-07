@@ -1,38 +1,27 @@
 import type { McpTool, McpToolResult } from "./client.ts";
+import { McpProtocolError } from "./errors.ts";
 
-export const mcpProtocolVersion = "2025-06-18";
+export type WireRequest = (
+  method: string,
+  params: Record<string, unknown>,
+) => Promise<Record<string, unknown>>;
 
-export class McpProtocolError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "McpProtocolError";
-  }
+export interface ToolListing {
+  tools: McpTool[];
+  freshUntil: number;
 }
 
-export type WireRequest = (method: string, params: unknown) => Promise<unknown>;
-
-export function initializeParams(): Record<string, unknown> {
-  return {
-    protocolVersion: mcpProtocolVersion,
-    capabilities: {},
-    clientInfo: { name: "keywork", version: "0.0.1" },
-  };
-}
-
-export function readServerName(initializeResult: Record<string, unknown>): string {
-  const info = asRecord(initializeResult.serverInfo);
-  return typeof info.name === "string" ? info.name : "unknown";
-}
-
-export async function collectToolPages(request: WireRequest): Promise<McpTool[]> {
+export async function collectToolPages(request: WireRequest): Promise<ToolListing> {
   const tools: McpTool[] = [];
+  let freshUntil = Number.POSITIVE_INFINITY;
   let cursor: string | undefined;
   do {
-    const page = asRecord(await request("tools/list", cursor === undefined ? {} : { cursor }));
+    const page = await request("tools/list", cursor === undefined ? {} : { cursor });
+    freshUntil = Math.min(freshUntil, Date.now() + freshnessMs(page.ttlMs));
     for (const entry of asArray(page.tools)) tools.push(listedTool(entry));
     cursor = typeof page.nextCursor === "string" ? page.nextCursor : undefined;
   } while (cursor !== undefined);
-  return tools;
+  return { tools, freshUntil };
 }
 
 export function toolCallResult(result: Record<string, unknown>): McpToolResult {
@@ -70,4 +59,8 @@ export function asRecord(value: unknown): Record<string, unknown> {
 
 export function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function freshnessMs(ttlMs: unknown): number {
+  return typeof ttlMs === "number" && ttlMs > 0 ? ttlMs : 0;
 }

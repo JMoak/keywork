@@ -111,19 +111,29 @@ cp -r systems/_template systems/deploys     # then replace SYSTEM with deploys i
 
 ## Permissions
 
-The agent runs with keywork's `open` preset: it reads, writes, and runs commands without
-asking, because the box is the boundary.
+The agent runs with the same rules as keywork's `open` preset: it reads, writes, and runs
+commands without asking, because the box is the boundary.
 
-MCP tools are the exception: keywork asks before each call. `box run` has nobody to ask, so
-keywork refuses the call, names the tool, and exits 4. To let a tool through, allow it by its
-full name, `<system>__<tool>`, in that system's `keywork.json`:
+MCP tools ask by default. `box run` has nobody to ask, so keywork would refuse the call,
+name the tool, print the rule that allows it, and exit 4. Each system's `keywork.json`
+carries one rule that lets its whole server through:
 
 ```json
-"permissions": { "tools": { "deploys__get_record": "allow" } }
+"permissions": [{ "action": "mcp", "resource": "deploys__*", "effect": "allow" }]
 ```
 
-Names are exact, there is no wildcard. Skip `--preset` on a run: it replaces the configured
-permissions for that run, these entries included.
+The entrypoint appends every enabled system's rules after the agent's base rules. Rules are
+ordered and the last match wins, so to keep one tool out, add a deny after the allow:
+
+```json
+"permissions": [
+  { "action": "mcp", "resource": "deploys__*", "effect": "allow" },
+  { "action": "mcp", "resource": "deploys__delete_*", "effect": "deny" }
+]
+```
+
+Skip `--preset` on a run: it replaces the configured permissions for that run, these rules
+included.
 
 keywork only honors MCP servers and permissions from the user config layer, which the
 entrypoint rebuilds inside the container on every boot. A repo you clone cannot add a server

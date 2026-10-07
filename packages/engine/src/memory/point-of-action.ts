@@ -2,6 +2,7 @@ import type { ToolCallPart } from "../messages.ts";
 import type { ContextBudget } from "../session/context-budget.ts";
 import { searchHitLayer } from "./arcs/recall.ts";
 import type { RecallTap } from "./citations.ts";
+import { neutralizeRecalled } from "./neutralize.ts";
 import type { MemorySearcher, SearchHit, SearchOutcome } from "./search.ts";
 
 export type ActionRecall = (call: ToolCallPart) => Promise<string | undefined>;
@@ -116,6 +117,8 @@ function renderActionRecall(
   hits: readonly SearchHit[],
   retrieval: string,
 ): string {
-  const sections = hits.map((hit) => `### [[${hit.note.name}]]\n\n${hit.note.body.trim()}\n`);
+  const sections = hits.map(
+    (hit) => `### [[${hit.note.name}]]\n\n${neutralizeRecalled(hit.note.body.trim())}\n`,
+  );
   return [`## memory for ${subject}`, "", ...sections, `retrieval: ${retrieval}`].join("\n");
 }

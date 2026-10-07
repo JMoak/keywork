@@ -17,12 +17,12 @@ export interface ToolSearchOptions {
 export function mcpToolSearch({ catalog, activate }: ToolSearchOptions): Tool {
   return {
     name: mcpSearchToolName,
-    get description() {
-      return searchDescription(catalog());
-    },
+    description: searchDescription,
     parameters: z.toJSONSchema(searchArguments),
     execute: async (args) => {
-      const matched = selectEntries(catalog(), searchArguments.parse(args));
+      const parsed = searchArguments.parse(args);
+      if (asksForRoster(parsed)) return renderRoster(catalog());
+      const matched = selectEntries(catalog(), parsed);
       activate(matched.map((entry) => entry.qualified));
       return renderSchemas(matched);
     },
@@ -36,10 +36,17 @@ const searchArguments = z.object({
 
 type SearchArguments = z.infer<typeof searchArguments>;
 
-function searchDescription(entries: readonly CatalogEntry[]): string {
+const searchDescription =
+  "Fetches full schemas for MCP tools so they become directly callable. Call it with no arguments to list every available tool, with exact tool names to load them, or with a search query.";
+
+function asksForRoster(args: SearchArguments): boolean {
+  return (args.tools ?? []).length === 0 && (args.query ?? "").trim() === "";
+}
+
+function renderRoster(entries: readonly CatalogEntry[]): string {
+  if (entries.length === 0) return "No MCP tools are available (no connected servers).";
   const lines = entries.map((entry) => `${entry.qualified}: ${oneLiner(entry.tool.description)}`);
-  const roster = lines.length > 0 ? lines.join("\n") : "(no connected servers)";
-  return `Fetches full schemas for MCP tools so they become directly callable. Pass exact tool names or a search query.\nAvailable:\n${roster}`;
+  return `Available:\n${lines.join("\n")}\nPass exact names to load their schemas.`;
 }
 
 function selectEntries(entries: readonly CatalogEntry[], args: SearchArguments): CatalogEntry[] {

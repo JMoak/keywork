@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import { openInteractiveShell } from "@keywork/engine";
+import { keepAwake, openInteractiveShell } from "@keywork/engine";
 import {
   type CliRenderer,
   createCliRenderer,
@@ -18,6 +18,7 @@ import type { BotEntry, BotSummary, BotsPort } from "./bots.ts";
 import { realBrowserDisk } from "./browser-model.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
+import { commitDraftCommand, gitIn } from "./commit-draft.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
 import type { Titler } from "./conversation-model.ts";
 import type { TranscriptElevation } from "./conversation-pane.ts";
@@ -40,10 +41,17 @@ import {
 } from "./extension-commands.ts";
 import { FileIndex, fileJumpSource, fileJumpsAllowed } from "./file-index.ts";
 import { FilePane } from "./file-pane.ts";
-import { type Flavor, FlavorSwitch, registerFlavorCommands, startupFlavors } from "./flavor.ts";
+import {
+  dressedIn,
+  type Flavor,
+  FlavorSwitch,
+  registerFlavorCommands,
+  startupFlavors,
+} from "./flavor.ts";
 import type { CheckpointsPort } from "./fork.ts";
 import { FrameCoalescer, type FrameScheduler } from "./frame-scheduler.ts";
 import { fullRect, type Rect, type Screen } from "./geometry.ts";
+import { herdrReporter } from "./herdr.ts";
 import type { ConnectionsPort, InferencePort } from "./inference-port.ts";
 import { applyKeybindings, type KeybindingSource, watchKeybindings } from "./keybindings.ts";
 import { chordOf } from "./keys.ts";
@@ -85,6 +93,7 @@ import {
 } from "./session-attachment.ts";
 import { type SessionPaneDeps, SessionPanes } from "./session-panes.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
+import { followTerminalTheme, systemFlavorName } from "./system-theme.ts";
 import {
   mirrorSourceOverPanes,
   type TerminalPanePort,
@@ -124,6 +133,7 @@ export interface AppOptions {
   flavors?: readonly Flavor[];
   page?: PageThresholdOverrides;
   glyphs?: GlyphSupport;
+  hyperlinks?: boolean;
   focusOutline?: FocusOutline;
   agentFactory?: AgentFactory;
   shellEscape?: SessionPaneDeps["shellEscape"];
@@ -140,6 +150,7 @@ export interface AppOptions {
   titler?: Titler;
   statusLabel?: string | (() => string);
   checkpoints?: CheckpointsPort;
+  exportSession?: AppCoreOptions["exportSession"];
   workspace?: WorkspacePort;
   sessions?: SessionPort;
   sessionTrees?: SessionTreePort;
@@ -207,6 +218,8 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
       : attachOnFork(options.sessionTrees, options.sessions, escrow);
   const glyphs = options.glyphs ?? detectCapabilities();
   const terminal = terminalOf(options, glyphs);
+  const awake = keepAwake();
+  const herdr = herdrReporter({ env: options.terminal?.facts?.env ?? process.env });
   const sessions = new SessionPanes({
     core: () => core,
     escrow,
@@ -215,6 +228,9 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     animator,
     page: resolvePageThresholds(options.page),
     glyphs,
+    hyperlinks: options.hyperlinks ?? terminalSupport(options.terminal?.facts).hyperlinks,
+    workspaceFiles: () =>
+      fileJumpsAllowed(options.workspaceSetup?.readiness()) ? fileIndex.entries() : [],
     ...definedOnly({
       agentFactory: options.agentFactory,
       shellEscape: options.shellEscape,
@@ -244,6 +260,9 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     render();
   });
   let stopFocusWatch: () => void = () => {};
+  let stopThemeFollow: () => void = () => {};
+  // opentui emits destroy before writing its own teardown, which blanks the title we pop
+  const shutDownWithRenderer = (): void => queueMicrotask(() => core.shutdown());
   let releaseFatalGuards: () => void = () => {};
   const core: AppCore = new AppCore({
     screen: () => screenWithin(renderer, flavors.active.chromeWeight),
@@ -281,8 +300,12 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
       escrow.releaseAll();
       unsubscribeInbox?.();
       stopFocusWatch();
-      terminal.reporter.end();
+      stopThemeFollow();
+      awake.dispose();
+      herdr.release();
+      renderer.off("destroy", shutDownWithRenderer);
       renderer.destroy();
+      terminal.reporter.end();
       options.workspace?.seal();
       void runClosers(
         options.closers ?? [],
@@ -316,6 +339,8 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
       );
       terminal.reporter.report(focusedWindowTitle(sessions));
       terminal.notifier.observe(workSnapshot(sessions, inboxWaiting));
+      awake.turnRunning(sessions.working());
+      herdr.report({ working: sessions.working(), blocked: sessions.awaiting().length > 0 });
     } catch (cause) {
       recordCrash("render", cause);
     }
@@ -362,7 +387,15 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     },
   });
   terminal.reporter.begin();
-  stopFocusWatch = watchFocus(terminal, options.terminal?.input ?? stdinTap);
+  stopFocusWatch = watchFocus(terminal, options.terminal?.input ?? stdinTap, (focused) =>
+    sessions.focused()?.pane.model.terminalFocusChanged(focused),
+  );
+  stopThemeFollow = watchTheme(terminal, options.terminal?.input ?? stdinTap, {
+    flavors,
+    overrides: options.themeOverrides,
+    repaint: render,
+  });
+  renderer.once("destroy", shutDownWithRenderer);
   renderer.auto();
   core.bindNotify(render);
   core.start();
@@ -488,9 +521,11 @@ function hostPorts(
     isDirectory: (path) =>
       statSync(resolve(process.cwd(), path), { throwIfNoEntry: false })?.isDirectory() === true,
     currentModel: () => sessions.currentModel(),
+    currentEffort: () => sessions.currentEffort(),
     switchModel: (reference) => sessions.switchModel(reference),
     ...definedOnly({
       undo: options.checkpoints,
+      exportSession: options.exportSession,
       presets: options.presets,
       inference: options.inference,
       connections: options.connections,
@@ -525,6 +560,15 @@ function registerHostCommands(
   })) {
     core.registry.register(command);
   }
+  core.registry.register(
+    commitDraftCommand({
+      conversation: () => sessions.focused()?.pane.model,
+      git: gitIn(process.cwd()),
+      write: terminal.write,
+      notice,
+      clipboard: terminal.clipboard,
+    }),
+  );
   for (const command of doctorCommands({
     logFile: crashLogFile,
     exists: (path) => statKind(path)?.isFile() === true,
@@ -555,6 +599,7 @@ interface Terminal {
   readonly notifier: Notifier;
   readonly write: (bytes: string) => void;
   readonly clipboard: boolean;
+  readonly interactive: boolean;
 }
 
 function terminalOf(options: AppOptions, glyphs: GlyphSupport): Terminal {
@@ -566,19 +611,43 @@ function terminalOf(options: AppOptions, glyphs: GlyphSupport): Terminal {
     notifier: new Notifier(write, transport),
     write,
     clipboard: support.clipboard,
+    interactive: support.title,
   };
 }
 
-function watchFocus(terminal: Terminal, tap: InputTap): () => void {
+function watchFocus(
+  terminal: Terminal,
+  tap: InputTap,
+  attend: (focused: boolean) => void,
+): () => void {
   if (terminal.notifier.transport === "off") return () => {};
   terminal.write(enableFocusReporting);
   const release = tap((bytes) => {
-    for (const event of focusEventsIn(bytes)) terminal.notifier.focusChanged(event);
+    for (const event of focusEventsIn(bytes)) {
+      terminal.notifier.focusChanged(event);
+      attend(event === "focus-in");
+    }
   });
   return () => {
     release();
     terminal.write(disableFocusReporting);
   };
+}
+
+interface ThemeWatch {
+  readonly flavors: FlavorSwitch;
+  readonly overrides: ThemeOverrides | undefined;
+  readonly repaint: () => void;
+}
+
+function watchTheme(terminal: Terminal, tap: InputTap, watch: ThemeWatch): () => void {
+  if (!terminal.interactive || !watch.flavors.names().includes(systemFlavorName)) return () => {};
+  return followTerminalTheme({
+    transport: { write: terminal.write, onData: tap },
+    closet: watch.flavors,
+    dress: (flavor) => dressedIn(flavor, watch.overrides),
+    repaint: watch.repaint,
+  });
 }
 
 const stdinTap: InputTap = (listener) => {

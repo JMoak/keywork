@@ -400,7 +400,10 @@ persists; human-authored fixture skill provably untouchable; telemetry increment
 **Landed (2026-09-06):** `packages/engine/src/skills/` over D7's discovery walk, `OWN`
 code from the Hermes contracts (attribution recorded in `NOTICE`). Provenance is a
 frontmatter key: `authored_by: keywork` marks a skill as agent-created, and
-`SkillDefinition.authoredBy` carries it. Frontmatter won over a sidecar because the
+`SkillDefinition.authoredBy` carries it (since 2026-10-02, 117 SW16, the key lives at
+`metadata.authored_by` per the Agent Skills spec; the top-level spelling is still read for one
+release and migrates on the next write; names follow `^[a-z0-9]+(-[a-z0-9]+)*$` and
+`.agents/skills` is discovered beside `.keywork/skills`). Frontmatter won over a sidecar because the
 marker then travels with the file wherever it is copied, shows in any editor, and gives a
 person a one-line opt-in for a skill they want the agent to maintain. Protection is by
 construction: `authorship.ts` owns the only two writers, and both take an

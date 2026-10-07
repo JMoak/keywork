@@ -78,6 +78,25 @@ design constraint, not an aspiration. Shape:
   token-pair the design language uses, both light and dark. A flavor that fails
   contrast doesn't load, it errors helpfully.
 
+**SW21 live theme follow (landed 2026-10-02, 117).** The `system` flavor now follows the
+terminal when its theme changes. At startup `app.ts` (`watchTheme`) switches on palette-update
+reports (`CSI ? 2031 h`, Contour's color-palette-update-notifications) whenever the terminal is
+a live TTY that is not `dumb` and the closet holds `system`; it switches them off on exit right
+after focus reporting. A report (`CSI ? 997 ; 1 n` dark, `; 2 n` light, matched by
+`themeChangeReported` in `osc.ts`) makes `followTerminalTheme` in `system-theme.ts` re-send
+`colorQueries()` with the startup timeout, re-derive with `systemFlavor`, lay the theme
+overrides over it (`dressedIn`, the same dressing `startupFlavors` uses) and `refit` the closet
+entry. `FlavorSwitch.refit` repaints only when `system` is the one being worn, so an explicit
+`/flavor-<name>` wins, and a later `/flavor-system` wears the fresh palette. A silent
+terminal leaves the flavor as it was; a second report mid-query asks once more after the first
+answer. OpenTUI 0.5.1 also sets 2031 and reads 997 for its own dark/light `themeMode`, which
+only queries OSC 10/11; keywork owns its switch so the full ANSI 16 re-derive does not depend
+on that. **Evidence:** `system-theme.test.ts` (+8: mode on and off, re-query on report, light
+re-derive and repaint, overrides kept, explicit flavor kept on screen, silent terminal,
+re-ask mid-query, late replies after stop), `osc.test.ts` (+3: the 2031 bytes, both 997
+reports, the 996 query and lookalikes ignored), and the `terminal-hygiene` e2e (a 997 report on
+the real input path re-sends the queries).
+
 ## PD16: The motion grammar
 
 Drafted per Jordan's mandate ("I trust you for an initial world-class draft I'd hope we

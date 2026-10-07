@@ -111,6 +111,13 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
       agent.send(text).catch(() => undefined);
       return "accepted";
     },
+    inject: async (id, text, origin) => {
+      const agent = agents.get(id);
+      if (agent === undefined) return "missing";
+      const outcome = agent.busy() ? "queued" : "started";
+      agent.send(text, { origin }).catch(() => undefined);
+      return outcome;
+    },
     abort: async (id) => {
       const agent = agents.get(id);
       if (agent === undefined) return "missing";

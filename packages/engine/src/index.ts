@@ -16,7 +16,13 @@ export {
   type TurnDelegate,
   type TurnSettler,
 } from "./agent.ts";
-export { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
+export {
+  type EngineEvents,
+  EventBus,
+  type PromptOrigin,
+  type QueuedPrompt,
+  type SendBehavior,
+} from "./bus.ts";
 export {
   declaredCapabilitiesFor,
   type InputModality,
@@ -121,6 +127,7 @@ export {
   type ResolutionFailureCode,
   type ResolutionRequest,
 } from "./inference/types.ts";
+export { KeepAwake, keepAwake } from "./keep-awake.ts";
 export {
   type DiagnosticsObserverOptions,
   type DiagnosticsPublication,
@@ -513,6 +520,7 @@ export {
   type ModelRates,
   mergeCostRollups,
   ratesFor,
+  retirementOf,
   type SessionCostSource,
   sessionCost,
   withTurnCost,
@@ -524,9 +532,18 @@ export {
   type SystemPromptOptions,
 } from "./prompt.ts";
 export {
+  type CacheDiagnostics,
+  type CacheMiss,
+  type DoneDelta,
   declaredContextWindow,
+  type EffortChange,
+  type EffortLevel,
+  effortInForce,
+  effortLevels,
+  isEffortLevel,
   type Provider,
   type ProviderRequest,
+  type ToolAddition,
   type ToolDefinition,
   type TurnDelta,
 } from "./provider.ts";
@@ -602,13 +619,18 @@ export {
   type BindingEntry,
   type BranchSummaryEntry,
   type CompactionEntry,
+  type ContextEditEntry,
+  type ContextReplacement,
   type CustomEntry,
   type CustomMessageEntry,
   checkpointForPrompt,
   describeBinding,
+  describeContextEdit,
+  type EffortChangeEntry,
   type FileEntry,
   type FileTrackingDetails,
   foldBinding,
+  isContextEditable,
   type LabelEntry,
   type MessageEntry,
   type ModelChangeEntry,

@@ -1,4 +1,4 @@
-import type { Message } from "@keywork/engine";
+import type { Message, PromptOrigin } from "@keywork/engine";
 import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
 
 export interface SessionSummary {
@@ -21,6 +21,8 @@ export interface SessionDetail extends SessionSummary {
 
 export type PromptOutcome = "accepted" | "missing";
 
+export type InjectOutcome = "started" | "queued" | "missing";
+
 export type AbortOutcome = "aborted" | "idle" | "missing";
 
 export interface SessionHost {
@@ -28,6 +30,7 @@ export interface SessionHost {
   read(id: string): Promise<SessionDetail | undefined>;
   create(): Promise<SessionSummary>;
   prompt(id: string, text: string): Promise<PromptOutcome>;
+  inject(id: string, text: string, origin: PromptOrigin): Promise<InjectOutcome>;
   abort(id: string): Promise<AbortOutcome>;
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(callId: string, verdict: AskVerdict): Promise<AnswerOutcome>;

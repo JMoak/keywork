@@ -52,6 +52,7 @@ Fires when a prompt begins its turn, after the user message joins the context.
 |---|---|---|
 | `userText` | `string` | The prompt text. |
 | `entryId` | `string`, optional | The session entry id, present on replay of a stored user message. |
+| `origin` | `PromptOrigin`, optional | `{ kind: "external", client }` when the prompt came through `POST /sessions/{id}/inject` on `keywork serve`; absent for a typed prompt. |
 
 On replay, a compaction or branch summary also fires `turn.started` with the summary as
 `userText`, so the transcript shows where history was folded.
@@ -102,7 +103,7 @@ Fires whenever the list of prompts waiting behind the active turn changes.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `queued` | `QueuedPrompt[]` | Each `{ id, text, behavior }`; `behavior` is `steer` or `queue`. |
+| `queued` | `QueuedPrompt[]` | Each `{ id, text, behavior, origin? }`; `behavior` is `steer` or `queue`, and `origin` is the same as on `turn.started`. |
 
 ## Tool lifecycle
 

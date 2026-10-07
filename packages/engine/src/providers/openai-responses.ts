@@ -1,5 +1,5 @@
 import type { ProviderStateOwner, Usage } from "../messages.ts";
-import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
+import type { CacheMiss, DoneDelta, Provider, ProviderRequest, TurnDelta } from "../provider.ts";
 import { ProviderStreamError } from "./errors.ts";
 import { toResponsesRequest } from "./responses-wire.ts";
 import { sseJsonEvents } from "./sse.ts";
@@ -56,10 +56,18 @@ interface StreamEvent {
   item?: OutputItem;
   message?: string;
   response?: {
+    id?: string;
     usage?: WireUsage;
     error?: { message?: string } | null;
     incomplete_details?: { reason?: string } | null;
+    prompt_cache_diagnostics?: WireCacheDiagnostics | null;
   };
+}
+
+interface WireCacheDiagnostics {
+  type?: string;
+  reason?: string;
+  cache_missed_tokens?: number;
 }
 
 interface OutputItem {
@@ -81,7 +89,10 @@ async function* assembleTurn(
   owner: ProviderStateOwner,
   events: AsyncIterable<unknown>,
 ): AsyncGenerator<TurnDelta> {
-  let usage: Usage = { inputTokens: 0, outputTokens: 0 };
+  let done: DoneDelta = {
+    type: "done",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
   for await (const raw of events) {
     const event = raw as StreamEvent;
     switch (event.type) {
@@ -101,7 +112,7 @@ async function* assembleTurn(
         yield* completedItem(event.item, owner);
         break;
       case "response.completed":
-        usage = toUsage(event.response?.usage);
+        done = completedTurn(event.response);
         break;
       case "response.incomplete":
         throw new ProviderStreamError(
@@ -119,7 +130,26 @@ async function* assembleTurn(
         break;
     }
   }
-  yield { type: "done", usage };
+  yield done;
+}
+
+function completedTurn(response: StreamEvent["response"]): DoneDelta {
+  const cacheMiss = cacheMissOf(response?.prompt_cache_diagnostics);
+  return {
+    type: "done",
+    usage: toUsage(response?.usage),
+    ...(response?.id !== undefined && { responseId: response.id }),
+    ...(cacheMiss !== undefined && { cacheMiss }),
+  };
+}
+
+function cacheMissOf(diagnostics: WireCacheDiagnostics | null | undefined): CacheMiss | undefined {
+  if (diagnostics?.type !== "cache_miss" || diagnostics.reason === undefined) return undefined;
+  const missedTokens = diagnostics.cache_missed_tokens;
+  return {
+    cause: diagnostics.reason.replaceAll("_", " "),
+    ...(missedTokens !== undefined && { missedTokens }),
+  };
 }
 
 function* completedItem(
@@ -147,10 +177,10 @@ function* completedItem(
 }
 
 function toUsage(usage: WireUsage | undefined): Usage {
-  const cachedTokens = usage?.input_tokens_details?.cached_tokens;
+  const cachedTokens = usage?.input_tokens_details?.cached_tokens ?? 0;
   return {
-    inputTokens: usage?.input_tokens ?? 0,
+    inputTokens: Math.max(0, (usage?.input_tokens ?? 0) - cachedTokens),
     outputTokens: usage?.output_tokens ?? 0,
-    ...(cachedTokens !== undefined && cachedTokens > 0 && { cacheReadInputTokens: cachedTokens }),
+    ...(cachedTokens > 0 && { cacheReadInputTokens: cachedTokens }),
   };
 }

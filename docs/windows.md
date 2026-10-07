@@ -50,10 +50,11 @@ rewriting the current line, CRLF treated as one newline, other control bytes dro
 | Full-screen programs (`vim`, `htop`, `less`) | out of scope for v1: no PTY means no window size, no cursor addressing, no alternate screen | same, plus no ConPTY handle, so programs that query the console see a redirected handle |
 | Exit | `· shell exited (code)` marker; `enter` starts a fresh shell in the workspace root | same |
 
-What ConPTY would add and why it waits: Bun's `spawn` does not expose a pseudo-console on
-Windows, and Node's `child_process` has no pty option either, so a real ConPTY needs a
-native addon that keywork's exact-pin policy and single-binary launch rail do not want
-yet. The mirror mode carries the agent's workflow on its own; the shell mode is a
+What ConPTY would add and why it waits: when this was written Bun's `spawn` exposed no
+pseudo-console. That stopped being true at Bun 1.3.14 (`Bun.spawn({ terminal })` with ConPTY
+on Windows), and OpenTUI 0.5.2+ ships an embedded terminal renderable; the spike is
+[`backlog/117`](backlog/117-influence-sweep.md) SW11, with Bun's documented Windows limits (no
+termios, no `` translation, no mouse on Windows 10) as the honest ceiling. The mirror mode carries the agent's workflow on its own; the shell mode is a
 convenience for one-line commands scoped to the project. Shell mode opens only in a
 trusted workspace (`/init`); typed lines are the user's own and never pass through the
 agent's permission gate.

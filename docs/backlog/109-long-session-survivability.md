@@ -74,6 +74,24 @@ The decision also settles whether calm shows the count at all (today it does; a 
 - **Local slash suggestions match by prefix**, not fuzzy subsequence (`/ex` no longer offers
   `context`).
 
+## Reversals of record
+
+- **G4 assumption 1, "thinking off is byte-identical", reversed 2026-10-02 (117 SW5).** G4
+  ([`70-anthropic.md`](70-anthropic.md)) promised that an off request goes out exactly as before
+  the switch existed. On the 5.5 generation that promise made long tool chains go silent: thinking
+  cannot be disabled there, `display` defaults to `"omitted"`, and the short notes the model writes
+  between tool calls arrive as empty thinking blocks, so a long session showed tool rows and
+  nothing between them. Now, on models that write progress updates (Opus 5.5, Sonnet 5.5, Fable 5
+  and later, Mythos 5.1), off sends `thinking: {type: "adaptive", display: "updates"}` under the
+  `thinking-display-updates-2026-08-18` beta (allowed by decision 117-1) and each non-empty
+  update renders as its own line of transcript prose; on sends `"summarized"` as before. Every
+  other model keeps the byte-identical off request. The update text is display only; the block
+  itself still round-trips unchanged as owned provider state. Evidence: `messages-wire.test.ts`
+  "asks a 5.5 model for progress updates while thinking is hidden and summaries when shown",
+  `anthropic.test.ts` "turns a non-empty update block into a progress note and keeps the block as
+  owned state", `effort-and-cache.test.ts` "render as their own prose entry between tool rows and
+  never absorb later text".
+
 ## Follow-ups (not in this stream)
 
 - Title-bar masthead tier hides telemetry by design; the gauge is reachable via `/context`.

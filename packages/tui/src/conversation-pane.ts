@@ -1,5 +1,5 @@
 import { type Agent, defaultSigil, type ToolCallPart } from "@keywork/engine";
-import { Box, bg, fg, StyledText, Text, type TextChunk } from "@opentui/core";
+import { Box, bg, fg, link, StyledText, Text, type TextChunk } from "@opentui/core";
 import type { BotEntry } from "./bots.ts";
 import {
   density,
@@ -21,11 +21,13 @@ import {
   type CompactionHook,
   ConversationModel,
   type ConversationPorts,
+  type EffortChangeHook,
   type SettledOutcome,
   type ThinkingChangeHook,
   type Titler,
 } from "./conversation-model.ts";
 import type { DiffLine } from "./diff-render.ts";
+import { fileLinker, type LinkableSpan, linkSpans } from "./file-references.ts";
 import type { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
 import type { MarkdownSpan } from "./markdown.ts";
@@ -53,6 +55,7 @@ import { clip, padEnd, width } from "./width.ts";
 const askDiffRows = 10;
 const mastheadStatusRows = 1;
 const clockTickMs = 1000;
+const undoStagedMark = "undo staged";
 
 const lifecycleRamps = {
   pulse: { tier1: ["▓", "█"], tier0: ["+", "#"] },
@@ -79,6 +82,7 @@ export interface ConversationPaneOptions {
   masthead?: "on" | "off";
   gauge?: GaugeStyle;
   elevation?: TranscriptElevation;
+  hyperlinks?: boolean;
 }
 
 export type TranscriptElevation = "arc-stamps" | "turn-age" | "scroll-map" | "chrome";
@@ -132,6 +136,7 @@ export class ConversationPane implements Pane {
     this.mastheadEnabled = options?.masthead !== "off";
     this.gaugeOverride = options?.gauge;
     this.elevation = options?.elevation;
+    if (options?.hyperlinks === true) this.model.feed.link = fileLinker(process.cwd());
     this.model.onSettled((outcome) => {
       if (!this.lastFocused) this.unseen = outcome;
     });
@@ -228,12 +233,20 @@ export class ConversationPane implements Pane {
     this.model.bindThinkingChange(hook);
   }
 
+  bindEffortChange(hook: EffortChangeHook): void {
+    this.model.bindEffortChange(hook);
+  }
+
   bindCompaction(hook: CompactionHook): void {
     this.model.bindCompaction(hook);
   }
 
   postNotice(text: string): void {
     this.model.postNotice(text);
+  }
+
+  cycleVerbosity(): void {
+    this.postNotice(`tool rows · ${this.model.feed.cycleVerbosity()}`);
   }
 
   liveStatus(context: Partial<Pick<PaneContext, "instruments" | "costs" | "focused">>): string {
@@ -368,6 +381,7 @@ export class ConversationPane implements Pane {
 
   view(context: PaneContext): PaneView {
     this.lastFocused = context.focused;
+    this.model.attend(context.focused);
     this.syncStamp(context.focused);
     this.syncClock();
     const page = resolvePage(context.width, this.pageThresholds);
@@ -383,7 +397,7 @@ export class ConversationPane implements Pane {
         stamp: this.stampGlyph(),
         arc: this.arc,
         bot: this.titleBot(),
-        telemetry: this.liveStatus(context) || undefined,
+        telemetry: this.titleTelemetry(context),
         siblings: this.siblingTitles?.(),
       },
       context.width,
@@ -397,6 +411,12 @@ export class ConversationPane implements Pane {
       groundArrival: this.groundInk,
       depth: this.chromeDepth(),
     };
+  }
+
+  private titleTelemetry(context: PaneContext): string | undefined {
+    const live = this.liveStatus(context);
+    if (!this.model.undoStaged()) return live || undefined;
+    return live === "" ? undoStagedMark : `${undoStagedMark} · ${live}`;
   }
 
   private titleBot(): TitleBot | undefined {
@@ -598,7 +618,7 @@ export class ConversationPane implements Pane {
             trayBox(
               theme,
               trayRows(suggestions, this.model.selectedSuggestion, innerWidth - 2, theme, {
-                namePrefix: "/",
+                namePrefix: this.model.editor.slashQuery() === undefined ? "@" : "/",
                 glyphs: this.glyphs,
               }),
             ),
@@ -739,17 +759,28 @@ function transcriptRow(line: TranscriptLine, paneWidth: number, theme: Theme, ti
       return Text({
         content: new StyledText([
           ...lead,
-          ...line.spans.map((span) => fg(tint.bodyInk as string)(span.text)),
+          ...line.spans.map((span) => linked(fg(tint.bodyInk as string)(span.text), span.href)),
         ]),
       });
     }
     return styledRow(lead, line.spans, line.panel === true, bodyWidth, theme);
   }
   const bodyInk = tint?.bodyInk ?? lineColor(line, theme);
-  if (lead.length === 0) return Text({ content: line.text || " ", fg: bodyInk });
-  return Text({
-    content: new StyledText([...lead, fg(bodyInk)(line.text || " ")]),
-  });
+  if (lead.length === 0 && line.links === undefined) {
+    return Text({ content: line.text || " ", fg: bodyInk });
+  }
+  return Text({ content: new StyledText([...lead, ...inkedText(line, bodyInk)]) });
+}
+
+function inkedText(line: TranscriptLine, ink: string): TextChunk[] {
+  if (line.links === undefined) return [fg(ink)(line.text || " ")];
+  return linkSpans<LinkableSpan>([{ text: line.text }], line.links).map((piece) =>
+    linked(fg(ink)(piece.text), piece.href),
+  );
+}
+
+function linked(chunk: TextChunk, href: string | undefined): TextChunk {
+  return href === undefined ? chunk : link(href)(chunk);
 }
 
 function stampColor(line: TranscriptLine, theme: Theme): string {

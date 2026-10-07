@@ -22,7 +22,8 @@ write_user_config() {
   jq --slurp \
      --rawfile rules "$house_rules" \
      --arg model "${AGENT_MODEL:-}" \
-     'reduce .[] as $fragment ({}; . * $fragment)
+     'reduce .[] as $fragment ({}; (. * $fragment)
+        + {permissions: ((.permissions // []) + ($fragment.permissions // []))})
       | .prompts.system = $rules
       | if $model == "" then . else .model = $model end' \
      $fragments > "$user_config"

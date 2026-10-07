@@ -1,11 +1,9 @@
 {
-  "permissions": {
-    "tools": {
-      "read": "allow",
-      "write": "allow",
-      "edit": "allow",
-      "bash": "allow"
-    }
-  },
+  "permissions": [
+    { "action": "read", "resource": "*", "effect": "allow" },
+    { "action": "write", "resource": "*", "effect": "allow" },
+    { "action": "edit", "resource": "*", "effect": "allow" },
+    { "action": "bash", "resource": "*", "effect": "allow" }
+  ],
   "mcpServers": {}
 }

@@ -38,6 +38,9 @@ export interface Stage {
   resize(width: number, height: number): Promise<void>;
   renderOnce(): Promise<number>;
   relaunch(): Promise<void>;
+  kill(): Promise<number>;
+  terminalBytes(): string;
+  answer(reply: string): void;
   quit(): Promise<number>;
 }
 
@@ -64,6 +67,7 @@ export interface Scenario {
   readonly app?: Partial<AppOptions>;
   readonly presets?: (stateDir: string) => PresetsPort;
   readonly goldens?: readonly string[];
+  readonly captureTerminal?: boolean;
   beforeBoot?(world: WorldPaths): void;
   run(stage: Stage): Promise<void>;
 }

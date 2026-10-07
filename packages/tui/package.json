@@ -9,6 +9,6 @@
   "dependencies": {
     "@keywork/engine": "workspace:*",
     "@keywork/shared": "workspace:*",
-    "@opentui/core": "0.5.1"
+    "@opentui/core": "0.5.14"
   }
 }

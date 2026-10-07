@@ -9,8 +9,16 @@
 > **Hard guardrail:** OpenCode's Anthropic subscription-OAuth login code paths must **NOT** be
 > ported into keywork. Anthropic access in keywork is API-key / Agent-SDK only (ToS). See §7.
 
-- Repo: <https://github.com/sst/opencode> (MIT, ~195k stars, created April 2025 by the SST/Anomaly team)
-- Docs: <https://opencode.ai/docs/>
+> **Status 2026-10-02.** The repo moved to `anomalyco/opencode` (still MIT; `sst/opencode`
+> redirects) and OpenTUI moved to `anomalyco/opentui`. OpenCode v2 is a rewrite branched
+> 2026-06-26 and tagged v2.0.0 on 2026-09-11 (v2.0.22 on 2026-10-02) with no release notes; it
+> replaces the plugin API, the server/client contracts and the TUI config file. v1 is in
+> maintenance. v2 runs on Bun 1.4.2 and OpenTUI 0.5.14, while keywork pins `@opentui/core`
+> 0.5.1. Sections 1 to 5 describe v1 as surveyed on 2026-08-09; §8 has what changed since, and
+> [`117-influence-sweep.md`](../backlog/117-influence-sweep.md) decides what keywork takes.
+
+- Repo: <https://github.com/anomalyco/opencode> (formerly `sst/opencode`; MIT, ~195k stars, created April 2025 by the SST/Anomaly team)
+- Docs: <https://opencode.ai/docs/> (v1) · <https://opencode.ai/v2/docs/> (v2)
 
 ---
 
@@ -170,19 +178,19 @@ because keywork shares the exact Bun + TypeScript + OpenTUI stack, structural re
 inspiration) is on the table. Study their OpenTUI usage in `packages/tui` before writing a line
 of keywork's renderer.
 
-| # | Take | Why / how |
-|---|---|---|
-| 1 | **Leader-key + palette keyboard model** | The `ctrl+x` leader with `leader_timeout`, frequency-tiered bindings, and a `ctrl+p` palette that doubles as keybind documentation is exactly keywork's "fiery-clean keyboard interaction" value. Lift the binding-resolution config model (string/array/object, `"none"`, platform overrides) directly. |
-| 2 | **OpenTUI patterns from `packages/tui`** | Production-proven component structure, overlay/dialog handling, scroll performance, and input handling on the same renderer keywork uses. Read the source; lift with attribution. |
-| 3 | **Headless server + OpenAPI + SSE architecture** | Client/server with a generated-SDK API is what makes multi-window/pane and multi-client workflows cheap later. Adopt the shape (session/message/event/tool endpoints, `/doc` spec, SSE stream) even if keywork's v1 runs in-process. Their `packages/server` + `httpapi-codegen` are reference implementations. |
-| 4 | **Git-snapshot undo/redo** | Highest-leverage trust feature per line of code. Lift the mechanism. |
-| 5 | **Plan/Build primary agents with Tab switch + allow/ask/deny permissions** | Small config surface (`mode`, `permission` with glob-scoped bash rules) delivering the whole safety UX. Markdown-with-frontmatter agent definitions are worth copying verbatim as a format. |
-| 6 | **Markdown custom commands** | `$ARGUMENTS`/`$1`, `` !`cmd` `` shell injection, `@file` inclusion, frontmatter routing to an agent/model. Cheap, composable, user-loved. |
-| 7 | **`system` theme + JSON theme format** | Terminal-background-derived grayscale + ANSI reuse + `"none"` inheritance is Omarchy-grade default behavior: it looks native everywhere with zero user effort. Theme `defs`/dark-light variants are a good schema to lift. |
-| 8 | **Vercel AI SDK + Models.dev provider layer** | Don't hand-roll provider abstraction; their `packages/llm` wiring over `@ai-sdk/*` with Models.dev metadata is directly reusable, **excluding all subscription-OAuth auth flows** (see §7). |
-| 9 | **Plugin hook taxonomy** | The event list (`tool.execute.before/after`, `session.*`, `permission.asked`, …) is a well-shaped extension surface; adopt the taxonomy even if keywork's plugin runtime differs. |
-| 10 | **Session trees for subagents** | Modeling subagent runs as navigable child sessions (instead of buried logs) fits keywork's multi-pane ambitions; a pane per child session is a natural keywork extension OpenCode itself doesn't have. |
-| · | **Skip:** Electron desktop app, share-link cloud service, enterprise/Slack packages are out of scope for a keyboard-first harness; revisit only if the server split (item 3) lands first. |
+| # | Take | Why / how | Status 2026-10-02 |
+|---|---|---|---|
+| 1 | **Leader-key + palette keyboard model** | The `ctrl+x` leader with `leader_timeout`, frequency-tiered bindings, and a `ctrl+p` palette that doubles as keybind documentation is exactly keywork's "fiery-clean keyboard interaction" value. Lift the binding-resolution config model (string/array/object, `"none"`, platform overrides) directly. | **Landed:** C3 keymap with a timed leader (`ctrl+k`, `tui/src/keymap.ts`), C6 overlay from the live keymap, C26 palette (partial at the 92 ledger; files section via C33), C4 hot reload (2026-09-07). The config schema came from Pi (92 I11), not OpenCode. |
+| 2 | **OpenTUI patterns from `packages/tui`** | Production-proven component structure, overlay/dialog handling, scroll performance, and input handling on the same renderer keywork uses. Read the source; lift with attribution. | **Landed** as keywork's own TUI on OpenTUI (C1, C2 + WP-6); no OpenCode TUI code was adapted (`NOTICE` has none). **Open:** SW9 bumps `@opentui/core` 0.5.1 to 0.5.14. |
+| 3 | **Headless server + OpenAPI + SSE architecture** | Client/server with a generated-SDK API is what makes multi-window/pane and multi-client workflows cheap later. Adopt the shape (session/message/event/tool endpoints, `/doc` spec, SSE stream) even if keywork's v1 runs in-process. Their `packages/server` + `httpapi-codegen` are reference implementations. | **Landed:** P2.1 server with OpenAPI 3.1 at `/doc` and SSE `/events` (2026-09-06), P2.2 `keywork attach`, S0 discovery and S1 ask queue (2026-09-07). The engine stays in-process (D7). **Open:** P2.3 shared workspaces. |
+| 4 | **Git-snapshot undo/redo** | Highest-leverage trust feature per line of code. Lift the mechanism. | **Landed:** E3/E4 (2026-08-10, shadow `GIT_DIR`, recorded in `NOTICE`). **Open:** SW14 undo that returns the prompt, SW13 per-command diff. |
+| 5 | **Plan/Build primary agents with Tab switch + allow/ask/deny permissions** | Small config surface (`mode`, `permission` with glob-scoped bash rules) delivering the whole safety UX. Markdown-with-frontmatter agent definitions are worth copying verbatim as a format. | **Landed:** E1 `permissionPolicy` (I6, in `NOTICE`), E2 presets, D6 markdown agents (since absorbed by D16 bots). **Superseded:** Plan/Build + Tab (E5) by the E7 / PD12 modes spec (Plan · Recall · Agent), unbuilt; the rule model by SW15 (decision 117-2, v2's ordered list), open. |
+| 6 | **Markdown custom commands** | `$ARGUMENTS`/`$1`, `` !`cmd` `` shell injection, `@file` inclusion, frontmatter routing to an agent/model. Cheap, composable, user-loved. | **Landed:** D5 (2026-08-10, `engine/src/extensions/markdown-commands.ts`, in `NOTICE`). |
+| 7 | **`system` theme + JSON theme format** | Terminal-background-derived grayscale + ANSI reuse + `"none"` inheritance is Omarchy-grade default behavior: it looks native everywhere with zero user effort. Theme `defs`/dark-light variants are a good schema to lift. | **Landed:** C16 theme tokens; C17 `system` as a flavor (2026-09-07). JSON theme files were not lifted; PD15 flavors are the unit. **Open:** SW21 live theme follow. |
+| 8 | **Vercel AI SDK + Models.dev provider layer** | Don't hand-roll provider abstraction; their `packages/llm` wiring over `@ai-sdk/*` with Models.dev metadata is directly reusable, **excluding all subscription-OAuth auth flows** (see §7). | **Superseded** by keywork's own raw-fetch providers (92 anti-regression note; G1, IR contract in 105). Models.dev metadata (92 I14) is not built: `engine/src/pricing.ts` is a hand table that SW2 refreshes, and per-model output limits are open (70, note 5). |
+| 9 | **Plugin hook taxonomy** | The event list (`tool.execute.before/after`, `session.*`, `permission.asked`, …) is a well-shaped extension surface; adopt the taxonomy even if keywork's plugin runtime differs. | **Superseded** by D2's Pi taxonomy (`LIFT:pi`). D1 to D3 are open (`packages/extensions` is a stub). The bus vocabulary landed as `docs/events.md` (A5, Pi names per I8). |
+| 10 | **Session trees for subagents** | Modeling subagent runs as navigable child sessions (instead of buried logs) fits keywork's multi-pane ambitions; a pane per child session is a natural keywork extension OpenCode itself doesn't have. | **Open, parked:** FR6.17 waits until spawning exists (115); no subagent primitive is planned in core (D2/P6). |
+| · | **Skip:** Electron desktop app, share-link cloud service, enterprise/Slack packages are out of scope for a keyboard-first harness; revisit only if the server split (item 3) lands first. | | Still skipped. The server landed; the share answer is P2.5 local HTML export (open). |
 
 ## 7. Licensing & compliance notes (must-read)
 
@@ -197,9 +205,81 @@ of keywork's renderer.
   When lifting from `packages/llm` / auth code, excise anything touching Anthropic OAuth,
   `auth.json` OAuth token storage for Anthropic, or Pro/Max login.
 
+## 8. Since 2026-08-09
+
+What keywork takes from this is decided in
+[`117-influence-sweep.md`](../backlog/117-influence-sweep.md); the tag after each item cites it.
+
+**v1 maintenance.** v1.18.16 to v1.18.34 (2026-08-10 to 2026-09-30) are provider fixes plus a
+few behaviors: 5-minute default header and stream-chunk timeouts (v1.18.27), a resumable
+`task_id` on failed subagents (v1.18.20), ACP session-option fixes (v1.18.31).
+[changelog](https://opencode.ai/changelog)
+
+**v2 rewrite.** Branched 2026-06-26, v2.0.0 tagged 2026-09-11, v2.0.22 on 2026-10-02. No
+release notes exist ([issue #52184](https://github.com/anomalyco/opencode/issues/52184)).
+Three breaking changes per the [migration guide](https://opencode.ai/v2/docs/migrate-v1/): a
+new plugin API, new server/client contracts, and one global `cli.json` in place of `tui.json`.
+
+- **Permissions** ([docs](https://opencode.ai/v2/docs/permissions/)): one ordered array of
+  `{action, resource, effect}`, last match wins, no match asks. `bash` became `shell`, `task`
+  became `subagent`, `write`/`patch` fold into `edit`. Every tool has its own resource (path,
+  pattern, URL, skill ID); a compound shell command scans into several resources and any deny
+  denies. Taken: SW15 (decision 117-2).
+- **Policies** ([docs](https://opencode.ai/v2/docs/policies/)): `experimental.policies` are
+  hard-deny statements that override "Allow always" and can be pushed by the Console. Not
+  triaged in 117.
+- **Background service by default** ([CLI docs](https://opencode.ai/v2/docs/cli/)): one shared
+  per-user server owns sessions, permissions and tools; `--standalone`, `--server` and
+  `opencode mini` opt out. Declined as a default; keywork keeps D7 in-process.
+- **Snapshots** ([docs](https://opencode.ai/v2/docs/snapshots/)): undo and redo cover the
+  conversation and files together; rollback is staged and the removed prompt returns to the
+  composer; each model step is attributed to the paths it changed; untracked files are capped
+  at 2 MiB. Taken: SW14.
+- **Session warming** ([docs](https://opencode.ai/v2/docs/warming/)): prompt-cache keep-alive,
+  off by default. Scope first.
+- **References** ([docs](https://opencode.ai/v2/docs/references/)): named outside directories or
+  repos, refreshed every 24h. Scope first, adjacent to V2.7.
+- **Code Mode** ([tools docs](https://opencode.ai/v2/docs/tools/)): an `execute` tool on by
+  default for MCP. Declined as a default; Pi codemode is the scope-first input to Q-DSH5.
+- **MCP client** reworked for the 2026-07-28 protocol revision with split startup, catalog and
+  execution timeouts ([PR #48937](https://github.com/anomalyco/opencode/pull/48937),
+  2026-09-14). keywork's answer: SW12.
+- **TUI commits:** `/btw` side questions (#49646, 2026-09-18; converges with V2.17, open),
+  `/goal` (#45379; declined), transcript verbosity levels (#50941, 2026-09-23) and adjacent
+  reads grouped into one row (#52207), both taken as SW25; transcript mounting budgeted by
+  rendered entries (#50936; not triaged, the A18 pane half's virtualized rows are the nearest
+  landed piece); undo of queued
+  prompts back into the input (#51124; not triaged, V2.6 queue editing is the nearest landed
+  piece); automatic tabs mode (#50456; not triaged).
+- **Runtime:** v2's root `package.json` at v2.0.22 pins Bun 1.4.2 and OpenTUI 0.5.14. keywork's
+  Bun move waits on decision 117-3 (SW10).
+
+**OpenTUI** ([releases](https://github.com/anomalyco/opentui/releases), MIT). keywork pins
+`@opentui/core` 0.5.1; latest is 0.5.14 (2026-09-30). Taken: SW9 (bump), SW11 (terminal pane).
+
+- 0.5.0 (2026-08-03): native image rendering (Kitty, Sixel, blocks); Windows output through
+  `WriteConsoleW`.
+- 0.5.2 (2026-08-12): statically linked libghostty and an embedded terminal runtime, exposed in
+  0.5.14 as `EmbeddedTerminalRenderable` driven by `Bun.spawn({ terminal })`; cross-platform
+  clipboard (host and OSC 52); bounded streaming code highlights.
+- 0.5.4 to 0.5.8: forced-Sixel fixes, stale mouse input cleared, double and triple-click
+  selection (#1407, must stay inert under 94's mouse refusals), independent mouse-button
+  tracking, Ghostty-matched wide graphemes.
+- 0.5.9 to 0.5.11: backpressure fixes, byte-accurate wrapped layout, bounded large-diff
+  rendering, split-diff realign on resize, Bun 1.4 support, CJK wrapping.
+- 0.5.12 to 0.5.14: OSC 22 pointer styles, `textAlign`, a Windows Zig extraction fix, a Kitty
+  z-order fix, tmux capability replies, repaint after net-zero resize bursts.
+- `@opentui/keymap` (MIT, since April 2026): leader, timed leader, sequences, a command catalog,
+  and dead or shadowed binding diagnostics. Not triaged in 117; keywork's own C3 keymap already
+  has a timed leader.
+
 ## Sources
 
 - <https://github.com/sst/opencode>: README, license, packages layout, root `package.json`
+- <https://github.com/anomalyco/opencode>: the repo since the move; v2 root `package.json` at v2.0.22; issue #52184, PR #48937
+- <https://opencode.ai/changelog>: v1.18.16 to v1.18.34
+- <https://opencode.ai/v2/docs/> · <https://opencode.ai/v2/docs/migrate-v1/> · <https://opencode.ai/v2/docs/permissions/> · <https://opencode.ai/v2/docs/policies/> · <https://opencode.ai/v2/docs/cli/> · <https://opencode.ai/v2/docs/snapshots/> · <https://opencode.ai/v2/docs/warming/> · <https://opencode.ai/v2/docs/references/> · <https://opencode.ai/v2/docs/tools/>
+- <https://github.com/anomalyco/opentui/releases>: OpenTUI 0.5.0 to 0.5.14
 - <https://opencode.ai/docs/>: intro
 - <https://opencode.ai/docs/tui/> · <https://opencode.ai/docs/keybinds/> · <https://opencode.ai/docs/agents/> · <https://opencode.ai/docs/lsp/> · <https://opencode.ai/docs/themes/> · <https://opencode.ai/docs/share/> · <https://opencode.ai/docs/server/> · <https://opencode.ai/docs/cli/> · <https://opencode.ai/docs/providers/> · <https://opencode.ai/docs/commands/> · <https://opencode.ai/docs/plugins/>
 - <https://www.stork.ai/blog/the-tui-library-thats-killing-ink>: OpenTUI origin story

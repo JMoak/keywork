@@ -6,6 +6,11 @@
 > memory. Python, hexagonal (5 layers), Postgres/pgvector in production, SQLite/sqlite-vec
 > in dev, LiteLLM inference, OIDC identity.
 
+**Status 2026-10-02.** Upstream added a retrieval recall harness and a maturity and
+trust-ceiling audit; nothing new for keywork to take. Item 3 below has landed, items 1 and 4
+are partly open. Current memory takes live in `docs/backlog/117-influence-sweep.md` (scope
+first) and `docs/backlog/95-memory-and-skills.md` (J).
+
 > **LICENSING**
 > **MIT**, adaptable with attribution in `NOTICE`. (Project accepts issues, not PRs.)
 
@@ -56,19 +61,37 @@ config + provenance, never from accumulated history. No reputation system, delib
 1. **Ledger-derived state (adopted as refinement R6)**: curing/usefulness state in note
    frontmatter is a *materialization* of the append-only audit/event ledger (recalls,
    corrections, re-attestations), recomputable, never independently mutated counters.
+   **Partly landed:** J13 citation events feed usefulness (`citationUsefulnessFeed` in
+   `packages/engine/src/memory/citations.ts`), but the J7 Gardener folds them into an EMA
+   seeded from the value already in frontmatter (`memory/gardener.ts`), so the stamp is not
+   yet recomputable from the ledger alone. **Open:** rematerialization rides J14 (fifth-pass
+   resolution 2, "recompute, never merge, machine state").
 2. **Uncertainty as its own axis (consider, not committed)**: Gardener promotion gates
    could carry (belief, uncertainty) rather than one confidence scalar, so "confidently
    wrong" and "unknown" stop looking alike. Adopt only if the math earns its keep in J7.
+   **Open**, not scheduled: J7 landed with a single `confidence` scalar
+   (`memory/gardener.ts`), and no task picks the axis up.
 3. **Hallucinated-ID rejection**: Gardener structured outputs validate every referenced
    note/entity against the candidate set (Lore's `ArchivistResolutionError` pattern).
+   **Landed:** J7, `memory/gardener.ts` rejects a promotion naming an entry outside the
+   candidate set as `unknown-entry`.
 4. **The federation seam (the real prize)**: Lore is an MCP server, so keywork's D8 MCP
    host can mount it as an additional **team scope** under J6's fail-closed policy:
    searchable, never bootstrap-injected, provenance-tagged as external, its access a
    **scope-level grant in config** (per J-D6, keywork never adopts Lore's per-oracle
    earned trust; the herd's consensus math stays Lore's business, keywork just reads the
    results under policy). Team memory without keywork building multi-user consensus.
+   **Open:** J6. The D8 MCP host exists, but no MCP-mounted memory scope does; whether the
+   rest of J6 has landed is unverified.
+
+## Since 2026-08-10
+
+v0.13.0 (2026-08-16) added a retrieval recall harness and surface-form keywords; v0.15.0
+(2026-08-22) added a maturity and trust-ceiling audit; the rest is dependency and CI
+updates. Nothing new to take.
 
 ## Sources
 
 - <https://github.com/dmbch/lore> (README; MIT)
 - `docs/architecture.md` in-repo (five layers, personas, attestation ledger, ECBF fusion)
+- <https://github.com/dmbch/lore/releases> (v0.13.0, v0.15.0)

@@ -8,12 +8,13 @@ const calmHeader = /│ session-1 +│/;
 const emptyRow = "no changes since session start";
 const changedRow = "notes.txt  +1 -1 · turn 1";
 const hunkHeader = "@@ -1,3 +1,3 @@";
+const shoutPrompt = "please shout the middle line of notes.txt";
 const frozenClock = (): number => Date.parse("2026-09-07T12:00:00.000Z");
 
 export const diffPane: Scenario = {
   name: "diff-pane",
   description:
-    "C14: /diff docks right over the session-start checkpoint → a mock write lands in the file list and the unified diff → /undo empties it → /redo brings it back → enter opens the file at its first hunk",
+    "C14: /diff docks right over the session-start checkpoint → a mock write lands in the file list and the unified diff → /undo empties it and hands the prompt back (SW14) → /redo brings it back → enter opens the file at its first hunk",
   size: { width: 160, height: 40 },
   files: { "notes.txt": notesBefore },
   tools: (workspaceDir) => [writeTool(toolScope(workspaceDir))],
@@ -45,7 +46,7 @@ export const diffPane: Scenario = {
     await stage.press("ctrl+p");
     await stage.type("session-1");
     await stage.press("enter");
-    await stage.type("please shout the middle line of notes.txt");
+    await stage.type(shoutPrompt);
     await stage.press("enter");
     await stage.until(askRowMarker);
     await stage.press("y");
@@ -60,13 +61,15 @@ export const diffPane: Scenario = {
 
     await stage.type("/undo");
     await stage.press("enter");
-    await stage.until("files put back");
-    await stage.until(emptyRow);
+    await stage.until("undone · files put back");
+    const undone = await stage.until(emptyRow);
+    assert.ok(undone.includes(`› ${shoutPrompt}`), "the prompt is back in the composer");
     await stage.capture("after-undo");
 
+    await stage.press(...Array.from(shoutPrompt, () => "backspace"));
     await stage.type("/redo");
     await stage.press("enter");
-    await stage.until("files redone");
+    await stage.until("redone · the turn and its files are back");
     await stage.until(changedRow);
 
     await stage.press("ctrl+k", "g", "escape");

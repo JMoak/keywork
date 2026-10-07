@@ -31,6 +31,7 @@ export {
 } from "./events.ts";
 export type {
   AbortOutcome,
+  InjectOutcome,
   PromptOutcome,
   SessionDetail,
   SessionHost,

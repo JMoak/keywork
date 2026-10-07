@@ -33,6 +33,7 @@ export const promptKeys: readonly HelpRow[] = [
     help: "edit queued prompts · ↑↓ pick · shift+↑↓ move · backspace cancels · enter sends now",
   },
   { keys: "tab", help: "expand a [pasted #n] placeholder under the cursor" },
+  { keys: "ctrl+c", help: "clear the prompt · up on an empty prompt brings it back" },
 ];
 
 export class HelpOverlay extends RowOverlay {

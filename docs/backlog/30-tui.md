@@ -243,8 +243,9 @@ and revives from the workspace file; a revived mirror finds its session by id on
 conversation pane has an agent, retrying on each frame until then. Shell mode refuses to
 open in an untrusted workspace with the notice `shell mode needs a trusted workspace ·
 /init to trust it`; typed commands are the user's own and never enter the agent's
-permission gate. No PTY: OpenTUI 0.5.1 ships no terminal renderable, Bun's `spawn` has no
-ConPTY option, and the honest limits are in `docs/windows.md`.
+permission gate. No PTY: OpenTUI 0.5.1 ships no terminal renderable, and the honest limits are in
+`docs/windows.md`. (2026-10-02: the "Bun has no ConPTY" half of the original note was wrong at
+the current pin; OpenTUI 0.5.2+ has the renderable. The spike is 117 SW11.)
 
 **Evidence.** `terminal-model.test.ts`: "shows the started command, streamed chunks, and the
 finished marker", "falls back to the finished output when nothing streamed and marks
@@ -281,7 +282,7 @@ engine `shell-session.ts` and `index.ts` (`InteractiveShell`, `openInteractiveSh
 `conversation-pane.ts`, `conversation-model.ts`, `transcript-view.ts`, `file-pane.ts` and
 `packages/server` untouched.
 
-**Windows limits.** No ConPTY, no signals to the child, no readline, no full-screen
+**Windows limits (pipe mode; see 117 SW11 for the PTY path).** No ConPTY, no signals to the child, no readline, no full-screen
 programs; see the terminal-pane table in `docs/windows.md`.
 
 **Assumptions Jordan may reverse.**

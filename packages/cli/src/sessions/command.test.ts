@@ -234,7 +234,7 @@ describe("keywork sessions usage", () => {
 
     expect(await sessionsCommand(["bogus"], await tempDir(), io)).toBe(2);
     expect(err).toEqual([
-      'keywork sessions: unknown subcommand "bogus" (expected list, tree, or fork)',
+      'keywork sessions: unknown subcommand "bogus" (expected list, tree, fork, or export)',
     ]);
     expect(out).toEqual([]);
   });

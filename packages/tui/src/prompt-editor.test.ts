@@ -113,6 +113,87 @@ describe("PromptEditor", () => {
     });
   });
 
+  describe("draft recovery", () => {
+    function cleared(text: string, ...prompts: string[]): PromptEditor {
+      const prompt = editor();
+      for (const earlier of prompts) prompt.remember(earlier);
+      type(prompt, text);
+      expect(press(prompt, "ctrl+c")).toBe("handled");
+      expect(prompt.value).toBe("");
+      return prompt;
+    }
+
+    it("brings back the draft ctrl+c cleared on up at an empty prompt", () => {
+      const prompt = cleared("half a thought");
+      expect(press(prompt, "up")).toBe("handled");
+      expect(prompt.value).toBe("half a thought");
+    });
+
+    it("falls through to history on the next up and returns to the draft on down", () => {
+      const prompt = cleared("draft", "one", "two");
+      press(prompt, "up");
+      expect(prompt.value).toBe("draft");
+      press(prompt, "up");
+      expect(prompt.value).toBe("two");
+      press(prompt, "up");
+      expect(prompt.value).toBe("one");
+      press(prompt, "down");
+      press(prompt, "down");
+      expect(prompt.value).toBe("draft");
+      press(prompt, "down");
+      expect(prompt.value).toBe("");
+      press(prompt, "up");
+      expect(prompt.value).toBe("draft");
+    });
+
+    it("keeps one draft per composer, the most recently cleared", () => {
+      const prompt = cleared("first");
+      type(prompt, "second");
+      press(prompt, "ctrl+c");
+      press(prompt, "up");
+      expect(prompt.value).toBe("second");
+      press(prompt, "up");
+      expect(prompt.value).toBe("second");
+    });
+
+    it("does nothing with ctrl+c on an empty prompt and keeps the held draft", () => {
+      const prompt = cleared("held");
+      expect(press(prompt, "ctrl+c")).toBe("pass");
+      press(prompt, "up");
+      expect(prompt.value).toBe("held");
+    });
+
+    it("leaves up alone while the prompt has text", () => {
+      const prompt = cleared("held", "one");
+      type(prompt, "new");
+      expect(press(prompt, "up")).toBe("pass");
+      expect(prompt.value).toBe("new");
+    });
+
+    it("lets go of the draft once it is edited or sent", () => {
+      const edited = cleared("held", "one");
+      press(edited, "up");
+      type(edited, "!");
+      expect(edited.value).toBe("held!");
+      edited.clear();
+      press(edited, "up");
+      expect(edited.value).toBe("one");
+
+      const sent = cleared("held", "one");
+      press(sent, "up");
+      expect(press(sent, "return")).toEqual({ submit: "held", behavior: "queue" });
+      sent.clear();
+      press(sent, "up");
+      expect(sent.value).toBe("one");
+    });
+
+    it("clears a slash query too", () => {
+      const prompt = cleared("/ex");
+      press(prompt, "up");
+      expect(prompt.value).toBe("/ex");
+    });
+  });
+
   describe("slash queries", () => {
     it("suggests matching commands while typing a slash query", () => {
       const prompt = editor();
@@ -186,6 +267,21 @@ describe("large-paste placeholders", () => {
     expect(editor.value).toBe(`${seven} tail`);
   });
 
+  it("brings pasted text back with a draft recovered after ctrl+c", () => {
+    const editor = new PromptEditor(() => {}, []);
+    editor.paste("look: ");
+    editor.paste(seven);
+    editor.handleKey(parseChord("ctrl+c"), undefined);
+    editor.paste(seven);
+    editor.clear();
+    editor.handleKey(parseChord("up"), undefined);
+    expect(editor.value).toBe("look: [pasted #1, 7 lines]");
+    expect(editor.handleKey(parseChord("return"), undefined)).toEqual({
+      submit: `look: ${seven}`,
+      behavior: "queue",
+    });
+  });
+
   it("does not expand a placeholder whose text it never held", () => {
     const editor = new PromptEditor(() => {}, []);
     editor.paste("[pasted #9, 40 lines]");
@@ -194,5 +290,80 @@ describe("large-paste placeholders", () => {
       submit: "[pasted #9, 40 lines]",
       behavior: "queue",
     });
+  });
+});
+
+describe("PromptEditor @-mentions", () => {
+  const workspace = ["src/app.ts", "src/app-core.ts", "docs/readme.md"].map((relative) => ({
+    relative,
+  }));
+
+  function mentioning(): PromptEditor {
+    return new PromptEditor(
+      () => {},
+      builtIn,
+      undefined,
+      () => workspace,
+    );
+  }
+
+  it("opens a completion over the workspace when @ is typed and narrows as you type", () => {
+    const prompt = mentioning();
+    type(prompt, "fix @");
+    expect(prompt.suggestions().map(({ name }) => name)).toHaveLength(3);
+    type(prompt, "core");
+    expect(prompt.suggestions().map(({ name }) => name)).toEqual(["src/app-core.ts"]);
+    expect(prompt.completing()).toBe(true);
+  });
+
+  it("inserts the chosen path on tab and keeps the rest of the prompt", () => {
+    const prompt = mentioning();
+    type(prompt, "fix @app");
+    press(prompt, "down");
+    expect(press(prompt, "tab")).toBe("handled");
+    expect(prompt.value).toBe("fix @src/app-core.ts ");
+    expect(prompt.suggestions()).toEqual([]);
+  });
+
+  it("inserts on enter instead of sending while the completion is open", () => {
+    const prompt = mentioning();
+    type(prompt, "@readme");
+    expect(press(prompt, "return")).toBe("handled");
+    expect(prompt.value).toBe("@docs/readme.md ");
+    expect(press(prompt, "return")).toEqual({ submit: "@docs/readme.md", behavior: "queue" });
+  });
+
+  it("dismisses on esc without touching the text, and enter then sends", () => {
+    const prompt = mentioning();
+    type(prompt, "ping @app");
+    expect(press(prompt, "escape")).toBe("handled");
+    expect(prompt.value).toBe("ping @app");
+    expect(prompt.suggestions()).toEqual([]);
+    type(prompt, ".ts");
+    expect(prompt.suggestions()).toEqual([]);
+    expect(press(prompt, "return")).toEqual({ submit: "ping @app.ts", behavior: "queue" });
+  });
+
+  it("sends on enter when the typed path is already complete", () => {
+    const prompt = mentioning();
+    type(prompt, "see @src/app.ts");
+    expect(press(prompt, "return")).toEqual({ submit: "see @src/app.ts", behavior: "queue" });
+  });
+
+  it("accepts a clicked tray row", () => {
+    const prompt = mentioning();
+    type(prompt, "@src");
+    expect(prompt.acceptSuggestion(1)).toBe("handled");
+    expect(prompt.value).toMatch(/^@src\/app(-core)?\.ts $/);
+  });
+
+  it("stays out of the way with no workspace source, an email, or a slash command", () => {
+    const plain = editor();
+    type(plain, "@app");
+    expect(plain.suggestions()).toEqual([]);
+    const prompt = mentioning();
+    type(prompt, "me@app");
+    expect(prompt.suggestions()).toEqual([]);
+    expect(prompt.completing()).toBe(false);
   });
 });

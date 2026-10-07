@@ -71,6 +71,17 @@ Remote servers over streamable HTTP/SSE incl. auth headers from config.
 **Accept:** fixture HTTP server round-trip; reconnect on drop.
 **Strategy:** `LIFT:opencode`; official TS SDK.
 
+**Landed 2026-10-02 (117 SW12, dual-era client):** both transports now probe the
+2026-07-28 revision first (`server/discover` with per-request `_meta`) and fall back to an
+`initialize` handshake at `2025-11-25` when the server answers like a legacy one;
+`mcp/era.ts` owns the probe and request shaping, and the registry remembers each server's
+era for the process (a failed connect forgets it). Modern servers get `Mcp-Method` /
+`Mcp-Name` / `x-mcp-header` headers on HTTP, `subscriptions/listen` in place of the GET
+stream, and `ttlMs` re-lists on the next tool call after expiry. An `input_required`
+result fails the call with a clear message until elicitation routing lands. Roots, Sampling,
+Logging and HTTP+SSE stay out (deprecated). The stdio fixture takes `--era=legacy|modern|dual`.
+The stdio probe waits at most 2s (`discoverProbeTimeoutMs`) before falling back, paid once per server per process thanks to the remembered era.
+
 ### D10 (2pt): Lazy MCP schemas
 The D1-decision mitigation: connected servers contribute **names + one-liners only** to the
 model's context; a built-in `tool_search`-style tool fetches full schemas on demand, after

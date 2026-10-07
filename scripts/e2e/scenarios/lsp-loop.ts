@@ -51,7 +51,7 @@ export const lspLoop: Scenario = {
     installLanguageServerShim(shimDir, "typescript-language-server", "basic");
     const scope = toolScope(workspaceDir);
     port = languagePort(scope, { servers: builtInLanguageServers, searchPath: shimDir });
-    return [editTool(scope, diagnosticsObserver(port, { cwd: workspaceDir }))];
+    return [editTool(scope, { afterSave: diagnosticsObserver(port, { cwd: workspaceDir }) })];
   },
   turns: [
     editTurn("call-1", "Renaming the constant's initializer to BROKEN.", "1", "BROKEN"),

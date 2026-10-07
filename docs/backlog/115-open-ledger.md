@@ -12,6 +12,11 @@ timing) and two reruns passed: a flake to pin before the next lane lands on top.
 
 ## Pickup order
 
+Read [117](117-influence-sweep.md) before this list. Its four phases landed on 2026-10-02 (29 tasks,
+ledger at the end of that file, gate 302 files / 4229 tests, e2e 47 of 47, all uncommitted); what
+remains of it is SW10 (Bun, decision 117-3), SW11 (the terminal pane spike) and the scope-first
+items, plus the calls listed under "Where the tree stands" there.
+
 1. Pin the `tools.test.ts` flake; run the gate three times.
 2. Small unblocked lanes in disjoint pairs: P2.5 + E9, then P2.6 + the V2 trio, audit crumbs
    alongside.
@@ -22,15 +27,15 @@ timing) and two reruns passed: a flake to pin before the next lane lands on top.
 
 | Item | Owner | Size | Note |
 |---|---|---|---|
-| P2.5 HTML export (`/export`) | [80](80-p2-reach.md) | 2 | `LIFT:pi`, self-contained |
-| P2.6 external prompt injection | [80](80-p2-reach.md) | 2 | endpoint on the landed P2.1 server |
+| ~~P2.5 HTML export (`/export`)~~ | [80](80-p2-reach.md) | 2 | landed 2026-10-02: `/export [tree] [path]` and `keywork sessions export`, own renderer (no Pi code) |
+| ~~P2.6 external prompt injection~~ | [80](80-p2-reach.md) | 2 | landed 2026-10-02: `POST /sessions/{id}/inject`, queues behind a running turn, origin on `turn.started` |
 | ~~S0 serve discovery (per-workspace ticket, `--port 0`, stale-ticket tolerance, `/doc` workspace)~~ | [80](80-p2-reach.md) | 2 | landed 2026-09-07 |
 | ~~S1 the ask queue (`gate.ask`, `GET /asks`, `POST /asks/{callId}`, `asOf`)~~ | [80](80-p2-reach.md) | 3 | landed 2026-09-07 |
 | P2.3 shared workspaces | [80](80-p2-reach.md) | 5 | also decides B1 store concurrency; scope first |
-| E9 secrets at rest | [103](103-dsh-influence.md) | 2 | no keychain code exists |
+| ~~E9 secrets at rest~~ | [103](103-dsh-influence.md) | 2 | landed 2026-10-02 |
 | E8 sandbox modes | [103](103-dsh-influence.md) | 3+ | fail-closed runner seam; scope first |
 | J14 sync self-reconciliation | [95](95-memory-and-skills.md) | 3 | nothing built |
-| V2.7 @-mention, V2.11 provenance gutter, V2.16 commit drafting, V2.17 away summary + `/btw`, V2.5 compaction offer | [96](96-conversation-enrichment.md) | 1–2 each | no code for any |
+| ~~V2.7 @-mention~~, V2.11 provenance gutter, ~~V2.16 commit drafting~~, ~~V2.17 away summary + `/btw`~~, V2.5 compaction offer | [96](96-conversation-enrichment.md) | 1–2 each | V2.7, V2.16, V2.17 landed 2026-10-02; no code for V2.11 or V2.5 |
 | FR6.18 enterprise security scoping doc | [101](101-feedback-round-4.md) | 2 | a document |
 | AB2 honest MCP denial hint, AB5 agentbox first boot | [116](116-agentbox.md) | 1 each | AB1 and AB3 wait on Q-AB1 / Q-AB2 |
 | Audit phase 3 crumbs | [111](111-code-audit.md) | 1 | `isPresetName` guards in `presets.ts`, `clip` in `mcp-pane-model.ts`, five-field copy in `cli/src/mcp.ts` |
@@ -51,4 +56,4 @@ timing) and two reruns passed: a flake to pin before the next lane lands on top.
 ## Parked by design
 
 - FR6.17 subagent transparency: nothing to attach to until spawning exists ([101](101-feedback-round-4.md)).
-- FR4.11 ChatGPT provider: behind its ToS gate ([101](101-feedback-round-4.md)).
+- ~~FR4.11 ChatGPT provider: behind its ToS gate ([101](101-feedback-round-4.md)).~~ Landed: `cli/src/codex-login.ts` is wired into setup and the inference runtime, recorded in `NOTICE` (noticed stale 2026-10-02).

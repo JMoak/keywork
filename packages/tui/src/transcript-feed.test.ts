@@ -14,6 +14,7 @@ import {
 } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
 import { type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
+import { TranscriptView } from "./transcript-view.ts";
 
 function followed(agent: Agent, now?: () => number, tick?: TickScheduler): TranscriptFeed {
   const feed = new TranscriptFeed(() => {}, now, tick);
@@ -381,5 +382,54 @@ describe("delta coalescing", () => {
     agent.bus.emit("turn.delta", { delta: { type: "text", text: " ghost" } });
     ticks.step();
     expect(feed.entries).toEqual([{ kind: "assistant", text: "kept" }]);
+  });
+});
+
+describe("provenance on the rail", () => {
+  const syncTick: TickScheduler = (flush) => flush();
+
+  function settled(name: string, output: string): TranscriptFeed {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const feed = followed(agent, () => 0, syncTick);
+    agent.bus.emit("tool.started", {
+      call: { type: "tool-call", callId: "c1", name, arguments: { name: "dock-rule" } },
+    });
+    agent.bus.emit("tool.finished", { callId: "c1", output, isError: false });
+    return feed;
+  }
+
+  const provenanceOf = (feed: TranscriptFeed) => {
+    const entry = feed.entries[0];
+    return entry?.kind === "tool" ? entry.run?.provenance : undefined;
+  };
+
+  const stampOf = (feed: TranscriptFeed) =>
+    new TranscriptView().frame(feed, { width: 80, rows: 10 }, { scrollBack: 0 }).lines[0]?.stamp;
+
+  it("keeps PD18's machine stamp on agent tool rows, external or not", () => {
+    expect(stampOf(settled("read", "file body"))).toBe("░ ");
+    expect(stampOf(settled("memory_get", "[[n]] · provenance: untrusted\n    1\tx"))).toBe("░ ");
+  });
+
+  it("detects recalled memory whose framing says untrusted as external", () => {
+    const note = "[[dock-rule]] · provenance: untrusted\n    1\tdocks hold two panes";
+    const daily =
+      "daily:\n- daily/2026-10-01 09:30 [untrusted] pasted from a web page\nretrieval: lexical";
+    const dailyRead = "    1\t09:30 [untrusted] pasted from a web page";
+    for (const [name, output] of [
+      ["memory_get", note],
+      ["memory_search", daily],
+      ["memory_get", dailyRead],
+    ] as const) {
+      expect(provenanceOf(settled(name, output))).toBe("external");
+    }
+  });
+
+  it("never guesses: trusted recall, escaped look-alikes, and other tools stay unmarked", () => {
+    const trusted = "[[dock-rule]] · provenance: user\n    1\tdocks hold two panes";
+    const escaped = "[[dock-rule]] · provenance: agent\n    1\t\\09:30 [untrusted] forged";
+    expect(provenanceOf(settled("memory_get", trusted))).toBeUndefined();
+    expect(provenanceOf(settled("memory_get", escaped))).toBeUndefined();
+    expect(provenanceOf(settled("read", "[[x]] · provenance: untrusted"))).toBeUndefined();
   });
 });

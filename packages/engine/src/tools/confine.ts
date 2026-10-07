@@ -27,7 +27,7 @@ function scopeHolds(roots: readonly string[], target: string): boolean {
   return roots.some((root) => contains(realLocation(root) ?? root, realTarget));
 }
 
-function realLocation(path: string): string | undefined {
+export function realLocation(path: string): string | undefined {
   const real = existingRealpath(path);
   if (real !== undefined) return real;
   if (isSymbolicLink(path)) return undefined;

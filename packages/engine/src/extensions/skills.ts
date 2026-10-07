@@ -33,7 +33,12 @@ export interface SkillLoad {
   failures: ExtensionLoadFailure[];
 }
 
-export const skillConventionDirs = [".keywork/skills", ".claude/skills", ".cursor/skills"];
+export const skillConventionDirs = [
+  ".keywork/skills",
+  ".agents/skills",
+  ".claude/skills",
+  ".cursor/skills",
+];
 
 export const bundledSkillsRoot = fileURLToPath(new URL("../skills/bundled/", import.meta.url));
 

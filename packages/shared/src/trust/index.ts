@@ -1,4 +1,8 @@
-export { type PermissionPolicy, permissionPolicy } from "./permissions.ts";
+export {
+  type PermissionPolicy,
+  type PermissionPolicyOptions,
+  permissionPolicy,
+} from "./permissions.ts";
 export {
   type ActivePreset,
   activePreset,
@@ -8,6 +12,7 @@ export {
   presetOrder,
   requiresConfirmation,
 } from "./presets.ts";
+export { permissionRules } from "./rules.ts";
 export {
   BlanketTrustError,
   type TrustDecision,
