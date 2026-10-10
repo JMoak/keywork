@@ -49,7 +49,11 @@ describe("scenario registry", () => {
       "pointer-off",
       "tray-tour",
       "terminal-mirror",
+      "terminal-hygiene",
+      "file-links",
+      "file-links-off",
       "diff-pane",
+      "feel-polish",
       "live-playground",
     ]);
   });
@@ -100,7 +104,11 @@ describe("scenario registry", () => {
       "pointer-off",
       "tray-tour",
       "terminal-mirror",
+      "terminal-hygiene",
+      "file-links",
+      "file-links-off",
       "diff-pane",
+      "feel-polish",
     ]);
   });
 

@@ -4,6 +4,7 @@ import {
   type EngineEvents,
   EventBus,
   knownCostNanos,
+  messageText,
   SessionStore,
   textMessage,
 } from "@keywork/engine";
@@ -137,6 +138,27 @@ describe("sessionPort", () => {
       .filter((entry) => entry.type === "thinking_level_change")
       .map((entry) => (entry as { thinkingLevel: string }).thinkingLevel);
     expect(levels).toEqual(["on", "off"]);
+  });
+
+  it("persists effort once per change and serves it back on the attachment", async () => {
+    const dir = await tempDir();
+    const changed: string[] = [];
+    const port = sessionPort(dir, ".", { onChange: (sessionId) => changed.push(sessionId) });
+    const created = await port.create();
+    expect(created?.effort).toBeUndefined();
+
+    await created?.recordEffort?.("low");
+    await created?.recordEffort?.("low");
+    await created?.recordEffort?.("max");
+    expect(changed).toEqual([created?.id, created?.id]);
+
+    const reopened = await port.open(created?.id ?? "");
+    expect(reopened?.effort).toBe("max");
+    const levels = (await storeOf(dir, created?.id))
+      .entries()
+      .filter((entry) => entry.type === "effort_change")
+      .map((entry) => (entry as { effort: string }).effort);
+    expect(levels).toEqual(["low", "max"]);
   });
 
   it("persists an arc binding as an entry and serves it back on the attachment and the overview", async () => {
@@ -377,5 +399,39 @@ describe("cost capture", () => {
 
     const overview = await sessionTreePort(dir).overview?.();
     expect(overview?.at(0)?.costNanos).toBeUndefined();
+  });
+});
+
+describe("sessionPort context edits", () => {
+  it("forgets a prompt or a tool result on the active path and serves the edited context", async () => {
+    const dir = await tempDir();
+    const changed: string[] = [];
+    const port = sessionPort(dir, ".", { onChange: (sessionId) => changed.push(sessionId) });
+    const attachment = await port.create();
+    const prompt = await attachment?.append(textMessage("user", "my key is sk-123"));
+    await attachment?.append({
+      role: "assistant",
+      parts: [{ type: "tool-call", callId: "c1", name: "read", arguments: { path: "secret" } }],
+    });
+    await attachment?.append({
+      role: "tool",
+      parts: [{ type: "tool-result", callId: "c1", output: "hunter2", isError: false }],
+    });
+    await attachment?.append(textMessage("assistant", "noted"));
+    changed.length = 0;
+
+    const afterTool = await attachment?.forget?.({ kind: "tool", callId: "c1" }, null);
+    expect(afterTool?.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const afterPrompt = await attachment?.forget?.(
+      { kind: "prompt", promptId: prompt?.entryId ?? "" },
+      "my key is [redacted]",
+    );
+    expect(afterPrompt?.map(messageText)).toEqual(["my key is [redacted]", "noted"]);
+    expect(changed).toHaveLength(2);
+
+    expect(await attachment?.forget?.({ kind: "tool", callId: "nope" }, null)).toBeUndefined();
+    expect(await attachment?.forget?.({ kind: "prompt", promptId: "nope" }, null)).toBeUndefined();
+    const reopened = await storeOf(dir, attachment?.id);
+    expect(reopened.messages().map(messageText)).toEqual(["my key is [redacted]", "noted"]);
   });
 });

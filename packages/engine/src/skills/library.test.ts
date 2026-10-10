@@ -123,7 +123,7 @@ describe("SkillLibrary patching", () => {
     expect(rewritten).toMatchObject({ body: "Fresh steps.", description: "Build it right" });
     const onDisk = await readFile(file, "utf8");
     expect(onDisk).toBe(
-      '---\ndescription: "Build it right"\nauthored_by: "keywork"\n---\nFresh steps.\n',
+      '---\ndescription: "Build it right"\nmetadata:\n  authored_by: "keywork"\n---\nFresh steps.\n',
     );
     expect(telemetry.activityOf("build").counts.rewrite).toBe(1);
   });
@@ -160,7 +160,7 @@ describe("SkillLibrary genesis", () => {
     const { library } = await libraryAt(root);
 
     await expect(library.create("manual", "d", "b")).rejects.toThrow(/already exists/);
-    await expect(library.create("../escape", "d", "b")).rejects.toThrow(/invalid name/);
+    await expect(library.create("../escape", "d", "b")).rejects.toThrow(/invalid skill name/);
     expect(await readFile(join(root, ".keywork", "skills", "manual", "SKILL.md"), "utf8")).toBe(
       humanSkill,
     );

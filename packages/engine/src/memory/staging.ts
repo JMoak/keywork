@@ -96,6 +96,19 @@ export const reviewProposalSchema = z.discriminatedUnion("kind", [
     patches: z.number(),
     rewrites: z.number(),
   }),
+  z.object({
+    kind: z.literal("drift-review"),
+    note: z.string(),
+    against: z.string(),
+    reason: z.string(),
+    evidence: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal("forget-proposal"),
+    session: z.string(),
+    notes: z.array(z.string()),
+    entries: z.array(z.string()),
+  }),
 ]);
 
 export type ReviewProposal = z.infer<typeof reviewProposalSchema>;
@@ -225,6 +238,10 @@ export function reviewKey(proposal: ReviewProposal): string {
       return `skill-proposal:${proposal.fingerprint}`;
     case "skill-review":
       return `skill-review:${proposal.skill}`;
+    case "drift-review":
+      return `drift:${titleKey(proposal.note)}`;
+    case "forget-proposal":
+      return `forget:${proposal.session}`;
   }
 }
 

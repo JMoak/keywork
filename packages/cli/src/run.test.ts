@@ -792,15 +792,16 @@ describe("headless exit contract", () => {
     expect(exitCodeOf(outcome)).toBe(0);
   });
 
-  it("denied: an ask nobody can answer is refused, named on stderr, and exits 4", async () => {
+  it("denied: an ask nobody can answer is refused, ends the run without another model call, and exits 4", async () => {
     const out: string[] = [];
     const err: string[] = [];
+    const provider = new MockProvider([bashCall, textTurn("I could not run it.")]);
 
     const outcome = await headless({
       prompt: "try a command",
       cwd: await tempDir(),
       json: false,
-      provider: new MockProvider([bashCall, textTurn("I could not run it.")]),
+      provider,
       print: (line) => out.push(line),
       printError: (line) => err.push(line),
     });
@@ -810,9 +811,36 @@ describe("headless exit contract", () => {
       refused: [{ tool: "bash", callId: "call-1", verdict: "denied", gate: "headless" }],
     });
     expect(exitCodeOf(outcome)).toBe(4);
-    expect(out).toEqual(["I could not run it."]);
+    expect(provider.remaining()).toBe(1);
+    expect(out).toEqual([]);
+    expect(err.join("\n")).toContain("the run stopped there");
     expect(err.join("\n")).toContain("bash");
     expect(err.join("\n")).toContain("--preset open");
+  });
+
+  it("denied: a refused MCP call names the exact rule that would allow it", () => {
+    const err: string[] = [];
+    const refusal = (tool: string, callId: string) => ({
+      tool,
+      callId,
+      verdict: "denied" as const,
+      gate: "headless" as const,
+    });
+
+    const code = conclude(
+      {
+        outcome: "denied",
+        message: { role: "assistant", parts: [{ type: "text", text: "I could not call it." }] },
+        refused: [refusal("github__get_issue", "call-1"), refusal("bash", "call-2")],
+      },
+      { json: false, print: () => {}, printError: (line) => err.push(line) },
+    );
+
+    expect(code).toBe(4);
+    expect(err.join("\n")).toContain(
+      'add {"action":"mcp","resource":"github__get_issue","effect":"allow"}, {"action":"bash","resource":"*","effect":"allow"} to the permissions list',
+    );
+    expect(err.join("\n")).not.toContain("--preset open");
   });
 
   it("denied: golden stream", async () => {
@@ -823,7 +851,7 @@ describe("headless exit contract", () => {
       prompt: "try a command",
       cwd,
       json: true,
-      provider: new MockProvider([bashCall, textTurn("I could not run it.")], "mock-model"),
+      provider: new MockProvider([bashCall], "mock-model"),
       print: (line) => lines.push(line),
     });
 

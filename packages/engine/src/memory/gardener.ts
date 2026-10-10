@@ -58,7 +58,9 @@ export const defaultCurationThresholds: CurationThresholds = {
   skillIdleDays: 30,
 };
 
-export type SkillEvidenceEntry = Pick<SkillDefinition, "name" | "authoredBy">;
+export type SkillEvidenceEntry = Pick<SkillDefinition, "name" | "authoredBy"> & {
+  pinned?: boolean;
+};
 
 export interface SkillEvidence {
   skills: readonly SkillEvidenceEntry[];
@@ -342,7 +344,8 @@ export class Gardener {
     if (evidence === undefined) return;
     for (const skill of evidence.skills) {
       const activity = evidence.telemetry[skill.name];
-      if (skill.authoredBy === undefined || activity === undefined) continue;
+      if (skill.authoredBy === undefined || skill.pinned === true || activity === undefined)
+        continue;
       const reason = this.skillReviewReason(activity);
       if (reason === undefined) continue;
       proposals.push({

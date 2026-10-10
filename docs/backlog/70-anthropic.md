@@ -208,9 +208,31 @@ under Node (`node --experimental-strip-types scripts/check-guardrails.ts`): `che
    thinking text is requested or shown; only signatures round-trip. **Jordan wants an option
    to enable and see thinking**; users find it valuable. That is task G4 below, a product
    feature spanning the conversation pane and every provider that can emit reasoning text.
-3. **Prior-turn thinking is dropped** (see the replay policy above). Opus 5 keeps all prior
+3. ~~**Prior-turn thinking is dropped** (see the replay policy above). Opus 5 keeps all prior
    thinking by default and would gain some cache and quality benefit from replay; that trade
-   was made for compaction safety across every model. Jordan: fine.
+   was made for compaction safety across every model. Jordan: fine.~~ **Amended 2026-10-07
+   (117 context-economy lane).** The drop cost real money once SW6 made it visible: on a model
+   that preserves prior-turn thinking, dropping the previous turn's blocks changes the prefix,
+   so every turn after a tool loop reported `messages changed` and rewrote the cache. The
+   policy is now per generation (`claude-models.ts` feature `preserved-thinking`: Opus 4.5+,
+   Sonnet 4.6+, Fable 5+, Mythos 5+, from the prompt-caching page's "thinking blocks and the
+   messages cache" rule; never Haiku, never an unplaceable id): on those models, when the
+   request carries a thinking config, every owned block is replayed unchanged and in order, so
+   the second request's `messages` is byte-for-byte the first's plus the new turn. Every other
+   model keeps the current-turn-only drop, and a request with no thinking config keeps it too
+   (blocks sent to a model with thinking off are a documented strip). Compaction safety moved
+   to where the prefix actually changes: the B7 keep-tail projection
+   (`entries.ts` `selectedContextEntries`) strips `redacted-thinking` from every entry kept
+   from before the latest compaction, because those signatures are bound to the pre-summary
+   prefix and a 5.5-generation model on a post-2026-08-31 account rejects them; blocks made
+   after the compaction stay. This is the documented "strip thinking from the retained
+   turns" shape for keep-tail compaction, and it also covers resume (the projection is what
+   `store.messages()` serves). Evidence: `messages-wire.test.ts` "thinking replay across
+   turns" (prefix stability on Opus 5.5, the Haiku drop, the no-config fallback, foreign
+   blocks still dropped), `claude-models.test.ts` "preserved thinking",
+   `compaction.test.ts` "thinking across a compaction". Unverified live: a real key on a
+   post-2026-08-31 account is the proof that the stripped tail passes the prefix check
+   (`docs/live-smoke/anthropic.md` step 6 covers the same 400).
 4. **Default model is `claude-haiku-4-5`** (changed 2026-09-03 from `claude-sonnet-5`).
    Jordan: the per-provider default is the cheap, simple model, matching the `gpt-5-mini`
    pattern of the other built-ins. Nothing else changes: under IR-07 a built-in's default

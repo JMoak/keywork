@@ -4,5 +4,6 @@
       "transport": "http",
       "url": "http://web.box:8080/mcp"
     }
-  }
+  },
+  "permissions": [{ "action": "mcp", "resource": "web__*", "effect": "allow" }]
 }

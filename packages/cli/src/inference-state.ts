@@ -3,9 +3,12 @@ import { type KeyworkConfig, loadConfig } from "@keywork/shared";
 import type { ConnectionsPort } from "@keywork/tui";
 import {
   type CredentialMap,
+  defaultAuthDir,
   legacyCredentials,
   readCredentials,
+  type SecretKeeping,
   saveCredential,
+  secretKeepingFor,
 } from "./auth-store.ts";
 import { connectionsPort } from "./inference/connections.ts";
 import { type ObservationMap, readObservations } from "./inference/observations.ts";
@@ -15,6 +18,7 @@ import { userConfigDir } from "./user-config.ts";
 export interface InferenceState {
   config: KeyworkConfig;
   credentials: CredentialMap;
+  secrets?: SecretKeeping | undefined;
   observations: ObservationMap;
   runtime: InferenceRuntime;
 }
@@ -46,6 +50,7 @@ export async function openInferenceState(options: InferenceStateOptions): Promis
       userDir: userConfigDir(),
       config: () => state.config,
       credentials: () => state.credentials,
+      secrets: () => state.secrets,
       observations: () => state.observations,
       changed: reload,
     }),
@@ -58,7 +63,11 @@ async function loadInferenceState(options: InferenceStateOptions): Promise<Infer
     projectDir: join(options.cwd, ".keywork"),
     projectTrusted: options.projectTrusted,
   });
-  const credentials = { ...legacyCredentials(config.apiKeys), ...(await readCredentials()) };
+  const secrets = secretKeepingFor(config, options.warn);
+  const credentials = {
+    ...legacyCredentials(config.apiKeys),
+    ...(await readCredentials(defaultAuthDir(), secrets)),
+  };
   const observations = await readObservations();
   const runtime = (options.compose ?? composeInference)({
     env: options.env,
@@ -66,8 +75,8 @@ async function loadInferenceState(options: InferenceStateOptions): Promise<Infer
     credentials,
     observations,
     persistCredential: (provider, credential) =>
-      saveCredential(provider, credential).then(() => {}),
+      saveCredential(provider, credential, defaultAuthDir(), secrets).then(() => {}),
   });
   for (const warning of runtime.warnings) options.warn(`keywork: ${warning}`);
-  return { config, credentials, observations, runtime };
+  return { config, credentials, secrets, observations, runtime };
 }

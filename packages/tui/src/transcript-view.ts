@@ -1,4 +1,12 @@
 import { clampScroll } from "./clamp.ts";
+import {
+  type LinkableSpan,
+  type SpanLinker,
+  spanLinks,
+  type TextLink,
+  unlinked,
+  wrapLinked,
+} from "./file-references.ts";
 import { type MarkdownRow, type MarkdownSpan, markdownBlocks, renderMarkdown } from "./markdown.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
 import { inkAt } from "./motion.ts";
@@ -6,11 +14,21 @@ import { columnPage, type PageGrammar, proseWidth } from "./page.ts";
 import {
   type AssistantEntry,
   type ThinkingEntry,
+  type ToolProvenance,
   type ToolRun,
   type TranscriptEntry,
   thinkingRowSpans,
   toolRowSpans,
 } from "./transcript-feed.ts";
+import {
+  defaultVerbosity,
+  type GroupRole,
+  groupRowSpans,
+  groupSignature,
+  type ToolGroup,
+  toolGroups,
+  type Verbosity,
+} from "./transcript-verbosity.ts";
 import { clipSpans, wrap } from "./width.ts";
 
 export interface TranscriptLine {
@@ -18,6 +36,7 @@ export interface TranscriptLine {
   failed: boolean;
   text: string;
   spans?: MarkdownSpan[];
+  links?: readonly TextLink[];
   panel?: true;
   selected?: true;
   stamp?: string;
@@ -26,6 +45,8 @@ export interface TranscriptLine {
 
 export interface TranscriptSource {
   readonly entries: readonly TranscriptEntry[];
+  readonly verbosity?: Verbosity;
+  readonly link?: SpanLinker | undefined;
   streamingProgress(entry: TranscriptEntry): number | undefined;
 }
 
@@ -59,8 +80,13 @@ export class TranscriptView {
 
   frame(source: TranscriptSource, geometry: FrameGeometry, viewport: Viewport): Frame {
     const { entries } = source;
-    const layout = this.index.adopt(layoutOf(geometry));
-    this.index.sync(entries, (entry, slot) => this.settled(entry, slot, layout, source));
+    const layout = this.index.adopt(layoutOf(geometry, source));
+    const grouping = toolGroups(entries, layout.verbosity);
+    this.index.sync(
+      entries,
+      (at) => grouping.get(at),
+      (entry, slot, role) => this.settled(entry, slot, role, layout, source),
+    );
     const countAt = (at: number): number => this.index.countAt(at);
     const linesAt = (at: number): TranscriptLine[] =>
       highlighted(at, viewport, this.linesAt(at, layout, source));
@@ -86,10 +112,12 @@ export class TranscriptView {
   private settled(
     entry: TranscriptEntry,
     slot: Slot | undefined,
+    role: GroupRole | undefined,
     layout: Layout,
     source: TranscriptSource,
   ): Slot {
     const stamp = stampFor(entry, layout.marks, source.streamingProgress(entry));
+    if (role !== undefined) return groupedSlot(entry, role, layout, stamp);
     if (slot === undefined || slot.entry !== entry) return this.rendered(entry, layout, stamp);
     if (entry.kind === "assistant") return this.flowed(slot, entry, layout, stamp);
     return this.rendered(entry, layout, stamp);
@@ -186,12 +214,15 @@ interface Layout {
   prose: number;
   page: PageGrammar;
   marks: PageMarks;
+  verbosity: Verbosity;
+  link: SpanLinker;
 }
 
 interface Shape {
   text: string;
   failed: boolean;
   folded: boolean;
+  group: string;
 }
 
 interface RenderedBlock {
@@ -206,7 +237,11 @@ interface Slot {
   lines: TranscriptLine[];
 }
 
-type SlotRenderer = (entry: TranscriptEntry, current: Slot | undefined) => Slot;
+type SlotRenderer = (
+  entry: TranscriptEntry,
+  current: Slot | undefined,
+  role: GroupRole | undefined,
+) => Slot;
 
 class RowIndex {
   total = 0;
@@ -221,13 +256,20 @@ class RowIndex {
     return layout;
   }
 
-  sync(entries: readonly TranscriptEntry[], render: SlotRenderer): void {
+  sync(
+    entries: readonly TranscriptEntry[],
+    roleAt: (at: number) => GroupRole | undefined,
+    render: SlotRenderer,
+  ): void {
     this.truncate(entries.length);
     for (let at = 0; at < entries.length; at += 1) {
       const entry = entries[at] as TranscriptEntry;
       const slot = this.slots[at];
-      if (slot !== undefined && slot.entry === entry && sameShape(slot.shape, entry)) continue;
-      this.replace(at, render(entry, slot));
+      const role = roleAt(at);
+      if (slot !== undefined && slot.entry === entry && sameShape(slot.shape, entry, role)) {
+        continue;
+      }
+      this.replace(at, render(entry, slot, role));
     }
   }
 
@@ -249,7 +291,7 @@ class RowIndex {
   }
 }
 
-function layoutOf(geometry: FrameGeometry): Layout {
+function layoutOf(geometry: FrameGeometry, source: TranscriptSource): Layout {
   const page = geometry.page ?? columnPage;
   const body = Math.max(1, geometry.width - railWidth);
   return {
@@ -258,6 +300,8 @@ function layoutOf(geometry: FrameGeometry): Layout {
     prose: proseWidth(page, body),
     page,
     marks: geometry.marks ?? defaultPageMarks,
+    verbosity: source.verbosity ?? defaultVerbosity,
+    link: source.link ?? unlinked,
   };
 }
 
@@ -266,15 +310,18 @@ function sameLayout(left: Layout, right: Layout): boolean {
     left.width === right.width &&
     left.prose === right.prose &&
     left.page.proseGutter === right.page.proseGutter &&
-    left.marks === right.marks
+    left.marks === right.marks &&
+    left.verbosity === right.verbosity &&
+    left.link === right.link
   );
 }
 
-function shapeOf(entry: TranscriptEntry): Shape {
+function shapeOf(entry: TranscriptEntry, role?: GroupRole): Shape {
   return {
     text: entry.text,
     failed: entry.kind === "tool" && entry.failed,
     folded: foldedOf(entry),
+    group: groupSignature(role),
   };
 }
 
@@ -289,12 +336,29 @@ function foldedOf(entry: TranscriptEntry): boolean {
   }
 }
 
-function sameShape(shape: Shape, entry: TranscriptEntry): boolean {
+function sameShape(shape: Shape, entry: TranscriptEntry, role: GroupRole | undefined): boolean {
   return (
     shape.text === entry.text &&
     shape.failed === (entry.kind === "tool" && entry.failed) &&
-    shape.folded === foldedOf(entry)
+    shape.folded === foldedOf(entry) &&
+    shape.group === groupSignature(role)
   );
+}
+
+function groupedSlot(entry: TranscriptEntry, role: GroupRole, layout: Layout, stamp: string): Slot {
+  const shape = shapeOf(entry, role);
+  if (role.role === "member") return { entry, shape, blocks: [], lines: [] };
+  const row = railed(groupRow(role.group, layout), entry);
+  return { entry, shape, blocks: [], lines: stampHead([row], stamp) };
+}
+
+function groupRow(group: ToolGroup, layout: Layout): TranscriptLine {
+  const spans = clipSpans(layout.link(groupRowSpans(group)), layout.body, {
+    text: "…",
+    tone: "meta",
+  });
+  const failed = group.runs.some((run) => run.outcome === "failed");
+  return { kind: "tool", failed, text: spanText(spans), spans };
 }
 
 function blockLines(blocks: readonly RenderedBlock[]): TranscriptLine[] {
@@ -327,11 +391,22 @@ function stampFor(entry: TranscriptEntry, marks: PageMarks, streaming: number | 
     case "thinking":
       return `${marks.voice.agent} `;
     case "tool":
-      return `${entry.run?.provenance === "user" ? marks.voice.user : marks.voice.machine} `;
+      return `${toolVoice(entry.run?.provenance, marks)} `;
     case "error":
       return `${marks.voice.machine} `;
     case "info":
       return railBlank;
+  }
+}
+
+function toolVoice(provenance: ToolProvenance | undefined, marks: PageMarks): string {
+  switch (provenance) {
+    case "user":
+      return marks.voice.user;
+    case "external":
+    case "agent":
+    case undefined:
+      return marks.voice.machine;
   }
 }
 
@@ -394,8 +469,10 @@ function thinkingEntryLines(entry: ThinkingEntry, layout: Layout): TranscriptLin
   const gutter = " ".repeat(layout.page.proseGutter);
   const body = entry.text
     .split("\n")
-    .flatMap((line) => wrap(line, layout.prose))
-    .map((text) => metaLine("thinking", text === "" ? "" : `${gutter}${text}`));
+    .flatMap((line) => wrapLinked(line, layout.prose, layout.link))
+    .map((pieces) =>
+      metaLine("thinking", pieces.length === 0 ? [] : [{ text: gutter }, ...pieces]),
+    );
   return [row, ruleLine("thinking", layout), ...body];
 }
 
@@ -404,30 +481,73 @@ function ruleLine(kind: TranscriptLine["kind"], layout: Layout): TranscriptLine 
   return { kind, failed: false, text, spans: [{ text, tone: "rule" }] };
 }
 
-function metaLine(kind: TranscriptLine["kind"], text: string): TranscriptLine {
-  return { kind, failed: false, text, spans: [{ text, tone: "meta" }] };
+function metaLine(kind: TranscriptLine["kind"], pieces: readonly LinkableSpan[]): TranscriptLine {
+  const spans: MarkdownSpan[] =
+    pieces.length === 0
+      ? [{ text: "", tone: "meta" }]
+      : pieces.map((piece) => ({ ...piece, tone: "meta" }));
+  return { kind, failed: false, text: spanText(spans), spans };
 }
 
 function toolEntryLines(run: ToolRun, failed: boolean, layout: Layout): TranscriptLine[] {
-  const spans = clipSpans(toolRowSpans(run), layout.body, { text: "…", tone: "meta" });
+  const spans = clipSpans(layout.link(toolRowSpans(run)), layout.body, {
+    text: "…",
+    tone: "meta",
+  });
   const row: TranscriptLine = { kind: "tool", failed, text: spanText(spans), spans };
-  if (run.folded || run.detail === undefined) return [row];
-  const detail = [...(run.args === "{}" ? [] : [run.args]), ...run.detail]
-    .flatMap((line) => wrap(line, layout.body))
-    .map((text) => metaLine("tool", text));
-  return [row, ruleLine("tool", layout), ...detail];
+  if (!run.folded && run.detail !== undefined) {
+    const args = argumentsOf(run, layout.verbosity);
+    return [row, ruleLine("tool", layout), ...detailLines([...args, ...run.detail], layout)];
+  }
+  if (layout.verbosity !== "high") return [row];
+  const glimpse = [...argumentRows(run, layout), ...detailLines(resultGlimpse(run), layout)];
+  return [row, ...glimpse];
+}
+
+const highArgumentRows = 8;
+const highResultLines = 3;
+
+function argumentsOf(run: ToolRun, verbosity: Verbosity): string[] {
+  const args = verbosity === "high" ? (run.fullArgs ?? run.args) : run.args;
+  return args === "{}" || args === "" ? [] : [args];
+}
+
+function argumentRows(run: ToolRun, layout: Layout): TranscriptLine[] {
+  const rows = detailLines(argumentsOf(run, "high"), layout);
+  if (rows.length <= highArgumentRows) return rows;
+  return [...rows.slice(0, highArgumentRows - 1), metaLine("tool", [{ text: "…" }])];
+}
+
+function resultGlimpse(run: ToolRun): string[] {
+  const detail = run.detail ?? [];
+  if (detail.length <= highResultLines) return detail;
+  return [...detail.slice(0, highResultLines), "…"];
+}
+
+function detailLines(lines: readonly string[], layout: Layout): TranscriptLine[] {
+  return lines
+    .flatMap((line) => wrapLinked(line, layout.body, layout.link))
+    .map((pieces) => metaLine("tool", pieces));
 }
 
 function proseEntryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {
   const gutter = " ".repeat(layout.page.proseGutter);
   return entry.text
     .split("\n")
-    .flatMap((line) => wrap(line, layout.prose))
-    .map((text) => ({
-      kind: entry.kind,
-      failed: false,
-      text: text === "" ? "" : `${gutter}${text}`,
-    }));
+    .flatMap((line) => wrapLinked(line, layout.prose, layout.link))
+    .map((pieces) =>
+      proseLine(entry.kind, pieces.length === 0 ? [] : [{ text: gutter }, ...pieces]),
+    );
+}
+
+function proseLine(kind: TranscriptLine["kind"], pieces: readonly LinkableSpan[]): TranscriptLine {
+  const links = spanLinks(pieces);
+  return {
+    kind,
+    failed: false,
+    text: spanText(pieces),
+    ...(links.length > 0 && { links }),
+  };
 }
 
 function markdownEntryLines(
@@ -436,7 +556,7 @@ function markdownEntryLines(
   markdown: MarkdownRenderer,
 ): TranscriptLine[] {
   const gutter = " ".repeat(layout.page.proseGutter);
-  return markdown(text, layout.prose, layout.body, layout.marks).map((row) =>
+  return markdown(text, layout.prose, layout.body, layout.marks, layout.link).map((row) =>
     markdownLine(row, gutter),
   );
 }
@@ -455,6 +575,6 @@ function markdownLine(row: MarkdownRow, gutter: string): TranscriptLine {
   };
 }
 
-function spanText(spans: readonly MarkdownSpan[]): string {
+function spanText(spans: readonly LinkableSpan[]): string {
   return spans.map((span) => span.text).join("");
 }

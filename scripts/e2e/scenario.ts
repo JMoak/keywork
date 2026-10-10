@@ -24,6 +24,7 @@ export interface Stage {
   readonly sessionDir: string;
   press(...chords: readonly string[]): Promise<void>;
   type(text: string): Promise<void>;
+  paste(text: string): Promise<void>;
   click(x: number, y: number): Promise<void>;
   hover(x: number, y: number): Promise<void>;
   scroll(x: number, y: number, direction: "up" | "down", times?: number): Promise<void>;
@@ -38,6 +39,9 @@ export interface Stage {
   resize(width: number, height: number): Promise<void>;
   renderOnce(): Promise<number>;
   relaunch(): Promise<void>;
+  kill(): Promise<number>;
+  terminalBytes(): string;
+  answer(reply: string): void;
   quit(): Promise<number>;
 }
 
@@ -64,6 +68,7 @@ export interface Scenario {
   readonly app?: Partial<AppOptions>;
   readonly presets?: (stateDir: string) => PresetsPort;
   readonly goldens?: readonly string[];
+  readonly captureTerminal?: boolean;
   beforeBoot?(world: WorldPaths): void;
   run(stage: Stage): Promise<void>;
 }

@@ -4,6 +4,7 @@ import { type ModelPicker, modelPickerOver } from "./model-picker.ts";
 export interface InferenceCommandSeams {
   inference: InferencePort;
   currentModel: (() => string | undefined) | undefined;
+  currentEffort?: (() => string | undefined) | undefined;
   switchModel: ((reference: string) => Promise<string>) | undefined;
   notice(text: string): void;
   showPicker(picker: ModelPicker): void;
@@ -12,7 +13,9 @@ export interface InferenceCommandSeams {
 export function runModelCommand(seams: InferenceCommandSeams, argument: string): Promise<void> {
   const reference = argument.trim();
   if (reference !== "") return selectModel(seams, reference);
-  seams.showPicker(modelPickerOver(seams.inference.choices(), seams.currentModel?.()));
+  seams.showPicker(
+    modelPickerOver(seams.inference.choices(), seams.currentModel?.(), seams.currentEffort?.()),
+  );
   return Promise.resolve();
 }
 

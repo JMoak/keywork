@@ -42,6 +42,10 @@ describe("notificationTransport", () => {
       { TERM: "tmux-256color", TMUX: "/tmp/x", TERM_PROGRAM: "WezTerm" },
       "bell",
     ],
+    ["zellij", { TERM: "xterm-256color", ZELLIJ: "0" }, "osc777"],
+    ["zellij over Windows Terminal", { ZELLIJ: "0", WT_SESSION: "abc" }, "osc777"],
+    ["zellij over iTerm2", { ZELLIJ: "0", TERM_PROGRAM: "iTerm.app" }, "osc777"],
+    ["tmux inside zellij", { ZELLIJ: "0", TMUX: "/tmp/x" }, "bell"],
   ];
 
   it.each(fixtures)("picks %s", (_name, env, expected) => {
@@ -180,5 +184,16 @@ describe("Notifier", () => {
     subject.focusChanged("focus-out");
     subject.observe(inboxAt(1));
     expect(writes).toEqual(["\x07"]);
+  });
+});
+
+describe("Notifier focus", () => {
+  it("starts focused and tracks focus events", () => {
+    const { subject } = notifier();
+    expect(subject.terminalFocused).toBe(true);
+    subject.focusChanged("focus-out");
+    expect(subject.terminalFocused).toBe(false);
+    subject.focusChanged("focus-in");
+    expect(subject.terminalFocused).toBe(true);
   });
 });

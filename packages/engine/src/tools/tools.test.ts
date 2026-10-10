@@ -330,12 +330,12 @@ describe("after-save annotations", () => {
     const observer = async (path: string) =>
       `diagnostics (typescript) · 1 error\n${path}:1:1 · boom`;
 
-    const edited = await editTool(toolScope(cwd), observer).execute({
+    const edited = await editTool(toolScope(cwd), { afterSave: observer }).execute({
       path: "code.ts",
       oldText: "1",
       newText: "BROKEN",
     });
-    const written = await writeTool(toolScope(cwd), observer).execute({
+    const written = await writeTool(toolScope(cwd), { afterSave: observer }).execute({
       path: "fresh.ts",
       content: "BROKEN",
     });
@@ -357,14 +357,14 @@ describe("after-save annotations", () => {
     };
 
     expect(
-      await editTool(toolScope(cwd), silent).execute({
+      await editTool(toolScope(cwd), { afterSave: silent }).execute({
         path: "code.ts",
         oldText: "1",
         newText: "2",
       }),
     ).toBe("Replaced 1 occurrence in code.ts");
     expect(
-      await editTool(toolScope(cwd), throwing).execute({
+      await editTool(toolScope(cwd), { afterSave: throwing }).execute({
         path: "code.ts",
         oldText: "2",
         newText: "3",

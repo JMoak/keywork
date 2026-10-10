@@ -2,6 +2,7 @@ import type { McpServerConfig } from "@keywork/shared";
 import type { ToolSource } from "../agent.ts";
 import type { Tool } from "../tools.ts";
 import { connectStdioServer, type McpConnection, type McpTool } from "./client.ts";
+import type { McpEra } from "./era.ts";
 import { connectHttpServer } from "./http.ts";
 import {
   type ConnectServer,
@@ -49,6 +50,7 @@ export class McpRegistryClosedError extends Error {
 export interface McpRegistryOptions {
   servers: Record<string, McpServerConfig>;
   connect?: ConnectServer;
+  reveal?: (config: McpServerConfig) => Promise<McpServerConfig>;
   requestTimeoutMs?: number;
   restartDelaysMs?: readonly number[];
   maxResultChars?: number;
@@ -69,8 +71,12 @@ export class McpRegistry {
 
   constructor(options: McpRegistryOptions) {
     const timeoutMs = options.requestTimeoutMs ?? 10_000;
+    const reveal = options.reveal ?? ((config: McpServerConfig) => Promise.resolve(config));
     const connect: ConnectServer =
-      options.connect ?? ((config, signal) => openTransport(config, timeoutMs, signal));
+      options.connect ??
+      rememberingEras(async (config, signal, era) =>
+        openTransport(await reveal(config), timeoutMs, signal, era),
+      );
     const restartDelays = options.restartDelaysMs ?? defaultRestartDelaysMs;
     this.maxResultChars = options.maxResultChars ?? 30_000;
     this.onToolResult = options.onToolResult;
@@ -224,15 +230,41 @@ interface ServerCatalogEntry extends CatalogEntry {
   server: ServerReconciler;
 }
 
+type OpenTransport = (
+  config: McpServerConfig,
+  signal: AbortSignal,
+  rememberedEra: McpEra | undefined,
+) => Promise<McpConnection>;
+
+function rememberingEras(open: OpenTransport): ConnectServer {
+  const eras = new WeakMap<McpServerConfig, McpEra>();
+  return async (config, signal) => {
+    try {
+      const connection = await open(config, signal, eras.get(config));
+      eras.set(config, connection.era);
+      return connection;
+    } catch (cause) {
+      eras.delete(config);
+      throw cause;
+    }
+  };
+}
+
 function openTransport(
   config: McpServerConfig,
   requestTimeoutMs: number,
   signal: AbortSignal,
+  rememberedEra: McpEra | undefined,
 ): Promise<McpConnection> {
+  const options = {
+    requestTimeoutMs,
+    signal,
+    ...(rememberedEra !== undefined && { rememberedEra }),
+  };
   if (config.transport === "http") {
     return connectHttpServer(
       { url: config.url, ...(config.headers !== undefined && { headers: config.headers }) },
-      { requestTimeoutMs, signal },
+      options,
     );
   }
   return connectStdioServer(
@@ -241,7 +273,7 @@ function openTransport(
       ...(config.args !== undefined && { args: config.args }),
       ...(config.env !== undefined && { env: config.env }),
     },
-    { requestTimeoutMs, signal },
+    options,
   );
 }
 

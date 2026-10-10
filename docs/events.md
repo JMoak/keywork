@@ -52,6 +52,7 @@ Fires when a prompt begins its turn, after the user message joins the context.
 |---|---|---|
 | `userText` | `string` | The prompt text. |
 | `entryId` | `string`, optional | The session entry id, present on replay of a stored user message. |
+| `origin` | `PromptOrigin`, optional | `{ kind: "external", client }` when the prompt came through `POST /sessions/{id}/inject` on `keywork serve`; absent for a typed prompt. |
 
 On replay, a compaction or branch summary also fires `turn.started` with the summary as
 `userText`, so the transcript shows where history was folded.
@@ -102,7 +103,7 @@ Fires whenever the list of prompts waiting behind the active turn changes.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `queued` | `QueuedPrompt[]` | Each `{ id, text, behavior }`; `behavior` is `steer` or `queue`. |
+| `queued` | `QueuedPrompt[]` | Each `{ id, text, behavior, origin? }`; `behavior` is `steer` or `queue`, and `origin` is the same as on `turn.started`. |
 
 ## Tool lifecycle
 
@@ -212,6 +213,20 @@ Fires after a file save when the language port publishes diagnostics for it.
 
 Fires when the session's shell state was reset. The payload has no fields beyond the
 optional `replay`.
+
+### extension.notice
+
+Fires when the extension host has something to say about one extension: a quarantine (level
+`error`, the message names the extension, the phase and the thrown reason), or a line the
+extension wrote through its own logger. A consumer that toasts shows `error` and `warn`;
+`info` belongs in a log. Not journaled; a resumed session does not replay notices.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `extension` | `string` | The extension's name (its file stem). |
+| `level` | `"info" \| "warn" \| "error"` | How loud the notice is. |
+| `message` | `string` | One readable line. |
+| `detail` | `unknown` | Optional structured context the extension attached. |
 
 ### engine.error
 

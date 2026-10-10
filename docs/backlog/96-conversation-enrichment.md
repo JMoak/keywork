@@ -3,12 +3,12 @@
 > **Status (2026-08-22, D-04 close-out check):** not closed; the file stays in place.
 > Landed: V2.1 (tail-follow), V2.2 (diff preview), V2.3 (markdown + code fences, `markdown.ts`
 > / `highlighter.ts`), V2.5 (context gauge + cost line, `context-gauge.ts`; the at-threshold
-> compaction offer is not built), V2.10 (retrieval disclosure), V2.13 (backtrack-fork with
-> checkpoint restore). Still open, in this file's own numbering: V2.4 thinking blocks, V2.7
-> @-mention autocomplete, V2.9 recall citations (J13's UX face), V2.11 provenance gutter,
-> V2.16 commit-message drafting, V2.17 away summary + `/btw`. V2.6, V2.8, V2.12, V2.14 and
-> V2.15 landed 2026-09-06 (status below). The typography of the feed itself has since moved
-> to [`104`](104-the-page.md).
+> compaction offer landed 2026-10-07, `compaction-offer.ts`), V2.10 (retrieval disclosure), V2.13 (backtrack-fork with
+> checkpoint restore). Still open, in this file's own numbering: V2.4 thinking blocks, V2.9
+> recall citations (J13's UX face). V2.11 provenance gutter landed 2026-10-02. V2.6, V2.8, V2.12, V2.14 and
+> V2.15 landed 2026-09-06; V2.7 @-mention autocomplete, V2.16 commit-message drafting and
+> V2.17 away summary + `/btw` landed 2026-10-02 (status below). The typography of the feed
+> itself has since moved to [`104`](104-the-page.md).
 
 > Planning overlay, 2026-08-10. Where this file speaks for the conversation pane's
 > streaming feed it wins; elsewhere the usual chain applies
@@ -107,6 +107,24 @@ was never an ask).
   panes interrupt instead. **Remaining:** checkpoint-paired file restore, which needs per-user-turn
   checkpoint tags plus a `Checkpoints.restoreTo` API and cli wiring (E3 seam), then the fork
   port restores files alongside the conversation.
+- **In-place companion landed (2026-10-02, 117 SW14).** Where V2.13 forks into a new pane,
+  `/undo` now rewinds the same session one prompt: files back to that prompt's checkpoint,
+  leaf moved to its parent, turn out of the transcript, prompt back in the composer, `undo
+  staged` in the title row until a send commits or `/redo` cancels. Seams: `rewindBefore` on
+  `SessionAttachment` (cli `sessions/ports.ts`), `tui/prompt-undo.ts`, and
+  `ConversationModel.undoLastPrompt` / `redoPrompt`. Detail and deviations in `50` E4.
+- **V2.11 landed (2026-10-02, provenance gutter).** External recalled content is detected on
+  the rail; the visible stamp stays PD18 (`█` user, `▓` agent prose, `░` machine for every
+  agent tool row, `█` kept for a user's own `!cmd` as V2.8 recorded). Detection: a
+  `memory_get` / `memory_search` result whose keywork framing says `provenance: untrusted` or
+  `[untrusted]` (framing `neutralize.ts` keeps recalled text from forging) settles with
+  `ToolRun.provenance = "external"` (`transcript-feed.ts` `carriesUntrustedRecall`); external
+  rows never join a SW25 group. Nothing is guessed: MCP results stay unmarked because the feed
+  does not see a server's `trusted` flag; the fix is an `external` field on `tool.started`
+  from `agent.ts` (an engine seam, not built here). **Jordan's call:** flipping agent tool
+  rows to `▓` so that `░` means external only is one line in `toolVoice`
+  (`transcript-view.ts`) plus regenerating the tool-row goldens. Tests:
+  `transcript-feed.test.ts` "provenance on the rail" (3).
 - **V2.12 landed (2026-09-06, OSC title + progress).** `tui/osc.ts` produces every escape as
   a string (`setTitle`, `pushTitle`/`popTitle` via XTWINOPS 22/23, `setProgress` for OSC 9;4,
   `copyToClipboard` for OSC 52) and `terminalSupport(facts)` is the one pure detector:
@@ -203,6 +221,73 @@ was never an ask).
   *Assumptions Jordan may reverse:* the threshold of six; placeholders are plain text in the
   buffer, so backspace eats them a character at a time and a hand-typed placeholder for a
   number the vault never held is submitted literally.
+- **V2.7 landed (2026-10-02, @-mention autocomplete).** Typing `@` (at the start or after a
+  space or bracket, so `me@host` stays prose) opens the slash tray over the workspace files:
+  `tui/mention-completer.ts` ranks the `FileIndex` walk (the file-jump index, so `.gitignore`
+  rules and the 2,000-file cap carry over) with the palette's `fuzzyScore`, file-name hits
+  first, dot paths hidden until the query reaches for them (the browser's default), and paths
+  the `@file` grammar can't carry (spaces) left out. `tab` inserts `@<repo path> `, `enter`
+  inserts too unless the typed path is already complete (then it sends), `esc` dismisses the
+  tray for that token without touching the text, and a clicked row inserts. On send,
+  `tui/mention-attachments.ts` reads each mention through `scanTemplate`, the same grammar
+  markdown commands use, and appends `<attached path="…">` blocks after the typed prompt:
+  workspace-relative paths only, binary files skipped, each file cut at 30,000 chars. "Once,
+  cached" is structural: a block already in the conversation's history byte for byte is not
+  sent again, so it rides the prompt cache with the message it came in. The transcript, the
+  queue rows, `/undo` and backtrack-fork all show the prompt as typed (`promptAsTyped`), so
+  file bodies never land in the composer. Seams: `ConversationPorts.workspaceFiles`, wired
+  through `SessionPaneDeps` from `app.ts` and gated like file jumps on workspace readiness;
+  the read goes through the pane's existing `readFile` port. Tests:
+  `mention-completer.test.ts` (10), `mention-attachments.test.ts` (9), `prompt-editor.test.ts`
+  "@-mentions" (7), `conversation-model.test.ts` "@-mentions" (2).
+  *Assumptions Jordan may reverse:* the tray still prints its `/` name prefix ahead of a path
+  (`conversation-pane.ts` was another lane's file this round; the fix is passing a per-mode
+  `namePrefix`); attachments are text appended to the user message, so the JSONL keeps the
+  file body with the prompt and a resumed session replays it.
+- **V2.17 landed (2026-10-02, away summary and `/btw`).** `tui/away-summary.ts` keeps an
+  `AwayWatch` per conversation: you count as present when the pane has focus and the terminal
+  does too (the existing focus reporting, so terminals with notifications `off` only use pane
+  focus). Leaving opens a stretch; a turn that settles inside it marks it; coming back with a
+  marked stretch posts one quiet info line at the bottom of the transcript, for example
+  `while you were away: changed src/parser.ts; it ended on "All tests pass."; waiting on you:
+  edit {...}`. Files come from the bus (successful `write` / `edit` calls and the `changed N
+  files on disk` listing SW13 adds to bash results), the closing line is the last prose line
+  of the newest reply (fences and list marks stripped; an error names where it stopped), the
+  waiting clause is the pending ask. No model call, no notification, no stamp change: it
+  renders and nothing else (PD25). Plain ASCII punctuation, since it can land in a glyph-tier-0
+  frame. `/btw <question>` streams one tool-less request through the bound provider with the
+  session's messages flattened into a `<session>` text block as background (newest 60,000
+  chars), and renders the question as an info row and the answer as a progress-style entry
+  that a streaming reply never merges into. Nothing touches `Agent` history or the JSONL; the
+  answer lives only in the pane, so it is gone after a restart. Tests: `away-summary.test.ts`
+  (7), `side-question.test.ts` (3), `conversation-model.test.ts` "/btw" (2, history length
+  unchanged and the request's background checked) and "away summary" (3: away pane, watched
+  turn, terminal focus).
+  *Assumptions Jordan may reverse:* any absence counts, however short, as long as a turn
+  finished inside it; the background is flattened text, since replaying tool blocks without
+  tool definitions is a 400 on the Messages API; `/btw` works mid-turn.
+- **V2.16 landed (2026-10-02, commit-message drafting).** `/commit-draft` (aliases
+  `draft-commit`, `commit-message`) in `tui/commit-draft.ts`: reads the staged diff, or the
+  unstaged one when nothing is staged, with `--stat` first and the patch cut at 30,000 chars,
+  asks the focused session's bound provider for a conventional commit message, shows it as a
+  fenced block in that transcript and copies it through the OSC 52 path the copy verbs use.
+  The last line says `keywork never commits, that part is yours`; the module only ever runs
+  `git diff`, with `core.fsmonitor`, external diff drivers and textconv off so an untrusted
+  repo's config can't run anything. Registered beside the copy verbs in `app.ts`. Tests:
+  `commit-draft.test.ts` (8, mock provider and fixture diff: staged first, unstaged
+  fallback, clean tree, no model, no clipboard, git failure, the cap, diff-only git calls).
+  *Assumptions Jordan may reverse:* untracked files are not in the draft (plain `git diff`
+  leaves them out); the bound session model drafts, there is no cheap-tier pick yet.
+- **V2.5 compaction offer landed (2026-10-07).** When a turn settles with the context
+  estimate past the memory-flush line and not yet past the compaction line
+  (`compaction-offer.ts`, `compactionOfferDue`), one info line offers `/compact [focus]` and
+  says keywork compacts on its own at the line. It never runs anything, fires once per
+  crossing (so never twice in a turn, and not again until the reading falls back below the
+  flush line), and stays silent when no compaction hook is bound. Tests:
+  `compaction-offer.test.ts` (4) and `conversation-model.test.ts` "compaction offer" (2, a
+  4000-token declared window).
+  *Assumptions Jordan may reverse:* the offer line is the flush line rather than a fraction
+  of the compaction line; a long stretch above the line gets one offer, not one per turn.
 
 ## Ordering instinct (pre-survey)
 

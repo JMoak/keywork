@@ -282,6 +282,59 @@ describe("Agent end-to-end with mock provider", () => {
     expect(gates).toEqual(["denied:headless"]);
   });
 
+  it("ends the run at a declined call without another model call when the guard says so", async () => {
+    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
+    const provider = new MockProvider([
+      [
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "c1", name: "scribble", arguments: {} },
+        },
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "c2", name: "echo", arguments: { text: "x" } },
+        },
+        { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
+      ],
+      textTurn("never asked for"),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool, echoTool],
+      guard: { confirm: async () => false, gate: "headless", declineEndsRun: true },
+    });
+    const finished: string[] = [];
+    agent.bus.on("turn.completed", () => finished.push("completed"));
+
+    await agent.send("Change something");
+
+    expect(provider.remaining()).toBe(1);
+    expect(finished).toEqual(["completed"]);
+    expect(orphanedCallIds(agent.history())).toEqual([]);
+    expect(agent.history().at(-1)?.parts[0]).toMatchObject({
+      callId: "c2",
+      output: "skipped: the run ended at a refused call",
+    });
+  });
+
+  it("keeps going after a declined call when the guard leaves the run open", async () => {
+    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+      textTurn("Understood."),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingTool],
+      guard: { confirm: async () => false, gate: "user" },
+    });
+
+    const reply = await agent.send("Change something");
+
+    expect(provider.remaining()).toBe(0);
+    expect(messageText(reply)).toBe("Understood.");
+  });
+
   it("announces an ask before consulting the guard and labels the answer with the gate it names", async () => {
     const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
     const provider = new MockProvider([
@@ -596,6 +649,32 @@ describe("Agent end-to-end with mock provider", () => {
     await queued;
 
     expect(events).toEqual(["interrupted"]);
+  });
+
+  it("carries images beside the prompt text, queued or not", async () => {
+    const provider = new MockProvider([textTurn("one"), textTurn("two")]);
+    const agent = new Agent({ provider });
+    const image = { type: "image" as const, mediaType: "image/png", data: "AAAA" };
+
+    const first = agent.send("look", { images: [image] });
+    const second = agent.send("and this", { images: [image] });
+    await Promise.all([first, second]);
+
+    const prompts = agent.history().filter((message) => message.role === "user");
+    expect(prompts.map((message) => message.parts)).toEqual([
+      [{ type: "text", text: "look" }, image],
+      [{ type: "text", text: "and this" }, image],
+    ]);
+  });
+
+  it("clears the checkpoint turn tag through the guard when a turn begins", async () => {
+    const provider = new MockProvider([textTurn("ok")]);
+    const began: string[] = [];
+    const agent = new Agent({ provider, guard: { beforeTurn: () => began.push("turn") } });
+
+    await agent.send("go");
+
+    expect(began).toEqual(["turn"]);
   });
 
   it("seeds history so a resumed conversation continues in place", async () => {
@@ -1266,5 +1345,79 @@ describe("Agent settlement seam", () => {
     expect(fresh).toEqual(["two", "three"]);
     expect(previous.busy()).toBe(false);
     expect(next.busy()).toBe(false);
+  });
+});
+
+describe("Agent tool batch settlement", () => {
+  function twoBatchConversation(seen: string[][]): Agent {
+    const scripted = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "b1", name: "echo", arguments: { text: "one" } }),
+      toolCallTurn({ type: "tool-call", callId: "b2", name: "echo", arguments: { text: "two" } }),
+      textTurn("all done"),
+    ]);
+    const recording: Provider = {
+      name: "recording",
+      stream: (request) => {
+        seen.push(request.messages.map((message) => `${message.role}:${messageText(message)}`));
+        return scripted.stream(request);
+      },
+    };
+    return new Agent({ provider: recording, tools: [echoTool] });
+  }
+
+  it("settles after each tool batch with the stream closed and hands the next call the rebuilt history", async () => {
+    const seen: string[][] = [];
+    const agent = twoBatchConversation(seen);
+    const settledAt: number[] = [];
+    agent.settleToolBatchesWith(async (history) => {
+      settledAt.push(history.length);
+      if (settledAt.length !== 1) return undefined;
+      return [textMessage("user", "folded: earlier work"), ...history.slice(1)];
+    });
+
+    const reply = await agent.send("go");
+
+    expect(messageText(reply)).toBe("all done");
+    expect(settledAt).toEqual([3, 5]);
+    expect(seen.map((messages) => messages[0])).toEqual([
+      "user:go",
+      "user:folded: earlier work",
+      "user:folded: earlier work",
+    ]);
+    expect(seen[1]).toHaveLength(3);
+    expect(agent.history().map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    expect(messageText(agent.history()[0] as Message)).toBe("folded: earlier work");
+  });
+
+  it("keeps the turn going and announces the failure when the batch settler throws", async () => {
+    const seen: string[][] = [];
+    const agent = twoBatchConversation(seen);
+    const errors: string[] = [];
+    agent.bus.on("engine.error", ({ error }) => errors.push(error.message));
+    agent.settleToolBatchesWith(async () => {
+      throw new Error("summary model down");
+    });
+
+    expect(messageText(await agent.send("go"))).toBe("all done");
+    expect(errors).toEqual(["summary model down", "summary model down"]);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("never runs the batch settler on a turn without tool calls", async () => {
+    const agent = new Agent({ provider: new MockProvider([textTurn("plain")]) });
+    let settled = 0;
+    agent.settleToolBatchesWith(async () => {
+      settled += 1;
+      return undefined;
+    });
+    await agent.send("hi");
+    expect(settled).toBe(0);
   });
 });

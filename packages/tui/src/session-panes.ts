@@ -53,6 +53,7 @@ export interface SessionPaneDeps {
   masthead?: "on" | "off";
   gauge?: GaugeStyle;
   elevation?: TranscriptElevation;
+  hyperlinks?: boolean;
   agentFactory?: AgentFactory;
   sessions?: SessionPort;
   trees?: SessionTreePort;
@@ -66,6 +67,7 @@ export interface SessionPaneDeps {
   now?: () => number;
   shellEscape?: (guard: ToolGuard) => ShellEscapePort;
   spillFile?: (sessionId: string, spillId: string) => string | undefined;
+  workspaceFiles?: NonNullable<ConversationPorts["workspaceFiles"]>;
 }
 
 export interface SessionControls {
@@ -128,6 +130,14 @@ export class SessionPanes {
     return busy;
   }
 
+  working(): boolean {
+    for (const id of this.controls.keys()) {
+      const pane = this.deps.core().panes.get(id);
+      if (pane instanceof ConversationPane && pane.lifecycle() === "working") return true;
+    }
+    return false;
+  }
+
   awaiting(): readonly string[] {
     const titles: string[] = [];
     for (const id of this.controls.keys()) {
@@ -140,6 +150,10 @@ export class SessionPanes {
   currentModel(): string | undefined {
     const agent = this.focused()?.pane.currentAgent();
     return agent === undefined ? undefined : modelReferenceOf(agent.provider);
+  }
+
+  currentEffort(): string | undefined {
+    return this.focused()?.pane.currentAgent()?.effort();
   }
 
   switchModel(reference: string): Promise<string> {
@@ -215,7 +229,10 @@ class PaneSession implements SessionControls {
     const checkpoints = deps.checkpoints;
     this.guard = {
       confirm: (call) => this.pane.confirmMutation(call),
-      ...(checkpoints !== undefined && { beforeMutation: () => checkpoints.capture() }),
+      ...(checkpoints !== undefined && {
+        beforeMutation: () => checkpoints.capture(),
+        beforeTurn: () => checkpoints.beginTurn?.(),
+      }),
     };
     const initial = buildAgent(
       deps.agentFactory,
@@ -246,6 +263,7 @@ class PaneSession implements SessionControls {
       }),
       spillFile: (spillId) => this.spillOnDisk(spillId),
       openFile: (path, options) => deps.core().intents.openFile(path, options),
+      ...(deps.workspaceFiles !== undefined && { workspaceFiles: deps.workspaceFiles }),
     };
     this.pane = new ConversationPane(
       id,
@@ -263,6 +281,7 @@ class PaneSession implements SessionControls {
         ...(deps.masthead !== undefined && { masthead: deps.masthead }),
         ...(deps.gauge !== undefined && { gauge: deps.gauge }),
         ...(deps.elevation !== undefined && { elevation: deps.elevation }),
+        ...(deps.hyperlinks === true && { hyperlinks: true }),
         ...(draft !== undefined && { initialDraft: draft }),
       },
     );
@@ -356,6 +375,7 @@ class PaneSession implements SessionControls {
       pane: this.pane,
       attachment,
       modelInForce: () => this.modelInForce(),
+      checkpoints: this.deps.checkpoints,
       ...(this.deps.afterTurn !== undefined && { afterTurn: this.deps.afterTurn }),
       ...(this.deps.compact !== undefined && { compact: this.deps.compact }),
       rebuild: (history, current) =>

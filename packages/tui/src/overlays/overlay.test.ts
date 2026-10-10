@@ -274,3 +274,15 @@ describe("HelpOverlay", () => {
     expect(closed).toEqual(["x"]);
   });
 });
+
+describe("HelpOverlay feel keys", () => {
+  it("lists send-now, the external editor and the clipboard image beside the prompt keys", () => {
+    const keymap = new Keymap({ leader: "ctrl+k", bindings: appBindings });
+    const overlay = new HelpOverlay(keymap, { dismiss: () => {}, screen: () => screen });
+    const rows = overlay.rows();
+    const helpOf = (keys: string) => rows.find((row) => row.keys === keys)?.help ?? "";
+    expect(helpOf("ctrl+enter")).toContain("sets the queue aside");
+    expect(helpOf("ctrl+g")).toContain("$EDITOR");
+    expect(helpOf("ctrl+v")).toContain("clipboard image");
+  });
+});

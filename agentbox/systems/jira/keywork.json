@@ -4,5 +4,6 @@
       "transport": "http",
       "url": "http://jira.box:8080/mcp"
     }
-  }
+  },
+  "permissions": [{ "action": "mcp", "resource": "jira__*", "effect": "allow" }]
 }

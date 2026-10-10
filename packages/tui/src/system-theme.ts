@@ -5,8 +5,11 @@ import { keyworkNightFlavor } from "./flavor.ts";
 import {
   colorQueries,
   colorRepliesComplete,
+  disableThemeReports,
+  enableThemeReports,
   parseColorReplies,
   type TerminalColors,
+  themeChangeReported,
 } from "./osc.ts";
 import type { Theme } from "./theme.ts";
 
@@ -66,6 +69,52 @@ export function queryTerminalColors(
     const cancelTimeout = timing.after(timeoutMs, finish);
     transport.write(colorQueries());
   });
+}
+
+export interface SystemFlavorCloset {
+  refit(flavor: Flavor): boolean;
+}
+
+export interface ThemeFollow {
+  readonly transport: ColorTransport;
+  readonly closet: SystemFlavorCloset;
+  readonly dress: (flavor: Flavor) => Flavor;
+  readonly repaint: () => void;
+  readonly timing?: DebounceTiming;
+  readonly timeoutMs?: number;
+}
+
+export function followTerminalTheme(follow: ThemeFollow): () => void {
+  let following = true;
+  let querying = false;
+  let changedMidQuery = false;
+  const rederive = (colors: TerminalColors): void => {
+    if (follow.closet.refit(follow.dress(systemFlavor(colors)))) follow.repaint();
+  };
+  const requery = (): void => {
+    if (querying) {
+      changedMidQuery = true;
+      return;
+    }
+    querying = true;
+    void queryTerminalColors(follow.transport, follow.timing, follow.timeoutMs).then((colors) => {
+      querying = false;
+      if (!following) return;
+      if (colors !== undefined) rederive(colors);
+      if (!changedMidQuery) return;
+      changedMidQuery = false;
+      requery();
+    });
+  };
+  const stopListening = follow.transport.onData((bytes) => {
+    if (themeChangeReported(bytes)) requery();
+  });
+  follow.transport.write(enableThemeReports);
+  return () => {
+    following = false;
+    stopListening();
+    follow.transport.write(disableThemeReports);
+  };
 }
 
 export function colorsFromEnv(

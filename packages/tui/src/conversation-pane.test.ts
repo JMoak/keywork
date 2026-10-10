@@ -660,3 +660,125 @@ describe("queue editing rows", () => {
     pane.dispose();
   });
 });
+
+describe("file links in the pane", () => {
+  function paneWith(hyperlinks: boolean): ConversationPane {
+    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
+      hyperlinks,
+    });
+    const feed = modelOf(pane).feed;
+    feed.entries.length = 0;
+    feed.entries.push(
+      { kind: "user", text: "check src/app.ts:12" },
+      { kind: "assistant", text: "The bug is at `src/app.ts:12`." },
+    );
+    return pane;
+  }
+
+  function linkedChunks(view: ReturnType<ConversationPane["view"]>): string[] {
+    const urls: string[] = [];
+    const visit = (node: unknown): void => {
+      if (node === null || typeof node !== "object") return;
+      const content = (node as { props?: { content?: unknown } }).props?.content;
+      const chunks = (content as { chunks?: Array<{ link?: { url: string } }> } | undefined)
+        ?.chunks;
+      for (const chunk of chunks ?? []) if (chunk.link !== undefined) urls.push(chunk.link.url);
+      for (const child of (node as { children?: unknown[] }).children ?? []) visit(child);
+    };
+    visit(view);
+    return urls;
+  }
+
+  it("attaches OSC 8 links to file references only when the terminal opens them", () => {
+    const on = linkedChunks(paneWith(true).view(context(true, 80)));
+    expect(on).toHaveLength(2);
+    for (const url of on) expect(url).toMatch(/^file:\/\/.*app\.ts#L12$/);
+    expect(linkedChunks(paneWith(false).view(context(true, 80)))).toEqual([]);
+  });
+
+  it("renders the same characters with links on or off", () => {
+    expect(frameRows(paneWith(true).view(context(true, 80)))).toEqual(
+      frameRows(paneWith(false).view(context(true, 80))),
+    );
+  });
+});
+
+describe("the verbosity verb", () => {
+  it("cycles the feed's tool-row level and says which level is on", () => {
+    const pane = new ConversationPane("session-1", undefined, () => {});
+    pane.cycleVerbosity();
+    expect(modelOf(pane).feed.verbosity).toBe("high");
+    expect(modelOf(pane).entries.at(-1)).toEqual({ kind: "info", text: "tool rows · high" });
+  });
+});
+
+describe("suggestion tray prefix", () => {
+  function typed(text: string): string[] {
+    const pane = new ConversationPane(
+      "session-1",
+      undefined,
+      () => {},
+      undefined,
+      {
+        search: (query) =>
+          ["exit"]
+            .filter((name) => name.startsWith(query.toLowerCase()))
+            .map((name) => ({ name, description: name })),
+        run: () => false,
+      },
+      { ports: { workspaceFiles: () => [{ relative: "src/app.ts" }] } },
+    );
+    for (const character of text) pane.handleKey(parseChord(character), character);
+    return frameRows(pane.view(context(true, 80)));
+  }
+
+  it("prints @ in front of mention rows and / in front of command rows", () => {
+    const mention = typed("see @app").join("\n");
+    expect(mention).toContain("@src/app.ts");
+    expect(mention).not.toContain("/src/app.ts");
+    const slash = typed("/ex").join("\n");
+    expect(slash).toContain("/exit");
+    expect(slash).not.toContain("@exit");
+  });
+});
+
+describe("image paste into the prompt", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+  function pane(files: Record<string, Uint8Array>): ConversationPane {
+    return new ConversationPane(
+      "session-1",
+      new Agent({ provider: new MockProvider([]) }),
+      () => {},
+      undefined,
+      undefined,
+      { readImage: (path) => files[path] },
+    );
+  }
+
+  it("turns a pasted image path into a chip and leaves other pastes as text", () => {
+    const subject = pane({ "/shots/one.png": png });
+    subject.handlePaste("/shots/one.png");
+    expect(subject.model.input).toBe("[image #1, png 4 B] ");
+    expect(subject.model.editor.attachedImages()).toEqual([
+      { type: "image", mediaType: "image/png", data: Buffer.from(png).toString("base64") },
+    ]);
+    subject.handlePaste("/shots/missing.png");
+    expect(subject.model.input).toBe("[image #1, png 4 B] /shots/missing.png");
+  });
+
+  it("attaches terminal-supplied image bytes and direct attachments alike", () => {
+    const subject = pane({});
+    subject.handlePaste("", { mimeType: "image/jpeg", kind: "binary", bytes: png });
+    subject.attachImage({
+      part: { type: "image", mediaType: "image/gif", data: "AA" },
+      bytes: 1,
+      format: "gif",
+    });
+    expect(subject.model.input).toBe("[image #1, jpg 4 B] [image #2, gif 1 B] ");
+  });
+
+  it("reports no spend before the first turn", () => {
+    expect(pane({}).spend()).toBeUndefined();
+  });
+});

@@ -133,7 +133,9 @@ function createSkillTool(library: SkillLibrary): Tool {
     schema: z.object({
       name: z
         .string()
-        .describe("Short kebab-case name (letters, digits, - or _), e.g. release-tag."),
+        .describe(
+          "Short kebab-case name: lowercase letters, digits and single hyphens, at most 64 characters, e.g. release-tag.",
+        ),
       description: z.string().min(1).describe("One line saying when this skill applies."),
       body: z.string().min(1).describe("Step-by-step instructions in markdown."),
     }),

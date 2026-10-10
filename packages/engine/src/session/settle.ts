@@ -12,12 +12,15 @@ import {
 import type { CompactionEntry } from "./entries.ts";
 import type { SessionStore } from "./store.ts";
 
+export type SettlePhase = "after-turn" | "between-tool-batches";
+
 export interface SettleOptions {
   store: SessionStore;
   provider: Provider;
   history: readonly Message[];
   budget: ContextBudget;
   flush?: MemoryFlush | undefined;
+  phase?: SettlePhase | undefined;
 }
 
 export interface CompactNowOptions {
@@ -37,7 +40,9 @@ export interface TurnSettlement {
 
 export async function settleTurn(options: SettleOptions): Promise<TurnSettlement> {
   const { store, provider, budget } = options;
-  const flush = await flushIfDue(options, readStore(store, budget));
+  const flush = flushesIn(options.phase)
+    ? await flushIfDue(options, readStore(store, budget))
+    : noFlush;
   const reading = readStore(store, budget);
   if (!compactionDue(reading)) return settled(flush, options.history, undefined, []);
   return compact({ store, provider, budget, flush: options.flush }, flush, options.history);
@@ -57,6 +62,10 @@ interface FlushStep {
 }
 
 const noFlush: FlushStep = { messages: [], notices: [] };
+
+function flushesIn(phase: SettlePhase | undefined): boolean {
+  return phase !== "between-tool-batches";
+}
 
 async function flushIfDue(options: SettleOptions, reading: ContextReading): Promise<FlushStep> {
   if (options.flush === undefined) return noFlush;

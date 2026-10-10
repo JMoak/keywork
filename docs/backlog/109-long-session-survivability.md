@@ -74,6 +74,38 @@ The decision also settles whether calm shows the count at all (today it does; a 
 - **Local slash suggestions match by prefix**, not fuzzy subsequence (`/ex` no longer offers
   `context`).
 
+## Reversals of record
+
+- **G4 assumption 1, "thinking off is byte-identical", reversed 2026-10-02 (117 SW5).** G4
+  ([`70-anthropic.md`](70-anthropic.md)) promised that an off request goes out exactly as before
+  the switch existed. On the 5.5 generation that promise made long tool chains go silent: thinking
+  cannot be disabled there, `display` defaults to `"omitted"`, and the short notes the model writes
+  between tool calls arrive as empty thinking blocks, so a long session showed tool rows and
+  nothing between them. Now, on models that write progress updates (Opus 5.5, Sonnet 5.5, Fable 5
+  and later, Mythos 5.1), off sends `thinking: {type: "adaptive", display: "updates"}` under the
+  `thinking-display-updates-2026-08-18` beta (allowed by decision 117-1) and each non-empty
+  update renders as its own line of transcript prose; on sends `"summarized"` as before. Every
+  other model keeps the byte-identical off request. The update text is display only; the block
+  itself still round-trips unchanged as owned provider state. Evidence: `messages-wire.test.ts`
+  "asks a 5.5 model for progress updates while thinking is hidden and summaries when shown",
+  `anthropic.test.ts` "turns a non-empty update block into a progress note and keeps the block as
+  owned state", `effort-and-cache.test.ts` "render as their own prose entry between tool rows and
+  never absorb later text".
+
+- **S3-T2 "never mid-stream, after-turn only", reversed 2026-10-07 (117 mid-run compaction).**
+  The settler waited for the turn to end, so a turn whose tool results crossed the compaction
+  mark had to survive its remaining model calls over budget and fail at the provider wall if it
+  could not. Now the agent settles between tool batches as well (`Agent.settleToolBatchesWith`,
+  wired by `bindSessionLifecycle` to the same `afterTurn` port with `phase:
+  "between-tool-batches"`): messages so far are persisted, B7 runs if the reading is past the
+  mark, and the running agent adopts the compacted projection before its next call. What did
+  not change: no compaction while a stream is open, the flush never runs mid-turn (it waits for
+  the after-turn settler and the latch re-arms as before), `/compact` still refuses while busy,
+  and the after-turn settler compacts at most once more only if a later batch pushed the
+  context back over the mark. The context gauge reads the agent's history, so it drops
+  mid-turn when this fires. Evidence in [`108`](108-survivability-and-launch-rail.md)
+  "Amendment 2026-10-07".
+
 ## Follow-ups (not in this stream)
 
 - Title-bar masthead tier hides telemetry by design; the gauge is reachable via `/context`.

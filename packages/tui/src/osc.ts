@@ -10,6 +10,7 @@ export interface TerminalSupport {
   readonly title: boolean;
   readonly progress: boolean;
   readonly clipboard: boolean;
+  readonly hyperlinks: boolean;
 }
 
 export type ProgressState = "clear" | "indeterminate" | "paused" | "error";
@@ -19,6 +20,7 @@ export type FocusEvent = "focus-in" | "focus-out";
 export interface WindowTitleState {
   readonly name?: string | undefined;
   readonly state: LifecycleState;
+  readonly spend?: string | undefined;
 }
 
 export interface TerminalColors {
@@ -30,14 +32,23 @@ export interface TerminalColors {
 export function terminalSupport(facts: TerminalFacts = {}): TerminalSupport {
   const env = facts.env ?? process.env;
   const tty = facts.tty ?? process.stdout.isTTY === true;
-  if (!tty || env.TERM === "dumb") return { title: false, progress: false, clipboard: false };
-  return { title: true, progress: reportsProgress(env), clipboard: true };
+  if (!tty || env.TERM === "dumb") {
+    return { title: false, progress: false, clipboard: false, hyperlinks: false };
+  }
+  return {
+    title: true,
+    progress: reportsProgress(env),
+    clipboard: true,
+    hyperlinks: opensHyperlinks(env),
+  };
 }
 
 export const pushTitle = "\x1b[22;0t";
 export const popTitle = "\x1b[23;0t";
 export const enableFocusReporting = "\x1b[?1004h";
 export const disableFocusReporting = "\x1b[?1004l";
+export const enableThemeReports = "\x1b[?2031h";
+export const disableThemeReports = "\x1b[?2031l";
 export const bell = "\x07";
 
 export function setTitle(text: string): string {
@@ -70,8 +81,14 @@ export function focusEventsIn(bytes: string): readonly FocusEvent[] {
   return events;
 }
 
+export function themeChangeReported(bytes: string): boolean {
+  return themeReport.test(bytes);
+}
+
 export function windowTitle(title: WindowTitleState, glyphs: GlyphSupport): string {
-  const name = title.name === undefined ? appName : `${title.name} · ${appName}`;
+  const name = [title.name, blankAsAbsent(title.spend), appName]
+    .filter((zone): zone is string => zone !== undefined)
+    .join(" · ");
   const mark = stateMarks[title.state];
   return mark === undefined ? name : `${resolveMark(mark, glyphs)} ${name}`;
 }
@@ -145,6 +162,11 @@ export class TerminalReporter {
     if (this.support.title) this.write(popTitle);
   }
 
+  refresh(): void {
+    this.lastTitle = undefined;
+    this.lastProgress = "clear";
+  }
+
   private reportTitle(text: string): void {
     if (!this.support.title || text === this.lastTitle) return;
     this.lastTitle = text;
@@ -161,6 +183,10 @@ export class TerminalReporter {
 const appName = "keywork";
 
 const csi = "\x1b[";
+
+function blankAsAbsent(text: string | undefined): string | undefined {
+  return text === undefined || text.trim() === "" ? undefined : text;
+}
 
 const stateMarks: Readonly<Partial<Record<LifecycleState, TieredMark>>> = {
   working: { tier1: "▒", tier0: ":" },
@@ -188,6 +214,42 @@ function reportsProgress(env: Readonly<Record<string, string | undefined>>): boo
   return env.WT_SESSION !== undefined || env.ConEmuANSI === "ON" || env.ConEmuPID !== undefined;
 }
 
+function opensHyperlinks(env: Readonly<Record<string, string | undefined>>): boolean {
+  if (insideMultiplexer(env) || overSsh(env)) return false;
+  return hyperlinkTerminals.some((recognized) => recognized(env));
+}
+
+const hyperlinkTerminals: readonly ((
+  env: Readonly<Record<string, string | undefined>>,
+) => boolean)[] = [
+  (env) => env.WT_SESSION !== undefined,
+  (env) => env.KITTY_WINDOW_ID !== undefined || env.TERM === "xterm-kitty",
+  (env) =>
+    env.GHOSTTY_RESOURCES_DIR !== undefined ||
+    env.TERM === "xterm-ghostty" ||
+    env.TERM_PROGRAM === "ghostty",
+  (env) => env.TERM_PROGRAM === "WezTerm",
+  (env) => env.TERM_PROGRAM === "iTerm.app",
+  (env) => (env.TERM ?? "").startsWith("foot"),
+  (env) => Number(env.VTE_VERSION ?? 0) >= 5000,
+  (env) => env.KONSOLE_VERSION !== undefined,
+];
+
+function insideMultiplexer(env: Readonly<Record<string, string | undefined>>): boolean {
+  const term = env.TERM ?? "";
+  return (
+    env.TMUX !== undefined ||
+    env.STY !== undefined ||
+    env.ZELLIJ !== undefined ||
+    term.startsWith("tmux") ||
+    term.startsWith("screen")
+  );
+}
+
+function overSsh(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env.SSH_CONNECTION !== undefined || env.SSH_TTY !== undefined;
+}
+
 function clampPercent(percent: number): number {
   return Math.min(100, Math.max(0, Math.round(percent)));
 }
@@ -211,6 +273,7 @@ const colorReply = new RegExp(
   `${escapeByte}\\](10|11|4;(\\d+));([^${bell}${escapeByte}]*)(?:${bell}|${escapeByte}\\\\)`,
   "g",
 );
+const themeReport = new RegExp(`${escapeByte}\\[\\?997;[12]n`);
 const x11Rgb = /^rgba?:([0-9a-f]{1,4})\/([0-9a-f]{1,4})\/([0-9a-f]{1,4})(?:\/[0-9a-f]{1,4})?$/i;
 const x11Hex = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{9}|[0-9a-f]{12})$/i;
 

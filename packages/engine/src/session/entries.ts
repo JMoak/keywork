@@ -1,4 +1,4 @@
-import { type Message, textMessage, type Usage } from "../messages.ts";
+import { type Message, type Part, textMessage, type Usage } from "../messages.ts";
 
 export const sessionFormatVersion = 3;
 
@@ -70,10 +70,23 @@ export interface ThinkingLevelChangeEntry extends EntryBase {
   thinkingLevel: string;
 }
 
+export interface EffortChangeEntry extends EntryBase {
+  type: "effort_change";
+  effort: string;
+}
+
 export interface ModelChangeEntry extends EntryBase {
   type: "model_change";
   provider: string;
   modelId: string;
+}
+
+export type ContextReplacement = string | Part[];
+
+export interface ContextEditEntry extends EntryBase {
+  type: "context_edit";
+  targetId: string;
+  replacement: ContextReplacement | null;
 }
 
 export interface BindingEntry extends EntryBase {
@@ -101,7 +114,9 @@ export type SessionEntry =
   | CustomEntry
   | CustomMessageEntry
   | ThinkingLevelChangeEntry
+  | EffortChangeEntry
   | ModelChangeEntry
+  | ContextEditEntry
   | BindingEntry;
 
 export type FileEntry = SessionHeader | SessionEntry;
@@ -161,16 +176,39 @@ export function pathToEntry(
 }
 
 export function contextEntriesFor(path: readonly SessionEntry[]): SessionEntry[] {
+  return applyContextEdits(selectedContextEntries(path), latestEditsOn(path));
+}
+
+export function isContextEditable(entry: SessionEntry): boolean {
+  return entry.type === "message" || entry.type === "custom_message";
+}
+
+export function describeContextEdit(entry: ContextEditEntry): string {
+  const target = entry.targetId.slice(0, 8);
+  return entry.replacement === null ? `forgot ${target}` : `rewrote ${target}`;
+}
+
+function selectedContextEntries(path: readonly SessionEntry[]): SessionEntry[] {
   const latest = latestCompaction(path);
   if (latest === undefined) return [...path];
   const { compaction, index } = latest;
-  const contextBefore = contextEntriesFor(path.slice(0, index));
+  const contextBefore = selectedContextEntries(path.slice(0, index));
   const keptFrom = contextBefore.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
   const kept =
     keptFrom === -1
       ? []
-      : contextBefore.slice(keptFrom).filter((entry) => entry.type !== "compaction");
+      : contextBefore
+          .slice(keptFrom)
+          .filter((entry) => entry.type !== "compaction")
+          .map(withoutThinkingBoundToTheOldPrefix);
   return [compaction, ...kept, ...path.slice(index + 1)];
+}
+
+function withoutThinkingBoundToTheOldPrefix(entry: SessionEntry): SessionEntry {
+  if (entry.type !== "message") return entry;
+  const parts = entry.message.parts.filter((part) => part.type !== "redacted-thinking");
+  if (parts.length === entry.message.parts.length) return entry;
+  return { ...entry, message: { ...entry.message, parts } };
 }
 
 export function contextMessages(entries: readonly SessionEntry[]): Message[] {
@@ -231,6 +269,71 @@ export function buildTree(
     else parent.children.push(node);
   }
   return roots;
+}
+
+function latestEditsOn(path: readonly SessionEntry[]): Map<string, ContextReplacement | null> {
+  const edits = new Map<string, ContextReplacement | null>();
+  for (const entry of path) {
+    if (entry.type === "context_edit") edits.set(entry.targetId, entry.replacement);
+  }
+  return edits;
+}
+
+function applyContextEdits(
+  entries: readonly SessionEntry[],
+  edits: ReadonlyMap<string, ContextReplacement | null>,
+): SessionEntry[] {
+  if (edits.size === 0) return [...entries];
+  const lostCalls = new Set<string>();
+  const edited = entries.flatMap((entry) => {
+    const replacement = edits.get(entry.id);
+    if (replacement === undefined || !isContextEditable(entry)) return [entry];
+    const projected = replacement === null ? undefined : replaced(entry, replacement);
+    for (const callId of callIdsOf(entry)) {
+      if (projected === undefined || !callIdsOf(projected).has(callId)) lostCalls.add(callId);
+    }
+    return projected === undefined ? [] : [projected];
+  });
+  return lostCalls.size === 0 ? edited : withoutCalls(edited, lostCalls);
+}
+
+function replaced(entry: SessionEntry, replacement: ContextReplacement): SessionEntry {
+  if (entry.type === "custom_message") return { ...entry, content: textOf(replacement) };
+  if (entry.type !== "message") return entry;
+  return { ...entry, message: { ...entry.message, parts: partsFor(entry.message, replacement) } };
+}
+
+function partsFor(message: Message, replacement: ContextReplacement): Part[] {
+  if (typeof replacement !== "string") return replacement;
+  if (message.role !== "tool") return [{ type: "text", text: replacement }];
+  return message.parts.map((part) =>
+    part.type === "tool-result" ? { ...part, output: replacement } : part,
+  );
+}
+
+function textOf(replacement: ContextReplacement): string {
+  if (typeof replacement === "string") return replacement;
+  return replacement.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+}
+
+function callIdsOf(entry: SessionEntry): Set<string> {
+  if (entry.type !== "message") return new Set();
+  return new Set(entry.message.parts.flatMap(callIdOf));
+}
+
+function callIdOf(part: Part): string[] {
+  return part.type === "tool-call" || part.type === "tool-result" ? [part.callId] : [];
+}
+
+function withoutCalls(entries: readonly SessionEntry[], lost: ReadonlySet<string>): SessionEntry[] {
+  return entries.flatMap((entry): SessionEntry[] => {
+    if (entry.type !== "message") return [entry];
+    const parts = entry.message.parts.filter((part) =>
+      callIdOf(part).every((callId) => !lost.has(callId)),
+    );
+    if (parts.length === entry.message.parts.length) return [entry];
+    return parts.length === 0 ? [] : [{ ...entry, message: { ...entry.message, parts } }];
+  });
 }
 
 function parseLine(line: string): FileEntry | undefined {

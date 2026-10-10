@@ -109,6 +109,7 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
   "context.injected": { injection: { source: "memory-recall", id: "n1", scope: "workspace" } },
   "diagnostics.published": { path: "src/a.ts", count: 2 },
   "shell.reset": { replay: true },
+  "extension.notice": { extension: "counter", level: "info", message: "counted 3" },
   "engine.error": { error: new Error("boom") },
 };
 
@@ -149,6 +150,7 @@ describe("authentication", () => {
     ["POST", "/sessions"],
     ["GET", "/sessions/s1"],
     ["POST", "/sessions/s1/prompt"],
+    ["POST", "/sessions/s1/inject"],
     ["POST", "/sessions/s1/abort"],
   ];
 
@@ -489,5 +491,113 @@ describe("the document and session detail", () => {
     await reader.close();
     const detail = (await (await h.call(`/sessions/${id}`)).json()) as { asOf: number };
     expect(detail.asOf).toBe(Number(frames.at(-1)?.id));
+  });
+});
+
+describe("external prompt injection", () => {
+  const voice = { kind: "external", client: "wispr-flow" };
+  const inject = (h: Harness, id: string, body: unknown) =>
+    h.call(`/sessions/${id}/inject`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("starts a turn on an idle session and runs it exactly like a typed prompt", async () => {
+    const typed = harness({ provider: new MockProvider([textTurn("lights on")]) });
+    const typedId = await createSession(typed);
+    const typedReader = await typed.stream();
+    await typed.call(`/sessions/${typedId}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: "turn on the lights" }),
+    });
+    await collect(typedReader, (event) => event === "turn.completed");
+    await typedReader.close();
+
+    const h = harness({ provider: new MockProvider([textTurn("lights on")]) });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    const accepted = await inject(h, id, { text: "turn on the lights", client: "wispr-flow" });
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toEqual({ sessionId: id, accepted: true, queued: false });
+
+    const frames = await collect(reader, (event) => event === "turn.completed");
+    await reader.close();
+    expect(frames[0]?.event).toBe("turn.started");
+    expect(JSON.parse(frames[0]?.data ?? "{}").payload).toEqual({
+      userText: "turn on the lights",
+      origin: voice,
+    });
+    const messagesOf = async (server: Harness, session: string) =>
+      ((await (await server.call(`/sessions/${session}`)).json()) as { messages: Message[] })
+        .messages;
+    expect(await messagesOf(h, id)).toEqual(await messagesOf(typed, typedId));
+  });
+
+  it("queues behind a running turn and starts once that turn ends", async () => {
+    const h = harness({ provider: hangingProvider() });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await h.call(`/sessions/${id}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: "typed first" }),
+    });
+    expect((await reader.next()).event).toBe("turn.started");
+
+    const queued = await inject(h, id, { text: "spoken second", client: "wispr-flow" });
+    expect(await queued.json()).toEqual({ sessionId: id, accepted: true, queued: true });
+    const announced = await collect(reader, (event) => event === "queue.changed");
+    expect(JSON.parse(announced.at(-1)?.data ?? "{}").payload.queued).toEqual([
+      expect.objectContaining({ text: "spoken second", behavior: "queue", origin: voice }),
+    ]);
+
+    await h.call(`/sessions/${id}/abort`, { method: "POST" });
+    const next = await collect(reader, (event) => event === "turn.started");
+    const types = next.map((frame) => frame.event);
+    expect(types).toContain("turn.interrupted");
+    expect(types.indexOf("turn.interrupted")).toBeLessThan(types.lastIndexOf("turn.started"));
+    expect(JSON.parse(next.at(-1)?.data ?? "{}").payload).toEqual({
+      userText: "spoken second",
+      origin: voice,
+    });
+    await h.call(`/sessions/${id}/abort`, { method: "POST" });
+    await reader.close();
+  });
+
+  it("refuses a client without the ticket's token and runs nothing", async () => {
+    const h = harness({ provider: new MockProvider([textTurn("never")]) });
+    const id = await createSession(h);
+    const before = h.log.latestId();
+    for (const authorization of ["Bearer stolen-or-stale", ""]) {
+      const response = await h.server.fetch(
+        new Request(`${origin}/sessions/${id}/inject`, {
+          method: "POST",
+          headers: authorization === "" ? {} : { authorization },
+          body: JSON.stringify({ text: "rm -rf everything", client: "intruder" }),
+        }),
+      );
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate")).toBe("Bearer");
+    }
+    expect(h.log.latestId()).toBe(before);
+    const read = (await (await h.call(`/sessions/${id}`)).json()) as { messages: Message[] };
+    expect(read.messages).toEqual([]);
+  });
+
+  it("refuses a body without text or a usable client name, and an unknown session", async () => {
+    const h = harness();
+    const id = await createSession(h);
+    for (const body of [
+      {},
+      { text: "hi" },
+      { text: "  ", client: "wispr-flow" },
+      { text: "hi", client: "" },
+      { text: "hi", client: "two words" },
+      { text: "hi", client: "x".repeat(65) },
+      { text: "hi", client: 7 },
+    ]) {
+      expect((await inject(h, id, body)).status, JSON.stringify(body)).toBe(400);
+    }
+    expect((await inject(h, "nope", { text: "hi", client: "wispr-flow" })).status).toBe(404);
   });
 });

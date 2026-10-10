@@ -140,3 +140,39 @@ nightly and on demand, never on PRs.
 | G3 | ✅ landed (stream 4, 2026-08-21) | `scripts/release/{targets,build,build-npm,npm-manifest}.ts` (+ tests), `release.yml` (5-target matrix built on own runners, checksums, `gh release`, timed `install.sh`, npm publish gated on `NPM_PUBLISH`), `scripts/install.sh` / `install.ps1`, `packaging/` (WT fragment, `.desktop`, macOS `.app` shim), `cli/src/version.ts` + `keywork --version`, `docs/release.md`, README quickstart. Verified locally: Windows binary 125 MB via the script, smoke `--version` ok; npm bundle installs its deps and runs. **Open:** first tag not cut yet (the 60 s measurement prints in the `publish` job); `macos-15-intel`/`ubuntu-24.04-arm` runner labels assumed; macOS launcher needs `+x` in git (`git add --chmod=+x`); npm name `keywork` availability unchecked |
 | FR1.2 | ✅ landed (stream 4, 2026-08-21) | `scripts/soak.ts` + `scripts/soak/{budget,provider}.ts` (+ tests), `Scenario.agentFactory` + `Stage.renderOnce` seams in the e2e harness, `EventBus.listenerCount`, `soak.yml` nightly + dispatch. First run found a real leak: every session attachment's usage listener outlived its pane (`cli/sessions.ts` `replay`) and live panes were never released at quit; fixed (`sessionPort.release` unsubscribes via `onListen`; `paneSessions.closeAll()` in `onExit`). 500-turn run on Windows: heap 36.4 → 33.5 MB, RSS 339 → 342 MB, render p95 0.4 ms, zero residue |
 | S3.1–S3.4 | ✅ landed (stream 3, 2026-08-21) | ledger in [`109-long-session-survivability.md`](109-long-session-survivability.md): engine `context-budget.ts` + `settle.ts`, `Provider.capabilities`, `/compact` · `/context` in panes, `tui/context-gauge.ts` (C55 options round open), `/model` ctx facts + `doctor` context section, per-model cost ledger; e2e `long-session` |
+
+**Amendment 2026-10-07 (117 mid-run compaction).** S3.1's "never compact mid-stream" now
+means what it says and no more: compaction never runs while a provider stream is open, but it
+no longer waits for the turn to end. The engine `Agent` gained a second settlement seam,
+`settleToolBatchesWith`, called in the turn loop after each tool batch has fully executed and
+before the next model call (the stream for the previous call is closed, the next has not
+opened). The pane lifecycle (`bindSessionLifecycle`) answers it only when the gauge's own
+reading of the agent's history (`ledger.contextReading`) is past the compaction mark, so a
+turn with room never touches the store mid-turn; when it is, the lifecycle persists the
+turn's messages so far in order, runs the same `settleTurn` with `phase: "between-tool-batches"`
+(B7 compaction if due, `<skill_content>` pinning as before, no memory flush mid-turn since a
+flush turn inside a tool loop would break pairing; the flush latch still re-arms and the
+after-turn settler flushes if still due), and handing the compacted projection back to the
+running agent, which replaces its in-memory history with it. The after-turn settler then
+finds the context under the mark and does not compact again. Interrupted and declined turns
+skip the seam. `keywork chat` keeps after-turn-only settlement for now. Known limit: the
+prompt's undo checkpoint tag is taken when the prompt is persisted, so in the rare turn that
+compacts mid-way before any mutation and mutates afterwards, that prompt has no restore
+point and the tag reaches the next prompt instead; making `checkpointTag` phase-aware in
+`compose-panes.ts` closes it. Proof: `agent.test.ts`
+"Agent tool batch settlement", `settle.test.ts` "settleTurn between tool batches" (entry order
+in the JSONL is message, message, message, compaction, message; the flush is deferred, the
+compaction happens once), `session-attachment.test.ts` "bindSessionLifecycle between tool
+batches". Ledger in [`109`](109-long-session-survivability.md) "Reversals of record".
+
+**Amendment 2026-10-02 (117 gate `terminate` outcome).** Exit 4 no longer lets the turn run on
+after the refusal: `ToolGuard.declineEndsRun` (set by the `keywork run` guard) ends the run
+right after the refused call's tool result, with no further model call; later calls in the same
+reply are settled as `skipped: the run ended at a refused call` so history stays paired. The
+`run.finished` message is whatever text the model wrote before the call (often empty, and then
+stdout stays empty); stderr says `so the run stopped there`. Panes and `keywork chat` keep the
+old behavior: the model sees the denial and may continue. Policy `deny` rules do not end a run
+(the model is expected to route around a rule the user wrote); the `serve` ask broker keeps
+the continuing behavior too. Proof: `agent.test.ts` counts model calls on the mock provider,
+`run.test.ts` asserts one script turn left over, the `denied.jsonl` golden lost its second
+turn. `docs/headless.md` exit 4 row updated.

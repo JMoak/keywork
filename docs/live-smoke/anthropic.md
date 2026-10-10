@@ -38,7 +38,25 @@ real API with a real key before a release that touches `engine/src/providers/ant
    anthropic/claude-sonnet-5`, one prompt. Both turns succeed; the neutral transcript carries
    across with no 400 about thinking blocks.
 
-6. **A wrong key.** `KEYWORK_ANTHROPIC_API_KEY=sk-ant-wrong bun run keywork run "hi"`. Expect a
+6. **The 5.5 generation, needs a key created on or after 2026-08-31.** Configure one MCP
+   server, `/model anthropic/claude-opus-5-5`, and ask for something only that server can do so
+   the model calls `mcp_tool_search` and then the tool it activated. Expect no 400 about thinking
+   blocks or the prefix. With `--debug`, the second request's `tools` array matches the first
+   byte for byte and its last message is a `role: "system"` message carrying a `tool_addition`
+   block; the request after it reports `cacheReadInputTokens` above zero in the session file.
+   The `anthropic-beta` header names `inline-tools-2026-09-15`,
+   `mid-conversation-output-config-2026-07-01`, and `thinking-display-updates-2026-08-18` and
+   nothing else.
+
+7. **Effort, progress, and cache reasons.** On the same session: `/effort low`, one prompt
+   (the request carries a `role: "system"` message with `output_config.effort: "low"` ahead of
+   the prompt, the top-level `output_config` is unchanged, and the cache read stays above zero);
+   with `/thinking off`, a tool turn shows short progress notes as prose between the tool rows;
+   `/cost` ends its spend line with `effort low`. Then `/model anthropic/claude-sonnet-5` and run
+   the same tool-search turn: that model has no in-place tool changes, so activation changes the
+   `tools` array mid-loop and the status line and `/cost` read `cache missed: tools changed`.
+
+8. **A wrong key.** `KEYWORK_ANTHROPIC_API_KEY=sk-ant-wrong bun run keywork run "hi"`. Expect a
    clean `anthropic request failed (401)` failure whose text does not contain the key.
 
 ## Stop if you see

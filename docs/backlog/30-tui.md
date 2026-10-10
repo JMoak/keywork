@@ -243,8 +243,8 @@ and revives from the workspace file; a revived mirror finds its session by id on
 conversation pane has an agent, retrying on each frame until then. Shell mode refuses to
 open in an untrusted workspace with the notice `shell mode needs a trusted workspace ·
 /init to trust it`; typed commands are the user's own and never enter the agent's
-permission gate. No PTY: OpenTUI 0.5.1 ships no terminal renderable, Bun's `spawn` has no
-ConPTY option, and the honest limits are in `docs/windows.md`.
+permission gate. Shell mode since 2026-10-07 (117 SW11) is pty-backed where the runtime
+allows and falls back to this pipe model with a visible reason; see the SW11 update below.
 
 **Evidence.** `terminal-model.test.ts`: "shows the started command, streamed chunks, and the
 finished marker", "falls back to the finished output when nothing streamed and marks
@@ -281,8 +281,42 @@ engine `shell-session.ts` and `index.ts` (`InteractiveShell`, `openInteractiveSh
 `conversation-pane.ts`, `conversation-model.ts`, `transcript-view.ts`, `file-pane.ts` and
 `packages/server` untouched.
 
-**Windows limits.** No ConPTY, no signals to the child, no readline, no full-screen
-programs; see the terminal-pane table in `docs/windows.md`.
+**Windows limits (pipe mode).** No ConPTY, no signals to the child, no readline, no
+full-screen programs; see the terminal-pane table in `docs/windows.md`.
+
+**SW11 update (2026-10-07): the real terminal pane.** Shell mode now has one backend seam
+(`terminal-backend.ts`: `chooseTerminalBackend` picks `pty` or `pipes` once per pane from
+`probePtySupport()` and whether the renderer offers a surface; no config option). The `pty`
+backend is `Bun.spawn({ terminal })` (engine `tools/pty.ts`, the only `Bun.*` call in
+product code, reached through `globalThis.Bun` so Node and old Buns degrade) feeding
+OpenTUI 0.5.14's `EmbeddedTerminalRenderable` through `terminal-surface.ts`
+(`embeddedTerminalSurfaces(renderer)`); `terminal-shell.ts` (`PtyShell`) owns lifecycle:
+open in the workspace at the pane's content size, child bytes into the emulator, the
+emulator's query responses back to the child, `\r\n· shell exited (code) · enter restarts
+it\r\n` written into the surface on exit, `enter` restarts at the current size, a start
+failure shows its message and `enter` retries, dispose kills the child (close pty, SIGHUP,
+SIGKILL after 2 s) and releases the surface. The surface renderable outlives keywork's
+per-frame tree rebuild by detaching instead of dying in `destroyRecursively` and dying only
+on `release()`; it is never OpenTUI-focused (that would install a second keypress listener
+beside keywork's router), so the cursor rides a `focused` override the pane sets per
+frame. Key policy, as the test names say: keywork keeps the leader chord and every verb
+under it, `ctrl+p`, `ctrl+shift+p`, `f1` and `ctrl+q` (the keymap answers before the pane
+is asked); everything the pane receives, including `escape`, `tab`, arrows, `ctrl+c` and
+`ctrl+d`, is encoded by libghostty for the child's current keyboard mode and written to
+the pty; pastes go through the emulator's paste encoder so bracketed paste follows the
+child. Mouse never reaches the surface (the pointer plane and keywork's router stay in
+front; `selectable: false`), so 94's refusals hold. Pipe mode and mirror mode are
+unchanged; a pipe shell says `· pipes` in its title and `· pipes: <reason>` on its first
+line. Windows: no pty, by Bun's own documentation and a probe on this machine; the verdict
+is in `docs/windows.md`. Linux acceptance (`vim`, `htop`, an interactive prompt) is by
+construction plus the fake-backend tests; the verification steps are in 117's SW11 ledger
+entry. Not built: focus-in/out escapes to the child and keyboard scrollback of the pty
+surface (OpenTUI exposes neither publicly), `ctrl+q` inside the pane (keywork's quit wins).
+Evidence: `terminal-shell.test.ts` (lifecycle, key policy, geometry and focus),
+`terminal-backend.test.ts`, `terminal-surface.test.ts`, `terminal-pane.test.ts` ("says why
+the pipe shell is running when no pty was available", "TerminalPane over a pty", "terminal
+pane key policy with a pty"), engine `tools/pty.test.ts` (probe, shell choice, Bun
+terminal plumbing, kill order). E2E `terminal-mirror` and `terminal-hygiene` pass unchanged.
 
 **Assumptions Jordan may reverse.**
 - The summon key is `leader shift+t` (mnemonic beside `leader t` for the tree); `y`, `Y`
@@ -364,3 +398,23 @@ HEAD fallback), `engine/index.ts` exports, `scripts/e2e/scenarios/index.ts`.
   that is the cost of exact diffs, and the refresh is event-driven so it stays bounded.
 - Renames show as a delete plus an add; binary files show a `binary file` note.
 - The body cap reuses `diff-render.ts`'s 160 lines rather than a pane-specific limit.
+
+### C7 external editor escape hatch (landed 2026-10-07)
+
+**What landed.** `ctrl+g` (and `/editor`) hands the composer draft to `$VISUAL`, then
+`$EDITOR`, then `notepad` on Windows and `vi` elsewhere (`tui/external-editor.ts`,
+`editorCommandFor`). The draft goes out with `[pasted #n]` placeholders expanded, lands in a
+temp file, and comes back whole into the composer (`PromptEditor.draftForEditing` /
+`replaceDraft`); an unchanged file leaves the composer alone, and a non-zero exit, a missing
+editor or a vanished file posts `editor · <reason> · your draft is untouched` with the draft
+still in place. The renderer is suspended around the child through `renderer-hold.ts`: keywork
+pops focus reporting (1004) and theme reports (2031) before OpenTUI's `suspend()` leaves the
+alternate screen, pushes them back after `resume()`, and `TerminalReporter.refresh()` rewrites
+the window title so an editor's own title does not stick. One edit at a time; a pending ask
+refuses with `answer the pending ask first`. Tests: `external-editor.test.ts` (11: command
+resolution, round trip, unchanged, failures, temp-file cleanup, the hold order),
+`prompt-actions.test.ts` (4: the action through `AppProbe`), e2e `feel-polish` golden
+`after-editor` (a real `bun` child edits the file under the test renderer).
+
+**Assumptions Jordan may reverse.** `vi` is the POSIX fallback (always present, never
+friendly); `ctrl+g` is leaderless; the kill-ring half of C7 stays open.

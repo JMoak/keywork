@@ -19,6 +19,7 @@ const documentedEvents = [
   "context.injected",
   "diagnostics.published",
   "shell.reset",
+  "extension.notice",
   "engine.error",
 ] as const satisfies readonly (keyof EngineEvents)[];
 

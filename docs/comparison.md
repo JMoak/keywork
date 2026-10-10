@@ -11,6 +11,15 @@
 > verdicts below stand as research history only; every formerly Crush-credited feature is now
 > an original keywork design; see the `OWN` tags in `backlog/`.
 >
+> **Status 2026-10-02:** the Pi and OpenCode columns are as of 2026-08-09. Since then Pi 1.0
+> (2026-10-01) ships MCP built in with lazy tool search, which reverses the "MCP stance" row
+> below, and OpenCode v2 (tagged 2026-09-11) is a rewrite with one ordered permission array and
+> a shared background service by default. What keywork takes from both is in
+> [`backlog/117-influence-sweep.md`](backlog/117-influence-sweep.md); the refreshed dossiers
+> are [`influencers/pi.md`](influencers/pi.md) and
+> [`influencers/opencode.md`](influencers/opencode.md). Which baseline rows keywork has landed
+> is listed after the §2 matrix.
+>
 > Synthesis document for **keywork** (Bun + TypeScript + Vitest + OpenTUI). It compares the
 > three primary influences head-to-head, extracts the shared table-stakes baseline, rates each
 > tool's unique features for adoption, and frames the disagreements keywork must resolve during
@@ -88,6 +97,22 @@ answer for every row.
 | External editor escape hatch | ✅ `Ctrl+G` | ✅ `/editor` → `$EDITOR` | ✅ Ctrl-clickable refs → `$EDITOR` | Bridge to the user's real editor; never pretend to be one. |
 
 **Legend:** ✅ verified present · ⚠️ partial/qualified.
+
+**Status 2026-10-02 (keywork against this baseline).** Landed: multi-provider support
+(Anthropic, OpenAI Chat and Responses, Bedrock in `engine/src/providers`); mid-session model
+switching (`/model`); JSONL tree sessions (`engine/src/session/store.ts`); compaction with a
+focus prompt (B7, `/compact [focus]`); slash commands including markdown-defined ones
+(`engine/src/extensions/markdown-commands.ts`); the palette with live bindings (C5); rebindable
+keys with hot reload (C3, C4); permission gating (E1, E2, `shared/src/trust/permissions.ts`;
+SW15 moves it to OpenCode v2's ordered model); `AGENTS.md` instructions; skills
+(`engine/src/skills`; SW16 brings them to spec); headless `keywork run`; token and cost
+visibility (A15, `/show-costs`); Windows in the CI matrix. In part: themes (one token set, live
+flavor swap and the `system` flavor; the C49 gallery is open); extensibility (markdown
+commands, skills, bots and MCP work; the TypeScript extension host, 40 D1 to D3, landed
+2026-10-07 in `engine/src/extensions/host.ts` with `packages/extensions` as the authoring
+surface, not yet wired into `keywork chat` / `run`). Landed 2026-10-07: the external-editor
+escape hatch (C7's `ctrl+g`, `tui/external-editor.ts`); image input (the TUI pastes image
+paths and clipboard images as chips and `Agent.send` carries them as image parts).
 
 ---
 

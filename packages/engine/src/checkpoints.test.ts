@@ -261,6 +261,17 @@ describe("Checkpoints", () => {
     expect(store.takeTurnTag()).toBeUndefined();
   });
 
+  it("drops a tag the previous turn left behind when a new turn begins", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "file.txt": "v1" });
+    await store.captureTree();
+
+    store.beginTurn();
+
+    expect(store.takeTurnTag()).toBeUndefined();
+  });
+
   it("does not mint a turn tag from restoreTo or undo", async () => {
     const { worktree, gitDir } = await scratchProject();
     const store = await Checkpoints.open({ worktree, gitDir });
@@ -350,5 +361,51 @@ describe("Checkpoints reads", () => {
     );
     expect(later.get("a.txt")).toBe(2);
     expect(later.get("b.txt")).toBe(3);
+  });
+
+  it("diffs two snapshots without touching the undo ring", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "a.txt": "one\n", "b.txt": "two\n", "c.txt": "three\n" });
+
+    const before = await store.snapshot();
+    await seed(worktree, { "a.txt": "one more\n", "b.txt": "two\nand more\n" });
+    const after = await store.snapshot();
+    const changes = await store.changesBetween(before, after);
+
+    expect(changes.files).toEqual([
+      { path: "a.txt", added: 1, deleted: 1 },
+      { path: "b.txt", added: 1, deleted: 0 },
+    ]);
+    expect(changes.patch).toContain("+one more");
+    expect(changes.patch).toContain("+and more");
+    expect(changes.patch).not.toContain("c.txt");
+    expect(store.canUndo()).toBe(false);
+    expect(store.takeTurnTag()).toBeUndefined();
+  });
+
+  it("finds nothing between identical snapshots", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "a.txt": "same" });
+
+    const tree = await store.snapshot();
+
+    expect(await store.changesBetween(tree, await store.snapshot())).toEqual({
+      files: [],
+      patch: "",
+    });
+  });
+
+  it("never snapshots its own shadow repo when it lives inside the worktree", async () => {
+    const { worktree } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir: join(worktree, ".shadow", "git") });
+    await seed(worktree, { "a.txt": "one" });
+
+    const before = await store.snapshot();
+    await seed(worktree, { "a.txt": "two" });
+    const changes = await store.changesBetween(before, await store.snapshot());
+
+    expect(changes.files.map((change) => change.path)).toEqual(["a.txt"]);
   });
 });

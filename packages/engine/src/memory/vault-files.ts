@@ -55,6 +55,18 @@ export class VaultFiles {
     if (!this.isReservedDir(dir)) throw new ReservedPathError(dir, "not a reserved directory");
   }
 
+  isNotePath(path: string): boolean {
+    if (!isVaultRelativePath(path) || !path.endsWith(".md")) return false;
+    const segments = path.split(/[\\/]/);
+    const rel = segments.join("/");
+    if (this.isStructuralFile(rel) || structuralFiles.has(rel.toLowerCase())) return false;
+    const dirs = segments.slice(0, -1);
+    return dirs.every((name, index) => {
+      const dir = dirs.slice(0, index + 1).join("/");
+      return !this.isStructuralDir(name, dir) && !isStructuralInAnyCase(name, dir);
+    });
+  }
+
   async read(path: string): Promise<string | null> {
     try {
       return await readFile(this.contained(path), "utf8");
@@ -160,3 +172,8 @@ export function isVaultRelativePath(path: string): boolean {
 
 const hiddenDirs = new Set([stagingDir, ".obsidian"]);
 const layerDirs = new Set([dailyDir, arcsDir, botsDir]);
+const structuralFiles = new Set([mocFile, auditFile].map((file) => file.toLowerCase()));
+
+function isStructuralInAnyCase(name: string, dir: string): boolean {
+  return hiddenDirs.has(name.toLowerCase()) || layerDirs.has(dir.toLowerCase());
+}

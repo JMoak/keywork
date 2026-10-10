@@ -4,14 +4,20 @@ import type { ContextInjection, PermissionAsk, PermissionDecision } from "./sess
 
 export type SendBehavior = "steer" | "queue";
 
+export interface PromptOrigin {
+  kind: "external";
+  client: string;
+}
+
 export interface QueuedPrompt {
   id: string;
   text: string;
   behavior: SendBehavior;
+  origin?: PromptOrigin;
 }
 
 interface LiveEvents {
-  "turn.started": { userText: string; entryId?: string };
+  "turn.started": { userText: string; entryId?: string; origin?: PromptOrigin };
   "turn.delta": { delta: TurnDelta };
   "turn.completed": { message: Message; usage: Usage };
   "turn.interrupted": { message: Message };
@@ -26,6 +32,12 @@ interface LiveEvents {
   "context.injected": { injection: ContextInjection };
   "diagnostics.published": { path: string; count: number };
   "shell.reset": Record<never, never>;
+  "extension.notice": {
+    extension: string;
+    level: "info" | "warn" | "error";
+    message: string;
+    detail?: unknown;
+  };
   "engine.error": { error: Error };
 }
 

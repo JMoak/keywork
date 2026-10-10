@@ -25,7 +25,7 @@ to stderr. `--json` prints one JSON object per line to stdout and nothing else.
 | 1 | `failed` | the turn ended in `engine.error`: provider failure after retries, tool-loop abort, internal error. |
 | 2 | `usage` | bad invocation: no prompt, unknown command, preset, or `--workspace` slug, or `panes` / `chat` / bare `keywork` without a terminal. |
 | 3 | `unresolved` | inference resolution failed. The IR-18 `code` (`unconfigured` · `ambiguous` · `unknown-provider` · `unknown-model` · `disabled-provider` · `unavailable-credential` · `unsupported-protocol` · `missing-capability` · `insecure-endpoint`) rides in the payload. |
-| 4 | `denied` | a tool call needed an approval nobody could give. The turn still ran to its end with that call refused; stderr names the tools and the fix. |
+| 4 | `denied` | a tool call needed an approval nobody could give. The run stops right after that refused call with no further model call (any later calls in the same reply are settled as skipped); stderr names the tool and the fix. |
 | 130 | `interrupted` | SIGINT or SIGTERM arrived mid-turn. The agent was interrupted and orphaned tool calls were settled; the session was persisted only when `--session-dir` was given (the `run.finished` line carries `saved`). |
 
 ### Permissions without a person
@@ -79,6 +79,21 @@ Example (`completed`):
 {"type":"turn.completed","message":{"role":"assistant","parts":[{"type":"text","text":"all done"}]},"usage":{"inputTokens":12,"outputTokens":3}}
 {"type":"run.finished","outcome":"completed","exitCode":0,"message":"all done"}
 ```
+
+## Prompts from outside, through `keywork serve`
+
+`keywork run` takes its one prompt from argv and nothing changes there. A tool that wants to
+hand prompts to a live session (a voice assistant, another LLM window) talks to `keywork
+serve` instead: `POST /sessions/{id}/inject` with `{ "text": "...", "client": "wispr-flow" }`
+and the bearer token from the ticket file. The prompt runs exactly like a typed one. On an idle
+session it starts a turn and the answer is `202 { "queued": false }`; behind a running turn it
+waits at the back of the queue (`"queued": true`) and starts when that turn ends, never
+steering it. `turn.started` and `queue.changed` carry `origin: { "kind": "external", "client" }`,
+so every client watching `/events` can tell where it came from. The turn answers to the same
+permission policy and ask queue as any other, and a memory note it proposes is staged with
+provenance `untrusted`. A missing or wrong token is a bodiless 401 and nothing runs; a body
+without `text` or a `client` matching `[A-Za-z0-9._-]{1,64}` is a 400; an unknown session is a
+404.
 
 ## Without a terminal
 

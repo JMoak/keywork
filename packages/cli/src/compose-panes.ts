@@ -81,6 +81,7 @@ import {
   workspaceStateFile,
 } from "./paths.ts";
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
+import { sessionExporter } from "./sessions/export.ts";
 import {
   boundSessionCounts,
   type SessionChangeFeed,
@@ -90,6 +91,7 @@ import {
 } from "./sessions/ports.ts";
 import { listSessions } from "./sessions/store.ts";
 import { userConfigDir } from "./user-config.ts";
+import { keyworkVersion } from "./version.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
 import { workspaceSetupPort } from "./workspace-setup.ts";
 import { type WorkspaceRecall, workspacesPort } from "./workspaces.ts";
@@ -297,6 +299,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
     }),
     sessionTrees: sessionTreePort(options.sessionDir, changes),
+    exportSession: sessionExporter(options.sessionDir, cwd, (sessionId) => stores.get(sessionId)),
     arcs: arcs.port,
     bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
@@ -336,6 +339,11 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     ...(projectTrusted && {
       inbox: reviewInboxFeed(changes, () => stagedCount(memory, botLayers)),
     }),
+    bugReport: {
+      version: keyworkVersion,
+      config: () => config,
+      dir: join(options.userRoot ?? homedir(), ".keywork", "bug-reports"),
+    },
     doctorReport: async () => {
       const { doctorReport, renderDoctorReport, workspaceDoctorFacts } = await import(
         "./doctor.ts"
@@ -446,7 +454,7 @@ function settleAfterTurn(
   agents: AgentComposition,
   changed: (sessionId: string) => void,
 ): AfterTurn {
-  return async ({ sessionId, history, agent }) => {
+  return async ({ sessionId, history, agent, phase }) => {
     const store = stores.get(sessionId);
     if (store === undefined) return undefined;
     const settlement = await settleTurn({
@@ -455,6 +463,7 @@ function settleAfterTurn(
       history,
       budget: budgetOf(agent),
       flush: agents.flushFor(sessionId, agent.provider),
+      phase,
     });
     if (settlement.history !== undefined) changed(sessionId);
     return settlement;

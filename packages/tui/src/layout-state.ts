@@ -22,6 +22,7 @@ export interface DocksState {
 export interface LayoutState {
   tree?: LayoutNode;
   focused?: PaneId;
+  recent?: PaneId[];
   docks?: DocksState;
 }
 
@@ -43,9 +44,13 @@ export function parseLayoutState(value: unknown): LayoutState | undefined {
   const ids = layoutStateIds(state);
   if (ids.length === 0 || new Set(ids).size !== ids.length) return undefined;
   const focused = value.focused;
-  if (focused === undefined) return state;
-  if (typeof focused !== "string" || !ids.includes(focused)) return undefined;
-  return { ...state, focused };
+  if (focused !== undefined && !isKnownId(focused, ids)) return undefined;
+  const recent = parseRecent(value.recent, ids);
+  return {
+    ...state,
+    ...(isKnownId(focused, ids) && { focused }),
+    ...(recent.length > 0 && { recent }),
+  };
 }
 
 export function layoutStateIds(state: LayoutState): PaneId[] {
@@ -56,7 +61,11 @@ export function layoutStateIds(state: LayoutState): PaneId[] {
   ];
 }
 
-export function layoutStateOf(arrangement: Arrangement, focused: PaneId | undefined): LayoutState {
+export function layoutStateOf(
+  arrangement: Arrangement,
+  focused: PaneId | undefined,
+  recent: readonly PaneId[] = [],
+): LayoutState {
   const { tree, docks } = arrangement;
   const persisted: DocksState = {
     ...(docks.left.panes.length > 0 && { left: snapshotDock(docks.left) }),
@@ -65,6 +74,7 @@ export function layoutStateOf(arrangement: Arrangement, focused: PaneId | undefi
   return {
     ...(tree !== undefined && { tree: cloneNode(tree) }),
     ...(focused !== undefined && { focused }),
+    ...(recent.length > 1 && { recent: [...recent] }),
     ...((persisted.left !== undefined || persisted.right !== undefined) && { docks: persisted }),
   };
 }
@@ -146,4 +156,14 @@ function parseRatio(value: unknown, bounds: { min: number; max: number }): numbe
 
 function isPaneId(value: unknown): value is PaneId {
   return typeof value === "string" && value !== "";
+}
+
+function parseRecent(value: unknown, ids: readonly PaneId[]): PaneId[] {
+  if (!Array.isArray(value)) return [];
+  const known = value.filter((id): id is PaneId => isKnownId(id, ids));
+  return [...new Set(known)];
+}
+
+function isKnownId(value: unknown, ids: readonly PaneId[]): value is PaneId {
+  return isPaneId(value) && ids.includes(value);
 }

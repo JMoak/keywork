@@ -223,3 +223,37 @@ describe("dragging a pane by its title row", () => {
     expect(probe.core.draggingPane()).toBeUndefined();
   });
 });
+
+describe("focus-last", () => {
+  function threePanes(): AppProbe {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("split");
+    return probe;
+  }
+
+  it("bounces between the two most recent panes on leader tab", () => {
+    const probe = threePanes();
+    probe.keys("ctrl+k", "h");
+    const left = probe.snapshot().focused;
+    probe.keys("escape", "ctrl+k", "tab");
+    expect(probe.snapshot().focused).toBe("session-3");
+    probe.keys("tab");
+    expect(probe.snapshot().focused).toBe(left);
+  });
+
+  it("lands on the most recently used pane when the focused one closes", () => {
+    const probe = threePanes();
+    probe.core.focusPane("session-1");
+    probe.core.focusPane("session-3");
+    probe.keys("ctrl+k", "x");
+    expect(probe.snapshot().focused).toBe("session-1");
+  });
+
+  it("shows the chord in the keymap and on its palette command", () => {
+    const probe = new AppProbe();
+    expect(probe.core.keymap.describe("focus.last")).toBe("ctrl+k tab");
+    const command = probe.core.registry.all().find((entry) => entry.name === "focus-last");
+    expect(command?.shortcut).toBe("ctrl+k tab");
+  });
+});

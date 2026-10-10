@@ -12,6 +12,11 @@ import {
   runApp,
 } from "../../packages/tui/src/index.ts";
 import { scenarioArtifactDir, stepFileBase } from "./artifacts.ts";
+import {
+  type CapturedTerminal,
+  capturedTerminal,
+  kittyKeyboardReply,
+} from "./captured-terminal.ts";
 import type { CapturedFrame } from "./frame.ts";
 import {
   committedGoldenRoot,
@@ -31,7 +36,7 @@ export interface HarnessOptions {
   readonly goldenRoot?: string;
 }
 
-export type AppSeams = Pick<AppOptions, "createRenderer" | "exit">;
+export type AppSeams = Pick<AppOptions, "createRenderer" | "exit" | "terminal">;
 
 export interface ComposedWorld {
   readonly workspaceDir: string;
@@ -62,15 +67,25 @@ export async function runScenario(
   const previousCwd = process.cwd();
   const boot = async (): Promise<RunningApp> => {
     const testing = await loadTesting();
-    const setup = await testing.createTestRenderer({ width: size.width, height: size.height });
+    const terminal = scenario.captureTerminal === true ? capturedTerminal(size) : undefined;
+    const setup = await testing.createTestRenderer({
+      width: size.width,
+      height: size.height,
+      ...(terminal !== undefined && realTerminalRenderer(terminal)),
+    });
+    if (terminal !== undefined) {
+      await setup.renderer.setupTerminal();
+      terminal.answer(kittyKeyboardReply);
+    }
     const exit: ExitLatch = { code: undefined };
     await world.compose({
       createRenderer: async () => setup.renderer,
       exit: (code) => {
         exit.code ??= code;
       },
+      ...(terminal !== undefined && { terminal: terminal.seams }),
     });
-    return { setup, exit };
+    return { setup, exit, terminal };
   };
   const captures: string[] = [];
   const goldens: string[] = [];
@@ -107,6 +122,7 @@ export async function runScenario(
     const running = app;
     if (running !== undefined && running.exit.code === undefined) {
       quietly(() => running.setup.renderer.destroy());
+      await exitOf(running, quitTimeoutMs);
     }
     process.chdir(previousCwd);
     quietly(() => world.dispose());
@@ -139,6 +155,7 @@ interface ExitLatch {
 interface RunningApp {
   setup: TestSetup;
   exit: ExitLatch;
+  terminal: CapturedTerminal | undefined;
 }
 
 interface StageContext {
@@ -163,6 +180,21 @@ function loadTesting(): Promise<TestingModule> {
   const anchor = fileURLToPath(new URL("../../packages/tui/src/index.ts", import.meta.url));
   const resolved = Bun.resolveSync("@opentui/core/testing", dirname(anchor));
   return import(pathToFileURL(resolved).href) as Promise<TestingModule>;
+}
+
+function realTerminalRenderer(terminal: CapturedTerminal) {
+  return {
+    stdin: terminal.stdin,
+    stdout: terminal.stdout,
+    bufferedOutput: "stdout",
+    screenMode: "alternate-screen",
+  } as const;
+}
+
+async function exitOf(app: RunningApp, timeoutMs: number): Promise<number | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (app.exit.code === undefined && Date.now() < deadline) await sleep(pollMs);
+  return app.exit.code;
 }
 
 function freshArtifactDir(outRoot: string, scenarioName: string): string {
@@ -226,6 +258,7 @@ async function composeMockApp(
     ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
     ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
     tips: "off",
+    hyperlinks: false,
     ...scenario.app,
     glyphs: scenario.glyphs ?? assumedGlyphs,
     ...(scenario.focusOutline !== undefined && { focusOutline: scenario.focusOutline }),
@@ -259,10 +292,15 @@ function buildStage(context: StageContext): Stage {
   let ordinal = 0;
   const quit = async (): Promise<number> => {
     app.setup.mockInput.pressKey("q", { ctrl: true });
-    const deadline = Date.now() + quitTimeoutMs;
-    while (app.exit.code === undefined && Date.now() < deadline) await sleep(pollMs);
-    if (app.exit.code === undefined) throw new Error("quit never reached the exit seam");
-    return app.exit.code;
+    const code = await exitOf(app, quitTimeoutMs);
+    if (code === undefined) throw new Error("quit never reached the exit seam");
+    return code;
+  };
+  const kill = async (): Promise<number> => {
+    process.emit("SIGTERM");
+    const code = await exitOf(app, quitTimeoutMs);
+    if (code === undefined) throw new Error("SIGTERM never reached the exit seam");
+    return code;
   };
   return {
     workspaceDir: world.workspaceDir,
@@ -276,6 +314,10 @@ function buildStage(context: StageContext): Stage {
     },
     type: async (text) => {
       await app.setup.mockInput.typeText(text);
+      await sleep(0);
+    },
+    paste: async (text) => {
+      await app.setup.mockInput.pasteBracketedText(text);
       await sleep(0);
     },
     click: async (x, y) => {
@@ -344,8 +386,16 @@ function buildStage(context: StageContext): Stage {
       await quit();
       Object.assign(app, await context.reboot());
     },
+    kill,
+    terminalBytes: () => captured(app).bytes(),
+    answer: (reply) => captured(app).answer(reply),
     quit,
   };
+}
+
+function captured(app: RunningApp): CapturedTerminal {
+  if (app.terminal === undefined) throw new Error("scenario did not ask to capture the terminal");
+  return app.terminal;
 }
 
 async function settle(setup: TestSetup): Promise<void> {

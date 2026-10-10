@@ -1,14 +1,17 @@
 import {
   type Agent,
   addUsage,
+  type CacheMiss,
   type ContextReading,
   type CostRollup,
   carriesUsage,
   contextBudgetFor,
   declaredContextWindow,
+  type EffortLevel,
   emptyCostRollup,
   estimateConversationTokens,
   formatCostNanos,
+  formatTokenCount,
   knownCostNanos,
   mergeCostRollups,
   modelReferenceOf,
@@ -35,12 +38,10 @@ export class SessionLedger {
 
   usageSummary(agent: Agent | undefined): string {
     if (agent === undefined) return "";
-    const { usage, cost } = this.sessionTotals(agent);
-    const known = knownCostNanos(cost);
-    if (known !== undefined) return formatCostNanos(known);
-    return usage.inputTokens + usage.outputTokens === 0
-      ? ""
-      : `${usage.inputTokens}▸${usage.outputTokens}`;
+    const miss = agent.cacheMiss();
+    return [this.spendSummary(agent), ...(miss === undefined ? [] : [cacheMissNote(miss)])]
+      .filter((part) => part !== "")
+      .join(" · ");
   }
 
   costReport(agent: Agent | undefined): string {
@@ -52,7 +53,13 @@ export class SessionLedger {
     const rows = this.rows(agent);
     const perModel =
       rows.length < 2 ? [] : rows.map(([reference, totals]) => modelLine(reference, totals));
-    return [tokenLine(usage), costLine(cost, agent.modelId()), ...perModel].join("\n");
+    const miss = agent.cacheMiss();
+    return [
+      tokenLine(usage),
+      costLine(cost, agent.modelId(), agent.effort()),
+      ...(miss === undefined ? [] : [cacheMissLine(miss)]),
+      ...perModel,
+    ].join("\n");
   }
 
   contextReading(agent: Agent | undefined): ContextReading | undefined {
@@ -73,6 +80,15 @@ export class SessionLedger {
     const reading = this.contextReading(agent);
     if (reading === undefined) return "no provider · nothing to measure";
     return contextReadout(reading).join("\n");
+  }
+
+  spendSummary(agent: Agent): string {
+    const { usage, cost } = this.sessionTotals(agent);
+    const known = knownCostNanos(cost);
+    if (known !== undefined) return formatCostNanos(known);
+    return usage.inputTokens + usage.outputTokens === 0
+      ? ""
+      : `${usage.inputTokens}▸${usage.outputTokens}`;
   }
 
   private sessionTotals(agent: Agent): ModelTotals {
@@ -121,7 +137,16 @@ function tokenLine(usage: Usage): string {
   return parts.join(" · ");
 }
 
-function costLine(cost: CostRollup, modelId: string | undefined): string {
+function costLine(
+  cost: CostRollup,
+  modelId: string | undefined,
+  effort: EffortLevel | undefined,
+): string {
+  const line = spendLine(cost, modelId);
+  return effort === undefined ? line : `${line} · effort ${effort}`;
+}
+
+function spendLine(cost: CostRollup, modelId: string | undefined): string {
   const known = knownCostNanos(cost);
   if (known !== undefined) return `cost ${formatCostNanos(known)} · ${costBasis(cost, modelId)}`;
   if (cost.pricedTurns > 0) {
@@ -146,4 +171,15 @@ function modelLine(reference: string, totals: ModelTotals): string {
         ? `${formatCostNanos(totals.cost.nanos)} + ${totals.cost.unpricedTurns} unpriced`
         : "no pricing";
   return `  ${reference} · ${turns} ${turns === 1 ? "turn" : "turns"} · ${totals.usage.inputTokens}▸${totals.usage.outputTokens} · ${spend}`;
+}
+
+function cacheMissNote(miss: CacheMiss): string {
+  return `cache missed: ${miss.cause}`;
+}
+
+function cacheMissLine(miss: CacheMiss): string {
+  const tokens = miss.missedTokens;
+  return tokens === undefined
+    ? cacheMissNote(miss)
+    : `${cacheMissNote(miss)} · about ${formatTokenCount(tokens)} tokens past the change`;
 }

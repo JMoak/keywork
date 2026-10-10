@@ -1,19 +1,32 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { killTree, within } from "../proc.ts";
 import {
-  asRecord,
-  collectToolPages,
-  initializeParams,
+  discoverProbeTimeoutMs,
+  type McpEra,
+  McpSession,
+  signalsToolsChanged,
+  subscriptionMethod,
+} from "./era.ts";
+import {
+  McpAbortedError,
   McpProtocolError,
-  readServerName,
-  toolCallResult,
-} from "./wire.ts";
+  McpRequestTimeoutError,
+  McpRpcError,
+  McpServerExitedError,
+} from "./errors.ts";
 
-export { McpProtocolError, mcpProtocolVersion } from "./wire.ts";
+export { type McpEra, mcpLegacyProtocolVersion, mcpProtocolVersion } from "./era.ts";
+export {
+  McpAbortedError,
+  McpInputRequiredError,
+  McpProtocolError,
+  McpRequestTimeoutError,
+  McpRpcError,
+  McpServerExitedError,
+} from "./errors.ts";
 
 const closeGraceMs = 500;
 const maxLineChars = 4 * 1024 * 1024;
-const toolsChangedNotification = "notifications/tools/list_changed";
 
 export interface McpTool {
   name: string;
@@ -28,6 +41,7 @@ export interface McpToolResult {
 
 export interface McpConnection {
   serverName: string;
+  readonly era: McpEra;
   listTools(): Promise<McpTool[]>;
   callTool(name: string, args: unknown): Promise<McpToolResult>;
   onClose(handler: (error?: Error) => void): void;
@@ -44,27 +58,8 @@ export interface StdioServerSpec {
 export interface StdioConnectOptions {
   requestTimeoutMs?: number;
   signal?: AbortSignal;
-}
-
-export class McpAbortedError extends Error {
-  constructor() {
-    super("connection attempt aborted");
-    this.name = "McpAbortedError";
-  }
-}
-
-export class McpRequestTimeoutError extends Error {
-  constructor(method: string, timeoutMs: number) {
-    super(`MCP request ${method} timed out after ${timeoutMs}ms`);
-    this.name = "McpRequestTimeoutError";
-  }
-}
-
-export class McpServerExitedError extends Error {
-  constructor(reason: string) {
-    super(reason);
-    this.name = "McpServerExitedError";
-  }
+  rememberedEra?: McpEra;
+  discoverTimeoutMs?: number;
 }
 
 export async function connectStdioServer(
@@ -72,14 +67,22 @@ export async function connectStdioServer(
   options: StdioConnectOptions = {},
 ): Promise<McpConnection> {
   if (options.signal?.aborted === true) throw new McpAbortedError();
-  const channel = new StdioChannel(spec, options.requestTimeoutMs ?? 10_000, options.signal);
+  const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+  const discoverTimeoutMs =
+    options.discoverTimeoutMs ?? Math.min(discoverProbeTimeoutMs, requestTimeoutMs);
+  const channel = new StdioChannel(spec, { requestTimeoutMs, discoverTimeoutMs }, options.signal);
   try {
-    await channel.handshake();
+    await channel.handshake(options.rememberedEra);
   } catch (cause) {
     await channel.close().catch(() => undefined);
     throw cause;
   }
   return channel;
+}
+
+interface StdioTimeouts {
+  requestTimeoutMs: number;
+  discoverTimeoutMs: number;
 }
 
 interface PendingRequest {
@@ -89,7 +92,7 @@ interface PendingRequest {
 }
 
 class StdioChannel implements McpConnection {
-  serverName = "unknown";
+  private readonly session: McpSession;
   private readonly child: ChildProcess;
   private readonly timeoutMs: number;
   private readonly exited: Promise<void>;
@@ -101,11 +104,20 @@ class StdioChannel implements McpConnection {
   private nextId = 1;
   private closed = false;
   private closedDeliberately = false;
-  private exitReason: string | undefined;
+  private exitError: Error | undefined;
   private teardown: Promise<void> | undefined;
+  private subscriptionId: number | undefined;
 
-  constructor(spec: StdioServerSpec, timeoutMs: number, signal?: AbortSignal) {
-    this.timeoutMs = timeoutMs;
+  constructor(spec: StdioServerSpec, timeouts: StdioTimeouts, signal?: AbortSignal) {
+    this.timeoutMs = timeouts.requestTimeoutMs;
+    this.session = new McpSession(
+      {
+        request: (method, params, timeoutMs) => this.request(method, params, timeoutMs),
+        notify: async (method) => this.send({ jsonrpc: "2.0", method }),
+      },
+      () => this.announceToolsChanged(),
+      timeouts.discoverTimeoutMs,
+    );
     this.child = spawn(spec.command, [...(spec.args ?? [])], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...spec.env },
@@ -132,20 +144,25 @@ class StdioChannel implements McpConnection {
     signal?.addEventListener("abort", () => this.abortNow(), { once: true });
   }
 
-  async handshake(): Promise<void> {
-    const result = asRecord(await this.request("initialize", initializeParams()));
-    this.serverName = readServerName(result);
-    this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  get serverName(): string {
+    return this.session.serverName;
+  }
+
+  get era(): McpEra {
+    return this.session.era;
+  }
+
+  async handshake(rememberedEra?: McpEra): Promise<void> {
+    await this.session.open(rememberedEra);
+    if (this.session.listensForToolChanges) this.listenForToolChanges();
   }
 
   listTools(): Promise<McpTool[]> {
-    return collectToolPages((method, params) => this.request(method, params));
+    return this.session.listTools();
   }
 
-  async callTool(name: string, args: unknown): Promise<McpToolResult> {
-    return toolCallResult(
-      asRecord(await this.request("tools/call", { name, arguments: args ?? {} })),
-    );
+  callTool(name: string, args: unknown): Promise<McpToolResult> {
+    return this.session.callTool(name, args);
   }
 
   onClose(handler: (error?: Error) => void): void {
@@ -175,16 +192,31 @@ class StdioChannel implements McpConnection {
     void this.teardown.catch(() => undefined);
   }
 
-  private request(method: string, params: unknown): Promise<unknown> {
+  private listenForToolChanges(): void {
+    const id = this.nextId++;
+    this.subscriptionId = id;
+    this.send({
+      jsonrpc: "2.0",
+      id,
+      method: subscriptionMethod,
+      params: this.session.subscriptionParams(),
+    });
+  }
+
+  private announceToolsChanged(): void {
+    for (const handler of this.toolsChangedHandlers) handler();
+  }
+
+  private request(method: string, params: unknown, timeoutMs = this.timeoutMs): Promise<unknown> {
     if (this.closed) {
-      return Promise.reject(new McpServerExitedError(this.exitReason ?? "server is not running"));
+      return Promise.reject(this.exitError ?? new McpServerExitedError("server is not running"));
     }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new McpRequestTimeoutError(method, this.timeoutMs));
-      }, this.timeoutMs);
+        reject(new McpRequestTimeoutError(method, timeoutMs));
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.send({ jsonrpc: "2.0", id, method, params });
     });
@@ -238,9 +270,7 @@ class StdioChannel implements McpConnection {
         });
         return;
       }
-      if (message.method === toolsChangedNotification) {
-        for (const handler of this.toolsChangedHandlers) handler();
-      }
+      if (signalsToolsChanged(message, this.subscriptionId)) this.announceToolsChanged();
       return;
     }
     if (typeof message.id !== "number") return;
@@ -248,9 +278,8 @@ class StdioChannel implements McpConnection {
     if (request === undefined) return;
     this.pending.delete(message.id);
     clearTimeout(request.timer);
-    const failure = asRecord(message.error ?? undefined);
     if (message.error !== undefined) {
-      request.reject(new McpProtocolError(String(failure.message ?? "server returned an error")));
+      request.reject(new McpRpcError(message.error));
       return;
     }
     request.resolve(message.result);
@@ -259,7 +288,7 @@ class StdioChannel implements McpConnection {
   private settleClosed(error: Error): void {
     if (this.closed) return;
     this.closed = true;
-    this.exitReason = error.message;
+    this.exitError = error;
     for (const request of this.pending.values()) {
       clearTimeout(request.timer);
       request.reject(error);

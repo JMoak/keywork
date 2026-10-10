@@ -10,6 +10,7 @@
 │                                 │ ctrl+k j                              focus down │                                 │
 │                                 │ ctrl+k k                                focus up │                                 │
 │                                 │ ctrl+k l                             focus right │                                 │
+│                                 │ ctrl+k tab          focus the last pane (bounce) │                                 │
 │                                 │ ctrl+k shift+h                    move pane left │                                 │
 │                                 │ ctrl+k shift+j                    move pane down │                                 │
 │                                 │ ctrl+k shift+k                      move pane up │                                 │
@@ -20,11 +21,10 @@
 │                                 │ ctrl+k ,                 narrow this pane's dock │                                 │
 │                                 │ ctrl+k shift+.             grow the focused pane │                                 │
 │                                 │ ctrl+k shift+,           shrink the focused pane │                                 │
+│                                 │ ctrl+k v  tool rows: low · medium · high (cycle) │                                 │
 │                                 │ ctrl+k f                            file browser │                                 │
 │                                 │ ctrl+k t                            session tree │                                 │
-│                                 │ ctrl+k m                             memory pane │                                 │
-│                                 │ ctrl+k g                               diff pane │                                 │
-│                                 │        ↑↓ scroll · 13 below · esc closes         │                                 │
+│                                 │        ↑↓ scroll · 19 below · esc closes         │                                 │
 │                                 │                                                  │                                 │
 │                                 ╰──────────────────────────────────────────────────╯                                 │
 │                                      │ › ▌                                                                           │

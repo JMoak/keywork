@@ -94,6 +94,83 @@ display-only `visible-thinking` delta), `packages/engine/src/providers/messages-
   `BUN_JSC_useRegExpJIT=false` on the reviewing machine, whose Bun 1.3.9 crashes in the
   regex JIT mid-scan; the repo pins Bun 1.3.14).
 
+## Re-run 2026-10-02 (117 SW2 to SW6: the 5.5 generation, effort, tool search, progress, cache reasons)
+
+Diff scope: `packages/engine/src/providers/anthropic.ts` (an `anthropic-beta` header computed from
+the model, a 128k default `max_tokens` for the wide-output models, progress-update blocks, the
+response id and `diagnostics` read off `message_start`), `packages/engine/src/providers/messages-wire.ts`
+(`output_config.effort`, effort-only and `tool_addition` system messages in place, `thinking.display:
+"updates"` while thinking is hidden, `diagnostics.previous_message_id`), the new
+`packages/engine/src/providers/claude-models.ts` (one generation table for every feature cut),
+plus `provider.ts`, `agent.ts`, `request-marks.ts`, pricing, session, and TUI files that never
+touch the wire.
+
+- [x] **Zero OAuth code paths.** The G1 scan, re-run over `anthropic.ts`, `messages-wire.ts`, and
+  `claude-models.ts`, returns nothing.
+- [x] **Zero subscription endpoints or client-ID spoofing.** No host or path changed; the only
+  appended path is still `/messages`.
+- [x] **No headers imitating Claude Code.** Reworded per decision 117-1: the provider sends
+  `content-type`, `accept`, `anthropic-version: 2023-06-01`, `x-api-key`, registration
+  decorations, and, on models that take them, one `anthropic-beta` header naming public Messages
+  API feature betas and nothing else. No `user-agent`, no `x-app`. The header is a function of
+  the model id only (the set never changes inside a conversation, so it never costs a cache
+  miss), and the full list of betas keywork sends is:
+  - `inline-tools-2026-09-15` (tool definitions inside `tool_addition` blocks): Claude Opus 4.8
+    and later Opus, Sonnet 5.5, Fable 5.1, Mythos 5.1.
+  - `mid-conversation-output-config-2026-07-01` (per-message effort): Opus 5 and later Opus,
+    Sonnet 5.5, Fable 5.1, Mythos 5.1.
+  - `thinking-display-updates-2026-08-18` (progress updates while thinking is hidden): Opus 5.5,
+    Sonnet 5.5, Fable 5 and later, Mythos 5.1.
+  `compact-2026-09-04` is allowed by 117-1 and not sent: nothing in this diff uses it. Haiku 4.5,
+  Sonnet 4.6 and earlier, Sonnet 5, and unrecognised ids get no beta header at all. Evidence:
+  `anthropic.test.ts` "sends the public feature betas as one stable header and opens the 128k
+  ceiling" (exact header string, no `authorization`), "sends no beta header to a model that needs
+  none"; `claude-models.test.ts` "names only the public feature betas decision 117-1 allows".
+  `check:guardrails` still denies the `claude-code-<date>` and `oauth-<date>` betas; the patterns
+  are byte-identical.
+- [x] **Key handling is never logged.** No new code path reads the key; the 401 test still passes.
+- [x] **No forced `tool_choice`, no `budget_tokens` on the 5.5 generation.** keywork never sends
+  `tool_choice`; thinking on a model with adaptive thinking is `{type: "adaptive"}` only.
+  Evidence: `messages-wire.test.ts` "never sends a forced tool_choice or a thinking budget to a
+  5.5-generation id" (Opus 5.5, Sonnet 5.5, Fable 5.1, Mythos 5.1, thinking on and off, effort
+  set and changed).
+- [x] **Credential precedence, `/connect`, user docs, influencer code.** Unchanged; `NOTICE`
+  untouched. Everything was written from the public effort, thinking, mid-conversation system
+  messages, cache diagnostics, pricing, models, and deprecations pages (read 2026-10-02).
+- [x] **CI guard.** `scripts/guardrail-patterns.json` untouched; `bun run check:guardrails` green.
+- [ ] **Live smoke on a post-2026-08-31 key.** Not run (no key in the lane). The tool-search
+  turn on Opus 5.5 in [`../live-smoke/anthropic.md`](../live-smoke/anthropic.md) step 6 is what
+  proves or disproves the prefix-binding 400; the mock tests prove the wire shape only.
+
+## Re-run 2026-10-07 (117 context economy: thinking replay per generation)
+
+Diff scope: `packages/engine/src/providers/messages-wire.ts` (prior-turn owned thinking blocks
+are replayed on models that preserve them, current-turn-only elsewhere; `thinkingReplayFor`),
+`packages/engine/src/providers/claude-models.ts` (one `preserved-thinking` row in the generation
+table), `packages/engine/src/session/entries.ts` (the keep-tail projection strips thinking bound
+to the pre-compaction prefix), plus agent, session, TUI, and CLI files for mid-run compaction and
+`/forget` that never touch the wire. `anthropic.ts` is untouched.
+
+- [x] **Zero OAuth code paths.** The G1 scan, re-run over `anthropic.ts`, `messages-wire.ts`,
+  and `claude-models.ts`, returns nothing.
+- [x] **Zero subscription endpoints or client-ID spoofing.** No host, path, or header changed.
+- [x] **No headers imitating Claude Code.** The header set is byte-identical; the beta list from
+  the 2026-10-02 review is unchanged (no `thinking-binding-controls-*` beta was added: the lane
+  strips stale blocks itself instead of asking the API to drop them, and decision 117-1 does not
+  list that beta). The only request change is which assistant `thinking` blocks ride in
+  `messages`, and only blocks the same provider and model produced are ever sent (IR-13 kept).
+- [x] **Key handling is never logged.** No new code path reads the key; the 401 test still passes.
+- [x] **No forced `tool_choice`, no `budget_tokens` on the 5.5 generation.** Unchanged;
+  `messages-wire.test.ts` "never sends a forced tool_choice or a thinking budget" still passes.
+- [x] **Credential precedence, `/connect`, user docs, influencer code.** Unchanged; `NOTICE`
+  untouched. The replay rule was written from the public prompt-caching page ("thinking blocks
+  and the messages cache") and the Claude Fable 5.1 migration notes on preserved thinking and
+  keep-tail compaction (read 2026-10-07).
+- [x] **CI guard.** `scripts/guardrail-patterns.json` untouched; `check:guardrails` green.
+- [ ] **Live smoke on a post-2026-08-31 key.** Still not run. The prefix-binding check is what
+  proves the stripped keep-tail is accepted after a compaction; the mock tests prove the wire
+  shape only.
+
 ## Deviation of record
 
 The overlay named the official `@anthropic-ai/sdk`. The landed provider uses keywork's own

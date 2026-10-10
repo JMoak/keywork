@@ -95,12 +95,12 @@ export class Layout {
   }
 
   toJSON(): LayoutState {
-    return layoutStateOf(this.arrangement, this.focusedId);
+    return layoutStateOf(this.arrangement, this.focusedId, this.trail);
   }
 
   load(state: LayoutState): void {
     this.arrangement = arrangementOf(state);
-    this.trail = [];
+    this.trail = [...(state.recent ?? [])];
     this.focusOn(state.focused);
     this.zoomedId = undefined;
   }
@@ -197,6 +197,12 @@ export class Layout {
     if (!this.panes().includes(id)) return;
     if (this.zoomedId !== undefined && this.zoomedId !== id) this.zoomedId = undefined;
     this.focusOn(id);
+  }
+
+  focusPrevious(): PaneId | undefined {
+    const previous = this.mostRecentPane(this.focusedId);
+    if (previous !== undefined) this.focus(previous);
+    return previous;
   }
 
   moveFocus(direction: Direction, screen: Screen): PaneId | undefined {
@@ -381,7 +387,16 @@ export class Layout {
     this.trail = [id, ...this.trail.filter((pane) => pane !== id)];
   }
 
+  private mostRecentPane(besides?: PaneId): PaneId | undefined {
+    const open = this.panes();
+    return this.trail.find((id) => id !== besides && open.includes(id));
+  }
+
   private heirAfterClosing(side: DockSide | undefined, slot: number): PaneId | undefined {
+    return this.mostRecentPane() ?? this.neighborAfterClosing(side, slot);
+  }
+
+  private neighborAfterClosing(side: DockSide | undefined, slot: number): PaneId | undefined {
     const { docks } = this.arrangement;
     const main = mainPanes(this.arrangement);
     if (side === undefined) return main[0] ?? docks.left.panes[0] ?? docks.right.panes[0];

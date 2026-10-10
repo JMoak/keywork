@@ -7,12 +7,17 @@ Usage:
               [--preset careful|standard|open]
               [--session-dir <dir>]                         one-shot headless run
   keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
+  keywork sessions export [id] [--tree] [--out <path>]      write a session to one HTML file
   keywork connect [target|url]                              add or verify an inference provider
                                                             (setup is an alias)
   keywork init                                              set up the workspace at its anchor
   keywork workspace [list|new|use|rm] [slug]                named workspaces over this root
   keywork bot [list|new|rm] [slug] [purpose] [--global]     personas with their own memory
-  keywork link <dir>                                        widen the workspace to another folder
+  keywork memory drift [range]                              ask whether touched notes still hold
+  keywork memory forget --session <id> [--apply]            stage removal of a session's memory
+  keywork skills history <name> [--restore <version>]       a skill's actor ledger and versions
+  keywork skills pin|unpin|archive|curate [name] [--apply]  curator hygiene for agent skills
+  keywork link <dir>                                      widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust
   keywork doctor                                            show what your terminal supports
   keywork serve [--port <n>|0] [--model <model>]
@@ -53,6 +58,8 @@ export const commandNames = [
   "init",
   "workspace",
   "bot",
+  "memory",
+  "skills",
   "link",
   "trust",
   "untrust",
@@ -78,6 +85,8 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   init: { behavior: "runs", note: "confirmations are skipped, never assumed" },
   workspace: { behavior: "runs", note: "removal confirmations are skipped, never assumed" },
   bot: { behavior: "runs", note: "removal confirmations are skipped, never assumed" },
+  memory: { behavior: "runs", note: "forget is a dry run unless --apply is given" },
+  skills: { behavior: "runs", note: "archive and curate are dry runs unless --apply is given" },
   link: { behavior: "runs", note: "confirmations are skipped, never assumed" },
   trust: { behavior: "runs" },
   untrust: { behavior: "runs" },

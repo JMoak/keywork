@@ -5,7 +5,7 @@ import { ConfigError, type KeyworkConfig } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import type { ConnectionDraft, ConnectionsPort } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
-import { type CredentialMap, readCredentials } from "../auth-store.ts";
+import { type CredentialMap, readCredentials, type SecretKeeping } from "../auth-store.ts";
 import { readUserConfig, updateUserConfig } from "../user-config.ts";
 import { type ConnectionsDeps, connectionsPort } from "./connections.ts";
 import { type ObservationMap, readObservations } from "./observations.ts";
@@ -52,7 +52,7 @@ async function harness(
     changed: async () => {
       state.reloads += 1;
       state.config = await readUserConfig(dir);
-      state.credentials = await readCredentials(dir);
+      state.credentials = await readCredentials(dir, overrides.secrets?.());
       state.observations = await readObservations(dir);
     },
     ...overrides,
@@ -197,6 +197,41 @@ describe("connectionsPort verify and save", () => {
     });
     expect(await readCredentials(dir)).toEqual({ broker: { type: "api_key", key: "sk-live" } });
     expect(await readFile(join(dir, "keywork.json"), "utf8")).not.toContain("sk-live");
+  });
+
+  it("saves the typed key through the OS credential store when one is wired, leaving auth.json a name only", async () => {
+    const vaulted = new Map<string, string>();
+    const secrets: SecretKeeping = {
+      notice: () => {},
+      vault: {
+        backend: "memory",
+        store: async (name, value) => {
+          vaulted.set(name, value);
+        },
+        lookup: async (name) => vaulted.get(name),
+        forget: async (name) => {
+          vaulted.delete(name);
+        },
+      },
+    };
+    const { port, dir } = await harness({ secrets: () => secrets });
+    const remote = draft({
+      name: "broker",
+      endpoint: "https://broker.example/v1",
+      credential: "api-key",
+      apiKey: "sk-live",
+    });
+    const verification = await port.verify(remote);
+    if (!verification.ok) throw new Error("verification should pass");
+
+    await port.save(remote, verification);
+
+    expect(await readFile(join(dir, "auth.json"), "utf8")).not.toContain("sk-live");
+    expect(await readCredentials(dir, secrets)).toEqual({
+      broker: { type: "api_key", key: "sk-live" },
+    });
+    await port.remove("broker");
+    expect(vaulted.size).toBe(0);
   });
 
   it("keeps hand-written models and a disabled flag across a re-save", async () => {

@@ -315,12 +315,158 @@ describe("AnthropicProvider", () => {
   });
 });
 
+describe("AnthropicProvider on the 5.5 generation", () => {
+  function opus(fetchFn: FetchLike) {
+    return new AnthropicProvider({
+      name: "anthropic",
+      baseUrl: "https://api.example.test/v1",
+      model: "claude-opus-5-5",
+      apiKey: secretKey,
+      fetchFn,
+    });
+  }
+
+  it("sends the public feature betas as one stable header and opens the 128k ceiling", async () => {
+    const sent: RequestInit[] = [];
+    const fetchFn: FetchLike = async (_url, init) => {
+      if (init !== undefined) sent.push(init);
+      return events(messageDelta("end_turn", { output_tokens: 1 }), messageStop);
+    };
+    await collect(opus(fetchFn).stream(simpleRequest));
+    await collect(opus(fetchFn).stream({ ...simpleRequest, thinking: true, effort: "low" }));
+
+    const [plain, opted] = sent.map((init) => init.headers as Record<string, string>);
+    expect(plain?.["anthropic-beta"]).toBe(
+      "inline-tools-2026-09-15,mid-conversation-output-config-2026-07-01,thinking-display-updates-2026-08-18",
+    );
+    expect(opted?.["anthropic-beta"]).toBe(plain?.["anthropic-beta"]);
+    expect(plain?.["x-api-key"]).toBe(secretKey);
+    expect(plain?.authorization).toBeUndefined();
+    expect(JSON.parse(sent[0]?.body as string).max_tokens).toBe(128_000);
+  });
+
+  it("sends no beta header to a model that needs none", async () => {
+    let headers: Record<string, string> | undefined;
+    const fetchFn: FetchLike = async (_url, init) => {
+      headers = init?.headers as Record<string, string>;
+      return events(messageDelta("end_turn", { output_tokens: 1 }), messageStop);
+    };
+    await collect(provider(fetchFn).stream(simpleRequest));
+    expect(headers?.["anthropic-beta"]).toBeUndefined();
+  });
+
+  it("turns a non-empty update block into a progress note and keeps the block as owned state", async () => {
+    const response = events(
+      messageStart({ input_tokens: 5, output_tokens: 1 }),
+      blockStart(0, { type: "thinking", thinking: "", signature: "" }),
+      blockDelta(0, { type: "thinking_delta", thinking: "" }),
+      blockDelta(0, { type: "signature_delta", signature: "reasoning==" }),
+      blockStop(0),
+      blockStart(1, { type: "thinking", thinking: "", signature: "" }),
+      blockDelta(1, { type: "thinking_delta", thinking: "Found the stale token. " }),
+      blockDelta(1, { type: "thinking_delta", thinking: "Editing auth.py next." }),
+      blockDelta(1, { type: "signature_delta", signature: "update==" }),
+      blockStop(1),
+      blockStart(2, { type: "tool_use", id: "toolu_2", name: "edit", input: {} }),
+      blockDelta(2, { type: "input_json_delta", partial_json: "{}" }),
+      blockStop(2),
+      messageDelta("tool_use", { output_tokens: 20 }),
+      messageStop,
+    );
+    const deltas = await collect(opus(async () => response).stream(simpleRequest));
+    const kinds = deltas.map((delta) => delta.type);
+
+    expect(kinds).toEqual([
+      "redacted-thinking",
+      "progress",
+      "redacted-thinking",
+      "tool-call",
+      "done",
+    ]);
+    expect(deltas[1]).toEqual({
+      type: "progress",
+      text: "Found the stale token. Editing auth.py next.",
+    });
+    expect(kinds).not.toContain("visible-thinking");
+  });
+
+  it("still streams thinking as visible text when thinking is shown", async () => {
+    const response = events(
+      blockStart(0, { type: "thinking", thinking: "", signature: "" }),
+      blockDelta(0, { type: "thinking_delta", thinking: "Consider it." }),
+      blockStop(0),
+      messageDelta("end_turn", { output_tokens: 3 }),
+      messageStop,
+    );
+    const deltas = await collect(
+      opus(async () => response).stream({ ...simpleRequest, thinking: true }),
+    );
+    expect(deltas[0]).toEqual({ type: "visible-thinking", text: "Consider it." });
+    expect(deltas.map((delta) => delta.type)).not.toContain("progress");
+  });
+
+  it("reports the response id and a changed-prefix miss reason from message_start", async () => {
+    const response = events(
+      [
+        "message_start",
+        {
+          type: "message_start",
+          message: {
+            id: "msg_2",
+            usage: { input_tokens: 42, cache_creation_input_tokens: 41_850, output_tokens: 1 },
+            diagnostics: {
+              cache_miss_reason: { type: "tools_changed", cache_missed_input_tokens: 41_850 },
+            },
+          },
+        },
+      ],
+      messageDelta("end_turn", { output_tokens: 2 }),
+      messageStop,
+    );
+    const deltas = await collect(
+      opus(async () => response).stream({
+        ...simpleRequest,
+        cacheDiagnostics: { previousResponseId: "msg_1" },
+      }),
+    );
+    expect(deltas.at(-1)).toEqual({
+      type: "done",
+      usage: { inputTokens: 42, outputTokens: 2, cacheCreationInputTokens: 41_850 },
+      responseId: "msg_2",
+      cacheMiss: { cause: "tools changed", missedTokens: 41_850 },
+    });
+  });
+
+  it("reports no miss when the comparison found nothing or produced no comparison", async () => {
+    for (const diagnostics of [
+      null,
+      { cache_miss_reason: null },
+      { cache_miss_reason: { type: "previous_message_not_found" } },
+      { cache_miss_reason: { type: "unavailable" } },
+    ]) {
+      const response = events(
+        ["message_start", { type: "message_start", message: { id: "msg_3", diagnostics } }],
+        messageDelta("end_turn", { output_tokens: 1 }),
+        messageStop,
+      );
+      const done = (await collect(opus(async () => response).stream(simpleRequest))).at(-1);
+      expect(done).toMatchObject({ type: "done", responseId: "msg_3" });
+      expect(done).not.toHaveProperty("cacheMiss");
+    }
+  });
+});
+
 describe("anthropicHeaders", () => {
   it("pins the protocol version and adds the key only when one exists", () => {
     expect(anthropicHeaders(undefined)).toEqual({ "anthropic-version": anthropicVersion });
     expect(anthropicHeaders("k")).toEqual({
       "anthropic-version": anthropicVersion,
       "x-api-key": "k",
+    });
+    expect(anthropicHeaders("k", ["one-2026-01-01", "two-2026-02-02"])).toEqual({
+      "anthropic-version": anthropicVersion,
+      "x-api-key": "k",
+      "anthropic-beta": "one-2026-01-01,two-2026-02-02",
     });
   });
 });

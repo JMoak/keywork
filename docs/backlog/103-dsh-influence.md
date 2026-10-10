@@ -99,6 +99,30 @@ at-rest protection.
 **Accept:** key round-trips through the platform store on Linux + Windows; config
 file contains no secret material; opt-out is `.describe()`-justified.
 **Strategy:** `OWN`.
+**Landed 2026-10-02.** New `shared/src/secrets/`: one `SecretVault` (store / lookup / forget)
+over the platform CLIs with every call going through an injectable `CommandRunner`, no native
+dependency. Windows seals with DPAPI (`ProtectedData`, CurrentUser) through
+`powershell -NoProfile -EncodedCommand`, the value and the ciphertext travel as Base64 on
+stdin/stdout, and the sealed blob lives in `~/.keywork/secrets/<name>.dpapi`; Linux and the
+BSDs use `secret-tool store/lookup/clear` (value on stdin); macOS uses
+`security add/find/delete-generic-password` (service `keywork`, account = the secret name).
+`cli/src/auth-store.ts` writes `{"type":"vault","secret":"provider.<name>"}` into `auth.json`
+and keeps the whole credential (api key or sign-in tokens) in the vault; a store that refuses
+or is missing falls back to plaintext with one notice, an unreadable secret drops that
+credential with a notice. `/connect` saves and removes through it (`ConnectionsDeps.secrets`,
+wired in `inference-state.ts`), and so does the Codex token refresh. MCP `env` and `headers`
+values written `secret:<name>` are revealed per server on connect (`McpRegistryOptions.reveal`,
+`compose.ts`); a missing one shows as that server's `lastError` naming the secret. Opt-out:
+top-level `secretStore: "plaintext"`, user layer only. Tests: `secrets/vault.test.ts` (Linux,
+Windows and macOS through fake runners, plus one real DPAPI round trip that runs only on
+win32), `auth-store.test.ts`, `connections.test.ts`, `mcp/registry.test.ts`. Deviations:
+the PowerShell `CredentialManager` module path was not built (DPAPI is always present, and two
+Windows backends would hide a secret written by one from the other); old plaintext `auth.json`
+entries are read as before and not migrated; there is no `keywork secret set` command yet, so
+on Windows an MCP `secret:` value can only be filled by keywork code (Linux and macOS users
+can use `secret-tool` / `security` with service `keywork`); the Codex browser / device sign-in
+in `setup.ts` still saves plaintext on first sign-in (its refresh goes to the vault). macOS
+passes the value in argv because `security` takes it nowhere else.
 
 ### A22 (1pt): Declared model capabilities, not discovery
 dsh models are "text-only until config says otherwise"; no endpoint discovery.

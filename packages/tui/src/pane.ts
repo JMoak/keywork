@@ -74,5 +74,6 @@ export interface Pane {
   handleMouse?(local: { x: number; y: number }, event: PointerEvent): boolean;
   settled?(): Promise<void>;
   revealed?(): void;
+  cycleVerbosity?(): void;
   dispose?(): void;
 }

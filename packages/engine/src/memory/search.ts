@@ -48,6 +48,12 @@ export interface MemorySearcher {
   search(query: string, options?: SearchOptions): Promise<SearchOutcome>;
 }
 
+export interface IndexReconciliation {
+  notes: number;
+  refreshed: string[];
+  dropped: string[];
+}
+
 const defaultLimit = 8;
 const legDepth = 50;
 const rrfK = 60;
@@ -68,6 +74,21 @@ export class MemorySearch {
     return this.embeddings === undefined
       ? { kind: "lexical" }
       : { kind: "hybrid", embeddings: this.embeddings.id };
+  }
+
+  async reconcile(): Promise<IndexReconciliation> {
+    const notes = await this.store.listNotes();
+    const present = new Set(notes.map((note) => note.path));
+    const dropped = [...this.vectors.keys()].filter((path) => !present.has(path));
+    this.forgetVanishedNotes(notes);
+    const refreshed = notes
+      .filter((note) => {
+        const cached = this.vectors.get(note.path);
+        return cached !== undefined && cached.hash !== contentHash(embeddingText(note));
+      })
+      .map((note) => note.path);
+    if (this.embeddings !== undefined) await this.noteVectors(notes).catch(() => undefined);
+    return { notes: notes.length, refreshed, dropped };
   }
 
   async search(query: string, options: SearchOptions = {}): Promise<SearchOutcome> {

@@ -6,7 +6,7 @@ import {
   type ProviderStateOwner,
   type ToolCallPart,
 } from "../messages.ts";
-import type { ProviderRequest, ToolDefinition } from "../provider.ts";
+import { effortInForce, type ProviderRequest, type ToolDefinition } from "../provider.ts";
 import { imageDataUrl } from "./wire-parts.ts";
 
 // The Responses surface rejects an empty instructions field, so a neutral
@@ -18,16 +18,50 @@ export function toResponsesRequest(
   model: string,
   owner?: ProviderStateOwner,
 ): object {
+  const reasoning = reasoningOf(request);
+  const comparisonResponseId = comparisonResponseIdOf(request, model);
   return {
     model,
     stream: true,
     store: false,
     include: ["reasoning.encrypted_content"],
-    ...(request.thinking === true && { reasoning: { summary: "auto" } }),
+    ...(reasoning !== undefined && { reasoning }),
     instructions: request.systemPrompt === "" ? defaultInstructions : request.systemPrompt,
     input: request.messages.flatMap((message) => toInputItems(message, owner)),
     ...(request.tools.length > 0 && { tools: request.tools.map(toWireTool) }),
+    ...(comparisonResponseId !== undefined && {
+      prompt_cache_options: { comparison_response_id: comparisonResponseId },
+    }),
   };
+}
+
+export function reportsCacheDiagnostics(model: string): boolean {
+  const generation = /^gpt-(\d+)(?:\.(\d+))?/.exec(model.slice(model.lastIndexOf("/") + 1));
+  if (generation === null) return false;
+  const major = Number(generation[1]);
+  const minor = Number(generation[2] ?? "0");
+  return (
+    major > diagnosedSince.major ||
+    (major === diagnosedSince.major && minor >= diagnosedSince.minor)
+  );
+}
+
+const diagnosedSince = { major: 5, minor: 6 };
+
+function reasoningOf(request: ProviderRequest): object | undefined {
+  const effort = effortInForce(request);
+  if (effort === undefined && request.thinking !== true) return undefined;
+  return {
+    ...(effort !== undefined && { effort }),
+    ...(request.thinking === true && { summary: "auto" }),
+  };
+}
+
+function comparisonResponseIdOf(request: ProviderRequest, model: string): string | undefined {
+  const previous = request.cacheDiagnostics?.previousResponseId;
+  return previous === undefined || previous === null || !reportsCacheDiagnostics(model)
+    ? undefined
+    : previous;
 }
 
 function toInputItems(message: Message, owner: ProviderStateOwner | undefined): object[] {

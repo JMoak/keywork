@@ -7,10 +7,12 @@ import { notesAfter, notesBefore } from "./fixtures.ts";
 
 const askRowMarker = "[y] allow  [a] always  [n] deny";
 const calmHeader = /│ session-1 +│/;
+const shoutPrompt = "please shout the middle line of notes.txt";
 
 export const firstConversation: Scenario = {
   name: "first-conversation",
-  description: "prompt → streamed reply → write ask with diff → approve → /undo → /redo",
+  description:
+    "prompt → streamed reply → write ask with diff → approve → /undo hands the prompt back → /redo",
   files: { "notes.txt": notesBefore },
   tools: (workspaceDir) => [writeTool(toolScope(workspaceDir))],
   turns: [
@@ -33,7 +35,7 @@ export const firstConversation: Scenario = {
     await stage.settle();
     await stage.capture("boot");
 
-    await stage.type("please shout the middle line of notes.txt");
+    await stage.type(shoutPrompt);
     await stage.press("enter");
     const ask = await stage.until(askRowMarker);
     assert.ok(ask.includes("Shouting the middle line"), "streamed reply precedes the ask");
@@ -51,13 +53,15 @@ export const firstConversation: Scenario = {
 
     await stage.type("/undo");
     await stage.press("enter");
-    await stage.until("files put back");
+    const undone = await stage.until("undone · files put back");
     assert.equal(workspaceRead(stage, "notes.txt"), notesBefore);
+    assert.ok(undone.includes(`› ${shoutPrompt}`), "the prompt is back in the composer");
     await stage.capture("undo-notice");
 
+    await stage.press(...Array.from(shoutPrompt, () => "backspace"));
     await stage.type("/redo");
     await stage.press("enter");
-    await stage.until("files redone");
+    await stage.until("redone · the turn and its files are back");
     assert.equal(workspaceRead(stage, "notes.txt"), notesAfter);
     await stage.capture("redo-notice");
 

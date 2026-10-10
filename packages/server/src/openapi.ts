@@ -1,23 +1,27 @@
 import { engineEventTypes } from "./events.ts";
+import { askFamily } from "./routes/asks.ts";
+import { documentFamily } from "./routes/document.ts";
+import { eventFamily } from "./routes/events.ts";
+import type {
+  HttpMethod,
+  JsonSchema,
+  OperationIdOf,
+  RouteSpec,
+  WorkspaceInfo,
+} from "./routes/family.ts";
+import { sessionFamily } from "./routes/sessions.ts";
 
-export type HttpMethod = "GET" | "POST";
+export type { HttpMethod, JsonSchema, RouteSpec, WorkspaceInfo } from "./routes/family.ts";
 
-export interface RouteSpec {
-  method: HttpMethod;
-  path: string;
-  operationId: string;
-  summary: string;
-  authenticated: boolean;
-  requestBody?: JsonSchema;
-  responses: Readonly<Record<string, string>>;
-}
+export const routeFamilies = [documentFamily, eventFamily, sessionFamily, askFamily] as const;
 
-export type JsonSchema = Record<string, unknown>;
+export type Route = (typeof routeFamilies)[number]["routes"][number];
 
-export interface WorkspaceInfo {
-  anchor: string;
-  identity: string;
-}
+export type OperationId = OperationIdOf<typeof routeFamilies>;
+
+export const routes: readonly Route[] = routeFamilies.flatMap(
+  (family): readonly Route[] => family.routes,
+);
 
 export interface OpenApiDocument {
   openapi: "3.1.0";
@@ -42,117 +46,6 @@ export interface OpenApiOperation {
   >;
   security?: Array<Record<string, string[]>>;
 }
-
-const promptBody: JsonSchema = {
-  type: "object",
-  required: ["text"],
-  properties: { text: { type: "string", minLength: 1 } },
-  additionalProperties: false,
-};
-
-const askAnswerBody: JsonSchema = {
-  type: "object",
-  required: ["verdict"],
-  properties: { verdict: { type: "string", enum: ["granted", "denied"] } },
-  additionalProperties: false,
-};
-
-export const routes = [
-  {
-    method: "GET",
-    path: "/doc",
-    operationId: "getDocument",
-    summary: "This OpenAPI 3.1 document.",
-    authenticated: false,
-    responses: { "200": "The document." },
-  },
-  {
-    method: "GET",
-    path: "/events",
-    operationId: "streamEvents",
-    summary:
-      "Server-sent events: every bus envelope as `event: <type>` plus `data: <envelope json>`. Send `Last-Event-ID` to resume from a retained id (0 replays everything still retained); without it the stream starts live.",
-    authenticated: true,
-    responses: { "200": "An open text/event-stream." },
-  },
-  {
-    method: "GET",
-    path: "/sessions",
-    operationId: "listSessions",
-    summary: "Session summaries, newest first.",
-    authenticated: true,
-    responses: { "200": "The summaries." },
-  },
-  {
-    method: "POST",
-    path: "/sessions",
-    operationId: "createSession",
-    summary: "Create an empty session in this workspace.",
-    authenticated: true,
-    responses: { "201": "The new session's summary." },
-  },
-  {
-    method: "GET",
-    path: "/sessions/{id}",
-    operationId: "readSession",
-    summary:
-      "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`.",
-    authenticated: true,
-    responses: { "200": "The session.", "404": "No session has that id." },
-  },
-  {
-    method: "POST",
-    path: "/sessions/{id}/prompt",
-    operationId: "promptSession",
-    summary:
-      "Append a user prompt and run a turn. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events.",
-    authenticated: true,
-    requestBody: promptBody,
-    responses: {
-      "202": "The prompt was accepted; watch /events for the turn.",
-      "400": "The body is not `{ text }`.",
-      "404": "No session has that id.",
-    },
-  },
-  {
-    method: "POST",
-    path: "/sessions/{id}/abort",
-    operationId: "abortSession",
-    summary: "Interrupt the session's running turn, if any.",
-    authenticated: true,
-    responses: {
-      "200": "Whether a turn was interrupted.",
-      "404": "No session has that id.",
-    },
-  },
-  {
-    method: "GET",
-    path: "/asks",
-    operationId: "listAsks",
-    summary: "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first.",
-    authenticated: true,
-    responses: { "200": "The pending asks." },
-  },
-  {
-    method: "POST",
-    path: "/asks/{callId}",
-    operationId: "answerAsk",
-    summary:
-      'Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: "user"`.',
-    authenticated: true,
-    requestBody: askAnswerBody,
-    responses: {
-      "200": "The ask was settled.",
-      "400": 'The body is not `{ verdict: "granted" | "denied" }`.',
-      "404": "No ask with that callId is pending.",
-      "409": "That ask was already answered or timed out.",
-    },
-  },
-] as const satisfies readonly RouteSpec[];
-
-export type Route = (typeof routes)[number];
-
-export type OperationId = Route["operationId"];
 
 export function openApiDocument(
   serverUrl: string,

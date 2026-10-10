@@ -400,7 +400,10 @@ persists; human-authored fixture skill provably untouchable; telemetry increment
 **Landed (2026-09-06):** `packages/engine/src/skills/` over D7's discovery walk, `OWN`
 code from the Hermes contracts (attribution recorded in `NOTICE`). Provenance is a
 frontmatter key: `authored_by: keywork` marks a skill as agent-created, and
-`SkillDefinition.authoredBy` carries it. Frontmatter won over a sidecar because the
+`SkillDefinition.authoredBy` carries it (since 2026-10-02, 117 SW16, the key lives at
+`metadata.authored_by` per the Agent Skills spec; the top-level spelling is still read for one
+release and migrates on the next write; names follow `^[a-z0-9]+(-[a-z0-9]+)*$` and
+`.agents/skills` is discovered beside `.keywork/skills`). Frontmatter won over a sidecar because the
 marker then travels with the file wherever it is copied, shows in any editor, and gives a
 person a one-line opt-in for a skill they want the agent to maintain. Protection is by
 construction: `authorship.ts` owns the only two writers, and both take an
@@ -747,6 +750,55 @@ derived-frontmatter case); dual-rewrite fixture yields a `conflict-of` sibling a
 one inbox card; merge-driver fixture resolves at `git merge`; fresh foreign lease
 defers the sweep; conflict-pattern filenames quarantine and surface as lint.
 **Strategy:** `OWN` (lease/queue via `LIFT:pi` `withFileMutationQueue`, per P6).
+**First rung landed (2026-10-07):** the single-vault half, "files are truth, index is
+cache", is now explicit rather than incidental. `MemorySearch.reconcile()`
+(`packages/engine/src/memory/search.ts`) re-reads the vault, re-embeds notes whose text
+changed outside keywork, drops vectors for notes that vanished, and reports
+`{notes, refreshed, dropped}`; lexical and graph legs already read files on every
+search. Evidence: `search-reconcile.test.ts` (edit outside keywork is picked up; a deleted
+note leaves no ghost; lexical-only is trivially reconciled). The multi-host half (per-host
+layout, merge driver, lease) stays open.
+
+### Memory lane, 2026-10-07 (117 scope-first "Memory" bullet)
+
+All `OWN`; the Hermes items are designed from the curator doc, no code copied, so
+`NOTICE` is unchanged.
+
+- **Claim-specific drift check** (3pt): `packages/engine/src/memory/drift.ts`.
+  `touchedNotes` matches notes to a diff by entity identity, `[[entities/<path>]]`
+  links, cited paths or filenames, and symbols declared on changed lines or hunk
+  headers; `checkDrift` asks the `DriftJudgmentPort` one bounded question per touched
+  note (`driftJudgment(provider)` is the provider seam, JSON verdict, `unsure` on any
+  failure), stamps the verdict as a `drift` frontmatter map plus a `curation.md` line
+  with the evidence, never edits the body, and stages `drift-review` for `stale`.
+  CLI: `keywork memory drift [range]` (working tree against `HEAD` by default, any git
+  range otherwise). Tests: `drift.test.ts` (touched note asked, untouched not, body
+  byte-identical after the stamp, audit line, stale → one proposal, stamp reverts
+  cleanly, `MockProvider` parsing and failure paths), `cli/src/memory-command.test.ts`.
+- **`memory forget` by session origin** (3pt): provenance gained a session axis
+  (`origin_session` / `revised_by` on notes, `[prov: agent, session: <id>]` in daily
+  markers; `NoteInput.session`, `appendDaily(text, prov, session)`,
+  `proposeNoteFile(..., session)`, `MemoryFlushOptions.session`).
+  `packages/engine/src/memory/forget.ts` plans and stages one `forget-proposal`;
+  approval lands the removals through the ledger (`store.ts` `forgetDeltas`), so
+  `revert` restores. Mixed provenance is refused with a reason. CLI: `keywork memory
+  forget --session <id>` dry run, `--apply` stages. Tests: `forget.test.ts`,
+  `memory-command.test.ts`. Still to wire outside this lane: `compose.ts` passes
+  `session: sessionId` into `MemoryFlush`, and `tools/protected-writes.ts` passes the
+  session into `proposeNoteFile`; until then only flushes built with the option carry it.
+- **Curator hygiene for skills** (2pt): `packages/engine/src/skills/curator.ts`
+  (`SkillArchive`, actor ledger, pin, `archiveCandidates`) and `library.ts`
+  (`archive` / `restore` / `pin` / `unpin` / `history` / `curate`, versions snapshotted
+  before every revision). Gardener skips pinned skills. Blast radius unchanged.
+  Tests: `skills/curator.test.ts`.
+- **Skill history review** (2pt): `keywork skills history <name> [--restore <stamp>]`,
+  plus `pin`, `unpin`, `archive`, `curate` (`packages/cli/src/skills-command.ts`).
+  Tests: `cli/src/skills-command.test.ts`.
+- **J4 memory-off control** (2pt): the probe corpus had no code, so
+  `packages/engine/src/memory/recall-probe.ts` lands the control seam
+  (`memoryOffControl`, `compareAgainstMemoryOff` → lift) and a four-note corpus stub
+  with three single-hop cases and one multi-hop case recorded as the graph-leg target.
+  Tests: `recall-probe.test.ts`.
 
 ### A18 (2pt): Bounded transcript entries & delta coalescing (engine stream)
 Transcript entries hold head + tail up to a budget; overflow spills to file-backed

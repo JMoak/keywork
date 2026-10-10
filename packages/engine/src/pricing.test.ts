@@ -13,6 +13,7 @@ import {
   knownCostNanos,
   mergeCostRollups,
   ratesFor,
+  retirementOf,
   sessionCost,
   withTurnCost,
 } from "./pricing.ts";
@@ -320,3 +321,37 @@ function messageEntry(id: string, usage?: Usage): MessageEntry {
 function modelChangeEntry(id: string, modelId: string): ModelChangeEntry {
   return { id, parentId: null, timestamp: "", type: "model_change", provider: "test", modelId };
 }
+
+describe("the 5.5 generation and GPT-6 rows", () => {
+  it("prices each new id at its listed rates, cache reads included", () => {
+    const listed = (input: number, output: number, cacheRead: number, cacheWrite: number) => ({
+      inputNanosPerToken: input,
+      outputNanosPerToken: output,
+      cacheReadNanosPerToken: cacheRead,
+      cacheWriteNanosPerToken: cacheWrite,
+    });
+    expect(ratesFor("claude-opus-5-5")).toEqual(listed(4000, 20_000, 200, 5000));
+    expect(ratesFor("claude-sonnet-5-5")).toEqual(listed(2000, 10_000, 200, 2500));
+    expect(ratesFor("claude-mythos-5-1")).toEqual(listed(10_000, 50_000, 250, 12_500));
+    expect(ratesFor("gpt-6-sol")).toEqual(listed(2000, 10_000, 200, 2500));
+    expect(ratesFor("gpt-6-luna")).toEqual(listed(100, 500, 10, 125));
+    expect(ratesFor("gpt-6.1-sol")).toEqual(listed(2000, 10_000, 100, 2500));
+    expect(ratesFor("us.anthropic.claude-opus-5-5")).toEqual(ratesFor("claude-opus-5-5"));
+  });
+
+  it("gets the cost line right for an Opus 5.5 turn", () => {
+    const turn = tokens(10_000, 2_000, {
+      cacheReadInputTokens: 100_000,
+      cacheCreationInputTokens: 4_000,
+    });
+    expect(costNanosOf(turn, "claude-opus-5-5")).toBe(
+      10_000 * 4000 + 2_000 * 20_000 + 100_000 * 200 + 4_000 * 5000,
+    );
+    expect(formatCostNanos(costNanosOf(turn, "claude-opus-5-5") ?? 0)).toBe("$0.12");
+  });
+
+  it("records Sonnet 4.5's retirement and nothing for live models", () => {
+    expect(retirementOf("claude-sonnet-4-5-20250929")).toBe("2026-11-30");
+    expect(retirementOf("claude-sonnet-5-5")).toBeUndefined();
+  });
+});

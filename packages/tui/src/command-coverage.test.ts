@@ -145,3 +145,15 @@ describe("pane keymap coverage", () => {
     }
   });
 });
+
+describe("/forget", () => {
+  it("is registered and reaches the focused conversation", () => {
+    const probe = fullyEquippedProbe();
+    expect(registeredNames(probe).has("forget")).toBe(true);
+    expect(probe.command("forget")).toBe(true);
+    expect(probe.model()?.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "can't forget · no session store",
+    });
+  });
+});

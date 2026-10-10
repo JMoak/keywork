@@ -48,6 +48,7 @@ export interface TerminalModelOptions {
   mirror?: MirrorSource;
   target?: MirrorTarget;
   scrollbackLimit?: number;
+  banner?: string;
 }
 
 export const scrollbackLineLimit = 2000;
@@ -77,6 +78,12 @@ export class TerminalModel {
     this.mirror = options.mirror;
     this.target = options.target ?? {};
     this.scrollback = new TerminalScrollback(options.scrollbackLimit ?? scrollbackLineLimit);
+    if (options.banner !== undefined)
+      this.scrollback.push(
+        `${options.banner}
+`,
+        "marker",
+      );
     if (this.mode === "shell") this.startShell();
   }
 

@@ -1,6 +1,14 @@
-import type { SendBehavior } from "@keywork/engine";
+import type { ImagePart, SendBehavior } from "@keywork/engine";
+import { ImageVault, type PastedImage } from "./image-paste.ts";
 import { InputBuffer } from "./input-buffer.ts";
 import type { Chord } from "./keys.ts";
+import {
+  insertedMention,
+  type MentionSource,
+  type MentionToken,
+  mentionAt,
+  rankMentions,
+} from "./mention-completer.ts";
 import { PasteVault } from "./paste-placeholder.ts";
 import { isPrintable } from "./picker-keys.ts";
 
@@ -15,23 +23,35 @@ export interface CommandsPort {
   run(name: string): boolean;
 }
 
+export type SendMode = SendBehavior | "now";
+
+export interface Submission {
+  submit: string;
+  behavior: SendMode;
+  images: readonly ImagePart[];
+}
+
 export type EditorOutcome =
   | "handled"
   | "pass"
-  | { submit: string; behavior: SendBehavior }
+  | Submission
   | { command: string; chosen: string | undefined };
 
 export class PromptEditor {
   readonly buffer = new InputBuffer();
   selectedSuggestion = 0;
   private readonly pastes = new PasteVault();
+  private readonly images = new ImageVault();
   private readonly history: string[] = [];
   private historyIndex: number | undefined;
+  private clearedDraft: ClearedDraft | undefined;
+  private dismissedMention: number | undefined;
 
   constructor(
     private readonly notify: () => void,
     private readonly builtIn: readonly CommandSuggestion[],
     private readonly commands?: CommandsPort,
+    private readonly mentions?: MentionSource,
   ) {}
 
   get value(): string {
@@ -47,8 +67,40 @@ export class PromptEditor {
   }
 
   clear(): void {
+    if (this.onClearedDraft()) this.clearedDraft = undefined;
     this.buffer.clear();
     this.pastes.clear();
+    this.images.clear();
+    this.historyIndex = undefined;
+    this.selectedSuggestion = 0;
+    this.notify();
+  }
+
+  clearKeepingDraft(): EditorOutcome {
+    if (this.buffer.isEmpty()) return "pass";
+    this.clearedDraft = this.draftSnapshot();
+    this.historyIndex = undefined;
+    this.clear();
+    return "handled";
+  }
+
+  holdAside(prompts: readonly string[]): void {
+    const newest = prompts.at(-1);
+    if (newest === undefined) return;
+    for (const prompt of prompts.slice(0, -1)) this.remember(prompt);
+    this.clearedDraft = { text: newest, pastes: new Map(), images: new Map() };
+    this.historyIndex = undefined;
+    this.notify();
+  }
+
+  draftForEditing(): string {
+    return this.pastes.expandAll(this.value);
+  }
+
+  replaceDraft(text: string): void {
+    this.buffer.load(text);
+    this.pastes.clear();
+    this.clearedDraft = undefined;
     this.historyIndex = undefined;
     this.selectedSuggestion = 0;
     this.notify();
@@ -57,6 +109,16 @@ export class PromptEditor {
   paste(text: string): void {
     const normalized = text.replace(/\r\n?/g, "\n");
     this.edit(() => this.buffer.insert(this.pastes.collapse(normalized)));
+  }
+
+  attachImage(image: PastedImage): void {
+    const chip = this.images.attach(image);
+    const padded = this.value === "" || this.value.endsWith(" ") ? chip : ` ${chip}`;
+    this.edit(() => this.buffer.insert(`${padded} `));
+  }
+
+  attachedImages(): readonly ImagePart[] {
+    return this.images.imagesIn(this.value);
   }
 
   expandPlaceholderAtCursor(): boolean {
@@ -77,9 +139,19 @@ export class PromptEditor {
     return this.value.startsWith("/") ? this.value.slice(1) : undefined;
   }
 
+  mentionQuery(): MentionToken | undefined {
+    if (this.mentions === undefined || this.slashQuery() !== undefined) return undefined;
+    const token = mentionAt(this.value, this.buffer.cursorOffset);
+    return token === undefined || token.start === this.dismissedMention ? undefined : token;
+  }
+
+  completing(): boolean {
+    return this.slashQuery() !== undefined || this.mentionSuggestions().length > 0;
+  }
+
   suggestions(): readonly CommandSuggestion[] {
     const query = this.slashQuery();
-    if (query === undefined) return [];
+    if (query === undefined) return this.mentionSuggestions();
     const needle = query.trim().toLowerCase();
     const local = this.builtIn.filter(({ name }) => name.startsWith(needle));
     const port = this.commands?.search(query) ?? [];
@@ -96,23 +168,28 @@ export class PromptEditor {
   }
 
   acceptSuggestion(at: number): EditorOutcome {
-    if (this.slashQuery() === undefined) return "pass";
     this.selectedSuggestion = at;
-    return this.chooseSelected();
+    if (this.slashQuery() !== undefined) return this.chooseSelected();
+    const mention = this.mentionQuery();
+    return mention === undefined ? "pass" : this.insertSelectedMention(mention);
   }
 
   handleKey(chord: Chord, sequence: string | undefined): EditorOutcome {
+    if (isClearChord(chord)) return this.clearKeepingDraft();
     if (this.slashQuery() !== undefined) {
       const slashed = this.handleSlashKey(chord);
       if (slashed !== "pass") return slashed;
+    }
+    const mention = this.mentionQuery();
+    if (mention !== undefined) {
+      const completed = this.handleMentionKey(chord, mention);
+      if (completed !== "pass") return completed;
     }
     switch (chord.name) {
       case "return":
       case "enter": {
         if (chord.shift) return this.edit(() => this.buffer.newline());
-        const text = this.pastes.expandAll(this.value).trim();
-        if (text === "") return "handled";
-        return { submit: text, behavior: chord.meta ? "steer" : "queue" };
+        return this.submission(sendModeOf(chord));
       }
       case "backspace":
         return this.edit(() => this.buffer.backspace());
@@ -132,6 +209,22 @@ export class PromptEditor {
         if (!isPrintable(chord, sequence)) return "pass";
         return this.edit(() => this.buffer.insert(sequence));
     }
+  }
+
+  private submission(behavior: SendMode): EditorOutcome {
+    const expanded = this.pastes.expandAll(this.value);
+    const images = this.images.imagesIn(expanded);
+    const text = this.images.strip(expanded).trim();
+    if (text === "") return "handled";
+    return { submit: text, behavior, images };
+  }
+
+  private draftSnapshot(): ClearedDraft {
+    return {
+      text: this.value,
+      pastes: this.pastes.snapshot(),
+      images: this.images.snapshot(),
+    };
   }
 
   private handleSlashKey(chord: Chord): EditorOutcome {
@@ -163,6 +256,57 @@ export class PromptEditor {
     }
   }
 
+  private handleMentionKey(chord: Chord, mention: MentionToken): EditorOutcome {
+    if (chord.ctrl || chord.meta || chord.shift) return "pass";
+    switch (chord.name) {
+      case "escape":
+        this.dismissedMention = mention.start;
+        this.selectedSuggestion = 0;
+        this.notify();
+        return "handled";
+      case "up":
+      case "down":
+        return this.cycleMention(chord.name === "down" ? 1 : -1);
+      case "tab":
+        return this.insertSelectedMention(mention);
+      case "return":
+      case "enter":
+        return this.mentionComplete(mention) ? "pass" : this.insertSelectedMention(mention);
+      default:
+        return "pass";
+    }
+  }
+
+  private cycleMention(step: 1 | -1): EditorOutcome {
+    const count = this.mentionSuggestions().length;
+    if (count === 0) return "pass";
+    this.selectedSuggestion = (this.selectedSuggestion + step + count) % count;
+    this.notify();
+    return "handled";
+  }
+
+  private mentionComplete(mention: MentionToken): boolean {
+    return this.mentionSuggestions()[this.selectedSuggestion]?.name === mention.query;
+  }
+
+  private insertSelectedMention(mention: MentionToken): EditorOutcome {
+    const chosen = this.mentionSuggestions()[this.selectedSuggestion];
+    if (chosen === undefined) return "pass";
+    return this.edit(() =>
+      this.buffer.replaceRange(mention.start, mention.end, insertedMention(chosen.name)),
+    );
+  }
+
+  private mentionSuggestions(): readonly CommandSuggestion[] {
+    const mention = this.mentionQuery();
+    const files = this.mentions;
+    if (mention === undefined || files === undefined) return [];
+    return rankMentions(mention.query, files(), suggestionLimit).map((path) => ({
+      name: path,
+      description: "",
+    }));
+  }
+
   private chooseSelected(): EditorOutcome {
     const command = this.value.slice(1).trim();
     const chosen = this.suggestions()[this.selectedSuggestion]?.name;
@@ -184,17 +328,18 @@ export class PromptEditor {
   }
 
   private browseHistory(direction: -1 | 1): EditorOutcome {
+    const newest = this.newestRecallSlot();
     if (direction === -1) {
       if (this.historyIndex === undefined) {
-        if (!this.buffer.isEmpty() || this.history.length === 0) return "pass";
-        this.historyIndex = this.history.length - 1;
+        if (!this.buffer.isEmpty() || newest < 0) return "pass";
+        this.historyIndex = newest;
       } else if (this.historyIndex > 0) {
         this.historyIndex -= 1;
       }
       return this.recallHistory();
     }
     if (this.historyIndex === undefined) return "pass";
-    if (this.historyIndex < this.history.length - 1) {
+    if (this.historyIndex < newest) {
       this.historyIndex += 1;
       return this.recallHistory();
     }
@@ -204,14 +349,37 @@ export class PromptEditor {
     return "handled";
   }
 
+  private newestRecallSlot(): number {
+    return this.clearedDraft === undefined ? this.history.length - 1 : this.history.length;
+  }
+
+  private onClearedDraft(): boolean {
+    return this.recalledDraft() !== undefined;
+  }
+
+  private recalledDraft(): ClearedDraft | undefined {
+    return this.historyIndex === this.history.length ? this.clearedDraft : undefined;
+  }
+
   private recallHistory(): EditorOutcome {
-    this.buffer.load(this.history[this.historyIndex ?? -1] ?? "");
+    const draft = this.recalledDraft();
+    if (draft !== undefined) {
+      this.buffer.load(draft.text);
+      this.pastes.restore(draft.pastes);
+      this.images.restore(draft.images);
+    } else {
+      this.buffer.load(this.history[this.historyIndex ?? -1] ?? "");
+    }
     this.notify();
     return "handled";
   }
 
   private edit(change: () => void): EditorOutcome {
     change();
+    if (this.onClearedDraft()) this.clearedDraft = undefined;
+    if (mentionAt(this.value, this.buffer.cursorOffset)?.start !== this.dismissedMention) {
+      this.dismissedMention = undefined;
+    }
     this.historyIndex = undefined;
     this.selectedSuggestion = 0;
     this.notify();
@@ -223,6 +391,21 @@ export class PromptEditor {
     this.notify();
     return "handled";
   }
+}
+
+interface ClearedDraft {
+  readonly text: string;
+  readonly pastes: ReadonlyMap<number, string>;
+  readonly images: ReadonlyMap<number, PastedImage>;
+}
+
+function isClearChord(chord: Chord): boolean {
+  return chord.ctrl && !chord.meta && !chord.shift && chord.name === "c";
+}
+
+function sendModeOf(chord: Chord): SendMode {
+  if (chord.ctrl) return "now";
+  return chord.meta ? "steer" : "queue";
 }
 
 const suggestionLimit = 5;

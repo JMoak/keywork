@@ -169,3 +169,16 @@ describe("PaneSession bot binding", () => {
     expect(created[1]?.models).toEqual(["acme/large"]);
   });
 });
+
+describe("SessionPanes.working", () => {
+  it("is true only while some pane's turn runs", async () => {
+    const { panes, created, pane } = world();
+    await waitFor(() => expect(created).toHaveLength(1));
+    expect(panes.working()).toBe(false);
+
+    pane("session-1").model.submitText("go");
+
+    expect(panes.working()).toBe(true);
+    await waitFor(() => expect(panes.working()).toBe(false));
+  });
+});

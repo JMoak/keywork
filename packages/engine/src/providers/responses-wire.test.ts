@@ -153,3 +153,25 @@ describe("toResponsesRequest", () => {
     expect(wire().tools).toBeUndefined();
   });
 });
+
+describe("toResponsesRequest on effort and cache diagnostics", () => {
+  it("maps the effort in force to reasoning.effort beside the summary switch", () => {
+    expect(wire({ effort: "high" })).toMatchObject({ reasoning: { effort: "high" } });
+    expect(
+      wire({ effort: "high", effortChanges: [{ before: 0, level: "low" }], thinking: true }),
+    ).toMatchObject({ reasoning: { effort: "low", summary: "auto" } });
+  });
+
+  it("asks for a cache comparison only on a diagnosed generation with a previous response", () => {
+    const thread = { cacheDiagnostics: { previousResponseId: "resp_1" } };
+    const diagnosed = toResponsesRequest(request(thread), "gpt-6-sol") as Record<string, unknown>;
+    expect(diagnosed.prompt_cache_options).toEqual({ comparison_response_id: "resp_1" });
+    const older = toResponsesRequest(request(thread), "gpt-5-mini") as Record<string, unknown>;
+    expect("prompt_cache_options" in older).toBe(false);
+    const opening = toResponsesRequest(
+      request({ cacheDiagnostics: { previousResponseId: null } }),
+      "gpt-6.1-sol",
+    ) as Record<string, unknown>;
+    expect("prompt_cache_options" in opening).toBe(false);
+  });
+});

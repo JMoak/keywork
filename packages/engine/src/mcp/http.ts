@@ -1,20 +1,14 @@
+import type { McpConnection, McpTool, McpToolResult } from "./client.ts";
+import { type McpEra, McpSession, signalsToolsChanged, subscriptionMethod } from "./era.ts";
 import {
   McpAbortedError,
-  type McpConnection,
-  McpRequestTimeoutError,
-  McpServerExitedError,
-  type McpTool,
-  type McpToolResult,
-} from "./client.ts";
-import {
-  asRecord,
-  collectToolPages,
-  initializeParams,
   McpProtocolError,
-  mcpProtocolVersion,
-  readServerName,
-  toolCallResult,
-} from "./wire.ts";
+  McpRequestTimeoutError,
+  McpRpcError,
+  McpServerExitedError,
+} from "./errors.ts";
+import { hasValidHeaderAnnotations, modernRequestHeaders } from "./http-headers.ts";
+import { asRecord } from "./wire.ts";
 
 export interface HttpServerSpec {
   url: string;
@@ -25,6 +19,7 @@ export interface HttpConnectOptions {
   requestTimeoutMs?: number;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  rememberedEra?: McpEra;
 }
 
 export async function connectHttpServer(
@@ -39,7 +34,7 @@ export async function connectHttpServer(
     options.signal,
   );
   try {
-    await channel.handshake();
+    await channel.handshake(options.rememberedEra);
   } catch (cause) {
     await channel.close().catch(() => undefined);
     throw cause;
@@ -47,18 +42,28 @@ export async function connectHttpServer(
   return channel;
 }
 
-const toolsChangedNotification = "notifications/tools/list_changed";
 const maxBodyChars = 16 * 1024 * 1024;
 
+interface RpcMessage {
+  jsonrpc: "2.0";
+  id?: number;
+  method: string;
+  params?: Record<string, unknown>;
+}
+
+type OpenStream = (signal: AbortSignal) => Promise<Response>;
+
 class HttpChannel implements McpConnection {
-  serverName = "unknown";
+  private readonly session: McpSession;
   private readonly spec: HttpServerSpec;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly closeHandlers: Array<(error?: Error) => void> = [];
   private readonly toolsChangedHandlers: Array<() => void> = [];
   private readonly inflight = new Set<AbortController>();
+  private toolSchemas = new Map<string, Record<string, unknown>>();
   private sessionId: string | undefined;
+  private subscriptionId: number | undefined;
   private nextId = 1;
   private closed = false;
   private closedDeliberately = false;
@@ -73,24 +78,42 @@ class HttpChannel implements McpConnection {
     this.spec = spec;
     this.timeoutMs = timeoutMs;
     this.fetchImpl = fetchImpl;
+    this.session = new McpSession(
+      {
+        request: (method, params) => this.request(method, params),
+        notify: (method) => this.notify(method),
+      },
+      () => this.announceToolsChanged(),
+    );
     signal?.addEventListener("abort", () => this.abortNow(), { once: true });
   }
 
-  async handshake(): Promise<void> {
-    const result = asRecord(await this.request("initialize", initializeParams()));
-    this.serverName = readServerName(result);
-    await this.notify("notifications/initialized");
-    this.openEventStream();
+  get serverName(): string {
+    return this.session.serverName;
   }
 
-  listTools(): Promise<McpTool[]> {
-    return collectToolPages((method, params) => this.request(method, params));
+  get era(): McpEra {
+    return this.session.era;
   }
 
-  async callTool(name: string, args: unknown): Promise<McpToolResult> {
-    return toolCallResult(
-      asRecord(await this.request("tools/call", { name, arguments: args ?? {} })),
-    );
+  async handshake(rememberedEra?: McpEra): Promise<void> {
+    await this.session.open(rememberedEra);
+    if (this.session.era === "legacy") this.follow((signal) => this.openLegacyEventStream(signal));
+    else if (this.session.listensForToolChanges) this.follow((signal) => this.subscribe(signal));
+  }
+
+  async listTools(): Promise<McpTool[]> {
+    const listed = await this.session.listTools();
+    const usable =
+      this.session.era === "modern"
+        ? listed.filter((tool) => hasValidHeaderAnnotations(tool.inputSchema))
+        : listed;
+    this.toolSchemas = new Map(usable.map((tool) => [tool.name, tool.inputSchema]));
+    return usable;
+  }
+
+  callTool(name: string, args: unknown): Promise<McpToolResult> {
+    return this.session.callTool(name, args);
   }
 
   onClose(handler: (error?: Error) => void): void {
@@ -108,17 +131,14 @@ class HttpChannel implements McpConnection {
     if (session !== undefined) await this.endSession(session);
   }
 
-  private async request(method: string, params: unknown): Promise<unknown> {
+  private async request(method: string, params: Record<string, unknown>): Promise<unknown> {
     if (this.closed) throw this.exitError ?? new McpServerExitedError("connection is closed");
     const id = this.nextId++;
     const message = await this.withTimeout(method, async (signal) => {
       const response = await this.post({ jsonrpc: "2.0", id, method, params }, signal);
       return this.readRpcResponse(response, id, method);
     });
-    if (message.error !== undefined) {
-      const failure = asRecord(message.error);
-      throw new McpProtocolError(String(failure.message ?? "server returned an error"));
-    }
+    if (message.error !== undefined) throw new McpRpcError(message.error);
     return message.result;
   }
 
@@ -132,19 +152,27 @@ class HttpChannel implements McpConnection {
     });
   }
 
-  private async post(body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
+  private async post(message: RpcMessage, signal: AbortSignal): Promise<Response> {
     const response = await this.fetchImpl(this.spec.url, {
       method: "POST",
       headers: this.headers({
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
+        ...this.eraHeaders(message),
       }),
-      body: JSON.stringify(body),
+      body: JSON.stringify(message),
       signal,
     });
     const session = response.headers.get("mcp-session-id");
-    if (session !== null) this.sessionId = session;
+    if (session !== null && this.session.era === "legacy") this.sessionId = session;
     return response;
+  }
+
+  private eraHeaders(message: RpcMessage): Record<string, string> {
+    if (this.session.era === "legacy") return {};
+    return modernRequestHeaders(message.method, message.params ?? {}, (tool) =>
+      this.toolSchemas.get(tool),
+    );
   }
 
   private async readRpcResponse(
@@ -152,19 +180,9 @@ class HttpChannel implements McpConnection {
     id: number,
     method: string,
   ): Promise<Record<string, unknown>> {
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new McpProtocolError(`server answered ${response.status} to ${method}`);
-    }
-    const contentType = response.headers.get("content-type") ?? "";
-    if (contentType.includes("text/event-stream")) {
-      return this.responseFromStream(response, id, method);
-    }
-    const text = await response.text();
-    if (text.length > maxBodyChars) {
-      throw new McpProtocolError(`server answered ${method} with over ${maxBodyChars} characters`);
-    }
-    return asRecord(parseJson(text, method));
+    if (!response.ok) throw await refusal(response, method);
+    if (isEventStream(response)) return this.responseFromStream(response, id, method);
+    return asRecord(parseJson(await boundedText(response, method), method));
   }
 
   private async responseFromStream(
@@ -183,24 +201,35 @@ class HttpChannel implements McpConnection {
     throw new McpProtocolError(`event stream ended before answering ${method}`);
   }
 
-  private openEventStream(): void {
-    const controller = new AbortController();
-    this.inflight.add(controller);
-    void this.listenForServerEvents(controller).finally(() => this.inflight.delete(controller));
+  private openLegacyEventStream(signal: AbortSignal): Promise<Response> {
+    return this.fetchImpl(this.spec.url, {
+      method: "GET",
+      headers: this.headers({ accept: "text/event-stream" }),
+      signal,
+    });
   }
 
-  private async listenForServerEvents(controller: AbortController): Promise<void> {
+  private subscribe(signal: AbortSignal): Promise<Response> {
+    const id = this.nextId++;
+    this.subscriptionId = id;
+    const params = this.session.subscriptionParams();
+    return this.post({ jsonrpc: "2.0", id, method: subscriptionMethod, params }, signal);
+  }
+
+  private follow(open: OpenStream): void {
+    const controller = new AbortController();
+    this.inflight.add(controller);
+    void this.followEvents(open, controller.signal).finally(() => this.inflight.delete(controller));
+  }
+
+  private async followEvents(open: OpenStream, signal: AbortSignal): Promise<void> {
     let response: Response;
     try {
-      response = await this.fetchImpl(this.spec.url, {
-        method: "GET",
-        headers: this.headers({ accept: "text/event-stream" }),
-        signal: controller.signal,
-      });
+      response = await open(signal);
     } catch {
       return;
     }
-    if (!response.ok || response.body === null) {
+    if (!response.ok || response.body === null || !isEventStream(response)) {
       await response.body?.cancel().catch(() => undefined);
       return;
     }
@@ -216,7 +245,10 @@ class HttpChannel implements McpConnection {
   }
 
   private dispatchServerMessage(message: Record<string, unknown>): void {
-    if (message.method !== toolsChangedNotification) return;
+    if (signalsToolsChanged(message, this.subscriptionId)) this.announceToolsChanged();
+  }
+
+  private announceToolsChanged(): void {
     for (const handler of this.toolsChangedHandlers) handler();
   }
 
@@ -248,7 +280,7 @@ class HttpChannel implements McpConnection {
   private headers(base: Record<string, string>): Record<string, string> {
     return {
       ...base,
-      "mcp-protocol-version": mcpProtocolVersion,
+      "mcp-protocol-version": this.session.protocolVersion,
       ...(this.sessionId !== undefined && { "mcp-session-id": this.sessionId }),
       ...this.spec.headers,
     };
@@ -274,11 +306,7 @@ class HttpChannel implements McpConnection {
     try {
       const response = await this.fetchImpl(this.spec.url, {
         method: "DELETE",
-        headers: {
-          "mcp-protocol-version": mcpProtocolVersion,
-          "mcp-session-id": session,
-          ...this.spec.headers,
-        },
+        headers: this.headers({ "mcp-session-id": session }),
         signal: controller.signal,
       });
       await response.body?.cancel().catch(() => undefined);
@@ -287,6 +315,33 @@ class HttpChannel implements McpConnection {
     } finally {
       clearTimeout(timer);
     }
+  }
+}
+
+async function refusal(response: Response, method: string): Promise<McpProtocolError> {
+  const body = await response.text().catch(() => "");
+  const error = asRecord(tryParseJson(body.slice(0, maxBodyChars))).error;
+  if (typeof asRecord(error).code === "number") return new McpRpcError(error);
+  return new McpProtocolError(`server answered ${response.status} to ${method}`);
+}
+
+function isEventStream(response: Response): boolean {
+  return (response.headers.get("content-type") ?? "").includes("text/event-stream");
+}
+
+async function boundedText(response: Response, method: string): Promise<string> {
+  const text = await response.text();
+  if (text.length > maxBodyChars) {
+    throw new McpProtocolError(`server answered ${method} with over ${maxBodyChars} characters`);
+  }
+  return text;
+}
+
+function tryParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }
 

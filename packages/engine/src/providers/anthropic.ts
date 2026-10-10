@@ -1,7 +1,8 @@
 import type { ProviderStateOwner, Usage } from "../messages.ts";
-import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
+import type { CacheMiss, Provider, ProviderRequest, TurnDelta } from "../provider.ts";
+import { claudeBetasFor, maxOutputTokensFor } from "./claude-models.ts";
 import { ProviderStreamError } from "./errors.ts";
-import { toMessagesRequest } from "./messages-wire.ts";
+import { showsProgressUpdates, toMessagesRequest } from "./messages-wire.ts";
 import { sseJsonEvents } from "./sse.ts";
 import { type FetchLike, postForStream } from "./transport.ts";
 import { ToolCallAssembler } from "./wire-parts.ts";
@@ -21,10 +22,14 @@ export interface AnthropicOptions {
   fetchFn?: FetchLike | undefined;
 }
 
-export function anthropicHeaders(apiKey: string | undefined): Record<string, string> {
+export function anthropicHeaders(
+  apiKey: string | undefined,
+  betas: readonly string[] = [],
+): Record<string, string> {
   return {
     "anthropic-version": anthropicVersion,
     ...(apiKey !== undefined && { "x-api-key": apiKey }),
+    ...(betas.length > 0 && { "anthropic-beta": betas.join(",") }),
   };
 }
 
@@ -59,7 +64,7 @@ export class AnthropicProvider implements Provider {
     this.owner = { provider: options.name, model: options.model };
     this.baseUrl = options.baseUrl;
     this.apiKey = options.apiKey;
-    this.maxTokens = options.maxTokens ?? defaultMaxOutputTokens;
+    this.maxTokens = options.maxTokens ?? maxOutputTokensFor(options.model, defaultMaxOutputTokens);
     this.extraHeaders = options.extraHeaders ?? {};
     this.extraBody = options.extraBody ?? {};
     this.fetchFn = options.fetchFn ?? fetch;
@@ -71,7 +76,7 @@ export class AnthropicProvider implements Provider {
       headers: {
         "content-type": "application/json",
         accept: "text/event-stream",
-        ...anthropicHeaders(this.apiKey),
+        ...anthropicHeaders(this.apiKey, claudeBetasFor(this.modelId)),
         ...this.extraHeaders,
       },
       body: JSON.stringify({
@@ -80,7 +85,11 @@ export class AnthropicProvider implements Provider {
       }),
       signal: request.signal,
     });
-    yield* assembleTurn(this.name, this.owner, sseJsonEvents(this.name, body));
+    const blocks = new BlockAssembly(
+      this.name,
+      showsProgressUpdates(this.modelId, request.thinking === true),
+    );
+    yield* assembleTurn(this.name, this.owner, blocks, sseJsonEvents(this.name, body));
   }
 }
 
@@ -93,9 +102,20 @@ interface StreamEvent {
   index?: number;
   content_block?: WireBlock;
   delta?: WireDelta;
-  message?: { usage?: WireUsage };
+  message?: WireMessageStart;
   usage?: WireUsage;
   error?: { type?: string; message?: string };
+}
+
+interface WireMessageStart {
+  id?: string;
+  usage?: WireUsage;
+  diagnostics?: { cache_miss_reason?: WireCacheMissReason | null } | null;
+}
+
+interface WireCacheMissReason {
+  type?: string;
+  cache_missed_input_tokens?: number;
 }
 
 interface WireBlock {
@@ -125,32 +145,34 @@ type ThinkingBlock =
   | { type: "thinking"; thinking: string; signature: string }
   | { type: "redacted_thinking"; data: string };
 
+type ResponseFacts = { responseId?: string; cacheMiss?: CacheMiss };
+
 async function* assembleTurn(
   provider: string,
   owner: ProviderStateOwner,
+  blocks: BlockAssembly,
   events: AsyncIterable<unknown>,
 ): AsyncGenerator<TurnDelta> {
-  const calls = new ToolCallAssembler(provider);
-  const thinking = new Map<number, ThinkingBlock>();
   let usage: Usage = { inputTokens: 0, outputTokens: 0 };
+  let facts: ResponseFacts = {};
   for await (const raw of events) {
     const event = raw as StreamEvent;
     const index = event.index ?? 0;
     switch (event.type) {
       case "message_start":
         usage = mergeUsage(usage, event.message?.usage);
+        facts = responseFacts(event.message);
         break;
       case "content_block_start":
-        openBlock(event.content_block, index, calls, thinking);
+        blocks.open(event.content_block, index);
         break;
       case "content_block_delta": {
-        const shown = shownDelta(event.delta);
+        const shown = blocks.extend(event.delta, index);
         if (shown !== undefined) yield shown;
-        extendBlock(event.delta, index, calls, thinking);
         break;
       }
       case "content_block_stop":
-        yield* closeBlock(index, owner, calls, thinking);
+        yield* blocks.close(index, owner);
         break;
       case "message_delta":
         usage = mergeUsage(usage, event.usage);
@@ -166,74 +188,88 @@ async function* assembleTurn(
         break;
     }
   }
-  yield { type: "done", usage };
+  yield { type: "done", usage, ...facts };
 }
 
-function openBlock(
-  block: WireBlock | undefined,
-  index: number,
-  calls: ToolCallAssembler,
-  thinking: Map<number, ThinkingBlock>,
-): void {
-  switch (block?.type) {
-    case "tool_use":
-      calls.add(index, { id: block.id, name: block.name });
-      return;
-    case "thinking":
-      thinking.set(index, { type: "thinking", thinking: "", signature: "" });
-      return;
-    case "redacted_thinking":
-      thinking.set(index, { type: "redacted_thinking", data: block.data ?? "" });
-      return;
-    default:
-      return;
+class BlockAssembly {
+  private readonly calls: ToolCallAssembler;
+  private readonly thinking = new Map<number, ThinkingBlock>();
+
+  constructor(
+    provider: string,
+    private readonly progressUpdates: boolean,
+  ) {
+    this.calls = new ToolCallAssembler(provider);
+  }
+
+  open(block: WireBlock | undefined, index: number): void {
+    switch (block?.type) {
+      case "tool_use":
+        this.calls.add(index, { id: block.id, name: block.name });
+        return;
+      case "thinking":
+        this.thinking.set(index, { type: "thinking", thinking: "", signature: "" });
+        return;
+      case "redacted_thinking":
+        this.thinking.set(index, { type: "redacted_thinking", data: block.data ?? "" });
+        return;
+      default:
+        return;
+    }
+  }
+
+  extend(delta: WireDelta | undefined, index: number): TurnDelta | undefined {
+    const open = this.thinking.get(index);
+    switch (delta?.type) {
+      case "text_delta":
+        return delta.text ? { type: "text", text: delta.text } : undefined;
+      case "input_json_delta":
+        this.calls.add(index, { argumentsJson: delta.partial_json });
+        return undefined;
+      case "thinking_delta":
+        if (open?.type === "thinking") open.thinking += delta.thinking ?? "";
+        return delta.thinking && !this.progressUpdates
+          ? { type: "visible-thinking", text: delta.thinking }
+          : undefined;
+      case "signature_delta":
+        if (open?.type === "thinking") open.signature += delta.signature ?? "";
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  *close(index: number, owner: ProviderStateOwner): Generator<TurnDelta> {
+    const call = this.calls.take(index);
+    if (call !== undefined) yield { type: "tool-call", call };
+    const block = this.thinking.get(index);
+    if (block === undefined) return;
+    this.thinking.delete(index);
+    if (this.progressUpdates && block.type === "thinking" && block.thinking !== "") {
+      yield { type: "progress", text: block.thinking };
+    }
+    yield {
+      type: "redacted-thinking",
+      part: { type: "redacted-thinking", data: JSON.stringify(block), owner },
+    };
   }
 }
 
-function shownDelta(delta: WireDelta | undefined): TurnDelta | undefined {
-  if (delta?.type === "text_delta" && delta.text) return { type: "text", text: delta.text };
-  if (delta?.type === "thinking_delta" && delta.thinking) {
-    return { type: "visible-thinking", text: delta.thinking };
-  }
-  return undefined;
+function responseFacts(message: WireMessageStart | undefined): ResponseFacts {
+  const cacheMiss = cacheMissOf(message?.diagnostics?.cache_miss_reason);
+  return {
+    ...(message?.id !== undefined && { responseId: message.id }),
+    ...(cacheMiss !== undefined && { cacheMiss }),
+  };
 }
 
-function extendBlock(
-  delta: WireDelta | undefined,
-  index: number,
-  calls: ToolCallAssembler,
-  thinking: Map<number, ThinkingBlock>,
-): void {
-  const open = thinking.get(index);
-  switch (delta?.type) {
-    case "input_json_delta":
-      calls.add(index, { argumentsJson: delta.partial_json });
-      return;
-    case "thinking_delta":
-      if (open?.type === "thinking") open.thinking += delta.thinking ?? "";
-      return;
-    case "signature_delta":
-      if (open?.type === "thinking") open.signature += delta.signature ?? "";
-      return;
-    default:
-      return;
-  }
-}
-
-function* closeBlock(
-  index: number,
-  owner: ProviderStateOwner,
-  calls: ToolCallAssembler,
-  thinking: Map<number, ThinkingBlock>,
-): Generator<TurnDelta> {
-  const call = calls.take(index);
-  if (call !== undefined) yield { type: "tool-call", call };
-  const block = thinking.get(index);
-  if (block === undefined) return;
-  thinking.delete(index);
-  yield {
-    type: "redacted-thinking",
-    part: { type: "redacted-thinking", data: JSON.stringify(block), owner },
+function cacheMissOf(reason: WireCacheMissReason | null | undefined): CacheMiss | undefined {
+  const type = reason?.type;
+  if (type === undefined || !type.endsWith("_changed")) return undefined;
+  const missedTokens = reason?.cache_missed_input_tokens;
+  return {
+    cause: type.replaceAll("_", " "),
+    ...(missedTokens !== undefined && { missedTokens }),
   };
 }
 

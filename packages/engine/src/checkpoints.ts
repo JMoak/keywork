@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative } from "node:path";
 
 export interface CheckpointsOptions {
   worktree: string;
@@ -14,6 +14,11 @@ export interface ChangedPath {
   added: number;
   deleted: number;
   turn?: number;
+}
+
+export interface TreeChanges {
+  files: ChangedPath[];
+  patch: string;
 }
 
 export interface CheckpointReads {
@@ -118,10 +123,35 @@ export class Checkpoints implements CheckpointReads {
     );
   }
 
+  snapshot(): Promise<string> {
+    return this.serialized(() => this.snapshotWorktree());
+  }
+
+  changesBetween(from: string, to: string): Promise<TreeChanges> {
+    return this.serialized(async () => {
+      if (from === to) return { files: [], patch: "" };
+      const listing = await this.git("diff-tree", "-r", "--numstat", "-z", from, to);
+      const patch = await this.gitRaw(
+        "diff-tree",
+        "-r",
+        "-p",
+        "--no-color",
+        "--no-ext-diff",
+        from,
+        to,
+      );
+      return { files: parseNumstat(listing), patch: patch.trimEnd() };
+    });
+  }
+
   takeTurnTag(): string | undefined {
     const tag = this.turnTag;
     this.turnTag = undefined;
     return tag;
+  }
+
+  beginTurn(): void {
+    this.turnTag = undefined;
   }
 
   restoreTo(tree: string): Promise<void> {
@@ -196,9 +226,19 @@ export class Checkpoints implements CheckpointReads {
 
   private async initShadowRepo(): Promise<void> {
     await mkdir(this.gitDir, { recursive: true });
-    if (existsSync(join(this.gitDir, "HEAD"))) return;
-    await this.git("init", "--quiet");
-    await this.git("config", "core.autocrlf", "false");
+    if (!existsSync(join(this.gitDir, "HEAD"))) {
+      await this.git("init", "--quiet");
+      await this.git("config", "core.autocrlf", "false");
+    }
+    await this.excludeShadowRepoFromItself();
+  }
+
+  private async excludeShadowRepoFromItself(): Promise<void> {
+    const inside = relative(this.worktree, this.gitDir);
+    if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) return;
+    await mkdir(join(this.gitDir, "info"), { recursive: true });
+    const pattern = `/${inside.replaceAll("\\", "/")}/\n`;
+    await writeFile(join(this.gitDir, "info", "exclude"), pattern, "utf8");
   }
 
   private serialized<T>(task: () => Promise<T>): Promise<T> {

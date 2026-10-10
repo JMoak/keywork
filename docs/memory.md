@@ -32,9 +32,21 @@ clock, so every timestamp is deterministic under test.
 - **Entity notes** are the one exception to bare-name links: they link by full path
   (`[[entities/packages/tui/layout.ts]]`), store case-preserving, match
   case-insensitively, and carry the short filename in `aliases`.
-- **Daily logs** are append-only. Each entry is `- HH:MM [prov: <class>] text`;
+- **Daily logs** are append-only. Each entry is `- HH:MM [prov: <class>] text`, or
+  `- HH:MM [prov: <class>, session: <id>] text` when the writer named its session;
   continuation lines are indented two spaces so entry content can never forge a
-  marker.
+  marker, and the session rides inside the marker bracket so text cannot forge that
+  either.
+- **Session origin** (2026-10-07): a note written with a session id carries
+  `origin_session` from its first write; a later write from a different session appends
+  that id to `revised_by` instead of overwriting the origin. `keywork memory forget
+  --session <id>` reads both (see "Forget by origin" below).
+- **Drift stamps** (2026-10-07): `keywork memory drift [range]` asks one bounded provider
+  question per note the diff touches and records the answer as a `drift` map
+  (`verdict: hold | stale | unsure`, `at`, `against`) in frontmatter, plus a
+  `drift [[Note]]: <verdict> against <ref> · <reason> · <evidence>` line in
+  `curation.md`. The body is never edited; a `stale` verdict also stages a
+  `drift-review` proposal for the Gardener inbox.
 
 ## Invariants
 
@@ -48,6 +60,12 @@ clock, so every timestamp is deterministic under test.
    A `staged: true` frontmatter flag hides a note from all reads as defense in
    depth. Property-tested: no operation sequence makes an untrusted write
    load-bearing without passing through `approve`.
+   The core `write` / `edit` tools cannot bypass this (117 SW7, 2026-10-02): a note the
+   agent writes under the vault becomes a staged proposal stamped `provenance: agent`
+   whatever its frontmatter claims; the vault's own structure, `AGENTS.md`, `CLAUDE.md`
+   and skill directories are refused with a message that names the right door. Recalled
+   text is neutralized before it reaches the model (SW8: invisible characters stripped,
+   framing lookalikes escaped).
 3. **Every mutation is one-key revertable.** The session ledger records each
    create/edit/approve/discard with full before/after content and hashes (P7).
    `revert` restores the prior content only if the file still matches the
@@ -66,3 +84,36 @@ clock, so every timestamp is deterministic under test.
    never cut.
 7. **Malformed frontmatter is a typed error naming the file**
    (`MalformedFrontmatterError`): never a crash, never a silent skip.
+8. **Forget by origin is a staged change, never a direct delete** (2026-10-07).
+   `planForget` lists the notes whose `origin_session` is the given id and the daily
+   entries whose marker names it; `stageForget` turns that into one `forget-proposal`
+   in the review inbox. Approval removes the note files and the named daily entries
+   (continuation lines included) through the ledger, so `revert` restores them byte
+   for byte. A note the session originated but another session revised, or one it
+   only revised, is refused with the reason and kept: mixed provenance is never
+   split by guessing.
+9. **The index reconciles itself; files stay truth** (J14 first rung, 2026-10-07).
+   Lexical and graph legs read the vault on every search; `MemorySearch.reconcile()`
+   re-embeds any note whose text changed outside keywork and drops the vector of any
+   note that vanished, reporting both. There is no rebuild command because there is
+   nothing to rebuild.
+
+## Skills beside the vault
+
+Skills stay outside the vault (J-D5), but their curation shares the vault's rules
+(2026-10-07, Hermes-style hygiene designed from the documented curator, no code copied):
+
+- **Archive instead of delete.** `<project>/.keywork/skills-archive/<name>/<stamp>/`
+  holds a full copy of a skill directory taken before every agent patch or rewrite,
+  before every archive, and before a restore overwrites a live skill. The archive sits
+  beside the convention dirs, so discovery never loads it.
+- **Actor ledger.** `.keywork/skills-archive/ledger.jsonl` records
+  `{at, actor, action, skill, version?}` for create / patch / rewrite / pin / unpin /
+  archive / restore; the actor is `agent`, `curator` or `user`.
+- **Pin.** `metadata.pinned: "true"` in a skill's frontmatter exempts it from the
+  Gardener's `skill-review` proposals and from archiving until unpinned.
+- **Blast radius.** Every mutation, pin included, goes through `claimAgentAuthored`;
+  a human-authored or bundled skill has no write path.
+- **Dry run by default.** `keywork skills archive <name>` and `keywork skills curate`
+  report what they would do; `--apply` does it. `keywork skills history <name>` shows
+  the ledger and versions; `--restore <stamp>` brings one back.

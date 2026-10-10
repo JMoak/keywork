@@ -7,7 +7,9 @@ import {
   deleteCredential,
   legacyCredentials,
   readCredentials,
+  type SecretKeeping,
   saveCredential,
+  secretKeepingFor,
 } from "./auth-store.ts";
 
 const tempDir = scratchDirs("keywork-auth-");
@@ -106,3 +108,114 @@ describe("legacyCredentials", () => {
     expect(legacyCredentials(undefined)).toEqual({});
   });
 });
+
+describe("credential store backed by the OS credential store (103/E9)", () => {
+  it("keeps the key in the vault and only its name in auth.json", async () => {
+    const dir = await tempDir();
+    const keeping = memoryKeeping();
+
+    const file = await saveCredential(
+      "broker",
+      { type: "api_key", key: "sk-live-1" },
+      dir,
+      keeping,
+    );
+
+    const raw = await readFile(file, "utf8");
+    expect(raw).not.toContain("sk-live-1");
+    expect(JSON.parse(raw)).toEqual({ broker: { type: "vault", secret: "provider.broker" } });
+    expect(await readCredentials(dir, keeping)).toEqual({
+      broker: { type: "api_key", key: "sk-live-1" },
+    });
+  });
+
+  it("round-trips an oauth credential whole", async () => {
+    const dir = await tempDir();
+    const keeping = memoryKeeping();
+    const signIn: Credential = {
+      type: "oauth",
+      access: "a",
+      refresh: "r",
+      expires: 9,
+      accountId: "x",
+    };
+
+    await saveCredential("openai-codex", signIn, dir, keeping);
+
+    expect(await readCredentials(dir, keeping)).toEqual({ "openai-codex": signIn });
+  });
+
+  it("falls back to plaintext with one notice when the store refuses", async () => {
+    const dir = await tempDir();
+    const keeping = memoryKeeping({ refuse: "secret-tool is not installed" });
+
+    await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir, keeping);
+
+    expect(keeping.notices).toEqual([
+      "keywork: couldn't use the OS credential store (secret-tool is not installed), so the openai key went into auth.json as plaintext",
+    ]);
+    expect(await readCredentials(dir)).toEqual({ openai: { type: "api_key", key: "sk-1" } });
+  });
+
+  it("drops a vault entry whose secret is gone, with a notice instead of a crash", async () => {
+    const dir = await tempDir();
+    const keeping = memoryKeeping();
+    await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir, keeping);
+    keeping.secrets.clear();
+
+    expect(await readCredentials(dir, keeping)).toEqual({});
+    expect(keeping.notices).toEqual([
+      "keywork: the saved openai key is missing from the OS credential store",
+    ]);
+  });
+
+  it("forgets the vault secret when the credential is deleted", async () => {
+    const dir = await tempDir();
+    const keeping = memoryKeeping();
+    await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir, keeping);
+
+    expect(await deleteCredential("openai", dir, keeping)).toBe(true);
+    expect(keeping.secrets.size).toBe(0);
+    expect(await readCredentials(dir, keeping)).toEqual({});
+  });
+
+  it("still reads plaintext entries written before the vault existed", async () => {
+    const dir = await tempDir();
+    await saveCredential("openrouter", { type: "api_key", key: "sk-old" }, dir);
+
+    expect(await readCredentials(dir, memoryKeeping())).toEqual({
+      openrouter: { type: "api_key", key: "sk-old" },
+    });
+  });
+
+  it("uses no vault when the config opts out with secretStore plaintext", () => {
+    expect(secretKeepingFor({ secretStore: "plaintext" }, () => {})).toBeUndefined();
+    expect(secretKeepingFor({}, () => {})?.vault).toBeDefined();
+  });
+});
+
+interface MemoryKeeping extends SecretKeeping {
+  secrets: Map<string, string>;
+  notices: string[];
+}
+
+function memoryKeeping(options: { refuse?: string } = {}): MemoryKeeping {
+  const secrets = new Map<string, string>();
+  const notices: string[] = [];
+  return {
+    secrets,
+    notices,
+    notice: (line) => notices.push(line),
+    vault: {
+      backend: "memory",
+      store: async (name, value) => {
+        if (options.refuse !== undefined) throw new Error(options.refuse);
+        secrets.set(name, value);
+      },
+      lookup: async (name) => secrets.get(name),
+      forget: async (name) => {
+        secrets.delete(name);
+      },
+    },
+  };
+}

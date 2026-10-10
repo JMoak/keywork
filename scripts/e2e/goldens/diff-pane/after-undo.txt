@@ -31,10 +31,10 @@
 │                                                    │                                                   │                                                     │
 │                                                    │                                                   │                                                     │
 │                                                    │                                                   │                                                     │
-│                                                    │ █ please shout the middle line of notes.txt       │                                                     │
-│                                                    │ ▓ Shouting the middle line of notes.txt now.      │                                                     │
-│                                                    │ ░ write notes.txt · ~·· · done                    │                                                     │
-│                                                    │ ▓ All set, beta is BETA now.                      │                                                     │
-│                                                    │ › ▌                                               │                                                     │
+│                                                    │                                                   │                                                     │
+│                                                    │                                                   │                                                     │
+│                                                    │   undone · files put back · your prompt is back   │                                                     │
+│                                                    │   in the composer · /redo brings it all back      │                                                     │
+│                                                    │ › please shout the middle line of notes.txt▌      │                                                     │
 ╰────────────────────────────────────────────────────╰───────────────────────────────────────────────────╯─────────────────────────────────────────────────────╯
- files put back                                                                                                                                          return 
+ keywork e2e · 3 panes · ctrl+k nav · ctrl+p go · / commands                                                                                             return 

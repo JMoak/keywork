@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { validatedName } from "../extensions/layers.ts";
 import type { ReviewProposal } from "../memory/staging.ts";
+import { skillDescriptionLimit, skillNameFrom } from "./spec.ts";
 
 export interface CommandOccurrence {
   id: string;
@@ -62,24 +62,16 @@ export function skillProposalFor(sequence: RecurringSequence): SkillProposal {
 export function skillNameFor(
   sequence: Pick<RecurringSequence, "fingerprint" | "commands">,
 ): string {
-  const lead = (sequence.commands[0] ?? "")
-    .split(/\s+/)
-    .slice(0, 3)
-    .map((word) => word.replace(/[^A-Za-z0-9_-]/g, ""))
-    .filter((word) => word !== "")
-    .join("-");
-  try {
-    return validatedName(lead);
-  } catch {
-    return `routine-${sequence.fingerprint.slice(0, 8)}`;
-  }
+  const lead = (sequence.commands[0] ?? "").split(/\s+/).slice(0, 3).join(" ");
+  return skillNameFrom(lead) ?? `routine-${sequence.fingerprint.slice(0, 8)}`;
 }
 
 export function skillDescriptionFor(
   proposal: Pick<SkillProposal, "commands" | "occurrences">,
 ): string {
   const steps = proposal.commands.split("\n");
-  return `Run ${steps[0]} and the ${steps.length - 1} steps that followed it, a routine seen ${proposal.occurrences} times`;
+  const description = `Run ${steps[0]} and the ${steps.length - 1} steps that followed it, a routine seen ${proposal.occurrences} times`;
+  return clippedDescription(description);
 }
 
 export function skillBodyFor(proposal: Pick<SkillProposal, "commands">): string {
@@ -100,4 +92,9 @@ function promptedCommand(line: string): string | undefined {
 
 function normalized(command: string): string {
   return command.trim().replace(/\s+/g, " ");
+}
+
+function clippedDescription(description: string): string {
+  if (description.length <= skillDescriptionLimit) return description;
+  return `${description.slice(0, skillDescriptionLimit - 3)}...`;
 }

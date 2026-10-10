@@ -23,12 +23,24 @@ export interface Note {
   delivered?: string;
   distilledFrom?: string;
   learnedBy?: string;
+  originSession?: string;
+  revisedBy?: string[];
+  drift?: DriftStamp;
+}
+
+export type DriftVerdict = "hold" | "stale" | "unsure";
+
+export interface DriftStamp {
+  verdict: DriftVerdict;
+  at: string;
+  against: string;
 }
 
 export interface DailyEntry {
   time: string;
   provenance: Provenance;
   text: string;
+  session?: string;
 }
 
 export type NoteWriteTarget = { title: string } | { entity: string };
@@ -53,6 +65,9 @@ export function parseNote(path: string, raw: string): Note | undefined {
   const delivered = firstString(frontmatter.delivered);
   const distilledFrom = wikilinkTarget(frontmatter.distilled_from);
   const learnedBy = learnedBySlug(frontmatter.learned_by);
+  const originSession = firstString(frontmatter.origin_session);
+  const revisedBy = asStringArray(frontmatter.revised_by);
+  const drift = driftStampOf(frontmatter.drift);
   return {
     name: noteName(path),
     path,
@@ -72,7 +87,22 @@ export function parseNote(path: string, raw: string): Note | undefined {
     ...(delivered !== undefined && { delivered }),
     ...(distilledFrom !== undefined && { distilledFrom }),
     ...(learnedBy !== undefined && { learnedBy }),
+    ...(originSession !== undefined && { originSession }),
+    ...(revisedBy.length > 0 && { revisedBy }),
+    ...(drift !== undefined && { drift }),
   };
+}
+
+export function driftStampOf(value: unknown): DriftStamp | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { verdict, at, against } = value as Record<string, unknown>;
+  if (!isDriftVerdict(verdict) || typeof at !== "string" || typeof against !== "string")
+    return undefined;
+  return { verdict, at, against };
+}
+
+export function isDriftVerdict(value: unknown): value is DriftVerdict {
+  return value === "hold" || value === "stale" || value === "unsure";
 }
 
 export const botMocName = "MOC";
@@ -166,10 +196,35 @@ export function dailyTimeOf(now: Date): string {
   return now.toISOString().slice(11, 16);
 }
 
-export function dailyEntryLines(text: string, provenance: Provenance, time: string): string {
+export function dailyEntryLines(
+  text: string,
+  provenance: Provenance,
+  time: string,
+  session?: string,
+): string {
   const [first = "", ...rest] = text.split("\n");
-  const lines = [`- ${time} [prov: ${provenance}] ${first}`, ...rest.map((line) => `  ${line}`)];
+  const marker = dailyMarker(provenance, session);
+  const lines = [`- ${time} ${marker} ${first}`, ...rest.map((line) => `  ${line}`)];
   return `${lines.join("\n")}\n`;
+}
+
+export function dailyMarker(provenance: Provenance, session?: string): string {
+  const origin = session === undefined ? "" : `, session: ${sessionToken(session)}`;
+  return `[prov: ${provenance}${origin}]`;
+}
+
+export function sessionToken(session: string): string {
+  return session.replace(/[^A-Za-z0-9._:-]/g, "_");
+}
+
+export function withoutDailyEntries(raw: string, dropped: ReadonlySet<number>): string {
+  const kept: string[] = [];
+  let index = -1;
+  for (const line of raw.split("\n")) {
+    if (dailyMarkerPattern.test(line)) index += 1;
+    if (index === -1 || !dropped.has(index)) kept.push(line);
+  }
+  return kept.join("\n");
 }
 
 export function parseDailyEntries(raw: string): DailyEntry[] {
@@ -177,10 +232,12 @@ export function parseDailyEntries(raw: string): DailyEntry[] {
   for (const line of raw.split("\n")) {
     const marker = line.match(dailyMarkerPattern);
     if (marker !== null) {
+      const session = marker[3];
       entries.push({
         time: marker[1] ?? "",
         provenance: (marker[2] ?? "user") as Provenance,
-        text: marker[3] ?? "",
+        text: marker[4] ?? "",
+        ...(session !== undefined && { session }),
       });
       continue;
     }
@@ -192,7 +249,8 @@ export function parseDailyEntries(raw: string): DailyEntry[] {
 }
 
 const wikilinkPattern = /\[\[([^[\]|#]+)(?:#[^[\]|]*)?(?:\|[^[\]]*)?\]\]/g;
-const dailyMarkerPattern = /^- (\d{2}:\d{2}) \[prov: (user|agent|untrusted)\] (.*)$/;
+const dailyMarkerPattern =
+  /^- (\d{2}:\d{2}) \[prov: (user|agent|untrusted)(?:, session: ([A-Za-z0-9._:-]+))?\] (.*)$/;
 const dailyDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 const learnedByPattern = new RegExp(`^bots/([^/]+)/${botMocName}$`);
 

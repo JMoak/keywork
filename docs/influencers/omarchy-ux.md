@@ -6,6 +6,78 @@
 > shipping a Linux distro. (Omarchy itself is MIT-licensed, but it is a Hyprland/Arch config,
 > so there is nothing to lift anyway, only lessons.)
 
+> **Status 2026-10-02.** The body below is the August 2026 study and stands as written. The
+> repo moved to `omacom/omarchy` (still MIT), and Omarchy 4 rebuilt the whole shell; what
+> changed and what keywork takes from it is in "Since 2026-08" just below. Each §2 heuristic now
+> carries a status line: **landed** with the task or file that carries it, **open** with the
+> [`117`](../backlog/117-influence-sweep.md) task where one exists, or **unverified**.
+
+## Since 2026-08
+
+**Omarchy 4.0 "Quattro"** (2026-08-14,
+[release](https://github.com/omacom/omarchy/releases/tag/v4.0.0)):
+
+- The whole shell is rebuilt in Quickshell as one process.
+- The launcher merged into the `Super + Space` menu, now a nested, filterable JSONC command
+  palette.
+- A notification daemon keeps replayable history: `Super + Shift + Alt + ,` replays the last
+  ten, including ones silenced by do-not-disturb.
+- Bar panels open by ordinal with `Super + Ctrl + 1..9` and renumber themselves.
+- The theme palette grew from 8 to 24 base colors, so the nvim, btop and VS Code configs are
+  generated from it. Themes are picked from a visual carousel.
+- One knob moves text size across the shell, GTK and the terminal together.
+- Foot is the default terminal.
+- It ships Herdr, an agent-aware multiplexer, beside tmux with matching bindings.
+- It cleans up after an SSH drop: no mouse tracking or alternate screen left armed.
+- The default-agent picker lists Claude Code, Codex, OpenCode, Pi and others. keywork is not
+  listed.
+
+Point releases: v4.0.1 (08-25) launches Claude and Codex with auto-review instead of full
+bypass and runs notification click actions as safe argv; v4.0.3 (09-08) adds agents to the
+picker and restricts kitty remote control to local sockets; v4.0.4 (09-15) is kernel only.
+
+**The terminal platform around it:**
+
+- **Herdr** v0.9.3 (2026-09-29, [herdrdev/herdr](https://github.com/herdrdev/herdr),
+  Apache-2.0) marks each pane working, blocked or idle. Agents can self-report through a
+  documented protocol: env `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH`,
+  then `"$HERDR_BIN_PATH" pane report-agent <pane> --source --agent --state
+  idle|working|blocked --seq`, resume argv after `--` (0.9.2+), and `pane release-agent` on
+  exit. It ports to Windows.
+  ([add-support doc](https://github.com/herdrdev/herdr/blob/master/docs/next/website/src/content/docs/add-herdr-support.mdx))
+- **Windows Terminal 1.25** stable (2026-10-02,
+  [release](https://github.com/microsoft/terminal/releases/tag/v1.25.2733.0)): kitty keyboard
+  protocol; OSC 52 writes only while focused; built-in glyphs U+1FB00 to U+1FB94 (sextants,
+  eighth blocks); closing a tab jumps to the most recent tab. The 1.26 preview adds OSC 777
+  notifications and bell-as-notification (both off by default) and "Workspaces" named windows.
+- **kitty 0.49.0** (2026-09-21): custom shaders, `remap_modifiers`, color-protocol hardening.
+  **Ghostty** has shipped nothing since 1.3.1 (2026-03-13).
+- **Mode 2031** color-scheme change reports (`CSI ?2031h`, then `CSI ?997;1 n` or `CSI ?997;2 n`
+  on change; [spec](https://contour-terminal.org/vt-extensions/color-palette-update-notifications/))
+  work in Ghostty, kitty and Contour. keywork does not handle them yet (SW21).
+- **zellij 0.45.0** (2026-08-20,
+  [release](https://github.com/zellij-org/zellij/releases/tag/v0.45.0)): Kitty graphics; OSC 133
+  prompt jumping and copy-last-output; title-line pane frames by default instead of full
+  borders; stacked panes as one-line titles; `FocusLastPane`; a no-UI fullscreen; OSC 9/777/99
+  notifications reduced to what the host terminal supports; a release-notes screen that offers
+  missing new keybindings with one keypress.
+- **Bun:** 1.3.14 (keywork's pin, 2026-05-13) already shipped `Bun.Terminal` and
+  `Bun.spawn({ terminal })` on Windows via ConPTY. 1.4.0 (2026-08-20) rewrote the runtime in
+  Rust, starts 2.5x faster on Windows, and adds `Bun.stringWidth` / `sliceAnsi` / `wrapAnsi`
+  and `--compile --asset`. 1.4.1 (09-04) fixes Windows stdin corruption and Ctrl+C; 1.4.2
+  (09-05) fixes regressions. Whether to bump is decision 117-3, still open.
+
+**What keywork takes** ([`117`](../backlog/117-influence-sweep.md) group 3): SW19 keep the
+machine awake during a turn, SW20 focus-last-pane with MRU focus on close (zellij
+`FocusLastPane`, Windows Terminal's MRU tab), SW21 live theme follow over mode 2031, SW22 OSC 8
+file:line links, SW23 a zellij notification transport, SW24 Herdr self-report from keywork's
+own lifecycle state, SW26 a kill test for terminal-mode hygiene (Omarchy's SSH-drop cleanup is
+the same bar).
+
+**Declined:** swapping keywork's width math for `Bun.stringWidth` (T1 regression risk), image
+panes, coupling to Omarchy's theme files, a zellij-style web UI, and Herdr-style screen
+scraping (keywork reports its own state).
+
 ---
 
 ## 1. What Omarchy Is, in Brief
@@ -55,6 +127,12 @@ plain = act on the focused pane, `Shift` = the stronger/inverse variant, second 
 harness/meta. Never let two panes interpret the same chord differently. If a user can guess
 a binding from the grammar and be right, the grammar is working.
 
+**Status 2026-10-02: landed.** One leader, `ctrl+k` with a 2000ms timeout (C3,
+`packages/tui/src/keymap.ts`); `Shift` is the stronger form throughout `app-actions.ts`
+(`leader s` split / `leader shift+s` split into a new arc, `leader h` focus / `leader shift+h`
+move). The leader itself is not rebindable from `keywork.json` yet (C4 ledger assumption).
+Whether any pane reads a global chord differently is unverified.
+
 ### 2.2 Single-Keystroke Reach for the Hot Path
 
 **Omarchy:** The operations you do dozens of times a day are one chord deep: `Super + W`
@@ -66,6 +144,11 @@ interrupt agent, approve/deny a tool call, jump between agent panes, toggle diff
 message) and give each a single chord with no intermediate menu. Everything else can live
 one layer deeper. Measure the hot path in keystrokes and defend it in review.
 
+**Status 2026-10-02: landed in part.** Split, close, zoom, focus, move and summon are each one
+leader chord (`app-actions.ts`); `enter` sends, `alt+enter` steers and `esc` interrupts
+(`overlays/help.ts` prompt keys). Open: the copy verbs have no chords yet (96 V2.15 proposes
+`leader y` / `leader shift+y` / `leader d`). Approve/deny chord count is unverified.
+
 ### 2.3 Discoverability via a Live Overlay, Not Documentation
 
 **Omarchy:** `Super + K` displays the complete hotkey reference in an overlay. The one2n
@@ -76,6 +159,11 @@ file edits and memorization needs." You never leave the environment to learn the
 context*, generated from the actual keymap (never a hand-maintained doc that drifts). Bonus
 Omarchy-grade detail: make each overlay row executable. Press the key while the overlay is
 open and it runs, turning the cheat sheet into a command palette.
+
+**Status 2026-10-02: landed.** The keys overlay (C6, `overlays/help.ts`, `leader /` or `f1`)
+is built from the live keymap, so a rebind shows at once. The runnable half lives in the
+palette (C5, `overlays/palette.ts`): every row shows its live shortcut and `enter` runs it.
+Open: the keys overlay itself is neither searchable nor runnable (no task).
 
 ### 2.4 Omakase: Opinionated Defaults Over Configuration
 
@@ -90,6 +178,11 @@ excellent. Allow overrides in a user config file, but treat every new config opt
 design failure to be justified. Keep user config and shipped defaults in separate files so
 updates never clobber customization (Omarchy's `~/.config` vs `~/.local/share` split).
 
+**Status 2026-10-02: landed.** Defaults live in code (keywork-night flavor, `appBindings`);
+user and trusted-project `keywork.json` layers sit over them (`shared/src/config/load.ts`,
+`tui/src/keybindings.ts` `resolveBindings`). Every config option carries a `.describe()`
+justification (vision D9).
+
 ### 2.5 Beauty Is a Feature: Visual Calm Reduces Cognitive Friction
 
 **Omarchy:** DHH's explicit claim: beauty motivates, and productivity is downstream of
@@ -102,6 +195,13 @@ Agent output streams should be typographically calm (clear speaker separation, m
 metadata, syntax-highlighted diffs) so a 10-hour session doesn't grind. If a UI element
 isn't earning attention, dim it.
 
+**Status 2026-10-02: landed.** [`design-language.md`](../design-language.md) is the
+vocabulary of record (density ramp, needs-you-only notifications, the motion grammar); `seams`
+chrome draws one hairline per split (C50 part 1, 112 L7); overlay scrims and opt-in unfocused
+dimming (C51, 113 W9 and W11); the highlighter (C52, `tui/highlighter.ts`); the motion and
+streaming remainders (C53 / C54, 113 W9). Open: C50 gap cells and borderless mode, C57
+frame-budget bar.
+
 ### 2.6 System-Wide Theme Coherence, Hot-Swappable
 
 **Omarchy:** One theme choice restyles desktop, terminal, Neovim, notifications, topbar, and
@@ -112,6 +212,13 @@ lock screen together: ~19 themes (Tokyo Night, Catppuccin, …) defined in a sim
 tree, status bar, dialogs) from a single palette definition; no widget hard-codes a color.
 Theme switching is a live keybinding, not a restart. Support the popular terminal palettes
 (Tokyo Night, Catppuccin) so keywork lands on-palette inside users' existing terminals.
+
+**Status 2026-10-02: landed in part.** One token set drives every surface (C16, `tui/theme.ts`);
+`/flavor-<name>` repaints everything live (`tui/flavor.ts`); the `system` flavor reads the
+terminal's own colors at startup (C17, `tui/system-theme.ts`, landed 2026-09-07), which is how
+keywork lands on-palette in a Tokyo Night or Catppuccin terminal. Open: SW21 live follow when
+the terminal switches light and dark; the C49 gallery (only keywork-night and `system` ship).
+Coupling to Omarchy's theme files is declined.
 
 ### 2.7 Tiling Discipline: The Layout Manages Itself
 
@@ -126,6 +233,10 @@ rotate/toggle orientation, zoom pane to full screen (and back), close. A "zoom" 
 fullscreen of one pane, one key to restore the layout) is the TUI equivalent of `Super + F`
 and is essential for reading long agent output.
 
+**Status 2026-10-02: landed.** Dwindle tiling (C8), spatial focus and move (C9), and the zoom
+toggle on `leader z` (C10, `app-core.ts` `zoomPane`). Open: SW20 focus-last-pane and MRU focus
+on close.
+
 ### 2.8 Type-to-Find, Never Navigate
 
 **Omarchy:** `Super + Space` opens a launcher where you *type* what you want; fuzzy matching
@@ -137,6 +248,10 @@ fuzzy-filterable the moment it opens, with typing as the default interaction and
 the fallback. A single command palette (leader + `p` or similar) reaches every operation by
 name, so nothing is ever more than "open palette, type three letters, Enter" away.
 
+**Status 2026-10-02: landed.** `ctrl+p` jumps to panes and `>` or `/` switches to commands, all
+fuzzy-scored (C5, `tui/commands.ts` `fuzzyScore`); pickers share `tui/filter-picker.ts`.
+Whether every list in the harness filters as you type is unverified.
+
 ### 2.9 Escape Hatches Are Also One Key
 
 **Omarchy:** `Super + Escape` is the system menu (suspend/restart/lock); `Super + W` closes
@@ -146,6 +261,11 @@ anything; `Super + Ctrl + L` locks instantly. Getting *out* of a state is as fas
 interrupt streaming), and interrupting a running agent must be a single, always-available
 keystroke that never queues behind output. A user who feels trapped in a mode for even a
 second loses trust in the whole tool. Test every state for "can I leave in one key?"
+
+**Status 2026-10-02: landed in part.** `esc` interrupts the running turn and closes the palette, keys,
+connect, preset and setup overlays (`overlays/*.ts`). Open: SW26, the kill test that proves a dead keywork leaves no title,
+focus reporting, mouse mode, kitty flags or alternate screen armed. "Never queues behind
+output" is unverified.
 
 ### 2.10 Cross-App Consistency: One Muscle Memory
 
@@ -157,6 +277,11 @@ clipboard mess so one muscle memory serves the whole system.
 type: chat transcript, diff, file preview, logs. Selection-and-copy from streaming agent
 output should be first-class (copy last code block, copy last message, yank a diff hunk) with
 one consistent set of keys, plus a history picker for previously copied items.
+
+**Status 2026-10-02: landed in part.** `/copy-message`, `/copy-code` and `/copy-diff` write
+through OSC 52 (96 V2.15, `tui/copy-commands.ts`). Open: pane-local copy chords, a clipboard
+history picker (no task), SW22 OSC 8 file:line links. Identical search and scroll across every
+pane type is unverified.
 
 ### 2.11 Curated Toolbelt, Zero Bloat
 
@@ -173,6 +298,10 @@ allow it (Pi and OpenCode are MIT, so code may be lifted with attribution; Crush
 FSL-1.1-MIT, ideas only, never copy its source; Anthropic access is API-key/Agent-SDK only,
 never subscription-OAuth).
 
+**Status 2026-10-02: landed as a rule.** Vision D9 makes every config option justify itself in
+the schema, and each overlay keeps a declined list (117's covers image panes, voice,
+marketplaces and more). Crush is now retired as a source entirely (2026-08-10).
+
 ### 2.12 Small Delights in the Corners
 
 **Omarchy:** The details nobody would demand but everyone notices: Caps Lock remapped as a
@@ -184,6 +313,14 @@ that someone *cared* about the whole surface.
 when useful and hide otherwise, a "what just happened" recap after an interrupt, smart
 titles on session panes, first-run onboarding that teaches the five keys that matter, and a
 single well-written manual. Delight lives in the tenth-percentile interactions.
+
+**Status 2026-10-02: landed in part.** The turn's elapsed time in the conversation pane
+(`conversation-pane.ts` `elapsedLabel`), costs in pane headers on `/show-costs`, the context
+gauge (C55, `tui/context-gauge.ts`), state-keyed rotating tips (FR5.15, `tui/tips.ts`), the
+terminal title carrying the lifecycle glyph (96 V2.12), needs-you notifications (P2.4). Open:
+the recap after an interrupt (nearest task: 96 V2.17 away summary), self-naming session titles (C65; only
+`fitTitle` has landed), SW19 keep the machine awake, SW23 zellij notifications, SW24 Herdr
+self-report. A single manual is unverified.
 
 ---
 
@@ -225,13 +362,15 @@ user than mediocre for everyone.
 14. Polish the corners nobody demanded; that's where trust is built.
 15. Beauty is not decoration; a beautiful session is a session you want to stay in.
 
+Status 2026-10-02: each line maps to a §2 heuristic, and its status line there is the record.
+
 ---
 
 ## Sources
 
 - Omarchy official site: https://omarchy.org/
 - The Omarchy Manual (philosophy, hotkeys, themes, window management): https://learn.omacom.io/2/the-omarchy-manual
-- Omarchy GitHub repository (basecamp/omarchy, MIT): https://github.com/basecamp/omarchy
+- Omarchy GitHub repository (basecamp/omarchy, MIT): https://github.com/basecamp/omarchy (moved to https://github.com/omacom/omarchy by 2026-10)
 - "Daily driving Omarchy and Hyprland as a CTO," One2N Engineering Blog: https://one2n.io/blog/daily-driving-omarchy-linux-and-hyprland-as-a-cto
 - "Omarchy Linux Review: Opinionated Arch + Hyprland for Developers," Thinklet: https://www.thinklet.blog/omarchy-linux-review-arch-hyprland
 - "Omarchy: A New Arch Linux Distro from 37signals," OpenReplay Blog: https://blog.openreplay.com/omarchy-new-arch-linux-distro-37signals/

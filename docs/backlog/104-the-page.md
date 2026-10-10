@@ -147,6 +147,40 @@
   beside cost (`session-1 · ▒ 1.6k · $0.01`), the masthead status line carries it too; see
   [`109-long-session-survivability.md`](109-long-session-survivability.md) for the ledger and the open options round.
 
+## Landed: transcript rendering from the 117 sweep (2026-10-02)
+
+- **SW22: OSC 8 file:line links** ✅ 2026-10-02. `tui/file-references.ts` finds `path:line`
+  and `path:line:col` (relative, absolute, drive-letter and `~/` paths with an extension; urls,
+  times, versions and bare `name:12` are left alone) and links them to
+  `file://<absolute>#L<line>` against the pane's working directory. Linking happens before
+  wrapping, as an `href` on the span, so each wrapped row carries its own piece of the link and
+  the renderer opens and closes OSC 8 per row (OpenTUI's `link()` chunk emits the escape; since 0.5.14 it
+  emits only when its own capability probe (XTVERSION) also says links work, so both gates must agree). Covered:
+  assistant markdown (prose, code spans, fences), user prompts, tool rows, tool detail and
+  thinking. `terminalSupport` gained `hyperlinks`: Windows Terminal, kitty, Ghostty, WezTerm,
+  iTerm2, foot, VTE 0.50+ and Konsole; off when unknown, under tmux, screen or zellij (the host
+  is unknown) and over ssh (a `file://` url would point at the wrong machine). Visible cells
+  never change, so goldens hold. `AppOptions.hyperlinks` overrides detection like `glyphs`
+  does, and the e2e harness pins it off; scenarios `file-links` (a link straddles four wrapped
+  rows, each opened and closed on its own row) and `file-links-off` (no OSC 8 byte at all)
+  prove both sides on a captured terminal that answers XTVERSION as kitty, so OpenTUI's own
+  gate is open and only keywork's decides.
+- **SW25: transcript verbosity cycle** ✅ 2026-10-02. `leader v` (palette `/verbosity`) cycles
+  the focused conversation's tool rows low → medium → high; the level lives on the
+  `TranscriptFeed` (per conversation, never persisted, no config key) and each cycle posts
+  `tool rows · <level>`. Medium is the C62 row, plus adjacent agent `read` calls collapsed
+  into one row (`read 4 files: a.ts, b.ts, c.ts, d.ts · done`). Low folds every run of two or
+  more adjacent agent tool calls into one counted row (`5 tools: read 4, bash 1 · done`). High
+  hangs the full arguments (capped at 8 rows) and the first three result lines under every
+  row. Grouped rows leave the disclosure walk and do not fold; a user's `!cmd` and external
+  rows never join a group. `v` chosen because it is free in the leader table and reads as
+  "verbosity"; the action is sticky so `v v` keeps cycling. `tui/transcript-verbosity.ts`.
+- **V2.11 (96): provenance gutter** ✅ 2026-10-02: external recalled content is detected on
+  the rail; the visible stamp stays item 6 (`░` machine on agent tool rows). Flipping agent
+  tool rows to `▓` is one line in `toolVoice` plus goldens, Jordan's call; detail in `96`.
+  The only golden change from this section is `discovery` (help overlay and slash list) for
+  the new `leader v` row.
+
 ## Tasks
 
 IDs continue the C-scheme. Same scale and style as the workstream files.

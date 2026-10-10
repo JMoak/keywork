@@ -26,6 +26,7 @@ import type {
   LspConfig,
   McpServerConfig,
   ModelCapabilitiesConfig,
+  PermissionRule,
   PromptsConfig,
 } from "@keywork/shared";
 import { botMemory } from "./bot-memory.ts";
@@ -110,7 +111,11 @@ export async function runHeadless(options: RunOptions): Promise<HeadlessOutcome>
   return settled;
 }
 
-const headlessGuard: ToolGuard = { confirm: async () => false, gate: "headless" };
+const headlessGuard: ToolGuard = {
+  confirm: async () => false,
+  gate: "headless",
+  declineEndsRun: true,
+};
 
 interface HeadlessRun {
   agent: Agent;
@@ -316,10 +321,12 @@ function narrate(outcome: HeadlessOutcome, io: HeadlessIo): void {
     case "completed":
       io.print(messageText(outcome.message));
       return;
-    case "denied":
-      io.print(messageText(outcome.message));
+    case "denied": {
+      const said = messageText(outcome.message);
+      if (said !== "") io.print(said);
       io.printError(refusalNotice(outcome.refused));
       return;
+    }
     case "interrupted": {
       const partial = messageText(outcome.message);
       if (partial !== "") io.print(partial);
@@ -345,9 +352,25 @@ function narrate(outcome: HeadlessOutcome, io: HeadlessIo): void {
 }
 
 function refusalNotice(refused: readonly PermissionDecision[]): string {
-  const tools = [...new Set(refused.map((decision) => decision.tool))].join(", ");
+  const tools = [...new Set(refused.map((decision) => decision.tool))];
   const calls = refused.length === 1 ? "1 tool call" : `${refused.length} tool calls`;
-  return `keywork run: ${calls} needed an approval no one could give (${tools}) · rerun with --preset open to allow them`;
+  return `keywork run: ${calls} needed an approval no one could give (${tools.join(", ")}), so the run stopped there · ${allowAdvice(tools)}`;
+}
+
+function allowAdvice(tools: readonly string[]): string {
+  if (!tools.some(isMcpTool)) return "rerun with --preset open to allow them";
+  const rules = tools.map((tool) => JSON.stringify(allowRuleFor(tool))).join(", ");
+  return `to allow them, add ${rules} to the permissions list in ~/.keywork/keywork.json`;
+}
+
+function allowRuleFor(tool: string): PermissionRule {
+  return isMcpTool(tool)
+    ? { action: "mcp", resource: tool, effect: "allow" }
+    : { action: tool, resource: "*", effect: "allow" };
+}
+
+function isMcpTool(tool: string): boolean {
+  return tool.includes("__");
 }
 
 function botFor(

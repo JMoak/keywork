@@ -48,8 +48,16 @@ import {
   toolScope,
 } from "@keywork/engine";
 import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
-import { mostSpecificMatch, openWorkspace, resolveAnchor, toError } from "@keywork/shared";
+import {
+  mostSpecificMatch,
+  openWorkspace,
+  platformVault,
+  resolveAnchor,
+  revealServerSecrets,
+  toError,
+} from "@keywork/shared";
 import type { ArcService } from "./arcs.ts";
+import { defaultAuthDir } from "./auth-store.ts";
 import type { BotLearning, BotMemory } from "./bot-memory.ts";
 import { loadWorkspaceExtensions, type WorkspaceExtensions } from "./commands.ts";
 import {
@@ -222,6 +230,7 @@ export function composeAgents(
         dailyStore: () => options.arcs?.layerStoreFor(sessionId) ?? workspaceStore,
         bot: () => options.bots?.flushTarget(sessionId),
         systemPrompt: composition.systemPromptFor(undefined),
+        session: sessionId,
       });
       flushes.set(sessionId, flush);
       return flush;
@@ -239,7 +248,10 @@ export function startMcpRegistry(
   servers: Record<string, McpServerConfig> | undefined,
 ): McpRegistry | undefined {
   if (servers === undefined || Object.keys(servers).length === 0) return undefined;
-  const registry = new McpRegistry({ servers });
+  const registry = new McpRegistry({
+    servers,
+    reveal: (config) => revealServerSecrets(config, platformVault({ dataDir: defaultAuthDir() })),
+  });
   registry.start();
   return registry;
 }
@@ -360,6 +372,10 @@ function buildAgent(
   const baseTools = [
     ...coreTools(composition.scope, {
       shell: spec.shell,
+      vault: composition.memory()?.store,
+      worktree: composition.checkpoints,
+      origin: () => self?.turnOrigin(),
+      session: () => resolveSessionKey(spec.sessionId),
       onToolOutput: (chunk) => self?.reportToolOutput(chunk),
       afterSave: composition.afterSaveFor((publication) =>
         self?.bus.emit("diagnostics.published", publication),

@@ -13,7 +13,12 @@ import type {
   RemovalReceipt,
   SavedConnection,
 } from "@keywork/tui";
-import { type CredentialMap, deleteCredential, saveCredential } from "../auth-store.ts";
+import {
+  type CredentialMap,
+  deleteCredential,
+  type SecretKeeping,
+  saveCredential,
+} from "../auth-store.ts";
 import { updateUserConfig } from "../user-config.ts";
 import {
   type BuiltInProvider,
@@ -29,6 +34,7 @@ export interface ConnectionsDeps {
   userDir: string;
   config: () => KeyworkConfig;
   credentials: () => CredentialMap;
+  secrets?: (() => SecretKeeping | undefined) | undefined;
   observations: () => ObservationMap;
   changed: () => Promise<void>;
   fetchFn?: FetchLike | undefined;
@@ -276,7 +282,12 @@ function apiKeyFor(draft: ConnectionDraft, deps: ConnectionsDeps): string | unde
 
 async function persistDraft(draft: ConnectionDraft, deps: ConnectionsDeps): Promise<void> {
   if (draft.credential === "api-key" && draft.apiKey !== "") {
-    await saveCredential(draft.name, { type: "api_key", key: draft.apiKey }, deps.userDir);
+    await saveCredential(
+      draft.name,
+      { type: "api_key", key: draft.apiKey },
+      deps.userDir,
+      deps.secrets?.(),
+    );
   }
   if (builtInProvider(draft.name) !== undefined) return;
   await updateUserConfig(
@@ -341,7 +352,7 @@ async function removeConnection(name: string, deps: ConnectionsDeps): Promise<Re
   }
   const saved = deps.credentials()[name];
   if (saved !== undefined) {
-    await deleteCredential(name, deps.userDir);
+    await deleteCredential(name, deps.userDir, deps.secrets?.());
     removed.push(saved.type === "oauth" ? `sign-in for ${name}` : `saved key for ${name}`);
   }
   const envSource = envCredentialSource(name, deps);

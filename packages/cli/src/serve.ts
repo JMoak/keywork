@@ -4,6 +4,7 @@ import {
   type Agent,
   type JournalTap,
   type PermissionResolver,
+  type PromptOrigin,
   type Provider,
   SessionStore,
   ShellSession,
@@ -179,6 +180,10 @@ export function fileSessionHost(options: HostOptions & { log: EventLog }): Sessi
       live.run(text);
       return "accepted";
     },
+    inject: async (id, text, origin) => {
+      const live = await sessions.open(id);
+      return live === undefined ? "missing" : live.run(text, origin);
+    },
     abort: async (id) => {
       const live = sessions.liveOnly(id);
       if (live !== undefined) return live.interrupt();
@@ -325,11 +330,13 @@ class LiveSession {
     this.detach = log.attach(agent.bus, this.id);
   }
 
-  run(text: string): void {
+  run(text: string, origin?: PromptOrigin): "started" | "queued" {
+    const outcome = this.agent.busy() ? "queued" : "started";
     this.settled = this.agent
-      .send(text)
+      .send(text, origin === undefined ? {} : { origin })
       .catch(() => undefined)
       .then(() => this.persist());
+    return outcome;
   }
 
   interrupt(): "aborted" | "idle" {

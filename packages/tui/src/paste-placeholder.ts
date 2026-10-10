@@ -42,6 +42,15 @@ export class PasteVault {
     this.held.clear();
   }
 
+  snapshot(): ReadonlyMap<number, string> {
+    return new Map(this.held);
+  }
+
+  restore(snapshot: ReadonlyMap<number, string>): void {
+    this.held.clear();
+    for (const [ordinal, text] of snapshot) this.held.set(ordinal, text);
+  }
+
   private expansionOf(token: string, ordinal: string): string {
     return this.held.get(Number(ordinal)) ?? token;
   }

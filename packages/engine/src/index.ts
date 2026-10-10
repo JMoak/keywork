@@ -10,13 +10,26 @@ export {
   QueuedPromptCancelledError,
   type SendOptions,
   type SpillSource,
+  type ToolBatchSettler,
   type ToolGuard,
   type ToolPermission,
   type ToolSource,
   type TurnDelegate,
   type TurnSettler,
 } from "./agent.ts";
-export { type EngineEvents, EventBus, type QueuedPrompt, type SendBehavior } from "./bus.ts";
+export {
+  type AgentHooks,
+  proceedWith,
+  type ToolCallRuling,
+  toolsThroughHooks,
+} from "./agent-hooks.ts";
+export {
+  type EngineEvents,
+  EventBus,
+  type PromptOrigin,
+  type QueuedPrompt,
+  type SendBehavior,
+} from "./bus.ts";
 export {
   declaredCapabilitiesFor,
   type InputModality,
@@ -62,6 +75,68 @@ export {
   narrowedPermissions,
   restrictTools,
 } from "./extensions/bots.ts";
+export {
+  discoverExtensions,
+  type ExtensionCandidate,
+  type ExtensionDiscovery,
+  type ExtensionLoadReport,
+  type ExtensionRoots,
+  extensionsConvention,
+  importExtension,
+  loadExtensions,
+  type SkippedExtensionLayer,
+  untrustedProjectReason,
+} from "./extensions/discover.ts";
+export {
+  appendExtensionEntry,
+  type ExtensionEntry,
+  extensionEntries,
+  extensionEntryOf,
+  extensionEntryType,
+} from "./extensions/extension-entries.ts";
+export {
+  type CustomEntryDelivery,
+  type ExtensionApi,
+  type ExtensionCommand,
+  type ExtensionDefinition,
+  type ExtensionFactory,
+  type ExtensionFlag,
+  type ExtensionLogger,
+  type ExtensionLogLevel,
+  type ExtensionShortcut,
+  type ExtensionSource,
+  type ExtensionTeardown,
+  type HookHandler,
+  type HookHandlers,
+  type HookName,
+  type HookPayload,
+  type HookResult,
+  type Hooks,
+  isWiredHook,
+  type SessionEndReason,
+  type SessionStartReason,
+  type ToolCallDecision,
+  type ToolResultReport,
+  type TypedOnlyHook,
+  typedOnlyHooks,
+  type WiredHook,
+  wiredHooks,
+} from "./extensions/hooks.ts";
+export {
+  defaultHookTimeoutMs,
+  type ExtensionFailure,
+  ExtensionHost,
+  type ExtensionHostOptions,
+  type ExtensionNotice,
+  type ExtensionStanding,
+  type ExtensionStatus,
+  HookTimeoutError,
+  type OwnedCommand,
+  type OwnedFlag,
+  type OwnedShortcut,
+  type SessionStartOptions,
+  UnknownExtensionCommandError,
+} from "./extensions/host.ts";
 export type {
   ExtensionLoadFailure,
   LayerRoots,
@@ -121,6 +196,7 @@ export {
   type ResolutionFailureCode,
   type ResolutionRequest,
 } from "./inference/types.ts";
+export { KeepAwake, keepAwake } from "./keep-awake.ts";
 export {
   type DiagnosticsObserverOptions,
   type DiagnosticsPublication,
@@ -329,6 +405,19 @@ export {
   type UsefulnessSink,
 } from "./memory/citations.ts";
 export {
+  checkDrift,
+  type DiffChanges,
+  type DriftAssessment,
+  type DriftCheckOptions,
+  type DriftEvidence,
+  type DriftFinding,
+  type DriftJudgmentPort,
+  type DriftReport,
+  driftAuditEvent,
+  driftJudgment,
+  touchedNotes,
+} from "./memory/drift.ts";
+export {
   type BotFlushTarget,
   type BotLearnings,
   backtrackFlushClause,
@@ -345,6 +434,14 @@ export {
   partitionBotLines,
   shouldFlush,
 } from "./memory/flush.ts";
+export {
+  type ForgetEntry,
+  type ForgetPlan,
+  type ForgetRefusal,
+  isEmptyPlan,
+  planForget,
+  stageForget,
+} from "./memory/forget.ts";
 export {
   type Frontmatter,
   type FrontmatterValue,
@@ -397,8 +494,12 @@ export {
   botMocLink,
   botMocName,
   type DailyEntry,
+  type DriftStamp,
+  type DriftVerdict,
+  driftStampOf,
   extractWikilinks,
   InvalidDailyDateError,
+  isDriftVerdict,
   isEntityPath,
   learnedByLink,
   learnedBySlug,
@@ -419,6 +520,18 @@ export {
   pointOfActionRecall,
 } from "./memory/point-of-action.ts";
 export {
+  compareAgainstMemoryOff,
+  memoryOffControl,
+  type ProbeCase,
+  type ProbeComparison,
+  type ProbeCorpus,
+  type ProbeHops,
+  type ProbeMetrics,
+  type ProbeOptions,
+  probeCorpusStub,
+  runRecallProbe,
+} from "./memory/recall-probe.ts";
+export {
   memoryGetTool,
   memoryRecallTools,
   memorySearchTool,
@@ -435,6 +548,7 @@ export {
 export type { NoteRelations } from "./memory/search.ts";
 export {
   type EmbeddingsPort,
+  type IndexReconciliation,
   type LegRanks,
   MemorySearch,
   type MemorySearcher,
@@ -513,6 +627,7 @@ export {
   type ModelRates,
   mergeCostRollups,
   ratesFor,
+  retirementOf,
   type SessionCostSource,
   sessionCost,
   withTurnCost,
@@ -524,9 +639,18 @@ export {
   type SystemPromptOptions,
 } from "./prompt.ts";
 export {
+  type CacheDiagnostics,
+  type CacheMiss,
+  type DoneDelta,
   declaredContextWindow,
+  type EffortChange,
+  type EffortLevel,
+  effortInForce,
+  effortLevels,
+  isEffortLevel,
   type Provider,
   type ProviderRequest,
+  type ToolAddition,
   type ToolDefinition,
   type TurnDelta,
 } from "./provider.ts";
@@ -602,13 +726,18 @@ export {
   type BindingEntry,
   type BranchSummaryEntry,
   type CompactionEntry,
+  type ContextEditEntry,
+  type ContextReplacement,
   type CustomEntry,
   type CustomMessageEntry,
   checkpointForPrompt,
   describeBinding,
+  describeContextEdit,
+  type EffortChangeEntry,
   type FileEntry,
   type FileTrackingDetails,
   foldBinding,
+  isContextEditable,
   type LabelEntry,
   type MessageEntry,
   type ModelChangeEntry,
@@ -644,6 +773,7 @@ export {
   compactNow,
   readStore,
   type SettleOptions,
+  type SettlePhase,
   settleTurn,
   type TurnSettlement,
 } from "./session/settle.ts";
@@ -673,6 +803,27 @@ export {
   SkillAlreadyExistsError,
 } from "./skills/authorship.ts";
 export {
+  type ArchivedSkill,
+  agentActor,
+  archiveCandidates,
+  type CurationCandidate,
+  type CurationThresholds as SkillCurationThresholds,
+  curatorActor,
+  defaultSkillCurationThresholds,
+  isPinned,
+  SkillArchive,
+  type SkillArchiveOptions,
+  type SkillLedgerAction,
+  type SkillLedgerEntry,
+  type SkillVersion,
+  SkillVersionNotFoundError,
+  skillArchiveDirName,
+  skillLedgerActions,
+  skillLedgerFileName,
+  userActor,
+  withPin,
+} from "./skills/curator.ts";
+export {
   type CommandOccurrence,
   commandSequenceOf,
   genesisRecurrenceFloor,
@@ -687,11 +838,18 @@ export {
   skillProposalFor,
 } from "./skills/genesis.ts";
 export {
+  type ArchiveOutcome,
+  type CurationOptions,
+  type CurationOutcome,
+  PinnedSkillError,
   ReferenceOutsideSkillError,
+  SkillArchiveUnavailableError,
   type SkillChange,
   type SkillChangeKind,
+  type SkillEvidenceRow,
   type SkillGenesis,
   SkillGenesisUnavailableError,
+  type SkillHistory,
   SkillLibrary,
   type SkillLibraryOptions,
   SkillPatchError,
@@ -732,6 +890,17 @@ export { confinedPath, scopeContains, type ToolScope, toolScope } from "./tools/
 export { type CoreToolOptions, coreTools, type MemoryRecall } from "./tools/core.ts";
 export { defineTool } from "./tools/define.ts";
 export { editTool } from "./tools/edit.ts";
+export {
+  interactiveShell,
+  type PtyChild,
+  type PtyRuntimeFacts,
+  type PtySize,
+  type PtySupport,
+  probePtySupport,
+  ptyUnavailableInRuntime,
+  ptyUnavailableOnWindows,
+  realPtyRuntimeFacts,
+} from "./tools/pty.ts";
 export { readTool } from "./tools/read.ts";
 export {
   type InteractiveShell,

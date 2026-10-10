@@ -1,4 +1,4 @@
-import { type Message, textMessage, type Usage } from "../messages.ts";
+import { type Message, type ToolCallPart, textMessage, type Usage } from "../messages.ts";
 import type { Provider } from "../provider.ts";
 import type { ContextBudget } from "./context-budget.ts";
 import {
@@ -15,9 +15,15 @@ export interface CompactionOptions {
   instructions?: string | undefined;
 }
 
+export interface PinnedSkill {
+  name: string;
+  content: string;
+}
+
 export interface CompactionPlan {
   entriesToSummarize: MessageEntry[];
   firstKeptEntryId: string;
+  pinnedSkills: PinnedSkill[];
   previousSummary?: string;
   previousDetails?: FileTrackingDetails;
   tokensBefore: number;
@@ -37,6 +43,7 @@ export function planCompaction(
 ): CompactionPlan | undefined {
   const context = store.contextEntries();
   const previous = context[0]?.type === "compaction" ? context[0] : undefined;
+  const carried = previous === undefined ? undefined : unpinned(previous.summary);
   const candidates = previous === undefined ? context : context.slice(1);
   const cut = findCutIndex(candidates, budget.keepRecent);
   if (cut === undefined) return undefined;
@@ -49,7 +56,8 @@ export function planCompaction(
   return {
     entriesToSummarize,
     firstKeptEntryId: (candidates[cut] as SessionEntry).id,
-    ...(previous?.summary !== undefined && { previousSummary: previous.summary }),
+    pinnedSkills: pinnedSkillsIn(entriesToSummarize, carried?.pinnedSkills ?? []),
+    ...(carried !== undefined && { previousSummary: carried.summary }),
     ...(previous?.details !== undefined && { previousDetails: previous.details }),
     tokensBefore: estimateConversationTokens(contextMessages(context)),
   };
@@ -66,7 +74,7 @@ export async function compactSession(
   const { text, usage } = await generateSummary(provider, plan, options.instructions);
   const details = trackFiles(plan.entriesToSummarize, plan.previousDetails);
   return store.appendCompaction({
-    summary: text,
+    summary: withPinnedSkills(text, plan.pinnedSkills),
     firstKeptEntryId: plan.firstKeptEntryId,
     tokensBefore: plan.tokensBefore,
     details,
@@ -142,6 +150,58 @@ function isCutPoint(entry: SessionEntry): boolean {
   if (entry.type === "custom_message" || entry.type === "branch_summary") return true;
   if (entry.type !== "message") return false;
   return entry.message.role === "user" || entry.message.role === "assistant";
+}
+
+const skillActivationTools = new Set(["skill", "skill_view"]);
+const pinnedHeading = "Skill instructions loaded earlier in this session, kept verbatim:";
+const pinnedBlock =
+  /<skill_content name="([^"]*)">\n([\s\S]*?)\n<\/skill_content>(?=\n\n<skill_content |$)/g;
+
+function pinnedSkillsIn(
+  entries: readonly MessageEntry[],
+  carried: readonly PinnedSkill[],
+): PinnedSkill[] {
+  const byName = new Map(carried.map((skill) => [skill.name, skill]));
+  const activations = new Map<string, string>();
+  for (const entry of entries) {
+    for (const part of entry.message.parts) {
+      if (part.type === "tool-call") {
+        const skill = activatedSkill(part);
+        if (skill !== undefined) activations.set(part.callId, skill);
+      }
+      if (part.type !== "tool-result" || part.isError) continue;
+      const name = activations.get(part.callId);
+      if (name === undefined) continue;
+      byName.delete(name);
+      byName.set(name, { name, content: part.output });
+    }
+  }
+  return [...byName.values()];
+}
+
+function activatedSkill(call: ToolCallPart): string | undefined {
+  if (!skillActivationTools.has(call.name)) return undefined;
+  if (typeof call.arguments !== "object" || call.arguments === null) return undefined;
+  const { name, file } = call.arguments as { name?: unknown; file?: unknown };
+  return typeof name === "string" && file === undefined ? name : undefined;
+}
+
+function withPinnedSkills(summary: string, pinned: readonly PinnedSkill[]): string {
+  if (pinned.length === 0) return summary;
+  const blocks = pinned.map(
+    (skill) => `<skill_content name="${skill.name}">\n${skill.content}\n</skill_content>`,
+  );
+  return `${summary}\n\n${pinnedHeading}\n\n${blocks.join("\n\n")}`;
+}
+
+function unpinned(summary: string): { summary: string; pinnedSkills: PinnedSkill[] } {
+  const marker = `\n\n${pinnedHeading}\n\n`;
+  const start = summary.indexOf(marker);
+  if (start === -1) return { summary, pinnedSkills: [] };
+  const pinnedSkills = [...summary.slice(start + marker.length).matchAll(pinnedBlock)].map(
+    (match) => ({ name: match[1] ?? "", content: match[2] ?? "" }),
+  );
+  return { summary: summary.slice(0, start), pinnedSkills };
 }
 
 function trackFiles(

@@ -21,7 +21,44 @@ describe("permissionPresets", () => {
   });
 
   it("defines standard as the empty bundle: the built-in posture with nothing overridden", () => {
-    expect(permissionPresets.standard).toEqual({});
+    expect(permissionPresets.standard).toEqual([]);
+  });
+
+  it("spells careful and open as one rule per core tool, leaving MCP tools on the built-in ask", () => {
+    expect(permissionPresets.open).toEqual([
+      { action: "read", resource: "*", effect: "allow" },
+      { action: "write", resource: "*", effect: "allow" },
+      { action: "edit", resource: "*", effect: "allow" },
+      { action: "bash", resource: "*", effect: "allow" },
+    ]);
+    expect(permissionPresets.careful.every((rule) => rule.effect === "ask")).toBe(true);
+  });
+});
+
+describe("activePreset over ordered rules", () => {
+  it("resolves the empty list to standard", () => {
+    expect(activePreset([])).toBe("standard");
+  });
+
+  it("resolves a reordered copy of a preset to that preset", () => {
+    expect(activePreset([...permissionPresets.careful].reverse())).toBe("careful");
+  });
+
+  it("names the same preset for a legacy map and the list it migrates to", () => {
+    const legacy: PermissionsConfig = {
+      tools: { read: "allow", write: "allow", edit: "allow", bash: "allow" },
+    };
+    expect(activePreset(legacy)).toBe("open");
+    expect(activePreset(permissionPresets.open)).toBe("open");
+  });
+
+  it("resolves an extra resource rule to custom", () => {
+    expect(
+      activePreset([
+        ...permissionPresets.open,
+        { action: "read", resource: "**/.env*", effect: "deny" },
+      ]),
+    ).toBe("custom");
   });
 });
 

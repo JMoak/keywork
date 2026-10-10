@@ -1,3 +1,4 @@
+import { neutralizeRecalled } from "./neutralize.ts";
 import type { Note } from "./notes.ts";
 
 export interface BootstrapSelection {
@@ -76,5 +77,5 @@ function renderLayer(layer: LayerBootstrap): string {
 }
 
 function renderNote(note: Note): string {
-  return `### [[${note.name}]]\n\n${note.body.trim()}\n`;
+  return `### [[${note.name}]]\n\n${neutralizeRecalled(note.body.trim())}\n`;
 }

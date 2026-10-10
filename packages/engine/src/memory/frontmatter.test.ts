@@ -53,6 +53,27 @@ describe("frontmatter round-trips", () => {
     const parsed = parseDocument("---\naliases: [one, two]\n---\n", "note.md");
     expect(parsed.frontmatter).toEqual({ aliases: ["one", "two"] });
   });
+
+  it("parses a nested string map", () => {
+    const raw = '---\nname: pdf\nmetadata:\n  author: example-org\n  version: "1.0"\n---\nbody';
+    expect(parseDocument(raw, "SKILL.md").frontmatter).toEqual({
+      name: "pdf",
+      metadata: { author: "example-org", version: "1.0" },
+    });
+  });
+
+  it("round-trips a nested string map", () => {
+    const frontmatter = { name: "pdf", metadata: { authored_by: "keywork" }, after: true };
+    const raw = serializeDocument(frontmatter, "body\n");
+    expect(raw).toContain('metadata:\n  authored_by: "keywork"\nafter: true');
+    expect(parseDocument(raw, "SKILL.md").frontmatter).toEqual(frontmatter);
+  });
+
+  it("rejects a nested key under a scalar", () => {
+    expect(() => parseDocument("---\nname: pdf\n  author: x\n---\n", "SKILL.md")).toThrow(
+      MalformedFrontmatterError,
+    );
+  });
 });
 
 describe("malformed frontmatter", () => {
