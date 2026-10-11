@@ -1,7 +1,8 @@
-import type { McpServerStatus } from "@keywork/engine";
+import type { FetchLike, McpServerStatus } from "@keywork/engine";
+import type { SecretVault } from "@keywork/shared";
 import type { McpServerView } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
-import { type McpRegistryLike, mcpPanePort } from "./mcp.ts";
+import { type McpRegistryLike, mcpCommand, mcpPanePort } from "./mcp.ts";
 
 interface StubWorld {
   restarted: string[];
@@ -79,5 +80,90 @@ describe("mcpPanePort", () => {
     mcpPanePort(registry).subscribe?.((servers) => seen.push(servers));
     world.listeners[0]?.([{ name: "files", state: "down", enabled: true, toolCount: 0 }]);
     expect(seen).toEqual([[{ name: "files", state: "down", enabled: true, toolCount: 0 }]]);
+  });
+});
+
+describe("keywork mcp", () => {
+  const servers = {
+    files: { transport: "stdio" as const, command: "files-mcp" },
+    github: { transport: "http" as const, url: "https://mcp.example.com/mcp" },
+  };
+
+  function memoryVault(): SecretVault & { names(): string[] } {
+    const items = new Map<string, string>();
+    return {
+      backend: "memory",
+      store: async (name, value) => void items.set(name, value),
+      lookup: async (name) => items.get(name),
+      forget: async (name) => void items.delete(name),
+      names: () => [...items.keys()],
+    };
+  }
+
+  function capture() {
+    const out: string[] = [];
+    const errors: string[] = [];
+    return {
+      out,
+      errors,
+      print: (line: string) => out.push(line),
+      printError: (line: string) => errors.push(line),
+    };
+  }
+
+  const offline: FetchLike = async () => new Response("", { status: 404 });
+
+  it("lists servers with their transport and sign-in state", async () => {
+    const io = capture();
+    const vault = memoryVault();
+    const code = await mcpCommand([], { servers, vault, fetchFn: offline, ...io });
+    expect(code).toBe(0);
+    expect(io.out).toEqual(["files · stdio", "github · http · not signed in"]);
+  });
+
+  it("refuses login for unknown or stdio servers with a usage exit", async () => {
+    const io = capture();
+    const base = { servers, vault: memoryVault(), fetchFn: offline, ...io };
+    expect(await mcpCommand(["login"], base)).toBe(2);
+    expect(await mcpCommand(["login", "nope"], base)).toBe(2);
+    expect(await mcpCommand(["login", "files"], base)).toBe(2);
+    expect(await mcpCommand(["frobnicate"], base)).toBe(2);
+    expect(io.errors).toEqual([
+      "keywork mcp login needs a server name",
+      'keywork mcp login: no server named "nope" (known: files, github)',
+      "keywork mcp login: files runs over stdio and has nothing to sign in to",
+      'keywork mcp: unknown verb "frobnicate" (list · login <server> · logout <server>)',
+    ]);
+  });
+
+  it("reports a server that cannot be signed in to without opening anything", async () => {
+    const io = capture();
+    const visited: string[] = [];
+    const fetchFn: FetchLike = async (url) => {
+      visited.push(url);
+      return new Response("", { status: 404 });
+    };
+    const code = await mcpCommand(["login", "github"], {
+      servers,
+      vault: memoryVault(),
+      fetchFn,
+      ...io,
+    });
+    expect(code).toBe(1);
+    expect(io.errors[0]).toMatch(/^keywork mcp login github: .*no protected resource metadata/);
+    expect(visited).toEqual([
+      "https://mcp.example.com/mcp",
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      "https://mcp.example.com/.well-known/oauth-protected-resource",
+    ]);
+  });
+
+  it("logs out by forgetting the stored token", async () => {
+    const io = capture();
+    const vault = memoryVault();
+    expect(
+      await mcpCommand(["logout", "github"], { servers, vault, fetchFn: offline, ...io }),
+    ).toBe(0);
+    expect(io.out).toEqual(["github had no sign-in to forget"]);
   });
 });

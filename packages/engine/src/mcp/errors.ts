@@ -26,6 +26,13 @@ export class McpInputRequiredError extends McpProtocolError {
   }
 }
 
+export class McpSignInRequiredError extends McpProtocolError {
+  constructor(readonly server: string) {
+    super(`${server} wants you to sign in first: run keywork mcp login ${server}`);
+    this.name = "McpSignInRequiredError";
+  }
+}
+
 export class McpAbortedError extends Error {
   constructor() {
     super("connection attempt aborted");

@@ -1,4 +1,5 @@
-import { engineEventTypes } from "./events.ts";
+import { engineEventTypes, serverEventTypes } from "./events.ts";
+import { airlockFamily } from "./routes/airlock.ts";
 import { askFamily } from "./routes/asks.ts";
 import { documentFamily } from "./routes/document.ts";
 import { eventFamily } from "./routes/events.ts";
@@ -9,11 +10,29 @@ import type {
   RouteSpec,
   WorkspaceInfo,
 } from "./routes/family.ts";
+import { fileFamily } from "./routes/files.ts";
+import { flavorFamily } from "./routes/flavors.ts";
+import { memoryFamily } from "./routes/memory.ts";
+import { sessionVerbFamily } from "./routes/session-verbs.ts";
 import { sessionFamily } from "./routes/sessions.ts";
+import { surfaceFamily } from "./routes/surfaces.ts";
+import { workspaceFamily } from "./routes/workspace.ts";
 
 export type { HttpMethod, JsonSchema, RouteSpec, WorkspaceInfo } from "./routes/family.ts";
 
-export const routeFamilies = [documentFamily, eventFamily, sessionFamily, askFamily] as const;
+export const routeFamilies = [
+  documentFamily,
+  eventFamily,
+  sessionFamily,
+  askFamily,
+  memoryFamily,
+  airlockFamily,
+  sessionVerbFamily,
+  workspaceFamily,
+  fileFamily,
+  surfaceFamily,
+  flavorFamily,
+] as const;
 
 export type Route = (typeof routeFamilies)[number]["routes"][number];
 
@@ -84,7 +103,7 @@ const envelopeSchema: JsonSchema = {
     id: { type: "integer", minimum: 1 },
     ts: { type: "string", format: "date-time" },
     sessionId: { type: "string" },
-    type: { type: "string", enum: [...engineEventTypes] },
+    type: { type: "string", enum: [...engineEventTypes, ...serverEventTypes] },
     payload: {},
   },
 };

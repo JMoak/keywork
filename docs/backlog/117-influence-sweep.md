@@ -616,3 +616,36 @@ flow; the loopback link is printed, never opened. Wiring the handler and vault i
 registry needs one line each in `cli/src/compose.ts` (`startMcpRegistry`) and the guard
 sites in `chat.ts` / `compose-panes.ts`, which are outside this lane's files; `keywork mcp`
 needs a `commandNames` entry in `cli/src/dispatch.ts` and a case in `main.ts`.
+
+### Landed 2026-10-10: elicitation through the ask gate, OAuth to the 2026 rules
+
+Both builds from the scope-first list are in the tree. The field names and decisions above
+held; what follows records where each piece lives and the calls taken while wiring it.
+
+| Piece | Where | Notes |
+|---|---|---|
+| `callTool` retry loop | `engine/src/mcp/era.ts` `McpSession.callTool` | `input_required` turns into one `elicitation/create` answer per `inputRequests` key, then `tools/call` again with top-level `inputResponses` plus the echoed `requestState`; capped at `maxElicitationRounds` (4); a server that asks again after a decline fails with a readable error; a connection without a handler still raises `McpInputRequiredError` (SW12's behavior) |
+| Client capability | `era.ts` `requestMeta` | `elicitation: { form: {}, url: {} }` rides `_meta["io.modelcontextprotocol/clientCapabilities"]` only when the session has a handler; fixture tool `capabilities` echoes it back for the test |
+| `elicit` option | `client.ts` `StdioConnectOptions`, `http.ts` `HttpConnectOptions`, `McpConnection.callTool(name, args, { elicit })`, `registry.ts` `McpRegistryOptions.elicit` and `surface(base, { elicit })` | the registry's own default is `decliningElicitation` so the capability is always advertised; each agent's surface carries its guard's handler, so asks land in the pane that made the call |
+| Ask-gate adapter | new `engine/src/mcp/elicitation-gate.ts` `askGateElicitation(guard, { say })` | one synthetic `ToolCallPart` named `mcp_elicitation` (arguments `{ server, message, fields? \| url }`) through `guard.confirm`, so the TUI prompt, `keywork chat` and `GET /asks` all show it with no server change; yes accepts with the schema defaults, no declines; a required field with no default declines without asking and names the field; url mode prints the link through `say` and never opens a browser; the decline reason follows the gate that answered (`user` says "you declined", anything else says "no one to answer"), so `keywork run` declines per A20 with no `run.ts` change |
+| Seams | `cli/src/compose.ts` `buildAgent` (surface with the guard's handler), `startMcpRegistry` (one shared vault, `auth: new McpOAuth({ vault })`), `chat.ts` and `compose-panes.ts` (`notice` into `composeAgents` so url links print) | `AgentCompositionOptions.notice` is the only new option shape |
+| Fixture | `engine/src/testing/mcp-fixture-server.ts` profile `asking` under `--era=modern` | tools `confirm`, `greet` (form with defaults), `register` (required field, no default), `connect` (url mode), `nag` (asks forever), `capabilities`; the fixture checks `requestState` round-trips |
+| 401 challenge | new `engine/src/mcp/oauth-wire.ts` `parseBearerChallenge` | `WWW-Authenticate: Bearer resource_metadata="…", scope="…"`; `http.ts` `post` retries up to three sends per request through `HttpAuthorization.renewAfter` (stored token first, then a refresh), then throws `McpSignInRequiredError` with the `keywork mcp login <server>` hint; the error is never mistaken for a legacy server |
+| RFC 9728 | `oauth-wire.ts` `fetchProtectedResourceMetadata`, `protectedResourceMetadataUrls` | challenge URL first, then `/.well-known/oauth-protected-resource<path>`, then the root; the document's `resource` must canonically equal the server URL; `authorization_servers[0]` is the issuer |
+| RFC 8414 / OIDC | `oauth-wire.ts` `discoverAuthorizationServer`, `authorizationServerMetadataUrls` | path-aware order: `/.well-known/oauth-authorization-server<path>`, `/.well-known/openid-configuration<path>`, `<path>/.well-known/openid-configuration` (root issuers take the first two without a path); `issuer` must equal the PRM string exactly; S256 must be in `code_challenge_methods_supported` |
+| CIMD then DCR | `oauth.ts` `clientIdMetadataDocumentUrl` (**`undefined` today**), `oauth-wire.ts` `registerClient` | CIMD is used only when the constant is set and the server says `client_id_metadata_document_supported`; otherwise the stored registration for the issuer, otherwise `POST registration_endpoint` with `application_type: "native"`, `token_endpoint_auth_method: "none"`, `grant_types` code + refresh |
+| PKCE, state, loopback | new `engine/src/mcp/oauth-loopback.ts` | 32 random bytes base64url as the verifier, S256 challenge, 16 random bytes of state, `http://127.0.0.1:<random port>/callback`; a stale state answers 400 and keeps waiting; an `error` callback fails the flow; the link is printed, never opened |
+| RFC 9207 and RFC 8707 | `oauth.ts` `assertIssuer`, `authorizeLink`, `oauth-wire.ts` `exchangeCode` / `refreshGrant` | `iss` must equal the issuer exactly when present and is required when the server advertises `authorization_response_iss_parameter_supported`; `resource` rides the authorize link, the code exchange and every refresh |
+| Storage | new `engine/src/mcp/oauth-store.ts` through E9's `SecretVault` | tokens under `mcp-token.<resource host>.<sha256(issuer, resource)[:16]>`, DCR credentials under `mcp-client.<issuer host>.<sha256(issuer)[:16]>`; JSON records, never config; a dead refresh token forgets the record and asks for sign-in again |
+| Never launches itself | `oauth.ts` `McpOAuth.authorizationFor` | the transport only reads the vault and refreshes; `McpOAuth.login` is the one door to the browser and `keywork mcp login <server>` is the one caller |
+| `keywork mcp` | `cli/src/mcp.ts` `mcpCommand`, `dispatch.ts` (`commandNames`, usage, `withoutTerminal`), `main.ts` `runMcp` | `list` (transport and sign-in state), `login <server>` (prints the link, waits, says to restart the server), `logout <server>`; stdio servers and unknown names refuse with exit 2 |
+| Pane rows | `tui/src/mcp-pane-model.ts` | `McpServerStatus.auth` (`signed-in` or `sign-in-needed`) from the registry; an alert row `sign in: keywork mcp login <name>, then restart` under a server that needs it; `· signed in` on a connected line |
+| Tests | `engine/src/mcp/elicitation-flow.test.ts` (12), `oauth.test.ts` (17), `cli/src/mcp.test.ts` (+4), `tui/src/mcp-pane-model.test.ts` (+2) | all through the stdio fixture or a fake authorization server behind `fetchFn`; the loopback handshake uses a fake browser request to the real `127.0.0.1` listener |
+
+Deviations and open calls: the CIMD document URL is a product decision (where keywork would
+host its client metadata JSON), so the constant stays `undefined` and every server goes
+through dynamic registration until it is set; the http schema's `headers` description in
+`shared/src/config/schema.ts` still says keywork runs no OAuth flow, which is now untrue for
+MCP servers and is outside this lane's files; after `keywork mcp login` the running pane
+needs a restart of that server (the reconciler's retries are what trigger the 401, and a
+separate process cannot see the new token until the next connect).

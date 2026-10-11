@@ -76,6 +76,13 @@ export {
   restrictTools,
 } from "./extensions/bots.ts";
 export {
+  describeExtensions,
+  type ExtensionListing,
+  type ExtensionsSummary,
+  extensionLoadNotices,
+  summarizeExtensions,
+} from "./extensions/describe.ts";
+export {
   discoverExtensions,
   type ExtensionCandidate,
   type ExtensionDiscovery,
@@ -128,12 +135,15 @@ export {
   ExtensionHost,
   type ExtensionHostOptions,
   type ExtensionNotice,
+  type ExtensionRegistrations,
   type ExtensionStanding,
   type ExtensionStatus,
   HookTimeoutError,
+  type ObserveSeams,
   type OwnedCommand,
   type OwnedFlag,
   type OwnedShortcut,
+  type SessionResolver,
   type SessionStartOptions,
   UnknownExtensionCommandError,
 } from "./extensions/host.ts";
@@ -226,12 +236,15 @@ export {
   languageServersFor,
 } from "./lsp/servers.ts";
 export {
+  type CallToolOptions,
   connectStdioServer,
   McpAbortedError,
   type McpConnection,
+  McpInputRequiredError,
   McpProtocolError,
   McpRequestTimeoutError,
   McpServerExitedError,
+  McpSignInRequiredError,
   type McpTool,
   type McpToolResult,
   mcpProtocolVersion,
@@ -239,10 +252,37 @@ export {
   type StdioServerSpec,
 } from "./mcp/client.ts";
 export {
+  decliningElicitation,
+  describeElicitation,
+  type ElicitationAnswer,
+  type ElicitationField,
+  type ElicitationHandler,
+  type ElicitationRequest,
+  type FormElicitation,
+  type UrlElicitation,
+} from "./mcp/elicitation.ts";
+export {
+  askGateElicitation,
+  type ElicitationGateOptions,
+  elicitationCall,
+  elicitationToolName,
+} from "./mcp/elicitation-gate.ts";
+export {
   connectHttpServer,
+  type HttpAuthorization,
   type HttpConnectOptions,
   type HttpServerSpec,
 } from "./mcp/http.ts";
+export {
+  clientIdMetadataDocumentUrl,
+  type LoginIo as McpLoginIo,
+  type McpAuthProvider,
+  type McpAuthState,
+  McpOAuth,
+  type McpOAuthOptions,
+  type SignInSummary as McpSignInSummary,
+} from "./mcp/oauth.ts";
+export { McpOAuthError } from "./mcp/oauth-wire.ts";
 export type {
   ConnectServer,
   McpServerState,
@@ -260,6 +300,7 @@ export {
   type McpStatusListener,
   type McpToolCallReport,
   type McpToolProvenance,
+  type SurfaceOptions as McpSurfaceOptions,
 } from "./mcp/registry.ts";
 export { mcpSearchToolName } from "./mcp/tool-search.ts";
 export {

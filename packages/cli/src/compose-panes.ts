@@ -58,9 +58,12 @@ import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
 import {
   type AgentComposition,
   type Composition,
+  closeExtensionHost,
   composeAgents,
   composeWorkspace,
+  sessionReasonFor,
 } from "./compose.ts";
+import { extensionHostPort } from "./extensions-command.ts";
 import { inferencePort } from "./inference/port.ts";
 import { closingRole, namingRole, roleProvider } from "./inference/roles.ts";
 import type { LiveInference } from "./inference-state.ts";
@@ -198,7 +201,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     checkpointsGitDir: options.checkpointsGitDir,
     reportCheckpointsUnavailable: options.reportCheckpointsUnavailable,
   });
-  const { checkpoints, extensions, mcp, memory } = composition;
+  const { checkpoints, extensions, host, mcp, memory } = composition;
   const port = composition.languagePort;
   const citations = citationTrail(memory, () => composition.bootstrap);
   const setup = options.workspaceSetup;
@@ -235,6 +238,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     bots: botLayers,
     citations,
     thinking: config.thinking === "on",
+    notice: notices.post,
   });
   const bots = botService({
     cwd,
@@ -288,12 +292,14 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
         stores.set(store.header.id, store);
         citations.forSession(store.header.id);
         void arcs.attached(store);
+        void host.startSession({ reason: sessionReasonFor(store), store });
       },
       onRelease: (sessionId) => {
         stores.delete(sessionId);
         agents.release(sessionId);
         arcs.released(sessionId);
         citations.release(sessionId);
+        void host.endSession("switch", sessionId);
       },
       onChange: (sessionId) => changes.emit(sessionId),
       onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
@@ -318,10 +324,12 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       },
       ...(mcp === undefined ? [] : [() => mcp.stop()]),
       ...(port === undefined ? [] : [() => port.dispose()]),
+      () => closeExtensionHost(host),
     ],
     notices,
     terminalPane: { trusted: projectTrusted },
     extensions: extensionsView(extensions, cwd),
+    extensionHost: extensionHostPort(host, composition.hostReport),
     ...(config.theme !== undefined && { themeOverrides: config.theme }),
     ...(config.flavor !== undefined && { flavor: config.flavor }),
     keybindings: fileKeybindings({

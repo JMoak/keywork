@@ -3,6 +3,7 @@ import type { AppCore } from "./app-core.ts";
 import type { CommandSpec } from "./commands.ts";
 import type { ConversationModel } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
+import { extensionListingCommand } from "./extension-host.ts";
 import type { TerminalMode } from "./pane.ts";
 import { type PaneKind, paneKindAvailable, paneKindOf } from "./pane-kinds.ts";
 
@@ -106,6 +107,14 @@ function builtinCommands(core: AppCore): CommandSpec[] {
     }),
     ...(options.arcs === undefined ? [] : arcCommands(core)),
     ...(options.bots === undefined ? [] : botCommands(core)),
+    ...(options.extensionHost === undefined
+      ? []
+      : [
+          extensionListingCommand(options.extensionHost, {
+            notice: (text) => core.postNotice(text),
+            post: (text) => postToFocusedConversation(core, text),
+          }),
+        ]),
     ...when(options.presets !== undefined, {
       name: "preset",
       aliases: ["presets"],
@@ -320,6 +329,13 @@ function focusedSessionId(core: AppCore): string | undefined {
     if (pane instanceof ConversationPane) return pane.sessionId;
   }
   return undefined;
+}
+
+function postToFocusedConversation(core: AppCore, text: string): boolean {
+  const conversation = focusedConversation(core);
+  if (conversation === undefined) return false;
+  conversation.postNotice(text);
+  return true;
 }
 
 function focusedConversation(core: AppCore): ConversationModel | undefined {

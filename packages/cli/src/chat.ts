@@ -7,6 +7,8 @@ import {
   compactNow,
   contextBudgetFor,
   declaredContextWindow,
+  type ExtensionNotice,
+  extensionLoadNotices,
   gatherReturnDelta,
   type MemoryFlush,
   type Message,
@@ -39,9 +41,11 @@ import {
 import {
   type AgentComposition,
   type Composition,
+  closeExtensionHost,
   composeAgents,
   composeWorkspace,
 } from "./compose.ts";
+import { describeExtensionHost } from "./extensions-command.ts";
 import { citationTrail, skillEvidenceOf, sweepOnClose } from "./memory.ts";
 import { defaultSessionDir, skillTelemetryFile, workspaceIdentity } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
@@ -144,6 +148,7 @@ const builtinCommands: Readonly<Record<string, SlashHandler>> = {
   bot: (repl, args) => switchBot(repl, args),
   steer: (repl, args) => submitPrompt(repl, args, "steer"),
   queue: (repl, args) => submitPrompt(repl, args, "queue"),
+  extensions: async (repl) => printExtensions(repl),
 };
 
 const builtinCommandNames: readonly string[] = Object.keys(builtinCommands);
@@ -260,7 +265,12 @@ class Repl {
     }
   }
 
+  hostCommandNames(): string[] {
+    return this.composition.host.commands().map((command) => command.name);
+  }
+
   async close(): Promise<void> {
+    await closeExtensionHost(this.composition.host);
     await this.composition.mcp?.stop();
     await this.composition.languagePort?.dispose();
     await this.sweepMemory().catch((cause: unknown) => {
@@ -305,6 +315,12 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     }),
   });
   reportExtensionFailures(composition.extensions, io);
+  for (const line of extensionLoadNotices(composition.hostReport)) io.printError(line);
+  composition.host.onNotice((notice) => printExtensionNotice(notice, io));
+  await composition.host.startSession({
+    reason: opened.seeded.length > 0 ? "resume" : "start",
+    store: opened.store,
+  });
   const guard = mutationGuard(io, composition.checkpoints);
   const citations = citationTrail(composition.memory, () => composition.bootstrap);
   citations.forSession(opened.store.header.id);
@@ -329,6 +345,7 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
       bots,
       citations,
       thinking: options.thinking === "on",
+      notice: (text) => io.print(text),
     }),
     bots,
     guard,
@@ -360,6 +377,7 @@ async function runRepl(repl: Repl): Promise<void> {
   const complete = slashCompleter([
     ...builtinCommandNames,
     ...repl.extensions.commands.map((command) => command.name),
+    ...repl.hostCommandNames(),
   ]);
   const stopListening = repl.io.onKey((key) => {
     if (key.name === "escape" || (key.ctrl && key.name === "c")) repl.interrupt();
@@ -385,6 +403,7 @@ async function handleLine(repl: Repl, line: string): Promise<void> {
   }
   const invoked = resolveSlashCommand(repl.extensions.commands, line);
   if (invoked === undefined) {
+    if (repl.hostCommandNames().includes(slash.name)) return runHostCommand(repl, slash);
     repl.io.printError(`unknown command /${slash.name} · ${knownCommandsLine(repl)}`);
     return;
   }
@@ -414,6 +433,27 @@ async function submitPrompt(
     repl.adopt(bot, repl.agent.history());
   }
   void repl.dispatch(text, behavior);
+}
+
+async function runHostCommand(repl: Repl, slash: { name: string; args: string }): Promise<void> {
+  const output = await repl.composition.host
+    .runCommand(slash.name, slash.args)
+    .catch((cause: unknown) => {
+      repl.io.printError(`/${slash.name} failed: ${toError(cause).message}`);
+      return undefined;
+    });
+  if (output !== undefined) repl.io.print(output);
+}
+
+function printExtensions(repl: Repl): void {
+  const { host, hostReport } = repl.composition;
+  for (const line of describeExtensionHost(host, hostReport)) repl.io.print(line);
+}
+
+function printExtensionNotice(notice: ExtensionNotice, io: ChatIo): void {
+  const line = `${notice.extension}: ${notice.message}`;
+  if (notice.level === "info") io.print(`  · ${line}`);
+  else io.printError(line);
 }
 
 async function compactSession(repl: Repl, instructions: string): Promise<void> {
@@ -600,7 +640,11 @@ function greet(repl: Repl, seededCount: number): void {
 }
 
 function knownCommandsLine(repl: Repl): string {
-  return [...builtinCommandNames, ...repl.extensions.commands.map((command) => command.name)]
+  return [
+    ...builtinCommandNames,
+    ...repl.extensions.commands.map((command) => command.name),
+    ...repl.hostCommandNames(),
+  ]
     .map((name) => `/${name}`)
     .join(" ");
 }

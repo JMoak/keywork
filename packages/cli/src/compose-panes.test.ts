@@ -1,6 +1,6 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ToolGuard } from "@keywork/engine";
+import { type ExtensionEntry, extensionEntries, type ToolGuard } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import type { AppOptions, ConnectionsPort, WorkspacePort } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import { composePanes, type PanesOptions } from "./compose-panes.ts";
 import { composeInference } from "./inference/runtime.ts";
 import type { LiveInference } from "./inference-state.ts";
 import { createPresetSwitch } from "./presets.ts";
+import { findSession } from "./sessions/store.ts";
 
 const tempDir = scratchDirs("keywork-panes-");
 
@@ -99,8 +100,8 @@ describe("composePanes", () => {
     expect((await declared.app.memory?.load())?.layers.map((layer) => layer.id)).toEqual([
       "workspace",
     ]);
-    expect(bare.app.closers).toHaveLength(2);
-    expect(declared.app.closers).toHaveLength(2);
+    expect(bare.app.closers).toHaveLength(3);
+    expect(declared.app.closers).toHaveLength(3);
   });
 
   it("passes the workspace setup port through and phrases arc refusals from its readiness", async () => {
@@ -169,3 +170,78 @@ describe("composePanes", () => {
     expect(app.page).toEqual({ columnAt: 90 });
   });
 });
+
+describe("extension host across pane sessions", () => {
+  const lifecycleSource = [
+    "export default function lifecycle(api) {",
+    '  api.on("session_start", ({ reason, sessionId }) => api.appendEntry("opened", reason));',
+    '  api.on("session_end", ({ reason, sessionId }) =>',
+    `    api.log.warn(\`closed \${sessionId} on \${reason}\`),`,
+    "  );",
+    '  api.registerCommand({ name: "ping", run: () => "pong" });',
+    "}",
+    "",
+  ].join("\n");
+
+  async function rootWithExtension(): Promise<string> {
+    const root = await tempDir();
+    const dir = join(root, "workspace", ".keywork", "extensions");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "lifecycle.ts"), lifecycleSource);
+    return root;
+  }
+
+  it("starts a session per attach, ends it per release, and lands entries in that session", async () => {
+    const root = await rootWithExtension();
+    const { app, sessionDir } = await composedIn(root);
+    const host = app.extensionHost;
+    if (host === undefined) throw new Error("no extension host port");
+    const warned: string[] = [];
+    host.onNotice((notice) => warned.push(notice.message));
+
+    const first = await app.sessions?.create();
+    const second = await app.sessions?.create();
+    if (first === undefined || second === undefined) throw new Error("sessions did not open");
+    const [firstEntries, secondEntries] = await Promise.all([
+      waitForEntries(sessionDir, first.id, 1),
+      waitForEntries(sessionDir, second.id, 1),
+    ]);
+    expect(firstEntries).toEqual([{ extension: "lifecycle", type: "opened", data: "start" }]);
+    expect(secondEntries).toEqual([{ extension: "lifecycle", type: "opened", data: "start" }]);
+
+    app.sessions?.release?.(first.id);
+    await waitFor(() => expect(warned).toEqual([`closed ${first.id} on switch`]));
+    expect(await host.runCommand("ping", "")).toBe("pong");
+    expect(host.extensions().map((status) => status.standing)).toEqual(["active"]);
+
+    for (const close of app.closers ?? []) await close();
+    expect(warned).toEqual([`closed ${first.id} on switch`, `closed ${second.id} on exit`]);
+  });
+});
+
+async function waitForEntries(
+  sessionDir: string,
+  sessionId: string,
+  count: number,
+): Promise<ExtensionEntry[]> {
+  let entries: ExtensionEntry[] = [];
+  await waitFor(async () => {
+    const store = await findSession(sessionDir, sessionId);
+    entries = extensionEntries(store?.entries() ?? []);
+    expect(entries).toHaveLength(count);
+  });
+  return entries;
+}
+
+async function waitFor(assertion: () => void | Promise<void>, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      await assertion();
+      return;
+    } catch (cause) {
+      if (Date.now() > deadline) throw cause;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+}

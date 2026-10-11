@@ -17,12 +17,14 @@ Usage:
   keywork memory forget --session <id> [--apply]            stage removal of a session's memory
   keywork skills history <name> [--restore <version>]       a skill's actor ledger and versions
   keywork skills pin|unpin|archive|curate [name] [--apply]  curator hygiene for agent skills
-  keywork link <dir>                                      widen the workspace to another folder
+  keywork extensions                                        list extensions and their standing
+  keywork mcp [list|login|logout] [server]                  sign in to MCP servers that ask for it
+  keywork link <dir>                                    widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust
   keywork doctor                                            show what your terminal supports
   keywork serve [--port <n>|0] [--model <model>]
                 [--preset careful|standard|open]
-                [--session-dir <dir>]                       HTTP + SSE server on 127.0.0.1
+                [--session-dir <dir>] [--no-checkpoints]    HTTP + SSE server on 127.0.0.1
   keywork attach [--pane conversation|session-tree] [--session <id>]
                  [--url <url>] [--token <token>]            mount a pane over keywork serve
   keywork --version                                         print the version and exit
@@ -60,6 +62,8 @@ export const commandNames = [
   "bot",
   "memory",
   "skills",
+  "extensions",
+  "mcp",
   "link",
   "trust",
   "untrust",
@@ -87,6 +91,8 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   bot: { behavior: "runs", note: "removal confirmations are skipped, never assumed" },
   memory: { behavior: "runs", note: "forget is a dry run unless --apply is given" },
   skills: { behavior: "runs", note: "archive and curate are dry runs unless --apply is given" },
+  extensions: { behavior: "runs", note: "activates each extension to report its standing" },
+  mcp: { behavior: "runs", note: "login prints the sign-in link and waits for the browser" },
   link: { behavior: "runs", note: "confirmations are skipped, never assumed" },
   trust: { behavior: "runs" },
   untrust: { behavior: "runs" },

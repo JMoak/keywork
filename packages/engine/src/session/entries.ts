@@ -50,6 +50,7 @@ export interface LabelEntry extends EntryBase {
 export interface SessionInfoEntry extends EntryBase {
   type: "session_info";
   name?: string;
+  pinned?: boolean;
 }
 
 export interface CustomEntry extends EntryBase {

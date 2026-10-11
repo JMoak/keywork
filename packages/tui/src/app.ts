@@ -48,6 +48,12 @@ import {
   registerExtensions,
   shadowedExtensionNotice,
 } from "./extension-commands.ts";
+import {
+  type ExtensionHostPort,
+  extensionStartupNotice,
+  registerHostedCommands,
+  watchExtensionNotices,
+} from "./extension-host.ts";
 import { externalEditorFor } from "./external-editor.ts";
 import { FileIndex, fileJumpSource, fileJumpsAllowed } from "./file-index.ts";
 import { FilePane } from "./file-pane.ts";
@@ -178,6 +184,7 @@ export interface AppOptions {
   diff?: DiffPort;
   notices?: NoticeSource;
   extensions?: ExtensionsPort;
+  extensionHost?: ExtensionHostPort;
   terminal?: TerminalSeams;
   terminalPane?: TerminalPanePort;
   notifications?: NotificationPolicy;
@@ -275,6 +282,16 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
   const fileIndex = new FileIndex(process.cwd(), realBrowserDisk, render);
   const unsubscribeMcp = options.mcp?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
   const unsubscribeNotices = options.notices?.subscribe((text) => core.postNotice(text));
+  const unsubscribeExtensionNotices =
+    options.extensionHost === undefined
+      ? undefined
+      : watchExtensionNotices(options.extensionHost, {
+          notice: (text) => {
+            core.postNotice(text);
+            render();
+          },
+          post: (text) => sessions.postNotice(text),
+        });
   let inboxWaiting = 0;
   const unsubscribeInbox = options.inbox?.subscribe((waiting) => {
     inboxWaiting = waiting;
@@ -338,6 +355,7 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
       frames.dispose();
       unsubscribeMcp?.();
       unsubscribeNotices?.();
+      unsubscribeExtensionNotices?.();
       unwatchKeybindings();
       arcIndex.dispose();
       fileIndex.dispose();
@@ -580,6 +598,7 @@ function hostPorts(
       workspaceSetup: options.workspaceSetup,
       arcs: options.arcs,
       bots: options.bots,
+      extensionHost: options.extensionHost,
     }),
     ...(options.arcs !== undefined && { focusedArc: sessions.focusedArcPort() }),
     ...(options.bots !== undefined && { focusedBot: sessions.focusedBotPort() }),
@@ -628,15 +647,25 @@ function registerHostCommands(
   }
   registerFlavorCommands(core.registry, flavors, { repaint: render, notice });
   const extensions = options.extensions;
-  if (extensions === undefined) return;
-  const shadowed = registerExtensions(core.registry, extensions, {
-    conversation: () => sessions.conversationTarget(),
+  if (extensions !== undefined) {
+    const shadowed = registerExtensions(core.registry, extensions, {
+      conversation: () => sessions.conversationTarget(),
+      notice,
+    });
+    for (const text of [
+      extensionFailureNotice(extensions.failures),
+      shadowedExtensionNotice(shadowed),
+    ]) {
+      if (text !== undefined) notice(text);
+    }
+  }
+  const host = options.extensionHost;
+  if (host === undefined) return;
+  const shadowed = registerHostedCommands(core.registry, host, {
     notice,
+    post: (text) => sessions.postNotice(text),
   });
-  for (const text of [
-    extensionFailureNotice(extensions.failures),
-    shadowedExtensionNotice(shadowed),
-  ]) {
+  for (const text of [extensionStartupNotice(host), shadowedExtensionNotice(shadowed)]) {
     if (text !== undefined) notice(text);
   }
 }

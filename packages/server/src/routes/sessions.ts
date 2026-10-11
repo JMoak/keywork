@@ -1,3 +1,4 @@
+import type { SendBehavior } from "@keywork/engine";
 import {
   bodyOf,
   fieldsOf,
@@ -12,7 +13,10 @@ import {
 const promptBody: JsonSchema = {
   type: "object",
   required: ["text"],
-  properties: { text: { type: "string", minLength: 1 } },
+  properties: {
+    text: { type: "string", minLength: 1 },
+    behavior: { type: "string", enum: ["steer", "queue"], default: "queue" },
+  },
   additionalProperties: false,
 };
 
@@ -59,12 +63,13 @@ export const sessionRoutes = [
     path: "/sessions/{id}/prompt",
     operationId: "promptSession",
     summary:
-      "Append a user prompt and run a turn. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events.",
+      "Append a user prompt and run a turn. `behavior` defaults to `queue`: when a turn is already running the prompt waits behind it, which is what Enter does in the terminal composer. `steer` interrupts the running turn and runs this prompt before anything queued. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events and a `session.state` envelope follows acceptance.",
     authenticated: true,
     requestBody: promptBody,
     responses: {
-      "202": "The prompt was accepted; watch /events for the turn.",
-      "400": "The body is not `{ text }`.",
+      "202":
+        "The prompt was accepted; `queued` says whether it waits behind a running turn. Watch /events for the turn.",
+      "400": 'The body is not `{ text, behavior?: "steer" | "queue" }`.',
       "404": "No session has that id.",
     },
   },
@@ -105,12 +110,21 @@ export const sessionFamily = {
       return session === undefined ? missingSession() : json(200, session);
     },
     promptSession: async (request, { id }) => {
-      const text = promptTextOf(await bodyOf(request));
-      if (text === undefined) return json(400, { error: "the body must be { text: string }" });
-      const outcome = await host.prompt(id ?? "", text);
+      const prompt = promptOf(await bodyOf(request));
+      if (prompt === undefined) {
+        return json(400, {
+          error: 'the body must be { text: string, behavior?: "steer" | "queue" }',
+        });
+      }
+      const outcome = await host.prompt(id ?? "", prompt.text, prompt.behavior);
       return outcome === "missing"
         ? missingSession()
-        : json(202, { sessionId: id, accepted: true });
+        : json(202, {
+            sessionId: id,
+            accepted: true,
+            queued: outcome === "queued",
+            behavior: prompt.behavior,
+          });
     },
     injectPrompt: async (request, { id }) => {
       const injection = injectionOf(await bodyOf(request));
@@ -132,8 +146,12 @@ export const sessionFamily = {
   }),
 } satisfies RouteFamily<typeof sessionRoutes>;
 
-function promptTextOf(body: unknown): string | undefined {
-  return nonBlank(fieldsOf<{ text: unknown }>(body)?.text);
+function promptOf(body: unknown): { text: string; behavior: SendBehavior } | undefined {
+  const fields = fieldsOf<{ text: unknown; behavior: unknown }>(body);
+  const text = nonBlank(fields?.text);
+  const behavior = fields?.behavior ?? "queue";
+  if (text === undefined || (behavior !== "steer" && behavior !== "queue")) return undefined;
+  return { text, behavior };
 }
 
 function injectionOf(body: unknown): { text: string; client: string } | undefined {

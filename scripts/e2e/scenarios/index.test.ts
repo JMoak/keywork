@@ -55,6 +55,7 @@ describe("scenario registry", () => {
       "diff-pane",
       "feel-polish",
       "live-playground",
+      "extensions-tour",
     ]);
   });
 
@@ -109,6 +110,7 @@ describe("scenario registry", () => {
       "file-links-off",
       "diff-pane",
       "feel-polish",
+      "extensions-tour",
     ]);
   });
 

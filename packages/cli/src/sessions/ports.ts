@@ -166,6 +166,7 @@ function attachmentOf(
       return { entryId: entry.id };
     },
     rename: async (title) => {
+      if (store.titlePinned()) return;
       await store.setName(title);
       seams.onChange?.(store.header.id);
     },
@@ -227,7 +228,7 @@ function isMessageEntry(entry: SessionEntry): entry is MessageEntry {
   return entry.type === "message";
 }
 
-function rewindBefore(store: SessionStore, promptId: string): RewoundPrompt | undefined {
+export function rewindBefore(store: SessionStore, promptId: string): RewoundPrompt | undefined {
   const prompt = store.entry(promptId);
   if (prompt?.type !== "message" || prompt.message.role !== "user") return undefined;
   const leaf = store.leafId();
@@ -242,7 +243,7 @@ function rewindBefore(store: SessionStore, promptId: string): RewoundPrompt | un
   };
 }
 
-function moveLeaf(store: SessionStore, entryId: string | null): void {
+export function moveLeaf(store: SessionStore, entryId: string | null): void {
   if (entryId === null) store.resetLeaf();
   else store.branch(entryId);
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { engineEventTypes } from "./events.ts";
+import { engineEventTypes, serverEventTypes } from "./events.ts";
 import {
   type OpenApiDocument,
   openApiDocument,
@@ -32,6 +32,6 @@ function fixtureWithTodaysVocabulary(): OpenApiDocument {
   const envelope = fixture.components.schemas.BusEnvelope as {
     properties: { type: { enum: string[] } };
   };
-  envelope.properties.type.enum = [...engineEventTypes];
+  envelope.properties.type.enum = [...engineEventTypes, ...serverEventTypes];
   return fixture;
 }

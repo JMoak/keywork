@@ -4,7 +4,20 @@
 > owns it. Read this first when resuming, then the owning overlay before building. Strike items
 > as they land and add the landing date; when a section empties, delete it.
 
-## Where the tree stands (2026-10-07)
+## Where the tree stands (2026-10-10)
+
+The 2026-10-07 round is committed and merged to `main` (`bc33378`). On top of it, uncommitted,
+the 2026-10-10 wave: 118 K0 + K1 (checkpoints and per-session inference under `serve`, the
+session verbs, `session.state`, `/events?session=`), K3 (workspace, files, trust, surfaces,
+flavors, `surface.changed`), K4 (memory and the arc airlock over HTTP, `memory.inbox`), the
+extension host wired into panes, chat, run and the CLI (per-session hosting,
+`host.observe(bus)`, `/extensions`, `docs/extensions.md`), MCP elicitation through the ask
+gate and OAuth sign-in (`keywork mcp login`), and the `serve.ts` integration (`servedHost`
+mounts every family over one eager composition and runs the extension lifecycle). Gate after
+integration on the quiet tree: `bun run check` clean, vitest 331 files / 4549 tests (1 skipped), e2e
+49 of 49.
+
+Earlier state (2026-10-07):
 
 The 117 sweep is committed at `25e9f67`. On top of it, uncommitted: the 2026-10-07 round
 (wave one: the pty terminal pane SW11, the extension host D1 to D3, thinking replay per
@@ -21,16 +34,17 @@ ledger at the end of that file, gate 302 files / 4229 tests, e2e 47 of 47, all u
 remains of it is SW10 (Bun, decision 117-3), SW11 (the terminal pane spike) and the scope-first
 items, plus the calls listed under "Where the tree stands" there.
 
-1. Jordan reviews and commits the 2026-10-07 round (commit messages proposed per lane in the
-   117 / 40 / 95 / 30 ledgers); installs Bun 1.3.14 locally so the e2e harness stops
-   segfaulting on Ctrl+C.
-2. Extension host product wiring (40 "Product wiring, not landed"): decide the multi-session
-   hosting shape first, then `host.observe(bus)`, composition, toasts, `/extensions`, docs.
-3. MCP elicitation retry loop through the ask gate, then OAuth to the 2026 rules (117 "MCP
-   lane"); both need one-line seams in `compose.ts` and a `keywork mcp` command.
+1. Jordan reviews and commits the 2026-10-10 wave (commit messages proposed per lane in the
+   118 / 40 / 117 ledgers); installs Bun 1.3.14 locally so the e2e harness stops segfaulting
+   on Ctrl+C.
+2. 118 K2 (tree and diff families): unblocked now that K0's checkpoints run under `serve`.
+3. `serve` gaps the wave named: no after-turn settle (flush, auto-compaction) under `serve`;
+   binding a session to a bot records the binding but builds no bot agent; an arc close under
+   `serve` runs with no flushes or closing judgment; after `keywork mcp login` a running pane
+   needs a manual server restart.
 4. Linux walk for SW11 (`docs/windows.md` lists the steps) and the launch runway walk.
 5. Options-first notes for P2.3 and E8 (E8 gates the LSP runner seam per 114).
-6. One sitting for the decisions below; the 2026-10-07 calls are listed first.
+6. One sitting for the decisions below; the newest calls are listed first.
 
 ## Unblocked, specified, unbuilt
 
@@ -44,8 +58,9 @@ items, plus the calls listed under "Where the tree stands" there.
 | ~~E9 secrets at rest~~ | [103](103-dsh-influence.md) | 2 | landed 2026-10-02 |
 | E8 sandbox modes | [103](103-dsh-influence.md) | 3+ | fail-closed runner seam; scope first |
 | ~~V2.7 @-mention~~, V2.11 provenance gutter, ~~V2.16 commit drafting~~, ~~V2.17 away summary + `/btw`~~, ~~V2.5 compaction offer~~ | [96](96-conversation-enrichment.md) | 1–2 each | V2.7, V2.16, V2.17 landed 2026-10-02; V2.5 landed 2026-10-07; V2.11 detection landed, glyph flip is Jordan's call |
-| Extension host product wiring (composition, toasts, `/extensions`, `docs/extensions.md`) | [40](40-extensions.md) | 5 | host landed 2026-10-07; wiring plan and the bus-seam gap recorded |
-| MCP elicitation retry through the ask gate · MCP OAuth (CIMD, PKCE, RFC 9207, E9 vault) | [117](117-influence-sweep.md) "MCP lane" | 3 + 5 | `mcp/elicitation.ts` parsing landed 2026-10-07; nothing else |
+| ~~Extension host product wiring~~ | [40](40-extensions.md) | 5 | landed 2026-10-10 |
+| ~~MCP elicitation retry through the ask gate · MCP OAuth~~ | [117](117-influence-sweep.md) "MCP lane" | 3 + 5 | landed 2026-10-10; CIMD waits on a document URL |
+| 118 K2 tree and diff families | [118](118-app-surface.md) | 3 | K0, K1, K3, K4 landed 2026-10-10 |
 | SW11 Linux verification · SW10 Bun trial | [117](117-influence-sweep.md), `../windows.md` | 1 + 2 | pane landed 2026-10-07 by construction; steps written |
 | J14 multi-host half (per-host layout, merge driver, lease) | [95](95-memory-and-skills.md) | 3 | single-vault reconcile landed 2026-10-07 |
 | FR6.18 enterprise security scoping doc | [101](101-feedback-round-4.md) | 2 | a document |
@@ -61,6 +76,9 @@ items, plus the calls listed under "Where the tree stands" there.
 
 | Call | Owner | What it frees |
 |---|---|---|
+| 118: Q-AS1 trust route as built (declares the workspace too, `reopens` from compose-time trust) · Q-AS2 body `confirmed: true` · Q-AS3 effort reset and title pin · Q-AS4 per-model lineage in the host · Q-AS5 `&only=session` · Q-AS6 one `surface.changed` · Q-AS8 `system` omitted from `/flavors` · generic port refusal as 409 · `memory.inbox` buckets or count only · a third `MemoryPort.trusted()` state for an undeclared workspace · `gate.preset` also as a process-level envelope | [118](118-app-surface.md) ledger | all built on the overlay's proposals; each is a small reversal |
+| MCP: the CIMD document URL (dynamic registration until set) · auto-restart a server after `keywork mcp login` · DCR redirect port strictness | [117](117-influence-sweep.md) "MCP lane" | sign-in polish |
+| Extensions: per-session hosting (recommended) vs single store · whether `keywork extensions` activates to report standing · `/extensions` with no pane as a summary line vs an overlay | [40](40-extensions.md) | reversals only |
 | Thinking replay cut (Opus 4.5+ / Sonnet 4.6+ / Fable 5+ / Mythos 5+ versus the 5.5 generation only) · thinking-off requests on a preserving model · the live smoke on a post-2026-08-31 key | [70](70-anthropic.md) deviation 3, [117](117-influence-sweep.md) | built on the wider cut; a four-number edit narrows it; smoke closes the compliance sign-off |
 | Cache warming: build the keyed off-by-default version or leave it | [117](117-influence-sweep.md) options note | recommendation is leave it |
 | Extension host: activation order (project first, then user; Pi does the reverse) · `extension.notice` at `info` over SSE · hook deadline 10s · multi-session hosting shape · `host.observe(bus)` · bot tool restriction over extension tools | [40](40-extensions.md) | the product wiring lane |

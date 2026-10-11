@@ -102,6 +102,16 @@ export type {
   ExtensionsPort,
 } from "./extension-commands.ts";
 export {
+  type ExtensionHostPort,
+  type ExtensionHostSeams,
+  extensionListingCommand,
+  extensionStartupNotice,
+  extensionsCommandName,
+  registerHostedCommands,
+  routeExtensionNotice,
+  watchExtensionNotices,
+} from "./extension-host.ts";
+export {
   type Flavor,
   FlavorSwitch,
   keyworkNightFlavor,

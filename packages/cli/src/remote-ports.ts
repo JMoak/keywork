@@ -12,12 +12,14 @@ import {
   toolCalls,
   type Usage,
 } from "@keywork/engine";
-import type {
-  BusEnvelope,
-  EngineEventType,
-  KeyworkClient,
-  SessionDetail,
-  SessionSummary,
+import {
+  type BusEnvelope,
+  type EngineEventType,
+  engineEventTypes,
+  type KeyworkClient,
+  type SessionDetail,
+  type SessionSummary,
+  type WireEventType,
 } from "@keywork/server";
 import type {
   AgentFactory,
@@ -212,12 +214,19 @@ function turnOutcomeOf(envelope: BusEnvelope): SettledTurn | undefined {
 }
 
 function relay(envelope: BusEnvelope, bus: EventBus<EngineEvents>): void {
-  if (locallyOwnedEvents.has(envelope.type)) return;
-  if (envelope.type === "engine.error") {
+  const type = envelope.type;
+  if (!isEngineEvent(type) || locallyOwnedEvents.has(type)) return;
+  if (type === "engine.error") {
     bus.emit("engine.error", { error: errorFromWire(envelope.payload) });
     return;
   }
-  bus.emit(envelope.type, envelope.payload as EngineEvents[typeof envelope.type]);
+  bus.emit(type, envelope.payload as EngineEvents[typeof type]);
+}
+
+const engineEvents: ReadonlySet<string> = new Set(engineEventTypes);
+
+function isEngineEvent(type: WireEventType): type is EngineEventType {
+  return engineEvents.has(type);
 }
 
 function errorFromWire(payload: unknown): Error {

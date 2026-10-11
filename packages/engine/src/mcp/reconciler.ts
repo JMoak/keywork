@@ -1,5 +1,6 @@
 import type { McpServerConfig } from "@keywork/shared";
 import type { McpConnection, McpTool } from "./client.ts";
+import type { McpAuthState } from "./oauth.ts";
 
 export type McpServerState = "connected" | "connecting" | "down";
 export type McpTransport = McpServerConfig["transport"];
@@ -11,6 +12,7 @@ export interface McpServerStatus {
   toolCount: number;
   transport?: McpTransport;
   lastError?: string;
+  auth?: McpAuthState;
 }
 
 export type ConnectServer = (

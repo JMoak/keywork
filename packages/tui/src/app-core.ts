@@ -32,6 +32,7 @@ import { CommandRegistry, type CommandSpec } from "./commands.ts";
 import { ConnectModel } from "./connect-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { registerCoreCommands } from "./core-commands.ts";
+import type { ExtensionHostPort } from "./extension-host.ts";
 import type { EditorResult, ExternalEditor } from "./external-editor.ts";
 import type { Direction, Rect, Screen } from "./geometry.ts";
 import {
@@ -130,6 +131,7 @@ export interface AppCoreOptions extends PaneFactories {
   focusedBot?: FocusedBotPort;
   workspaces?: WorkspacesPort;
   workspaceSetup?: WorkspaceSetupPort;
+  extensionHost?: ExtensionHostPort;
   currentModel?: () => string | undefined;
   currentEffort?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;

@@ -237,6 +237,70 @@ that throws while handling `engine.error` is dropped silently, so the bus cannot
 |---|---|---|
 | `error` | `Error` | The failure. |
 
+## Server events
+
+`keywork serve` adds a few event kinds of its own beside the engine vocabulary
+(`serverEventTypes` in `packages/server/src/events.ts`; the envelope's `type` enum in `/doc` is
+the union of both lists). They describe process-level state rather than one session's turn, so
+their `sessionId` is the empty string, and `/events?session=<id>` passes them through to every
+session filter. They are never replayed from a journal; a client that reconnects re-fetches the
+state they announce.
+
+### memory.inbox
+
+Fires when the review inbox is recounted: after every memory write over HTTP (approve, discard,
+revert, every airlock verb) and whenever the served memory port reports a change (the same
+places the terminal's inbox feed recounts). The counts are the whole inbox, not a delta, so a
+client replaces its number rather than adding. The "needs you" threshold stays in the client
+(`defaultInboxThreshold` 3, rising edge).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `count` | `number` | Every staged item waiting, the number `GET /memory/inbox` answers. |
+| `staged` | `number` | Untrusted writes held in `.staging/` (`note`, `daily`, `moc`). |
+| `airlock` | `number` | Arc close reviews (`arc-distillation`, `arc-question`). |
+| `proposals` | `number` | Every other gardener proposal (merge, supersession, link, promotion, preference, skill, drift, forget). |
+| `contradictions` | `number` | `contradiction` reviews. |
+
+An untrusted workspace never fires it: memory is inert there and the count is always zero.
+
+### surface.changed
+
+Fires when one of the process-level surfaces a status pane shows has changed, so a client
+re-fetches that family whole rather than merging a delta. One event with a `kind` serves all
+four surfaces because each is cheap to re-read and consumed by exactly one pane (118-3).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `kind` | `"mcp" \| "arcs" \| "bots" \| "workspaces"` | Which family changed: re-fetch `GET /mcp`, `GET /arcs`, `GET /bots` or `GET /workspaces` (and `GET /workspace`, whose trust and declaration ride under `workspaces`). |
+
+Where it fires: `mcp` wherever the MCP registry notifies its subscribers (a server connecting,
+dropping, changing its catalog, and after `restart` and `enabled`); `arcs` wherever the arc
+service notifies (create, close, abandon, a session binding or release, airlock triage); `bots`
+after a bot is created or a session is bound to one; `workspaces` after the workspace is trusted
+and declared, a named workspace is created or chosen, and a focus dir is linked or unlinked. A
+verb that changed nothing fires nothing. The payload carries no detail on purpose: the family's
+`GET` is the source of truth.
+
+### session.state
+
+The one server event that belongs to a session: its `sessionId` is the session's id, not the
+empty string. Fires after every session verb (`prompt`, `model`, `thinking`, `effort`,
+`compact`, `undo`, `redo`, `rename`) and again once a turn's messages are persisted, carrying
+the whole current state rather than what changed, so a client replaces its copy. It replaces
+nothing in the engine vocabulary: `turn.started` still opens a turn and `queue.changed` still
+announces the queue.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `model` | `string`, optional | The model in force as `provider/model`; absent when the provider declares no model id and the session recorded no choice. |
+| `thinking` | `boolean` | Whether extended thinking is requested for the next prompt. |
+| `effort` | `EffortLevel`, optional | The reasoning effort in force; absent means the provider default. |
+| `title` | `string` | The session's title, pinned or not. |
+| `leafId` | `string \| null` | The session entry the next message will follow; `null` for an empty session. |
+| `undoable` | `boolean` | Whether `POST /sessions/{id}/undo` has a prompt or a file checkpoint to take back. |
+| `redoable` | `boolean` | Whether `POST /sessions/{id}/redo` has a staged undo or a file checkpoint to restore. |
+
 ## SSE framing
 
 `GET /events` answers `text/event-stream; charset=utf-8` with `cache-control: no-store`. The
@@ -265,6 +329,16 @@ oldest envelope, the replay is preceded by a comment naming the loss:
 ```
 : resumed with a gap, events 12 to 41 are gone
 ```
+
+## Filtering with `?session=<id>`
+
+`GET /events?session=<id>` keeps the envelopes whose `sessionId` equals the id **and** every
+envelope with an empty `sessionId`, so a session pane still learns about process-level state
+(`memory.inbox`, `surface.changed`) without a second stream. The filter applies to the
+`Last-Event-ID` replay and to the live tail alike; ids are not renumbered, so a filtered
+client resumes with the same `Last-Event-ID` it would send unfiltered. `diagnostics.published`
+rides the session's bus and passes when its session matches. An empty `session=` is the same
+as no filter.
 
 ## The one translation: `engine.error`
 

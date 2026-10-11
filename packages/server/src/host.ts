@@ -1,5 +1,42 @@
-import type { Message, PromptOrigin } from "@keywork/engine";
+import type {
+  ArcStatus,
+  AuditEntry,
+  CacheMiss,
+  CandidateTriage,
+  CompactionEntry,
+  ContextReading,
+  CostRollup,
+  DailyEntry,
+  EffortLevel,
+  InferenceBinding,
+  LearningLevel,
+  LedgerEntry,
+  McpServerStatus,
+  Message,
+  ModelReference,
+  Note,
+  PromptOrigin,
+  Provenance,
+  Provider,
+  QuestionTriage,
+  Resolution,
+  ResolutionFailure,
+  RevertOutcome,
+  SendBehavior,
+  SessionBinding,
+  StagedItem,
+  Usage,
+  WriteResult,
+} from "@keywork/engine";
+import type {
+  ActivePreset,
+  Flavor,
+  PresetName,
+  TrustDecision,
+  WorkspaceAnchor,
+} from "@keywork/shared";
 import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
+import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 
 export interface SessionSummary {
   id: string;
@@ -10,6 +47,9 @@ export interface SessionSummary {
   costNanos?: number;
   arc?: string;
   bot?: string;
+  model?: string;
+  thinking?: boolean;
+  effort?: EffortLevel;
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -25,14 +65,351 @@ export type InjectOutcome = "started" | "queued" | "missing";
 
 export type AbortOutcome = "aborted" | "idle" | "missing";
 
+export type Refusal = "missing" | "busy";
+
+export interface SessionState {
+  model?: string;
+  thinking: boolean;
+  effort?: EffortLevel;
+  title: string;
+  leafId: string | null;
+  undoable: boolean;
+  redoable: boolean;
+}
+
+export interface SessionInference {
+  bind(reference: string): Resolution;
+  provider(binding: InferenceBinding): Provider;
+}
+
+export type ModelSwitch =
+  | { model: ModelReference; notice: string }
+  | { failure: ResolutionFailure };
+
+export interface CompactionReport {
+  compacted: CompactionEntry | null;
+  notices: readonly string[];
+}
+
+export interface UndonePrompt {
+  entryId: string;
+  text: string;
+}
+
+export interface UndoReport {
+  prompt: UndonePrompt | null;
+  filesNote: string;
+  undoable: boolean;
+  redoable: boolean;
+}
+
+export interface RedoReport {
+  restored: true;
+  undoable: boolean;
+  redoable: boolean;
+}
+
+export interface ModelSpend {
+  reference: string;
+  turns: number;
+  usage: Usage;
+  rollup: CostRollup;
+}
+
+export interface CostReport {
+  rollup: CostRollup;
+  usage: Usage;
+  modelId?: string;
+  cacheMiss?: CacheMiss;
+  models: readonly ModelSpend[];
+}
+
+export type ExportScope = "path" | "tree";
+
+export type ExportOutcome = { html: string } | { file: string } | "missing" | "outside-scope";
+
+export interface PresetHost {
+  active(): ActivePreset;
+  apply(name: PresetName): Promise<void>;
+}
+
+export type PresetOutcome =
+  | { from: ActivePreset; to: PresetName }
+  | "needs-confirmation"
+  | "unavailable";
+
 export interface SessionHost {
   list(): Promise<readonly SessionSummary[]>;
   read(id: string): Promise<SessionDetail | undefined>;
   create(): Promise<SessionSummary>;
-  prompt(id: string, text: string): Promise<PromptOutcome>;
+  prompt(id: string, text: string, behavior?: SendBehavior): Promise<InjectOutcome>;
   inject(id: string, text: string, origin: PromptOrigin): Promise<InjectOutcome>;
   abort(id: string): Promise<AbortOutcome>;
+  setModel(id: string, reference: string): Promise<ModelSwitch | Refusal>;
+  setThinking(id: string, on: boolean): Promise<{ thinking: boolean } | "missing">;
+  setEffort(
+    id: string,
+    level: EffortLevel | null,
+  ): Promise<{ effort: EffortLevel | null } | Refusal>;
+  compact(id: string, focus?: string): Promise<CompactionReport | Refusal>;
+  undo(id: string): Promise<UndoReport | Refusal | "nothing">;
+  redo(id: string): Promise<RedoReport | Refusal | "nothing">;
+  context(id: string): Promise<ContextReading | "missing">;
+  cost(id: string): Promise<CostReport | "missing">;
+  exportHtml(id: string, scope: ExportScope, out?: string): Promise<ExportOutcome>;
+  rename(id: string, title: string): Promise<{ title: string } | "missing">;
+  applyPreset(name: PresetName, confirmed: boolean): Promise<PresetOutcome>;
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(callId: string, verdict: AskVerdict): Promise<AnswerOutcome>;
   close(): Promise<void>;
+  memory?: MemoryPort;
+  workspace?: WorkspacePort;
+  mcp?: McpPort;
+  arcs?: ArcsPort;
+  bots?: BotsPort;
+  workspaces?: WorkspacesPort;
+  flavors?: FlavorsPort;
+}
+
+export interface MemoryPort {
+  trusted(): boolean;
+  overview(): Promise<MemoryOverview>;
+  inbox(): Promise<readonly StagedItem[]>;
+  approve(id: string): Promise<WriteResult | undefined>;
+  discard(id: string): Promise<void>;
+  notes(): Promise<readonly MemoryNoteRecord[]>;
+  note(name: string): Promise<MemoryNoteDetail | undefined>;
+  dailyDates(): Promise<readonly string[]>;
+  daily(date: string): Promise<readonly DailyEntry[]>;
+  ledger(): readonly LedgerEntry[];
+  revert(ledgerId: string): Promise<RevertOutcome>;
+  query(text: string, arc?: string): Promise<MemoryQueryOutcome>;
+  airlock: ArcAirlockPort;
+  subscribe?(listener: () => void): () => void;
+}
+
+export interface MemoryOverview {
+  layers: readonly MemoryLayerRecord[];
+  inbox: readonly StagedItem[];
+  ledger: readonly LedgerEntry[];
+  audit: readonly AuditEntry[];
+  gardener?: GardenerActivity;
+  airlocks: readonly ArcCloseDigestRecord[];
+}
+
+export interface MemoryLayerRecord {
+  id: string;
+  kind: "workspace" | "arc" | "user";
+  label: string;
+  arc?: string;
+  prompt?: { budget: number; used: number };
+}
+
+export interface GardenerActivity {
+  state: "idle" | "working" | "failed";
+  sweptAt?: string;
+}
+
+export type MemoryNoteRecord = Note & {
+  layer: string;
+  file: string;
+  injected: boolean;
+  recalls: number;
+};
+
+export interface NoteRelation {
+  name: string;
+  predicate: string;
+  direction: "out" | "in";
+}
+
+export type MemoryNoteDetail = MemoryNoteRecord & { relations: readonly NoteRelation[] };
+
+export interface MemoryQueryHit {
+  note: string;
+  layer: string;
+  ranks: Partial<Record<"lexical" | "semantic" | "graph", number>>;
+  boost?: number;
+  superseded: boolean;
+}
+
+export interface MemoryQueryOutcome {
+  hits: MemoryQueryHit[];
+  source: "lexical" | "hybrid" | "lexical-degraded";
+  embeddings?: string;
+}
+
+export interface AirlockCandidateRecord {
+  note: string;
+  title: string;
+  provenance: Provenance;
+  eligible: boolean;
+  shortfalls: string[];
+  created?: string;
+  choice?: CandidateTriage;
+}
+
+export interface AirlockQuestionRecord {
+  title: string;
+  provenance: Provenance;
+  created?: string;
+  choice?: QuestionTriage;
+}
+
+export interface ArcCloseDigestRecord {
+  arc: string;
+  candidates: AirlockCandidateRecord[];
+  questions: AirlockQuestionRecord[];
+  successor?: string;
+  sweep?: { acked: number; wedged: number };
+  direction?: string;
+}
+
+export type AirlockFinishOutcome =
+  | { kind: "closed"; delivered: number; released: number; notice?: string }
+  | { kind: "pending"; candidates: number; questions: number; wedged: number; notice?: string }
+  | { kind: "undecided"; items: string[] }
+  | { kind: "wedged"; sessions: string[] };
+
+export interface ArcAirlockPort {
+  digest(slug: string): Promise<ArcCloseDigestRecord | undefined>;
+  triageCandidate(slug: string, note: string, choice: CandidateTriage): Promise<void>;
+  triageQuestion(slug: string, title: string, choice: QuestionTriage): Promise<void>;
+  deliverEligible(slug: string): Promise<number>;
+  finish(slug: string, options?: { force?: boolean }): Promise<AirlockFinishOutcome>;
+}
+
+export type WorkspaceReadiness = "ready" | "undeclared" | "undecided" | "refused";
+
+export interface WorkspaceReport {
+  anchor: WorkspaceAnchor;
+  identity: string;
+  slug?: string;
+  name?: string;
+  declared: boolean;
+  declarationFile?: string;
+  contextDirs: readonly string[];
+  missingContextDirs: readonly string[];
+  focusDirs: readonly string[];
+  vault?: string;
+  trust: TrustDecision;
+  readiness: WorkspaceReadiness;
+}
+
+export interface TrustGrant {
+  trusted: true;
+  root: string;
+  vault: string;
+  reopens: boolean;
+}
+
+export interface WorkspacePort {
+  report(): Promise<WorkspaceReport>;
+  trust(): Promise<TrustGrant>;
+  tree(path: string, hidden: boolean): Promise<TreeListing>;
+  file(path: string, range: ByteRange): Promise<FileSlice>;
+}
+
+export interface McpPort {
+  status(): Promise<McpServerStatus[]>;
+  restart(name: string): Promise<void>;
+  setEnabled(name: string, on: boolean): Promise<void>;
+  listTools(name: string): Promise<string[]>;
+  subscribe(listener: () => void): () => void;
+}
+
+export interface ArcSummary {
+  slug: string;
+  status: ArcStatus;
+  created: string;
+  sessions: number;
+}
+
+export type ArcCloseOutcome = Extract<AirlockFinishOutcome, { kind: "closed" | "pending" }>;
+
+export interface ArcsPort {
+  list(): Promise<ArcSummary[]>;
+  create(slug: string): Promise<ArcSummary>;
+  close(slug: string, direction?: string): Promise<ArcCloseOutcome>;
+  abandon(slug: string): Promise<void>;
+  bindSession(id: string, slug: string | null): Promise<SessionBinding | undefined>;
+  subscribe(listener: () => void): () => void;
+}
+
+export type BotScope = "project" | "user";
+
+export interface BotEntry {
+  name: string;
+  sigil: string;
+  source: BotScope;
+  description?: string;
+  model?: string;
+  learning?: LearningLevel;
+}
+
+export interface BotSummary extends BotEntry {
+  sessions: number;
+  lastUsed?: string;
+  costNanos?: number;
+}
+
+export interface BotDraft {
+  slug: string;
+  scope: BotScope;
+  purpose?: string;
+}
+
+export interface BotsPort {
+  list(): Promise<BotSummary[]>;
+  create(draft: BotDraft): Promise<BotEntry>;
+  bindSession(id: string, name: string | null): Promise<SessionBinding | undefined>;
+}
+
+export interface WorkspaceChoice {
+  slug: string | undefined;
+  name: string;
+  declared: boolean;
+  current: boolean;
+  notes: number;
+  focusDirs: readonly string[];
+  sessions: number;
+  lastUsed: number | undefined;
+}
+
+export interface WorkspacesPort {
+  list(): Promise<WorkspaceChoice[]>;
+  create(slug: string): Promise<void>;
+  use(slug: string | undefined): Promise<void>;
+  linkFocusDir(slug: string | undefined, dir: string): Promise<string>;
+  unlinkFocusDir(slug: string | undefined, dir: string): Promise<void>;
+}
+
+export interface FlavorsReport {
+  flavors: readonly Flavor[];
+  active: string;
+}
+
+export interface FlavorsPort {
+  list(): Promise<FlavorsReport>;
+}
+
+export class SurfaceUnavailableError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "SurfaceUnavailableError";
+  }
+}
+
+export class SessionBusyError extends Error {
+  constructor() {
+    super("a turn is running");
+    this.name = "SessionBusyError";
+  }
+}
+
+export class TrustRefusedError extends Error {
+  constructor(root: string) {
+    super(`${root} is marked untrusted; keywork trust in a terminal reverses that`);
+    this.name = "TrustRefusedError";
+  }
 }

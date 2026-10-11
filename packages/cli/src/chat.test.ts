@@ -255,6 +255,32 @@ describe("chat REPL", () => {
     expect(prompt).toEqual(textMessage("user", "Ship the fix now"));
   });
 
+  it("lists hosted extensions and runs their commands from the slash table", async () => {
+    const { options, cwd } = await world();
+    const dir = join(cwd, ".keywork", "extensions");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "hello.ts"),
+      [
+        "export default function hello(api) {",
+        `  api.registerCommand({ name: "hello", run: (args) => \`hello \${args}\`.trim() });`,
+        `  api.on("session_start", ({ reason }) => api.log.info(\`opened on \${reason}\`));`,
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const io = scriptedIo({ lines: ["/extensions", "/hello there", "/nope"] });
+
+    await chat(options(new MockProvider([textTurn("unused")]), { projectTrusted: true }), io);
+
+    expect(io.out).toContain("  · hello: opened on start");
+    expect(io.out).toContain("1 extension active");
+    expect(io.out).toContain("  hello  project  active  0 tools · 1 command");
+    expect(io.out).toContain("hello there");
+    expect(io.err[0]).toContain("unknown command /nope");
+    expect(io.err[0]).toContain("/hello");
+  });
+
   it("reports a provider failure and keeps the REPL alive", async () => {
     const { options } = await world();
     const failing: Provider = {
@@ -471,6 +497,7 @@ describe("chat turn queue", () => {
         const reply = replies[turn] ?? "";
         turn += 1;
         if (turn === 1) {
+          if (request.signal?.aborted) throw new Error("aborted");
           await Promise.race([
             gate,
             new Promise<void>((resolve) =>

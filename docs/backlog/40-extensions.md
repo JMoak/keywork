@@ -136,6 +136,72 @@ changed. What the read established, so the next pass starts from it:
   loads through the project layer; its mock `agentFactory` bypasses `agents.build`, so an
   e2e scenario can show `/extensions` but not a hook firing.
 
+**Product wiring landed (2026-10-10).** The host is a product feature on every surface but
+`serve`. What landed, where, and the decisions taken (each reversible, each marked):
+
+- **Composition** (`cli/src/compose.ts`): `composeWorkspace` owns one `ExtensionHost` per
+  workspace as `host` plus `hostReport`, roots `userRoot ?? homedir()` and `cwd` with
+  `projectTrusted`, `reservedToolNames` from `coreTools(scope)`. `buildAgent` passes
+  `hooks: host.agentHooks({ session })` and calls `host.observe(agent.bus, { session })` after
+  construction, where `session` resolves the build's `sessionId`. `closeExtensionHost(host)`
+  is `endSession("exit")` then `dispose()`.
+- **Decision, reversible: hosting is per session.** The host keeps a map of session id to
+  store. `startSession({ store })` registers the store under `store.header.id` and replays
+  that session's entries; `endSession(reason, sessionId?)` ends one session by id, or every
+  open one with no id. Every hook dispatch is bound to the session that caused it: bus
+  dispatches through the `session` resolver given to `observe`, agent-seam dispatches
+  (`toolCall`, `systemPrompt`, `messageAppended`) through the resolver given to
+  `agentHooks`, replay through the store being replayed. `appendEntry` targets the session of
+  the dispatch in flight, else the sole open session, else drops with a `warn` that says why.
+  `session_start` / `session_end` payloads carry `sessionId`. No entry lands in "the most
+  recently attached session". Reversal: a single-store host is the old code path minus the
+  map; nothing else depends on the map.
+- **Decision, reversible: `host.observe(bus, seams?)`** is the additive host API: idempotent
+  per bus (a second call returns the same stop function), every observed bus unsubscribed on
+  `dispose`. Notices keep riding the constructor bus; `host.onNotice(listener)` subscribes
+  there. `host.registrations(name)` reports tool, command, shortcut and flag names per
+  extension; `host.openSessions()` the open ids.
+- **Decision, reversible: bot tool restriction covers extension tools.** `buildAgent` wraps the
+  host's hooks for a bot so `hooks.tools()` passes through `restrictTools` too
+  (`hooksRestrictedTo`). Reversal: drop the wrap.
+- **Fast path.** `agentHooks()` skips the host queue for `systemPrompt`, `toolCall` and
+  `messageAppended` while no active extension subscribes to the matching hook, so a workspace
+  without extensions pays no extra microtask hops per turn. Found by `chat.test.ts`'s
+  `/steer` test: the extra hops let a steer abort the signal before the gated test provider
+  started listening; that provider now honors an already-aborted signal like a real one.
+- **Session lifecycle.** Panes: `onAttach(store)` calls `startSession({ reason: messages ?
+  "resume" : "start", store })`, `onRelease(id)` calls `endSession("switch", id)`, a closer
+  calls `closeExtensionHost`. `chat`: `startSession` after `openOrResumeSession`,
+  `closeExtensionHost` first in `Repl.close()`. `run`: `startSession` after the session store
+  opens (no store means a session with nowhere to append), teardown step "stopping
+  extensions". **`serve.ts` is not wired** (another lane owns it this wave); the one call it
+  needs per `LiveSession` is `composition.host.startSession({ reason, store })` on open and
+  `composition.host.endSession("switch", store.header.id)` on close, plus
+  `closeExtensionHost(composition.host)` on shutdown; `buildAgent` already observes the bus.
+- **Notices.** `tui/src/extension-host.ts`: `error` and `warn` to the status bar
+  (`core.postNotice`) as `<extension>: <message>`, `info` to the focused pane's feed
+  (`sessions.postNotice`) and dropped with no pane; load-time quarantines summarized on the
+  status bar at startup (`extensionStartupNotice`). `chat`: warn and above on stderr, info
+  quiet on stdout. `run`: warn and above on stderr as `keywork run: <extension>: <message>`.
+- **Commands.** `registerHostedCommands` puts `host.commands()` into `core.registry` beside
+  `registerExtensions`, collisions through `shadowedExtensionNotice`; a string result posts
+  into the focused feed. `/extensions` (`core-commands.ts`, `extensionListingCommand`) prints
+  the listing into the focused conversation or a one-line count on the status bar with no
+  pane. `chat.ts` resolves host commands after markdown commands and adds `/extensions`.
+  `keywork extensions` (`cli/src/extensions-command.ts`, `dispatch.ts`, `main.ts`) is the CLI
+  twin. The formatter is `engine/src/extensions/describe.ts` (`describeExtensions`): summary
+  line, then name, layer, standing, registrations or `phase: reason`, then skipped layers.
+- **Docs and example.** `docs/extensions.md` (linked from `docs/README.md`) and
+  `docs/examples/extensions/shell-sentry.ts` (one tool, one command, a `bash` gate, a replayed
+  entry), kept honest by `packages/extensions/src/example.test.ts`.
+- **Tests.** Host: many buses, per-session entries through bus and agent seams, end by id,
+  ambiguous drop, registrations and notices. Composition: trust gating, hooks and tools on a
+  built agent with the turn reaching `turn_start`, bot restriction over an extension tool,
+  entries per session across two agents. Panes: start per attach, end per release, entries
+  per session, closer ends with `exit`. `run`: stderr notices and load quarantine. `chat`:
+  `/extensions` and a hosted command. TUI: routing, startup notice, listing, hosted commands.
+  e2e `extensions-tour`: a project extension from a scratch workspace, `/extensions`, `/hello`.
+
 ### D4 (2pt): `/reload` hot reload
 Reload extensions/skills/themes/keybindings in-place: teardown, re-import (cache-busted),
 re-register, replay state (D3); sub-second; toast confirms. This is what makes

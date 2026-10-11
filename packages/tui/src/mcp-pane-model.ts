@@ -24,7 +24,14 @@ export interface McpPaneEffects {
   listTools(name: string): void;
 }
 
-export type McpRowKind = "server" | "error" | "action" | "tool" | "tools-status" | "empty";
+export type McpRowKind =
+  | "server"
+  | "error"
+  | "sign-in"
+  | "action"
+  | "tool"
+  | "tools-status"
+  | "empty";
 export type McpAction = "restart" | "toggle" | "tools" | "retry-tools";
 
 export interface McpRow {
@@ -162,6 +169,15 @@ export class McpPaneModel extends RowCursor<McpRow> {
         kind: "error",
         text: `  ${clip(server.lastError, errorLimit)}`,
         tone: "dim",
+        selectable: false,
+      });
+    }
+    if (server.auth === "sign-in-needed") {
+      rows.push({
+        id: `sign-in:${server.name}`,
+        kind: "sign-in",
+        text: `  sign in: keywork mcp login ${clip(server.name, nameLimit)}, then restart`,
+        tone: "alert",
         selectable: false,
       });
     }
@@ -328,10 +344,11 @@ function calmRow(): McpRow {
 function serverText(server: McpServerView): string {
   const name = clip(server.name, nameLimit);
   const via = server.transport === "http" ? " · http" : "";
+  const signedIn = server.auth === "signed-in" ? " · signed in" : "";
   if (!isOn(server)) return `${stateGlyph("down")} ${name} · off${via}`;
   switch (server.state) {
     case "connected":
-      return `${stateGlyph("connected")} ${name} · ${toolPhrase(server.toolCount)}${via}`;
+      return `${stateGlyph("connected")} ${name} · ${toolPhrase(server.toolCount)}${via}${signedIn}`;
     case "connecting":
       return `${stateGlyph("connecting")} ${name} · ${tileMark(server.progress)} connecting${via}`;
     case "down":

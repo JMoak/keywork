@@ -46,6 +46,13 @@ export interface ExtensionStatus {
   failure?: ExtensionFailure;
 }
 
+export interface ExtensionRegistrations {
+  tools: string[];
+  commands: string[];
+  shortcuts: string[];
+  flags: string[];
+}
+
 export interface ExtensionNotice {
   extension: string;
   level: ExtensionLogLevel;
@@ -70,6 +77,12 @@ export interface SessionStartOptions {
   store?: SessionStore;
 }
 
+export type SessionResolver = () => string | undefined;
+
+export interface ObserveSeams {
+  session?: SessionResolver | undefined;
+}
+
 export const defaultHookTimeoutMs = 10_000;
 
 export class HookTimeoutError extends Error {
@@ -92,15 +105,16 @@ export class ExtensionHost {
   private readonly reservedToolNames: ReadonlySet<string>;
   private readonly loaded: LoadedExtension[] = [];
   private readonly callsInFlight = new Map<string, ToolCallPart>();
-  private readonly unsubscribe: Array<() => void>;
+  private readonly observed = new Map<EventBus<EngineEvents>, () => void>();
+  private readonly sessions = new Map<string, SessionStore>();
   private queue: Promise<unknown> = Promise.resolve();
-  private store: SessionStore | undefined;
+  private current: string | undefined;
 
   constructor(options: ExtensionHostOptions) {
     this.bus = options.bus;
     this.hookTimeoutMs = options.hookTimeoutMs ?? defaultHookTimeoutMs;
     this.reservedToolNames = new Set(options.reservedToolNames ?? []);
-    this.unsubscribe = this.observeBus();
+    this.observe(this.bus);
   }
 
   async activate(definition: ExtensionDefinition): Promise<ExtensionStatus> {
@@ -127,6 +141,22 @@ export class ExtensionHost {
     return statusOf(extension);
   }
 
+  observe(bus: EventBus<EngineEvents>, seams: ObserveSeams = {}): () => void {
+    const already = this.observed.get(bus);
+    if (already !== undefined) return already;
+    const subscriptions = this.subscribeToTurns(bus, seams.session);
+    const stop = (): void => {
+      for (const unsubscribe of subscriptions) unsubscribe();
+      this.observed.delete(bus);
+    };
+    this.observed.set(bus, stop);
+    return stop;
+  }
+
+  onNotice(listener: (notice: ExtensionNotice) => void): () => void {
+    return this.bus.on("extension.notice", listener);
+  }
+
   async deactivateAll(): Promise<void> {
     await this.settle();
     for (const extension of this.active()) {
@@ -137,11 +167,21 @@ export class ExtensionHost {
 
   async dispose(): Promise<void> {
     await this.deactivateAll();
-    for (const stop of this.unsubscribe) stop();
+    for (const stop of [...this.observed.values()]) stop();
   }
 
   extensions(): ExtensionStatus[] {
     return this.loaded.map(statusOf);
+  }
+
+  registrations(name: string): ExtensionRegistrations {
+    const extension = this.loaded.find((candidate) => candidate.definition.name === name);
+    return {
+      tools: extension?.tools.map((tool) => tool.name) ?? [],
+      commands: extension?.commands.map((command) => command.name) ?? [],
+      shortcuts: extension?.shortcuts.map((shortcut) => shortcut.keys) ?? [],
+      flags: extension?.flags.map((flag) => flag.name) ?? [],
+    };
   }
 
   tools(): Tool[] {
@@ -169,6 +209,10 @@ export class ExtensionHost {
     );
   }
 
+  openSessions(): string[] {
+    return [...this.sessions.keys()];
+  }
+
   async runCommand(name: string, args: string): Promise<string | undefined> {
     const owner = this.active().find((extension) =>
       extension.commands.some((command) => command.name === name),
@@ -181,26 +225,48 @@ export class ExtensionHost {
     });
   }
 
-  agentHooks(): AgentHooks {
+  agentHooks(seams: ObserveSeams = {}): AgentHooks {
+    const session = seams.session;
     return {
       tools: () => this.tools(),
-      systemPrompt: (base) => this.enqueue(() => this.composeSystemPrompt(base)),
-      toolCall: (call) => this.enqueue(() => this.ruleOnToolCall(call)),
+      systemPrompt: (base) =>
+        this.anyoneListensTo("context")
+          ? this.enqueue(() => this.composeSystemPrompt(base), session)
+          : Promise.resolve(base),
+      toolCall: (call) =>
+        this.anyoneListensTo("tool_call")
+          ? this.enqueue(() => this.ruleOnToolCall(call), session)
+          : Promise.resolve(proceedWith(call)),
       messageAppended: (message) => {
-        void this.observe("message_appended", { message });
+        if (this.anyoneListensTo("message_appended")) {
+          void this.dispatch("message_appended", { message }, session);
+        }
       },
     };
   }
 
   async startSession(options: SessionStartOptions = {}): Promise<void> {
-    this.store = options.store;
-    if (options.store !== undefined) await this.replayEntries(options.store.activePath());
-    await this.observe("session_start", { reason: options.reason ?? "start" });
+    const store = options.store;
+    const sessionId = store?.header.id;
+    if (store !== undefined && sessionId !== undefined) {
+      this.sessions.set(sessionId, store);
+      await this.replayEntries(store.activePath(), sessionId);
+    }
+    await this.dispatch(
+      "session_start",
+      { reason: options.reason ?? "start", ...(sessionId !== undefined && { sessionId }) },
+      () => sessionId,
+    );
   }
 
-  async endSession(reason: SessionEndReason = "exit"): Promise<void> {
-    await this.observe("session_end", { reason });
-    this.store = undefined;
+  async endSession(reason: SessionEndReason = "exit", sessionId?: string): Promise<void> {
+    if (sessionId !== undefined) {
+      if (this.sessions.has(sessionId)) await this.closeSession(reason, sessionId);
+      return;
+    }
+    const open = this.openSessions();
+    if (open.length === 0) await this.dispatch("session_end", { reason });
+    for (const id of open) await this.closeSession(reason, id);
   }
 
   async settle(): Promise<void> {
@@ -211,33 +277,48 @@ export class ExtensionHost {
     } while (seen !== this.queue);
   }
 
-  private observeBus(): Array<() => void> {
+  private async closeSession(reason: SessionEndReason, sessionId: string): Promise<void> {
+    await this.dispatch("session_end", { reason, sessionId }, () => sessionId);
+    this.sessions.delete(sessionId);
+  }
+
+  private subscribeToTurns(
+    bus: EventBus<EngineEvents>,
+    session: SessionResolver | undefined,
+  ): Array<() => void> {
     return [
-      this.bus.on("turn.started", ({ userText, replay }) => {
-        if (replay !== true) void this.observe("turn_start", { userText });
+      bus.on("turn.started", ({ userText, replay }) => {
+        if (replay !== true) void this.dispatch("turn_start", { userText }, session);
       }),
-      this.bus.on("turn.completed", ({ message, replay }) => {
-        if (replay !== true) void this.observe("turn_end", { message, interrupted: false });
+      bus.on("turn.completed", ({ message, replay }) => {
+        if (replay !== true) {
+          void this.dispatch("turn_end", { message, interrupted: false }, session);
+        }
       }),
-      this.bus.on("turn.interrupted", ({ message, replay }) => {
-        if (replay !== true) void this.observe("turn_end", { message, interrupted: true });
+      bus.on("turn.interrupted", ({ message, replay }) => {
+        if (replay !== true)
+          void this.dispatch("turn_end", { message, interrupted: true }, session);
       }),
-      this.bus.on("tool.started", ({ call, replay }) => {
+      bus.on("tool.started", ({ call, replay }) => {
         if (replay !== true) this.callsInFlight.set(call.callId, call);
       }),
-      this.bus.on("tool.finished", ({ callId, output, isError, replay }) => {
+      bus.on("tool.finished", ({ callId, output, isError, replay }) => {
         if (replay === true) return;
         const call = this.callsInFlight.get(callId);
         this.callsInFlight.delete(callId);
-        void this.observe("tool_result", { callId, call, output, isError });
+        void this.dispatch("tool_result", { callId, call, output, isError }, session);
       }),
     ];
   }
 
-  private observe<K extends HookName>(hook: K, payload: HookPayload<K>): Promise<void> {
+  private dispatch<K extends HookName>(
+    hook: K,
+    payload: HookPayload<K>,
+    session?: SessionResolver,
+  ): Promise<void> {
     return this.enqueue(async () => {
       for (const extension of this.active()) await this.deliver(extension, hook, payload);
-    });
+    }, session);
   }
 
   private async deliver<K extends HookName>(
@@ -278,16 +359,19 @@ export class ExtensionHost {
     return fragments.filter((fragment) => fragment.trim() !== "").join("\n\n");
   }
 
-  private replayEntries(entries: readonly SessionEntry[]): Promise<void> {
-    return this.enqueue(async () => {
-      for (const entry of extensionEntries(entries)) {
-        const owner = this.active().find(
-          (candidate) => candidate.definition.name === entry.extension,
-        );
-        if (owner === undefined) continue;
-        await this.deliverEntry(owner, { type: entry.type, data: entry.data, replay: true });
-      }
-    });
+  private replayEntries(entries: readonly SessionEntry[], sessionId: string): Promise<void> {
+    return this.enqueue(
+      async () => {
+        for (const entry of extensionEntries(entries)) {
+          const owner = this.active().find(
+            (candidate) => candidate.definition.name === entry.extension,
+          );
+          if (owner === undefined) continue;
+          await this.deliverEntry(owner, { type: entry.type, data: entry.data, replay: true });
+        }
+      },
+      () => sessionId,
+    );
   }
 
   private async appendEntry(
@@ -296,12 +380,23 @@ export class ExtensionHost {
     data: unknown,
   ): Promise<void> {
     if (extension.standing !== "active") return;
-    if (this.store === undefined) {
-      this.notify(extension, "warn", `entry "${type}" was dropped: no session is open`);
+    const target = this.entryTarget();
+    if (typeof target === "string") {
+      this.notify(extension, "warn", `entry "${type}" was dropped: ${target}`);
       return;
     }
-    await appendExtensionEntry(this.store, { extension: extension.definition.name, type, data });
+    await appendExtensionEntry(target, { extension: extension.definition.name, type, data });
     await this.deliverEntry(extension, { type, data, replay: false });
+  }
+
+  private entryTarget(): SessionStore | string {
+    const inFlight = this.current === undefined ? undefined : this.sessions.get(this.current);
+    if (inFlight !== undefined) return inFlight;
+    const open = [...this.sessions.values()];
+    if (open.length === 1 && open[0] !== undefined) return open[0];
+    return open.length === 0
+      ? "no session is open"
+      : `${open.length} sessions are open and no turn names one`;
   }
 
   private async deliverEntry(
@@ -369,14 +464,25 @@ export class ExtensionHost {
     }
   }
 
-  private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(work);
+  private enqueue<T>(work: () => Promise<T>, session?: SessionResolver): Promise<T> {
+    const next = this.queue.then(async () => {
+      this.current = session?.();
+      try {
+        return await work();
+      } finally {
+        this.current = undefined;
+      }
+    });
     this.queue = next.catch(() => undefined);
     return next;
   }
 
   private active(): LoadedExtension[] {
     return this.loaded.filter((extension) => extension.standing === "active");
+  }
+
+  private anyoneListensTo(hook: HookName): boolean {
+    return this.active().some((extension) => handlersOf(extension, hook).length > 0);
   }
 
   private apiFor(extension: LoadedExtension): ExtensionApi {

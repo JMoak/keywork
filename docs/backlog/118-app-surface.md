@@ -367,3 +367,149 @@ server-side switch, so this family never needs a change when a kind is added.
 pre-split document key for key and in order, with the envelope's `type` enum taken from the
 live `engineEventTypes` because the vocabulary is the engine's; unique operation ids). Pure
 refactor: 66 server, serve and attach tests unchanged and green.
+
+### K4 · memory and the arc airlock over HTTP · landed 2026-10-10
+
+Families `packages/server/src/routes/memory.ts` (eleven routes) and `routes/airlock.ts` (five),
+registered last in `routeFamilies`. `SessionHost` gains an optional `memory?: MemoryPort`
+(`host.ts`: `MemoryPort`, `ArcAirlockPort`, `MemoryOverview`, `MemoryNoteRecord`,
+`ArcCloseDigestRecord`, `AirlockFinishOutcome`); a host without it answers 503 on every memory
+route. The port is implemented twice: `vaultMemoryPort` in `server/src/testing.ts` (a real
+`MemoryStore` on a temp vault, trusted or untrusted, with a pluggable airlock seam) and
+`servedMemory` in `cli/src/serve-memory.ts` (workspace + active arc layers, bot-owned staged
+items, the arc service's airlock, `arcs.port.subscribe` as the recount feed). `client.ts` gains one
+method per route; `serverEventTypes` gains `memory.inbox` and `docs/events.md` its "Server
+events" section; `openapi-document.fixture.json` regenerated for the new routes.
+
+**Wiring `serve.ts` still needs (owned by another lane):** in `fileSessionHost`, add
+`memory: servedMemory({ memory, arcs })` to the returned object, where `memory` is the
+composition's `MemoryAccess` (so the route's ledger is the same instance the sessions flush
+through) and `arcs` an `arcService` built as `compose-panes.ts` builds it. Until then `serve`
+answers 503 and `serve.test.ts` proves the port by spreading it over `fileSessionHost`.
+
+**Where the committed memory shapes differ from the K4 text:** `GET /memory` returns
+`StagedItem[]` and `LedgerEntry[]` as written, and the notes carry `originSession`,
+`revisedBy` and `drift` because `Note` does; `drift-review` and `forget-proposal` pass through
+`GET /memory/inbox` with no server-side switch (tested). `curing` is computed in the family from
+the note's provenance, pin, usefulness and confidence (the same rule as `cli/src/memory.ts`), the
+one presentation field the K4 table asked for. `GET /arcs/{slug}/airlock` returns the arc
+service's digest (`AirlockDigestView` fields) plus `decisions`, derived from the per-row `choice`,
+`successor` and `direction`, because `ArcCloseDraft` is private to the service.
+
+**Deviations:** every read carries `trusted` beside its records (the single-note read spreads it
+over the note); `approve` answers `{}` for an item a bot store owns, since `BotMemory.approve`
+returns nothing; an undeclared workspace (no vault) also answers the inert shape, because a
+`MemoryStore` cannot exist without a vault root; `memory.inbox` is recorded after every write
+unconditionally and on port change notifications only when the count moved, which is the
+terminal feed's dedupe. `GET /memory/notes/{name}` and the candidate route URL-decode their
+parameter so entity notes and titles with spaces fit the `[^/]+` matcher.
+
+### K3 · workspace, files, trust and status over HTTP · landed 2026-10-10
+
+Four families, registered last in `routeFamilies` in this order: `routes/workspace.ts`
+(`GET /workspace`, `POST /workspace/trust`), `routes/files.ts` (`GET /tree`, `GET /files`),
+`routes/surfaces.ts` (`GET /mcp`, `POST /mcp/{name}/restart`, `POST /mcp/{name}/enabled`,
+`GET /mcp/{name}/tools`, `GET /arcs`, `POST /arcs`, `POST /arcs/{slug}/close`,
+`POST /arcs/{slug}/abandon`, `POST /sessions/{id}/arc`, `POST /sessions/{id}/bot`, `GET /bots`,
+`POST /bots`, `GET /workspaces`, `POST /workspaces`, `POST /workspaces/use`,
+`POST /workspaces/{slug}/focus`, `POST /workspaces/{slug}/unfocus`) and `routes/flavors.ts`
+(`GET /flavors`). `routes/answers.ts` holds what the four share: `servedBy` (503 when the host
+lacks the port, the K4 precedent), `answering` (one class-to-status table: 400 blanket trust and
+slug grammar, 403 scope escape and surface unavailable, 404 missing path, MCP server or arc, 409
+busy, untrusted, arc exists or not active, 413 over the file cap, 415 binary, 503 registry
+stopping; a port's plain `Error` is a 409 refusal, anything more specific is rethrown) and
+`surfaceChanged`. `files.ts` is the filesystem half (`workspaceFiles(root, scope)`: one level of
+tree with `.gitignore` layers from the root down through the shared ignore rules, byte slices
+capped at 1 MiB with a 20 MiB whole-file cap, NUL refused), shared by both hosts.
+
+`SessionHost` gains six optional ports, following K4's `memory?`: `workspace` (report, trust,
+tree, file), `mcp`, `arcs` (with `bindSession`), `bots` (with `bindSession`), `workspaces` and
+`flavors`. They are implemented twice: `memorySurfacePorts` in `server/src/testing.ts` (a real
+directory for tree and files, in-memory trust, arcs, bots and workspaces, a pluggable `McpPort`)
+and `surfacePorts` in `cli/src/serve-surfaces.ts` (the anchor, declaration, `TrustStore` and
+`workspaceReadiness` for the report; `workspaceSetupPort(...).setUp()` for trust, the same path
+`/init` takes; the composition's `scope` and `mcp`; `arcService` and `botService` built as
+`compose-panes.ts` builds them; `workspacesPort` with a no-op switch; `startupFlavors` dressed
+in the config theme). `client.ts` gains one method per route; `serverEventTypes` gains
+`surface.changed` and `docs/events.md` its section.
+
+**Decisions taken (reversible):** Q-AS1 built as constrained: no body path, served root only,
+never untrusts, 400 on a home directory, 409 on an untrusted root; `reopens` is
+`!projectTrusted` (the server composed before the decision) rather than a constant, and the
+route also declares the workspace because that is what `/init` does and `serve` has no deferred
+materialization. Q-AS6 one `surface.changed { kind }`. Q-AS7 context-dir linking stays off the
+wire. Q-AS8 `system` is omitted from `/flavors`; `active` still names it when configured and the
+summary says the client derives it. Events for `mcp` and `arcs` ride the registry's and the arc
+service's own subscriptions (so a verb that changed nothing fires nothing, and an MCP server
+dropping on its own still announces); `bots` and `workspaces` are recorded after each verb.
+
+**Wiring `serve.ts` still needs (owned by another lane):** in `fileSessionHost`, spread
+`...surfacePorts({ ...options, composition: () => sessions.composed(), session: (id) =>
+sessions.bound(id) })` into the returned object, with `LiveSessions.composed()` made public
+(returning the composition) and a `bound(id)` that answers `{ store, busy }` for a live or stored
+session; `HostOptions` may gain `flavor` and `theme` so the config closet reaches `/flavors`.
+Until then `serve` answers 503 on every K3 route and `serve.test.ts` proves the ports by spreading
+them over `fileSessionHost`, which is also how the MCP fixture server is run through restart and
+toggle there.
+
+**Deviations:** `/tree` and `/files` resolve `path` against the anchor root and check it against
+the composed tool scope (so a linked context dir is reachable by absolute path) rather than
+calling `confinedPath` on the launch cwd; the TUI's `IgnoreRules` are not shared with the server,
+so the ignore flag uses `@keywork/shared`'s `ignoresPath` over the same `.gitignore` files; the
+`WorkspaceChoice`, `ArcSummary`, `BotEntry` and `BotSummary` wire shapes are restated in
+`host.ts` because the server cannot import `@keywork/tui`; binding a session to a bot under
+`serve` records the binding but does not rebuild the agent as a bot, because `serve` builds every
+agent without a bot today (the same gap K0 names for model selection); an unknown bot name is a
+409 so a client cannot bind what no roster defines.
+
+### K0 · checkpoints and per-session inference under `keywork serve` · landed 2026-10-10
+
+`cli/src/serve.ts` composes with `checkpoints: "on"` by default (`--no-checkpoints` keeps the
+old behavior; `HostOptions.checkpoints` and `checkpointsGitDir` carry it, the latter so tests
+run the shadow repo in a temp dir). Every live session's guard is the ask-queue guard plus
+`beforeMutation → Checkpoints.capture()` and `beforeTurn → beginTurn()`, and
+`persistNewMessages` receives the store so the turn tag lands on `MessageEntry.checkpoint`
+exactly as `chat.ts` does. `LiveSession` builds its agent from the session's own
+`modelSelection()` through a `SessionInference` seam (`host.ts`: `bind(reference)` +
+`provider(binding)`, wired in `main.ts` from the runtime's registry), falling back to the
+process provider with a notice when the stored reference does not resolve; `thinkingLevel()`
+and `effort()` are applied to the agent on open. `SessionSummary` gains `model?`
+(`provider/model`), `thinking?` and `effort?` for stored and live sessions alike.
+
+### K1 · session verbs · landed 2026-10-10
+
+Family `packages/server/src/routes/session-verbs.ts` (eleven routes), registered last in
+`routeFamilies`; `POST /sessions/{id}/prompt` in `routes/sessions.ts` gains `behavior`
+(default `queue`) and answers `{ sessionId, accepted, queued, behavior }`. `SessionHost` gains
+one method per verb (`setModel`, `setThinking`, `setEffort`, `compact`, `undo`, `redo`,
+`context`, `cost`, `exportHtml`, `rename`, `applyPreset`) with the string refusals `"missing"`
+/ `"busy"` (`"nothing"` for undo/redo) mapped to 404 / 409 in the family; `client.ts` gains the
+same methods and `events({ session })`. Implemented twice: the memory host in
+`server/src/testing.ts` (a `models` map stands in for the registry, `presets` for the switch)
+and `LiveSession` in `cli/src/serve.ts` (agent rebuild over the same history for model, effort
+reset, compaction and undo, with a `SpendLedger` that retires each agent's usage and rollup
+under its reference so `GET …/cost` answers `models` per model, not `[current]`). `/undo`
+stages one `cancel` closure (files restored to the snapshot taken before the rewind, leaf moved
+back) that `/redo` runs; with no prompt on the path it falls through to `Checkpoints.undo()`.
+`/preset` is process-level: `main.ts` passes a `userPresetSwitch` seeded from `--preset` or
+the config, and every live session's bus emits `gate.preset` so the journal folds it.
+
+`serverEventTypes` gains `session.state`, recorded after every verb and after each turn's
+persist; `/events?session=<id>` filters in `sse.ts` per 118-4 (replay and live). The title pin:
+`SessionInfoEntry.pinned`, `SessionStore.setName(name, pinned)` + `titlePinned()`, and
+`attachmentOf.rename` in `cli/src/sessions/ports.ts` is a no-op when pinned, which is where
+`persistingTitler` writes. `rewindBefore` and `moveLeaf` are exported from `ports.ts` for the
+host. `docs/events.md` gains `session.state` and the `?session=` section.
+
+**Decisions taken (all reversible):** Q-AS2 `confirmed: true` in the body is the confirmation
+over loopback + bearer; Q-AS3 yes to both (`effort: null` writes `effort_change "default"`,
+which the readers treat as no level; `/rename` pins); Q-AS4 the retired map lives in the host
+(`SpendLedger`), so `models` is real lineage, and the TUI's `SessionLedger` is untouched.
+`gate.preset` is emitted on each live session's bus rather than as a process-level envelope,
+so it journals; a stored session not yet open hears nothing and needs nothing. `/thinking` and a
+levelled `/effort` never answer 409 (the TUI toggles them mid-turn too); only `effort: null`,
+`/model`, `/compact`, `/undo` and `/redo` need an idle session. `/preset` on a server started
+without a switch answers 501. Exports confine `out` with `scopeContains` over the composition's
+tool scope. Tests: `server.test.ts` "session verbs (118 K1) over the memory host" (eleven
+cases including the typed client and the `?session=` filter), `serve.test.ts` "K0 and K1 under
+serve" (eight cases over a real JSONL store and a temp shadow repo). Gate: see the report.

@@ -21,11 +21,11 @@
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
-│                                      │                                                                               │
 │                                      │ ╭───────────────────────────────────────────────────────────────────────────╮ │
-│                                      │ │ ▸ /exit      close this pane · quits keywork if it's the last    ctrl+k x │ │
-│                                      │ │   /export    write this session to a self-contained HTML file: /export [… │ │
-│                                      │ │   /exit-all  close every pane and quit keywork                     ctrl+q │ │
+│                                      │ │ ▸ /exit        close this pane · quits keywork if it's the last  ctrl+k x │ │
+│                                      │ │   /export      write this session to a self-contained HTML file: /export… │ │
+│                                      │ │   /exit-all    close every pane and quit keywork                   ctrl+q │ │
+│                                      │ │   /extensions  list loaded extensions, their standing and what each regi… │ │
 │                                      │ ╰───────────────────────────────────────────────────────────────────────────╯ │
 │                                      │ › /ex▌                                                                        │
 ╰──────────────────────────────────────╰───────────────────────────────────────────────────────────────────────────────╯

@@ -81,8 +81,8 @@ interface Hook<Payload, Result = unknown> {
 type Empty = Record<never, never>;
 
 export interface Hooks {
-  session_start: Hook<{ reason: SessionStartReason }>;
-  session_end: Hook<{ reason: SessionEndReason }>;
+  session_start: Hook<{ reason: SessionStartReason; sessionId?: string }>;
+  session_end: Hook<{ reason: SessionEndReason; sessionId?: string }>;
   turn_start: Hook<{ userText: string }>;
   turn_end: Hook<{ message: Message; interrupted: boolean }>;
   message_appended: Hook<{ message: Message }>;

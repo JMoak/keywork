@@ -33,8 +33,8 @@ export interface ElicitationField {
 
 export type ElicitationAnswer =
   | { action: "accept"; content?: Record<string, unknown> }
-  | { action: "decline" }
-  | { action: "cancel" };
+  | { action: "decline"; reason?: string }
+  | { action: "cancel"; reason?: string };
 
 export type ElicitationHandler = (request: ElicitationRequest) => Promise<ElicitationAnswer>;
 
@@ -54,10 +54,15 @@ export function pendingInputOf(server: string, result: Record<string, unknown>):
   return { requests, requestState: typeof requestState === "string" ? requestState : undefined };
 }
 
+export const decliningElicitation: ElicitationHandler = async (request) => ({
+  action: "decline",
+  reason: `${request.server} asked for input and no one was there to answer`,
+});
+
 export function inputResponsesOf(
   answers: ReadonlyMap<string, ElicitationAnswer>,
 ): Record<string, unknown> {
-  return Object.fromEntries(answers);
+  return Object.fromEntries([...answers].map(([key, answer]) => [key, wireAnswer(answer)]));
 }
 
 export function validateFormContent(
@@ -90,6 +95,11 @@ export function describeElicitation(request: ElicitationRequest): string {
   return wanted.length === 0
     ? `${request.server} asks: ${request.message}`
     : `${request.server} asks: ${request.message} (${wanted})`;
+}
+
+function wireAnswer(answer: ElicitationAnswer): Record<string, unknown> {
+  if (answer.action !== "accept") return { action: answer.action };
+  return { action: "accept", ...(answer.content !== undefined && { content: answer.content }) };
 }
 
 function elicitationOf(

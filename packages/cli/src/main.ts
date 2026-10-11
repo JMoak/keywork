@@ -7,6 +7,7 @@ import {
   openWorkspace,
   type PermissionsConfig,
   type PresetName,
+  permissionPresets,
   presetOrder,
   TrustStore,
 } from "@keywork/shared";
@@ -134,6 +135,8 @@ const commands: Record<CommandName, Command> = {
   bot: runBot,
   memory: runMemory,
   skills: runSkills,
+  extensions: runExtensions,
+  mcp: runMcp,
   trust: (context) => runTrust("trust", context),
   untrust: (context) => runTrust("untrust", context),
   doctor: runDoctor,
@@ -308,6 +311,9 @@ ${connectHint}`,
     );
     return exitCodes.unresolved;
   }
+  const presets = userPresetSwitch(
+    preset === undefined ? config.permissions : permissionPresets[preset],
+  );
   const { serve } = await import("./serve.ts");
   return untilInterrupted((signal) =>
     serve({
@@ -316,7 +322,13 @@ ${connectHint}`,
       workspaceSlug,
       port,
       provider: runtime.provider(bound.binding),
-      permissions: headlessPermissions(preset, config.permissions),
+      permissions: presets.resolver,
+      presets,
+      inference: {
+        bind: (reference) => runtime.registry.bind(reference),
+        provider: (binding) => runtime.provider(binding),
+      },
+      checkpoints: values["no-checkpoints"] ? "off" : "on",
       sessionDir: values["session-dir"],
       prompts: config.prompts,
       mcpServers: config.mcpServers,
@@ -324,6 +336,8 @@ ${connectHint}`,
       lsp: config.lsp,
       models: config.models,
       thinking: config.thinking,
+      flavor: config.flavor,
+      theme: config.theme,
       signal,
       print: io.print,
       printError: io.printError,
@@ -494,6 +508,35 @@ async function runSkills(
   );
 }
 
+async function runMcp(context: CommandContext, { positionals }: ParsedInvocation): Promise<number> {
+  const { mcpCommand } = await import("./mcp.ts");
+  const { platformVault } = await import("@keywork/shared");
+  const { defaultAuthDir } = await import("./auth-store.ts");
+  const { config } = (await context.openInference()).current();
+  return mcpCommand(positionals, {
+    servers: config.mcpServers,
+    vault: platformVault({ dataDir: defaultAuthDir() }),
+    ...commandIo(context),
+  });
+}
+
+async function runExtensions(
+  context: CommandContext,
+  { positionals }: ParsedInvocation,
+): Promise<number> {
+  const { extensionsCommand } = await import("./extensions-command.ts");
+  return extensionsCommand(
+    positionals,
+    {
+      cwd: context.cwd,
+      projectTrusted: context.projectTrusted,
+      userRoot: homedir(),
+      workspaceSlug: context.workspaceSlug,
+    },
+    commandIo(context),
+  );
+}
+
 async function defaultProvider(context: CommandContext) {
   const { config, runtime } = (await context.openInference()).current();
   const resolution = runtime.resolve({ default: config.model });
@@ -553,6 +596,7 @@ function parseInvocationArgs(args: readonly string[]) {
       "session-dir": { type: "string" },
       workspace: { type: "string" },
       port: { type: "string" },
+      "no-checkpoints": { type: "boolean", default: false },
       pane: { type: "string" },
       session: { type: "string" },
       url: { type: "string" },

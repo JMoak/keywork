@@ -30,7 +30,7 @@
     "/events": {
       "get": {
         "operationId": "streamEvents",
-        "summary": "Server-sent events: every bus envelope as `event: <type>` plus `data: <envelope json>`. Send `Last-Event-ID` to resume from a retained id (0 replays everything still retained); without it the stream starts live.",
+        "summary": "Server-sent events: every bus envelope as `event: <type>` plus `data: <envelope json>`. Send `Last-Event-ID` to resume from a retained id (0 replays everything still retained); without it the stream starts live. `?session=<id>` keeps that session's envelopes plus every process-level envelope (an empty `sessionId`), on replay and live alike.",
         "responses": {
           "200": {
             "description": "An open text/event-stream."
@@ -85,7 +85,7 @@
     "/sessions/{id}/prompt": {
       "post": {
         "operationId": "promptSession",
-        "summary": "Append a user prompt and run a turn. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events.",
+        "summary": "Append a user prompt and run a turn. `behavior` defaults to `queue`: when a turn is already running the prompt waits behind it, which is what Enter does in the terminal composer. `steer` interrupts the running turn and runs this prompt before anything queued. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events and a `session.state` envelope follows acceptance.",
         "parameters": [
           {
             "name": "id",
@@ -107,6 +107,11 @@
                   "text": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "behavior": {
+                    "type": "string",
+                    "enum": ["steer", "queue"],
+                    "default": "queue"
                   }
                 },
                 "additionalProperties": false
@@ -116,10 +121,10 @@
         },
         "responses": {
           "202": {
-            "description": "The prompt was accepted; watch /events for the turn."
+            "description": "The prompt was accepted; `queued` says whether it waits behind a running turn. Watch /events for the turn."
           },
           "400": {
-            "description": "The body is not `{ text }`."
+            "description": "The body is not `{ text, behavior?: \"steer\" | \"queue\" }`."
           },
           "404": {
             "description": "No session has that id."
@@ -258,6 +263,1553 @@
           }
         }
       }
+    },
+    "/memory": {
+      "get": {
+        "operationId": "readMemory",
+        "summary": "The whole memory vault at a glance: the layers notes live in (`workspace`, one `arc:<slug>` per active arc), the review inbox as raw staged items, this process's mutation ledger, the vault's curation audit, the gardener's last sweep and every arc waiting at the airlock. `trusted: false` means the workspace is untrusted and memory is inert: every list is empty and every write answers 403.",
+        "responses": {
+          "200": {
+            "description": "The overview, or the inert shape when the workspace is untrusted."
+          }
+        }
+      }
+    },
+    "/memory/inbox": {
+      "get": {
+        "operationId": "listMemoryInbox",
+        "summary": "Items waiting for a person: untrusted writes held in staging and the gardener's review proposals, each as the engine's `StagedItem` with its `kind`. `count` is the number the `memory.inbox` event carries.",
+        "responses": {
+          "200": {
+            "description": "The staged items and their count."
+          }
+        }
+      }
+    },
+    "/memory/inbox/{id}/approve": {
+      "post": {
+        "operationId": "approveStagedItem",
+        "summary": "Land a staged item: a staged write moves to its target note, daily log or map; a proposal is applied. Fires `memory.inbox` with the new count. The answer is the engine's `WriteResult` (`path`, `staged`, `ledgerId`) when the workspace store landed it, or `{}` when a bot's own store did.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item landed."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "404": {
+            "description": "No staged item has that id."
+          }
+        }
+      }
+    },
+    "/memory/inbox/{id}/discard": {
+      "post": {
+        "operationId": "discardStagedItem",
+        "summary": "Drop a staged item without landing it. Fires `memory.inbox` with the new count.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item was discarded."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "404": {
+            "description": "No staged item has that id."
+          }
+        }
+      }
+    },
+    "/memory/notes": {
+      "get": {
+        "operationId": "listMemoryNotes",
+        "summary": "Every note the agent can recall, as the engine's `Note` plus the layer it lives in, its file on disk, whether the bootstrap injects it into the system prompt, how often it was recalled since the last sweep and its curing stage (0 raw, 1 has a confidence, 2 has proved useful, 3 settled). `?layer=<id>` keeps one layer.",
+        "responses": {
+          "200": {
+            "description": "The notes."
+          }
+        }
+      }
+    },
+    "/memory/notes/{name}": {
+      "get": {
+        "operationId": "readMemoryNote",
+        "summary": "One note by name (URL-encode it; entity notes are named by path, such as `entities/src/app.ts`), with its graph relations: each `{ name, predicate, direction }` edge the note takes part in.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The note."
+          },
+          "404": {
+            "description": "No note has that name."
+          }
+        }
+      }
+    },
+    "/memory/daily": {
+      "get": {
+        "operationId": "listMemoryDailyDates",
+        "summary": "The dates (`YYYY-MM-DD`) that have a daily log.",
+        "responses": {
+          "200": {
+            "description": "The dates."
+          }
+        }
+      }
+    },
+    "/memory/daily/{date}": {
+      "get": {
+        "operationId": "readMemoryDaily",
+        "summary": "One day's episodic log: each entry's time, provenance class, text and the session that wrote it when known.",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entries."
+          },
+          "400": {
+            "description": "The date is not `YYYY-MM-DD`."
+          }
+        }
+      }
+    },
+    "/memory/ledger": {
+      "get": {
+        "operationId": "readMemoryLedger",
+        "summary": "This server process's memory mutations, oldest first, capped at 128: each entry's op, time and file deltas with before and after content and hashes. Any entry can be reverted.",
+        "responses": {
+          "200": {
+            "description": "The ledger entries."
+          }
+        }
+      }
+    },
+    "/memory/ledger/{id}/revert": {
+      "post": {
+        "operationId": "revertMemoryLedgerEntry",
+        "summary": "Undo one ledger entry. `outcome` is `reverted` when every file still matched the entry's recorded result, or `needs-rebase` when something edited a file since; a rebase touches nothing.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revert outcome."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "404": {
+            "description": "No ledger entry has that id."
+          }
+        }
+      }
+    },
+    "/memory/ask": {
+      "post": {
+        "operationId": "askMemory",
+        "summary": "Search memory the way the agent's recall does: lexical, semantic and graph legs ranked per hit. With `arc`, that arc's layer is searched on top of the workspace and boosted.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "arc": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The ranked hits."
+          },
+          "400": {
+            "description": "The body is not `{ query, arc? }`."
+          }
+        }
+      }
+    },
+    "/arcs/{slug}/airlock": {
+      "get": {
+        "operationId": "readAirlock",
+        "summary": "An arc waiting to close: the notes it distilled (`candidates`, each with whether it meets the delivery bar and why not), its open `questions`, the sweep of its live sessions, the `successor` arc carried questions go to, and `decisions` so far. Every candidate and question needs a choice before the close can finish.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The digest, or the inert shape when the workspace is untrusted."
+          },
+          "404": {
+            "description": "No review is staged for that arc."
+          }
+        }
+      }
+    },
+    "/arcs/{slug}/airlock/candidates/{note}": {
+      "post": {
+        "operationId": "triageAirlockCandidate",
+        "summary": "Decide one distilled note: `deliver` promotes it into workspace memory when the arc closes (refused with 409 when it is below the bar), `leave` keeps it in the arc's archive.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "note",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["choice"],
+                "properties": {
+                  "choice": {
+                    "type": "string",
+                    "enum": ["deliver", "leave"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The digest after the decision."
+          },
+          "400": {
+            "description": "The body is not `{ choice: \"deliver\" | \"leave\" }`."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "404": {
+            "description": "No review is staged for that arc, or it has no such candidate."
+          },
+          "409": {
+            "description": "The note is below the delivery bar."
+          }
+        }
+      }
+    },
+    "/arcs/{slug}/airlock/questions": {
+      "post": {
+        "operationId": "triageAirlockQuestion",
+        "summary": "Decide one open question by title: `resolve` closes it, `carry` moves it to the newest other active arc (409 when there is none), `drop` closes it unanswered.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title", "choice"],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "choice": {
+                    "type": "string",
+                    "enum": ["resolve", "carry", "drop"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The digest after the decision."
+          },
+          "400": {
+            "description": "The body is not `{ title, choice: \"resolve\" | \"carry\" | \"drop\" }`."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "404": {
+            "description": "No review is staged for that arc, or it has no such question."
+          },
+          "409": {
+            "description": "No other active arc can carry the question."
+          }
+        }
+      }
+    },
+    "/arcs/{slug}/airlock/deliver": {
+      "post": {
+        "operationId": "deliverAirlock",
+        "summary": "Decide every candidate at once: each eligible note is marked `deliver`, each below the bar `leave`. `delivered` counts the notes marked for delivery.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "How many candidates will be delivered."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "404": {
+            "description": "No review is staged for that arc."
+          }
+        }
+      }
+    },
+    "/arcs/{slug}/airlock/finish": {
+      "post": {
+        "operationId": "finishAirlock",
+        "summary": "Close the arc with the decisions made so far. `kind` says what happened: `closed` (notes delivered, bound sessions released), `undecided` (`items` still need a choice), `wedged` (`sessions` did not flush their memory; `force: true` closes past them) or `pending`.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The finish outcome."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "404": {
+            "description": "No review is staged for that arc."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/model": {
+      "post": {
+        "operationId": "setSessionModel",
+        "summary": "Switch the model this session talks to from its next prompt on. The reference is resolved against the configured providers, the session's agent is rebuilt over the same history, and the choice is written to the session so a later open keeps it. A `session.state` envelope follows.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reference"],
+                "properties": {
+                  "reference": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "`provider/model`, or a bare model name when only one provider offers it."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ model: { provider, model }, notice }`."
+          },
+          "400": {
+            "description": "The body is not `{ reference }`, or the reference did not resolve: `code` carries the resolution failure (`unknown-model`, `unknown-provider`, `ambiguous`, `unavailable-credential`, …) and `failure` its detail."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/thinking": {
+      "post": {
+        "operationId": "setSessionThinking",
+        "summary": "Turn extended thinking on or off for this session's next prompts. Binary, not levelled. Recorded in the session; a `session.state` envelope follows.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["on"],
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ thinking }`."
+          },
+          "400": {
+            "description": "The body is not `{ on: boolean }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/effort": {
+      "post": {
+        "operationId": "setSessionEffort",
+        "summary": "Set the reasoning effort for this session's next prompts, or `null` to return to the provider's default. Recorded in the session; a `session.state` envelope follows.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["level"],
+                "properties": {
+                  "level": {
+                    "type": ["string", "null"],
+                    "enum": ["low", "medium", "high", "xhigh", "max", null]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ effort }`, `null` meaning the provider default."
+          },
+          "400": {
+            "description": "The body is not `{ level: \"low\" | \"medium\" | \"high\" | \"xhigh\" | \"max\" | null }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first. Only returning to the default needs an idle session."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/compact": {
+      "post": {
+        "operationId": "compactSession",
+        "summary": "Fold the older part of the conversation into a summary now, keeping the recent turns verbatim. `focus` steers what the summary keeps. The session continues over the shorter context; a `session.state` envelope follows.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "focus": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ compacted, notices }`: the compaction entry written, or `null` with a notice when there was nothing to fold."
+          },
+          "400": {
+            "description": "The body is not `{ focus?: string }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/undo": {
+      "post": {
+        "operationId": "undoSession",
+        "summary": "Take back the last prompt: the conversation moves to just before it, its text comes back in `prompt` so a client can offer it for editing, and the files the turn changed are put back to the checkpoint taken before it. One undo is staged at a time; the next POST /redo cancels it. With no prompt on the path, undoes the last file checkpoint alone. A `session.state` envelope follows.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ prompt: { entryId, text } | null, filesNote, undoable, redoable }`."
+          },
+          "404": {
+            "description": "No session has that id. Or `{ error: \"nothing to undo\" }`."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/redo": {
+      "post": {
+        "operationId": "redoSession",
+        "summary": "Cancel the staged undo, restoring the transcript and the files, or redo the last file checkpoint when nothing is staged. A `session.state` envelope follows.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ restored: true, undoable, redoable }`."
+          },
+          "404": {
+            "description": "No session has that id. Or `{ error: \"nothing to redo\" }`."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/context": {
+      "get": {
+        "operationId": "readSessionContext",
+        "summary": "How full the model's context window is: `used` tokens estimated from the conversation text against the `window`, with the thresholds at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen. `declared` says whether the window came from keywork.json or is assumed.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`ContextReading & { fullness, flushDue, compactionDue, basis: \"estimated\" }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/cost": {
+      "get": {
+        "operationId": "readSessionCost",
+        "summary": "What this server process has spent on the session: token `usage`, the cost `rollup` in nanodollars with how many turns were priced, metered or unpriced, a `basis` line saying how honest the number is, the last `cacheMiss` if the provider reported one, and the same split per model under `models`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ rollup, usage, basis, cacheMiss?, models: [{ reference, turns, usage, rollup }] }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/export": {
+      "post": {
+        "operationId": "exportSession",
+        "summary": "Render the session as a self-contained HTML page. `scope: \"path\"` (default) renders the active conversation; `\"tree\"` renders every branch. Without `out` the page is the response body; with `out`, a file or directory inside the workspace, the page is written there.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": ["path", "tree"],
+                    "default": "path"
+                  },
+                  "out": {
+                    "type": "string",
+                    "description": "A file or directory inside the workspace scope."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The HTML page (`text/html`)."
+          },
+          "201": {
+            "description": "`{ file }`: where the page was written."
+          },
+          "400": {
+            "description": "The body is not `{ scope?: \"path\" | \"tree\", out?: string }`."
+          },
+          "403": {
+            "description": "`out` escapes the workspace scope."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/rename": {
+      "post": {
+        "operationId": "renameSession",
+        "summary": "Give the session a title. A title set this way is pinned: the automatic titler that names a session from its first exchange will not replace it. A `session.state` envelope follows.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title"],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ title }`."
+          },
+          "400": {
+            "description": "The body is not `{ title: string }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/preset": {
+      "post": {
+        "operationId": "applyPreset",
+        "summary": "Switch the permission preset for this whole server process: `careful` asks before every core tool, `standard` follows the configured rules, `open` allows every core tool. Loosening (moving right in that order, or leaving a custom config) needs `confirmed: true`. The choice is saved to the user config and every live session sees a `gate.preset` event.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "enum": ["careful", "standard", "open"]
+                  },
+                  "confirmed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ from, to }`."
+          },
+          "400": {
+            "description": "The body is not `{ name: \"careful\" | \"standard\" | \"open\", confirmed?: true }`."
+          },
+          "409": {
+            "description": "Loosening needs `confirmed: true`."
+          },
+          "501": {
+            "description": "This server was started without a preset switch."
+          }
+        }
+      }
+    },
+    "/workspace": {
+      "get": {
+        "operationId": "readWorkspace",
+        "summary": "The workspace this server was launched for. `anchor` is its root and where the root came from: `declaration` when a `.keywork/workspace.json` was found walking up from the launch directory, `git` when a repository root was, `launch` when neither and the launch directory itself is the root. `identity` is the key its sessions and tickets are filed under (the same value as this document's `info.workspace.identity`). When a declaration exists, `declared` is true and `name`, `declarationFile`, `contextDirs` (extra folders the agent's tools and memory may reach), `missingContextDirs`, `focusDirs` (subtrees the workspace is about) and the memory `vault` describe it. `trust` is the user's standing decision for this root and `readiness` folds the two together: `ready` (trusted and declared), `undeclared` (trusted, no declaration yet), `undecided` (no decision yet, so nothing runs with project access) or `refused` (marked untrusted).",
+        "responses": {
+          "200": {
+            "description": "The workspace report."
+          },
+          "503": {
+            "description": "This host serves no workspace."
+          }
+        }
+      }
+    },
+    "/workspace/trust": {
+      "post": {
+        "operationId": "trustWorkspace",
+        "summary": "Trust the served workspace and set it up, exactly what `/init` in the terminal and `keywork trust` do: the decision is written for this root and no other (the body is ignored, so no path can be smuggled in) to the user's trust store, and `.keywork/workspace.json` plus the memory vault are created when missing. Trust is read when a server composes, so `reopens` says whether this server must be restarted before the decision takes effect; a client that owns the server process restarts it. Already trusted is not an error. This route never untrusts and never forgets a decision.",
+        "responses": {
+          "200": {
+            "description": "Trusted; `root` names the directory the decision covers."
+          },
+          "400": {
+            "description": "The root is a home directory or a filesystem root, which would trust everything beneath it."
+          },
+          "409": {
+            "description": "The root is marked untrusted; only `keywork trust` in a terminal reverses that."
+          },
+          "503": {
+            "description": "This host serves no workspace."
+          }
+        }
+      }
+    },
+    "/tree": {
+      "get": {
+        "operationId": "readTree",
+        "summary": "One directory level of the workspace, for a file browser. `path` is relative to the workspace root (empty or absent for the root itself; an absolute path reaches a linked context folder). Each entry is a `file` or a `dir`, directories first, then by name. Entries that a `.gitignore` between the root and this directory ignores are returned with `ignored: true` rather than dropped, so a browser can dim them. Dotfiles are left out unless `hidden=true`, and come flagged `hidden: true` when included. Every path is confined to the scope the agent's tools get: `..`, symlinks that leave it and anything outside the workspace answer 403.",
+        "responses": {
+          "200": {
+            "description": "The directory's entries."
+          },
+          "403": {
+            "description": "The path escapes the workspace scope."
+          },
+          "404": {
+            "description": "No directory at that path."
+          },
+          "503": {
+            "description": "This host serves no workspace."
+          }
+        }
+      }
+    },
+    "/files": {
+      "get": {
+        "operationId": "readFile",
+        "summary": "A slice of one text file as UTF-8: the bytes `[from, to)` of it, the whole file when neither is given. At most 1 MiB comes back per request; when the slice was cut short, `truncated` is true and `to` says where it stopped, so the next request starts there. `bytes` is the whole file's size. A clipped tool result's `spill.elidedFrom` and `elidedTo` are the `from` and `to` that open the clipped range. Files over 20 MiB are refused, a slice holding a NUL byte is refused as binary, and `path` is confined exactly as for `/tree`.",
+        "responses": {
+          "200": {
+            "description": "The slice."
+          },
+          "400": {
+            "description": "`from` or `to` is not a non-negative integer."
+          },
+          "403": {
+            "description": "The path escapes the workspace scope."
+          },
+          "404": {
+            "description": "No file at that path."
+          },
+          "413": {
+            "description": "The file is over the 20 MiB cap."
+          },
+          "415": {
+            "description": "The slice holds a NUL byte: a binary file."
+          },
+          "503": {
+            "description": "This host serves no workspace."
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "get": {
+        "operationId": "listMcpServers",
+        "summary": "Every configured MCP server (a tool provider the agent can call) with its live status: `state` is `connected`, `connecting` or `down`, `enabled` is the user's switch, `toolCount` is how many tools it currently offers, `transport` is `stdio` or `http`, and `lastError` says why it is down when it is. `surface.changed` with `kind: \"mcp\"` fires whenever any of this changes. An empty list means no servers are configured.",
+        "responses": {
+          "200": {
+            "description": "The servers."
+          },
+          "503": {
+            "description": "This host serves no MCP registry."
+          }
+        }
+      }
+    },
+    "/mcp/{name}/restart": {
+      "post": {
+        "operationId": "restartMcpServer",
+        "summary": "Drop the server's connection and open a fresh one, re-enabling it if it was off. Answers once the server has settled, with its new status.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server's status after the restart."
+          },
+          "404": {
+            "description": "No MCP server has that name."
+          },
+          "503": {
+            "description": "The registry is stopping, or this host serves none."
+          }
+        }
+      }
+    },
+    "/mcp/{name}/enabled": {
+      "post": {
+        "operationId": "setMcpServerEnabled",
+        "summary": "Switch a server on or off. Off disconnects it and withdraws its tools until it is switched on again; on reconnects it. Answers once the server has settled.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["on"],
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server's status after the switch."
+          },
+          "400": {
+            "description": "The body is not `{ on: boolean }`."
+          },
+          "404": {
+            "description": "No MCP server has that name."
+          },
+          "503": {
+            "description": "The registry is stopping, or this host serves none."
+          }
+        }
+      }
+    },
+    "/mcp/{name}/tools": {
+      "get": {
+        "operationId": "listMcpServerTools",
+        "summary": "The names of the tools a server currently offers; empty while it is down.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tool names."
+          },
+          "404": {
+            "description": "No MCP server has that name."
+          },
+          "503": {
+            "description": "This host serves no MCP registry."
+          }
+        }
+      }
+    },
+    "/arcs": {
+      "get": {
+        "operationId": "listArcs",
+        "summary": "Every arc in the workspace: a named stretch of work that sessions bind to and that keeps its own memory layer until it closes. Each arc carries its `slug`, `status` (`active` or `archived`), `created` time and how many `sessions` are bound to it. `ordinals` numbers the arcs by creation order so a client can give each a stable colour. Arcs need a trusted workspace with memory.",
+        "responses": {
+          "200": {
+            "description": "The arcs and their ordinals."
+          },
+          "403": {
+            "description": "The workspace is untrusted, so there are no arcs."
+          },
+          "503": {
+            "description": "This host serves no arcs."
+          }
+        }
+      },
+      "post": {
+        "operationId": "createArc",
+        "summary": "Open a new active arc named by `slug` (lowercase letters, digits and single hyphens). Fires `surface.changed` with `kind: \"arcs\"`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["slug"],
+                "properties": {
+                  "slug": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new arc."
+          },
+          "400": {
+            "description": "The body is not `{ slug }` or the slug is not valid."
+          },
+          "403": {
+            "description": "The workspace is untrusted."
+          },
+          "409": {
+            "description": "An arc with that slug already exists."
+          },
+          "503": {
+            "description": "This host serves no arcs."
+          }
+        }
+      }
+    },
+    "/arcs/{slug}/close": {
+      "post": {
+        "operationId": "closeArc",
+        "summary": "Close an arc: its live sessions are swept for memory, and its notes and open questions are distilled for review. `kind: \"closed\"` means it closed at once, delivering `delivered` notes and releasing `released` sessions; `kind: \"pending\"` means `candidates` notes and `questions` are waiting at the airlock (see `GET /arcs/{slug}/airlock`) and the arc stays open until they are decided. `direction` is an optional sentence steering what the close should keep.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "direction": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The close outcome."
+          },
+          "403": {
+            "description": "The workspace is untrusted."
+          },
+          "404": {
+            "description": "No arc has that slug."
+          },
+          "409": {
+            "description": "The arc is not active."
+          },
+          "503": {
+            "description": "This host serves no arcs."
+          }
+        }
+      }
+    },
+    "/arcs/{slug}/abandon": {
+      "post": {
+        "operationId": "abandonArc",
+        "summary": "Archive an arc without distilling anything: its sessions are released and its layer is kept only as an archive. Fires `surface.changed` with `kind: \"arcs\"`.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The arc was abandoned."
+          },
+          "403": {
+            "description": "The workspace is untrusted."
+          },
+          "404": {
+            "description": "No arc has that slug."
+          },
+          "503": {
+            "description": "This host serves no arcs."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/arc": {
+      "post": {
+        "operationId": "bindSessionArc",
+        "summary": "Bind a session to an arc, or release it with `slug: null`. The binding is recorded in the session's log and answers as the session's whole binding (`arc`, `bot`). From then on the session's memory writes go to the arc's layer and its recall searches that layer first.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["slug"],
+                "properties": {
+                  "slug": {
+                    "type": ["string", "null"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The session's binding after the change."
+          },
+          "400": {
+            "description": "The body is not `{ slug: string | null }` or the slug is not valid."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "503": {
+            "description": "This host serves no arcs."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/bot": {
+      "post": {
+        "operationId": "bindSessionBot",
+        "summary": "Have a session run as a bot (a named role with its own prompt, tool allowance and memory layer), or as no bot with `name: null`. Refused while a turn is running, because the running agent cannot be swapped mid-turn. Answers as the session's whole binding (`arc`, `bot`).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {
+                    "type": ["string", "null"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The session's binding after the change."
+          },
+          "400": {
+            "description": "The body is not `{ name: string | null }` or the name is not valid."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "A turn is running."
+          },
+          "503": {
+            "description": "This host serves no bots."
+          }
+        }
+      }
+    },
+    "/bots": {
+      "get": {
+        "operationId": "listBots",
+        "summary": "Every bot defined for this workspace and this user: its `name`, display `sigil`, where it was defined (`source` is `project` or `user`), its `description`, the `model` it prefers and its `learning` policy, plus how many `sessions` have run as it, when it was `lastUsed` and what those sessions cost when known.",
+        "responses": {
+          "200": {
+            "description": "The bots."
+          },
+          "503": {
+            "description": "This host serves no bots."
+          }
+        }
+      },
+      "post": {
+        "operationId": "createBot",
+        "summary": "Define a new bot: writes `.keywork/bots/<slug>/bot.md` in the workspace (`scope: \"project\"`, needs a trusted workspace) or under the user's home (`scope: \"user\"`), with `purpose` as its description. Fires `surface.changed` with `kind: \"bots\"`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["slug", "scope"],
+                "properties": {
+                  "slug": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": ["project", "user"]
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new bot's definition."
+          },
+          "400": {
+            "description": "The body is not `{ slug, scope, purpose? }` or the slug is not valid."
+          },
+          "403": {
+            "description": "A project bot was asked for in an untrusted workspace."
+          },
+          "409": {
+            "description": "A bot with that name already exists."
+          },
+          "503": {
+            "description": "This host serves no bots."
+          }
+        }
+      }
+    },
+    "/workspaces": {
+      "get": {
+        "operationId": "listWorkspaces",
+        "summary": "The workspaces that share this root: the default one (no `slug`) and every named one under `.keywork/workspaces/<slug>/`. Each says whether it is `declared` (set up on disk), whether it is the `current` one this server runs, how many memory `notes` it holds, its `focusDirs`, how many `sessions` it has and when it was `lastUsed` (epoch milliseconds).",
+        "responses": {
+          "200": {
+            "description": "The workspaces."
+          },
+          "503": {
+            "description": "This host serves no workspaces."
+          }
+        }
+      },
+      "post": {
+        "operationId": "createWorkspace",
+        "summary": "Create a named workspace over this root: a separate declaration and memory vault under `.keywork/workspaces/<slug>/`. The new workspace is not opened; `POST /workspaces/use` does that. Fires `surface.changed` with `kind: \"workspaces\"`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["slug"],
+                "properties": {
+                  "slug": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The workspace was created."
+          },
+          "400": {
+            "description": "The body is not `{ slug }`, the slug is not valid, or it is the reserved word `default`."
+          },
+          "409": {
+            "description": "A workspace with that slug already exists."
+          },
+          "503": {
+            "description": "This host serves no workspaces."
+          }
+        }
+      }
+    },
+    "/workspaces/use": {
+      "post": {
+        "operationId": "useWorkspace",
+        "summary": "Choose the workspace the next launch from this directory opens: a named one by `slug`, or the default with `slug: null`. A workspace is a separate identity with its own sessions and memory, so the running server cannot switch in place: `reopens: true` says a client that owns the server process must restart it, which then opens the chosen workspace.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["slug"],
+                "properties": {
+                  "slug": {
+                    "type": ["string", "null"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The choice was remembered."
+          },
+          "400": {
+            "description": "The body is not `{ slug: string | null }`."
+          },
+          "409": {
+            "description": "No workspace has that slug."
+          },
+          "503": {
+            "description": "This host serves no workspaces."
+          }
+        }
+      }
+    },
+    "/workspaces/{slug}/focus": {
+      "post": {
+        "operationId": "focusWorkspaceDir",
+        "summary": "Add a focus dir to a workspace (`default` names the default workspace): a subtree of the root the workspace is about, which memory recall and the sessions overview lean toward. `dir` is relative to the root or absolute and must be inside it; nothing here widens what the agent's tools may touch. Answers the dir as recorded. Fires `surface.changed` with `kind: \"workspaces\"`.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["dir"],
+                "properties": {
+                  "dir": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The focus dir as recorded."
+          },
+          "400": {
+            "description": "The body is not `{ dir }`."
+          },
+          "409": {
+            "description": "The dir is not a directory, lies outside the root, is the root itself, or is already a focus dir; or the workspace is not declared."
+          },
+          "503": {
+            "description": "This host serves no workspaces."
+          }
+        }
+      }
+    },
+    "/workspaces/{slug}/unfocus": {
+      "post": {
+        "operationId": "unfocusWorkspaceDir",
+        "summary": "Remove a focus dir from a workspace (`default` names the default workspace); `dir` is the value `GET /workspaces` lists. Fires `surface.changed` with `kind: \"workspaces\"`.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["dir"],
+                "properties": {
+                  "dir": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The focus dir was removed."
+          },
+          "400": {
+            "description": "The body is not `{ dir }`."
+          },
+          "409": {
+            "description": "That dir is not a focus dir of the workspace, or the workspace is not declared."
+          },
+          "503": {
+            "description": "This host serves no workspaces."
+          }
+        }
+      }
+    },
+    "/flavors": {
+      "get": {
+        "operationId": "listFlavors",
+        "summary": "The colour flavors this installation knows, each a complete palette (`tokens`: ground, panel, text inks, accent ramp, outcome colours), its `appearance` (`dark` or `light`), how density maps onto inks and its chrome taste (`gap`, `chromeWeight`, `instruments`), as validated records a client can paint from directly. `keywork-night` is always present and the user's `theme` overrides are already laid over the flavor they wear. `active` is the configured flavor name; the terminal-derived `system` flavor is never listed because it is read from the terminal's own colours, so a client whose `active` is `system` derives its palette from its host instead.",
+        "responses": {
+          "200": {
+            "description": "The flavors."
+          },
+          "503": {
+            "description": "This host serves no flavors."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -296,7 +1848,10 @@
               "diagnostics.published",
               "shell.reset",
               "extension.notice",
-              "engine.error"
+              "engine.error",
+              "memory.inbox",
+              "session.state",
+              "surface.changed"
             ]
           },
           "payload": {}

@@ -7,6 +7,8 @@ import {
   debugLogFile,
   type EngineEvents,
   type EventBus,
+  type ExtensionHost,
+  extensionLoadNotices,
   type JournalTap,
   type LanguagePort,
   type McpRegistry,
@@ -31,8 +33,9 @@ import type {
 } from "@keywork/shared";
 import { botMemory } from "./bot-memory.ts";
 import type { WorkspaceExtensions } from "./commands.ts";
-import { composeAgents, composeWorkspace } from "./compose.ts";
+import { closeExtensionHost, composeAgents, composeWorkspace } from "./compose.ts";
 import { type ExitClass, exitCodes } from "./dispatch.ts";
+import { headlessNoticeLine } from "./extensions-command.ts";
 import { nextActionFor, shellCommands } from "./inference/port.ts";
 import { connectHint } from "./inference/runtime.ts";
 import { defaultSessionDir } from "./paths.ts";
@@ -125,7 +128,10 @@ interface HeadlessRun {
   diagnostics: DiagnosticsLog | undefined;
   mcp: McpRegistry | undefined;
   languagePort: LanguagePort | undefined;
+  host: ExtensionHost;
 }
+
+const runPrefix = "keywork run";
 
 async function openRun(
   options: RunOptions,
@@ -148,10 +154,18 @@ async function openRun(
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
   });
   reportExtensionFailures(composition.extensions, io);
+  for (const line of extensionLoadNotices(composition.hostReport)) {
+    io.printError(`${runPrefix}: ${line}`);
+  }
+  composition.host.onNotice((notice) => {
+    const line = headlessNoticeLine(runPrefix, notice);
+    if (line !== undefined) io.printError(line);
+  });
   const bot = botFor(options.bot, composition.extensions);
   if (typeof bot === "string") return { refused: bot };
   const store = await openSessionStore(options);
   if (bot !== undefined) await store?.appendBotBinding(bot.name);
+  await composition.host.startSession({ reason: "start", ...(store !== undefined && { store }) });
   const bots = botMemory({
     cwd: options.cwd,
     projectTrusted: options.projectTrusted === true,
@@ -188,6 +202,7 @@ async function openRun(
     diagnostics,
     mcp: composition.mcp,
     languagePort: composition.languagePort,
+    host: composition.host,
   };
 }
 
@@ -267,6 +282,7 @@ function tearDown(run: HeadlessRun): Promise<string[]> {
         for (const message of run.agent.history()) await run.store.append(message);
       },
     ],
+    ["stopping extensions", () => closeExtensionHost(run.host)],
     ["stopping language servers", async () => run.languagePort?.dispose()],
     ["flushing the debug log", async () => run.diagnostics?.flush()],
     ["stopping MCP servers", async () => run.mcp?.stop()],

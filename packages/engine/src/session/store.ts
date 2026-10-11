@@ -141,8 +141,12 @@ export class SessionStore {
     return this.appendEntry({ type: "context_edit", targetId, replacement });
   }
 
-  async setName(name: string): Promise<SessionInfoEntry> {
-    return this.appendEntry({ type: "session_info", name });
+  async setName(name: string, pinned = false): Promise<SessionInfoEntry> {
+    return this.appendEntry({ type: "session_info", name, ...(pinned && { pinned }) });
+  }
+
+  titlePinned(): boolean {
+    return this.latestInfo()?.pinned === true;
   }
 
   spills(): SpillStore {
@@ -151,8 +155,11 @@ export class SessionStore {
   }
 
   name(): string | undefined {
-    return this.log.findLast((entry): entry is SessionInfoEntry => entry.type === "session_info")
-      ?.name;
+    return this.latestInfo()?.name;
+  }
+
+  private latestInfo(): SessionInfoEntry | undefined {
+    return this.log.findLast((entry): entry is SessionInfoEntry => entry.type === "session_info");
   }
 
   async appendModelChange(provider: string, modelId: string): Promise<ModelChangeEntry> {

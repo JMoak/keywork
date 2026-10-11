@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { killTree, within } from "../proc.ts";
+import type { ElicitationHandler } from "./elicitation.ts";
 import {
   discoverProbeTimeoutMs,
   type McpEra,
@@ -23,7 +24,12 @@ export {
   McpRequestTimeoutError,
   McpRpcError,
   McpServerExitedError,
+  McpSignInRequiredError,
 } from "./errors.ts";
+
+export interface CallToolOptions {
+  elicit?: ElicitationHandler | undefined;
+}
 
 const closeGraceMs = 500;
 const maxLineChars = 4 * 1024 * 1024;
@@ -43,7 +49,7 @@ export interface McpConnection {
   serverName: string;
   readonly era: McpEra;
   listTools(): Promise<McpTool[]>;
-  callTool(name: string, args: unknown): Promise<McpToolResult>;
+  callTool(name: string, args: unknown, options?: CallToolOptions): Promise<McpToolResult>;
   onClose(handler: (error?: Error) => void): void;
   onToolsChanged(handler: () => void): void;
   close(): Promise<void>;
@@ -60,6 +66,7 @@ export interface StdioConnectOptions {
   signal?: AbortSignal;
   rememberedEra?: McpEra;
   discoverTimeoutMs?: number;
+  elicit?: ElicitationHandler;
 }
 
 export async function connectStdioServer(
@@ -70,7 +77,11 @@ export async function connectStdioServer(
   const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   const discoverTimeoutMs =
     options.discoverTimeoutMs ?? Math.min(discoverProbeTimeoutMs, requestTimeoutMs);
-  const channel = new StdioChannel(spec, { requestTimeoutMs, discoverTimeoutMs }, options.signal);
+  const channel = new StdioChannel(
+    spec,
+    { requestTimeoutMs, discoverTimeoutMs, elicit: options.elicit },
+    options.signal,
+  );
   try {
     await channel.handshake(options.rememberedEra);
   } catch (cause) {
@@ -80,9 +91,10 @@ export async function connectStdioServer(
   return channel;
 }
 
-interface StdioTimeouts {
+interface StdioChannelOptions {
   requestTimeoutMs: number;
   discoverTimeoutMs: number;
+  elicit: ElicitationHandler | undefined;
 }
 
 interface PendingRequest {
@@ -108,15 +120,15 @@ class StdioChannel implements McpConnection {
   private teardown: Promise<void> | undefined;
   private subscriptionId: number | undefined;
 
-  constructor(spec: StdioServerSpec, timeouts: StdioTimeouts, signal?: AbortSignal) {
-    this.timeoutMs = timeouts.requestTimeoutMs;
+  constructor(spec: StdioServerSpec, options: StdioChannelOptions, signal?: AbortSignal) {
+    this.timeoutMs = options.requestTimeoutMs;
     this.session = new McpSession(
       {
         request: (method, params, timeoutMs) => this.request(method, params, timeoutMs),
         notify: async (method) => this.send({ jsonrpc: "2.0", method }),
       },
       () => this.announceToolsChanged(),
-      timeouts.discoverTimeoutMs,
+      { probeTimeoutMs: options.discoverTimeoutMs, elicit: options.elicit },
     );
     this.child = spawn(spec.command, [...(spec.args ?? [])], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -161,8 +173,8 @@ class StdioChannel implements McpConnection {
     return this.session.listTools();
   }
 
-  callTool(name: string, args: unknown): Promise<McpToolResult> {
-    return this.session.callTool(name, args);
+  callTool(name: string, args: unknown, options: CallToolOptions = {}): Promise<McpToolResult> {
+    return this.session.callTool(name, args, options.elicit);
   }
 
   onClose(handler: (error?: Error) => void): void {

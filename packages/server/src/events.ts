@@ -2,11 +2,17 @@ import type { EngineEvents, EventBus } from "@keywork/engine";
 
 export type EngineEventType = keyof EngineEvents;
 
+export const serverEventTypes = ["memory.inbox", "session.state", "surface.changed"] as const;
+
+export type ServerEventType = (typeof serverEventTypes)[number];
+
+export type WireEventType = EngineEventType | ServerEventType;
+
 export interface BusEnvelope {
   id: number;
   ts: string;
   sessionId: string;
-  type: EngineEventType;
+  type: WireEventType;
   payload: unknown;
 }
 
@@ -53,7 +59,7 @@ export class EventLog {
     this.now = options.now ?? (() => new Date());
   }
 
-  record(sessionId: string, type: EngineEventType, payload: unknown): BusEnvelope {
+  record(sessionId: string, type: WireEventType, payload: unknown): BusEnvelope {
     const envelope: BusEnvelope = {
       id: this.nextId++,
       ts: this.now().toISOString(),

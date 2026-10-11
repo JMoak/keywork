@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type BotDefinition,
+  extensionEntries,
   extensionState,
   MockProvider,
   messageText,
@@ -14,10 +15,16 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import { recordingProvider } from "@keywork/engine/testing";
+import { extensionFixturesDir, recordingProvider } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { type Composition, composeAgents, composeWorkspace, startMcpRegistry } from "./compose.ts";
+import {
+  type Composition,
+  closeExtensionHost,
+  composeAgents,
+  composeWorkspace,
+  startMcpRegistry,
+} from "./compose.ts";
 import { citationTrail } from "./memory.ts";
 
 const fixtureServerPath = fileURLToPath(
@@ -579,5 +586,104 @@ describe("language servers in the composition", () => {
         },
       },
     ]);
+  });
+});
+
+describe("extension host in the composition", () => {
+  async function withProjectExtension(name: string): Promise<string> {
+    const cwd = await declaredWorkspace();
+    const dir = join(cwd, ".keywork", "extensions");
+    await mkdir(dir, { recursive: true });
+    await copyFile(join(extensionFixturesDir, `${name}.ts`), join(dir, `${name}.ts`));
+    return cwd;
+  }
+
+  const scribeSource = [
+    "export default function scribe(api) {",
+    '  api.on("turn_end", ({ message }) =>',
+    '    api.appendEntry("said", message.parts.map((part) => part.text ?? "").join("")),',
+    "  );",
+    "}",
+    "",
+  ].join("\n");
+
+  it("loads project extensions only for a trusted workspace and reports the refused layer", async () => {
+    const cwd = await withProjectExtension("greeter");
+    const untrusted = await composedIn(cwd);
+    expect(untrusted.host.extensions()).toEqual([]);
+    expect(untrusted.hostReport.skipped.map((layer) => layer.source)).toEqual(["project"]);
+
+    const trusted = await composedIn(cwd, { projectTrusted: true });
+    expect(trusted.host.extensions().map((status) => `${status.name}:${status.standing}`)).toEqual([
+      "greeter:active",
+    ]);
+    expect(trusted.host.registrations("greeter").tools).toEqual(["greet"]);
+    await trusted.host.dispose();
+  });
+
+  it("hands every built agent the host's tools and routes its turns to the host", async () => {
+    const cwd = await withProjectExtension("greeter");
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const heard: string[] = [];
+    composition.host.onNotice((notice) => heard.push(`${notice.level}:${notice.message}`));
+    const provider = recordingProvider([textTurn("ok")]);
+
+    await composeAgents(composition).build({ provider, guard: {} }).send("hello there");
+    await composition.host.settle();
+
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toContain("greet");
+    expect(provider.requests[0]?.systemPrompt).toContain("Greet people warmly.");
+    expect(heard).toEqual(["info:turn: hello there"]);
+    await composition.host.dispose();
+  });
+
+  it("keeps extension tools behind a bot's tool allowlist", async () => {
+    const cwd = await withProjectExtension("greeter");
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const provider = recordingProvider([textTurn("ok")]);
+    const shellOnly: BotDefinition = { ...briefBot, name: "shell-only", tools: ["bash"] };
+
+    await composeAgents(composition).build({ provider, guard: {}, bot: shellOnly }).send("hi");
+
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toEqual(["bash"]);
+    await composition.host.dispose();
+  });
+
+  it("lands each agent's entries in the session it was built for", async () => {
+    const cwd = await declaredWorkspace();
+    const userRoot = join(cwd, "user-keywork");
+    await mkdir(join(userRoot, ".keywork", "extensions"), { recursive: true });
+    await writeFile(join(userRoot, ".keywork", "extensions", "scribe.ts"), scribeSource);
+    const composition = await composedIn(cwd, { userRoot });
+    const first = await SessionStore.create(join(cwd, "first.jsonl"), cwd);
+    const second = await SessionStore.create(join(cwd, "second.jsonl"), cwd);
+    await composition.host.startSession({ store: first });
+    await composition.host.startSession({ store: second });
+    const agents = composeAgents(composition);
+
+    await agents
+      .build({
+        provider: new MockProvider([textTurn("one")]),
+        guard: {},
+        sessionId: first.header.id,
+      })
+      .send("a");
+    await agents
+      .build({
+        provider: new MockProvider([textTurn("two")]),
+        guard: {},
+        sessionId: () => second.header.id,
+      })
+      .send("b");
+    await composition.host.settle();
+
+    expect(extensionEntries(first.entries())).toEqual([
+      { extension: "scribe", type: "said", data: "one" },
+    ]);
+    expect(extensionEntries(second.entries())).toEqual([
+      { extension: "scribe", type: "said", data: "two" },
+    ]);
+    await closeExtensionHost(composition.host);
+    expect(composition.host.openSessions()).toEqual([]);
   });
 });

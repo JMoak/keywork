@@ -18,6 +18,14 @@ export interface StreamRegistry {
   add(close: () => void): () => void;
 }
 
+export type EnvelopeFilter = (envelope: BusEnvelope) => boolean;
+
+export function sessionFilterOf(request: Request): EnvelopeFilter {
+  const session = new URL(request.url).searchParams.get("session");
+  if (session === null || session === "") return () => true;
+  return (envelope) => envelope.sessionId === session || envelope.sessionId === "";
+}
+
 export function eventStreamResponse(
   log: EventLog,
   request: Request,
@@ -45,6 +53,7 @@ const sseHeaders = {
 class SseConnection {
   private readonly encoder = new TextEncoder();
   private readonly teardown: Array<() => void> = [];
+  private readonly keep: EnvelopeFilter;
   private closed = false;
 
   constructor(
@@ -52,12 +61,18 @@ class SseConnection {
     private readonly log: EventLog,
     private readonly request: Request,
     private readonly streams: StreamRegistry,
-  ) {}
+  ) {
+    this.keep = sessionFilterOf(request);
+  }
 
   open(resumeFrom: number | undefined): void {
     this.write(": connected\n\n");
     if (resumeFrom !== undefined) this.replay(resumeFrom);
-    this.teardown.push(this.log.subscribe((envelope) => this.write(sseFrame(envelope))));
+    this.teardown.push(
+      this.log.subscribe((envelope) => {
+        if (this.keep(envelope)) this.write(sseFrame(envelope));
+      }),
+    );
     this.teardown.push(this.streams.add(() => this.close()));
     const onAbort = (): void => this.close();
     this.request.signal.addEventListener("abort", onAbort, { once: true });
@@ -78,7 +93,9 @@ class SseConnection {
     if (oldest !== undefined && resumeFrom + 1 < oldest) {
       this.write(`: resumed with a gap, events ${resumeFrom + 1} to ${oldest - 1} are gone\n\n`);
     }
-    for (const envelope of this.log.since(resumeFrom)) this.write(sseFrame(envelope));
+    for (const envelope of this.log.since(resumeFrom).filter(this.keep)) {
+      this.write(sseFrame(envelope));
+    }
   }
 
   private write(text: string): void {

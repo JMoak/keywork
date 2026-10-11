@@ -469,6 +469,44 @@ describe("composition parity with panes", () => {
     expect(err.join("\n")).toContain("SKILL.md");
   });
 
+  it("prints extension warnings and quarantines on stderr, keeps info quiet, and ends the session", async () => {
+    const cwd = await trustedWorkspace();
+    const dir = join(cwd, ".keywork", "extensions");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "noisy.ts"),
+      [
+        "export default function noisy(api) {",
+        '  api.on("turn_start", () => {',
+        '    api.log.info("quietly");',
+        '    api.log.warn("heads up");',
+        "  });",
+        `  api.on("session_end", ({ reason }) => api.log.error(\`ended on \${reason}\`));`,
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(dir, "broken.ts"), "export const nothing = true;\n");
+    const err: string[] = [];
+
+    const outcome = await headless({
+      prompt: "hi",
+      cwd,
+      json: false,
+      projectTrusted: true,
+      provider: new MockProvider([textTurn("ok")]),
+      print: () => {},
+      printError: (line) => err.push(line),
+    });
+
+    expect(outcome.outcome).toBe("completed");
+    expect(err).toEqual([
+      'keywork run: extension "broken" quarantined during load: the module must export a default function taking the extension api',
+      "keywork run: noisy: heads up",
+      "keywork run: noisy: ended on exit",
+    ]);
+  });
+
   function shapeOf(entries: readonly SessionEntry[]): string[] {
     return entries
       .filter((entry) => entry.type === "message" || entry.type === "custom")
