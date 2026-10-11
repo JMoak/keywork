@@ -44,6 +44,7 @@ export interface PaneIntents {
   holdPane?(id: string): boolean;
   showPane?(id: string, near?: readonly string[]): boolean;
   paneHeld?(id: string): boolean;
+  closePane?(id: string): boolean;
 }
 
 export type PaneDescriptor =

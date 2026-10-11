@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   checkDrift,
   type DiffChanges,
@@ -7,9 +9,15 @@ import {
   driftJudgment,
   type ForgetPlan,
   isEmptyPlan,
+  isFresh,
+  markMultiHostVault,
+  mergeVaultFile,
   type Provider,
   planForget,
+  reconcileVault,
   stageForget,
+  type VaultReconciliation,
+  writeFileAtomic,
 } from "@keywork/engine";
 import { type CommandIo, resolveCommandIo } from "./command-io.ts";
 import { exitCodes } from "./dispatch.ts";
@@ -31,12 +39,22 @@ export interface MemoryCommandSeams {
   judgment?: (() => Promise<DriftJudgmentPort | undefined>) | undefined;
   provider?: (() => Promise<Provider | undefined>) | undefined;
   changes?: ((range: string | undefined) => Promise<DiffChanges>) | undefined;
+  git?: GitRunner | undefined;
+  now?: (() => Date) | undefined;
 }
+
+export type GitRunner = (cwd: string, args: readonly string[]) => Promise<string>;
 
 export const memoryUsage = [
   "usage: keywork memory drift [range]",
   "       keywork memory forget --session <id> [--apply]",
+  "       keywork memory sync [setup]",
+  "       keywork memory sync merge <base> <ours> <theirs> [path]",
 ].join("\n");
+
+export const mergeDriverName = "keywork-memory";
+export const mergeDriverCommand = "keywork memory sync merge %O %A %B %P";
+export const mergeAttributesLine = `*.md merge=${mergeDriverName}`;
 
 export async function memoryCommand(
   args: readonly string[],
@@ -52,11 +70,13 @@ export async function memoryCommand(
       return driftCommand(rest[0], place, seams, print, printError);
     case "forget":
       return forgetCommand(flags, place, seams, print, printError);
+    case "sync":
+      return syncCommand(rest, place, seams, print, printError);
     default:
       printError(
         subcommand === undefined
           ? memoryUsage
-          : `keywork memory: unknown subcommand "${subcommand}" (expected drift or forget)`,
+          : `keywork memory: unknown subcommand "${subcommand}" (expected drift, forget or sync)`,
       );
       return exitCodes.usage;
   }
@@ -89,7 +109,146 @@ export function describeForgetPlan(plan: ForgetPlan): string[] {
   return lines.length === 0 ? [`nothing originated in session ${plan.session}`] : lines;
 }
 
+export function describeReconciliation(report: VaultReconciliation, now: Date): string[] {
+  const hosts = report.hosts.length === 0 ? "none yet" : report.hosts.join(", ");
+  const lines = [
+    report.host === undefined
+      ? "layout: single host · keywork memory sync setup lets more hosts write this vault"
+      : `layout: per host · this host writes as ${report.host}`,
+    `hosts seen: ${hosts}`,
+    `sweep lease: ${describeLease(report, now)}`,
+    ...report.intake.map(
+      (intake) =>
+        `quarantined ${intake.original} · copy kept as ${intake.sibling} (${intake.source})`,
+    ),
+    ...report.restored.map((name) => `restored ${name} from its sync copy`),
+  ];
+  if (report.cards.length > 0)
+    lines.push(`${report.cards.length} inbox card${plural(report.cards.length)} staged`);
+  if (report.index !== undefined)
+    lines.push(
+      `index: ${report.index.notes} notes · ${report.index.refreshed.length} refreshed · ${report.index.dropped.length} dropped`,
+    );
+  return lines;
+}
+
 type Print = (line: string) => void;
+
+async function syncCommand(
+  args: readonly string[],
+  place: MemoryCommandPlace,
+  seams: MemoryCommandSeams,
+  print: Print,
+  printError: Print,
+): Promise<number> {
+  const [verb, ...rest] = args;
+  switch (verb) {
+    case undefined:
+      return syncReport(place, seams, print, printError);
+    case "setup":
+      return syncSetup(place, seams, print, printError);
+    case "merge":
+      return mergeDriver(rest, print, printError);
+    default:
+      return refuse(printError, `unknown sync verb "${verb}" (expected setup or merge)`);
+  }
+}
+
+async function syncReport(
+  place: MemoryCommandPlace,
+  seams: MemoryCommandSeams,
+  print: Print,
+  printError: Print,
+): Promise<number> {
+  const memory = openMemory(place, seams);
+  if (memory === undefined) return refuse(printError, "memory isn't set up here · keywork init");
+  if (!memory.store.trusted) return refuse(printError, "memory is inert in an untrusted workspace");
+  const report = await reconcileVault({
+    store: memory.store,
+    search: memory.search,
+    ...(memory.lease !== undefined && { lease: memory.lease }),
+  });
+  const now = seams.now ?? (() => new Date());
+  for (const line of describeReconciliation(report, now())) print(line);
+  return exitCodes.completed;
+}
+
+async function syncSetup(
+  place: MemoryCommandPlace,
+  seams: MemoryCommandSeams,
+  print: Print,
+  printError: Print,
+): Promise<number> {
+  const memory = openMemory(place, seams);
+  if (memory === undefined) return refuse(printError, "memory isn't set up here · keywork init");
+  if (!memory.store.trusted) return refuse(printError, "memory is inert in an untrusted workspace");
+  const marked = await markMultiHostVault(memory.vaultRoot);
+  print(
+    marked
+      ? "per-host layout: on · daily logs and the curation ledger now write per host"
+      : "per-host layout: already on",
+  );
+  const run = seams.git ?? git;
+  const top = await gitTopLevel(memory.vaultRoot, run);
+  if (top === undefined) {
+    print("git: the vault is not inside a repository · merge driver skipped");
+    return exitCodes.completed;
+  }
+  await installMergeDriver(memory.vaultRoot, top, run);
+  print(`git: merge driver ${mergeDriverName} registered in ${top} · .gitattributes written`);
+  return exitCodes.completed;
+}
+
+async function mergeDriver(
+  args: readonly string[],
+  print: Print,
+  printError: Print,
+): Promise<number> {
+  const [base, ours, theirs, path] = args;
+  if (base === undefined || ours === undefined || theirs === undefined)
+    return refuse(printError, "sync merge needs <base> <ours> <theirs> [path]");
+  const sides = {
+    base: await readFile(base, "utf8"),
+    ours: await readFile(ours, "utf8"),
+    theirs: await readFile(theirs, "utf8"),
+  };
+  const outcome = mergeVaultFile(path ?? ours, sides);
+  await writeFile(ours, outcome.content, "utf8");
+  if (outcome.merged) return exitCodes.completed;
+  print(
+    `keywork memory: both hosts rewrote ${path ?? ours} · keywork memory sync keeps the copy as a sibling note`,
+  );
+  return exitCodes.failed;
+}
+
+async function gitTopLevel(cwd: string, run: GitRunner): Promise<string | undefined> {
+  try {
+    return (await run(cwd, ["rev-parse", "--show-toplevel"])).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function installMergeDriver(vaultRoot: string, top: string, run: GitRunner): Promise<void> {
+  const attributes = join(vaultRoot, ".gitattributes");
+  const existing = await readFile(attributes, "utf8").catch(() => "");
+  if (!existing.split("\n").includes(mergeAttributesLine))
+    await writeFileAtomic(attributes, `${existing}${mergeAttributesLine}\n`);
+  await run(top, ["config", `merge.${mergeDriverName}.name`, "keywork memory vault merge"]);
+  await run(top, ["config", `merge.${mergeDriverName}.driver`, mergeDriverCommand]);
+}
+
+function describeLease(report: VaultReconciliation, now: Date): string {
+  if (report.lease === undefined) return "free";
+  const holder = report.lease.host === report.host ? "this host" : report.lease.host;
+  return isFresh(report.lease, now)
+    ? `held by ${holder} until ${report.lease.expires}`
+    : `stale, left by ${holder}, expired ${report.lease.expires} · the next sweep takes it over`;
+}
+
+function plural(count: number): string {
+  return count === 1 ? "" : "s";
+}
 
 async function driftCommand(
   range: string | undefined,

@@ -11,6 +11,13 @@ export {
   restrictTools,
 } from "./bots.ts";
 export {
+  describeExtensions,
+  type ExtensionListing,
+  type ExtensionsSummary,
+  extensionLoadNotices,
+  summarizeExtensions,
+} from "./describe.ts";
+export {
   discoverExtensions,
   type ExtensionCandidate,
   type ExtensionDiscovery,
@@ -63,12 +70,15 @@ export {
   ExtensionHost,
   type ExtensionHostOptions,
   type ExtensionNotice,
+  type ExtensionRegistrations,
   type ExtensionStanding,
   type ExtensionStatus,
   HookTimeoutError,
+  type ObserveSeams,
   type OwnedCommand,
   type OwnedFlag,
   type OwnedShortcut,
+  type SessionResolver,
   type SessionStartOptions,
   UnknownExtensionCommandError,
 } from "./host.ts";

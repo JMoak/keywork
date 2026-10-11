@@ -15,16 +15,18 @@ import {
 import {
   type BusEnvelope,
   type EngineEventType,
-  isEngineEventType,
+  engineEventTypes,
   type KeyworkClient,
   type SessionDetail,
   type SessionSummary,
+  type WireEventType,
 } from "@keywork/server";
 import type {
   AgentFactory,
   SessionAttachment,
   SessionOverviewItem,
   SessionPort,
+  SessionRemoval,
   SessionTreePort,
   SessionTreeView,
 } from "@keywork/tui";
@@ -131,6 +133,12 @@ export function remoteSessionTreePort(client: KeyworkClient, feed: ServerFeed): 
     fork: async () => {
       throw new Error("forking stays on the server · not available while attached");
     },
+    remove: (sessionId) => client.removeSession(sessionId).then(removalOf),
+    trash: async () => (await client.trash()).map(overviewItemOf),
+    restore: async (sessionId) => {
+      const restored = await client.restoreSession(sessionId);
+      return restored === undefined ? undefined : overviewItemOf(restored);
+    },
     subscribe: (listener) =>
       feed.subscribe((envelope) => {
         if (envelope.type === "turn.completed" || envelope.type === "turn.interrupted") {
@@ -138,6 +146,10 @@ export function remoteSessionTreePort(client: KeyworkClient, feed: ServerFeed): 
         }
       }),
   };
+}
+
+function removalOf(answer: SessionSummary | "missing" | "busy"): SessionRemoval {
+  return typeof answer === "string" ? answer : "removed";
 }
 
 export function replayMessages(messages: readonly Message[], bus: EventBus<EngineEvents>): void {
@@ -213,13 +225,19 @@ function turnOutcomeOf(envelope: BusEnvelope): SettledTurn | undefined {
 }
 
 function relay(envelope: BusEnvelope, bus: EventBus<EngineEvents>): void {
-  const { type } = envelope;
-  if (!isEngineEventType(type) || locallyOwnedEvents.has(type)) return;
+  const type = envelope.type;
+  if (!isEngineEvent(type) || locallyOwnedEvents.has(type)) return;
   if (type === "engine.error") {
     bus.emit("engine.error", { error: errorFromWire(envelope.payload) });
     return;
   }
   bus.emit(type, envelope.payload as EngineEvents[typeof type]);
+}
+
+const engineEvents: ReadonlySet<string> = new Set(engineEventTypes);
+
+function isEngineEvent(type: WireEventType): type is EngineEventType {
+  return engineEvents.has(type);
 }
 
 function errorFromWire(payload: unknown): Error {

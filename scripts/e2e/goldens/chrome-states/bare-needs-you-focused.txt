@@ -19,6 +19,6 @@
                                   - beta                                                            
                                   + BETA                                                            
                                     gamma                                                           
-                                  ? write {"path":"notes.txt","co…  [y] allow  [a] always  [n] deny 
+                                  ? write {"path":"notes.txt","content":"alph…  [y] allow  [n] deny 
                                   › ▌                                                               
  keywork e2e · 2 panes · ctrl+k nav · ctrl+p go · / commands                                 return 

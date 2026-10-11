@@ -9,8 +9,6 @@ export interface PromptOrigin {
   client: string;
 }
 
-export type TreeChangeReason = "fork" | "label" | "leaf" | "entry";
-
 export interface QueuedPrompt {
   id: string;
   text: string;
@@ -40,14 +38,6 @@ interface LiveEvents {
     message: string;
     detail?: unknown;
   };
-  "session.tree": {
-    sessionId: string;
-    leafId: string | null;
-    reason: TreeChangeReason;
-    entryId?: string;
-    forkedTo?: string;
-  };
-  "changes.updated": { sessionId: string; paths: readonly string[] };
   "engine.error": { error: Error };
 }
 

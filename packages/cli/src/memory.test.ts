@@ -1,6 +1,14 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ArcRegistry, type MemoryStore, type Note, StagedItemNotFoundError } from "@keywork/engine";
+import {
+  ArcRegistry,
+  conflictMarkers,
+  localHost,
+  type MemoryStore,
+  markMultiHostVault,
+  type Note,
+  StagedItemNotFoundError,
+} from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import type { AirlockDigestView, ArcAirlockPort } from "@keywork/tui";
 import { describe, expect, it, vi } from "vitest";
@@ -38,6 +46,40 @@ describe("openWorkspaceMemory", () => {
     await memory?.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "user" });
     const raw = await readFile(join(cwd, ".keywork", "memory", "Ratio Rule.md"), "utf8");
     expect(raw).toContain("60/40");
+  });
+
+  it("writes per host once the vault is marked multi-host, and leases the sweep", async () => {
+    const cwd = await declaredWorkspace();
+    const single = openWorkspaceMemory(cwd, true);
+    expect(single?.store.host).toBeUndefined();
+    expect(single?.lease).toBeUndefined();
+    await markMultiHostVault(join(cwd, ".keywork", "memory"));
+    const multi = openWorkspaceMemory(cwd, true);
+    expect(multi?.store.host).toBe(localHost());
+    expect(multi?.lease?.host).toBe(localHost());
+    await multi?.store.appendDaily("entry", "user");
+    const files = await readdir(join(cwd, ".keywork", "memory", "daily"));
+    expect(files).toEqual([
+      expect.stringMatching(new RegExp(`^\\d{4}-\\d{2}-\\d{2}\\.${localHost()}\\.md$`)),
+    ]);
+  });
+
+  it("heals a conflict-marked note before the first bootstrap read", async () => {
+    const cwd = await declaredWorkspace();
+    const memory = openWorkspaceMemory(cwd, true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "user" });
+    const path = join(cwd, ".keywork", "memory", "Ratio Rule.md");
+    const ours = await readFile(path, "utf8");
+    await writeFile(path, conflictMarkers({ ours, theirs: ours.replace("60/40", "70/30") }));
+    await memory.store.writeMoc(["Ratio Rule"], "user");
+    const injection = await bootstrapInjection(memory);
+    expect(injection?.text).toContain("60/40");
+    expect((await memory.store.listNotes()).map((note) => note.name).sort()).toEqual([
+      "Ratio Rule",
+      "Ratio Rule (conflict copy)",
+    ]);
+    expect((await memory.store.listStaged()).map((item) => item.kind)).toEqual(["contradiction"]);
   });
 });
 

@@ -16,6 +16,10 @@ clock, so every timestamp is deterministic under test.
   <Concept Title>.md        atomic notes, one concept per file
   entities/<repo/path>.md   entity notes named by repo path (P4)
   .staging/<uuid>.json      staged items: untrusted writes (content + metadata sidecar) and reviews
+  .sync/layout.json         present only once `keywork memory sync setup` ran (multi-host, below)
+  .sync/lease.json          the cross-host sweep lease; gitignored, synced by file-sync tools
+  daily/YYYY-MM-DD.<host>.md  this host's daily segment (multi-host vaults only)
+  curation.<host>.md        this host's curation segment (multi-host vaults only)
   .obsidian/                never created by keywork; ignored if present (gitignore it)
 ```
 
@@ -97,6 +101,83 @@ clock, so every timestamp is deterministic under test.
    re-embeds any note whose text changed outside keywork and drops the vector of any
    note that vanished, reporting both. There is no rebuild command because there is
    nothing to rebuild.
+10. **Two hosts never clobber each other; conflicts become notes** (J14 multi-host
+    half, 2026-10-11). In a multi-host vault every append-only surface is a per-host
+    file, the merge driver resolves the shared files deterministically, a dual rewrite
+    of one note lands as a `conflict-of` sibling plus one inbox card, and Gardeners on
+    different hosts take turns through a lease. Details in "Multi-host vaults" below.
+
+## Multi-host vaults
+
+A vault is synced the moment someone puts it in git, OneDrive, Syncthing or Dropbox, so
+keywork reconciles itself instead of asking the sync tool to be clever (95 F1: *sync
+however you like; keywork reconciles itself*). Nothing below runs until
+`keywork memory sync setup` has been run once on any host; a vault that never ran it
+keeps writing exactly the single-host bytes it always wrote.
+
+**Partition by writer.** `sync setup` writes `.sync/layout.json`. From then on every
+host (`os.hostname()` lowered and dashed, at most 32 characters) appends daily entries
+to `daily/<date>.<host>.md` and audit lines to `curation.<host>.md`. Reads union the
+shared file with every host segment: `readDaily` orders entries by time across
+segments, `readAudit` orders by timestamp, `listDailyDates` collapses segments to
+dates, and `forget` maps a merged entry back to the segment that holds it. Two hosts
+never write the same file, so file-level union, which every sync tool does natively,
+is the whole merge. Atomic notes stay single files; they are the only surface that
+can still collide, and the merge driver and the intake below cover them.
+
+**Merge driver on the blessed path.** When the vault is inside a git work tree,
+`sync setup` also writes `*.md merge=keywork-memory` to the vault's `.gitattributes`
+and registers `keywork memory sync merge %O %A %B %P` in the clone's git config
+(per clone, never auto-installed, offered by the explicit verb only). The driver is
+deterministic:
+
+- `MEMORY.md` is set-merged: links added by either side stay, links removed by either
+  side go, ours order first.
+- `daily/*` and `curation*.md` never conflict: both appends are kept, and a rewrite on
+  both sides falls back to a line union.
+- Atomic notes merge field by field. A field only one side changed takes that side.
+  Derived fields that both sides changed resolve by rule: `usefulness` and
+  `confidence` take the higher value, `aliases` and `revised_by` union, `drift` keeps
+  the later `at`, `pinned` is true if either side pinned, and `supersedes`,
+  `superseded_by`, `distilled_from` keep ours. Bodies take the only changed side or
+  both appends to the same base. Anything else (a human field rewritten on both sides,
+  a true dual rewrite of the body, malformed frontmatter on any side) exits 1 with
+  whole-file conflict markers so git marks the file and the intake below finishes the
+  job.
+
+**Conflict intake.** `reconcileVault()` runs before the first bootstrap read of every
+workspace open and on `keywork memory sync`. It reads every note file raw (so a hunk
+marker inside frontmatter cannot break the read) and heals two shapes:
+
+- A note holding git conflict markers (whole-file from the driver, or git's own
+  hunk-level markers, diff3 base included) is split: ours stays at the note's path,
+  theirs becomes `<Note> (conflict copy).md` stamped `conflict-of: "[[Note]]"`.
+- A sync tool's conflict artifact (`Name (… conflicted copy …).md` from Dropbox and
+  Nextcloud, `Name.sync-conflict-YYYYMMDD-HHMMSS-XXXXXXX.md` from Syncthing) becomes
+  the same `(conflict copy)` sibling. When the original is missing the copy is simply
+  restored under the original name.
+
+Every quarantine goes through the ledger as one entry (`revert` undoes it) and stages
+exactly one `contradiction` card for the pair, deduplicated by the pair key, so the
+Gardener's existing merge and contradiction machinery adjudicates; there is no new
+review surface.
+
+**Sweep lease.** In a multi-host vault the Gardener takes `.sync/lease.json`
+(`{host, acquired, expires}`, ten minutes) before sweeping and removes it after. A
+fresh lease held by another host defers the sweep: the report carries
+`deferred: {host, until}` and the audit records `gardener deferred: <host> holds the
+sweep lease until <t>`; the next close sweeps as usual. A stale lease is taken over.
+The file is gitignored (git sync is manual, so a clone never contends live) and
+synced by file-sync tools, where it matters.
+
+**Report.** `keywork memory sync` prints the layout and this host's name, the hosts
+seen in segments, the lease state, every quarantine and restoration it performed, the
+cards it staged, and the index reconciliation.
+
+**Not built yet** (recorded in 95's J14 ledger entry): rematerializing derived
+frontmatter from the audit union instead of the per-field rule; OneDrive's
+`Name-<Computer>.md` artifact pattern (ambiguous with real titles); per-host arc and
+bot layers; a conflict-pattern lint line in the memory pane.
 
 ## Skills beside the vault
 

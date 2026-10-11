@@ -32,6 +32,7 @@ import { CommandRegistry, type CommandSpec } from "./commands.ts";
 import { ConnectModel } from "./connect-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { registerCoreCommands } from "./core-commands.ts";
+import type { ExtensionHostPort } from "./extension-host.ts";
 import type { EditorResult, ExternalEditor } from "./external-editor.ts";
 import type { Direction, Rect, Screen } from "./geometry.ts";
 import {
@@ -130,6 +131,7 @@ export interface AppCoreOptions extends PaneFactories {
   focusedBot?: FocusedBotPort;
   workspaces?: WorkspacesPort;
   workspaceSetup?: WorkspaceSetupPort;
+  extensionHost?: ExtensionHostPort;
   currentModel?: () => string | undefined;
   currentEffort?: () => string | undefined;
   switchModel?: (reference: string) => Promise<string>;
@@ -178,6 +180,7 @@ export class AppCore implements ActionTarget {
     holdPane: (id) => this.holdPane(id),
     showPane: (id, near) => this.showPane(id, near),
     paneHeld: (id) => this.paneHeld(id),
+    closePane: (id) => this.discardPane(id),
   };
   leaderArmed = false;
   costsShown = false;
@@ -371,6 +374,21 @@ export class AppCore implements ActionTarget {
     this.layout.close(id);
     this.touch();
     this.options.onPaneClosed?.(id);
+  }
+
+  discardPane(id: string): boolean {
+    const pane = this.panes.get(id);
+    if (pane === undefined) return false;
+    const shown = this.layout.panes();
+    if (shown.includes(id) && shown.length <= 1) return false;
+    pane.dispose?.();
+    this.panes.delete(id);
+    this.described.delete(id);
+    this.held.delete(id);
+    this.layout.close(id);
+    this.touch();
+    this.options.onPaneClosed?.(id);
+    return true;
   }
 
   summon(kind: SummonableKind): void {

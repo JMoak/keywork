@@ -19,7 +19,12 @@ import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
-import { focusOrOpenSession, type SessionTreePort } from "./session-tree-pane.ts";
+import {
+  focusOrOpenSession,
+  removalConfirmLine,
+  removeSessionThrough,
+  type SessionTreePort,
+} from "./session-tree-pane.ts";
 import {
   isSessionRow,
   livenessMark,
@@ -33,7 +38,7 @@ import { clipSpans } from "./width.ts";
 
 export interface ArcPaneOptions {
   slug: string;
-  sessions: Pick<SessionTreePort, "overview" | "attach" | "subscribe">;
+  sessions: Pick<SessionTreePort, "overview" | "attach" | "subscribe" | "remove">;
   currentSession: () => string | undefined;
   presence?: SessionPresence;
   arcOrdinal?: ArcOrdinals;
@@ -70,6 +75,10 @@ export class ArcPane implements Pane {
         refresh: () => this.refresh(),
         activate: (sessionId) => this.tasks.track(() => this.focusOrOpen(sessionId)),
         drill: () => {},
+        ...(options.sessions.remove !== undefined && {
+          remove: (sessionId: string, title: string) =>
+            this.tasks.track(() => this.remove(sessionId, title)),
+        }),
       },
       {
         order: "created",
@@ -118,6 +127,8 @@ export class ArcPane implements Pane {
 
   handleKey(chord: Chord, sequence?: string): boolean {
     if (this.tray.open) return this.tray.handleKey(chord, sequence);
+    if (this.members.removal() !== undefined)
+      return this.members.handleKey(chord, this.lastPageRows);
     if (this.tray.opensOn(chord)) {
       this.tray.openTray();
       return true;
@@ -152,8 +163,13 @@ export class ArcPane implements Pane {
       ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
       : undefined;
     const delta = this.deltaLines.map((line) => deltaRowView(line, theme, innerWidth));
-    this.lastPageRows = Math.max(0, paneContentHeight(context) - (tray?.rows ?? 0) - delta.length);
-    const body = [...delta, ...this.bodyLines(theme, this.lastPageRows, innerWidth)];
+    const confirm = removalConfirmLine(this.members, theme, innerWidth);
+    const trailing = confirm === undefined ? [] : [confirm];
+    this.lastPageRows = Math.max(
+      0,
+      paneContentHeight(context) - (tray?.rows ?? 0) - delta.length - trailing.length,
+    );
+    const body = [...delta, ...this.bodyLines(theme, this.lastPageRows, innerWidth), ...trailing];
     this.trayFirstRow = 2 + body.length;
     return paneChrome(context, this.title(), ...body, ...(tray?.children ?? []));
   }
@@ -242,6 +258,16 @@ export class ArcPane implements Pane {
     return this.options.presence?.paneFor(sessionId);
   }
 
+  private remove(sessionId: string, title: string): Promise<void> {
+    return removeSessionThrough(sessionId, title, {
+      sessions: this.options.sessions,
+      intents: this.intents,
+      live: () => this.tasks.live(),
+      refresh: () => this.refresh(),
+      ...(this.options.presence !== undefined && { presence: this.options.presence }),
+    });
+  }
+
   private focusOrOpen(sessionId: string): Promise<void> {
     if (this.placementOf(sessionId) === "folded") this.unfold(sessionId);
     return focusOrOpenSession(sessionId, {
@@ -315,6 +341,7 @@ export const memberTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "open the selected session, unfolding it first", key: "enter" },
   { name: "fold", description: "fold or unfold the selected session", key: "space" },
   { name: "fold all", description: "fold every shown session, or unfold them all", key: "a" },
+  { name: "remove", description: "move the selected session to the trash", key: "x" },
   { name: "refresh", description: "reload this arc's sessions", key: "r" },
 ];
 

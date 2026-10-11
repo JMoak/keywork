@@ -8,6 +8,8 @@ Usage:
               [--session-dir <dir>]                         one-shot headless run
   keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
   keywork sessions export [id] [--tree] [--out <path>]      write a session to one HTML file
+  keywork sessions remove <id> [--yes]                      move a session to the trash
+  keywork sessions restore <id> | trash | purge [--yes]     bring one back, list, empty the trash
   keywork connect [target|url]                              add or verify an inference provider
                                                             (setup is an alias)
   keywork init                                              set up the workspace at its anchor
@@ -15,9 +17,12 @@ Usage:
   keywork bot [list|new|rm] [slug] [purpose] [--global]     personas with their own memory
   keywork memory drift [range]                              ask whether touched notes still hold
   keywork memory forget --session <id> [--apply]            stage removal of a session's memory
+  keywork memory sync [setup|merge ...]                     heal a synced vault, join more hosts
   keywork skills history <name> [--restore <version>]       a skill's actor ledger and versions
   keywork skills pin|unpin|archive|curate [name] [--apply]  curator hygiene for agent skills
-  keywork link <dir>                                      widen the workspace to another folder
+  keywork extensions                                        list extensions and their standing
+  keywork mcp [list|login|logout] [server]                  sign in to MCP servers that ask for it
+  keywork link <dir>                                    widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust
   keywork doctor                                            show what your terminal supports
   keywork serve [--port <n>|0] [--model <model>]
@@ -60,6 +65,8 @@ export const commandNames = [
   "bot",
   "memory",
   "skills",
+  "extensions",
+  "mcp",
   "link",
   "trust",
   "untrust",
@@ -87,6 +94,8 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   bot: { behavior: "runs", note: "removal confirmations are skipped, never assumed" },
   memory: { behavior: "runs", note: "forget is a dry run unless --apply is given" },
   skills: { behavior: "runs", note: "archive and curate are dry runs unless --apply is given" },
+  extensions: { behavior: "runs", note: "activates each extension to report its standing" },
+  mcp: { behavior: "runs", note: "login prints the sign-in link and waits for the browser" },
   link: { behavior: "runs", note: "confirmations are skipped, never assumed" },
   trust: { behavior: "runs" },
   untrust: { behavior: "runs" },

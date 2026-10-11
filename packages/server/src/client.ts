@@ -1,35 +1,67 @@
-import type { EffortLevel, ModelReference, ResolutionFailure, SendBehavior } from "@keywork/engine";
-import type { AskScope, PresetName } from "@keywork/shared";
+import type {
+  CandidateTriage,
+  CloseDecisions,
+  DailyEntry,
+  EffortLevel,
+  LedgerEntry,
+  McpServerStatus,
+  ModelReference,
+  QuestionTriage,
+  ResolutionFailure,
+  RevertOutcome,
+  SendBehavior,
+  SessionBinding,
+  StagedItem,
+  WriteResult,
+} from "@keywork/engine";
+import type { ActivePreset, AskScope, PresetName } from "@keywork/shared";
 import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
 import type { BusEnvelope } from "./events.ts";
+import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 import type {
   AbortOutcome,
-  ChangedFile,
-  CompactOutcome,
-  ContextReport,
-  CostReport,
-  EffortOutcome,
-  ExportOutcome,
-  ExportRequest,
-  FileRange,
-  ForkOutcome,
+  AirlockFinishOutcome,
+  ArcCloseDigestRecord,
+  ArcCloseOutcome,
+  ArcSummary,
+  BotDraft,
+  BotEntry,
+  BotSummary,
+  ChangesReport,
+  CompactionReport,
+  ExportScope,
   LabelOutcome,
   LeafOutcome,
-  ModelOutcome,
-  PresetOutcome,
+  MemoryNoteDetail,
+  MemoryNoteRecord,
+  MemoryOverview,
+  MemoryQueryOutcome,
   PromptOutcome,
-  RedoOutcome,
-  RenameOutcome,
-  SessionChanges,
+  RedoReport,
   SessionDetail,
   SessionEntries,
   SessionSummary,
-  SpillSlice,
-  ThinkingOutcome,
-  UndoOutcome,
+  ThemesReport,
+  TrustGrant,
+  UndoReport,
+  WorkspaceChoice,
+  WorkspaceReport,
 } from "./host.ts";
 import { askRefusals } from "./routes/asks.ts";
+import type { FileChange } from "./routes/changes.ts";
+import type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
 import { readServerTicket, type ServerTicket } from "./token.ts";
+
+export type ModelAnswer =
+  | { model: ModelReference; notice: string }
+  | { failure: ResolutionFailure };
+
+export type ExportAnswer = { html: string } | { file: string };
+
+export interface PresetAnswer {
+  from: ActivePreset;
+  to: PresetName;
+}
 
 export interface KeyworkClient {
   readonly url: string;
@@ -38,45 +70,102 @@ export interface KeyworkClient {
   createSession(): Promise<SessionSummary>;
   prompt(id: string, text: string, behavior?: SendBehavior): Promise<PromptOutcome>;
   abort(id: string): Promise<AbortOutcome>;
-  entries(id: string): Promise<SessionEntries | undefined>;
-  fork(id: string, entryId: string): Promise<ForkOutcome>;
-  label(id: string, entryId: string, label: string | null): Promise<LabelOutcome>;
-  moveLeaf(id: string, entryId: string | null): Promise<LeafOutcome>;
-  changes(id: string): Promise<ChangesReading | undefined>;
-  changedFile(id: string, path: string): Promise<ChangedFileReading | undefined>;
-  spill(id: string, spillId: string, range?: FileRange): Promise<SpillSlice | undefined>;
-  setModel(id: string, reference: string): Promise<ModelOutcome>;
-  setThinking(id: string, on: boolean): Promise<ThinkingOutcome>;
-  setEffort(id: string, level: EffortLevel | null): Promise<EffortOutcome>;
-  compact(id: string, focus?: string): Promise<CompactOutcome>;
-  undo(id: string): Promise<UndoOutcome>;
-  redo(id: string): Promise<RedoOutcome>;
-  context(id: string): Promise<ContextReport | "missing">;
-  cost(id: string): Promise<CostReport | "missing">;
-  exportSession(id: string, request?: Partial<ExportRequest>): Promise<ExportOutcome>;
-  rename(id: string, title: string): Promise<RenameOutcome>;
-  setPreset(name: PresetName, confirmed?: boolean): Promise<PresetOutcome>;
+  setModel(id: string, reference: string): Promise<ModelAnswer | undefined>;
+  setThinking(id: string, on: boolean): Promise<{ thinking: boolean } | undefined>;
+  setEffort(
+    id: string,
+    level: EffortLevel | null,
+  ): Promise<{ effort: EffortLevel | null } | undefined>;
+  compact(id: string, focus?: string): Promise<CompactionReport | undefined>;
+  undo(id: string): Promise<UndoReport | "missing" | "nothing">;
+  redo(id: string): Promise<RedoReport | "missing" | "nothing">;
+  context(id: string): Promise<ContextAnswer | undefined>;
+  cost(id: string): Promise<CostAnswer | undefined>;
+  exportSession(id: string, scope?: ExportScope, out?: string): Promise<ExportAnswer | undefined>;
+  rename(id: string, title: string): Promise<{ title: string } | undefined>;
+  applyPreset(name: PresetName, confirmed?: boolean): Promise<PresetAnswer>;
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
   events(options?: EventStreamOptions): AsyncIterable<BusEnvelope>;
+  memory(): Promise<Trusted<MemoryOverview>>;
+  memoryInbox(): Promise<Trusted<{ items: StagedItem[]; count: number }>>;
+  approveStagedItem(id: string): Promise<WriteResult | Record<string, never>>;
+  discardStagedItem(id: string): Promise<void>;
+  memoryNotes(layer?: string): Promise<Trusted<{ notes: CuredNote[] }>>;
+  memoryNote(name: string): Promise<CuredNoteDetail | undefined>;
+  memoryDailyDates(): Promise<Trusted<{ dates: string[] }>>;
+  memoryDaily(date: string): Promise<Trusted<{ date: string; entries: DailyEntry[] }>>;
+  memoryLedger(): Promise<Trusted<{ entries: LedgerEntry[] }>>;
+  revertMemoryLedgerEntry(id: string): Promise<RevertOutcome>;
+  askMemory(query: string, arc?: string): Promise<Trusted<MemoryQueryOutcome>>;
+  airlock(slug: string): Promise<Trusted<AirlockDigest> | undefined>;
+  triageAirlockCandidate(
+    slug: string,
+    note: string,
+    choice: CandidateTriage,
+  ): Promise<Trusted<AirlockDigest>>;
+  triageAirlockQuestion(
+    slug: string,
+    title: string,
+    choice: QuestionTriage,
+  ): Promise<Trusted<AirlockDigest>>;
+  deliverAirlock(slug: string): Promise<{ delivered: number }>;
+  finishAirlock(slug: string, options?: { force?: boolean }): Promise<AirlockFinishOutcome>;
+  workspace(): Promise<WorkspaceReport>;
+  trustWorkspace(): Promise<TrustGrant>;
+  tree(path?: string, hidden?: boolean): Promise<TreeListing>;
+  file(path: string, range?: ByteRange): Promise<FileSlice>;
+  mcpServers(): Promise<McpServerStatus[]>;
+  restartMcpServer(name: string): Promise<McpServerStatus | undefined>;
+  setMcpServerEnabled(name: string, on: boolean): Promise<McpServerStatus | undefined>;
+  mcpServerTools(name: string): Promise<string[]>;
+  arcs(): Promise<ArcsAnswer>;
+  createArc(slug: string): Promise<ArcSummary>;
+  closeArc(slug: string, direction?: string): Promise<ArcCloseOutcome>;
+  abandonArc(slug: string): Promise<void>;
+  bindSessionArc(id: string, slug: string | null): Promise<SessionBinding | undefined>;
+  bindSessionBot(id: string, name: string | null): Promise<SessionBinding | undefined>;
+  bots(): Promise<BotSummary[]>;
+  createBot(draft: BotDraft): Promise<BotEntry>;
+  workspaces(): Promise<WorkspaceChoice[]>;
+  createWorkspace(slug: string): Promise<void>;
+  useWorkspace(slug: string | null): Promise<{ slug: string | null; reopens: boolean }>;
+  focusWorkspaceDir(slug: string | null, dir: string): Promise<string>;
+  unfocusWorkspaceDir(slug: string | null, dir: string): Promise<void>;
+  themes(): Promise<ThemesReport>;
+  entries(id: string): Promise<SessionEntries | undefined>;
+  fork(id: string, entryId: string): Promise<{ sessionId: string } | undefined>;
+  labelEntry(id: string, entryId: string, label: string | null): Promise<LabelOutcome | undefined>;
+  moveLeaf(id: string, entryId: string | null): Promise<LeafOutcome | undefined>;
+  changes(id: string): Promise<ChangesReport | undefined>;
+  changedFile(id: string, path: string): Promise<FileChange | undefined>;
+  removeSession(id: string): Promise<SessionSummary | "missing" | "busy">;
+  trash(): Promise<readonly SessionSummary[]>;
+  restoreSession(id: string): Promise<SessionSummary | undefined>;
+  discardTrashedSession(id: string): Promise<boolean>;
+  purgeTrash(): Promise<{ purged: number }>;
 }
 
-export type ChangesReading =
-  | ({ trusted: true } & SessionChanges)
-  | { trusted: false; files: readonly [] }
-  | "no-baseline";
+export interface ArcsAnswer {
+  arcs: ArcSummary[];
+  ordinals: Record<string, number>;
+}
 
-export type ChangedFileReading =
-  | ({ trusted: true } & ChangedFile)
-  | { trusted: false; path: string; before: null; after: null; truncated: false }
-  | "no-baseline";
+export type Trusted<Shape> = Shape & { trusted: boolean };
+
+export type CuringStage = 0 | 1 | 2 | 3;
+
+export type CuredNote = MemoryNoteRecord & { curing: CuringStage };
+
+export type CuredNoteDetail = Trusted<MemoryNoteDetail> & { curing: CuringStage };
+
+export type AirlockDigest = ArcCloseDigestRecord & { decisions: CloseDecisions };
 
 export interface EventStreamOptions {
   since?: number | undefined;
-  session?: string | undefined;
-  only?: "session" | undefined;
   signal?: AbortSignal | undefined;
   onOpen?: (() => void) | undefined;
+  session?: string | undefined;
 }
 
 export interface SseFrame {
@@ -138,9 +227,6 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       },
       ...(body !== undefined && { body: JSON.stringify(body) }),
     });
-  const sessionPath = (id: string, verb: string) => `/sessions/${encodeURIComponent(id)}/${verb}`;
-  const verb = (id: string, name: string, body?: unknown) =>
-    request("POST", sessionPath(id, name), body);
   return {
     url,
     sessions: async () => {
@@ -152,144 +238,56 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       return response.status === 404 ? undefined : json<SessionDetail>(response);
     },
     createSession: () => request("POST", "/sessions").then(json<SessionSummary>),
-    prompt: async (id, text, behavior = "queue") => {
-      const response = await verb(id, "prompt", { text, behavior });
+    prompt: async (id, text, behavior) => {
+      const response = await request("POST", `/sessions/${encodeURIComponent(id)}/prompt`, {
+        text,
+        ...(behavior !== undefined && { behavior }),
+      });
       if (response.status === 404) return "missing";
-      const accepted = await json<{ queued: boolean }>(response);
-      return accepted.queued ? "queued" : "started";
+      await json(response);
+      return "accepted";
     },
     abort: async (id) => {
-      const response = await verb(id, "abort");
+      const response = await request("POST", `/sessions/${encodeURIComponent(id)}/abort`);
       if (response.status === 404) return "missing";
       const outcome = await json<{ interrupted: boolean }>(response);
       return outcome.interrupted ? "aborted" : "idle";
     },
-    entries: async (id) => {
-      const response = await request("GET", `/sessions/${encodeURIComponent(id)}/entries`);
-      return response.status === 404 ? undefined : json<SessionEntries>(response);
-    },
-    fork: async (id, entryId) => {
-      const response = await request("POST", `/sessions/${encodeURIComponent(id)}/fork`, {
-        entryId,
-      });
-      if (response.status === 404) return await missingOf(response);
-      return json<SessionSummary>(response);
-    },
-    label: async (id, entryId, label) => {
-      const response = await request("POST", `/sessions/${encodeURIComponent(id)}/label`, {
-        entryId,
-        label,
-      });
-      if (response.status === 404) return await missingOf(response);
-      await json(response);
-      return "labelled";
-    },
-    moveLeaf: async (id, entryId) => {
-      const response = await request("POST", `/sessions/${encodeURIComponent(id)}/leaf`, {
-        entryId,
-      });
-      if (response.status === 404) return await missingOf(response);
-      if (response.status === 409) return "busy";
-      return json<{ leafId: string | null }>(response);
-    },
-    changes: async (id) => {
-      const response = await request("GET", `/sessions/${encodeURIComponent(id)}/changes`);
-      if (response.status === 404) return undefined;
-      if (response.status === 409) return "no-baseline";
-      return json<ChangesReading>(response);
-    },
-    changedFile: async (id, path) => {
-      const query = new URLSearchParams({ path });
-      const response = await request(
-        "GET",
-        `/sessions/${encodeURIComponent(id)}/changes/file?${query}`,
-      );
-      if (response.status === 404) return undefined;
-      if (response.status === 409) return "no-baseline";
-      return json<ChangedFileReading>(response);
-    },
-    spill: async (id, spillId, range = {}) => {
-      const query = rangeQueryOf(range);
-      const response = await request(
-        "GET",
-        `${sessionPath(id, "spills")}/${encodeURIComponent(spillId)}${query}`,
-      );
-      return response.status === 404 ? undefined : json<SpillSlice>(response);
-    },
     setModel: async (id, reference) => {
-      const response = await verb(id, "model", { reference });
-      if (response.status === 404) return "missing";
-      if (response.status === 409) return "busy";
+      const response = await request("POST", sessionPath(id, "model"), { reference });
+      if (response.status === 404) return undefined;
       if (response.status === 400) {
-        const refused = (await response.json()) as { error: string; failure?: ResolutionFailure };
-        if (refused.failure !== undefined) return { ok: false, failure: refused.failure };
-        throw new ServerRefusal(400, refused.error);
+        const refusal = (await response.json()) as { failure?: ResolutionFailure };
+        if (refusal.failure !== undefined) return { failure: refusal.failure };
+        throw new ServerRefusal(400, "the server refused the reference");
       }
-      const set = await json<{ model: ModelReference; notice: string }>(response);
-      return { ok: true, ...set };
+      return json<ModelAnswer>(response);
     },
-    setThinking: async (id, on) => {
-      const response = await verb(id, "thinking", { on });
-      return response.status === 404 ? "missing" : json<{ thinking: boolean }>(response);
-    },
-    setEffort: async (id, level) => {
-      const response = await verb(id, "effort", { level });
-      return response.status === 404 ? "missing" : json<{ effort: EffortLevel | null }>(response);
-    },
-    compact: async (id, focus) => {
-      const response = await verb(id, "compact", focus === undefined ? {} : { focus });
-      if (response.status === 404) return "missing";
-      if (response.status === 409) return "busy";
-      return json<CompactOutcome & object>(response);
-    },
-    undo: async (id) => {
-      const response = await verb(id, "undo");
-      if (response.status === 404)
-        return (await errorOf(response)) === missingSessionError ? "missing" : "nothing";
-      if (response.status === 409)
-        return (await errorOf(response)) === turnRunningError ? "busy" : "staged";
-      return json<UndoOutcome & object>(response);
-    },
-    redo: async (id) => {
-      const response = await verb(id, "redo");
-      if (response.status === 404)
-        return (await errorOf(response)) === missingSessionError ? "missing" : "nothing";
-      if (response.status === 409) return "busy";
-      return json<RedoOutcome & object>(response);
-    },
-    context: async (id) => {
-      const response = await request("GET", sessionPath(id, "context"));
-      return response.status === 404 ? "missing" : json<ContextReport>(response);
-    },
-    cost: async (id) => {
-      const response = await request("GET", sessionPath(id, "cost"));
-      return response.status === 404 ? "missing" : json<CostReport>(response);
-    },
-    exportSession: async (id, exportRequest = {}) => {
-      const response = await verb(id, "export", {
-        scope: exportRequest.scope ?? "path",
-        ...(exportRequest.out !== undefined && { out: exportRequest.out }),
+    setThinking: (id, on) => unlessMissing(request("POST", sessionPath(id, "thinking"), { on })),
+    setEffort: (id, level) => unlessMissing(request("POST", sessionPath(id, "effort"), { level })),
+    compact: (id, focus) =>
+      unlessMissing(
+        request("POST", sessionPath(id, "compact"), focus === undefined ? {} : { focus }),
+      ),
+    undo: (id) => timeTravel(request("POST", sessionPath(id, "undo"))),
+    redo: (id) => timeTravel(request("POST", sessionPath(id, "redo"))),
+    context: (id) => unlessMissing(request("GET", sessionPath(id, "context"))),
+    cost: (id) => unlessMissing(request("GET", sessionPath(id, "cost"))),
+    exportSession: async (id, scope = "path", out) => {
+      const response = await request("POST", sessionPath(id, "export"), {
+        scope,
+        ...(out !== undefined && { out }),
       });
-      if (response.status === 404) return "missing";
-      if (response.status === 403) return { refused: await errorOf(response) };
+      if (response.status === 404) return undefined;
       if (response.status === 201) return json<{ file: string }>(response);
       if (!response.ok) throw new ServerRefusal(response.status, await refusalDetail(response));
       return { html: await response.text() };
     },
-    rename: async (id, title) => {
-      const response = await verb(id, "rename", { title });
-      return response.status === 404 ? "missing" : json<{ title: string }>(response);
-    },
-    setPreset: async (name, confirmed = false) => {
-      const response = await request("POST", "/preset", {
-        name,
-        ...(confirmed && { confirmed: true }),
-      });
-      if (response.status === 409) {
-        return (await errorOf(response)) === loosening ? "needs-confirmation" : "unavailable";
-      }
-      return json<PresetOutcome & object>(response);
-    },
+    rename: (id, title) => unlessMissing(request("POST", sessionPath(id, "rename"), { title })),
+    applyPreset: (name, confirmed) =>
+      request("POST", "/preset", { name, ...(confirmed === true && { confirmed }) }).then(
+        json<PresetAnswer>,
+      ),
     asks: async () => {
       const listed = await json<{ asks: PendingAsk[] }>(await request("GET", "/asks"));
       return listed.asks;
@@ -302,18 +300,158 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       if (response.status === 404) return "missing";
       if (response.status === 409) return "already-settled";
       if (response.status === 400) {
-        const refusal = askRefusalOf(await errorOf(response));
+        const refusal = askRefusalOf(await refusalDetail(response));
         if (refusal !== undefined) return refusal;
         throw new ServerRefusal(400, "the server refused the answer");
       }
       await json(response);
       return "settled";
     },
+    memory: () => request("GET", "/memory").then(json<Trusted<MemoryOverview>>),
+    memoryInbox: () =>
+      request("GET", "/memory/inbox").then(json<Trusted<{ items: StagedItem[]; count: number }>>),
+    approveStagedItem: (id) =>
+      request("POST", `/memory/inbox/${encodeURIComponent(id)}/approve`).then(
+        json<WriteResult | Record<string, never>>,
+      ),
+    discardStagedItem: async (id) => {
+      await json(await request("POST", `/memory/inbox/${encodeURIComponent(id)}/discard`));
+    },
+    memoryNotes: (layer) =>
+      request(
+        "GET",
+        layer === undefined ? "/memory/notes" : `/memory/notes?layer=${encodeURIComponent(layer)}`,
+      ).then(json<Trusted<{ notes: CuredNote[] }>>),
+    memoryNote: async (name) => {
+      const response = await request("GET", `/memory/notes/${encodeURIComponent(name)}`);
+      return response.status === 404 ? undefined : json<CuredNoteDetail>(response);
+    },
+    memoryDailyDates: () =>
+      request("GET", "/memory/daily").then(json<Trusted<{ dates: string[] }>>),
+    memoryDaily: (date) =>
+      request("GET", `/memory/daily/${encodeURIComponent(date)}`).then(
+        json<Trusted<{ date: string; entries: DailyEntry[] }>>,
+      ),
+    memoryLedger: () =>
+      request("GET", "/memory/ledger").then(json<Trusted<{ entries: LedgerEntry[] }>>),
+    revertMemoryLedgerEntry: async (id) => {
+      const response = await request("POST", `/memory/ledger/${encodeURIComponent(id)}/revert`);
+      return (await json<{ outcome: RevertOutcome }>(response)).outcome;
+    },
+    askMemory: (query, arc) =>
+      request("POST", "/memory/ask", { query, ...(arc !== undefined && { arc }) }).then(
+        json<Trusted<MemoryQueryOutcome>>,
+      ),
+    airlock: async (slug) => {
+      const response = await request("GET", `/arcs/${encodeURIComponent(slug)}/airlock`);
+      return response.status === 404 ? undefined : json<Trusted<AirlockDigest>>(response);
+    },
+    triageAirlockCandidate: (slug, note, choice) =>
+      request(
+        "POST",
+        `/arcs/${encodeURIComponent(slug)}/airlock/candidates/${encodeURIComponent(note)}`,
+        { choice },
+      ).then(json<Trusted<AirlockDigest>>),
+    triageAirlockQuestion: (slug, title, choice) =>
+      request("POST", `/arcs/${encodeURIComponent(slug)}/airlock/questions`, {
+        title,
+        choice,
+      }).then(json<Trusted<AirlockDigest>>),
+    deliverAirlock: (slug) =>
+      request("POST", `/arcs/${encodeURIComponent(slug)}/airlock/deliver`).then(
+        json<{ delivered: number }>,
+      ),
+    finishAirlock: (slug, options = {}) =>
+      request("POST", `/arcs/${encodeURIComponent(slug)}/airlock/finish`, {
+        force: options.force === true,
+      }).then(json<AirlockFinishOutcome>),
+    workspace: () => request("GET", "/workspace").then(json<WorkspaceReport>),
+    trustWorkspace: () => request("POST", "/workspace/trust").then(json<TrustGrant>),
+    tree: (path = "", hidden = false) =>
+      request("GET", `/tree?${queryOf({ path, hidden: hidden ? "true" : undefined })}`).then(
+        json<TreeListing>,
+      ),
+    file: (path, range = {}) =>
+      request("GET", `/files?${queryOf({ path, from: range.from, to: range.to })}`).then(
+        json<FileSlice>,
+      ),
+    mcpServers: async () =>
+      (await json<{ servers: McpServerStatus[] }>(await request("GET", "/mcp"))).servers,
+    restartMcpServer: (name) =>
+      request("POST", `/mcp/${encodeURIComponent(name)}/restart`).then(
+        json<McpServerStatus | undefined>,
+      ),
+    setMcpServerEnabled: (name, on) =>
+      request("POST", `/mcp/${encodeURIComponent(name)}/enabled`, { on }).then(
+        json<McpServerStatus | undefined>,
+      ),
+    mcpServerTools: async (name) =>
+      (
+        await json<{ tools: string[] }>(
+          await request("GET", `/mcp/${encodeURIComponent(name)}/tools`),
+        )
+      ).tools,
+    arcs: () => request("GET", "/arcs").then(json<ArcsAnswer>),
+    createArc: (slug) => request("POST", "/arcs", { slug }).then(json<ArcSummary>),
+    closeArc: (slug, direction) =>
+      request("POST", `/arcs/${encodeURIComponent(slug)}/close`, {
+        ...(direction !== undefined && { direction }),
+      }).then(json<ArcCloseOutcome>),
+    abandonArc: async (slug) => {
+      await json(await request("POST", `/arcs/${encodeURIComponent(slug)}/abandon`));
+    },
+    bindSessionArc: (id, slug) => unlessMissing(request("POST", sessionPath(id, "arc"), { slug })),
+    bindSessionBot: (id, name) => unlessMissing(request("POST", sessionPath(id, "bot"), { name })),
+    bots: async () => (await json<{ bots: BotSummary[] }>(await request("GET", "/bots"))).bots,
+    createBot: (draft) => request("POST", "/bots", draft).then(json<BotEntry>),
+    workspaces: async () =>
+      (await json<{ workspaces: WorkspaceChoice[] }>(await request("GET", "/workspaces")))
+        .workspaces,
+    createWorkspace: async (slug) => {
+      await json(await request("POST", "/workspaces", { slug }));
+    },
+    useWorkspace: (slug) =>
+      request("POST", "/workspaces/use", { slug }).then(
+        json<{ slug: string | null; reopens: boolean }>,
+      ),
+    focusWorkspaceDir: async (slug, dir) =>
+      (await json<{ dir: string }>(await request("POST", workspacePath(slug, "focus"), { dir })))
+        .dir,
+    unfocusWorkspaceDir: async (slug, dir) => {
+      await json(await request("POST", workspacePath(slug, "unfocus"), { dir }));
+    },
+    themes: () => request("GET", "/themes").then(json<ThemesReport>),
+    entries: (id) => unlessMissing(request("GET", sessionPath(id, "entries"))),
+    fork: (id, entryId) => unlessMissing(request("POST", sessionPath(id, "fork"), { entryId })),
+    labelEntry: (id, entryId, label) =>
+      unlessMissing(request("POST", sessionPath(id, "label"), { entryId, label })),
+    moveLeaf: (id, entryId) => unlessMissing(request("POST", sessionPath(id, "leaf"), { entryId })),
+    changes: (id) => unlessMissing(request("GET", sessionPath(id, "changes"))),
+    changedFile: (id, path) =>
+      unlessMissing(request("GET", `${sessionPath(id, "changes/file")}?${queryOf({ path })}`)),
+    removeSession: async (id) => {
+      const response = await request("DELETE", `/sessions/${encodeURIComponent(id)}`);
+      if (response.status === 404) return "missing";
+      if (response.status === 409) return "busy";
+      return json<SessionSummary>(response);
+    },
+    trash: async () => {
+      const listed = await json<{ sessions: SessionSummary[] }>(await request("GET", "/trash"));
+      return listed.sessions;
+    },
+    restoreSession: (id) => unlessMissing(request("POST", trashPath(id, "restore"))),
+    discardTrashedSession: async (id) => {
+      const response = await request("DELETE", `/trash/${encodeURIComponent(id)}`);
+      if (response.status === 404) return false;
+      await json(response);
+      return true;
+    },
+    purgeTrash: () => request("DELETE", "/trash").then(json<{ purged: number }>),
     events: (options = {}) =>
       resumingEvents(
         options,
         (lastId) =>
-          request("GET", eventsPath(options), undefined, {
+          request("GET", eventsPath(options.session), undefined, {
             ...(options.signal !== undefined && { signal: options.signal }),
             headers: lastId === undefined ? {} : { "last-event-id": String(lastId) },
           }),
@@ -321,17 +459,6 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
         delay,
       ),
   };
-}
-
-const missingSessionError = "no session has that id";
-const turnRunningError = "a turn is running";
-const loosening = "loosening needs confirmed: true";
-
-function eventsPath(options: EventStreamOptions): string {
-  if (options.session === undefined) return "/events";
-  const query = new URLSearchParams({ session: options.session });
-  if (options.only !== undefined) query.set("only", options.only);
-  return `/events?${query}`;
 }
 
 export async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncIterable<SseFrame> {
@@ -419,25 +546,50 @@ async function openStream(
   return response.body;
 }
 
-function rangeQueryOf(range: FileRange): string {
-  const query = new URLSearchParams();
-  if (range.from !== undefined) query.set("from", String(range.from));
-  if (range.to !== undefined) query.set("to", String(range.to));
-  return query.size === 0 ? "" : `?${query}`;
-}
-
 async function json<T = unknown>(response: Response): Promise<T> {
   if (response.ok) return (await response.json()) as T;
   throw new ServerRefusal(response.status, await refusalDetail(response));
 }
 
+function sessionPath(id: string, verb: string): string {
+  return `/sessions/${encodeURIComponent(id)}/${verb}`;
+}
+
+function trashPath(id: string, verb: string): string {
+  return `/trash/${encodeURIComponent(id)}/${verb}`;
+}
+
+function workspacePath(slug: string | null, verb: string): string {
+  return `/workspaces/${encodeURIComponent(slug ?? "default")}/${verb}`;
+}
+
+function queryOf(fields: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [name, value] of Object.entries(fields)) {
+    if (value !== undefined) query.set(name, String(value));
+  }
+  return query.toString();
+}
+
+function eventsPath(session: string | undefined): string {
+  return session === undefined ? "/events" : `/events?session=${encodeURIComponent(session)}`;
+}
+
+async function unlessMissing<T>(pending: Promise<Response>): Promise<T | undefined> {
+  const response = await pending;
+  return response.status === 404 ? undefined : json<T>(response);
+}
+
+async function timeTravel<T>(pending: Promise<Response>): Promise<T | "missing" | "nothing"> {
+  const response = await pending;
+  if (response.status !== 404) return json<T>(response);
+  const detail = await refusalDetail(response);
+  return detail.startsWith("nothing to") ? "nothing" : "missing";
+}
+
 function askRefusalOf(error: string): Exclude<AnswerOutcome, "settled"> | undefined {
   const refusals = Object.entries(askRefusals) as [keyof typeof askRefusals, string][];
   return refusals.find(([, message]) => message === error)?.[0];
-}
-
-async function errorOf(response: Response): Promise<string> {
-  return refusalDetail(response);
 }
 
 async function refusalDetail(response: Response): Promise<string> {
@@ -480,9 +632,4 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
       resolve();
     }
   });
-}
-
-async function missingOf(response: Response): Promise<"missing" | "unknown-entry"> {
-  const body = (await response.json().catch(() => ({}))) as { error?: string };
-  return body.error === "no entry has that entryId" ? "unknown-entry" : "missing";
 }

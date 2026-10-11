@@ -355,3 +355,47 @@ describe("relativeAge", () => {
     expect(relativeAge(now, now + 60_000)).toBe("now");
   });
 });
+
+describe("SessionsOverviewModel removal", () => {
+  function removable(items: SessionOverviewItem[]) {
+    const removed: Array<[string, string]> = [];
+    const model = new SessionsOverviewModel(
+      () => {},
+      {
+        refresh: () => {},
+        activate: () => {},
+        drill: () => {},
+        remove: (sessionId, title) => removed.push([sessionId, title]),
+      },
+      { now: () => 10 * 60_000 },
+    );
+    model.setItems(items);
+    return { model, removed };
+  }
+
+  it("x asks about the cursored session and enter confirms", () => {
+    const { model, removed } = removable([itemOf("a", 2), itemOf("b", 1)]);
+    expect(model.handleKey(parseChord("x"), 20)).toBe(true);
+    expect(model.removal()).toEqual({ sessionId: "a", title: "title-a" });
+    expect(model.removalPrompt()).toBe(
+      'remove "title-a"? enter trashes it, memory notes stay · any other key cancels',
+    );
+    expect(model.handleKey(parseChord("enter"), 20)).toBe(true);
+    expect(removed).toEqual([["a", "title-a"]]);
+    expect(model.removal()).toBeUndefined();
+  });
+
+  it("any other key cancels without moving the cursor or removing", () => {
+    const { model, removed } = removable([itemOf("a", 2), itemOf("b", 1)]);
+    press(model, "x", "j");
+    expect(model.removal()).toBeUndefined();
+    expect(model.cursorSession()).toBe("a");
+    expect(removed).toEqual([]);
+  });
+
+  it("x is not a key when the pane offers no removal", () => {
+    const { model } = modelOver([itemOf("a", 1)]);
+    expect(model.handleKey(parseChord("x"), 20)).toBe(false);
+    expect(model.removal()).toBeUndefined();
+  });
+});

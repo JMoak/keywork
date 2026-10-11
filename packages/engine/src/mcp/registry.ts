@@ -2,8 +2,10 @@ import type { McpServerConfig } from "@keywork/shared";
 import type { ToolSource } from "../agent.ts";
 import type { Tool } from "../tools.ts";
 import { connectStdioServer, type McpConnection, type McpTool } from "./client.ts";
+import { decliningElicitation, type ElicitationHandler } from "./elicitation.ts";
 import type { McpEra } from "./era.ts";
-import { connectHttpServer } from "./http.ts";
+import { connectHttpServer, type HttpAuthorization } from "./http.ts";
+import type { McpAuthProvider } from "./oauth.ts";
 import {
   type ConnectServer,
   type McpServerStatus,
@@ -55,6 +57,12 @@ export interface McpRegistryOptions {
   restartDelaysMs?: readonly number[];
   maxResultChars?: number;
   onToolResult?: (report: McpToolCallReport) => void;
+  elicit?: ElicitationHandler;
+  auth?: McpAuthProvider;
+}
+
+export interface SurfaceOptions {
+  elicit?: ElicitationHandler;
 }
 
 export const defaultRestartDelaysMs: readonly number[] = [500, 1_000, 2_000, 4_000, 8_000];
@@ -65,6 +73,7 @@ export class McpRegistry {
   private readonly activated = new Set<string>();
   private readonly maxResultChars: number;
   private readonly onToolResult: ((report: McpToolCallReport) => void) | undefined;
+  private readonly auth: McpAuthProvider | undefined;
   private readonly searchTool: Tool;
   private live: readonly Tool[] = [];
   private closing = false;
@@ -72,19 +81,23 @@ export class McpRegistry {
   constructor(options: McpRegistryOptions) {
     const timeoutMs = options.requestTimeoutMs ?? 10_000;
     const reveal = options.reveal ?? ((config: McpServerConfig) => Promise.resolve(config));
-    const connect: ConnectServer =
-      options.connect ??
-      rememberingEras(async (config, signal, era) =>
-        openTransport(await reveal(config), timeoutMs, signal, era),
-      );
+    const elicit = options.elicit ?? decliningElicitation;
     const restartDelays = options.restartDelaysMs ?? defaultRestartDelaysMs;
     this.maxResultChars = options.maxResultChars ?? 30_000;
     this.onToolResult = options.onToolResult;
+    this.auth = options.auth;
     this.searchTool = mcpToolSearch({
       catalog: () => this.catalog(),
       activate: (names) => this.activate(names),
     });
     for (const [name, config] of Object.entries(options.servers)) {
+      const auth =
+        config.transport === "http" ? this.auth?.authorizationFor(name, config.url) : undefined;
+      const connect: ConnectServer =
+        options.connect ??
+        rememberingEras(async (revealed, signal, era) =>
+          openTransport(await reveal(revealed), { timeoutMs, signal, era, elicit, auth }),
+        );
       this.servers.set(
         name,
         new ServerReconciler({
@@ -113,12 +126,14 @@ export class McpRegistry {
     return this.live;
   }
 
-  surface(base: readonly Tool[]): ToolSource {
-    return () => [...base, ...this.live];
+  surface(base: readonly Tool[], options: SurfaceOptions = {}): ToolSource {
+    const { elicit } = options;
+    if (elicit === undefined) return () => [...base, ...this.live];
+    return () => [...base, ...this.liveTools(elicit)];
   }
 
   status(): McpServerStatus[] {
-    return [...this.servers.values()].map((server) => server.status());
+    return [...this.servers.values()].map((server) => this.statusWithAuth(server));
   }
 
   subscribe(listener: McpStatusListener): () => void {
@@ -168,14 +183,23 @@ export class McpRegistry {
     this.rebuildTools();
   }
 
-  private rebuildTools(): void {
-    this.live = this.servers.size === 0 ? [] : [this.searchTool, ...this.activatedTools()];
+  private statusWithAuth(server: ServerReconciler): McpServerStatus {
+    const auth = this.auth?.stateOf(server.name);
+    return { ...server.status(), ...(auth !== undefined && { auth }) };
   }
 
-  private activatedTools(): McpBackedTool[] {
+  private rebuildTools(): void {
+    this.live = this.liveTools(undefined);
+  }
+
+  private liveTools(elicit: ElicitationHandler | undefined): Tool[] {
+    return this.servers.size === 0 ? [] : [this.searchTool, ...this.activatedTools(elicit)];
+  }
+
+  private activatedTools(elicit: ElicitationHandler | undefined): McpBackedTool[] {
     return this.catalog()
       .filter((entry) => this.activated.has(entry.qualified))
-      .map((entry) => this.backedTool(entry));
+      .map((entry) => this.backedTool(entry, elicit));
   }
 
   private catalog(): ServerCatalogEntry[] {
@@ -188,18 +212,26 @@ export class McpRegistry {
     return entries;
   }
 
-  private backedTool({ server, tool, qualified }: ServerCatalogEntry): McpBackedTool {
+  private backedTool(
+    { server, tool, qualified }: ServerCatalogEntry,
+    elicit: ElicitationHandler | undefined,
+  ): McpBackedTool {
     return {
       name: qualified,
       description: tool.description,
       parameters: tool.inputSchema,
       mutates: true,
       mcp: { server: server.name, trusted: server.config.trusted === true },
-      execute: (args) => this.invoke(server, tool.name, args),
+      execute: (args) => this.invoke(server, tool.name, args, elicit),
     };
   }
 
-  private async invoke(server: ServerReconciler, toolName: string, args: unknown): Promise<string> {
+  private async invoke(
+    server: ServerReconciler,
+    toolName: string,
+    args: unknown,
+    elicit: ElicitationHandler | undefined,
+  ): Promise<string> {
     const live = server.live();
     if (live === undefined) {
       const { enabled, state } = server.status();
@@ -211,7 +243,7 @@ export class McpRegistry {
       external: server.config.trusted !== true,
     };
     try {
-      const result = await live.connection.callTool(toolName, args);
+      const result = await live.connection.callTool(toolName, args, { elicit });
       const text = truncate(result.text, this.maxResultChars);
       if (result.isError) throw new Error(text);
       return text;
@@ -250,21 +282,28 @@ function rememberingEras(open: OpenTransport): ConnectServer {
   };
 }
 
+interface TransportOptions {
+  timeoutMs: number;
+  signal: AbortSignal;
+  era: McpEra | undefined;
+  elicit: ElicitationHandler;
+  auth: HttpAuthorization | undefined;
+}
+
 function openTransport(
   config: McpServerConfig,
-  requestTimeoutMs: number,
-  signal: AbortSignal,
-  rememberedEra: McpEra | undefined,
+  transport: TransportOptions,
 ): Promise<McpConnection> {
   const options = {
-    requestTimeoutMs,
-    signal,
-    ...(rememberedEra !== undefined && { rememberedEra }),
+    requestTimeoutMs: transport.timeoutMs,
+    signal: transport.signal,
+    elicit: transport.elicit,
+    ...(transport.era !== undefined && { rememberedEra: transport.era }),
   };
   if (config.transport === "http") {
     return connectHttpServer(
       { url: config.url, ...(config.headers !== undefined && { headers: config.headers }) },
-      options,
+      { ...options, ...(transport.auth !== undefined && { auth: transport.auth }) },
     );
   }
   return connectStdioServer(

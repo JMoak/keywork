@@ -56,13 +56,6 @@ export {
   isBotSlug,
 } from "./bots.ts";
 export {
-  type Entry as DirectoryEntry,
-  gitignoreFileName,
-  readDirectoryFromDisk,
-  relativeTo,
-  sortEntries,
-} from "./browser-model.ts";
-export {
   border,
   type CapabilityProfile,
   type ColorDepth,
@@ -108,8 +101,17 @@ export type {
   ExtensionCommandEntry,
   ExtensionsPort,
 } from "./extension-commands.ts";
+export {
+  type ExtensionHostPort,
+  type ExtensionHostSeams,
+  extensionListingCommand,
+  extensionStartupNotice,
+  extensionsCommandName,
+  registerHostedCommands,
+  routeExtensionNotice,
+  watchExtensionNotices,
+} from "./extension-host.ts";
 export type { CheckpointsPort } from "./fork.ts";
-export { IgnoreRules } from "./gitignore.ts";
 export {
   type Highlighter,
   highlightedLanguages,
@@ -228,8 +230,12 @@ export type {
   SessionTurn,
   ThinkingSwitch,
 } from "./session-attachment.ts";
-export type { SessionTreeView } from "./session-tree-model.ts";
-export type { SessionTreePaneSeams, SessionTreePort } from "./session-tree-pane.ts";
+export type { ForkOrigin, SessionTreeView } from "./session-tree-model.ts";
+export type {
+  SessionRemoval,
+  SessionTreePaneSeams,
+  SessionTreePort,
+} from "./session-tree-pane.ts";
 export {
   type OverviewRow,
   type SessionGroupBy,

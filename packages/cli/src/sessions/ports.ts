@@ -15,10 +15,12 @@ import type {
   SessionAttachment,
   SessionOverviewItem,
   SessionPort,
+  SessionRemoval,
   SessionTreePort,
   SessionTreeView,
   ThinkingSwitch,
 } from "@keywork/tui";
+import { forkOrigin, listTrash, removeSession, restoreSession } from "./lifecycle.ts";
 import {
   findSession,
   newSessionFileName,
@@ -90,10 +92,12 @@ export function sessionTreePort(dir: string, changes?: SessionChangeFeed): Sessi
       const store = await findSession(dir, sessionId);
       if (store === undefined) return undefined;
       const name = store.name();
+      const forkedFrom = await forkOrigin(dir, store.header.parentSession);
       return {
         sessionId: store.header.id,
         roots: store.tree(),
         ...(name !== undefined && { name }),
+        ...(forkedFrom !== undefined && { forkedFrom }),
       };
     },
     async setLabel(sessionId: string, entryId: string, label: string | undefined): Promise<void> {
@@ -107,6 +111,22 @@ export function sessionTreePort(dir: string, changes?: SessionChangeFeed): Sessi
       const clone = await store.clone(join(dir, newSessionFileName()), entryId);
       changes?.emit(store.header.id);
       return clone.header.id;
+    },
+    async remove(sessionId: string): Promise<SessionRemoval> {
+      const removed = await removeSession(dir, sessionId);
+      if (removed === undefined) return "missing";
+      changes?.emit(removed.id);
+      return "removed";
+    },
+    async trash(): Promise<SessionOverviewItem[]> {
+      const { sessions } = await listTrash(dir);
+      return sessions.map(overviewItem);
+    },
+    async restore(sessionId: string): Promise<SessionOverviewItem | undefined> {
+      const store = await restoreSession(dir, sessionId);
+      if (store === undefined) return undefined;
+      changes?.emit(store.header.id);
+      return overviewItem(await summarize(store));
     },
     ...(changes !== undefined && {
       subscribe: (listener: (sessionId: string) => void) => changes.subscribe(listener),
@@ -166,6 +186,7 @@ function attachmentOf(
       return { entryId: entry.id };
     },
     rename: async (title) => {
+      if (store.titlePinned()) return;
       await store.setName(title);
       seams.onChange?.(store.header.id);
     },
@@ -242,7 +263,7 @@ export function rewindBefore(store: SessionStore, promptId: string): RewoundProm
   };
 }
 
-function moveLeaf(store: SessionStore, entryId: string | null): void {
+export function moveLeaf(store: SessionStore, entryId: string | null): void {
   if (entryId === null) store.resetLeaf();
   else store.branch(entryId);
 }

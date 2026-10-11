@@ -623,3 +623,20 @@ describe("interior seam drag-resize", () => {
     );
   });
 });
+
+describe("discarding a pane by id", () => {
+  it("disposes and closes any pane but the last visible one, held or shown", () => {
+    const probe = new AppProbe();
+    probe.command("split");
+    probe.command("split");
+    expect(probe.core.holdPane("session-2")).toBe(true);
+    expect(probe.core.discardPane("session-2")).toBe(true);
+    expect(probe.core.panes.has("session-2")).toBe(false);
+    expect(probe.snapshot().held).toEqual([]);
+    expect(probe.core.discardPane("session-3")).toBe(true);
+    expect(paneIds(probe)).toEqual(["session-1"]);
+    expect(probe.core.discardPane("session-1")).toBe(false);
+    expect(probe.core.discardPane("session-9")).toBe(false);
+    expect(paneIds(probe)).toEqual(["session-1"]);
+  });
+});

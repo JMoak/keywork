@@ -7,7 +7,6 @@ import {
   type ProviderRequest,
   type TurnDelta,
   textTurn,
-  toolCallTurn,
 } from "@keywork/engine";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -148,45 +147,7 @@ describe("keyworkClient routes", () => {
     expect(await h.client.prompt("nope", "hi")).toBe("missing");
     expect(await h.client.abort("nope")).toBe("missing");
     expect(await h.client.abort("s1")).toBe("idle");
-    expect(await h.client.prompt("s1", "hi")).toBe("started");
-  });
-
-  it("drives every session verb and the preset switch, with refusals as outcomes", async () => {
-    const h = harness(new MockProvider([textTurn("ok")]));
-    const { id } = await h.client.createSession();
-    expect(await h.client.setModel(id, "anything")).toMatchObject({
-      ok: false,
-      failure: { code: "unconfigured" },
-    });
-    expect(await h.client.setModel("nope", "x")).toBe("missing");
-    expect(await h.client.setThinking(id, true)).toEqual({ thinking: true });
-    expect(await h.client.setEffort(id, "low")).toEqual({ effort: "low" });
-    expect(await h.client.setEffort(id, null)).toEqual({ effort: null });
-    expect(await h.client.compact(id, "focus")).toMatchObject({ compacted: null });
-    expect(await h.client.undo(id)).toBe("nothing");
-    expect(await h.client.redo(id)).toBe("nothing");
-    expect(await h.client.undo("nope")).toBe("missing");
-    expect(await h.client.prompt(id, "hello")).toBe("started");
-    const stops = new AbortController();
-    for await (const envelope of h.client.events({ since: 0, session: id, signal: stops.signal })) {
-      if (envelope.type === "turn.completed") break;
-    }
-    stops.abort();
-    expect(await h.client.undo(id)).toMatchObject({ prompt: { text: "hello" }, redoable: true });
-    expect(await h.client.undo(id)).toBe("staged");
-    expect(await h.client.redo(id)).toMatchObject({ restored: true });
-    expect(await h.client.context(id)).toMatchObject({ basis: "estimated" });
-    expect(await h.client.cost(id)).toMatchObject({ models: expect.any(Array) });
-    expect(await h.client.exportSession(id)).toMatchObject({
-      html: expect.stringContaining("hello"),
-    });
-    expect(await h.client.exportSession(id, { out: "x" })).toMatchObject({
-      refused: expect.any(String),
-    });
-    expect(await h.client.rename(id, "Named")).toEqual({ title: "Named" });
-    expect(await h.client.setPreset("open")).toBe("needs-confirmation");
-    expect(await h.client.setPreset("open", true)).toEqual({ from: "standard", to: "open" });
-    expect(await h.client.rename("nope", "x")).toBe("missing");
+    expect(await h.client.prompt("s1", "hi")).toBe("accepted");
   });
 
   it("refuses a bad token with a ServerRefusal naming the status", async () => {
@@ -291,7 +252,7 @@ describe("over a real socket", () => {
           if (envelope.type === "turn.completed") break;
         }
       })();
-      expect(await client.prompt(created.id, "hello over tcp")).toBe("started");
+      expect(await client.prompt(created.id, "hello over tcp")).toBe("accepted");
       await finished;
       stops.abort();
       const types = collected.map((envelope) => envelope.type);
@@ -346,55 +307,3 @@ function hangingProvider(): Provider {
     },
   };
 }
-
-describe("spills through the client", () => {
-  it("reads a spill by id and range, with an unknown id as undefined", async () => {
-    const output = "z".repeat(70 * 1024);
-    const log = new EventLog();
-    const host = memorySessionHost({
-      log,
-      provider: new MockProvider([
-        toolCallTurn({ type: "tool-call", callId: "c1", name: "flood", arguments: {} }),
-        textTurn("done"),
-      ]),
-      tools: [
-        {
-          name: "flood",
-          description: "floods",
-          parameters: { type: "object" },
-          execute: async () => output,
-        },
-      ],
-    });
-    const server = createKeyworkServer({ token, host, log, version: "test" });
-    const client = keyworkClient(
-      { url, token },
-      { fetch: (input, init) => server.fetch(new Request(input, init)) },
-    );
-    const completed = new Promise<void>((resolve) => {
-      log.subscribe((envelope) => {
-        if (envelope.type === "turn.completed") resolve();
-      });
-    });
-    const { id } = await client.createSession();
-    await client.prompt(id, "flood");
-    await completed;
-    const parts = (await client.session(id))?.messages.flatMap((message) => message.parts) ?? [];
-    const spill = parts.find((part) => part.type === "tool-result")?.spill;
-    if (spill === undefined) throw new Error("the tool output did not spill");
-    const slice = await client.spill(id, spill.id, { from: 10, to: 20 });
-    expect(slice).toEqual({
-      spillId: spill.id,
-      bytes: output.length,
-      from: 10,
-      to: 20,
-      text: "z".repeat(10),
-      truncated: false,
-      eof: false,
-      encoding: "utf-8",
-    });
-    expect((await client.spill(id, spill.id))?.text).toBe(output);
-    expect(await client.spill(id, "no-such-spill")).toBeUndefined();
-    await server.close();
-  });
-});

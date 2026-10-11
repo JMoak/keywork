@@ -17,7 +17,7 @@ import { occurrences, rowOf } from "../frame-queries.ts";
 import type { Scenario, Stage } from "../scenario.ts";
 import { notesAfter, notesBefore } from "./fixtures.ts";
 
-const askRowMarker = "[y] allow  [a] always  [n] deny";
+const askRowMarker = "[y] allow  [n] deny";
 const boxed = parseTheme({ ...keyworkNightTheme, name: "boxed", chromeWeight: "regular" });
 const bare = parseTheme({ ...keyworkNightTheme, name: "bare", chromeWeight: "borderless" });
 const gapped = parseTheme({ ...keyworkNightTheme, name: "gapped", gap: 1 });

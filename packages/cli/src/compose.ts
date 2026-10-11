@@ -2,7 +2,9 @@ import { homedir } from "node:os";
 import {
   type AfterSave,
   Agent,
+  type AgentHooks,
   actionRecallBudget,
+  askGateElicitation,
   type BootstrapInjection,
   type BotDefinition,
   buildSystemPrompt,
@@ -16,12 +18,16 @@ import {
   declaredContextWindow,
   diagnosticsObserver,
   type EngineEvents,
-  type EventBus,
+  EventBus,
+  ExtensionHost,
+  type ExtensionLoadReport,
   type LanguagePort,
   type LanguageServerSetting,
   languagePort,
   languageServersFor,
+  loadExtensions,
   loadProjectInstructions,
+  McpOAuth,
   McpRegistry,
   MemoryFlush,
   type MemoryRecall,
@@ -35,6 +41,8 @@ import {
   RepoMap,
   repoMapTokenBudget,
   restrictTools,
+  type SessionStartReason,
+  type SessionStore,
   type ShellSession,
   SkillLibrary,
   SkillTelemetry,
@@ -100,6 +108,8 @@ export interface Composition {
   bootstrap: BootstrapInjection | undefined;
   checkpoints: Checkpoints | undefined;
   extensions: WorkspaceExtensions;
+  host: ExtensionHost;
+  hostReport: ExtensionLoadReport;
   skills: SkillLibrary;
   mcp: McpRegistry | undefined;
   repoMap: RepoMap | undefined;
@@ -139,6 +149,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   });
   const mcp = startMcpRegistry(options.mcpServers);
   const scope = workspaceToolScope(cwd, projectTrusted, workspaceSlug);
+  const { host, hostReport } = await openExtensionHost(scope, { cwd, projectTrusted, userRoot });
   const port = openLanguagePort(scope, options);
   const afterSaveFor = (onPublished: (publication: DiagnosticsPublication) => void) =>
     composeAfterSave(
@@ -161,6 +172,8 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     bootstrap,
     checkpoints,
     extensions,
+    host,
+    hostReport,
     skills,
     mcp,
     repoMap,
@@ -168,6 +181,33 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     afterSave: afterSaveFor(() => undefined),
     afterSaveFor,
   };
+}
+
+export async function closeExtensionHost(host: ExtensionHost): Promise<void> {
+  await host.endSession("exit");
+  await host.dispose();
+}
+
+export function sessionReasonFor(store: SessionStore): SessionStartReason {
+  return store.messages().length > 0 ? "resume" : "start";
+}
+
+interface ExtensionHostPlace {
+  cwd: string;
+  projectTrusted: boolean;
+  userRoot: string;
+}
+
+async function openExtensionHost(
+  scope: ToolScope,
+  { cwd, projectTrusted, userRoot }: ExtensionHostPlace,
+): Promise<{ host: ExtensionHost; hostReport: ExtensionLoadReport }> {
+  const host = new ExtensionHost({
+    bus: new EventBus<EngineEvents>(),
+    reservedToolNames: coreTools(scope).map((tool) => tool.name),
+  });
+  const hostReport = await loadExtensions({ userRoot, projectRoot: cwd, projectTrusted }, host);
+  return { host, hostReport };
 }
 
 export function workspaceToolScope(
@@ -186,6 +226,7 @@ export interface AgentCompositionOptions {
   bots?: BotMemory | undefined;
   citations?: CitationTrail | undefined;
   thinking?: boolean | undefined;
+  notice?: ((text: string) => void) | undefined;
 }
 
 export interface AgentBuildSpec {
@@ -249,9 +290,11 @@ export function startMcpRegistry(
   servers: Record<string, McpServerConfig> | undefined,
 ): McpRegistry | undefined {
   if (servers === undefined || Object.keys(servers).length === 0) return undefined;
+  const vault = platformVault({ dataDir: defaultAuthDir() });
   const registry = new McpRegistry({
     servers,
-    reveal: (config) => revealServerSecrets(config, platformVault({ dataDir: defaultAuthDir() })),
+    reveal: (config) => revealServerSecrets(config, vault),
+    auth: new McpOAuth({ vault }),
   });
   registry.start();
   return registry;
@@ -388,16 +431,23 @@ function buildAgent(
     ...skillToolsFor(skills, () => self),
   ];
   const tools =
-    composition.mcp === undefined ? () => baseTools : composition.mcp.surface(baseTools);
+    composition.mcp === undefined
+      ? () => baseTools
+      : composition.mcp.surface(baseTools, {
+          elicit: askGateElicitation(spec.guard, { say: (line) => options.notice?.(line) }),
+        });
   const bot = spec.bot;
   const basePermissions = spec.permissions ?? options.permissions;
   const permissions =
     bot === undefined ? basePermissions : narrowedPermissions(bot, basePermissions);
   const learning = bot === undefined ? undefined : options.bots?.bootstrapFor(bot);
   const prompt = promptFor(composition, spec.provider.modelId, bot, learning);
+  const session = () => resolveSessionKey(spec.sessionId);
+  const hooks = composition.host.agentHooks({ session });
   const agent = new Agent({
     provider: spec.provider,
     tools: bot === undefined ? tools : () => restrictTools(tools(), bot),
+    hooks: bot === undefined ? hooks : hooksRestrictedTo(hooks, bot),
     systemPrompt: prompt.systemPrompt,
     standingInjections: prompt.standingInjections,
     guard: spec.guard,
@@ -419,9 +469,14 @@ function buildAgent(
     }),
   });
   self = agent;
+  composition.host.observe(agent.bus, { session });
   wireReplyCitations(agent, options.citations, spec.sessionId, replyTapped);
   wireBootstrapCitations(agent, options.citations, spec.sessionId, prompt.bootstrap);
   return agent;
+}
+
+function hooksRestrictedTo(hooks: AgentHooks, bot: BotDefinition): AgentHooks {
+  return { ...hooks, tools: () => restrictTools(hooks.tools?.() ?? [], bot) };
 }
 
 interface ComposedPrompt {

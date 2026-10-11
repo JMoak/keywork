@@ -20,8 +20,6 @@ const documentedEvents = [
   "diagnostics.published",
   "shell.reset",
   "extension.notice",
-  "session.tree",
-  "changes.updated",
   "engine.error",
 ] as const satisfies readonly (keyof EngineEvents)[];
 
@@ -31,10 +29,8 @@ const everyEventHasASection: [EventWithoutSection] extends [never] ? true : neve
 
 const eventsDoc = fileURLToPath(new URL("../../../docs/events.md", import.meta.url));
 
-const serverEventsHeading = "## Server events";
-
 function eventHeadingsIn(markdown: string): string[] {
-  const engineVocabulary = markdown.split(serverEventsHeading)[0] ?? "";
+  const engineVocabulary = markdown.split("\n## Server events")[0] ?? "";
   return engineVocabulary.split("\n").flatMap((line) => {
     const heading = /^### ([a-z]+\.[a-z]+)$/.exec(line);
     return heading?.[1] === undefined ? [] : [heading[1]];

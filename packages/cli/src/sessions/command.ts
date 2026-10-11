@@ -3,9 +3,9 @@ import {
   describeBinding,
   describeContextEdit,
   messageText,
-  removeSessionFiles,
   type SessionEntry,
   SessionStore,
+  SessionTrash,
   type SessionTreeNode,
 } from "@keywork/engine";
 import {
@@ -18,11 +18,20 @@ import { exitCodes } from "../dispatch.ts";
 import { excerpt } from "../text.ts";
 import { exportSession } from "./export.ts";
 import {
+  listTrash,
+  memoryStaysNote,
+  purgeTrash,
+  removeSession,
+  restoreSession,
+} from "./lifecycle.ts";
+import {
   findSession,
   latestSessionFile,
   listSessions,
   newSessionFileName,
+  type SessionSummary,
   scanSessions,
+  summarize,
   type UnreadableSession,
 } from "./store.ts";
 
@@ -32,7 +41,19 @@ export interface SessionsCommandIo extends CommandIo {
   out?: string | undefined;
   cwd?: string;
   confirm?: Confirm | undefined;
+  yes?: boolean;
 }
+
+export const sessionsSubcommands = [
+  "list",
+  "tree",
+  "fork",
+  "export",
+  "remove",
+  "restore",
+  "trash",
+  "purge",
+] as const;
 
 export async function sessionsCommand(
   args: readonly string[],
@@ -50,9 +71,17 @@ export async function sessionsCommand(
       return forkSession(dir, rest[0], rest[1], resolved);
     case "export":
       return exportToHtml(dir, rest[0], io, resolved);
+    case "remove":
+      return removeToTrash(dir, rest[0], io, resolved);
+    case "restore":
+      return restoreFromTrash(dir, rest[0], resolved);
+    case "trash":
+      return printTrash(dir, resolved, io.json === true);
+    case "purge":
+      return purgeTheTrash(dir, io, resolved);
     default:
       resolved.printError(
-        `keywork sessions: unknown subcommand "${subcommand}" (expected list, tree, fork, or export)`,
+        `keywork sessions: unknown subcommand "${subcommand}" (expected ${sessionsSubcommands.join(", ")})`,
       );
       return exitCodes.usage;
   }
@@ -74,11 +103,7 @@ async function printList(
     io.print("no sessions yet");
     return 0;
   }
-  for (const session of sessions) {
-    const stamp = session.modifiedAt.toISOString().slice(0, 16).replace("T", " ");
-    const count = String(session.messageCount).padStart(3);
-    io.print(`${session.id.slice(0, 8)}  ${stamp}  ${count} msgs  ${session.title}`);
-  }
+  for (const session of sessions) io.print(listLine(session));
   if (confirm !== undefined) await offerEmptySessionCleanup(dir, io.print, confirm);
   return 0;
 }
@@ -97,9 +122,127 @@ async function offerEmptySessionCleanup(
   if (empties.length === 0) return;
   const noun = empties.length === 1 ? "file" : "files";
   print(`found ${empties.length} empty session ${noun} (just a header, never used)`);
-  if (!(await confirm(`delete ${empties.length === 1 ? "it" : "them"} now? [y/N] `))) return;
-  for (const file of empties) await removeSessionFiles(file);
-  print(`removed ${empties.length} empty session ${noun}`);
+  if (!(await confirm(`trash ${empties.length === 1 ? "it" : "them"} now? [y/N] `))) return;
+  const trash = new SessionTrash(dir);
+  for (const file of empties) await trash.put(file);
+  print(
+    `trashed ${empties.length} empty session ${noun} · keywork sessions purge empties the trash`,
+  );
+}
+
+async function removeToTrash(
+  dir: string,
+  idPrefix: string | undefined,
+  options: SessionsCommandIo,
+  io: ResolvedCommandIo,
+): Promise<number> {
+  if (idPrefix === undefined) {
+    io.printError("keywork sessions remove needs a session id");
+    return exitCodes.usage;
+  }
+  const store = await findSession(dir, idPrefix);
+  if (store === undefined) {
+    io.printError(`no session matches id ${idPrefix}`);
+    return exitCodes.failed;
+  }
+  const short = store.header.id.slice(0, 8);
+  const title = store.name() ?? short;
+  const agreed = await agreedTo(
+    `remove session ${short} "${title}"? it goes to the trash; ${memoryStaysNote} [y/N] `,
+    options,
+    io,
+  );
+  if (agreed !== true) return agreed;
+  const removed = await removeSession(dir, store.header.id);
+  if (removed === undefined) {
+    io.printError(`no session matches id ${idPrefix}`);
+    return exitCodes.failed;
+  }
+  io.print(`removed ${short} · ${removed.title}`);
+  io.print(`  keywork sessions restore ${short} brings it back`);
+  io.print(`  ${memoryStaysNote}`);
+  return exitCodes.completed;
+}
+
+async function restoreFromTrash(
+  dir: string,
+  idPrefix: string | undefined,
+  io: ResolvedCommandIo,
+): Promise<number> {
+  if (idPrefix === undefined) {
+    io.printError("keywork sessions restore needs a session id");
+    return exitCodes.usage;
+  }
+  const restored = await restoreSession(dir, idPrefix);
+  if (restored === undefined) {
+    io.printError(`nothing in the trash matches id ${idPrefix}`);
+    return exitCodes.failed;
+  }
+  const short = restored.header.id.slice(0, 8);
+  io.print(`restored ${short} · ${(await summarize(restored)).title}`);
+  io.print(`resume it with: keywork chat --resume ${short}`);
+  return exitCodes.completed;
+}
+
+async function printTrash(dir: string, io: ResolvedCommandIo, json: boolean): Promise<number> {
+  const { sessions, unreadable } = await listTrash(dir);
+  reportUnreadable(unreadable, io);
+  if (json) {
+    io.print(JSON.stringify(sessions, null, 2));
+    return exitCodes.completed;
+  }
+  if (sessions.length === 0) {
+    io.print("the trash is empty");
+    return exitCodes.completed;
+  }
+  for (const session of sessions) io.print(listLine(session));
+  io.print(
+    "keywork sessions restore <id> brings one back · keywork sessions purge empties the trash",
+  );
+  return exitCodes.completed;
+}
+
+async function purgeTheTrash(
+  dir: string,
+  options: SessionsCommandIo,
+  io: ResolvedCommandIo,
+): Promise<number> {
+  const { sessions } = await listTrash(dir);
+  if (sessions.length === 0) {
+    io.print("the trash is empty");
+    return exitCodes.completed;
+  }
+  const noun = sessions.length === 1 ? "session" : "sessions";
+  const agreed = await agreedTo(
+    `delete ${sessions.length} trashed ${noun} for good? there is no undo [y/N] `,
+    options,
+    io,
+  );
+  if (agreed !== true) return agreed;
+  const purged = await purgeTrash(dir);
+  io.print(`purged ${purged} ${noun}`);
+  return exitCodes.completed;
+}
+
+async function agreedTo(
+  question: string,
+  options: SessionsCommandIo,
+  io: ResolvedCommandIo,
+): Promise<true | number> {
+  if (options.yes === true) return true;
+  if (options.confirm === undefined) {
+    io.printError("no terminal to confirm on · pass --yes to skip the prompt");
+    return exitCodes.usage;
+  }
+  if (await options.confirm(question)) return true;
+  io.print("left as it was");
+  return exitCodes.completed;
+}
+
+function listLine(session: SessionSummary): string {
+  const stamp = session.modifiedAt.toISOString().slice(0, 16).replace("T", " ");
+  const count = String(session.messageCount).padStart(3);
+  return `${session.id.slice(0, 8)}  ${stamp}  ${count} msgs  ${session.title}`;
 }
 
 async function printTree(

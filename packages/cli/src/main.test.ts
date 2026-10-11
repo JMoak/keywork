@@ -115,6 +115,8 @@ describe("main(argv) dispatches one call per command", () => {
     [["workspace", "bogus"], 2, "err", 'keywork workspace: unknown subcommand "bogus"'],
     [["link"], 1, "err", "usage: keywork link <dir>"],
     [["doctor"], 0, "out", "keywork doctor"],
+    [["extensions"], 0, "out", "no extensions loaded"],
+    [["extensions", "bogus"], 2, "err", 'keywork extensions: unexpected argument "bogus"'],
     [["sessions"], 0, "out", "no sessions yet"],
     [["panes"], 2, "err", "panes needs a terminal"],
     [["chat"], 2, "err", "chat needs a terminal"],

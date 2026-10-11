@@ -1,6 +1,7 @@
-import { eventTypes } from "./events.ts";
+import { engineEventTypes, serverEventTypes } from "./events.ts";
+import { airlockFamily } from "./routes/airlock.ts";
 import { askFamily } from "./routes/asks.ts";
-import { changeFamily } from "./routes/changes.ts";
+import { changesFamily } from "./routes/changes.ts";
 import { documentFamily } from "./routes/document.ts";
 import { eventFamily } from "./routes/events.ts";
 import type {
@@ -10,12 +11,14 @@ import type {
   RouteSpec,
   WorkspaceInfo,
 } from "./routes/family.ts";
+import { fileFamily } from "./routes/files.ts";
+import { lifecycleFamily } from "./routes/lifecycle.ts";
 import { memoryFamily } from "./routes/memory.ts";
 import { permissionFamily } from "./routes/permissions.ts";
-import { presetFamily } from "./routes/presets.ts";
 import { sessionVerbFamily } from "./routes/session-verbs.ts";
 import { sessionFamily } from "./routes/sessions.ts";
-import { statusFamily } from "./routes/status.ts";
+import { surfaceFamily } from "./routes/surfaces.ts";
+import { themeFamily } from "./routes/themes.ts";
 import { treeFamily } from "./routes/tree.ts";
 import { workspaceFamily } from "./routes/workspace.ts";
 
@@ -26,13 +29,16 @@ export const routeFamilies = [
   eventFamily,
   sessionFamily,
   askFamily,
-  treeFamily,
-  changeFamily,
-  workspaceFamily,
-  statusFamily,
   memoryFamily,
+  airlockFamily,
   sessionVerbFamily,
-  presetFamily,
+  workspaceFamily,
+  fileFamily,
+  surfaceFamily,
+  themeFamily,
+  treeFamily,
+  changesFamily,
+  lifecycleFamily,
   permissionFamily,
 ] as const;
 
@@ -104,11 +110,8 @@ const envelopeSchema: JsonSchema = {
   properties: {
     id: { type: "integer", minimum: 1 },
     ts: { type: "string", format: "date-time" },
-    sessionId: {
-      type: "string",
-      description: "The session the event concerns; empty for a process-level server event.",
-    },
-    type: { type: "string", enum: [...eventTypes] },
+    sessionId: { type: "string" },
+    type: { type: "string", enum: [...engineEventTypes, ...serverEventTypes] },
     payload: {},
   },
 };

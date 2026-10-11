@@ -5,11 +5,11 @@
 │ │ ▸ open     open the select…enter │ │                                                                               │
 │ │   entries  browse the selected…l │ │                                                                               │
 │ │   group    group by none · arc…g │ │                                                                               │
+│ │   remove   move the selected s…x │ │                                                                               │
+│ │   trash    show trashed sessio…t │ │                                                                               │
 │ │   refresh  reload the sessions…r │ │                                                                               │
 │ ╰──────────────────────────────────╯ │                                                                               │
 │ : ▌                                  │                                                                               │
-│                                      │                                                                               │
-│                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │

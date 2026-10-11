@@ -1,62 +1,30 @@
 import {
-  ArcNotActiveError,
   IneligibleDeliveryError,
-  InvalidDailyDateError,
+  isStagedWrite,
   LedgerEntryNotFoundError,
   MemoryInertError,
-  MissingArcError,
   MissingSuccessorError,
+  type Note,
+  type StagedItem,
   StagedItemNotFoundError,
 } from "@keywork/engine";
-import type { CandidateChoice, MemoryHost, QuestionChoice } from "../host.ts";
+import type { MemoryPort } from "../host.ts";
 import {
   bodyOf,
   fieldsOf,
   type JsonSchema,
   json,
   nonBlank,
+  type RouteContext,
   type RouteFamily,
+  type RouteHandler,
   type RouteSpec,
 } from "./family.ts";
-
-export const maxAskQueryLength = 2000;
-
-const candidateChoices: readonly CandidateChoice[] = ["deliver", "leave"];
-const questionChoices: readonly QuestionChoice[] = ["resolve", "carry", "drop"];
-
-const inertNote =
-  "When the workspace is untrusted (or has no vault) every read answers `trusted: false` with empty lists and every write answers 403 `memory is inert`.";
 
 const askBody: JsonSchema = {
   type: "object",
   required: ["query"],
-  properties: {
-    query: { type: "string", minLength: 1, maxLength: maxAskQueryLength },
-    arc: { type: "string", minLength: 1 },
-  },
-  additionalProperties: false,
-};
-
-const candidateBody: JsonSchema = {
-  type: "object",
-  required: ["choice"],
-  properties: { choice: { type: "string", enum: [...candidateChoices] } },
-  additionalProperties: false,
-};
-
-const questionBody: JsonSchema = {
-  type: "object",
-  required: ["title", "choice"],
-  properties: {
-    title: { type: "string", minLength: 1 },
-    choice: { type: "string", enum: [...questionChoices] },
-  },
-  additionalProperties: false,
-};
-
-const finishBody: JsonSchema = {
-  type: "object",
-  properties: { force: { type: "boolean" } },
+  properties: { query: { type: "string", minLength: 1 }, arc: { type: "string" } },
   additionalProperties: false,
 };
 
@@ -65,28 +33,29 @@ export const memoryRoutes = [
     method: "GET",
     path: "/memory",
     operationId: "readMemory",
-    summary: `The memory garden at a glance: one entry per layer (the workspace vault and each active arc) with its note count, curing tally and, for the workspace, the prompt budget the bootstrap used; the review inbox as the engine's own staged items; this process's write ledger; the curation audit; the gardener's last sweep; and every arc whose close is waiting at the airlock. ${inertNote}`,
+    summary:
+      "The whole memory vault at a glance: the layers notes live in (`workspace`, one `arc:<slug>` per active arc), the review inbox as raw staged items, this process's mutation ledger, the vault's curation audit, the gardener's last sweep and every arc waiting at the airlock. `trusted: false` means the workspace is untrusted and memory is inert: every list is empty and every write answers 403.",
     authenticated: true,
-    responses: { "200": "The garden." },
+    responses: { "200": "The overview, or the inert shape when the workspace is untrusted." },
   },
   {
     method: "GET",
     path: "/memory/inbox",
-    operationId: "readMemoryInbox",
+    operationId: "listMemoryInbox",
     summary:
-      "The review inbox: every staged item waiting for a human, in the engine's own shape (an untrusted write, a borderline promotion, a contradiction, a proposal, an arc review, and whatever kinds the engine adds later), plus the items a bot layer staged, each tagged with its `bot`. `count` is what the `memory.inbox` event carries.",
+      "Items waiting for a person: untrusted writes held in staging and the gardener's review proposals, each as the engine's `StagedItem` with its `kind`. `count` is the number the `memory.inbox` event carries.",
     authenticated: true,
-    responses: { "200": "The inbox and its count." },
+    responses: { "200": "The staged items and their count." },
   },
   {
     method: "POST",
     path: "/memory/inbox/{id}/approve",
     operationId: "approveStagedItem",
     summary:
-      "Approve a staged item: an untrusted write lands in the vault, a proposal is carried out, a bot item lands in its bot layer. Answers the engine's write result (`null` for a bot item) and fires `memory.inbox` with the new count.",
+      "Land a staged item: a staged write moves to its target note, daily log or map; a proposal is applied. Fires `memory.inbox` with the new count. The answer is the engine's `WriteResult` (`path`, `staged`, `ledgerId`) when the workspace store landed it, or `{}` when a bot's own store did.",
     authenticated: true,
     responses: {
-      "200": "The item was approved.",
+      "200": "The item landed.",
       "403": "Memory is inert: the workspace is untrusted.",
       "404": "No staged item has that id.",
     },
@@ -95,7 +64,7 @@ export const memoryRoutes = [
     method: "POST",
     path: "/memory/inbox/{id}/discard",
     operationId: "discardStagedItem",
-    summary: "Discard a staged item without applying it. Fires `memory.inbox` with the new count.",
+    summary: "Drop a staged item without landing it. Fires `memory.inbox` with the new count.",
     authenticated: true,
     responses: {
       "200": "The item was discarded.",
@@ -108,24 +77,24 @@ export const memoryRoutes = [
     path: "/memory/notes",
     operationId: "listMemoryNotes",
     summary:
-      "Every note the garden holds, each the engine's record plus its `layer` (`workspace` or `arc:<slug>`), `curing` stage 0 to 3, whether the bootstrap `injected` it into the prompt, how many `recalls` it had since the last sweep, and its graph `relations`. `?layer=` narrows to one layer and answers 404 for a layer that does not exist.",
+      "Every note the agent can recall, as the engine's `Note` plus the layer it lives in, its file on disk, whether the bootstrap injects it into the system prompt, how often it was recalled since the last sweep and its curing stage (0 raw, 1 has a confidence, 2 has proved useful, 3 settled). `?layer=<id>` keeps one layer.",
     authenticated: true,
-    responses: { "200": "The notes.", "404": "No layer has that id." },
+    responses: { "200": "The notes." },
   },
   {
     method: "GET",
     path: "/memory/notes/{name}",
     operationId: "readMemoryNote",
     summary:
-      "One note by name (a title, an alias, or an entity path with its slashes percent-encoded), with frontmatter, body, provenance, curing and relations. `?layer=` reads an arc layer instead of the workspace.",
+      "One note by name (URL-encode it; entity notes are named by path, such as `entities/src/app.ts`), with its graph relations: each `{ name, predicate, direction }` edge the note takes part in.",
     authenticated: true,
-    responses: { "200": "The note.", "404": "No note has that name in that layer." },
+    responses: { "200": "The note.", "404": "No note has that name." },
   },
   {
     method: "GET",
     path: "/memory/daily",
     operationId: "listMemoryDailyDates",
-    summary: "The dates (YYYY-MM-DD) that have a daily log in the workspace vault.",
+    summary: "The dates (`YYYY-MM-DD`) that have a daily log.",
     authenticated: true,
     responses: { "200": "The dates." },
   },
@@ -133,16 +102,17 @@ export const memoryRoutes = [
     method: "GET",
     path: "/memory/daily/{date}",
     operationId: "readMemoryDaily",
-    summary: "The daily log for one date: each entry's time, provenance and text.",
+    summary:
+      "One day's episodic log: each entry's time, provenance class, text and the session that wrote it when known.",
     authenticated: true,
-    responses: { "200": "The entries.", "400": "The date is not YYYY-MM-DD." },
+    responses: { "200": "The entries.", "400": "The date is not `YYYY-MM-DD`." },
   },
   {
     method: "GET",
     path: "/memory/ledger",
     operationId: "readMemoryLedger",
     summary:
-      "This process's memory write ledger, newest last: every create, edit, approve, discard and revert with full before and after content, capped at the engine's ledger capacity. Entries from earlier processes are gone; the audit on GET /memory is the durable record.",
+      "This server process's memory mutations, oldest first, capped at 128: each entry's op, time and file deltas with before and after content and hashes. Any entry can be reverted.",
     authenticated: true,
     responses: { "200": "The ledger entries." },
   },
@@ -151,7 +121,7 @@ export const memoryRoutes = [
     path: "/memory/ledger/{id}/revert",
     operationId: "revertMemoryLedgerEntry",
     summary:
-      "Revert one ledger entry, restoring the files it changed. `outcome` is `reverted`, or `needs-rebase` when a file no longer matches what the entry wrote (nothing is touched then). Fires `memory.inbox` when the revert changed the inbox.",
+      "Undo one ledger entry. `outcome` is `reverted` when every file still matched the entry's recorded result, or `needs-rebase` when something edited a file since; a rebase touches nothing.",
     authenticated: true,
     responses: {
       "200": "The revert outcome.",
@@ -163,269 +133,255 @@ export const memoryRoutes = [
     method: "POST",
     path: "/memory/ask",
     operationId: "askMemory",
-    summary: `Ask the garden a question: a lexical (or hybrid, when embeddings are configured) search over the workspace notes, layered with the active arc's notes when \`arc\` is given. Answers up to 20 hits with their per-leg ranks. The query is capped at ${maxAskQueryLength} characters.`,
+    summary:
+      "Search memory the way the agent's recall does: lexical, semantic and graph legs ranked per hit. With `arc`, that arc's layer is searched on top of the workspace and boosted.",
     authenticated: true,
     requestBody: askBody,
-    responses: { "200": "The hits.", "400": "The body is not `{ query, arc? }`." },
-  },
-  {
-    method: "GET",
-    path: "/arcs/{slug}/airlock",
-    operationId: "readArcAirlock",
-    summary:
-      "The close review staged for an arc: each candidate note with its eligibility and shortfalls, each open question, the choices made so far, the successor arc a carried question goes to, and the last session sweep. 404 when no close is waiting for that arc.",
-    authenticated: true,
-    responses: { "200": "The digest.", "404": "No close review is staged for that arc." },
-  },
-  {
-    method: "POST",
-    path: "/arcs/{slug}/airlock/candidates/{note}",
-    operationId: "triageAirlockCandidate",
-    summary:
-      "Decide a candidate note: `deliver` promotes it into the workspace when the arc closes, `leave` keeps it archived in the arc layer. Answers the updated digest.",
-    authenticated: true,
-    requestBody: candidateBody,
-    responses: {
-      "200": "The updated digest.",
-      "400": "The body is not `{ choice }`.",
-      "403": "Memory is inert: the workspace is untrusted.",
-      "404": "No close review is staged for that arc, or it has no such candidate.",
-      "409": "The note is below the delivery bar and cannot be delivered.",
-    },
-  },
-  {
-    method: "POST",
-    path: "/arcs/{slug}/airlock/questions",
-    operationId: "triageAirlockQuestion",
-    summary:
-      "Decide an open question by title: `resolve`, `drop`, or `carry` it into the newest other active arc. Answers the updated digest.",
-    authenticated: true,
-    requestBody: questionBody,
-    responses: {
-      "200": "The updated digest.",
-      "400": "The body is not `{ title, choice }`.",
-      "403": "Memory is inert: the workspace is untrusted.",
-      "404": "No close review is staged for that arc, or it has no such question.",
-      "409": "Carrying needs another active arc and none exists.",
-    },
-  },
-  {
-    method: "POST",
-    path: "/arcs/{slug}/airlock/deliver",
-    operationId: "deliverAirlockEligible",
-    summary: "Mark every eligible candidate `deliver` at once. Answers how many were marked.",
-    authenticated: true,
-    responses: {
-      "200": "The number of candidates marked.",
-      "403": "Memory is inert: the workspace is untrusted.",
-      "404": "No close review is staged for that arc.",
-    },
-  },
-  {
-    method: "POST",
-    path: "/arcs/{slug}/airlock/finish",
-    operationId: "finishArcAirlock",
-    summary:
-      "Try to close the arc now: flush every session bound to it, stage its close review when none is staged yet, then deliver the chosen notes and archive the arc once every item has a choice. The outcome is `closed`, `undecided` (naming what still needs a choice; the review is now readable at GET /arcs/{slug}/airlock), or `wedged` (naming sessions that did not flush); `force: true` sweeps past wedged sessions.",
-    authenticated: true,
-    requestBody: finishBody,
-    responses: {
-      "200": "The finish outcome.",
-      "400": "The body is not `{ force? }`.",
-      "403": "Memory is inert: the workspace is untrusted.",
-      "404": "No active arc has that slug.",
-    },
+    responses: { "200": "The ranked hits.", "400": "The body is not `{ query, arc? }`." },
   },
 ] as const satisfies readonly RouteSpec[];
 
 export const memoryFamily = {
   routes: memoryRoutes,
-  handlers: ({ host }) => {
-    const memory = host.memory;
+  handlers: (context) => {
+    const memory = memoryGate(context);
     return {
-      readMemory: () => reading(() => memory.garden()),
-      readMemoryInbox: () =>
-        reading(async () => {
-          const items = await memory.inbox();
-          return { trusted: await memory.trusted(), items, count: items.length };
-        }),
-      approveStagedItem: (_request, { id }) =>
-        writing(memory, async () => {
-          const result = await memory.approve(id ?? "");
-          return json(200, { id, result: result ?? null });
-        }),
-      discardStagedItem: (_request, { id }) =>
-        writing(memory, async () => {
-          await memory.discard(id ?? "");
-          return json(200, { id, discarded: true });
-        }),
-      listMemoryNotes: (request) =>
-        reading(async () => {
-          const layer = queryOf(request, "layer");
-          const notes = await memory.notes(layer);
-          if (notes === undefined) return json(404, { error: "no layer has that id" });
-          return { trusted: await memory.trusted(), notes };
-        }),
-      readMemoryNote: (request, { name }) =>
-        reading(async () => {
-          const noteName = decoded(name);
-          if (noteName === undefined) return json(400, { error: "the note name is not decodable" });
-          if (!(await memory.trusted())) return { trusted: false, note: null };
-          const note = await memory.note(noteName, queryOf(request, "layer"));
-          return note === undefined
-            ? json(404, { error: "no note has that name in that layer" })
-            : { trusted: true, note };
-        }),
-      listMemoryDailyDates: () =>
-        reading(async () => ({
-          trusted: await memory.trusted(),
-          dates: await memory.dailyDates(),
-        })),
-      readMemoryDaily: (_request, { date }) =>
-        reading(async () => ({
-          trusted: await memory.trusted(),
-          date,
-          entries: await memory.daily(date ?? ""),
-        })),
-      readMemoryLedger: () =>
-        reading(async () => ({ trusted: await memory.trusted(), entries: await memory.ledger() })),
-      revertMemoryLedgerEntry: (_request, { id }) =>
-        writing(memory, async () => json(200, { id, outcome: await memory.revert(id ?? "") })),
-      askMemory: (request) =>
-        reading(async () => {
+      readMemory: memory.read(async (port) => port.overview(), {
+        layers: [],
+        inbox: [],
+        ledger: [],
+        audit: [],
+        airlocks: [],
+      }),
+      listMemoryInbox: memory.read(
+        async (port) => {
+          const items = await port.inbox();
+          return { items, count: items.length };
+        },
+        { items: [], count: 0 },
+      ),
+      approveStagedItem: memory.write(async (port, { id }) => {
+        const result = await port.approve(decodeURIComponent(id ?? ""));
+        return result ?? {};
+      }),
+      discardStagedItem: memory.write(async (port, { id }) => {
+        await port.discard(decodeURIComponent(id ?? ""));
+        return {};
+      }),
+      listMemoryNotes: memory.read(
+        async (port, request) => {
+          const layer = new URL(request.url).searchParams.get("layer");
+          const notes = (await port.notes()).filter(
+            (note) => layer === null || note.layer === layer,
+          );
+          return { notes: notes.map(withCuring) };
+        },
+        { notes: [] },
+      ),
+      readMemoryNote: memory.read(async (port, _request, { name }) => {
+        const note = await port.note(decodeURIComponent(name ?? ""));
+        return note === undefined
+          ? json(404, { error: `no note named ${JSON.stringify(name)}` })
+          : withCuring(note);
+      }, {}),
+      listMemoryDailyDates: memory.read(async (port) => ({ dates: await port.dailyDates() }), {
+        dates: [],
+      }),
+      readMemoryDaily: memory.read(
+        async (port, _request, { date }) =>
+          isDailyDate(date) ? { date, entries: await port.daily(date) } : badDate(date),
+        (_request, { date }) => (isDailyDate(date) ? { date, entries: [] } : badDate(date)),
+      ),
+      readMemoryLedger: memory.read(async (port) => ({ entries: port.ledger() }), {
+        entries: [],
+      }),
+      revertMemoryLedgerEntry: memory.write(async (port, { id }) => ({
+        outcome: await port.revert(decodeURIComponent(id ?? "")),
+      })),
+      askMemory: memory.read(
+        async (port, request) => {
           const question = questionOf(await bodyOf(request));
-          if (question === undefined) {
-            return json(400, { error: `the body must be { query: string, arc?: string }` });
-          }
-          const outcome = await memory.ask(question.query, question.arc);
-          return { trusted: await memory.trusted(), ...outcome };
-        }),
-      readArcAirlock: (_request, { slug }) =>
-        reading(async () => {
-          if (!(await memory.trusted())) return { trusted: false, digest: null };
-          const digest = await memory.airlock.digest(slug ?? "");
-          return digest === undefined ? noReview() : { trusted: true, digest };
-        }),
-      triageAirlockCandidate: (request, { slug, note }) =>
-        writing(memory, async () => {
-          const choice = candidateChoiceOf(await bodyOf(request));
-          if (choice === undefined) return json(400, { error: "the body must be { choice }" });
-          const name = decoded(note);
-          const digest = await memory.airlock.digest(slug ?? "");
-          if (digest === undefined) return noReview();
-          if (name === undefined || !digest.candidates.some((candidate) => candidate.note === name))
-            return json(404, { error: `arc ${slug} has no candidate named ${name}` });
-          await memory.airlock.triageCandidate(slug ?? "", name, choice);
-          return json(200, (await memory.airlock.digest(slug ?? "")) ?? digest);
-        }),
-      triageAirlockQuestion: (request, { slug }) =>
-        writing(memory, async () => {
-          const decision = questionDecisionOf(await bodyOf(request));
-          if (decision === undefined)
-            return json(400, { error: "the body must be { title, choice }" });
-          const digest = await memory.airlock.digest(slug ?? "");
-          if (digest === undefined) return noReview();
-          if (!digest.questions.some((question) => question.title === decision.title))
-            return json(404, {
-              error: `arc ${slug} has no open question titled ${decision.title}`,
-            });
-          await memory.airlock.triageQuestion(slug ?? "", decision.title, decision.choice);
-          return json(200, (await memory.airlock.digest(slug ?? "")) ?? digest);
-        }),
-      deliverAirlockEligible: (_request, { slug }) =>
-        writing(memory, async () => {
-          if ((await memory.airlock.digest(slug ?? "")) === undefined) return noReview();
-          return json(200, { delivered: await memory.airlock.deliverEligible(slug ?? "") });
-        }),
-      finishArcAirlock: (request, { slug }) =>
-        writing(memory, async () => {
-          const force = forceOf(await bodyOf(request));
-          if (force === undefined)
-            return json(400, { error: "the body must be { force?: boolean }" });
-          return json(200, await memory.airlock.finish(slug ?? "", { force }));
-        }),
+          if (question === undefined) return badAsk();
+          return port.query(question.query, question.arc);
+        },
+        async (request) => {
+          const question = questionOf(await bodyOf(request));
+          return question === undefined ? badAsk() : { hits: [], source: "lexical" };
+        },
+      ),
     };
   },
 } satisfies RouteFamily<typeof memoryRoutes>;
 
-async function reading(read: () => Promise<unknown>): Promise<Response> {
-  try {
-    const reply = await read();
-    return reply instanceof Response ? reply : json(200, reply);
-  } catch (cause) {
-    return refusalOf(cause);
+export type CuringStage = 0 | 1 | 2 | 3;
+
+export function curingStage(note: Note): CuringStage {
+  if (note.provenance === "user" || note.pinned) return 3;
+  const usefulness = note.usefulness ?? 0;
+  if (usefulness >= settledUsefulness) return 3;
+  if (usefulness > 0) return 2;
+  return note.confidence === undefined ? 0 : 1;
+}
+
+export interface InboxTally {
+  count: number;
+  staged: number;
+  airlock: number;
+  proposals: number;
+  contradictions: number;
+}
+
+export function inboxTally(items: readonly StagedItem[]): InboxTally {
+  const tally: InboxTally = {
+    count: items.length,
+    staged: 0,
+    airlock: 0,
+    proposals: 0,
+    contradictions: 0,
+  };
+  for (const item of items) tally[bucketOf(item)] += 1;
+  return tally;
+}
+
+type RouteParams = Readonly<Record<string, string>>;
+
+type LiveRead = (port: MemoryPort, request: Request, params: RouteParams) => Promise<unknown>;
+
+type InertShape = object | ((request: Request, params: RouteParams) => unknown);
+
+type Write = (port: MemoryPort, params: RouteParams, request: Request) => Promise<unknown>;
+
+export interface MemoryGate {
+  read(live: LiveRead, inert: InertShape): RouteHandler;
+  write(act: Write): RouteHandler;
+  feed: InboxFeed;
+}
+
+export function memoryGate(context: RouteContext): MemoryGate {
+  const feed = inboxFeedOf(context);
+  const portOf = (): MemoryPort | undefined => context.host.memory;
+  return {
+    feed,
+    read: (live, inert) => async (request, params) => {
+      const port = portOf();
+      if (port === undefined) return unserved();
+      if (!port.trusted())
+        return answer({ trusted: false }, await resolveInert(inert, request, params));
+      return answer({ trusted: true }, await live(port, request, params));
+    },
+    write: (act) => async (request, params) => {
+      const port = portOf();
+      if (port === undefined) return unserved();
+      if (!port.trusted()) return inertWrite();
+      try {
+        const body = await act(port, params, request);
+        await feed.publish();
+        return body instanceof Response ? body : json(200, body);
+      } catch (cause) {
+        const refusal = refusalOf(cause);
+        if (refusal === undefined) throw cause;
+        return refusal;
+      }
+    },
+  };
+}
+
+export class InboxFeed {
+  private reported: number | undefined;
+
+  constructor(private readonly context: RouteContext) {}
+
+  async publish(): Promise<void> {
+    const port = this.context.host.memory;
+    if (port === undefined) return;
+    this.record(inboxTally(port.trusted() ? await port.inbox() : []));
+  }
+
+  async refresh(): Promise<void> {
+    const port = this.context.host.memory;
+    if (port === undefined) return;
+    const tally = inboxTally(port.trusted() ? await port.inbox() : []);
+    if (tally.count !== this.reported) this.record(tally);
+  }
+
+  private record(tally: InboxTally): void {
+    this.reported = tally.count;
+    this.context.log.record("", "memory.inbox", tally);
   }
 }
 
-async function writing(memory: MemoryHost, write: () => Promise<Response>): Promise<Response> {
-  try {
-    return (await memory.trusted()) ? await write() : inert();
-  } catch (cause) {
-    return refusalOf(cause);
-  }
+const feeds = new WeakMap<RouteContext, InboxFeed>();
+
+function inboxFeedOf(context: RouteContext): InboxFeed {
+  const existing = feeds.get(context);
+  if (existing !== undefined) return existing;
+  const feed = new InboxFeed(context);
+  feeds.set(context, feed);
+  const stop = context.host.memory?.subscribe?.(() => void feed.refresh().catch(() => undefined));
+  if (stop !== undefined) context.streams.add(stop);
+  return feed;
 }
 
-function inert(): Response {
+const settledUsefulness = 0.5;
+
+function bucketOf(item: StagedItem): Exclude<keyof InboxTally, "count"> {
+  if (isStagedWrite(item)) return "staged";
+  if (item.kind === "arc-distillation" || item.kind === "arc-question") return "airlock";
+  if (item.kind === "contradiction") return "contradictions";
+  return "proposals";
+}
+
+function withCuring<Shape extends Note>(note: Shape): Shape & { curing: CuringStage } {
+  return { ...note, curing: curingStage(note) };
+}
+
+async function resolveInert(inert: InertShape, request: Request, params: RouteParams) {
+  return typeof inert === "function" ? inert(request, params) : inert;
+}
+
+function answer(mark: { trusted: boolean }, body: unknown): Response {
+  if (body instanceof Response) return body;
+  return json(200, { ...mark, ...(body as object) });
+}
+
+function unserved(): Response {
+  return json(503, { error: "memory is not served by this host" });
+}
+
+function inertWrite(): Response {
   return json(403, { error: new MemoryInertError().message });
 }
 
-function refusalOf(cause: unknown): Response {
+function refusalOf(cause: unknown): Response | undefined {
   if (cause instanceof MemoryInertError) return json(403, { error: cause.message });
-  if (cause instanceof InvalidDailyDateError) return json(400, { error: cause.message });
-  if (isMissing(cause)) return json(404, { error: cause.message });
-  if (cause instanceof MissingSuccessorError || cause instanceof IneligibleDeliveryError)
-    return json(409, { error: cause.message });
-  throw cause;
-}
-
-function isMissing(cause: unknown): cause is Error {
-  return (
-    cause instanceof StagedItemNotFoundError ||
-    cause instanceof LedgerEntryNotFoundError ||
-    cause instanceof MissingArcError ||
-    cause instanceof ArcNotActiveError
-  );
-}
-
-function noReview(): Response {
-  return json(404, { error: "no close review is staged for that arc" });
-}
-
-function queryOf(request: Request, name: string): string | undefined {
-  return nonBlank(new URL(request.url).searchParams.get(name) ?? undefined);
-}
-
-function decoded(segment: string | undefined): string | undefined {
-  try {
-    return nonBlank(decodeURIComponent(segment ?? ""));
-  } catch {
-    return undefined;
-  }
+  if (cause instanceof StagedItemNotFoundError) return json(404, { error: cause.message });
+  if (cause instanceof LedgerEntryNotFoundError) return json(404, { error: cause.message });
+  if (cause instanceof MissingSuccessorError) return json(409, { error: cause.message });
+  if (cause instanceof IneligibleDeliveryError) return json(409, { error: cause.message });
+  return undefined;
 }
 
 function questionOf(body: unknown): { query: string; arc: string | undefined } | undefined {
   const fields = fieldsOf<{ query: unknown; arc: unknown }>(body);
   const query = nonBlank(fields?.query);
-  if (query === undefined || query.length > maxAskQueryLength) return undefined;
-  if (fields?.arc !== undefined && nonBlank(fields.arc) === undefined) return undefined;
-  return { query, arc: nonBlank(fields?.arc) };
+  if (query === undefined) return undefined;
+  const arc = fields?.arc;
+  if (arc !== undefined && typeof arc !== "string") return undefined;
+  return { query, arc };
 }
 
-function candidateChoiceOf(body: unknown): CandidateChoice | undefined {
-  const choice = fieldsOf<{ choice: unknown }>(body)?.choice;
-  return candidateChoices.find((known) => known === choice);
+const dailyDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+function isDailyDate(date: string | undefined): date is string {
+  return date !== undefined && dailyDatePattern.test(date);
 }
 
-function questionDecisionOf(body: unknown): { title: string; choice: QuestionChoice } | undefined {
-  const fields = fieldsOf<{ title: unknown; choice: unknown }>(body);
-  const title = nonBlank(fields?.title);
-  const choice = questionChoices.find((known) => known === fields?.choice);
-  return title === undefined || choice === undefined ? undefined : { title, choice };
+function badDate(date: string | undefined): Response {
+  return json(400, {
+    error: `invalid daily log date ${JSON.stringify(date)}: expected YYYY-MM-DD`,
+  });
 }
 
-function forceOf(body: unknown): boolean | undefined {
-  if (body === undefined) return false;
-  const force = fieldsOf<{ force: unknown }>(body)?.force;
-  if (force === undefined) return false;
-  return typeof force === "boolean" ? force : undefined;
+function badAsk(): Response {
+  return json(400, { error: "the body must be { query: string, arc?: string }" });
 }

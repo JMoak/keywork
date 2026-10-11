@@ -1,65 +1,67 @@
-import { mkdtempSync } from "node:fs";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { existsSync, mkdtempSync } from "node:fs";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ArcRegistry,
-  Checkpoints,
-  MemoryInertError,
-  MemoryStore,
+  formatReference,
+  type InferenceBinding,
   type Message,
   MockProvider,
-  messageText,
   type Provider,
   type ProviderRequest,
+  parseReference,
   SessionStore,
   type TurnDelta,
-  textMessage,
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
 import {
-  type BusEnvelope,
   createKeyworkServer,
   EventLog,
-  maxFileSliceBytes,
   readServerTicket,
-  type SessionEntries,
+  type SessionHost,
+  type SessionInference,
   writeServerTicket,
 } from "@keywork/server";
-import { inferenceOver, memorySessionHost, sseReader } from "@keywork/server/testing";
+import {
+  memorySessionHost,
+  type SseFrame,
+  type SseReader,
+  sseReader,
+} from "@keywork/server/testing";
 import {
   type ActivePreset,
   type CompleteTheme,
-  canonicalPath,
   contrastFailures,
   gallery,
-  type PresetName,
-  resolveVaultPath,
   TrustStore,
 } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterAll, describe, expect, it } from "vitest";
+import { type ArcService, arcService } from "./arcs.ts";
+import { composeWorkspace } from "./compose.ts";
+import { arcLayerId, citationTrail, openWorkspaceMemory } from "./memory.ts";
 import { keyworkHome } from "./paths.ts";
 import {
   alreadyServingExit,
   fileSessionHost,
   type HostOptions,
   serve,
+  servedHost,
   serverTicketFile,
   ticketFilesFor,
   workspaceInfoOf,
   workspaceTicketFile,
 } from "./serve.ts";
-import { scanSessions } from "./sessions/store.ts";
+import { servedMemory } from "./serve-memory.ts";
+import { surfacePorts } from "./serve-surfaces.ts";
+import { boundSessionCounts, sessionPort } from "./sessions/ports.ts";
+import { findSession, scanSessions } from "./sessions/store.ts";
 import { fileWorkspaceRecall, workspaceRecallFile } from "./workspaces.ts";
 
 const tempDir = scratchDirs("keywork-serve-");
-const fixtureServerPath = fileURLToPath(
-  new URL("../../engine/src/testing/mcp-fixture-server.ts", import.meta.url),
-);
 const emptyUserRoot = mkdtempSync(join(tmpdir(), "keywork-serve-user-"));
 const token = "serve-test-token";
 
@@ -73,7 +75,6 @@ async function hostOptions(provider: MockProvider): Promise<HostOptions & { log:
     provider,
     permissions: () => "allow",
     userRoot: emptyUserRoot,
-    checkpointsGitDir: await tempDir(),
     log: new EventLog(),
   };
 }
@@ -90,6 +91,42 @@ function serverOver(options: HostOptions & { log: EventLog }) {
     );
   return { server, host, call };
 }
+
+describe("servedHost", () => {
+  it("mounts every route family over one composition so keywork serve answers them all", async () => {
+    const options = { ...(await hostOptions(new MockProvider([]))), projectTrusted: true };
+    const host = await servedHost(options);
+    const server = createKeyworkServer({ token, host, log: options.log, version: "test" });
+    const call = (path: string) =>
+      server.fetch(
+        new Request(`http://keywork.test${path}`, {
+          headers: { authorization: `Bearer ${token}` },
+        }),
+      );
+
+    const answered = await Promise.all(
+      ["/workspace", "/themes", "/mcp", "/arcs", "/memory", "/bots", "/workspaces"].map(
+        async (path) => [path, (await call(path)).status] as const,
+      ),
+    );
+
+    expect(answered.every(([, status]) => status === 200)).toBe(true);
+    await host.close();
+  });
+
+  it("keeps the session verbs of the file host", async () => {
+    const options = {
+      ...(await hostOptions(new MockProvider([textTurn("hi")]))),
+      projectTrusted: true,
+    };
+    const host = await servedHost(options);
+
+    const created = await host.create();
+    expect((await host.list()).map((session) => session.id)).toContain(created.id);
+    expect(await host.context(created.id)).not.toBe("missing");
+    await host.close();
+  });
+});
 
 describe("fileSessionHost", () => {
   it("creates a session, runs a tool-using turn on prompt, streams it, and persists it", async () => {
@@ -155,7 +192,7 @@ describe("fileSessionHost", () => {
     });
     expect(await host.abort(stored.header.id)).toBe("idle");
     expect(await host.abort("nope")).toBe("missing");
-    expect(await host.prompt("nope", "hi", "queue")).toBe("missing");
+    expect(await host.prompt("nope", "hi")).toBe("missing");
     await server.close();
   });
 
@@ -491,7 +528,7 @@ describe("memorySessionHost parity", () => {
 
   it("answers the same host contract as the file host for unknown sessions", async () => {
     const host = memorySessionHost({ log: new EventLog(), provider: new MockProvider([]) });
-    expect(await host.prompt("nope", "hi", "queue")).toBe("missing");
+    expect(await host.prompt("nope", "hi")).toBe("missing");
     expect(await host.abort("nope")).toBe("missing");
     expect(await host.read("nope")).toBeUndefined();
   });
@@ -548,623 +585,997 @@ describe("serve discovery", () => {
   });
 });
 
-describe("the tree over stored sessions", () => {
-  async function branchedStore(options: HostOptions) {
-    const store = await SessionStore.create(
+describe("the memory family over a served vault (K4)", () => {
+  const closeTime = "2026-08-21T12:00:00.000Z";
+  const vaultWalkTimeoutMs = 30_000;
+
+  async function declaredWorkspace(): Promise<string> {
+    const cwd = await tempDir();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "fixture" }));
+    return cwd;
+  }
+
+  async function servedWorld(options: { trusted?: boolean; wedge?: string } = {}) {
+    const cwd = await declaredWorkspace();
+    const trusted = options.trusted ?? true;
+    const memory = openWorkspaceMemory(cwd, trusted);
+    if (memory === undefined) throw new Error("expected workspace memory");
+    const sessionDir = await tempDir();
+    const flushed: string[] = [];
+    const citations = citationTrail(() => memory);
+    const arcs: ArcService = arcService({
+      cwd,
+      trusted,
+      memory: () => memory,
+      boundSessionCounts: () => boundSessionCounts(sessionDir),
+      now: () => new Date(closeTime),
+      citedNotes: (slug) => citations.citedNotes(slug),
+      flushFor: (sessionId) => {
+        if (sessionId === options.wedge) return undefined;
+        return async () => {
+          flushed.push(sessionId);
+          await arcs.layerStoreFor(sessionId)?.appendDaily(`flushed by ${sessionId}`, "agent");
+        };
+      },
+    });
+    const log = new EventLog();
+    const host: SessionHost = {
+      ...fileSessionHost({
+        cwd,
+        sessionDir,
+        projectTrusted: trusted,
+        provider: new MockProvider([]),
+        permissions: () => "allow",
+        userRoot: emptyUserRoot,
+        log,
+      }),
+      memory: servedMemory({ memory: () => memory, arcs }),
+    };
+    const server = createKeyworkServer({ token, host, log, version: "test" });
+    const call = (path: string, init: RequestInit = {}) =>
+      server.fetch(
+        new Request(`http://keywork.test${path}`, {
+          ...init,
+          headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+        }),
+      );
+    const post = async <Shape>(path: string, body?: unknown): Promise<Shape> => {
+      const response = await call(path, {
+        method: "POST",
+        ...(body !== undefined && {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      });
+      return (await response.json()) as Shape;
+    };
+    const get = async <Shape>(path: string): Promise<Shape> =>
+      (await (await call(path)).json()) as Shape;
+    const inboxCounts = (): number[] =>
+      log
+        .since(0)
+        .filter((envelope) => envelope.type === "memory.inbox")
+        .map((envelope) => (envelope.payload as { count: number }).count);
+    return { cwd, memory, arcs, citations, flushed, server, call, post, get, inboxCounts };
+  }
+
+  async function arcAtTheAirlock(world: Awaited<ReturnType<typeof servedWorld>>) {
+    const registry = world.arcs.registry();
+    if (registry === undefined) throw new Error("expected a registry");
+    await world.arcs.port.create("dock-v2");
+    await world.arcs.port.create("next-arc");
+    const layer = registry.arcStore("dock-v2");
+    await layer.writeNote({
+      title: "Dock Ratio Finding",
+      body: "Docks split 50/50 by default.\n",
+      provenance: "agent",
+    });
+    await layer.writeNote({
+      title: "Uncited Hunch",
+      body: "Thirds, maybe.\n",
+      provenance: "agent",
+    });
+    const ledger = world.citations.forSession("s1");
+    ledger.recordRecall("Dock Ratio Finding", "search", arcLayerId("dock-v2"));
+    ledger.recordReply("per [[Dock Ratio Finding]]");
+    const questions = registry.openQuestions("dock-v2");
+    for (const title of ["Tie order", "Theme drift", "Old worry"]) {
+      await questions.add({ title, body: `${title}?`, provenance: "user" });
+    }
+    world.arcs.recordBinding("s1", "dock-v2");
+    world.arcs.recordBinding("s2", "dock-v2");
+    return registry;
+  }
+
+  interface Digest {
+    trusted: boolean;
+    arc: string;
+    candidates: Array<{ note: string; eligible: boolean; shortfalls: string[]; choice?: string }>;
+    questions: Array<{ title: string; choice?: string }>;
+    successor?: string;
+    sweep?: { acked: number; wedged: number };
+    decisions: { candidates: Record<string, string>; questions: Record<string, string> };
+  }
+
+  it("answers the inert shape against an untrusted workspace", async () => {
+    const world = await servedWorld({ trusted: false });
+    expect(await world.get("/memory")).toEqual({
+      trusted: false,
+      layers: [],
+      inbox: [],
+      ledger: [],
+      audit: [],
+      airlocks: [],
+    });
+    const refused = await world.call("/arcs/dock-v2/airlock/deliver", { method: "POST" });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "memory is inert: this workspace is untrusted" });
+    await world.server.close();
+  });
+
+  it(
+    "lists the workspace and active arc layers with their notes and the digests waiting at the airlock",
+    async () => {
+      const world = await servedWorld();
+      await world.memory.store.writeNote({
+        title: "Shared Rule",
+        body: "shared\n",
+        provenance: "user",
+      });
+      await arcAtTheAirlock(world);
+      await world.arcs.port.close("dock-v2");
+
+      const overview = await world.get<{
+        layers: Array<{ id: string; kind: string; arc?: string }>;
+        inbox: Array<{ kind: string }>;
+        airlocks: Array<{ arc: string }>;
+      }>("/memory");
+      expect(overview.layers.map((layer) => layer.id)).toEqual([
+        "workspace",
+        "arc:dock-v2",
+        "arc:next-arc",
+      ]);
+      expect(overview.inbox.map((item) => item.kind).sort()).toEqual([
+        "arc-distillation",
+        "arc-distillation",
+        "arc-question",
+        "arc-question",
+        "arc-question",
+      ]);
+      expect(overview.airlocks.map((digest) => digest.arc)).toEqual(["dock-v2"]);
+
+      const notes = await world.get<{ notes: Array<{ name: string; layer: string }> }>(
+        "/memory/notes?layer=arc:dock-v2",
+      );
+      expect(notes.notes.map((note) => note.name).sort()).toEqual([
+        "Dock Ratio Finding",
+        "Uncited Hunch",
+      ]);
+      const shared = await world.get<{ name: string; layer: string; relations: unknown[] }>(
+        "/memory/notes/Shared%20Rule",
+      );
+      expect(shared).toMatchObject({ name: "Shared Rule", layer: "workspace", relations: [] });
+      await world.server.close();
+    },
+    vaultWalkTimeoutMs,
+  );
+
+  it(
+    "walks the airlock over HTTP: digest, triage, deliver, finish, mirroring the arc service's own cases",
+    async () => {
+      const world = await servedWorld();
+      const registry = await arcAtTheAirlock(world);
+      expect(await world.arcs.port.close("dock-v2")).toEqual({
+        kind: "pending",
+        candidates: 2,
+        questions: 3,
+        wedged: 0,
+      });
+      expect(world.flushed.sort()).toEqual(["s1", "s2"]);
+
+      const digest = await world.get<Digest>("/arcs/dock-v2/airlock");
+      expect(digest.trusted).toBe(true);
+      expect(digest.sweep).toEqual({ acked: 2, wedged: 0 });
+      expect(digest.candidates.map((c) => [c.note, c.eligible, c.shortfalls])).toEqual([
+        ["Dock Ratio Finding", true, []],
+        ["Uncited Hunch", false, ["uncited"]],
+      ]);
+      expect(digest.questions.map((q) => q.title).sort()).toEqual([
+        "Old worry",
+        "Theme drift",
+        "Tie order",
+      ]);
+      expect((await world.call("/arcs/next-arc/airlock")).status).toBe(404);
+
+      const undecided = await world.post<{ kind: string; items: string[] }>(
+        "/arcs/dock-v2/airlock/finish",
+      );
+      expect(undecided.kind).toBe("undecided");
+      expect([...undecided.items].sort()).toEqual([
+        "Dock Ratio Finding",
+        "Old worry",
+        "Theme drift",
+        "Tie order",
+      ]);
+      expect(
+        (await world.get<Digest>("/arcs/dock-v2/airlock")).candidates.map((c) => c.choice),
+      ).toEqual([undefined, "leave"]);
+      const below = await world.call("/arcs/dock-v2/airlock/candidates/Uncited%20Hunch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ choice: "deliver" }),
+      });
+      expect(below.status).toBe(409);
+      expect(await world.post("/arcs/dock-v2/airlock/deliver")).toEqual({ delivered: 1 });
+      await world.post("/arcs/dock-v2/airlock/questions", {
+        title: "Tie order",
+        choice: "resolve",
+      });
+      await world.post("/arcs/dock-v2/airlock/questions", {
+        title: "Theme drift",
+        choice: "carry",
+      });
+      const decided = await world.post<Digest>("/arcs/dock-v2/airlock/questions", {
+        title: "Old worry",
+        choice: "drop",
+      });
+      expect(decided.successor).toBe("next-arc");
+      expect(decided.candidates.map((c) => c.choice)).toEqual(["deliver", "leave"]);
+      expect(decided.decisions).toEqual({
+        candidates: { "Dock Ratio Finding": "deliver", "Uncited Hunch": "leave" },
+        questions: { "Tie order": "resolve", "Theme drift": "carry", "Old worry": "drop" },
+        successor: "next-arc",
+      });
+
+      expect(await world.post("/arcs/dock-v2/airlock/finish")).toEqual({
+        kind: "closed",
+        delivered: 1,
+        released: 2,
+      });
+      const delivered = await world.memory.store.readNote("Dock Ratio Finding");
+      expect(delivered?.delivered).toBe(closeTime);
+      expect(await world.memory.store.readNote("Uncited Hunch")).toBeUndefined();
+      expect((await registry.openQuestions("next-arc").open()).map((q) => q.title)).toEqual([
+        "Theme drift",
+      ]);
+      expect((await world.call("/arcs/dock-v2/airlock")).status).toBe(404);
+      expect(world.inboxCounts().at(-1)).toBe(0);
+      expect(new Set(world.inboxCounts()).size).toBeGreaterThan(1);
+      await world.server.close();
+    },
+    vaultWalkTimeoutMs,
+  );
+
+  it(
+    "refuses to finish past a wedged session until forced",
+    async () => {
+      const world = await servedWorld({ wedge: "s2" });
+      await arcAtTheAirlock(world);
+      expect(await world.arcs.port.close("dock-v2")).toMatchObject({ kind: "pending", wedged: 1 });
+      expect((await world.get<Digest>("/arcs/dock-v2/airlock")).sweep).toEqual({
+        acked: 1,
+        wedged: 1,
+      });
+      await world.post("/arcs/dock-v2/airlock/deliver");
+      for (const title of ["Tie order", "Theme drift", "Old worry"]) {
+        await world.post("/arcs/dock-v2/airlock/questions", { title, choice: "drop" });
+      }
+      expect(await world.post("/arcs/dock-v2/airlock/finish")).toEqual({
+        kind: "wedged",
+        sessions: ["s2"],
+      });
+      expect(await world.post("/arcs/dock-v2/airlock/finish", { force: true })).toEqual({
+        kind: "closed",
+        delivered: 1,
+        released: 2,
+      });
+      expect(world.flushed).toEqual(["s1"]);
+      await world.server.close();
+    },
+    vaultWalkTimeoutMs,
+  );
+
+  it(
+    "carrying a question needs a successor arc and names the newest one",
+    async () => {
+      const orphaned = await servedWorld();
+      await arcAtTheAirlock(orphaned);
+      await orphaned.arcs.port.abandon("next-arc");
+      await orphaned.arcs.port.close("dock-v2");
+      const refused = await orphaned.call("/arcs/dock-v2/airlock/questions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "Tie order", choice: "carry" }),
+      });
+      expect(refused.status).toBe(409);
+      await orphaned.arcs.port.create("later-arc");
+      const carried = await orphaned.post<Digest>("/arcs/dock-v2/airlock/questions", {
+        title: "Tie order",
+        choice: "carry",
+      });
+      expect(carried.successor).toBe("later-arc");
+      await orphaned.server.close();
+    },
+    vaultWalkTimeoutMs,
+  );
+
+  it(
+    "approves a staged note through the served port and fires memory.inbox with the new count",
+    async () => {
+      const world = await servedWorld();
+      await world.memory.store.writeNote({
+        title: "Hunch",
+        body: "maybe\n",
+        provenance: "untrusted",
+      });
+      await world.memory.store.propose([
+        { kind: "forget-proposal", session: "s9", notes: [], entries: [] },
+      ]);
+      const inbox = await world.get<{ items: Array<{ id: string; kind: string }>; count: number }>(
+        "/memory/inbox",
+      );
+      expect(inbox.items.map((item) => item.kind)).toEqual(["note", "forget-proposal"]);
+      const staged = inbox.items.find((item) => item.kind === "note");
+      expect(await world.post(`/memory/inbox/${staged?.id}/approve`)).toMatchObject({
+        path: "Hunch.md",
+        staged: false,
+      });
+      expect(await world.memory.store.readNote("Hunch")).toBeDefined();
+      expect(world.inboxCounts()).toEqual([1]);
+      await world.server.close();
+    },
+    vaultWalkTimeoutMs,
+  );
+});
+
+describe("K0 and K1 under serve: checkpoints, per-session inference, and the verbs over JSONL", () => {
+  const post = (call: ReturnType<typeof serverOver>["call"], path: string, body?: unknown) =>
+    call(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+  const payloadOf = (frame: SseFrame) => JSON.parse(frame.data).payload;
+  const until = async (reader: SseReader, done: (frame: SseFrame) => boolean) => {
+    for (;;) {
+      const frame = await reader.next();
+      if (done(frame)) return frame;
+    }
+  };
+  const settledState = (reader: SseReader, after: (state: { leafId: string | null }) => boolean) =>
+    until(reader, (frame) => frame.event === "session.state" && after(payloadOf(frame)));
+  const writeTurn = (path: string, content: string) =>
+    toolCallTurn({
+      type: "tool-call",
+      callId: `w-${path}`,
+      name: "write",
+      arguments: { path, content },
+    });
+
+  async function checkpointed(provider: MockProvider) {
+    const options = await hostOptions(provider);
+    options.checkpointsGitDir = join(await tempDir(), "shadow");
+    return options;
+  }
+
+  function fakeBinding(provider: string, model: string): InferenceBinding {
+    return {
+      reference: { provider, model },
+      registration: {
+        name: provider,
+        protocol: "chat-completions",
+        endpoint: "https://example.test/v1",
+        credential: { kind: "none" },
+        models: [{ id: model, origin: "declared" }],
+        openCatalog: true,
+        enabled: true,
+      },
+      spec: { id: model, origin: "declared" },
+      protocol: "chat-completions",
+      capabilities: { input: ["text"], toolCalls: true },
+      credential: undefined,
+    };
+  }
+
+  function inferenceOver(providers: Readonly<Record<string, () => Provider>>): SessionInference {
+    return {
+      bind: (reference) => {
+        const parsed = parseReference(reference);
+        if (parsed === undefined || providers[reference] === undefined) {
+          return {
+            ok: false,
+            failure: {
+              code: "unknown-model",
+              message: `no model matches ${reference}`,
+              reference,
+              provider: parsed?.provider,
+              known: Object.keys(providers),
+            },
+          };
+        }
+        return { ok: true, binding: fakeBinding(parsed.provider, parsed.model) };
+      },
+      provider: (binding) =>
+        providers[formatReference(binding.reference)]?.() ?? new MockProvider([]),
+    };
+  }
+
+  it("stores the turn tag on the prompt entry, puts files back on undo, and brings them back on redo", async () => {
+    const options = await checkpointed(
+      new MockProvider([writeTurn("note.txt", "hello"), textTurn("wrote it")]),
+    );
+    const { server, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+    await post(call, `/sessions/${id}/prompt`, { text: "write a note" });
+    const settled = await settledState(reader, (state) => state.leafId !== null);
+    expect(payloadOf(settled)).toMatchObject({ undoable: true, redoable: false });
+    expect(await readFile(join(options.cwd, "note.txt"), "utf8")).toBe("hello");
+    const { stores } = await scanSessions(options.sessionDir ?? "");
+    const prompt = stores[0]
+      ?.entries()
+      .find((entry) => entry.type === "message" && entry.message.role === "user");
+    expect(prompt?.type === "message" ? prompt.checkpoint : undefined).toMatch(/^[0-9a-f]{40,64}$/);
+
+    const undone = await post(call, `/sessions/${id}/undo`);
+    expect(undone.status).toBe(200);
+    expect(await undone.json()).toEqual({
+      prompt: { entryId: prompt?.id, text: "write a note" },
+      filesNote: "files put back",
+      undoable: true,
+      redoable: true,
+    });
+    expect(existsSync(join(options.cwd, "note.txt"))).toBe(false);
+    expect(
+      ((await (await call(`/sessions/${id}`)).json()) as { messages: unknown[] }).messages,
+    ).toEqual([]);
+
+    const redone = await post(call, `/sessions/${id}/redo`);
+    expect(await redone.json()).toEqual({ restored: true, undoable: true, redoable: false });
+    expect(await readFile(join(options.cwd, "note.txt"), "utf8")).toBe("hello");
+    const restored = (await (await call(`/sessions/${id}`)).json()) as { messages: Message[] };
+    expect(restored.messages).toHaveLength(4);
+    await reader.close();
+    await server.close();
+  });
+
+  it("keeps the checkpoint-free behavior under --no-checkpoints", async () => {
+    const options = await hostOptions(
+      new MockProvider([writeTurn("kept.txt", "stays"), textTurn("wrote it")]),
+    );
+    options.checkpoints = "off";
+    const { server, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+    await post(call, `/sessions/${id}/prompt`, { text: "write" });
+    await settledState(reader, (state) => state.leafId !== null);
+    const { stores } = await scanSessions(options.sessionDir ?? "");
+    const prompt = stores[0]?.entries().find((entry) => entry.type === "message");
+    expect(prompt?.type === "message" ? prompt.checkpoint : "set").toBeUndefined();
+    expect(await (await post(call, `/sessions/${id}/undo`)).json()).toMatchObject({
+      prompt: { text: "write" },
+      filesNote: "files untouched",
+    });
+    expect(await readFile(join(options.cwd, "kept.txt"), "utf8")).toBe("stays");
+    await reader.close();
+    await server.close();
+  });
+
+  it("answers a stored session's model, thinking and effort from its JSONL and binds the model through the registry", async () => {
+    const options = await hostOptions(new MockProvider([textTurn("from the process model")], "m0"));
+    options.inference = inferenceOver({
+      "mock/m-stored": () => new MockProvider([textTurn("from the stored model")], "m-stored"),
+      "mock/other": () => new MockProvider([], "other"),
+    });
+    const stored = await SessionStore.create(
       join(options.sessionDir ?? "", "1-0001-1.jsonl"),
       options.cwd,
     );
-    const question = await store.append({
-      role: "user",
-      parts: [{ type: "text", text: "which way?" }],
-    });
-    const answer = await store.append({
-      role: "assistant",
-      parts: [{ type: "text", text: "left" }],
-    });
-    store.branch(question.id);
-    const retry = await store.append({
-      role: "user",
-      parts: [{ type: "text", text: "try right" }],
-    });
-    await store.setLabel(answer.id, "went left");
-    await store.appendCompaction({
-      summary: "folded",
-      firstKeptEntryId: retry.id,
-      tokensBefore: 9,
-    });
-    await store.appendArcBinding("maps");
-    await store.setName("directions");
-    return { store, question, answer, retry };
-  }
-
-  it("round-trips a fork, a label, a compaction and a binding from the JSONL", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const { store, question, answer, retry } = await branchedStore(options);
+    await stored.append({ role: "user", parts: [{ type: "text", text: "earlier" }] });
+    await stored.appendModelChange("mock", "m-stored");
+    await stored.appendThinkingLevelChange("on");
+    await stored.appendEffortChange("high");
     const { server, call } = serverOver(options);
-    const tree = (await (
-      await call(`/sessions/${store.header.id}/entries`)
-    ).json()) as SessionEntries;
-    expect(tree.sessionId).toBe(store.header.id);
-    expect(tree.name).toBe("directions");
-    expect(tree.entries.map((entry) => entry.type)).toEqual([
-      "message",
-      "message",
-      "message",
-      "label",
-      "compaction",
-      "binding",
-      "session_info",
+    const id = stored.header.id;
+    const summary = { model: "mock/m-stored", thinking: true, effort: "high" };
+    expect(await (await call(`/sessions/${id}`)).json()).toMatchObject({ live: false, ...summary });
+    const listed = (await (await call("/sessions")).json()) as { sessions: unknown[] };
+    expect(listed.sessions[0]).toMatchObject(summary);
+
+    const reader = sseReader(await call("/events"));
+    await post(call, `/sessions/${id}/prompt`, { text: "again" });
+    const completed = await until(reader, (frame) => frame.event === "turn.completed");
+    expect(payloadOf(completed).message.parts).toEqual([
+      { type: "text", text: "from the stored model" },
     ]);
-    expect(tree.entries.map((entry) => entry.parentId).slice(0, 3)).toEqual([
-      null,
-      question.id,
-      question.id,
-    ]);
-    expect(tree.labels).toEqual({ [answer.id]: "went left" });
-    expect(tree.activePath.slice(0, 2)).toEqual([question.id, retry.id]);
-    expect(tree.activePath).not.toContain(answer.id);
-    expect(tree.leafId).toBe(tree.entries.at(-1)?.id);
+    await settledState(reader, () => true);
+    expect(await (await call(`/sessions/${id}`)).json()).toMatchObject({ live: true, ...summary });
+
+    const switched = await post(call, `/sessions/${id}/model`, { reference: "mock/other" });
+    expect(await switched.json()).toEqual({
+      model: { provider: "mock", model: "other" },
+      notice: "model → mock/other",
+    });
+    const unknown = await post(call, `/sessions/${id}/model`, { reference: "mock/none" });
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toMatchObject({ code: "unknown-model" });
+    expect(await (await post(call, `/sessions/${id}/effort`, { level: null })).json()).toEqual({
+      effort: null,
+    });
+    await reader.close();
     await server.close();
-  });
-
-  it("forks at an entry into a session on disk that names its parent, and labels and moves the leaf", async () => {
-    const options = await hostOptions(new MockProvider([textTurn("right it is")]));
-    const { store, question, answer } = await branchedStore(options);
-    const { server, call } = serverOver(options);
-    const post = (path: string, body: unknown) =>
-      call(path, { method: "POST", body: JSON.stringify(body) });
-    const forked = await post(`/sessions/${store.header.id}/fork`, { entryId: answer.id });
-    expect(forked.status).toBe(201);
-    const summary = (await forked.json()) as { id: string; title: string; messageCount: number };
-    expect(summary).toMatchObject({ title: "which way?", messageCount: 2 });
-    const listed = (await (await call("/sessions")).json()) as { sessions: Array<{ id: string }> };
-    expect(listed.sessions.map((session) => session.id)).toContain(summary.id);
-    const read = (await (await call(`/sessions/${summary.id}`)).json()) as { messages: Message[] };
-    expect(read.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const reopened = await SessionStore.open(stored.file);
+    expect(reopened.modelSelection()).toMatchObject({ provider: "mock", modelId: "other" });
+    expect(reopened.effort()).toBe("default");
     const { stores } = await scanSessions(options.sessionDir ?? "");
-    expect(
-      stores.find((candidate) => candidate.header.id === summary.id)?.header.parentSession,
-    ).toBe(store.file);
-
-    const labelled = await post(`/sessions/${store.header.id}/label`, {
-      entryId: question.id,
-      label: "the fork",
-    });
-    expect(await labelled.json()).toEqual({ entryId: question.id, label: "the fork" });
-    const moved = await post(`/sessions/${store.header.id}/leaf`, { entryId: answer.id });
-    expect(await moved.json()).toEqual({ leafId: answer.id });
-    const afterMove = (await (await call(`/sessions/${store.header.id}`)).json()) as {
-      messages: Message[];
-    };
-    expect(afterMove.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-
-    const reasons = options.log
-      .since(0)
-      .filter((envelope: BusEnvelope) => envelope.type === "session.tree")
-      .map((envelope: BusEnvelope) => (envelope.payload as { reason: string }).reason);
-    expect(reasons).toEqual(["fork", "label", "leaf"]);
-    const states = options.log
-      .since(0)
-      .filter((envelope: BusEnvelope) => envelope.type === "session.state")
-      .map((envelope: BusEnvelope) => envelope.payload);
-    expect(states).toEqual([expect.objectContaining({ leafId: answer.id })]);
-    await server.close();
-  });
-});
-
-describe("workspace, files and trust over the file host", () => {
-  const bodyOf = async (response: Response) => (await response.json()) as Record<string, unknown>;
-
-  async function workspaceOnDisk(): Promise<HostOptions & { log: EventLog }> {
-    const options = await hostOptions(new MockProvider([]));
-    const { cwd } = options;
-    await mkdir(join(cwd, "src", "deep"), { recursive: true });
-    await mkdir(join(cwd, "dist"), { recursive: true });
-    await writeFile(join(cwd, ".gitignore"), "dist/\n*.log\n");
-    await writeFile(join(cwd, "src", "a.ts"), "alpha beta\n");
-    await writeFile(join(cwd, "src", "deep", "b.ts"), "beta");
-    await writeFile(join(cwd, "src", "deep", ".gitignore"), "b.ts\n");
-    await writeFile(join(cwd, "dist", "out.js"), "built");
-    await writeFile(join(cwd, "trace.log"), "noise");
-    await writeFile(join(cwd, "bin.dat"), Buffer.from([0x61, 0x00, 0x62]));
-    await writeFile(join(cwd, "big"), "x".repeat(maxFileSliceBytes + 5));
-    return options;
-  }
-
-  it("describes a launch-anchored workspace as /doc does, then lists a level with gitignore and hidden flags", async () => {
-    const options = await workspaceOnDisk();
-    const { server, call } = serverOver(options);
-    const workspace = await bodyOf(await call("/workspace"));
-    expect(workspace).toMatchObject({
-      anchor: { root: workspaceInfoOf(options.cwd).anchor, source: "launch" },
-      identity: workspaceInfoOf(options.cwd).identity,
-      declared: false,
-      contextDirs: [],
-      focusDirs: [],
-      trust: "undecided",
-      readiness: "undecided",
-    });
-    expect(await bodyOf(await call("/tree"))).toEqual({
-      path: "",
-      entries: [
-        { name: "dist", kind: "dir", ignored: true, hidden: false },
-        { name: "src", kind: "dir", ignored: false, hidden: false },
-        { name: ".gitignore", kind: "file", ignored: false, hidden: true },
-        { name: "big", kind: "file", ignored: false, hidden: false },
-        { name: "bin.dat", kind: "file", ignored: false, hidden: false },
-        { name: "trace.log", kind: "file", ignored: true, hidden: false },
-      ],
-    });
-    expect(await bodyOf(await call("/tree?path=dist"))).toEqual({
-      path: "dist",
-      entries: [{ name: "out.js", kind: "file", ignored: true, hidden: false }],
-    });
-    expect(await bodyOf(await call("/tree?path=src/deep"))).toEqual({
-      path: "src/deep",
-      entries: [
-        { name: ".gitignore", kind: "file", ignored: false, hidden: true },
-        { name: "b.ts", kind: "file", ignored: true, hidden: false },
-      ],
-    });
-    expect((await call("/tree?path=nope")).status).toBe(404);
-    expect((await call("/tree?path=src/a.ts")).status).toBe(404);
-    await server.close();
+    expect(stores).toHaveLength(1);
   });
 
-  it("applies the tool jail to /tree and /files: dot-dot, absolute paths outside, and junctions out", async () => {
-    const options = await workspaceOnDisk();
-    const outside = await tempDir();
-    await writeFile(join(outside, "secret.txt"), "shh");
-    const { server, call } = serverOver(options);
-    const escapes = ["..", "../x", "src/../..", outside, join(outside, "secret.txt")];
-    for (const path of escapes) {
-      const tree = await call(`/tree?path=${encodeURIComponent(path)}`);
-      expect(tree.status, path).toBe(403);
-      expect((await bodyOf(tree)).error).toContain("escapes the project root");
-      expect((await call(`/files?path=${encodeURIComponent(path)}`)).status, path).toBe(403);
-    }
-    const junction = join(options.cwd, "link");
-    const linked = await symlink(outside, junction, "junction").then(
-      () => true,
-      () => false,
+  it("falls back to the process provider with a notice when the stored model does not resolve", async () => {
+    const options = await hostOptions(new MockProvider([textTurn("fallback answer")], "m0"));
+    options.inference = inferenceOver({});
+    const notices: string[] = [];
+    options.notice = (text) => notices.push(text);
+    const stored = await SessionStore.create(
+      join(options.sessionDir ?? "", "1-0001-1.jsonl"),
+      options.cwd,
     );
-    if (linked) {
-      expect((await call("/tree?path=link")).status).toBe(403);
-      expect((await call("/files?path=link/secret.txt")).status).toBe(403);
-    }
-    await server.close();
-  });
-
-  it("reads byte ranges from disk, caps a request at 1 MiB, and refuses NUL content and oversize files", async () => {
-    const options = await workspaceOnDisk();
-    const { server, call } = serverOver(options);
-    expect(await bodyOf(await call("/files?path=src/a.ts&from=6&to=10"))).toEqual({
-      path: "src/a.ts",
-      bytes: 11,
-      from: 6,
-      to: 10,
-      text: "beta",
-      truncated: false,
-      eof: false,
-      encoding: "utf-8",
-    });
-    expect(await bodyOf(await call("/files?path=src/a.ts&from=6"))).toMatchObject({
-      text: "beta\n",
-      eof: true,
-    });
-    expect(await bodyOf(await call("/files?path=big"))).toMatchObject({
-      to: maxFileSliceBytes,
-      truncated: true,
-      eof: false,
-    });
-    expect((await call("/files?path=bin.dat")).status).toBe(415);
-    expect((await call("/files?path=src")).status).toBe(404);
-    expect((await call("/files?path=nope.ts")).status).toBe(404);
-    await server.close();
-  });
-
-  it("records trust through the store, answers reopens: true once, and fires surface.changed", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    options.userRoot = await tempDir();
+    await stored.appendModelChange("gone", "model");
     const { server, call } = serverOver(options);
     const reader = sseReader(await call("/events"));
-    const granted = await call("/workspace/trust", { method: "POST", body: "{}" });
-    expect(granted.status).toBe(200);
-    expect(await bodyOf(granted)).toEqual({
-      trusted: true,
-      root: workspaceInfoOf(options.cwd).anchor,
-      reopens: true,
+    await post(call, `/sessions/${stored.header.id}/prompt`, { text: "hi" });
+    const completed = await until(reader, (frame) => frame.event === "turn.completed");
+    expect(payloadOf(completed).message.parts[0].text).toBe("fallback answer");
+    expect(notices[0]).toMatch(/asked for gone\/model .* using the server's model$/);
+    expect(await (await call(`/sessions/${stored.header.id}`)).json()).toMatchObject({
+      model: "mock/m0",
     });
-    const frame = await reader.next();
-    expect(frame.event).toBe("surface.changed");
-    expect(JSON.parse(frame.data)).toMatchObject({ sessionId: "", payload: { kind: "workspace" } });
     await reader.close();
-
-    const store = new TrustStore({ home: options.userRoot });
-    expect(store.file).toBe(join(options.userRoot, ".keywork", "trust.json"));
-    expect(store.resolve(options.cwd)).toBe("trusted");
-    expect(JSON.parse(await readFile(store.file, "utf8"))).toEqual({
-      [canonicalPath(options.cwd)]: true,
-    });
-    expect(await bodyOf(await call("/workspace"))).toMatchObject({
-      trust: "trusted",
-      readiness: "undeclared",
-    });
-    expect(await bodyOf(await call("/workspace/trust", { method: "POST" }))).toMatchObject({
-      reopens: false,
-    });
     await server.close();
   });
 
-  it("refuses a body path, a home directory, and a root already marked untrusted", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    options.userRoot = await tempDir();
-    const store = new TrustStore({ home: options.userRoot });
-    const { server, call } = serverOver({ ...options, trustStore: store });
-    const pathed = await call("/workspace/trust", {
-      method: "POST",
-      body: JSON.stringify({ path: options.userRoot }),
-    });
-    expect(pathed.status).toBe(400);
-    expect(store.resolve(options.cwd)).toBe("undecided");
-
-    store.untrust(options.cwd);
-    const refused = await call("/workspace/trust", { method: "POST", body: "{}" });
-    expect(refused.status).toBe(409);
-    expect((await bodyOf(refused)).error).toContain("keywork trust reverses that");
-    await server.close();
-
-    const home = serverOver({ ...options, cwd: options.userRoot, trustStore: store });
-    const blanket = await home.call("/workspace/trust", { method: "POST", body: "{}" });
-    expect(blanket.status).toBe(400);
-    expect((await bodyOf(blanket)).error).toContain("refusing to record a trust decision");
-    await home.server.close();
-  });
-
-  it("lists the whole gallery complete, names the configured theme, and leaves system to the client", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const { server, call } = serverOver({ ...options, theme: "system" });
-    const themes = (await bodyOf(await call("/themes"))) as {
-      themes: CompleteTheme[];
-      active: string;
-      placeholders: string[];
-    };
-    expect(themes.themes.map((theme) => theme.name)).toEqual(gallery.map((theme) => theme.name));
-    for (const theme of themes.themes) {
-      expect(contrastFailures(theme), theme.name).toEqual([]);
-      expect(Object.keys(theme.terminal)).toHaveLength(16);
-      expect(theme.syntax.keyword).toMatch(/^#[0-9a-f]{6}$/i);
-      expect(theme.diff.insertedLine).toMatch(/^#[0-9a-f]{6}$/i);
-      expect(theme.selection.background).toMatch(/^#[0-9a-f]{6}$/i);
-      expect(theme.cursor).toMatch(/^#[0-9a-f]{6}$/i);
-    }
-    const night = themes.themes.find((theme) => theme.name === "keywork-night");
-    expect(night?.pair).toBe("keywork-day");
-    expect(themes.active).toBe("system");
-    expect(themes.placeholders).toEqual(["system"]);
-    await server.close();
-  });
-});
-
-describe("changes under the file host", () => {
-  const writeTurn = (path: string, content: string, reply: string) =>
-    new MockProvider([
-      toolCallTurn({
-        type: "tool-call",
-        callId: `w-${path}`,
-        name: "write",
-        arguments: { path, content },
-      }),
-      textTurn(reply),
-    ]);
-
-  it("announces changes.updated after a write and lists the file with turn provenance", async () => {
-    const options = await hostOptions(writeTurn("notes.txt", "hello\n", "wrote it"));
-    options.projectTrusted = true;
-    await writeFile(join(options.cwd, "kept.txt"), "old\n", "utf8");
+  it("compacts a real store with a focus and continues over the summary", async () => {
+    const options = await hostOptions(
+      new MockProvider([
+        textTurn("one"),
+        textTurn("two"),
+        textTurn("## Goal\nthe focused summary"),
+      ]),
+    );
     const { server, call } = serverOver(options);
     const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
     const reader = sseReader(await call("/events"));
-    await call(`/sessions/${id}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: "write" }),
-    });
-    for (;;) {
-      const frame = await reader.next();
-      if (frame.event !== "changes.updated") continue;
-      expect(JSON.parse(frame.data).payload).toEqual({ sessionId: id, paths: ["notes.txt"] });
-      break;
+    for (const text of ["first", "second"]) {
+      await post(call, `/sessions/${id}/prompt`, { text });
+      await until(reader, (frame) => frame.event === "turn.completed");
+      await settledState(reader, () => true);
     }
+    const compacted = await post(call, `/sessions/${id}/compact`, { focus: "the goal" });
+    expect(compacted.status).toBe(200);
+    const report = (await compacted.json()) as {
+      compacted: { type: string; summary: string } | null;
+      notices: string[];
+    };
+    expect(report.compacted).toMatchObject({ type: "compaction" });
+    expect(report.compacted?.summary).toContain("the focused summary");
+    expect(report.notices[0]).toMatch(/^compacted /);
+    expect(payloadOf(await settledState(reader, () => true))).toMatchObject({ undoable: true });
+    const detail = (await (await call(`/sessions/${id}`)).json()) as { messages: Message[] };
+    expect(detail.messages).toHaveLength(4);
+    expect(JSON.stringify(detail.messages[0])).toContain("the focused summary");
     await reader.close();
-
-    const listed = await call(`/sessions/${id}/changes`);
-    expect(await listed.json()).toEqual({
-      trusted: true,
-      baseline: "session start",
-      files: [{ path: "notes.txt", added: 1, deleted: 0, turn: 1 }],
-    });
-    const file = await call(`/sessions/${id}/changes/file?path=notes.txt`);
-    expect(await file.json()).toEqual({
-      trusted: true,
-      path: "notes.txt",
-      before: null,
-      after: "hello\n",
-      note: "new",
-      truncated: false,
-    });
-    const untouched = await call(`/sessions/${id}/changes/file?path=kept.txt`);
-    expect(await untouched.json()).toMatchObject({ before: "old\n", after: "old\n" });
-    expect((await call(`/sessions/${id}/changes/file?path=../escape`)).status).toBe(400);
     await server.close();
   });
 
-  it("answers trusted: false with no files for an untrusted workspace", async () => {
+  it("exports to a file inside the workspace and refuses one outside it", async () => {
+    const options = await hostOptions(new MockProvider([textTurn("exported")]));
+    const { server, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+    await post(call, `/sessions/${id}/prompt`, { text: "hello" });
+    await settledState(reader, (state) => state.leafId !== null);
+    await reader.close();
+    const page = await post(call, `/sessions/${id}/export`, { scope: "tree" });
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("hello");
+    const written = await post(call, `/sessions/${id}/export`, { out: "transcript.html" });
+    expect(written.status).toBe(201);
+    const { file } = (await written.json()) as { file: string };
+    expect(file).toBe(join(options.cwd, "transcript.html"));
+    expect(await readFile(file, "utf8")).toContain("exported");
+    const escaped = await post(call, `/sessions/${id}/export`, { out: "../escape.html" });
+    expect(escaped.status).toBe(403);
+    await server.close();
+  });
+
+  it("pins a title set over the wire so the auto-titler leaves it alone", async () => {
     const options = await hostOptions(new MockProvider([]));
     const { server, call } = serverOver(options);
     const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    expect(await (await call(`/sessions/${id}/changes`)).json()).toEqual({
-      trusted: false,
-      files: [],
+    expect(await (await post(call, `/sessions/${id}/rename`, { title: "Pinned" })).json()).toEqual({
+      title: "Pinned",
     });
-    expect((await call("/sessions/nope/changes")).status).toBe(404);
+    const attachment = await sessionPort(options.sessionDir ?? "", options.cwd).open(id);
+    await attachment?.rename?.("suggested by the titler");
+    const { stores } = await scanSessions(options.sessionDir ?? "");
+    expect(stores[0]?.name()).toBe("Pinned");
+    expect(stores[0]?.titlePinned()).toBe(true);
+    const listed = (await (await call("/sessions")).json()) as {
+      sessions: Array<{ title: string }>;
+    };
+    expect(listed.sessions[0]?.title).toBe("Pinned");
     await server.close();
   });
-});
 
-describe("status surfaces over the file host", () => {
-  const bodyOf = async (response: Response) => (await response.json()) as Record<string, unknown>;
-  const post = (call: ReturnType<typeof serverOver>["call"], path: string, body?: unknown) =>
-    call(path, { method: "POST", ...(body !== undefined && { body: JSON.stringify(body) }) });
-
-  async function trustedWorkspace(provider: MockProvider | Provider) {
-    const options = await hostOptions(provider as MockProvider);
-    options.userRoot = await tempDir();
-    options.projectTrusted = true;
-    await mkdir(join(options.cwd, ".keywork"), { recursive: true });
-    await writeFile(
-      join(options.cwd, ".keywork", "workspace.json"),
-      JSON.stringify({ name: "k3" }),
-    );
-    new TrustStore({ home: options.userRoot }).trust(options.cwd);
-    return options;
-  }
-
-  async function untilConnected(call: ReturnType<typeof serverOver>["call"]) {
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      const { servers } = (await bodyOf(await call("/mcp"))) as {
-        servers: Array<{ name: string; state: string; toolCount: number }>;
-      };
-      if (servers[0]?.state === "connected") return servers[0];
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error("the fixture server never connected");
-  }
-
-  it("runs the MCP fixture through status, toggle, restart and tools, with surface.changed on the stream", async () => {
+  it("switches the process preset and every live session journals gate.preset", async () => {
     const options = await hostOptions(new MockProvider([]));
-    options.mcpServers = {
-      fixture: {
-        transport: "stdio",
-        command: process.execPath,
-        args: [fixtureServerPath, "basic"],
+    let active: ActivePreset = "standard";
+    options.presets = {
+      active: () => active,
+      apply: async (name) => {
+        active = name;
       },
     };
     const { server, call } = serverOver(options);
-    const reader = sseReader(await call("/events"));
-    const connected = await untilConnected(call);
-    expect(connected.name).toBe("fixture");
-    expect(connected.toolCount).toBeGreaterThan(0);
-    const toolsUp = (await bodyOf(await call("/mcp/fixture/tools"))) as { tools: string[] };
-    expect(toolsUp.tools.length).toBe(connected.toolCount);
-
-    const disabled = await post(call, "/mcp/fixture/enabled", { enabled: false });
-    expect(await bodyOf(disabled)).toMatchObject({
-      name: "fixture",
-      enabled: false,
-      state: "down",
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call(`/events?session=${id}`));
+    expect((await post(call, "/preset", { name: "open" })).status).toBe(409);
+    expect(await (await post(call, "/preset", { name: "open", confirmed: true })).json()).toEqual({
+      from: "standard",
+      to: "open",
     });
-    expect(await bodyOf(await call("/mcp/fixture/tools"))).toEqual({ tools: [] });
-    const restarted = await post(call, "/mcp/fixture/restart");
-    expect(await bodyOf(restarted)).toMatchObject({ enabled: true, state: "connected" });
-    const frames: string[] = [];
-    while (!frames.includes("mcp")) {
-      const frame = await reader.next();
-      if (frame.event === "surface.changed") frames.push(JSON.parse(frame.data).payload.kind);
-      expect(JSON.parse(frame.data).sessionId).toBe("");
-    }
-    await reader.close();
-    expect((await post(call, "/mcp/nope/restart")).status).toBe(404);
-    expect((await post(call, "/mcp/fixture/enabled", {})).status).toBe(400);
-    await server.close();
-  }, 20_000);
-
-  it("answers 404 for every MCP verb when no server is configured", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const { server, call } = serverOver(options);
-    expect(await bodyOf(await call("/mcp"))).toEqual({ servers: [] });
-    expect((await post(call, "/mcp/fixture/restart")).status).toBe(404);
-    expect((await call("/mcp/fixture/tools")).status).toBe(404);
-    await server.close();
-  });
-
-  it("refuses arcs with the readiness notice in an untrusted workspace", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const { server, call } = serverOver(options);
-    const listed = await call("/arcs");
-    expect(listed.status).toBe(403);
-    expect((await bodyOf(listed)).error).toContain("isn't trusted yet");
-    expect((await post(call, "/arcs", { slug: "dock-v2" })).status).toBe(403);
-    await server.close();
-  });
-
-  it("walks new, bind, close and abandon on real arcs, persisting the binding in the session file", async () => {
-    const options = await trustedWorkspace(new MockProvider([]));
-    const { server, call } = serverOver(options);
-    const reader = sseReader(await call("/events"));
-    expect(await bodyOf(await call("/arcs"))).toEqual({ arcs: [], ordinals: {} });
-    const created = await post(call, "/arcs", { slug: "dock-v2" });
-    expect(created.status).toBe(201);
-    expect(await bodyOf(created)).toMatchObject({ slug: "dock-v2", status: "active", sessions: 0 });
-    expect(JSON.parse((await reader.next()).data)).toMatchObject({
-      sessionId: "",
-      type: "surface.changed",
-      payload: { kind: "arcs" },
-    });
-    expect(await bodyOf(await post(call, "/arcs", {}))).toMatchObject({ slug: "arc-2" });
-    expect((await post(call, "/arcs", { slug: "dock-v2" })).status).toBe(409);
-    expect((await post(call, "/arcs", { slug: "Bad Slug" })).status).toBe(400);
-
-    const { id } = (await bodyOf(await post(call, "/sessions"))) as { id: string };
-    expect(await bodyOf(await post(call, `/sessions/${id}/arc`, { slug: "dock-v2" }))).toEqual({
+    const heard = await reader.next();
+    expect(heard.event).toBe("gate.preset");
+    expect(JSON.parse(heard.data)).toMatchObject({
       sessionId: id,
-      arc: "dock-v2",
+      payload: { from: "standard", to: "open" },
     });
-    expect(await bodyOf(await call(`/sessions/${id}`))).toMatchObject({ arc: "dock-v2" });
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    expect(stores[0]?.arcBinding()).toBe("dock-v2");
-    const listed = (await bodyOf(await call("/arcs"))) as {
-      arcs: Array<{ slug: string; sessions: number }>;
-      ordinals: Record<string, number>;
-    };
-    expect(listed.arcs.find((arc) => arc.slug === "dock-v2")?.sessions).toBe(1);
-    expect(listed.ordinals).toEqual({ "dock-v2": 0, "arc-2": 1 });
-    expect((await post(call, `/sessions/${id}/arc`, { slug: "nope" })).status).toBe(404);
-
-    const closed = await post(call, "/arcs/dock-v2/close", { direction: "wrap up" });
-    expect(closed.status).toBe(200);
-    expect(await bodyOf(closed)).toMatchObject({ kind: "closed", released: 1 });
-    expect((await bodyOf(await call(`/sessions/${id}`))).arc).toBeUndefined();
-    expect((await post(call, "/arcs/dock-v2/close")).status).toBe(409);
-    expect((await post(call, "/arcs/nope/close")).status).toBe(404);
-    expect(await bodyOf(await post(call, "/arcs/arc-2/abandon"))).toEqual({
-      slug: "arc-2",
-      abandoned: true,
-    });
-    const after = (await bodyOf(await call("/arcs"))) as { arcs: Array<{ status: string }> };
-    expect(after.arcs.map((arc) => arc.status)).toEqual(["archived", "archived"]);
     await reader.close();
-    await server.close();
-  });
-
-  it("defines a bot, switches a session onto it between turns, refuses mid-turn, and releases it", async () => {
-    const options = await trustedWorkspace(hangingProvider());
-    const { server, call } = serverOver(options);
-    expect(await bodyOf(await call("/bots"))).toEqual({ bots: [] });
-    const created = await post(call, "/bots", { slug: "scribe", scope: "user", purpose: "writes" });
-    expect(created.status).toBe(201);
-    expect(await bodyOf(created)).toMatchObject({
-      name: "scribe",
-      source: "user",
-      description: "writes",
-      learning: "notes",
-    });
-    expect((await post(call, "/bots", { slug: "scribe", scope: "project" })).status).toBe(409);
-    expect((await post(call, "/bots", { slug: "Bad Slug", scope: "user" })).status).toBe(400);
-
-    const { id } = (await bodyOf(await post(call, "/sessions"))) as { id: string };
-    expect((await post(call, `/sessions/${id}/bot`, { slug: "nope" })).status).toBe(404);
-    expect(await bodyOf(await post(call, `/sessions/${id}/bot`, { slug: "scribe" }))).toEqual({
-      sessionId: id,
-      bot: "scribe",
-    });
-    expect(await bodyOf(await call(`/sessions/${id}`))).toMatchObject({ bot: "scribe" });
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    expect(stores[0]?.botBinding()).toBe("scribe");
-    const bots = (await bodyOf(await call("/bots"))) as { bots: Array<{ sessions: number }> };
-    expect(bots.bots[0]?.sessions).toBe(1);
-
-    const reader = sseReader(await call("/events"));
-    await post(call, `/sessions/${id}/prompt`, { text: "wait" });
-    while ((await reader.next()).event !== "turn.started");
-    const busy = await post(call, `/sessions/${id}/bot`, { slug: null });
-    expect(busy.status).toBe(409);
-    await post(call, `/sessions/${id}/abort`);
-    while ((await reader.next()).event !== "turn.interrupted");
-    await reader.close();
-    expect(await bodyOf(await post(call, `/sessions/${id}/bot`, { slug: null }))).toEqual({
-      sessionId: id,
-      bot: null,
-    });
-    await server.close();
-  });
-
-  it("refuses a project bot without trust", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const { server, call } = serverOver(options);
-    const refused = await post(call, "/bots", { slug: "scribe", scope: "project" });
-    expect(refused.status).toBe(403);
-    expect((await bodyOf(refused)).error).toContain("project bots need a trusted workspace");
-    await server.close();
-  });
-
-  it("lists, creates, uses, focuses and unfocuses named workspaces on disk", async () => {
-    const options = await trustedWorkspace(new MockProvider([]));
-    await mkdir(join(options.cwd, "packages", "api"), { recursive: true });
-    const { server, call } = serverOver(options);
-    const listed = (await bodyOf(await call("/workspaces"))) as { workspaces: unknown[] };
-    expect(listed.workspaces).toEqual([
-      expect.objectContaining({ name: "k3", declared: true, current: true, focusDirs: [] }),
-    ]);
-    const created = await post(call, "/workspaces", { slug: "api-v2" });
-    expect(created.status).toBe(201);
-    expect((await post(call, "/workspaces", { slug: "api-v2" })).status).toBe(409);
-    expect((await post(call, "/workspaces", { slug: "Bad Slug" })).status).toBe(400);
-    const after = (await bodyOf(await call("/workspaces"))) as {
-      workspaces: Array<{ slug?: string; name: string }>;
-    };
-    expect(after.workspaces.map((choice) => choice.slug)).toEqual([undefined, "api-v2"]);
-    expect(after.workspaces[1]?.name).toBe("api v2");
-
-    expect(await bodyOf(await post(call, "/workspaces/use", { slug: "api-v2" }))).toEqual({
-      slug: "api-v2",
-      reopens: true,
-    });
-    const recall = fileWorkspaceRecall(workspaceRecallFile(keyworkHome(options.userRoot)));
-    expect(recall.recall(options.cwd)).toBe("api-v2");
-    expect(await bodyOf(await post(call, "/workspaces/use", { slug: null }))).toEqual({
-      slug: null,
-      reopens: true,
-    });
-    expect(recall.recall(options.cwd)).toBeUndefined();
-    expect((await post(call, "/workspaces/use", { slug: "nope" })).status).toBe(404);
-
-    const focused = await post(call, "/workspaces/api-v2/focus", { dir: "packages/api" });
-    expect(await bodyOf(focused)).toEqual({ dir: "packages/api" });
-    expect((await post(call, "/workspaces/api-v2/focus", { dir: "packages/api" })).status).toBe(
-      400,
-    );
-    expect((await post(call, "/workspaces/api-v2/focus", { dir: "../elsewhere" })).status).toBe(
-      400,
-    );
-    expect((await post(call, "/workspaces/nope/focus", { dir: "packages/api" })).status).toBe(404);
-    const focusedList = (await bodyOf(await call("/workspaces"))) as {
-      workspaces: Array<{ slug?: string; focusDirs: string[] }>;
-    };
-    expect(focusedList.workspaces[1]?.focusDirs).toEqual(["packages/api"]);
-    expect(
-      await bodyOf(await post(call, "/workspaces/default/focus", { dir: "packages/api" })),
-    ).toEqual({
-      dir: "packages/api",
-    });
-    expect(
-      await bodyOf(await post(call, "/workspaces/api-v2/unfocus", { dir: "packages/api" })),
-    ).toEqual({
-      dir: "packages/api",
-    });
-    expect((await post(call, "/workspaces/api-v2/unfocus", { dir: "packages/api" })).status).toBe(
-      400,
-    );
-    expect(
-      options.log.since(0).filter((envelope) => envelope.type === "surface.changed"),
-    ).not.toHaveLength(0);
     await server.close();
   });
 });
 
-function hangingProvider(): Provider {
+describe("the surface ports over a served workspace (K3)", () => {
+  const fixtureServerPath = fileURLToPath(
+    new URL("../../engine/src/testing/mcp-fixture-server.ts", import.meta.url),
+  );
+  interface SurfacedOptions {
+    cwd?: string;
+    userRoot?: string;
+    projectTrusted?: boolean;
+    mcp?: boolean;
+    theme?: string;
+  }
+  async function surfacedServer(overrides: SurfacedOptions = {}) {
+    const options = await hostOptions(new MockProvider([]));
+    const cwd = overrides.cwd ?? options.cwd;
+    const userRoot = overrides.userRoot ?? (await tempDir());
+    const projectTrusted = overrides.projectTrusted === true;
+    const sessionDir = options.sessionDir ?? "";
+    const composition = await composeWorkspace({
+      cwd,
+      projectTrusted,
+      userRoot,
+      checkpoints: "off",
+      ...(overrides.mcp === true && {
+        mcpServers: {
+          fixture: {
+            transport: "stdio" as const,
+            command: process.execPath,
+            args: [fixtureServerPath, "basic"],
+          },
+        },
+      }),
+    });
+    const host: SessionHost = {
+      ...fileSessionHost({ ...options, cwd, userRoot, projectTrusted }),
+      ...surfacePorts({
+        cwd,
+        projectTrusted,
+        userRoot,
+        sessionDir,
+        theme: overrides.theme,
+        composition: () => Promise.resolve(composition),
+        session: async (id) => {
+          const store = await findSession(sessionDir, id);
+          return store === undefined ? undefined : { store, busy: () => false };
+        },
+      }),
+    };
+    const server = createKeyworkServer({ token, host, log: options.log, version: "test" });
+    const call = (path: string, init: RequestInit = {}) =>
+      server.fetch(
+        new Request(`http://keywork.test${path}`, {
+          ...init,
+          headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+        }),
+      );
+    const post = (path: string, body?: unknown) =>
+      call(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        ...(body !== undefined && { body: JSON.stringify(body) }),
+      });
+    const surfaceKinds = () =>
+      options.log
+        .since(0)
+        .filter((envelope) => envelope.type === "surface.changed")
+        .map((envelope) => [(envelope.payload as { kind: string }).kind, envelope.sessionId]);
+    const close = async () => {
+      await server.close();
+      await composition.mcp?.stop();
+      await composition.languagePort?.dispose();
+    };
+    return { cwd, userRoot, sessionDir, call, post, surfaceKinds, close };
+  }
+  const answer = async <Shape>(response: Response, status = 200): Promise<Shape> => {
+    expect(response.status).toBe(status);
+    return (await response.json()) as Shape;
+  };
+  async function declaredWorkspace(): Promise<string> {
+    const cwd = await tempDir();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "surfaced" }));
+    return cwd;
+  }
+
+  it("runs the MCP fixture server through restart and toggle, announcing on /events", async () => {
+    const world = await surfacedServer({ mcp: true });
+    try {
+      const deadline = Date.now() + 10_000;
+      let servers: Array<{ name: string; state: string; toolCount: number; transport?: string }>;
+      for (;;) {
+        servers = (await answer<{ servers: typeof servers }>(await world.call("/mcp"))).servers;
+        if (servers[0]?.state === "connected") break;
+        if (Date.now() > deadline) throw new Error("the fixture server never connected");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(servers[0]).toMatchObject({ name: "fixture", toolCount: 2, transport: "stdio" });
+      expect(await answer(await world.call("/mcp/fixture/tools"))).toEqual({
+        tools: ["echo", "add"],
+      });
+      const off = await answer(await world.post("/mcp/fixture/enabled", { on: false }));
+      expect(off).toMatchObject({ name: "fixture", enabled: false, state: "down", toolCount: 0 });
+      expect(await answer(await world.call("/mcp/fixture/tools"))).toEqual({ tools: [] });
+      const on = await answer(await world.post("/mcp/fixture/enabled", { on: true }));
+      expect(on).toMatchObject({ enabled: true, state: "connected", toolCount: 2 });
+      const restarted = await answer(await world.post("/mcp/fixture/restart"));
+      expect(restarted).toMatchObject({ enabled: true, state: "connected", toolCount: 2 });
+      expect((await world.post("/mcp/nope/restart")).status).toBe(404);
+      const kinds = world.surfaceKinds();
+      expect(kinds.length).toBeGreaterThanOrEqual(3);
+      expect(new Set(kinds.map(([kind, sessionId]) => `${kind}:${sessionId}`))).toEqual(
+        new Set(["mcp:"]),
+      );
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("trusts and declares the served root, writing trust.json under the user root, and refuses a home or untrusted root", async () => {
+    const world = await surfacedServer();
+    try {
+      const before = await answer<{ identity: string; readiness: string; trust: string }>(
+        await world.call("/workspace"),
+      );
+      expect(before.identity).toBe(workspaceInfoOf(world.cwd).identity);
+      expect(before).toMatchObject({ readiness: "undecided", trust: "undecided", declared: false });
+      const grant = await answer(await world.post("/workspace/trust", { path: "C:/elsewhere" }));
+      expect(grant).toEqual({
+        trusted: true,
+        root: world.cwd,
+        vault: join(world.cwd, ".keywork", "memory"),
+        reopens: true,
+      });
+      const trustFile = join(world.userRoot, ".keywork", "trust.json");
+      const recorded = JSON.parse(await readFile(trustFile, "utf8")) as Record<string, boolean>;
+      expect(Object.values(recorded)).toEqual([true]);
+      expect(new TrustStore({ home: world.userRoot }).resolve(world.cwd)).toBe("trusted");
+      expect(new TrustStore({ home: world.userRoot }).resolve("C:/elsewhere")).toBe("undecided");
+      await stat(join(world.cwd, ".keywork", "workspace.json"));
+      expect(await answer(await world.call("/workspace"))).toMatchObject({
+        declared: true,
+        trust: "trusted",
+        readiness: "ready",
+        name: basename(world.cwd),
+      });
+      expect(await answer(await world.post("/workspace/trust"))).toMatchObject({ reopens: true });
+      expect(world.surfaceKinds()).toEqual([
+        ["workspaces", ""],
+        ["workspaces", ""],
+      ]);
+    } finally {
+      await world.close();
+    }
+
+    const home = await surfacedServer({ cwd: emptyUserRoot, userRoot: emptyUserRoot });
+    try {
+      const refused = await home.post("/workspace/trust");
+      expect(refused.status).toBe(400);
+      expect(((await refused.json()) as { error: string }).error).toContain("every directory");
+    } finally {
+      await home.close();
+    }
+
+    const userRoot = await tempDir();
+    const cwd = await tempDir();
+    new TrustStore({ home: userRoot }).untrust(cwd);
+    const untrusted = await surfacedServer({ cwd, userRoot });
+    try {
+      expect((await untrusted.post("/workspace/trust")).status).toBe(409);
+      expect(await answer(await untrusted.call("/workspace"))).toMatchObject({
+        readiness: "refused",
+      });
+    } finally {
+      await untrusted.close();
+    }
+  });
+
+  it("serves the tree and file slices confined to the composed tool scope", async () => {
+    const world = await surfacedServer();
+    try {
+      await mkdir(join(world.cwd, "src"));
+      await writeFile(join(world.cwd, ".gitignore"), "dist/\n");
+      await mkdir(join(world.cwd, "dist"));
+      await writeFile(join(world.cwd, "src", "index.ts"), "export {};\n");
+      const listed = await answer<{ entries: Array<{ name: string; ignored: boolean }> }>(
+        await world.call("/tree"),
+      );
+      expect(listed.entries.map((entry) => [entry.name, entry.ignored])).toEqual([
+        ["dist", true],
+        ["src", false],
+      ]);
+      expect(await answer(await world.call("/files?path=src/index.ts&from=7"))).toMatchObject({
+        path: "src/index.ts",
+        text: "{};\n",
+        truncated: false,
+      });
+      expect((await world.call("/tree?path=..")).status).toBe(403);
+      expect((await world.call(`/files?path=${encodeURIComponent(emptyUserRoot)}`)).status).toBe(
+        403,
+      );
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("creates arcs and bots on a trusted workspace and binds a stored session to them", async () => {
+    const cwd = await declaredWorkspace();
+    const world = await surfacedServer({ cwd, projectTrusted: true });
+    try {
+      expect(await answer(await world.call("/arcs"))).toEqual({ arcs: [], ordinals: {} });
+      expect(await answer(await world.post("/arcs", { slug: "alpha" }), 201)).toMatchObject({
+        slug: "alpha",
+        status: "active",
+      });
+      expect((await world.post("/arcs", { slug: "alpha" })).status).toBe(409);
+      const stored = await SessionStore.create(join(world.sessionDir, "1-0001-1.jsonl"), cwd);
+      await stored.append({ role: "user", parts: [{ type: "text", text: "earlier question" }] });
+      const id = stored.header.id;
+      expect(await answer(await world.post(`/sessions/${id}/arc`, { slug: "alpha" }))).toEqual({
+        arc: "alpha",
+      });
+      const arcs = await answer<{ arcs: Array<{ slug: string; sessions: number }> }>(
+        await world.call("/arcs"),
+      );
+      expect(arcs.arcs).toEqual([expect.objectContaining({ slug: "alpha", sessions: 1 })]);
+      const scribe = await answer(
+        await world.post("/bots", { slug: "scribe", scope: "project", purpose: "writes docs" }),
+        201,
+      );
+      expect(scribe).toMatchObject({
+        name: "scribe",
+        source: "project",
+        description: "writes docs",
+      });
+      await stat(join(cwd, ".keywork", "bots", "scribe", "bot.md"));
+      expect(await answer<{ bots: unknown[] }>(await world.call("/bots"))).toEqual({
+        bots: [expect.objectContaining({ name: "scribe", sessions: 0 })],
+      });
+      expect(await answer(await world.post(`/sessions/${id}/bot`, { name: "scribe" }))).toEqual({
+        arc: "alpha",
+        bot: "scribe",
+      });
+      expect((await world.post(`/sessions/${id}/bot`, { name: "ghost" })).status).toBe(409);
+      expect((await world.post("/sessions/nope/bot", { name: "scribe" })).status).toBe(404);
+      const reread = await findSession(world.sessionDir, id);
+      expect(reread?.binding()).toEqual({ arc: "alpha", bot: "scribe" });
+      expect(await answer(await world.post("/arcs/alpha/abandon"))).toEqual({
+        slug: "alpha",
+        abandoned: true,
+      });
+      expect((await findSession(world.sessionDir, id))?.arcBinding()).toBeUndefined();
+      expect(world.surfaceKinds().map(([kind]) => kind)).toContain("arcs");
+      expect(world.surfaceKinds().map(([kind]) => kind)).toContain("bots");
+    } finally {
+      await world.close();
+    }
+
+    const untrusted = await surfacedServer({ cwd: await declaredWorkspace() });
+    try {
+      expect((await untrusted.call("/arcs")).status).toBe(403);
+      expect((await untrusted.post("/bots", { slug: "scribe", scope: "project" })).status).toBe(
+        403,
+      );
+    } finally {
+      await untrusted.close();
+    }
+  });
+
+  it("lists workspaces, creates a named one, focuses a dir, and remembers which opens next", async () => {
+    const cwd = await declaredWorkspace();
+    const world = await surfacedServer({ cwd });
+    try {
+      expect(await answer<{ workspaces: unknown[] }>(await world.call("/workspaces"))).toEqual({
+        workspaces: [expect.objectContaining({ name: "surfaced", declared: true, current: true })],
+      });
+      expect(await answer(await world.post("/workspaces", { slug: "docs" }), 201)).toEqual({
+        slug: "docs",
+      });
+      await stat(join(cwd, ".keywork", "workspaces", "docs", "workspace.json"));
+      await mkdir(join(cwd, "packages", "docs"), { recursive: true });
+      expect(
+        await answer(await world.post("/workspaces/docs/focus", { dir: "packages/docs" })),
+      ).toEqual({
+        dir: "packages/docs",
+      });
+      expect((await world.post("/workspaces/docs/focus", { dir: "nowhere" })).status).toBe(409);
+      const listed = await answer<{ workspaces: Array<{ slug?: string; focusDirs: string[] }> }>(
+        await world.call("/workspaces"),
+      );
+      expect(listed.workspaces.map((choice) => [choice.slug, choice.focusDirs])).toEqual([
+        [undefined, []],
+        ["docs", ["packages/docs"]],
+      ]);
+      expect(
+        await answer(await world.post("/workspaces/docs/unfocus", { dir: "packages/docs" })),
+      ).toEqual({
+        dir: "packages/docs",
+      });
+      expect(await answer(await world.post("/workspaces/use", { slug: "docs" }))).toEqual({
+        slug: "docs",
+        reopens: true,
+      });
+      expect(
+        fileWorkspaceRecall(workspaceRecallFile(keyworkHome(world.userRoot))).recall(cwd),
+      ).toBe("docs");
+      expect((await world.post("/workspaces/use", { slug: "nope" })).status).toBe(409);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("lists the whole gallery complete, names the configured theme, and leaves system to the client", async () => {
+    const world = await surfacedServer({ theme: "system" });
+    try {
+      const listed = await answer<{
+        themes: CompleteTheme[];
+        active: string;
+        placeholders: string[];
+      }>(await world.call("/themes"));
+      expect(listed.themes.map((theme) => theme.name)).toEqual(gallery.map((theme) => theme.name));
+      for (const theme of listed.themes) {
+        expect(contrastFailures(theme), theme.name).toEqual([]);
+        expect(Object.keys(theme.terminal)).toHaveLength(16);
+        expect(theme.syntax.keyword).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(theme.diff.insertedLine).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(theme.selection.background).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(theme.cursor).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+      const night = listed.themes.find((theme) => theme.name === "keywork-night");
+      expect(night?.pair).toBe("keywork-day");
+      expect(listed.active).toBe("system");
+      expect(listed.placeholders).toEqual(["system"]);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+function stallingProvider(): Provider {
   return {
-    name: "hanging",
+    name: "stalling",
     async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
       yield { type: "text", text: "..." };
       await new Promise<void>((resolve) => {
@@ -1176,598 +1587,417 @@ function hangingProvider(): Provider {
   };
 }
 
-describe("memory over the file host", () => {
-  async function trustedWorkspace(options: HostOptions): Promise<string> {
-    await mkdir(join(options.cwd, ".keywork", "memory"), { recursive: true });
-    await writeFile(
-      join(options.cwd, ".keywork", "workspace.json"),
-      JSON.stringify({ name: "fixture" }),
+describe("session lifecycle (119) under serve", () => {
+  const remove = (call: ReturnType<typeof serverOver>["call"], id: string) =>
+    call(`/sessions/${id}`, { method: "DELETE" });
+  const ids = async (call: ReturnType<typeof serverOver>["call"], path: string) =>
+    ((await (await call(path)).json()) as { sessions: Array<{ id: string }> }).sessions.map(
+      (session) => session.id,
     );
-    options.projectTrusted = true;
-    return resolveVaultPath(options.cwd) ?? "";
+
+  async function storedSession(options: HostOptions, name: string, text: string) {
+    const store = await SessionStore.create(join(options.sessionDir ?? "", name), options.cwd);
+    await store.append({ role: "user", parts: [{ type: "text", text }] });
+    return store;
   }
 
-  const jsonPost =
-    (call: (path: string, init?: RequestInit) => Promise<Response>) =>
-    (path: string, body: unknown = {}) =>
-      call(path, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
+  it("moves a stored session's log and spills to .trash, lists it there, and restores it whole", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    const store = await storedSession(options, "1-0001-1.jsonl", "keep me around");
+    await store.spills().keep("x".repeat(100_000));
+    const { server, call } = serverOver(options);
+    const id = store.header.id;
+    const sessionDir = options.sessionDir ?? "";
 
-  async function nextInboxEvent(reader: ReturnType<typeof sseReader>) {
+    const removed = await remove(call, id);
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({ id, title: "keep me around", messageCount: 1 });
+    expect(existsSync(store.file)).toBe(false);
+    expect(existsSync(join(sessionDir, ".trash", "1-0001-1.jsonl"))).toBe(true);
+    expect(existsSync(join(sessionDir, ".trash", "1-0001-1.spills"))).toBe(true);
+    expect(await ids(call, "/sessions")).toEqual([]);
+    expect(await ids(call, "/trash")).toEqual([id]);
+    expect((await call(`/sessions/${id}`)).status).toBe(404);
+
+    const restored = await call(`/trash/${id}/restore`, { method: "POST" });
+    expect(restored.status).toBe(201);
+    expect(await restored.json()).toMatchObject({ id, title: "keep me around" });
+    expect(existsSync(store.file)).toBe(true);
+    expect(existsSync(join(store.file.replace(/\.jsonl$/, ".spills")))).toBe(true);
+    expect(await ids(call, "/sessions")).toEqual([id]);
+    expect(await ids(call, "/trash")).toEqual([]);
+    await server.close();
+  });
+
+  it("closes an idle live session before moving it and refuses one with a running turn", async () => {
+    const options = await hostOptions(new MockProvider([textTurn("first answer")]));
+    const { server, host, call } = serverOver(options);
+    const created = await host.create();
+    const reader = sseReader(await call("/events"));
+    await host.prompt(created.id, "hello");
     for (;;) {
       const frame = await reader.next();
-      if (frame.event === "memory.inbox") return JSON.parse(frame.data) as BusEnvelope;
+      if (frame.event === "session.state" && JSON.parse(frame.data).payload.leafId !== null) break;
     }
-  }
 
-  it("answers inert on an untrusted workspace: empty reads, 403 writes", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const { server, call } = serverOver(options);
-    expect(await (await call("/memory")).json()).toMatchObject({ trusted: false, layers: [] });
-    const approve = await call("/memory/inbox/x/approve", { method: "POST" });
-    expect(approve.status).toBe(403);
-    expect(await approve.json()).toEqual({ error: new MemoryInertError().message });
-    await server.close();
-  });
-
-  it("approves a note staged in the composed vault, lands it in the garden and fires memory.inbox", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const vaultRoot = await trustedWorkspace(options);
-    const vault = new MemoryStore({ vaultRoot, trusted: true });
-    await vault.writeNote({
-      title: "Stray Claim",
-      body: "Thirds, maybe.\n",
-      provenance: "untrusted",
-    });
-    const { server, call } = serverOver(options);
-    const inbox = (await (await call("/memory/inbox")).json()) as {
-      trusted: boolean;
-      count: number;
-      items: Array<{ id: string; kind: string; target: string }>;
-    };
-    expect(inbox).toMatchObject({ trusted: true, count: 1 });
-    expect(inbox.items[0]).toMatchObject({ kind: "note", target: "Stray Claim.md" });
-
-    const reader = sseReader(await call("/events"));
-    const approved = await call(`/memory/inbox/${inbox.items[0]?.id}/approve`, { method: "POST" });
-    expect(approved.status).toBe(200);
-    expect(await nextInboxEvent(reader)).toMatchObject({
-      sessionId: "",
-      payload: { count: 0, kinds: {} },
-    });
+    const removed = await remove(call, created.id);
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({ id: created.id, messageCount: 2 });
+    expect(await ids(call, "/sessions")).toEqual([]);
+    expect(await host.abort(created.id)).toBe("missing");
+    const trashed = await scanSessions(join(options.sessionDir ?? "", ".trash"));
+    expect(trashed.stores[0]?.messages()).toHaveLength(2);
     await reader.close();
-    const note = await call("/memory/notes/Stray%20Claim");
-    expect(await note.json()).toMatchObject({
-      trusted: true,
-      note: { name: "Stray Claim", provenance: "untrusted", layer: "workspace", curing: 0 },
-    });
-    expect((await vault.readNote("Stray Claim"))?.body).toBe("Thirds, maybe.\n");
-    const ledger = (await (await call("/memory/ledger")).json()) as {
-      entries: Array<{ op: string }>;
-    };
-    expect(ledger.entries.map((entry) => entry.op)).toEqual(["approve"]);
     await server.close();
   });
 
-  it("walks the airlock over HTTP: finish stages the review for a bound session, triage carries a question, finish closes the arc", async () => {
-    const options = await hostOptions(
-      new MockProvider([textTurn("noted"), textTurn("flushed through serve")]),
-    );
-    const vaultRoot = await trustedWorkspace(options);
-    const registry = new ArcRegistry({ vaultRoot, trusted: true });
-    await registry.createArc("dock-v2");
-    await registry.createArc("next-arc");
-    await registry.arcStore("dock-v2").writeNote({
-      title: "Dock Ratio Finding",
-      body: "Docks split 50/50 by default.\n",
-      provenance: "agent",
-    });
-    await registry
-      .openQuestions("dock-v2")
-      .add({ title: "Tie order", body: "Which pane wins a tie?", provenance: "user" });
-    const stored = await SessionStore.create(
-      join(options.sessionDir ?? "", "1-0001-1.jsonl"),
-      options.cwd,
-    );
-    await stored.appendArcBinding("dock-v2");
-    const { server, call } = serverOver(options);
-    const post = jsonPost(call);
-    const reader = sseReader(await call("/events"));
-    await post(`/sessions/${stored.header.id}/prompt`, { text: "remember the docks" });
-    while ((await reader.next()).event !== "turn.completed");
-    expect(await nextInboxEvent(reader)).toMatchObject({
-      sessionId: "",
-      payload: { count: 0, kinds: {} },
-    });
-
-    expect((await call("/arcs/dock-v2/airlock")).status).toBe(404);
-    expect((await post("/arcs/nowhere/airlock/finish")).status).toBe(404);
-    const undecided = await post("/arcs/dock-v2/airlock/finish");
-    expect(await undecided.json()).toEqual({ kind: "undecided", items: ["Tie order"] });
-    expect((await nextInboxEvent(reader)).payload).toEqual({
-      count: 2,
-      kinds: { "arc-distillation": 1, "arc-question": 1 },
-    });
-
-    const digest = (await (await call("/arcs/dock-v2/airlock")).json()) as { digest: unknown };
-    expect(digest.digest).toMatchObject({
-      arc: "dock-v2",
-      sweep: { acked: 1, wedged: 0 },
-      candidates: [
-        { note: "Dock Ratio Finding", eligible: false, shortfalls: ["uncited"], choice: "leave" },
-      ],
-      questions: [{ title: "Tie order", provenance: "user" }],
-    });
-    const garden = (await (await call("/memory")).json()) as {
-      layers: Array<{ id: string }>;
-      airlocks: Array<{ arc: string }>;
-    };
-    expect(garden.layers.map((layer) => layer.id)).toEqual([
-      "workspace",
-      "arc:dock-v2",
-      "arc:next-arc",
-    ]);
-    expect(garden.airlocks.map((waiting) => waiting.arc)).toEqual(["dock-v2"]);
-
-    const carried = await post("/arcs/dock-v2/airlock/questions", {
-      title: "Tie order",
-      choice: "carry",
-    });
-    expect(await carried.json()).toMatchObject({
-      successor: "next-arc",
-      questions: [{ title: "Tie order", choice: "carry" }],
-    });
-    const closed = await post("/arcs/dock-v2/airlock/finish", { force: true });
-    expect(await closed.json()).toEqual({ kind: "closed", delivered: 0, released: 1 });
-    expect((await nextInboxEvent(reader)).payload).toEqual({ count: 0, kinds: {} });
-    await reader.close();
-
-    expect((await call("/arcs/dock-v2/airlock")).status).toBe(404);
-    expect((await registry.openQuestions("next-arc").open()).map((q) => q.title)).toEqual([
-      "Tie order",
-    ]);
-    expect((await registry.readArc("dock-v2"))?.status).toBe("archived");
-    const after = (await (await call("/memory")).json()) as { layers: Array<{ id: string }> };
-    expect(after.layers.map((layer) => layer.id)).toEqual(["workspace", "arc:next-arc"]);
-    await server.close();
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    expect(stores[0]?.arcBinding()).toBeUndefined();
-  });
-});
-
-describe("K0 · checkpoints and per-session inference under serve", () => {
-  const writingTurns = (content: string, callId: string) => [
-    toolCallTurn({
-      type: "tool-call",
-      callId,
-      name: "write",
-      arguments: { path: "note.txt", content },
-    }),
-    textTurn(`wrote ${content}`),
-  ];
-
-  it("captures a checkpoint before a mutating tool and tags the user message with it", async () => {
-    const options = await hostOptions(new MockProvider(writingTurns("v1", "c1")));
+  it("refuses to remove a session whose turn is still running", async () => {
+    const options = { ...(await hostOptions(new MockProvider([]))), provider: stallingProvider() };
     const { server, host, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const created = await host.create();
     const reader = sseReader(await call("/events"));
-    await call(`/sessions/${id}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: "write v1" }),
-    });
-    while ((await reader.next()).event !== "turn.completed");
-    await reader.close();
-    expect(await readFile(join(options.cwd, "note.txt"), "utf8")).toBe("v1");
-    const checkpoints = await host.checkpointsOf(id);
-    expect(checkpoints).toBeInstanceOf(Checkpoints);
-    expect((checkpoints as Checkpoints).canUndo()).toBe(true);
-    expect(await host.checkpointsOf("nope")).toBe("missing");
-    await server.close();
+    await host.prompt(created.id, "stall");
+    for (;;) {
+      const frame = await reader.next();
+      if (frame.event === "turn.delta") break;
+    }
 
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    const prompt = stores[0]?.entries().find((entry) => entry.type === "message");
-    expect(prompt?.type === "message" && prompt.checkpoint).toMatch(/^[0-9a-f]{40,}$/);
+    const busy = await remove(call, created.id);
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toEqual({ error: "a turn is running" });
+    expect(await ids(call, "/sessions")).toEqual([created.id]);
+    expect(await host.abort(created.id)).toBe("aborted");
+    await reader.close();
+    await server.close();
   });
 
-  it("keeps today's behavior with checkpoints off: no tag, nothing to undo", async () => {
-    const options = {
-      ...(await hostOptions(new MockProvider(writingTurns("v1", "c1")))),
-      checkpoints: "off" as const,
-    };
-    const { server, host, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-    await call(`/sessions/${id}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: "write v1" }),
-    });
-    while ((await reader.next()).event !== "turn.completed");
-    await reader.close();
-    expect(await host.checkpointsOf(id)).toBe("off");
-    expect((await call(`/sessions/${id}/undo`, { method: "POST" })).status).toBe(200);
-    expect(await host.undo(id)).toBe("staged");
-    await server.close();
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    const prompt = stores[0]?.entries().find((entry) => entry.type === "message");
-    expect(prompt?.type === "message" && prompt.checkpoint).toBeUndefined();
-  });
-
-  it("builds each session from its own model, thinking and effort entries", async () => {
-    const seen: ProviderRequest[] = [];
-    const alpha = new MockProvider([textTurn("from alpha")], "alpha");
-    const beta: Provider = {
-      name: "mock",
-      modelId: "beta",
-      stream: (request) => {
-        seen.push(request);
-        return new MockProvider([textTurn("from beta")]).stream(request);
-      },
-    };
-    const options = {
-      ...(await hostOptions(alpha)),
-      inference: inferenceOver({ "mock/alpha": alpha, "mock/beta": beta }),
-    };
-    const stored = await SessionStore.create(
-      join(options.sessionDir ?? "", "1-0001-1.jsonl"),
-      options.cwd,
-    );
-    await stored.append(textMessage("user", "earlier"));
-    await stored.appendModelChange("mock", "beta");
-    await stored.appendThinkingLevelChange("on");
-    await stored.appendEffortChange("high");
+  it("keeps a fork pointing at its removed parent and reports the origin as removed", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    const parent = await storedSession(options, "1-0001-1.jsonl", "the parent");
+    const fork = await parent.clone(join(options.sessionDir ?? "", "2-0001-1.jsonl"));
     const { server, call } = serverOver(options);
-    const listed = (await (await call("/sessions")).json()) as { sessions: unknown[] };
-    expect(listed.sessions[0]).toMatchObject({
-      model: "mock/beta",
-      thinking: true,
-      effort: "high",
+
+    expect(await (await call(`/sessions/${fork.header.id}`)).json()).toMatchObject({
+      forkedFrom: { sessionId: parent.header.id, removed: false },
+    });
+    expect((await remove(call, parent.header.id)).status).toBe(200);
+
+    const read = await call(`/sessions/${fork.header.id}`);
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({
+      parentSession: parent.file,
+      forkedFrom: { sessionId: parent.header.id, removed: true },
+      messages: [{ role: "user" }],
+    });
+    expect(await ids(call, "/sessions")).toEqual([fork.header.id]);
+    expect(await (await call("/trash", { method: "DELETE" })).json()).toEqual({ purged: 1 });
+    expect(await (await call(`/sessions/${fork.header.id}`)).json()).toMatchObject({
+      forkedFrom: { removed: true },
+    });
+    await server.close();
+  });
+
+  it("discards one trashed session for good and says so on /events", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    const store = await storedSession(options, "1-0001-1.jsonl", "gone soon");
+    const { server, call } = serverOver(options);
+    const reader = sseReader(await call("/events"));
+    await remove(call, store.header.id);
+    const removedFrame = await reader.next();
+    expect(JSON.parse(removedFrame.data)).toMatchObject({
+      sessionId: "",
+      type: "session.removed",
+      payload: { sessionId: store.header.id },
     });
 
-    const reader = sseReader(await call("/events"));
-    await call(`/sessions/${stored.header.id}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: "which model?" }),
-    });
-    while ((await reader.next()).event !== "turn.completed");
+    const discarded = await call(`/trash/${store.header.id}`, { method: "DELETE" });
+    expect(await discarded.json()).toEqual({ sessionId: store.header.id, discarded: true });
+    expect((await call(`/trash/${store.header.id}`, { method: "DELETE" })).status).toBe(404);
+    expect(existsSync(join(options.sessionDir ?? "", ".trash", "1-0001-1.jsonl"))).toBe(false);
     await reader.close();
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toMatchObject({ thinking: true, effort: "high" });
-    const live = (await (await call(`/sessions/${stored.header.id}`)).json()) as Record<
-      string,
-      unknown
-    >;
-    expect(live).toMatchObject({ live: true, model: "mock/beta", thinking: true, effort: "high" });
-    expect(alpha.remaining()).toBe(1);
     await server.close();
   });
 });
 
-describe("K1 · session verbs over the file host", () => {
+describe("K2 under serve: the tree and the diff over JSONL and the shadow repo", () => {
   const post = (call: ReturnType<typeof serverOver>["call"], path: string, body?: unknown) =>
-    call(path, { method: "POST", ...(body !== undefined && { body: JSON.stringify(body) }) });
-  const completed = async (reader: ReturnType<typeof sseReader>) => {
-    while ((await reader.next()).event !== "turn.completed");
-  };
-  const nextFrame = async (reader: ReturnType<typeof sseReader>, event: string) => {
+    call(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+  const envelopeIn = (frame: SseFrame) =>
+    JSON.parse(frame.data) as { sessionId: string; type: string; payload: unknown };
+  const until = async (reader: SseReader, done: (frame: SseFrame) => boolean) => {
     for (;;) {
       const frame = await reader.next();
-      if (frame.event === event) return frame;
+      if (done(frame)) return frame;
     }
   };
-  const writing = (content: string, callId: string) => [
+  const read = async <Shape>(response: Response): Promise<Shape> =>
+    (await response.json()) as Shape;
+  const writeTurn = (path: string, content: string) =>
     toolCallTurn({
       type: "tool-call",
-      callId,
+      callId: `w-${path}`,
       name: "write",
-      arguments: { path: "note.txt", content },
-    }),
-    textTurn(`wrote ${content}`),
-  ];
-
-  it("undo hands the prompt back and restores the files; redo brings the turn and the files back", async () => {
-    const options = await hostOptions(
-      new MockProvider([...writing("v1", "c1"), ...writing("v2", "c2")]),
-    );
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-    for (const text of ["write v1", "write v2"]) {
-      await post(call, `/sessions/${id}/prompt`, { text });
-      await completed(reader);
-    }
-    const note = () => readFile(join(options.cwd, "note.txt"), "utf8");
-    expect(await note()).toBe("v2");
-
-    const undone = await post(call, `/sessions/${id}/undo`);
-    expect(undone.status).toBe(200);
-    const result = (await undone.json()) as {
-      prompt: { entryId: string; text: string };
-      filesNote: string;
-    };
-    expect(result).toMatchObject({
-      prompt: { text: "write v2" },
-      filesNote: "files put back",
-      redoable: true,
+      arguments: { path, content },
     });
-    expect(await note()).toBe("v1");
-    const state = JSON.parse((await nextFrame(reader, "session.state")).data) as {
-      type: string;
-      payload: { leafId: string; redoable: boolean };
-    };
-    expect(state.type).toBe("session.state");
-    expect(state.payload.redoable).toBe(true);
-    const rewound = (await (await call(`/sessions/${id}`)).json()) as { messages: Message[] };
-    expect(rewound.messages.map((message) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "tool",
-      "assistant",
+
+  async function checkpointed(provider: Provider) {
+    const options = await hostOptions(new MockProvider([]));
+    options.provider = provider;
+    options.checkpointsGitDir = join(await tempDir(), "shadow");
+    return options;
+  }
+
+  async function fixtureStore(sessionDir: string, cwd: string) {
+    const store = await SessionStore.create(join(sessionDir, "1-0001-1.jsonl"), cwd);
+    const user = await store.append(userMessage("plan the port"));
+    const first = await store.append(assistantMessage("first answer"));
+    await store.setLabel(user.id, "start");
+    await store.appendCompaction({
+      summary: "folded the opening",
+      firstKeptEntryId: first.id,
+      tokensBefore: 120,
+    });
+    await store.appendArcBinding("port-arc");
+    store.branch(user.id);
+    const second = await store.append(assistantMessage("second answer"));
+    return { store, user, first, second };
+  }
+
+  it("round-trips a fixture JSONL with a fork, a label, a compaction and a binding entry through /entries", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    const { store, user, second } = await fixtureStore(options.sessionDir ?? "", options.cwd);
+    const { server, call } = serverOver(options);
+
+    const answer = await read<{
+      sessionId: string;
+      name?: string;
+      leafId: string;
+      entries: Array<{ id: string; type: string; parentId: string | null }>;
+      labels: Record<string, string>;
+      activePath: string[];
+    }>(await call(`/sessions/${store.header.id}/entries`));
+
+    expect(answer.sessionId).toBe(store.header.id);
+    expect(answer.name).toBeUndefined();
+    expect(answer.entries).toEqual(JSON.parse(JSON.stringify(store.entries())));
+    expect(answer.entries.map((entry) => entry.type)).toEqual([
+      "message",
+      "message",
+      "label",
+      "compaction",
+      "binding",
+      "message",
     ]);
-    expect((await post(call, `/sessions/${id}/undo`)).status).toBe(409);
-
-    const redone = await post(call, `/sessions/${id}/redo`);
-    expect(await redone.json()).toEqual({ restored: true, undoable: true, redoable: false });
-    expect(await note()).toBe("v2");
-    const restored = (await (await call(`/sessions/${id}`)).json()) as { messages: Message[] };
-    expect(restored.messages).toHaveLength(8);
-    expect((await post(call, `/sessions/${id}/redo`)).status).toBe(404);
-    await reader.close();
+    expect(answer.entries.filter((entry) => entry.parentId === user.id)).toHaveLength(2);
+    expect(answer.labels).toEqual({ [user.id]: "start" });
+    expect(answer.leafId).toBe(second.id);
+    expect(answer.activePath).toEqual([user.id, second.id]);
+    expect((await call("/sessions/nope/entries")).status).toBe(404);
     await server.close();
-
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    expect(stores[0]?.messages()).toHaveLength(8);
   });
 
-  it("switches the model and records thinking and effort as session entries", async () => {
-    const alpha = new MockProvider([], "alpha");
-    const beta = new MockProvider([textTurn("from beta")], "beta");
-    const options = {
-      ...(await hostOptions(alpha)),
-      inference: inferenceOver({ "mock/alpha": alpha, "mock/beta": beta }),
-    };
+  it("forks a stored session at an entry into one whose detail names its parent, labels an entry into the file, and announces session.tree", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    const { store, user, first } = await fixtureStore(options.sessionDir ?? "", options.cwd);
     const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+
+    const forked = await post(call, `/sessions/${store.header.id}/fork`, { entryId: first.id });
+    expect(forked.status).toBe(201);
+    const { sessionId } = await read<{ sessionId: string }>(forked);
+    const detail = await read<{ parentSession?: string; messages: Message[]; live: boolean }>(
+      await call(`/sessions/${sessionId}`),
+    );
+    expect(detail).toMatchObject({ parentSession: store.file, live: false });
+    expect(detail.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect((await findSession(options.sessionDir ?? "", sessionId))?.header.parentSession).toBe(
+      store.file,
+    );
     expect(
-      await (await post(call, `/sessions/${id}/model`, { reference: "mock/beta" })).json(),
-    ).toEqual({
-      model: { provider: "mock", model: "beta" },
-      notice: "model → mock/beta",
+      envelopeIn(await until(reader, (frame) => frame.event === "session.tree")),
+    ).toMatchObject({
+      sessionId: store.header.id,
+      payload: { reason: "fork", entryId: first.id, forkedTo: sessionId },
     });
-    expect((await post(call, `/sessions/${id}/model`, { reference: "gamma" })).status).toBe(400);
-    expect(await (await post(call, `/sessions/${id}/thinking`, { on: true })).json()).toEqual({
-      thinking: true,
-    });
-    expect(await (await post(call, `/sessions/${id}/effort`, { level: "xhigh" })).json()).toEqual({
-      effort: "xhigh",
-    });
-    expect(await (await post(call, `/sessions/${id}/effort`, { level: null })).json()).toEqual({
-      effort: null,
-    });
-    const reader = sseReader(await call("/events"));
-    await post(call, `/sessions/${id}/prompt`, { text: "hello" });
-    await completed(reader);
-    await reader.close();
-    expect(beta.remaining()).toBe(0);
-    await server.close();
 
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    const types = stores[0]?.entries().map((entry) => entry.type) ?? [];
-    expect(types.slice(0, 4)).toEqual([
-      "model_change",
-      "thinking_level_change",
-      "effort_change",
-      "effort_change",
-    ]);
-    expect(stores[0]?.modelSelection()).toMatchObject({ provider: "mock", modelId: "beta" });
-    expect(stores[0]?.thinkingLevel()).toBe("on");
-    expect(stores[0]?.effort()).toBe("default");
-  });
-
-  it("compacts on request with a focus and rebuilds the live history over the summary", async () => {
-    const provider = new MockProvider([textTurn("## Goal\nthe summary")], {
-      modelId: "small",
-      capabilities: { input: ["text"], toolCalls: true, contextWindow: 500 },
+    const labelled = await post(call, `/sessions/${store.header.id}/label`, {
+      entryId: first.id,
+      label: "keep",
     });
-    const options = await hostOptions(provider);
-    const stored = await SessionStore.create(
-      join(options.sessionDir ?? "", "1-0001-1.jsonl"),
-      options.cwd,
-    );
-    for (let turn = 1; turn <= 6; turn += 1) {
-      await stored.append(textMessage("user", `question ${turn} ${"q".repeat(200)}`));
-      await stored.append(textMessage("assistant", `answer ${turn} ${"a".repeat(200)}`));
-    }
-    const { server, call } = serverOver(options);
-    const compacted = await post(call, `/sessions/${stored.header.id}/compact`, {
-      focus: "the goal",
-    });
-    expect(compacted.status).toBe(200);
-    const outcome = (await compacted.json()) as {
-      compacted: { summary: string } | null;
-      notices: string[];
-    };
-    expect(outcome.compacted?.summary).toContain("the summary");
-    expect(outcome.notices[0]).toMatch(/^compacted /);
-    const live = (await (await call(`/sessions/${stored.header.id}`)).json()) as {
-      messages: Message[];
-    };
-    expect(messageText(live.messages[0] as Message)).toContain("the summary");
-    expect(live.messages.length).toBeLessThan(12);
-
-    const fresh = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    expect(await (await post(call, `/sessions/${fresh.id}/compact`, {})).json()).toEqual({
-      compacted: null,
-      notices: ["nothing to compact yet · the recent turns are all that's here"],
-    });
-    await server.close();
-  });
-
-  it("exports as HTML in the body or to a file inside the workspace, and refuses to escape it", async () => {
-    const options = await hostOptions(new MockProvider([textTurn("an answer")]));
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-    await post(call, `/sessions/${id}/prompt`, { text: "a question" });
-    await completed(reader);
-    await reader.close();
-    await post(call, `/sessions/${id}/rename`, { title: "Exported" });
-
-    const inline = await post(call, `/sessions/${id}/export`, {});
-    expect(inline.headers.get("content-type")).toBe("text/html; charset=utf-8");
-    const html = await inline.text();
-    expect(html).toContain("<title>Exported</title>");
-    expect(html).toContain("a question");
-    await mkdir(join(options.cwd, "exports"));
-    const written = await post(call, `/sessions/${id}/export`, { scope: "tree", out: "exports" });
-    expect(written.status).toBe(201);
-    const { file } = (await written.json()) as { file: string };
-    expect(file.startsWith(join(options.cwd, "exports"))).toBe(true);
-    expect(file.endsWith(".tree.html")).toBe(true);
-    expect(await readFile(file, "utf8")).toContain("a question");
-    const escaped = await post(call, `/sessions/${id}/export`, { out: "../outside.html" });
-    expect(escaped.status).toBe(403);
-    await server.close();
-  });
-
-  it("renames the session durably and reads context and cost", async () => {
-    const provider = new MockProvider(
-      [textTurn("sure", { inputTokens: 50, outputTokens: 5 })],
-      "gpt-5",
-    );
-    const options = await hostOptions(provider);
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call(`/events?session=${id}`));
-    expect(await (await post(call, `/sessions/${id}/rename`, { title: "Lights" })).json()).toEqual({
-      title: "Lights",
-    });
-    expect(JSON.parse((await reader.next()).data)).toMatchObject({
-      type: "session.state",
-      sessionId: id,
-      payload: { title: "Lights", thinking: false, undoable: false, redoable: false },
-    });
-    await post(call, `/sessions/${id}/prompt`, { text: "hello" });
-    await completed(reader);
-    await reader.close();
-    const context = (await (await call(`/sessions/${id}/context`)).json()) as {
-      used: number;
-      basis: string;
-    };
-    expect(context.used).toBeGreaterThan(0);
-    expect(context.basis).toBe("estimated");
-    const cost = (await (await call(`/sessions/${id}/cost`)).json()) as {
-      usage: { inputTokens: number };
-      basis: string;
-    };
-    expect(cost.usage.inputTokens).toBe(50);
-    expect(cost.basis).toBe("estimated from gpt-5 rates");
-    await server.close();
-
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    expect(stores[0]?.name()).toBe("Lights");
-  });
-
-  it("switches the process preset through the preset port and announces gate.preset", async () => {
-    let active: ActivePreset = "standard";
-    const applied: string[] = [];
-    const options = {
-      ...(await hostOptions(new MockProvider([]))),
-      presets: {
-        active: () => active,
-        apply: async (name: PresetName) => {
-          applied.push(name);
-          active = name;
-        },
-      },
-    };
-    const { server, call } = serverOver(options);
-    const reader = sseReader(await call("/events"));
-    expect((await post(call, "/preset", { name: "open" })).status).toBe(409);
-    expect(await (await post(call, "/preset", { name: "open", confirmed: true })).json()).toEqual({
-      from: "standard",
-      to: "open",
-    });
-    expect(applied).toEqual(["open"]);
-    expect(JSON.parse((await reader.next()).data)).toMatchObject({
-      type: "gate.preset",
-      sessionId: "",
-      payload: { from: "standard", to: "open" },
-    });
+    expect(await labelled.json()).toEqual({ entryId: first.id, label: "keep" });
+    expect(
+      envelopeIn(await until(reader, (frame) => frame.event === "session.tree")).payload,
+    ).toEqual({ reason: "label", entryId: first.id });
+    const reopened = await findSession(options.sessionDir ?? "", store.header.id);
+    expect(reopened?.labelFor(first.id)).toBe("keep");
+    expect(reopened?.labelFor(user.id)).toBe("start");
+    expect(
+      (await post(call, `/sessions/${store.header.id}/fork`, { entryId: "nope" })).status,
+    ).toBe(404);
     await reader.close();
     await server.close();
-
-    const bare = serverOver(await hostOptions(new MockProvider([])));
-    const unavailable = await post(bare.call, "/preset", { name: "careful" });
-    expect(unavailable.status).toBe(409);
-    expect(await unavailable.json()).toEqual({ error: "this process has no preset switch" });
-    await bare.server.close();
   });
-});
 
-describe("spills over the file host", () => {
-  it("spills a live session's oversized tool output and serves it by id, live and once stored", async () => {
+  it("moves a live session's leaf over the shorter path, branches the next prompt there, and refuses mid-turn", async () => {
     const options = await hostOptions(
-      new MockProvider([
-        toolCallTurn({
-          type: "tool-call",
-          callId: "c1",
-          name: "read",
-          arguments: { path: "wide.txt" },
-        }),
-        textTurn("read it"),
-      ]),
+      new MockProvider([textTurn("one"), textTurn("two"), textTurn("three")]),
     );
-    const wide = Array.from(
-      { length: 1500 },
-      (_, index) => `${String(index).padStart(4, "0")} ${"w".repeat(60)}`,
-    ).join("\n");
-    await writeFile(join(options.cwd, "wide.txt"), wide);
-    const live = serverOver(options);
-    const { id } = (await (await live.call("/sessions", { method: "POST" })).json()) as {
-      id: string;
+    const { server, call } = serverOver(options);
+    const { id } = await read<{ id: string }>(await call("/sessions", { method: "POST" }));
+    const reader = sseReader(await call("/events"));
+    const settled = (after: (state: { leafId: string | null }) => boolean) =>
+      until(
+        reader,
+        (frame) =>
+          frame.event === "session.state" &&
+          after(envelopeIn(frame).payload as { leafId: string | null }),
+      );
+    await post(call, `/sessions/${id}/prompt`, { text: "first" });
+    const opened = envelopeIn(await settled((state) => state.leafId !== null)).payload as {
+      leafId: string;
     };
-    const reader = sseReader(await live.call("/events"));
-    await live.call(`/sessions/${id}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: "read wide.txt" }),
-    });
-    while ((await reader.next()).event !== "turn.completed");
+    await post(call, `/sessions/${id}/prompt`, { text: "second" });
+    await settled((state) => state.leafId !== null && state.leafId !== opened.leafId);
+    const before = await read<{ leafId: string; activePath: string[] }>(
+      await call(`/sessions/${id}/entries`),
+    );
+    expect(before.activePath).toHaveLength(4);
+    const firstAnswer = before.activePath[1] ?? "";
+
+    const moved = await post(call, `/sessions/${id}/leaf`, { entryId: firstAnswer });
+    expect(await moved.json()).toEqual({ leafId: firstAnswer });
+    expect(
+      (await read<{ messages: Message[] }>(await call(`/sessions/${id}`))).messages,
+    ).toHaveLength(2);
+    expect(
+      envelopeIn(await until(reader, (frame) => frame.event === "session.tree")).payload,
+    ).toEqual({ reason: "leaf", entryId: firstAnswer });
+
+    await post(call, `/sessions/${id}/prompt`, { text: "third" });
+    await settled(
+      (state) =>
+        state.leafId !== null && state.leafId !== firstAnswer && state.leafId !== before.leafId,
+    );
+    const after = await read<{ entries: Array<{ parentId: string | null }>; activePath: string[] }>(
+      await call(`/sessions/${id}/entries`),
+    );
+    expect(after.entries.filter((entry) => entry.parentId === firstAnswer)).toHaveLength(2);
+    expect(after.activePath.slice(0, 2)).toEqual(before.activePath.slice(0, 2));
+    expect(after.activePath).toHaveLength(4);
+    expect((await post(call, `/sessions/${id}/leaf`, { entryId: "nope" })).status).toBe(404);
     await reader.close();
-    const { messages } = (await (await live.call(`/sessions/${id}`)).json()) as {
-      messages: Message[];
-    };
-    const spill = spilledReference(messages);
-    const range = `?from=${spill.elidedFrom}&to=${spill.elidedTo}`;
-    const elided = await live.call(`/sessions/${id}/spills/${spill.id}${range}`);
-    expect(elided.status).toBe(200);
-    const slice = (await elided.json()) as { text: string };
-    expect(slice).toMatchObject({
-      spillId: spill.id,
-      bytes: spill.bytes,
-      from: spill.elidedFrom,
-      to: spill.elidedTo,
+    await server.close();
+  });
+
+  it("refuses a leaf move while a turn runs", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    options.provider = hangingProviderK2();
+    const { server, call } = serverOver(options);
+    const { id } = await read<{ id: string }>(await call("/sessions", { method: "POST" }));
+    const reader = sseReader(await call("/events"));
+    await post(call, `/sessions/${id}/prompt`, { text: "wait" });
+    await until(reader, (frame) => frame.event === "turn.started");
+    expect((await post(call, `/sessions/${id}/leaf`, { entryId: null })).status).toBe(409);
+    await post(call, `/sessions/${id}/abort`);
+    await until(reader, (frame) => frame.event === "turn.interrupted");
+    await reader.close();
+    await server.close();
+  });
+
+  it("fires changes.updated after a write turn, lists the change with turn 1, reads both sides, and follows undo and redo", async () => {
+    const options = await checkpointed(
+      new MockProvider([writeTurn("note.txt", "hello\n"), textTurn("wrote it")]),
+    );
+    const { server, call } = serverOver(options);
+    const { id } = await read<{ id: string }>(await call("/sessions", { method: "POST" }));
+    expect(await (await call(`/sessions/${id}/changes`)).json()).toEqual({
+      baseline: "session start",
+      files: [],
+    });
+    const reader = sseReader(await call("/events"));
+    await post(call, `/sessions/${id}/prompt`, { text: "write a note" });
+    const updated = envelopeIn(await until(reader, (frame) => frame.event === "changes.updated"));
+    expect(updated).toMatchObject({ sessionId: id, payload: { paths: ["note.txt"], turn: 1 } });
+
+    expect(await (await call(`/sessions/${id}/changes`)).json()).toEqual({
+      baseline: "session start",
+      files: [{ path: "note.txt", added: 1, deleted: 0, turn: 1 }],
+    });
+    expect(await (await call(`/sessions/${id}/changes/file?path=note.txt`)).json()).toEqual({
+      path: "note.txt",
+      before: null,
+      after: "hello\n",
+      note: "new",
       truncated: false,
     });
-    expect(slice.text).toContain("w".repeat(60));
-    await live.server.close();
+    await writeFile(join(options.cwd, "blob.bin"), "a\0b");
+    expect(await (await call(`/sessions/${id}/changes/file?path=blob.bin`)).json()).toEqual({
+      path: "blob.bin",
+      before: null,
+      after: null,
+      note: "binary",
+      truncated: false,
+    });
+    const escaped = await call(`/sessions/${id}/changes/file?path=${encodeURIComponent("../x")}`);
+    expect(escaped.status).toBe(403);
 
-    const stored = serverOver(options);
-    const reopened = await stored.call(`/sessions/${id}/spills/${spill.id}${range}`);
-    expect(await reopened.json()).toEqual(slice);
-    expect((await stored.call(`/sessions/${id}/spills/no-such-spill`)).status).toBe(404);
-    expect((await stored.call(`/sessions/nope/spills/${spill.id}`)).status).toBe(404);
-    await stored.server.close();
+    await post(call, `/sessions/${id}/undo`);
+    const undone = envelopeIn(await until(reader, (frame) => frame.event === "changes.updated"));
+    expect(undone.payload).toEqual({ paths: [] });
+    expect(existsSync(join(options.cwd, "note.txt"))).toBe(false);
+    await post(call, `/sessions/${id}/redo`);
+    const redone = envelopeIn(await until(reader, (frame) => frame.event === "changes.updated"));
+    expect((redone.payload as { paths: string[] }).paths).toEqual(["blob.bin", "note.txt"]);
+    await reader.close();
+    await server.close();
   });
 
-  function spilledReference(messages: readonly Message[]) {
-    for (const message of messages) {
-      for (const part of message.parts) {
-        if (part.type === "tool-result" && part.spill !== undefined) return part.spill;
-      }
-    }
-    throw new Error("the read did not spill");
+  it("answers no baseline under --no-checkpoints and still lists entries", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    options.checkpoints = "off";
+    const { server, call } = serverOver(options);
+    const { id } = await read<{ id: string }>(await call("/sessions", { method: "POST" }));
+    const refused = await call(`/sessions/${id}/changes`);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: "no baseline" });
+    expect((await call(`/sessions/${id}/changes/file?path=a`)).status).toBe(409);
+    expect((await call(`/sessions/${id}/entries`)).status).toBe(200);
+    await server.close();
+  });
+
+  it("answers the tree and the diff through servedHost as well", async () => {
+    const options = await checkpointed(new MockProvider([textTurn("hi")]));
+    const host = await servedHost(options);
+    const created = await host.create();
+    expect(await host.tree.entries(created.id)).toMatchObject({ entries: [], leafId: null });
+    expect(await host.changes.list(created.id)).toEqual({ baseline: "session start", files: [] });
+    expect(await host.changes.list("nope")).toBe("missing");
+    await host.close();
+  });
+
+  function userMessage(text: string): Message {
+    return { role: "user", parts: [{ type: "text", text }] };
+  }
+
+  function assistantMessage(text: string): Message {
+    return { role: "assistant", parts: [{ type: "text", text }] };
+  }
+
+  function hangingProviderK2(): Provider {
+    return {
+      name: "hanging",
+      async *stream(request) {
+        yield { type: "text", text: "..." };
+        await new Promise<void>((resolve) => {
+          if (request.signal?.aborted) resolve();
+          request.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        request.signal?.throwIfAborted();
+      },
+    };
   }
 });

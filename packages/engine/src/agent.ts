@@ -208,7 +208,7 @@ export class Agent {
     return this.effortRequested;
   }
 
-  setEffort(level: EffortLevel | undefined): void {
+  setEffort(level: EffortLevel): void {
     this.effortRequested = level;
   }
 

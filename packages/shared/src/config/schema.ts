@@ -53,7 +53,7 @@ const mcpHttpServer = z
     headers: z
       .record(z.string(), z.string())
       .describe(
-        'Static HTTP headers sent verbatim on every request to the server, typically Authorization; treated as secrets: never logged, never echoed in errors, never readable from the project layer. Static values only; keywork runs no OAuth flow of any kind. A value of "secret:<name>" is read from the OS credential store on connect, so this file names the secret instead of holding it (103/E9).',
+        'Static HTTP headers sent verbatim on every request to the server, typically Authorization; treated as secrets: never logged, never echoed in errors, never readable from the project layer. Static values win over any OAuth bearer keywork holds for the server (sign-in runs only through keywork mcp login, never on connect). A value of "secret:<name>" is read from the OS credential store on connect, so this file names the secret instead of holding it (103/E9).',
       )
       .optional(),
     trusted: mcpTrusted.optional(),

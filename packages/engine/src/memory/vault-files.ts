@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve, sep } from "node:path";
 export const mocFile = "MEMORY.md";
 export const auditFile = "curation.md";
 export const stagingDir = ".staging";
+export const syncDir = ".sync";
 export const dailyDir = "daily";
 export const arcsDir = "arcs";
 export const botsDir = "bots";
@@ -121,7 +122,9 @@ export class VaultFiles {
   }
 
   private isStructuralFile(rel: string): boolean {
-    return rel === mocFile || rel === auditFile || this.reserved.has(rel);
+    return (
+      rel === mocFile || rel === auditFile || isAuditSegmentPath(rel) || this.reserved.has(rel)
+    );
   }
 
   private async entries(dir: string) {
@@ -170,7 +173,12 @@ export function isVaultRelativePath(path: string): boolean {
     .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
-const hiddenDirs = new Set([stagingDir, ".obsidian"]);
+export function isAuditSegmentPath(path: string): boolean {
+  return auditSegmentPattern.test(path);
+}
+
+const auditSegmentPattern = /^curation\.[a-z0-9-]+\.md$/i;
+const hiddenDirs = new Set([stagingDir, syncDir, ".obsidian"]);
 const layerDirs = new Set([dailyDir, arcsDir, botsDir]);
 const structuralFiles = new Set([mocFile, auditFile].map((file) => file.toLowerCase()));
 

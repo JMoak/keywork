@@ -36,6 +36,7 @@ export interface ArcsPaneEffects {
   close(slug: string): void;
   abandon(slug: string): void;
   reject(reason: string): void;
+  removeSession?(sessionId: string, title: string): void;
 }
 
 export interface ArcsPaneSeams {
@@ -63,7 +64,14 @@ export class ArcsPaneModel extends RowCursor<ArcGroupRow> {
     this.drilledGroup = seams.drilled;
     this.sessions = new SessionsOverviewModel(
       notify,
-      { refresh: () => effects.refresh(), activate: (id) => effects.activate(id), drill: () => {} },
+      {
+        refresh: () => effects.refresh(),
+        activate: (id) => effects.activate(id),
+        drill: () => {},
+        ...(effects.removeSession !== undefined && {
+          remove: (id: string, title: string) => effects.removeSession?.(id, title),
+        }),
+      },
       {
         ...(seams.presence !== undefined && { presence: seams.presence }),
         ...(seams.currentSession !== undefined && { currentSession: seams.currentSession }),
@@ -147,7 +155,12 @@ export class ArcsPaneModel extends RowCursor<ArcGroupRow> {
     return row.key.kind === "arc" ? `arc:${row.key.slug}` : "unbound";
   }
 
+  get confirming(): boolean {
+    return this.sessions.removal() !== undefined;
+  }
+
   private handleSessionsKey(chord: Chord, pageRows: number): boolean {
+    if (this.confirming) return this.sessions.handleKey(chord, pageRows);
     if (chord.name === "escape" || chord.name === "backspace") return this.returnToArcs();
     return this.sessions.handleKey(chord, pageRows);
   }

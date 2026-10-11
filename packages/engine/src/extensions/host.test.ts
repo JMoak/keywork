@@ -513,3 +513,167 @@ describe("ExtensionHost settle", () => {
     expect(seen).toEqual(["first", "second"]);
   });
 });
+
+describe("ExtensionHost over many buses", () => {
+  it("hears turns on every observed bus, once per bus, and lets go on dispose", async () => {
+    const { host } = harness();
+    const seen: string[] = [];
+    await host.activate(
+      inline("ears", (api) => api.on("turn_start", ({ userText }) => void seen.push(userText))),
+    );
+    const other = new EventBus<EngineEvents>();
+    const stop = host.observe(other);
+    expect(host.observe(other)).toBe(stop);
+
+    other.emit("turn.started", { userText: "elsewhere" });
+    other.emit("turn.started", { userText: "again", replay: true });
+    await host.settle();
+    expect(seen).toEqual(["elsewhere"]);
+
+    await host.dispose();
+    other.emit("turn.started", { userText: "after dispose" });
+    await host.settle();
+    expect(seen).toEqual(["elsewhere"]);
+  });
+
+  it("lands each entry in the session whose turn is in flight", async () => {
+    const { host } = harness();
+    const root = await scratch();
+    const first = await SessionStore.create(join(root, "first.jsonl"), "/w");
+    const second = await SessionStore.create(join(root, "second.jsonl"), "/w");
+    const started: string[] = [];
+    await host.activate(
+      inline("scribe", (api) => {
+        api.on(
+          "session_start",
+          ({ reason, sessionId }) => void started.push(`${reason}:${sessionId}`),
+        );
+        api.on("turn_end", ({ message }) => api.appendEntry("saw", messageTextOf(message)));
+      }),
+    );
+    await host.startSession({ reason: "start", store: first });
+    await host.startSession({ reason: "start", store: second });
+    const firstBus = new EventBus<EngineEvents>();
+    const secondBus = new EventBus<EngineEvents>();
+    host.observe(firstBus, { session: () => first.header.id });
+    host.observe(secondBus, { session: () => second.header.id });
+
+    secondBus.emit("turn.completed", { message: said("two"), usage: noUsage });
+    firstBus.emit("turn.completed", { message: said("one"), usage: noUsage });
+    await host.settle();
+
+    expect(started).toEqual([`start:${first.header.id}`, `start:${second.header.id}`]);
+    expect(extensionEntries(first.entries())).toEqual([
+      { extension: "scribe", type: "saw", data: "one" },
+    ]);
+    expect(extensionEntries(second.entries())).toEqual([
+      { extension: "scribe", type: "saw", data: "two" },
+    ]);
+  });
+
+  it("binds the agent hooks seam to its session as well", async () => {
+    const { host } = harness();
+    const root = await scratch();
+    const first = await SessionStore.create(join(root, "first.jsonl"), "/w");
+    const second = await SessionStore.create(join(root, "second.jsonl"), "/w");
+    await host.activate(
+      inline("gate", (api) => {
+        api.on("tool_call", async ({ call }) => {
+          await api.appendEntry("call", call.name);
+          return undefined;
+        });
+      }),
+    );
+    await host.startSession({ store: first });
+    await host.startSession({ store: second });
+
+    await host.agentHooks({ session: () => second.header.id }).toolCall?.(bashCall);
+    await host.settle();
+
+    expect(extensionEntries(first.entries())).toEqual([]);
+    expect(extensionEntries(second.entries())).toEqual([
+      { extension: "gate", type: "call", data: "bash" },
+    ]);
+  });
+
+  it("ends one session by id and leaves the others open", async () => {
+    const { host } = harness();
+    const root = await scratch();
+    const first = await SessionStore.create(join(root, "first.jsonl"), "/w");
+    const second = await SessionStore.create(join(root, "second.jsonl"), "/w");
+    const ended: string[] = [];
+    await host.activate(
+      inline("watch", (api) =>
+        api.on("session_end", ({ reason, sessionId }) => void ended.push(`${reason}:${sessionId}`)),
+      ),
+    );
+    await host.startSession({ store: first });
+    await host.startSession({ store: second });
+
+    await host.endSession("switch", first.header.id);
+    await host.endSession("switch", "never-opened");
+    expect(host.openSessions()).toEqual([second.header.id]);
+
+    await host.endSession("exit");
+    expect(host.openSessions()).toEqual([]);
+    expect(ended).toEqual([`switch:${first.header.id}`, `exit:${second.header.id}`]);
+  });
+
+  it("drops an entry outside any turn when more than one session is open", async () => {
+    const { host, notices } = harness();
+    const root = await scratch();
+    let api: ExtensionApi | undefined;
+    await host.activate(
+      inline("loose", (given) => {
+        api = given;
+      }),
+    );
+    await host.startSession({ store: await SessionStore.create(join(root, "a.jsonl"), "/w") });
+    await host.startSession({ store: await SessionStore.create(join(root, "b.jsonl"), "/w") });
+
+    await api?.appendEntry("note", 1);
+
+    expect(notices.map((notice) => notice.message)).toEqual([
+      'entry "note" was dropped: 2 sessions are open and no turn names one',
+    ]);
+  });
+
+  it("reports what each extension registered and relays notices to listeners", async () => {
+    const { host } = harness();
+    const heard: string[] = [];
+    const stop = host.onNotice((notice) => heard.push(`${notice.level}:${notice.message}`));
+    await host.activate(
+      inline("kit", (api) => {
+        api.registerTool(tool("kit_tool"));
+        api.registerCommand({ name: "kit", run: () => undefined });
+        api.registerShortcut({ keys: "ctrl+k", run: () => undefined });
+        api.registerFlag({ name: "kit-flag" });
+        api.log.warn("ready-ish");
+      }),
+    );
+    expect(host.registrations("kit")).toEqual({
+      tools: ["kit_tool"],
+      commands: ["kit"],
+      shortcuts: ["ctrl+k"],
+      flags: ["kit-flag"],
+    });
+    expect(host.registrations("nobody")).toEqual({
+      tools: [],
+      commands: [],
+      shortcuts: [],
+      flags: [],
+    });
+    expect(heard).toEqual(["warn:ready-ish"]);
+    stop();
+  });
+});
+
+const noUsage = { inputTokens: 0, outputTokens: 0 };
+
+function said(text: string): Message {
+  return { role: "assistant", parts: [{ type: "text", text }] };
+}
+
+function messageTextOf(message: Message): string {
+  return message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
+}

@@ -435,3 +435,32 @@ describe("sessionPort context edits", () => {
     expect(reopened.messages().map(messageText)).toEqual(["my key is [redacted]", "noted"]);
   });
 });
+
+describe("sessionTreePort lifecycle", () => {
+  it("removes to the trash, lists it, names a removed fork parent, and restores", async () => {
+    const dir = await tempDir();
+    const feed = sessionChangeFeed();
+    const port = sessionTreePort(dir, feed);
+    const seen: string[] = [];
+    port.subscribe?.((sessionId) => seen.push(sessionId));
+    const opened = await openOrResumeSession(dir, ".");
+    const root = await opened.store.append(textMessage("user", "parent"));
+    const parentId = opened.store.header.id;
+    const forkId = (await port.fork(parentId, root.id)) ?? "";
+
+    expect(await port.remove?.(parentId)).toBe("removed");
+    expect(await port.remove?.(parentId)).toBe("missing");
+    expect((await port.overview?.())?.map((item) => item.id)).toEqual([forkId]);
+    expect((await port.trash?.())?.map((item) => item.id)).toEqual([parentId]);
+    expect((await port.load(forkId))?.forkedFrom).toEqual({ sessionId: parentId, removed: true });
+
+    const restored = await port.restore?.(parentId);
+    expect(restored?.id).toBe(parentId);
+    expect(await port.restore?.(parentId)).toBeUndefined();
+    expect((await port.overview?.())?.map((item) => item.id).sort()).toEqual(
+      [forkId, parentId].sort(),
+    );
+    expect((await port.load(forkId))?.forkedFrom).toEqual({ sessionId: parentId, removed: false });
+    expect(seen).toEqual([parentId, parentId, parentId]);
+  });
+});

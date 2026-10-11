@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { type CheckpointReads, followMutations } from "@keywork/engine";
+import {
+  type Agent,
+  type CheckpointReads,
+  followMutations as followBusMutations,
+} from "@keywork/engine";
 import { clampScroll } from "./clamp.ts";
 import { type DiffLine, unifiedDiff } from "./diff-render.ts";
 import type { CheckpointsPort } from "./fork.ts";
@@ -113,6 +117,10 @@ export function refreshingCheckpoints(
     restoreTo: (tree) => announced(port.restoreTo(tree)),
     ...(port.snapshot !== undefined && { snapshot: port.snapshot.bind(port) }),
   };
+}
+
+export function followMutations(bus: Agent["bus"], feed: FileChangeFeed): () => void {
+  return followBusMutations(bus, () => feed.emit());
 }
 
 export function firstHunkLine(lines: readonly DiffLine[]): number | undefined {
@@ -311,7 +319,7 @@ function halfPageOf(rows: number): number {
 function announcingFactory(factory: AgentFactory, feed: FileChangeFeed): AgentFactory {
   return (...args) => {
     const agent = factory(...args);
-    followMutations(agent.bus, () => feed.emit());
+    followMutations(agent.bus, feed);
     return agent;
   };
 }

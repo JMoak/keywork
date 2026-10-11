@@ -1,12 +1,8 @@
 #!/usr/bin/env bun
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
-import {
-  debugEnabled,
-  formatReference,
-  type PermissionResolver,
-  ResolutionError,
-} from "@keywork/engine";
+import { debugEnabled, type PermissionResolver, ResolutionError } from "@keywork/engine";
+import type { KeyworkClient } from "@keywork/server";
 import {
   ConfigError,
   openWorkspace,
@@ -141,6 +137,8 @@ const commands: Record<CommandName, Command> = {
   bot: runBot,
   memory: runMemory,
   skills: runSkills,
+  extensions: runExtensions,
+  mcp: runMcp,
   trust: (context) => runTrust("trust", context),
   untrust: (context) => runTrust("untrust", context),
   doctor: runDoctor,
@@ -290,7 +288,7 @@ async function runHeadlessPrompt(
 }
 
 async function runServe(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
-  const { io, cwd, projectTrusted, workspaceSlug, trustStore, workspaceRecall } = context;
+  const { io, cwd, projectTrusted, workspaceSlug } = context;
   const port = parsePort(values.port);
   if (port === "invalid") {
     io.printError(`keywork serve: --port wants a whole number from 0 to 65535 (0 picks a free port)
@@ -306,8 +304,7 @@ ${usage}`);
     return exitCodes.usage;
   }
   const { config, runtime } = (await context.openInference()).current();
-  const selection = { override: values.model, default: config.model };
-  const bound = runtime.resolve(selection);
+  const bound = runtime.resolve({ override: values.model, default: config.model });
   if (!bound.ok) {
     io.printError(
       `${bound.failure.message} · ${nextActionFor(bound.failure, shellCommands)}
@@ -327,30 +324,21 @@ ${connectHint}`,
       workspaceSlug,
       port,
       provider: runtime.provider(bound.binding),
-      inference: {
-        bind: (selected) => {
-          const resolution = runtime.resolve({ ...selection, selection: selected });
-          if (!resolution.ok) return resolution;
-          return {
-            ok: true,
-            provider: runtime.provider(resolution.binding),
-            reference: formatReference(resolution.binding.reference),
-          };
-        },
-      },
       permissions: presets.resolver,
       presets,
+      inference: {
+        bind: (reference) => runtime.registry.bind(reference),
+        provider: (binding) => runtime.provider(binding),
+      },
       checkpoints: values["no-checkpoints"] ? "off" : "on",
       sessionDir: values["session-dir"],
-      trustStore,
-      workspaceRecall,
-      theme: startupThemeName(config),
       prompts: config.prompts,
       mcpServers: config.mcpServers,
       repoMap: config.repoMap,
       lsp: config.lsp,
       models: config.models,
       thinking: config.thinking,
+      theme: startupThemeName(config),
       signal,
       print: io.print,
       printError: io.printError,
@@ -423,6 +411,7 @@ async function runSessions(
       tree: values.tree,
       out: values.out,
       cwd: context.cwd,
+      yes: values.yes,
       ...commandIo(context),
       confirm: terminalConfirm(),
     },
@@ -521,6 +510,46 @@ async function runSkills(
   );
 }
 
+async function runMcp(context: CommandContext, { positionals }: ParsedInvocation): Promise<number> {
+  const { mcpCommand } = await import("./mcp.ts");
+  const { platformVault } = await import("@keywork/shared");
+  const { defaultAuthDir } = await import("./auth-store.ts");
+  const { config } = (await context.openInference()).current();
+  return mcpCommand(positionals, {
+    servers: config.mcpServers,
+    vault: platformVault({ dataDir: defaultAuthDir() }),
+    runningServer: () => runningServerClient(context),
+    ...commandIo(context),
+  });
+}
+
+async function runningServerClient(context: CommandContext): Promise<KeyworkClient | undefined> {
+  const { runningServerAmong, ticketFilesFor } = await import("./serve.ts");
+  const { keyworkClient } = await import("@keywork/server");
+  const ticket = await runningServerAmong(
+    ticketFilesFor(context.cwd, context.workspaceSlug),
+    fetch,
+  );
+  return ticket === undefined ? undefined : keyworkClient(ticket);
+}
+
+async function runExtensions(
+  context: CommandContext,
+  { positionals }: ParsedInvocation,
+): Promise<number> {
+  const { extensionsCommand } = await import("./extensions-command.ts");
+  return extensionsCommand(
+    positionals,
+    {
+      cwd: context.cwd,
+      projectTrusted: context.projectTrusted,
+      userRoot: homedir(),
+      workspaceSlug: context.workspaceSlug,
+    },
+    commandIo(context),
+  );
+}
+
 async function defaultProvider(context: CommandContext) {
   const { config, runtime } = (await context.openInference()).current();
   const resolution = runtime.resolve({ default: config.model });
@@ -578,9 +607,9 @@ function parseInvocationArgs(args: readonly string[]) {
       fresh: { type: "boolean", default: false },
       resume: { type: "string" },
       "session-dir": { type: "string" },
-      "no-checkpoints": { type: "boolean", default: false },
       workspace: { type: "string" },
       port: { type: "string" },
+      "no-checkpoints": { type: "boolean", default: false },
       pane: { type: "string" },
       session: { type: "string" },
       url: { type: "string" },
@@ -589,6 +618,7 @@ function parseInvocationArgs(args: readonly string[]) {
       out: { type: "string" },
       apply: { type: "boolean", default: false },
       restore: { type: "string" },
+      yes: { type: "boolean", default: false },
     },
   });
 }

@@ -24,6 +24,7 @@ import {
   elevationScrollMap,
   elevationTurnAge,
 } from "./elevation.ts";
+import { extensionsTour } from "./extensions-tour.ts";
 import { feelPolish } from "./feel-polish.ts";
 import { fileLinksOff, fileLinksOn } from "./file-links.ts";
 import { firstConversation } from "./first-conversation.ts";
@@ -95,6 +96,7 @@ export const scenarios: readonly Scenario[] = [
   diffPane,
   feelPolish,
   livePlayground,
+  extensionsTour,
 ];
 
 export function scenarioNamed(name: string): Scenario | undefined {

@@ -8,13 +8,7 @@ import {
   routes,
   type WorkspaceInfo,
 } from "./openapi.ts";
-import {
-  handlersOf,
-  json,
-  type RouteParams,
-  refusalResponse,
-  unauthorized,
-} from "./routes/family.ts";
+import { handlersOf, json, type RouteParams, unauthorized } from "./routes/family.ts";
 import { bearerMatches } from "./token.ts";
 
 export const defaultPort = 4770;
@@ -48,7 +42,7 @@ export function createKeyworkServer(options: ServerOptions): KeyworkServer {
       if (match === undefined) return json(404, { error: "no such route" });
       if (match.route.authenticated && !bearerMatches(request, options.token))
         return unauthorized();
-      return handlers[match.route.operationId](request, match.params).catch(refusalResponse);
+      return handlers[match.route.operationId](request, match.params);
     },
     close: async () => {
       streams.closeAll();

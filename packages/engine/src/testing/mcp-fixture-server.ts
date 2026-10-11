@@ -8,13 +8,18 @@ interface FixtureTool {
   name: string;
   description: string;
   inputSchema: Json;
-  respond(args: Json): Outcome;
+  asks?: Json;
+  respond(args: Json, call: CallContext): Outcome;
+}
+
+interface CallContext {
+  responses: Json | undefined;
+  clientCapabilities: Json;
 }
 
 interface Outcome {
   text: string;
   isError?: boolean;
-  needsInput?: boolean;
 }
 
 type Era = "legacy" | "modern" | "dual";
@@ -143,9 +148,99 @@ function askingTools(): FixtureTool[] {
       name: "confirm",
       description: "Asks the user to confirm before answering.",
       inputSchema: { type: "object", properties: {} },
-      respond: () => ({ text: "confirmed", needsInput: true }),
+      asks: {
+        confirm: elicitation({
+          message: "Proceed?",
+          requestedSchema: { type: "object", properties: {} },
+        }),
+      },
+      respond: (_args, call) => answered(call, "confirm", () => "confirmed"),
+    },
+    {
+      name: "greet",
+      description: "Asks for a name and a colour, then greets.",
+      inputSchema: { type: "object", properties: {} },
+      asks: {
+        who: elicitation({
+          mode: "form",
+          message: "Who should I greet?",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", title: "Name", default: "friend" },
+              color: { type: "string", enum: ["Red", "Green"], default: "Red" },
+            },
+            required: ["name"],
+          },
+        }),
+      },
+      respond: (_args, call) =>
+        answered(call, "who", (content) => `hello ${content.name} in ${content.color}`),
+    },
+    {
+      name: "register",
+      description: "Asks for a handle it cannot default.",
+      inputSchema: { type: "object", properties: {} },
+      asks: {
+        handle: elicitation({
+          message: "Pick a handle",
+          requestedSchema: {
+            type: "object",
+            properties: { handle: { type: "string" } },
+            required: ["handle"],
+          },
+        }),
+      },
+      respond: (_args, call) =>
+        answered(call, "handle", (content) => `registered ${content.handle}`),
+    },
+    {
+      name: "connect",
+      description: "Sends the user to a link before answering.",
+      inputSchema: { type: "object", properties: {} },
+      asks: {
+        link: elicitation({
+          mode: "url",
+          message: "Finish connecting in your browser",
+          url: "https://fixture.example/connect",
+        }),
+      },
+      respond: (_args, call) => answered(call, "link", () => "connected"),
+    },
+    {
+      name: "nag",
+      description: "Keeps asking no matter what it hears.",
+      inputSchema: { type: "object", properties: {} },
+      asks: {
+        again: elicitation({
+          message: "Once more?",
+          requestedSchema: { type: "object", properties: {} },
+        }),
+      },
+      respond: () => ({ text: "never answered" }),
+    },
+    {
+      name: "capabilities",
+      description: "Echoes the client capabilities the caller advertised.",
+      inputSchema: { type: "object", properties: {} },
+      respond: (_args, call) => ({ text: JSON.stringify(call.clientCapabilities) }),
     },
   ];
+}
+
+function elicitation(params: Json): Json {
+  return { method: "elicitation/create", params };
+}
+
+function answered(call: CallContext, key: string, reply: (content: Json) => string): Outcome {
+  const response = (call.responses?.[key] ?? {}) as Json;
+  if (response.action !== "accept") {
+    return {
+      text: `${key}: the user ${String(response.action ?? "gave no answer")}`,
+      isError: true,
+    };
+  }
+  return { text: reply((response.content ?? {}) as Json) };
 }
 
 function announceToolsChanged(): void {
@@ -293,24 +388,27 @@ function callResult(tools: FixtureTool[], params: Json, modern: boolean): Json {
       isError: true,
     };
   }
-  const outcome = tool.respond((params.arguments ?? {}) as Json);
-  if (outcome.needsInput === true && modern) return inputRequired();
+  const responses = params.inputResponses as Json | undefined;
+  const asksFirst = tool.asks !== undefined && modern;
+  const needsRound = asksFirst && (responses === undefined || tool.name === "nag");
+  if (needsRound) return inputRequired(tool);
+  if (asksFirst && params.requestState !== stateFor(tool)) {
+    return { content: [{ type: "text", text: "requestState did not round-trip" }], isError: true };
+  }
+  const clientCapabilities = ((params._meta as Json | undefined)?.[capabilitiesKey] ?? {}) as Json;
+  const outcome = tool.respond((params.arguments ?? {}) as Json, { responses, clientCapabilities });
   return {
     content: [{ type: "text", text: outcome.text }],
     ...(outcome.isError === true && { isError: true }),
   };
 }
 
-function inputRequired(): Json {
-  return {
-    resultType: "input_required",
-    inputRequests: {
-      confirm: {
-        method: "elicitation/create",
-        params: { message: "Proceed?", requestedSchema: { type: "object", properties: {} } },
-      },
-    },
-  };
+function inputRequired(tool: FixtureTool): Json {
+  return { resultType: "input_required", inputRequests: tool.asks, requestState: stateFor(tool) };
+}
+
+function stateFor(tool: FixtureTool): string {
+  return `state-${tool.name}`;
 }
 
 function respond(id: number | undefined, result: Json): void {

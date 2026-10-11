@@ -1,55 +1,68 @@
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   Agent,
+  ArcExistsError,
+  ArcNotActiveError,
+  contextBudgetFor,
+  declaredContextWindow,
   type EffortLevel,
+  estimateConversationTokens,
+  McpServerNotFoundError,
+  MemoryGraph,
+  MemorySearch,
+  MemoryStore,
   type Message,
-  type MessageEntry,
+  MissingArcError,
   memoryGrants,
-  messageText,
   modelReferenceOf,
+  type Note,
   PermissionLedger,
-  type PromptOrigin,
   type Provider,
   parseReference,
-  type SendBehavior,
-  SessionStore,
+  readContext,
+  type SessionBinding,
+  type SessionEntry,
   type Tool,
   type ToolGuard,
-  UsageLedger,
+  titleKey,
+  toolScope,
 } from "@keywork/engine";
-import { type ActivePreset, requiresConfirmation } from "@keywork/shared";
+import { type CompleteTheme, requiresConfirmation, type TrustDecision } from "@keywork/shared";
 import { AskQueue } from "./asks.ts";
-import { announceChanges, type ChangeSource, changedFileOf, changedFilesOf } from "./changes.ts";
-import { type EventLog, processLevelSessionId } from "./events.ts";
-import type {
-  BoundModel,
-  ChangesOutcome,
-  SessionDetail,
-  SessionHost,
-  SessionInference,
-  SessionState,
-  SessionSummary,
-} from "./host.ts";
-import { type MemoryWorkspace, memoryHost } from "./memory.ts";
-import { contextReportOf, costReportOf } from "./reports.ts";
-import { spillSliceOf } from "./spills.ts";
+import { ChangesFeed, type ChangesSource, changesPortOver } from "./changes.ts";
+import type { EventLog } from "./events.ts";
+import { workspaceFiles } from "./files.ts";
 import {
-  type MemorySurfaceOptions,
-  memorySurfaces,
-  type SessionBindings,
-  type SessionStatus,
-} from "./testing-surfaces.ts";
-import { entriesOf, moveLeafOf, treeChange } from "./tree.ts";
-
-export {
-  arcsUnavailable,
-  type MemorySurfaceOptions,
-  type SessionBindings,
-  type SessionStatus,
-} from "./testing-surfaces.ts";
+  type ArcAirlockPort,
+  type ArcSummary,
+  type BotEntry,
+  type BotSummary,
+  type CompactionReport,
+  type CostReport,
+  type ExportOutcome,
+  type LabelOutcome,
+  type LeafOutcome,
+  type McpPort,
+  type MemoryNoteRecord,
+  type MemoryPort,
+  type ModelSwitch,
+  type NoteRelation,
+  type PresetHost,
+  type RedoReport,
+  SessionBusyError,
+  type SessionDetail,
+  type SessionEntries,
+  type SessionHost,
+  type SessionLifecyclePort,
+  type SessionState,
+  type SessionSummary,
+  SurfaceUnavailableError,
+  TrustRefusedError,
+  type UndonePrompt,
+  type UndoReport,
+  type WorkspaceChoice,
+  type WorkspaceReadiness,
+} from "./host.ts";
 
 export interface SseFrame {
   id: string | undefined;
@@ -104,38 +117,6 @@ export function sseReader(response: Response): SseReader {
 
 export const headlessGuard: ToolGuard = { confirm: async () => false, gate: "headless" };
 
-export function inferenceOver(models: Readonly<Record<string, Provider>>): SessionInference {
-  const known = Object.keys(models);
-  return {
-    bind: (selection): BoundModel => {
-      if (selection === undefined) {
-        const [first] = known;
-        const provider = first === undefined ? undefined : models[first];
-        return provider === undefined
-          ? { ok: false, failure: { code: "unconfigured", message: "no models", available: [] } }
-          : { ok: true, provider, reference: first ?? "" };
-      }
-      const reference = known.find(
-        (candidate) => candidate === selection || parseReference(candidate)?.model === selection,
-      );
-      const provider = reference === undefined ? undefined : models[reference];
-      if (reference === undefined || provider === undefined) {
-        return {
-          ok: false,
-          failure: {
-            code: "unknown-model",
-            message: `no model matches ${selection}`,
-            reference: selection,
-            provider: parseReference(selection)?.provider,
-            known,
-          },
-        };
-      }
-      return { ok: true, provider, reference };
-    },
-  };
-}
-
 export interface MemoryHostOptions {
   log: EventLog;
   provider: Provider;
@@ -143,469 +124,764 @@ export interface MemoryHostOptions {
   now?: () => Date;
   asks?: "queue" | "headless";
   askTimeoutMs?: number;
-  changes?: ChangeSource | "untrusted";
-  surfaces?: Omit<MemorySurfaceOptions, "log">;
-  memory?: () => Promise<MemoryWorkspace | undefined>;
-  inference?: SessionInference;
-  preset?: ActivePreset;
+  memory?: MemoryPort;
+  models?: Readonly<Record<string, Provider>>;
+  presets?: PresetHost;
+  surfaces?: MemorySurfaceOptions;
+  changes?: ChangesSource;
   trusted?: boolean;
 }
 
+export interface MemorySurfaceOptions {
+  root: string;
+  identity?: string;
+  trust?: TrustDecision;
+  mcp?: McpPort;
+  themes?: readonly CompleteTheme[];
+}
+
+interface MemorySession {
+  agent: Agent;
+  title: string;
+  detach: () => void;
+  staged: { prompt: UndonePrompt; cancel(): void } | undefined;
+  labels: Map<string, string>;
+  parent?: string;
+}
+
 export function memorySessionHost(options: MemoryHostOptions): SessionHost {
+  const sessions = new Map<string, MemorySession>();
+  const trashed = new Map<string, MemorySession>();
   const now = options.now ?? (() => new Date());
-  const sessions = new MemorySessions({ ...options, now }, (id) => surfaces.bindingsOf(id));
-  const surfaces = memorySurfaces({ log: options.log, now, ...options.surfaces }, (id) =>
-    sessions.status(id),
-  );
-  let preset: ActivePreset = options.preset ?? "standard";
-  const session = (id: string): MemorySession | undefined => sessions.get(id);
+  const ledger = new PermissionLedger({
+    trusted: options.trusted ?? false,
+    workspace: memoryGrants(),
+    root: "/memory",
+  });
+  const asks = new AskQueue({
+    now,
+    grants: ledger,
+    ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
+  });
+  const buildAgent = (id: string, provider: Provider, history?: readonly Message[]): Agent =>
+    new Agent({
+      provider,
+      guard: options.asks === "queue" ? asks.guardFor(id) : headlessGuard,
+      permissions: ledger.resolverFor(id),
+      ...(options.tools !== undefined && { tools: options.tools }),
+      ...(history !== undefined && { history }),
+    });
+  const changes = new ChangesFeed(options.log, async () => options.changes);
+  const attach = (id: string, agent: Agent): (() => void) => {
+    const detach = options.log.attach(agent.bus, id);
+    const unfollow = changes.follow(agent.bus, id);
+    return () => {
+      detach();
+      unfollow();
+    };
+  };
+  const swap = (
+    id: string,
+    session: MemorySession,
+    next: Agent,
+    effort: EffortLevel | null = session.agent.effort() ?? null,
+  ): void => {
+    next.setThinking(session.agent.thinking());
+    if (effort !== null) next.setEffort(effort);
+    session.detach();
+    session.agent = next;
+    session.detach = attach(id, next);
+  };
+  const stateOf = (session: MemorySession): SessionState => {
+    const { agent } = session;
+    const model = modelReferenceOf(agent.provider);
+    const effort = agent.effort();
+    const history = agent.history();
+    return {
+      ...(model !== undefined && { model }),
+      thinking: agent.thinking(),
+      ...(effort !== undefined && { effort }),
+      title: session.title,
+      leafId: history.length === 0 ? null : `m${history.length - 1}`,
+      undoable: lastPromptIndex(history) !== -1,
+      redoable: session.staged !== undefined,
+    };
+  };
+  const announce = (id: string, session: MemorySession): void => {
+    options.log.record(id, "session.state", stateOf(session));
+  };
+  const summaryOf = (id: string, session: MemorySession): SessionSummary => {
+    const { model, thinking, effort } = stateOf(session);
+    return {
+      id,
+      title: session.title,
+      createdAt: now().toISOString(),
+      lastActivityAt: now().toISOString(),
+      messageCount: session.agent.history().length,
+      ...(model !== undefined && { model }),
+      thinking,
+      ...(effort !== undefined && { effort }),
+    };
+  };
+  const verb = async <T>(
+    id: string,
+    act: (session: MemorySession) => T | Promise<T>,
+  ): Promise<T | "missing"> => {
+    const session = sessions.get(id);
+    return session === undefined ? "missing" : act(session);
+  };
   return {
-    ...surfaces.host,
-    list: async () => sessions.list(),
-    read: async (id) => sessions.read(id),
-    create: async () => sessions.create(),
-    prompt: async (id, text, behavior) => session(id)?.run(text, behavior) ?? "missing",
-    inject: async (id, text, origin) => session(id)?.run(text, "queue", origin) ?? "missing",
-    abort: async (id) => session(id)?.interrupt() ?? "missing",
-    entries: async (id) => {
-      const live = session(id);
-      return live === undefined ? undefined : { ...entriesOf(live.store), sessionId: id };
+    list: async () => [...sessions].map(([id, session]) => summaryOf(id, session)),
+    read: async (id) => {
+      const session = sessions.get(id);
+      if (session === undefined) return undefined;
+      const detail: SessionDetail = {
+        ...summaryOf(id, session),
+        cwd: "/memory",
+        live: true,
+        messages: session.agent.history(),
+        asOf: options.log.latestId(),
+        ...(session.parent !== undefined && { parentSession: session.parent }),
+      };
+      return detail;
     },
-    fork: (id, entryId) => sessions.fork(id, entryId),
-    label: async (id, entryId, label) => (await session(id)?.label(entryId, label)) ?? "missing",
-    moveLeaf: async (id, entryId) => (await session(id)?.moveLeaf(entryId)) ?? "missing",
-    changes: async (id) => sessions.changes(id, changedFilesOf),
-    changedFile: async (id, path) => sessions.changes(id, (source) => changedFileOf(source, path)),
-    spill: async (id, spillId, range) => {
-      const live = session(id);
-      return live === undefined ? "missing" : spillSliceOf(live.store.spills(), spillId, range);
+    create: async () => {
+      const id = `s${sessions.size + 1}`;
+      const agent = buildAgent(id, options.provider);
+      const session: MemorySession = {
+        agent,
+        title: `session ${id}`,
+        detach: attach(id, agent),
+        staged: undefined,
+        labels: new Map(),
+      };
+      sessions.set(id, session);
+      return summaryOf(id, session);
     },
-    setModel: async (id, reference) => {
-      const live = session(id);
-      if (live === undefined) return "missing";
-      if (options.inference === undefined) {
-        return {
-          ok: false,
-          failure: { code: "unconfigured", message: "this host has no inference", available: [] },
+    prompt: (id, text, behavior) =>
+      verb(id, (session) => {
+        const outcome = session.agent.busy() ? "queued" : "started";
+        session.staged = undefined;
+        session.agent
+          .send(text, { ...(behavior !== undefined && { behavior }) })
+          .catch(() => undefined)
+          .then(() => announce(id, session));
+        announce(id, session);
+        return outcome;
+      }),
+    inject: (id, text, origin) =>
+      verb(id, (session) => {
+        const outcome = session.agent.busy() ? "queued" : "started";
+        session.agent.send(text, { origin }).catch(() => undefined);
+        return outcome;
+      }),
+    abort: (id) =>
+      verb(id, (session) => {
+        if (!session.agent.busy()) return "idle";
+        session.agent.interrupt();
+        return "aborted";
+      }),
+    setModel: (id, reference) =>
+      verb(id, (session): ModelSwitch | "busy" => {
+        const provider = options.models?.[reference];
+        if (provider === undefined) {
+          return {
+            failure: {
+              code: "unknown-model",
+              message: `no model matches ${reference}`,
+              reference,
+              provider: undefined,
+              known: Object.keys(options.models ?? {}),
+            },
+          };
+        }
+        if (session.agent.busy()) return "busy";
+        swap(id, session, buildAgent(id, provider, session.agent.history()));
+        announce(id, session);
+        const model = parseReference(reference) ?? { provider: provider.name, model: reference };
+        return { model, notice: `model → ${reference}` };
+      }),
+    setThinking: (id, on) =>
+      verb(id, (session) => {
+        session.agent.setThinking(on);
+        announce(id, session);
+        return { thinking: on };
+      }),
+    setEffort: (id, level) =>
+      verb(id, (session): { effort: EffortLevel | null } | "busy" => {
+        if (level === null) {
+          if (session.agent.busy()) return "busy";
+          swap(id, session, buildAgent(id, session.agent.provider, session.agent.history()), null);
+        } else {
+          session.agent.setEffort(level);
+        }
+        announce(id, session);
+        return { effort: level };
+      }),
+    compact: (id) =>
+      verb(id, (session): CompactionReport | "busy" => {
+        if (session.agent.busy()) return "busy";
+        announce(id, session);
+        return { compacted: null, notices: [nothingToCompact] };
+      }),
+    undo: (id) =>
+      verb(id, (session): UndoReport | "busy" | "nothing" => {
+        if (session.agent.busy()) return "busy";
+        session.staged = undefined;
+        const history = session.agent.history();
+        const index = lastPromptIndex(history);
+        const prompt = history[index];
+        if (prompt === undefined) return "nothing";
+        swap(id, session, buildAgent(id, session.agent.provider, history.slice(0, index)));
+        const staged = {
+          prompt: { entryId: `m${index}`, text: textOf(prompt) },
+          cancel: () => swap(id, session, buildAgent(id, session.agent.provider, history)),
         };
-      }
-      return live.setModel(options.inference.bind(reference));
-    },
-    setThinking: async (id, on) => session(id)?.setThinking(on) ?? "missing",
-    setEffort: async (id, level) => session(id)?.setEffort(level) ?? "missing",
-    compact: async (id) => session(id)?.compact() ?? "missing",
-    undo: async (id) => (await session(id)?.undo()) ?? "missing",
-    redo: async (id) => (await session(id)?.redo()) ?? "missing",
-    context: async (id) => session(id)?.context() ?? "missing",
-    cost: async (id) => session(id)?.cost() ?? "missing",
-    export: async (id, request) => session(id)?.export(request.out) ?? "missing",
-    rename: async (id, title) => session(id)?.rename(title) ?? "missing",
-    checkpointsOf: async (id) => (session(id) === undefined ? "missing" : "off"),
-    setPreset: async (name, confirmed) => {
-      const from = preset;
-      if (from !== name && requiresConfirmation(from, name) && !confirmed)
-        return "needs-confirmation";
-      preset = name;
-      if (from !== name)
-        options.log.record(processLevelSessionId, "gate.preset", { from, to: name });
+        session.staged = staged;
+        announce(id, session);
+        const { undoable, redoable } = stateOf(session);
+        return { prompt: staged.prompt, filesNote: "files untouched", undoable, redoable };
+      }),
+    redo: (id) =>
+      verb(id, (session): RedoReport | "busy" | "nothing" => {
+        const { staged } = session;
+        if (staged === undefined) return "nothing";
+        if (session.agent.busy()) return "busy";
+        session.staged = undefined;
+        staged.cancel();
+        announce(id, session);
+        const { undoable, redoable } = stateOf(session);
+        return { restored: true, undoable, redoable };
+      }),
+    context: (id) =>
+      verb(id, ({ agent }) =>
+        readContext(
+          estimateConversationTokens(agent.history()),
+          contextBudgetFor(declaredContextWindow(agent.provider)),
+        ),
+      ),
+    cost: (id) =>
+      verb(id, ({ agent }): CostReport => {
+        const rollup = agent.cost();
+        const usage = agent.usage();
+        const cacheMiss = agent.cacheMiss();
+        const modelId = agent.modelId();
+        return {
+          rollup,
+          usage,
+          ...(modelId !== undefined && { modelId }),
+          ...(cacheMiss !== undefined && { cacheMiss }),
+          models: [
+            {
+              reference: modelReferenceOf(agent.provider) ?? agent.provider.name,
+              turns: rollup.pricedTurns + rollup.unpricedTurns,
+              usage,
+              rollup,
+            },
+          ],
+        };
+      }),
+    exportHtml: (id, _scope, out) =>
+      verb(
+        id,
+        (session): ExportOutcome =>
+          out === undefined ? { html: transcriptPage(session) } : "outside-scope",
+      ),
+    rename: (id, title) =>
+      verb(id, (session) => {
+        session.title = title;
+        announce(id, session);
+        return { title };
+      }),
+    applyPreset: async (name, confirmed) => {
+      const presets = options.presets;
+      if (presets === undefined) return "unavailable";
+      const from = presets.active();
+      if (from === name) return { from, to: name };
+      if (requiresConfirmation(from, name) && !confirmed) return "needs-confirmation";
+      await presets.apply(name);
+      for (const { agent } of sessions.values()) agent.bus.emit("gate.preset", { from, to: name });
       return { from, to: name };
     },
-    asks: async () => sessions.asks.list(),
-    answerAsk: async (callId, verdict, scope) => sessions.asks.answer(callId, verdict, scope),
-    permissions: async () => sessions.ledger.view(),
-    revokeWorkspaceGrant: async (rule) => sessions.ledger.revokeWorkspace(rule),
-    memory: memoryHost({
-      log: options.log,
-      workspace: options.memory ?? (async () => undefined),
-    }),
-    close: () => sessions.close(),
+    tree: {
+      entries: (id) => verb(id, (session) => entriesOf(id, session)),
+      fork: (id, entryId) =>
+        verb(id, (session): { sessionId: string } | "unknown-entry" => {
+          const index = entryIndexOf(session, entryId);
+          if (index === undefined) return "unknown-entry";
+          const forkedId = `s${sessions.size + 1}`;
+          const agent = buildAgent(
+            forkedId,
+            session.agent.provider,
+            session.agent.history().slice(0, index + 1),
+          );
+          sessions.set(forkedId, {
+            agent,
+            title: `session ${forkedId}`,
+            detach: attach(forkedId, agent),
+            staged: undefined,
+            labels: new Map(),
+            parent: id,
+          });
+          return { sessionId: forkedId };
+        }),
+      label: (id, entryId, label) =>
+        verb(id, (session): LabelOutcome | "unknown-entry" => {
+          if (entryIndexOf(session, entryId) === undefined) return "unknown-entry";
+          if (label === null) session.labels.delete(entryId);
+          else session.labels.set(entryId, label);
+          return { entryId, label };
+        }),
+      moveLeaf: (id, entryId) =>
+        verb(id, (session): LeafOutcome | "busy" | "unknown-entry" => {
+          const index = entryId === null ? -1 : entryIndexOf(session, entryId);
+          if (index === undefined) return "unknown-entry";
+          if (session.agent.busy()) return "busy";
+          session.staged = undefined;
+          const history = session.agent.history().slice(0, index + 1);
+          swap(id, session, buildAgent(id, session.agent.provider, history));
+          announce(id, session);
+          return { leafId: stateOf(session).leafId };
+        }),
+    },
+    changes: changesPortOver({ has: async (id) => sessions.has(id) }, async () => options.changes),
+    lifecycle: memoryTrash(sessions, trashed, summaryOf),
+    asks: async () => asks.list(),
+    answerAsk: async (callId, verdict, scope) => asks.answer(callId, verdict, scope),
+    permissions: async () => ledger.view(),
+    revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
+    close: async () => {
+      asks.close();
+      for (const session of sessions.values()) {
+        session.agent.interrupt();
+        session.detach();
+      }
+      sessions.clear();
+    },
+    ...(options.memory !== undefined && { memory: options.memory }),
+    ...(options.surfaces !== undefined &&
+      memorySurfacePorts(options.surfaces, {
+        has: (id) => sessions.has(id),
+        busy: (id) => sessions.get(id)?.agent.busy() ?? false,
+        now,
+      })),
   };
 }
 
-class MemorySessions {
-  readonly asks: AskQueue;
-  readonly ledger: PermissionLedger;
-  private readonly sessions = new Map<string, MemorySession>();
-  private readonly now: () => Date;
-  private readonly dir = mkdtempSync(join(tmpdir(), "keywork-memory-host-"));
-  private created = 0;
+function memoryTrash(
+  sessions: Map<string, MemorySession>,
+  trashed: Map<string, MemorySession>,
+  summaryOf: (id: string, session: MemorySession) => SessionSummary,
+): SessionLifecyclePort {
+  return {
+    remove: async (id) => {
+      const session = sessions.get(id);
+      if (session === undefined) return "missing";
+      if (session.agent.busy()) return "busy";
+      session.detach();
+      sessions.delete(id);
+      trashed.set(id, session);
+      return summaryOf(id, session);
+    },
+    trash: async () => [...trashed].map(([id, session]) => summaryOf(id, session)),
+    restore: async (id) => {
+      const session = trashed.get(id);
+      if (session === undefined) return undefined;
+      trashed.delete(id);
+      sessions.set(id, session);
+      return summaryOf(id, session);
+    },
+    discard: async (id) => {
+      const session = trashed.get(id);
+      if (session === undefined) return undefined;
+      trashed.delete(id);
+      return summaryOf(id, session);
+    },
+    purge: async () => {
+      const count = trashed.size;
+      trashed.clear();
+      return count;
+    },
+  };
+}
 
-  constructor(
-    private readonly options: MemoryHostOptions,
-    private readonly bindingsOf: (id: string) => SessionBindings,
-  ) {
-    this.now = options.now ?? (() => new Date());
-    this.ledger = new PermissionLedger({
-      trusted: options.trusted ?? false,
-      workspace: memoryGrants(),
-      root: "/memory",
-    });
-    this.asks = new AskQueue({
-      now: this.now,
-      grants: this.ledger,
-      ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
-    });
-  }
+export interface SurfaceSessions {
+  has(id: string): boolean;
+  busy(id: string): boolean;
+  now(): Date;
+}
 
-  get(id: string): MemorySession | undefined {
-    return this.sessions.get(id);
-  }
+export type MemorySurfacePorts = Required<
+  Pick<SessionHost, "workspace" | "mcp" | "arcs" | "bots" | "workspaces" | "themes">
+>;
 
-  status(id: string): SessionStatus {
-    const session = this.sessions.get(id);
-    if (session === undefined) return "missing";
-    return session.busy() ? "busy" : "idle";
-  }
-
-  list(): SessionSummary[] {
-    return [...this.sessions.values()].map((session) => this.summaryOf(session));
-  }
-
-  read(id: string): SessionDetail | undefined {
-    const session = this.sessions.get(id);
-    if (session === undefined) return undefined;
-    return {
-      ...this.summaryOf(session),
-      cwd: "/memory",
-      live: true,
-      messages: session.messages(),
-      asOf: this.options.log.latestId(),
-    };
-  }
-
-  async create(): Promise<SessionSummary> {
-    const id = this.nextId();
-    const store = await SessionStore.create(join(this.dir, `${id}.jsonl`), "/memory");
-    return this.summaryOf(this.adopt(id, store));
-  }
-
-  async fork(id: string, entryId: string) {
-    const session = this.sessions.get(id);
-    if (session === undefined) return "missing" as const;
-    if (session.store.entry(entryId) === undefined) return "unknown-entry" as const;
-    const forkId = this.nextId();
-    const clone = await session.store.clone(join(this.dir, `${forkId}.jsonl`), entryId);
-    const forked = this.adopt(forkId, clone);
-    this.options.log.record(id, "session.tree", {
-      ...treeChange(session.store, "fork", { entryId, forkedTo: forkId }),
-      sessionId: id,
-    });
-    return this.summaryOf(forked);
-  }
-
-  async changes<Reading>(
+export function memorySurfacePorts(
+  options: MemorySurfaceOptions,
+  sessions: SurfaceSessions,
+): MemorySurfacePorts {
+  const root = resolve(options.root);
+  const composedTrusted = options.trust === "trusted";
+  let trust: TrustDecision = options.trust ?? "undecided";
+  const files = workspaceFiles(root, toolScope(root));
+  const bindings = new Map<string, SessionBinding>();
+  const arcs = new Map<string, ArcSummary>();
+  const arcListeners = new Set<() => void>();
+  const bots = new Map<string, BotSummary>();
+  const namedWorkspaces = new Map<string, string[]>();
+  const defaultFocusDirs: string[] = [];
+  const arcsChanged = (): void => {
+    for (const listener of [...arcListeners]) listener();
+  };
+  const requireArcs = (): void => {
+    if (!composedTrusted) throw new SurfaceUnavailableError(arcsNeedTrust);
+  };
+  const requireArc = (slug: string): ArcSummary => {
+    requireArcs();
+    const arc = arcs.get(slug);
+    if (arc === undefined) throw new MissingArcError(slug);
+    return arc;
+  };
+  const archive = (slug: string): number => {
+    const arc = requireArc(slug);
+    if (arc.status !== "active") throw new ArcNotActiveError(slug, arc.status);
+    arcs.set(slug, { ...arc, status: "archived" });
+    let released = 0;
+    for (const [id, binding] of bindings) {
+      if (binding.arc !== slug) continue;
+      bindings.set(id, bindingWith(id, { arc: undefined }));
+      released += 1;
+    }
+    arcsChanged();
+    return released;
+  };
+  const bindingOf = (id: string): SessionBinding => bindings.get(id) ?? {};
+  const bindingWith = (
     id: string,
-    read: (source: ChangeSource) => Promise<Reading>,
-  ): Promise<ChangesOutcome<Reading>> {
-    if (!this.sessions.has(id)) return "missing";
-    const { changes } = this.options;
-    if (changes === undefined) return "no-baseline";
-    if (changes === "untrusted") return "untrusted";
-    return read(changes);
-  }
-
-  async close(): Promise<void> {
-    this.asks.close();
-    for (const session of this.sessions.values()) await session.close();
-    this.sessions.clear();
-    await rm(this.dir, { recursive: true, force: true });
-  }
-
-  private adopt(id: string, store: SessionStore): MemorySession {
-    const { options } = this;
-    const agentOver: Rebuild = (provider, history, bus) =>
-      new Agent({
-        provider,
-        guard: options.asks === "queue" ? this.asks.guardFor(id) : headlessGuard,
-        permissions: this.ledger.resolverFor(id),
-        history,
-        spills: store.spills(),
-        ...(bus !== undefined && { bus }),
-        ...(options.tools !== undefined && { tools: options.tools }),
-      });
-    const session = new MemorySession(id, store, agentOver(options.provider, store.messages()), {
-      log: options.log,
-      changes: options.changes,
-      rebuild: agentOver,
-    });
-    this.sessions.set(id, session);
-    return session;
-  }
-
-  private summaryOf(session: MemorySession): SessionSummary {
-    const { arc, bot } = this.bindingsOf(session.id);
-    return {
-      ...session.summary(this.now()),
-      ...(arc !== undefined && { arc }),
-      ...(bot !== undefined && { bot }),
-    };
-  }
-
-  private nextId(): string {
-    this.created += 1;
-    return `s${this.created}`;
-  }
+    patch: { arc?: string | undefined; bot?: string | undefined },
+  ): SessionBinding => {
+    const current = bindingOf(id);
+    const arc = "arc" in patch ? patch.arc : current.arc;
+    const bot = "bot" in patch ? patch.bot : current.bot;
+    return { ...(arc !== undefined && { arc }), ...(bot !== undefined && { bot }) };
+  };
+  const boundTo = (slug: string): number =>
+    [...bindings.values()].filter((binding) => binding.arc === slug).length;
+  const focusDirsOf = (slug: string | undefined): string[] => {
+    if (slug === undefined) return defaultFocusDirs;
+    const dirs = namedWorkspaces.get(slug);
+    if (dirs === undefined) throw new Error(`no workspace named ${slug}`);
+    return dirs;
+  };
+  const choiceOf = (slug: string | undefined, focusDirs: readonly string[]): WorkspaceChoice => ({
+    slug,
+    name: slug ?? "default",
+    declared: true,
+    current: slug === undefined,
+    notes: 0,
+    focusDirs,
+    sessions: 0,
+    lastUsed: undefined,
+  });
+  return {
+    workspace: {
+      report: async () => ({
+        anchor: { root, source: "launch" },
+        identity: options.identity ?? "memory",
+        declared: false,
+        contextDirs: [],
+        missingContextDirs: [],
+        focusDirs: defaultFocusDirs,
+        trust,
+        readiness: readinessOf(trust),
+      }),
+      trust: async () => {
+        if (trust === "untrusted") throw new TrustRefusedError(root);
+        trust = "trusted";
+        return {
+          trusted: true,
+          root,
+          vault: join(root, ".keywork", "memory"),
+          reopens: !composedTrusted,
+        };
+      },
+      tree: files.tree,
+      file: files.file,
+    },
+    mcp: options.mcp ?? noMcpRegistry,
+    arcs: {
+      list: async () => {
+        requireArcs();
+        return [...arcs.values()].map((arc) => ({ ...arc, sessions: boundTo(arc.slug) }));
+      },
+      create: async (slug) => {
+        requireArcs();
+        if (arcs.has(slug)) throw new ArcExistsError(slug);
+        const arc: ArcSummary = {
+          slug,
+          status: "active",
+          created: sessions.now().toISOString(),
+          sessions: 0,
+        };
+        arcs.set(slug, arc);
+        arcsChanged();
+        return arc;
+      },
+      close: async (slug) => ({ kind: "closed", delivered: 0, released: archive(slug) }),
+      abandon: async (slug) => {
+        archive(slug);
+      },
+      bindSession: async (id, slug) => {
+        if (!sessions.has(id)) return undefined;
+        bindings.set(id, bindingWith(id, { arc: slug ?? undefined }));
+        arcsChanged();
+        return bindingOf(id);
+      },
+      subscribe: (listener) => {
+        arcListeners.add(listener);
+        return () => arcListeners.delete(listener);
+      },
+    },
+    bots: {
+      list: async () => [...bots.values()],
+      create: async (draft) => {
+        if (draft.scope === "project" && !composedTrusted) {
+          throw new SurfaceUnavailableError(projectBotsNeedTrust);
+        }
+        if (bots.has(draft.slug)) throw new Error(`a bot named ${draft.slug} already exists`);
+        const entry: BotEntry = {
+          name: draft.slug,
+          sigil: draft.slug.charAt(0).toUpperCase(),
+          source: draft.scope,
+          learning: "notes",
+          ...(draft.purpose !== undefined && { description: draft.purpose }),
+        };
+        bots.set(draft.slug, { ...entry, sessions: 0 });
+        return entry;
+      },
+      bindSession: async (id, name) => {
+        if (!sessions.has(id)) return undefined;
+        if (sessions.busy(id)) throw new SessionBusyError();
+        if (name !== null && !bots.has(name)) throw new Error(`no bot named ${name}`);
+        bindings.set(id, bindingWith(id, { bot: name ?? undefined }));
+        return bindingOf(id);
+      },
+    },
+    workspaces: {
+      list: async () => [
+        choiceOf(undefined, defaultFocusDirs),
+        ...[...namedWorkspaces].map(([slug, dirs]) => choiceOf(slug, dirs)),
+      ],
+      create: async (slug) => {
+        if (namedWorkspaces.has(slug)) throw new Error(`a workspace named ${slug} already exists`);
+        namedWorkspaces.set(slug, []);
+      },
+      use: async (slug) => {
+        focusDirsOf(slug);
+      },
+      linkFocusDir: async (slug, dir) => {
+        const dirs = focusDirsOf(slug);
+        if (dirs.includes(dir)) throw new Error(`${dir} is already a focus dir`);
+        dirs.push(dir);
+        return dir;
+      },
+      unlinkFocusDir: async (slug, dir) => {
+        const dirs = focusDirsOf(slug);
+        const at = dirs.indexOf(dir);
+        if (at === -1) throw new Error(`${dir} isn't a focus dir here`);
+        dirs.splice(at, 1);
+      },
+    },
+    themes: {
+      list: async () => ({
+        themes: options.themes ?? [],
+        active: options.themes?.[0]?.name ?? "keywork-night",
+        placeholders: ["system"],
+      }),
+    },
+  };
 }
 
-type Rebuild = (provider: Provider, history: readonly Message[], bus?: Agent["bus"]) => Agent;
+export const arcsNeedTrust = "arcs need a trusted workspace with memory";
 
-interface MemorySessionSeams {
-  log: EventLog;
-  changes: ChangeSource | "untrusted" | undefined;
-  rebuild: Rebuild;
-}
+export const projectBotsNeedTrust = "project bots need a trusted workspace";
 
-class MemorySession {
-  private agent: Agent;
-  private title: string | undefined;
-  private stagedLeaf: string | null | undefined;
-  private persisted: number;
-  private settledTurns: Promise<void> = Promise.resolve();
-  private readonly ledger = new UsageLedger();
-  private readonly stops: readonly (() => unknown)[];
-
-  constructor(
-    readonly id: string,
-    readonly store: SessionStore,
-    agent: Agent,
-    private readonly seams: MemorySessionSeams,
-  ) {
-    this.agent = agent;
-    this.persisted = agent.history().length;
-    this.stops = [seams.log.attach(agent.bus, id), this.announceChangesOn(agent.bus)];
-  }
-
-  busy(): boolean {
-    return this.agent.busy();
-  }
-
-  messages(): readonly Message[] {
-    return this.agent.history();
-  }
-
-  run(text: string, behavior: SendBehavior, origin?: PromptOrigin): "started" | "queued" {
-    const outcome = this.agent.busy() ? "queued" : "started";
-    this.stagedLeaf = undefined;
-    const sent = this.agent
-      .send(text, { behavior, ...(origin !== undefined && { origin }) })
-      .catch(() => undefined);
-    this.settledTurns = this.settledTurns.then(() => sent).then(() => this.persist());
-    return outcome;
-  }
-
-  interrupt(): "aborted" | "idle" {
-    if (!this.agent.busy()) return "idle";
-    this.agent.interrupt();
-    return "aborted";
-  }
-
-  async label(entryId: string, label: string | undefined) {
-    if (this.store.entry(entryId) === undefined) return "unknown-entry" as const;
-    await this.store.setLabel(entryId, label);
-    this.announceTree("label", { entryId });
-    return "labelled" as const;
-  }
-
-  async moveLeaf(entryId: string | null) {
-    if (this.agent.busy()) return "busy" as const;
-    await this.settledTurns;
-    if (!moveLeafOf(this.store, entryId)) return "unknown-entry" as const;
-    this.stagedLeaf = undefined;
-    this.rebuildFromStore();
-    this.announceTree("leaf", entryId === null ? {} : { entryId });
-    this.announceState();
-    return { leafId: this.store.leafId() };
-  }
-
-  setModel(bound: BoundModel): Exclude<Awaited<ReturnType<SessionHost["setModel"]>>, "missing"> {
-    if (this.agent.busy()) return "busy";
-    if (!bound.ok) return bound;
-    this.swap(this.seams.rebuild(bound.provider, this.agent.history(), this.agent.bus));
-    this.announceState();
-    const model = parseReference(bound.reference) ?? {
-      provider: bound.provider.name,
-      model: bound.reference,
-    };
-    return { ok: true, model, notice: `model → ${bound.reference}` };
-  }
-
-  setThinking(on: boolean): { thinking: boolean } {
-    this.agent.setThinking(on);
-    this.announceState();
-    return { thinking: on };
-  }
-
-  setEffort(level: EffortLevel | null): { effort: EffortLevel | null } {
-    this.agent.setEffort(level ?? undefined);
-    this.announceState();
-    return { effort: level };
-  }
-
-  compact(): Exclude<Awaited<ReturnType<SessionHost["compact"]>>, "missing"> {
-    if (this.agent.busy()) return "busy";
-    this.announceState();
-    return { compacted: null, notices: ["nothing to compact · this host never compacts"] };
-  }
-
-  async undo(): Promise<Exclude<Awaited<ReturnType<SessionHost["undo"]>>, "missing">> {
-    if (this.agent.busy()) return "busy";
-    await this.settledTurns;
-    if (this.stagedLeaf !== undefined) return "staged";
-    const prompt = lastPromptOf(this.store);
-    if (prompt === undefined) return "nothing";
-    this.stagedLeaf = this.store.leafId();
-    moveLeafOf(this.store, prompt.parentId);
-    this.rebuildFromStore();
-    this.announceState();
-    return {
-      prompt: { entryId: prompt.id, text: messageText(prompt.message) },
-      filesNote: "files untouched",
-      undoable: this.undoable(),
-      redoable: true,
-    };
-  }
-
-  async redo(): Promise<Exclude<Awaited<ReturnType<SessionHost["redo"]>>, "missing">> {
-    if (this.agent.busy()) return "busy";
-    const staged = this.stagedLeaf;
-    if (staged === undefined) return "nothing";
-    this.stagedLeaf = undefined;
-    moveLeafOf(this.store, staged);
-    this.rebuildFromStore();
-    this.announceState();
-    return { restored: true, undoable: this.undoable(), redoable: false };
-  }
-
-  context(): ReturnType<typeof contextReportOf> {
-    return contextReportOf(this.agent);
-  }
-
-  cost(): ReturnType<typeof costReportOf> {
-    return costReportOf(this.agent, this.ledger);
-  }
-
-  export(out: string | undefined): { html: string } | { refused: string } {
-    if (out !== undefined)
-      return { refused: "this host keeps sessions in memory and writes no files" };
-    const lines = this.agent
-      .history()
-      .map((message) => `<p class="${message.role}">${escapeHtml(messageText(message))}</p>`);
-    return {
-      html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(this.titled())}</title></head><body>${lines.join("")}</body></html>`,
-    };
-  }
-
-  rename(title: string): { title: string } {
-    this.title = title;
-    this.announceState();
-    return { title };
-  }
-
-  summary(at: Date): SessionSummary {
-    const model = modelReferenceOf(this.agent.provider);
-    const effort = this.agent.effort();
-    return {
-      id: this.id,
-      title: this.titled(),
-      createdAt: at.toISOString(),
-      lastActivityAt: at.toISOString(),
-      messageCount: this.agent.history().length,
-      ...(model !== undefined && { model }),
-      thinking: this.agent.thinking(),
-      ...(effort !== undefined && { effort }),
-    };
-  }
-
-  async close(): Promise<void> {
-    this.agent.interrupt();
-    await this.settledTurns;
-    for (const stop of this.stops) await stop();
-  }
-
-  private async persist(): Promise<void> {
-    const history = this.agent.history();
-    const fresh = history.slice(this.persisted);
-    if (fresh.length === 0) return;
-    for (const message of fresh) await this.store.append(message);
-    this.persisted = history.length;
-    this.announceTree("entry", {});
-  }
-
-  private rebuildFromStore(): void {
-    this.swap(this.seams.rebuild(this.agent.provider, this.store.messages(), this.agent.bus));
-  }
-
-  private swap(next: Agent): void {
-    const previous = this.agent;
-    this.ledger.retire(previous);
-    next.setThinking(previous.thinking());
-    next.setEffort(previous.effort());
-    this.agent = next;
-    this.persisted = next.history().length;
-    next.adoptQueue(previous);
-  }
-
-  private titled(): string {
-    return this.title ?? `session ${this.id}`;
-  }
-
-  private undoable(): boolean {
-    return lastPromptOf(this.store) !== undefined;
-  }
-
-  private announceChangesOn(bus: Agent["bus"]): () => unknown {
-    const { changes, log } = this.seams;
-    if (changes === undefined || changes === "untrusted") return () => undefined;
-    return announceChanges(bus, changes, (paths) =>
-      log.record(this.id, "changes.updated", { sessionId: this.id, paths }),
-    );
-  }
-
-  private announceTree(
-    reason: Parameters<typeof treeChange>[1],
-    detail: Parameters<typeof treeChange>[2],
-  ): void {
-    this.seams.log.record(this.id, "session.tree", {
-      ...treeChange(this.store, reason, detail),
-      sessionId: this.id,
-    });
-  }
-
-  private announceState(): void {
-    const model = modelReferenceOf(this.agent.provider);
-    const effort = this.agent.effort();
-    const state: SessionState = {
-      ...(model !== undefined && { model }),
-      thinking: this.agent.thinking(),
-      ...(effort !== undefined && { effort }),
-      title: this.titled(),
-      leafId: this.store.leafId(),
-      undoable: this.undoable(),
-      redoable: this.stagedLeaf !== undefined,
-    };
-    this.seams.log.record(this.id, "session.state", state);
-  }
-}
-
-function lastPromptOf(store: SessionStore): MessageEntry | undefined {
-  return store
-    .activePath()
-    .findLast(
-      (entry): entry is MessageEntry => entry.type === "message" && entry.message.role === "user",
-    );
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (character) => htmlEscapes[character] ?? character);
-}
-
-const htmlEscapes: Readonly<Record<string, string>> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
+const noMcpRegistry: McpPort = {
+  status: async () => [],
+  restart: async (name) => {
+    throw new McpServerNotFoundError(name);
+  },
+  setEnabled: async (name) => {
+    throw new McpServerNotFoundError(name);
+  },
+  listTools: async (name) => {
+    throw new McpServerNotFoundError(name);
+  },
+  subscribe: () => () => undefined,
 };
+
+function readinessOf(trust: TrustDecision): WorkspaceReadiness {
+  if (trust === "untrusted") return "refused";
+  return trust === "undecided" ? "undecided" : "undeclared";
+}
+
+const nothingToCompact = "nothing to compact yet · the recent turns are all that's here";
+
+function entriesOf(id: string, session: MemorySession): SessionEntries {
+  const entries = session.agent.history().map(
+    (message, index): SessionEntry => ({
+      type: "message",
+      id: `m${index}`,
+      parentId: index === 0 ? null : `m${index - 1}`,
+      timestamp: "",
+      message,
+    }),
+  );
+  return {
+    sessionId: id,
+    name: session.title,
+    leafId: entries.at(-1)?.id ?? null,
+    entries,
+    labels: Object.fromEntries(session.labels),
+    activePath: entries.map((entry) => entry.id),
+  };
+}
+
+function entryIndexOf(session: MemorySession, entryId: string): number | undefined {
+  const match = /^m(\d+)$/.exec(entryId);
+  const index = match === null ? Number.NaN : Number(match[1]);
+  return index < session.agent.history().length ? index : undefined;
+}
+
+function lastPromptIndex(history: readonly Message[]): number {
+  return history.findLastIndex((message) => message.role === "user");
+}
+
+function textOf(message: Message): string {
+  return message.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+}
+
+function transcriptPage(session: MemorySession): string {
+  const transcript = JSON.stringify(session.agent.history(), null, 2)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;");
+  return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${session.title}</title></head><body><pre>${transcript}</pre></body></html>\n`;
+}
+
+export interface VaultMemoryOptions {
+  vaultRoot: string;
+  trusted: boolean;
+  now?: () => Date;
+  airlock?: ArcAirlockPort;
+}
+
+export interface VaultMemoryPort extends MemoryPort {
+  readonly store: MemoryStore;
+  changed(): void;
+}
+
+export const vaultBootstrapBudget = 4096;
+
+export function vaultMemoryPort(options: VaultMemoryOptions): VaultMemoryPort {
+  const store = new MemoryStore({
+    vaultRoot: options.vaultRoot,
+    trusted: options.trusted,
+    ...(options.now !== undefined && { now: options.now }),
+  });
+  const search = new MemorySearch(store);
+  const listeners = new Set<() => void>();
+  const recordsOf = async (): Promise<MemoryNoteRecord[]> => {
+    const notes = await store.listNotes();
+    const selection = await store.bootstrap(vaultBootstrapBudget);
+    const injected = new Set(selection.notes.map((note) => note.name));
+    return notes.map((note) => ({
+      ...note,
+      layer: "workspace",
+      file: join(store.vaultRoot, note.path),
+      injected: injected.has(note.name),
+      recalls: 0,
+    }));
+  };
+  return {
+    store,
+    changed: () => {
+      for (const listener of [...listeners]) listener();
+    },
+    trusted: () => store.trusted,
+    overview: async () => ({
+      layers: [
+        {
+          id: "workspace",
+          kind: "workspace",
+          label: "workspace",
+          prompt: {
+            budget: vaultBootstrapBudget,
+            used: (await store.bootstrap(vaultBootstrapBudget)).tokens,
+          },
+        },
+      ],
+      inbox: await store.listStaged(),
+      ledger: store.ledger(),
+      audit: await store.readAudit(),
+      gardener: { state: "idle" },
+      airlocks: [],
+    }),
+    inbox: () => store.listStaged(),
+    approve: (id) => store.approve(id),
+    discard: (id) => store.discard(id),
+    notes: recordsOf,
+    note: async (name) => {
+      const records = await recordsOf();
+      const found = records.find((note) => titleKey(note.name) === titleKey(name));
+      if (found === undefined) return undefined;
+      return { ...found, relations: relationsOf(MemoryGraph.fromNotes(records), found) };
+    },
+    dailyDates: () => store.listDailyDates(),
+    daily: (date) => store.readDaily(date),
+    ledger: () => store.ledger(),
+    revert: (ledgerId) => store.revert(ledgerId),
+    query: async (text) => {
+      const outcome = await search.search(text);
+      return {
+        hits: outcome.hits.map((hit) => ({
+          note: hit.note.name,
+          layer: "workspace",
+          ranks: hit.ranks,
+          superseded: hit.superseded,
+        })),
+        source: outcome.source.kind,
+        ...(outcome.source.kind !== "lexical" && { embeddings: outcome.source.embeddings }),
+      };
+    },
+    airlock: options.airlock ?? noAirlock,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+const noAirlock: ArcAirlockPort = {
+  digest: async () => undefined,
+  triageCandidate: async (slug) => {
+    throw new Error(`arc ${slug} has nothing at the airlock`);
+  },
+  triageQuestion: async (slug) => {
+    throw new Error(`arc ${slug} has nothing at the airlock`);
+  },
+  deliverEligible: async () => 0,
+  finish: async () => ({ kind: "undecided", items: [] }),
+};
+
+function relationsOf(graph: MemoryGraph, note: Note): NoteRelation[] {
+  const key = titleKey(note.name);
+  return graph.edges.flatMap((edge): NoteRelation[] => {
+    if (titleKey(edge.subject) === key)
+      return [{ name: edge.object, predicate: edge.predicate, direction: "out" }];
+    if (titleKey(edge.object) === key)
+      return [{ name: edge.subject, predicate: edge.predicate, direction: "in" }];
+    return [];
+  });
+}
 
 function parseFrame(block: string): SseFrame | undefined {
   const fields = block.split("\n").filter((line) => !line.startsWith(":"));

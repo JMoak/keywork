@@ -1,4 +1,6 @@
-import type { McpConnection, McpTool, McpToolResult } from "./client.ts";
+import type { FetchLike } from "../providers/transport.ts";
+import type { CallToolOptions, McpConnection, McpTool, McpToolResult } from "./client.ts";
+import type { ElicitationHandler } from "./elicitation.ts";
 import { type McpEra, McpSession, signalsToolsChanged, subscriptionMethod } from "./era.ts";
 import {
   McpAbortedError,
@@ -6,6 +8,7 @@ import {
   McpRequestTimeoutError,
   McpRpcError,
   McpServerExitedError,
+  McpSignInRequiredError,
 } from "./errors.ts";
 import { hasValidHeaderAnnotations, modernRequestHeaders } from "./http-headers.ts";
 import { asRecord } from "./wire.ts";
@@ -15,11 +18,19 @@ export interface HttpServerSpec {
   headers?: Record<string, string>;
 }
 
+export interface HttpAuthorization {
+  readonly serverName: string;
+  bearer(): Promise<string | undefined>;
+  renewAfter(challenge: string | null): Promise<string | undefined>;
+}
+
 export interface HttpConnectOptions {
   requestTimeoutMs?: number;
   signal?: AbortSignal;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchLike;
   rememberedEra?: McpEra;
+  elicit?: ElicitationHandler;
+  auth?: HttpAuthorization;
 }
 
 export async function connectHttpServer(
@@ -29,8 +40,12 @@ export async function connectHttpServer(
   if (options.signal?.aborted === true) throw new McpAbortedError();
   const channel = new HttpChannel(
     spec,
-    options.requestTimeoutMs ?? 10_000,
-    options.fetchImpl ?? fetch,
+    {
+      timeoutMs: options.requestTimeoutMs ?? 10_000,
+      fetchImpl: options.fetchImpl ?? fetch,
+      elicit: options.elicit,
+      auth: options.auth,
+    },
     options.signal,
   );
   try {
@@ -43,6 +58,7 @@ export async function connectHttpServer(
 }
 
 const maxBodyChars = 16 * 1024 * 1024;
+const renewalsPerRequest = 3;
 
 interface RpcMessage {
   jsonrpc: "2.0";
@@ -53,11 +69,19 @@ interface RpcMessage {
 
 type OpenStream = (signal: AbortSignal) => Promise<Response>;
 
+interface HttpChannelOptions {
+  timeoutMs: number;
+  fetchImpl: FetchLike;
+  elicit: ElicitationHandler | undefined;
+  auth: HttpAuthorization | undefined;
+}
+
 class HttpChannel implements McpConnection {
   private readonly session: McpSession;
   private readonly spec: HttpServerSpec;
   private readonly timeoutMs: number;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: FetchLike;
+  private readonly auth: HttpAuthorization | undefined;
   private readonly closeHandlers: Array<(error?: Error) => void> = [];
   private readonly toolsChangedHandlers: Array<() => void> = [];
   private readonly inflight = new Set<AbortController>();
@@ -69,21 +93,18 @@ class HttpChannel implements McpConnection {
   private closedDeliberately = false;
   private exitError: Error | undefined;
 
-  constructor(
-    spec: HttpServerSpec,
-    timeoutMs: number,
-    fetchImpl: typeof fetch,
-    signal?: AbortSignal,
-  ) {
+  constructor(spec: HttpServerSpec, options: HttpChannelOptions, signal?: AbortSignal) {
     this.spec = spec;
-    this.timeoutMs = timeoutMs;
-    this.fetchImpl = fetchImpl;
+    this.timeoutMs = options.timeoutMs;
+    this.fetchImpl = options.fetchImpl;
+    this.auth = options.auth;
     this.session = new McpSession(
       {
         request: (method, params) => this.request(method, params),
         notify: (method) => this.notify(method),
       },
       () => this.announceToolsChanged(),
+      { elicit: options.elicit },
     );
     signal?.addEventListener("abort", () => this.abortNow(), { once: true });
   }
@@ -112,8 +133,8 @@ class HttpChannel implements McpConnection {
     return usable;
   }
 
-  callTool(name: string, args: unknown): Promise<McpToolResult> {
-    return this.session.callTool(name, args);
+  callTool(name: string, args: unknown, options: CallToolOptions = {}): Promise<McpToolResult> {
+    return this.session.callTool(name, args, options.elicit);
   }
 
   onClose(handler: (error?: Error) => void): void {
@@ -153,13 +174,33 @@ class HttpChannel implements McpConnection {
   }
 
   private async post(message: RpcMessage, signal: AbortSignal): Promise<Response> {
+    const auth = this.auth;
+    let bearer = await auth?.bearer();
+    for (let attempt = 0; attempt < renewalsPerRequest; attempt += 1) {
+      const response = await this.send(message, signal, bearer);
+      if (response.status !== 401 || auth === undefined) return response;
+      await response.body?.cancel().catch(() => undefined);
+      bearer = await auth.renewAfter(response.headers.get("www-authenticate"));
+      if (bearer === undefined) throw new McpSignInRequiredError(auth.serverName);
+    }
+    throw new McpSignInRequiredError(auth?.serverName ?? this.serverName);
+  }
+
+  private async send(
+    message: RpcMessage,
+    signal: AbortSignal,
+    bearer: string | undefined,
+  ): Promise<Response> {
     const response = await this.fetchImpl(this.spec.url, {
       method: "POST",
-      headers: this.headers({
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        ...this.eraHeaders(message),
-      }),
+      headers: this.headers(
+        {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...this.eraHeaders(message),
+        },
+        bearer,
+      ),
       body: JSON.stringify(message),
       signal,
     });
@@ -201,10 +242,10 @@ class HttpChannel implements McpConnection {
     throw new McpProtocolError(`event stream ended before answering ${method}`);
   }
 
-  private openLegacyEventStream(signal: AbortSignal): Promise<Response> {
+  private async openLegacyEventStream(signal: AbortSignal): Promise<Response> {
     return this.fetchImpl(this.spec.url, {
       method: "GET",
-      headers: this.headers({ accept: "text/event-stream" }),
+      headers: this.headers({ accept: "text/event-stream" }, await this.auth?.bearer()),
       signal,
     });
   }
@@ -277,11 +318,12 @@ class HttpChannel implements McpConnection {
     }
   }
 
-  private headers(base: Record<string, string>): Record<string, string> {
+  private headers(base: Record<string, string>, bearer?: string): Record<string, string> {
     return {
       ...base,
       "mcp-protocol-version": this.session.protocolVersion,
       ...(this.sessionId !== undefined && { "mcp-session-id": this.sessionId }),
+      ...(bearer !== undefined && { authorization: `Bearer ${bearer}` }),
       ...this.spec.headers,
     };
   }
@@ -306,7 +348,7 @@ class HttpChannel implements McpConnection {
     try {
       const response = await this.fetchImpl(this.spec.url, {
         method: "DELETE",
-        headers: this.headers({ "mcp-session-id": session }),
+        headers: this.headers({ "mcp-session-id": session }, await this.auth?.bearer()),
         signal: controller.signal,
       });
       await response.body?.cancel().catch(() => undefined);

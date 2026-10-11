@@ -33,7 +33,6 @@ export {
   type PromptOrigin,
   type QueuedPrompt,
   type SendBehavior,
-  type TreeChangeReason,
 } from "./bus.ts";
 export {
   declaredCapabilitiesFor,
@@ -80,6 +79,13 @@ export {
   narrowedPermissions,
   restrictTools,
 } from "./extensions/bots.ts";
+export {
+  describeExtensions,
+  type ExtensionListing,
+  type ExtensionsSummary,
+  extensionLoadNotices,
+  summarizeExtensions,
+} from "./extensions/describe.ts";
 export {
   discoverExtensions,
   type ExtensionCandidate,
@@ -133,12 +139,15 @@ export {
   ExtensionHost,
   type ExtensionHostOptions,
   type ExtensionNotice,
+  type ExtensionRegistrations,
   type ExtensionStanding,
   type ExtensionStatus,
   HookTimeoutError,
+  type ObserveSeams,
   type OwnedCommand,
   type OwnedFlag,
   type OwnedShortcut,
+  type SessionResolver,
   type SessionStartOptions,
   UnknownExtensionCommandError,
 } from "./extensions/host.ts";
@@ -231,12 +240,15 @@ export {
   languageServersFor,
 } from "./lsp/servers.ts";
 export {
+  type CallToolOptions,
   connectStdioServer,
   McpAbortedError,
   type McpConnection,
+  McpInputRequiredError,
   McpProtocolError,
   McpRequestTimeoutError,
   McpServerExitedError,
+  McpSignInRequiredError,
   type McpTool,
   type McpToolResult,
   mcpProtocolVersion,
@@ -244,10 +256,37 @@ export {
   type StdioServerSpec,
 } from "./mcp/client.ts";
 export {
+  decliningElicitation,
+  describeElicitation,
+  type ElicitationAnswer,
+  type ElicitationField,
+  type ElicitationHandler,
+  type ElicitationRequest,
+  type FormElicitation,
+  type UrlElicitation,
+} from "./mcp/elicitation.ts";
+export {
+  askGateElicitation,
+  type ElicitationGateOptions,
+  elicitationCall,
+  elicitationToolName,
+} from "./mcp/elicitation-gate.ts";
+export {
   connectHttpServer,
+  type HttpAuthorization,
   type HttpConnectOptions,
   type HttpServerSpec,
 } from "./mcp/http.ts";
+export {
+  clientIdMetadataDocumentUrl,
+  type LoginIo as McpLoginIo,
+  type McpAuthProvider,
+  type McpAuthState,
+  McpOAuth,
+  type McpOAuthOptions,
+  type SignInSummary as McpSignInSummary,
+} from "./mcp/oauth.ts";
+export { McpOAuthError } from "./mcp/oauth-wire.ts";
 export type {
   ConnectServer,
   McpServerState,
@@ -265,6 +304,7 @@ export {
   type McpStatusListener,
   type McpToolCallReport,
   type McpToolProvenance,
+  type SurfaceOptions as McpSurfaceOptions,
 } from "./mcp/registry.ts";
 export { mcpSearchToolName } from "./mcp/tool-search.ts";
 export {
@@ -409,7 +449,6 @@ export {
   type RecallTap,
   type UsefulnessSink,
 } from "./memory/citations.ts";
-export { type CuringStage, curingStage, settledUsefulness } from "./memory/curing.ts";
 export {
   checkDrift,
   type DiffChanges,
@@ -469,6 +508,7 @@ export {
   type SkillEvidence,
   type SkillEvidenceEntry,
   type SkillReviewReason,
+  type SweepDeferral,
   type SweepOptions,
   type SweepReport,
 } from "./memory/gardener.ts";
@@ -489,12 +529,46 @@ export {
   type SkippedRelation,
 } from "./memory/graph.ts";
 export {
+  auditSegmentHost,
+  dailySegmentDate,
+  dailySegmentHost,
+  hostAuditPath,
+  hostDailyPath,
+  hostToken,
+  isMultiHostVault,
+  layoutMarker,
+  localHost,
+  markMultiHostVault,
+  vaultHost,
+} from "./memory/hosts.ts";
+export {
+  defaultLeaseTtlMs,
+  isFresh,
+  type LeaseClaim,
+  type LeaseRecord,
+  leaseFile,
+  SweepLease,
+  type SweepLeaseOptions,
+} from "./memory/lease.ts";
+export {
   contentHash,
   type FileDelta,
   type LedgerEntry,
   type LedgerOp,
   type RevertOutcome,
 } from "./memory/ledger.ts";
+export {
+  type ConflictSides,
+  conflictMarkers,
+  derivedFields,
+  isAppendOnlyPath,
+  type MergeOutcome,
+  type MergeSides,
+  mergeFrontmatter,
+  mergeText,
+  mergeVaultFile,
+  splitConflictMarkers,
+} from "./memory/merge.ts";
 export { canonicalEntityPath, InvalidTitleError, titleKey } from "./memory/naming.ts";
 export {
   botMocLink,
@@ -543,6 +617,16 @@ export {
   memorySearchTool,
   type RecallListener,
 } from "./memory/recall-tools.ts";
+export {
+  type ConflictIntake,
+  type ConflictSource,
+  conflictArtifactOriginal,
+  conflictOfField,
+  conflictSiblingName,
+  type ReconcileOptions,
+  reconcileVault,
+  type VaultReconciliation,
+} from "./memory/reconcile.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
 export {
   type BotIdentity,
@@ -587,6 +671,7 @@ export {
   MemoryStore,
   type MemoryStoreOptions,
   MissingNoteError,
+  type NoteFileChange,
   type NoteInput,
   type WriteResult,
 } from "./memory/store.ts";
@@ -594,6 +679,7 @@ export {
   isMissingFileError,
   PathOutsideVaultError,
   ReservedPathError,
+  syncDir,
   VaultFiles,
   writeFileAtomic,
 } from "./memory/vault-files.ts";
@@ -633,7 +719,6 @@ export {
 export {
   type CostRollup,
   carriesUsage,
-  costBasis,
   costNanosOf,
   emptyCostRollup,
   formatCostNanos,
@@ -809,6 +894,12 @@ export {
   SessionStore,
 } from "./session/store.ts";
 export {
+  SessionFileCollisionError,
+  SessionTrash,
+  sessionFilePair,
+  trashDirName,
+} from "./session/trash.ts";
+export {
   type AgentAuthoredSkill,
   authoredByKey,
   authorOf,
@@ -926,12 +1017,5 @@ export {
 } from "./tools/shell-session.ts";
 export { writeTool } from "./tools/write.ts";
 export { findTool, type Tool, ToolNotFoundError } from "./tools.ts";
-export {
-  ledgerKey,
-  type ModelRow,
-  type ModelTotals,
-  turnsOf,
-  UsageLedger,
-} from "./usage-ledger.ts";
 
 export { engineVersion } from "./version.ts";

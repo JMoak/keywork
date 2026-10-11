@@ -4,9 +4,7 @@ The engine emits typed events on an in-process bus (`packages/engine/src/bus.ts`
 `EngineEvents`). The TUI subscribes in process; `keywork serve` streams the same events over
 SSE (`packages/server/src/events.ts`, `sse.ts`). Names are API: a new event gets a section
 here in the same change that adds it to `EngineEvents`, and `packages/engine/src/bus.test.ts`
-fails when the two drift. Vision D7 is the decision behind the shape. The server adds a
-second, process-level vocabulary of its own (`ServerEvents`, the "Server events" section at
-the end); `packages/server/src/server.test.ts` holds that section to the same rule.
+fails when the two drift. Vision D7 is the decision behind the shape.
 
 ## Envelope
 
@@ -21,7 +19,7 @@ stamps each payload into an envelope before it leaves the process:
 |---|---|
 | `id` | Monotonic per server process, starting at 1. The SSE `id:` line carries the same number. |
 | `ts` | ISO 8601 time the envelope was stamped. |
-| `sessionId` | The session the event concerns. Empty (`""`) for a process-level event, which belongs to the process rather than to one session: `surface.changed`, `memory.inbox`, and `gate.preset` from `POST /preset`. |
+| `sessionId` | The session whose bus produced the event. |
 | `type` | One of the event names below. |
 | `payload` | The event's fields, exactly as emitted, with one translation (see `engine.error`). |
 
@@ -176,7 +174,7 @@ Fires when the trust gate decides on a tool call.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `decision` | `PermissionDecision` | `{ tool, callId, verdict, gate }`. |
+| `decision` | `PermissionDecision` | `{ tool, callId, verdict, gate, scope? }`. |
 
 `verdict` is `granted` or `denied`. `gate` says who decided: `policy` (a preset rule),
 `default` (the preset's fallback), `user` (an interactive answer) or `headless` (no one to
@@ -190,8 +188,7 @@ denial carries no `scope`.
 
 ### gate.preset
 
-Fires when the active permission preset changes. Over `keywork serve` the switch is
-`POST /preset`, and the envelope is process-level: its `sessionId` is empty.
+Fires when the active permission preset changes.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -246,40 +243,6 @@ extension wrote through its own logger. A consumer that toasts shows `error` and
 | `message` | `string` | One readable line. |
 | `detail` | `unknown` | Optional structured context the extension attached. |
 
-## Tree and files
-
-These two events carry what the TUI's in-process feeds carry: the session tree pane's
-`SessionChangeFeed` and the diff pane's `FileChangeFeed`. `keywork serve` records them on the
-session's log where those feeds fire; a remote tree or diff pane refetches on them instead of
-polling. Neither is replayed.
-
-### session.tree
-
-Fires when the session's entry tree changes other than by streaming a turn: after a fork,
-a label, a leaf move, or once a finished turn's messages are written to the JSONL.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `sessionId` | `string` | The session whose tree changed (the source session, for a fork). |
-| `leafId` | `string \| null` | The session's active leaf after the change; `null` is the empty root. |
-| `reason` | `"fork" \| "label" \| "leaf" \| "entry"` | What changed. |
-| `entryId` | `string`, optional | The entry forked at, labelled, or moved to. |
-| `forkedTo` | `string`, optional | The new session's id, on `fork`. |
-
-A client answers it by refetching `GET /sessions/{id}/entries`.
-
-### changes.updated
-
-Fires after a `write`, `edit` or `bash` tool call finishes, once the checkpoint store has
-re-read the worktree.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `sessionId` | `string` | The session whose turn ran the tool. |
-| `paths` | `string[]` | Every path changed since the session's baseline, after the refresh; a client replaces its list rather than merging. |
-
-The counts and provenance behind each path come from `GET /sessions/{id}/changes`.
-
 ### engine.error
 
 Fires when a listener throws, when a turn fails, or when post-turn settling fails. A listener
@@ -291,64 +254,136 @@ that throws while handling `engine.error` is dropped silently, so the bus cannot
 
 ## Server events
 
-`keywork serve` adds a second vocabulary beside the engine's (`serverEventTypes` in
-`packages/server/src/events.ts`; the envelope's `type` is the union of both lists, and `/doc`
-publishes the union). These events never appear on the in-process bus and never replay. The
-engine vocabulary above is unchanged by them. `surface.changed` and `memory.inbox` belong to
-the process: their envelope carries an empty `sessionId` (`""`), and a client filtering
-`/events` by session keeps them unless it adds `only=session`. `session.state` carries its
-session's id.
-
-### surface.changed
-
-Fires when one of the process-level surfaces changed and a client should fetch it whole
-again. It fires where the terminal's own panes refresh today: on every `McpRegistry` status
-change (`kind: "mcp"`), on every arc registry change and session binding (`kind: "arcs"`),
-after a bot is defined or a session switches bot (`kind: "bots"`), after a workspace is
-declared, chosen, focused or unfocused (`kind: "workspaces"`), and after trust is recorded for
-the served root (`kind: "workspace"`).
-
-| Field | Type | Meaning |
-|---|---|---|
-| `kind` | `"mcp" \| "arcs" \| "bots" \| "workspaces" \| "workspace"` | Which surface changed: `GET /mcp`, `GET /arcs`, `GET /bots`, `GET /workspaces` or `GET /workspace`. |
-
-One event with a `kind` rather than four names, because every surface is cheap to re-fetch
-whole and read by exactly one pane (118-3; Q-AS6 may split it).
+`keywork serve` adds a few event kinds of its own beside the engine vocabulary
+(`serverEventTypes` in `packages/server/src/events.ts`; the envelope's `type` enum in `/doc` is
+the union of both lists). They describe process-level state rather than one session's turn, so
+their `sessionId` is the empty string, and `/events?session=<id>` passes them through to every
+session filter. They are never replayed from a journal; a client that reconnects re-fetches the
+state they announce.
 
 ### memory.inbox
 
-Fires whenever the memory review inbox changes under the server: a staged write landing at
-the end of a turn, an approval or discard through `POST /memory/inbox/{id}/...`, a revert
-that re-stages or un-stages an item, and every arc airlock verb (a close review staged by
-`finish`, a triage, a delivery). Fired only when the count or the kind tally actually
-differs from the last one announced, so a verb that leaves the inbox as it was is silent.
+Fires when the review inbox is recounted: after every memory write over HTTP (approve, discard,
+revert, every airlock verb) and whenever the served memory port reports a change (the same
+places the terminal's inbox feed recounts). The counts are the whole inbox, not a delta, so a
+client replaces its number rather than adding. The "needs you" threshold stays in the client
+(`defaultInboxThreshold` 3, rising edge).
 
 | Field | Type | Meaning |
 |---|---|---|
-| `count` | `number` | How many items wait in the inbox, the workspace vault's and every bot layer's together. |
-| `kinds` | `Record<string, number>` | The count per staged kind, keyed by the engine's own `StagedItem.kind` (`note`, `daily`, `moc`, `borderline-promotion`, `contradiction`, `arc-question`, ...), so a kind the engine adds later appears here without a server change. |
+| `count` | `number` | Every staged item waiting, the number `GET /memory/inbox` answers. |
+| `staged` | `number` | Untrusted writes held in `.staging/` (`note`, `daily`, `moc`). |
+| `airlock` | `number` | Arc close reviews (`arc-distillation`, `arc-question`). |
+| `proposals` | `number` | Every other gardener proposal (merge, supersession, link, promotion, preference, skill, drift, forget). |
+| `contradictions` | `number` | `contradiction` reviews. |
 
-The needs-you threshold stays on the client: the TUI notifies on the rising edge of
-`count >= 3` (`defaultInboxThreshold`, `packages/tui/src/notifications.ts`), and a remote
-client applies the same rule to this payload. The server carries the count, never the
-decision.
+An untrusted workspace never fires it: memory is inert there and the count is always zero.
+
+### surface.changed
+
+Fires when one of the process-level surfaces a status pane shows has changed, so a client
+re-fetches that family whole rather than merging a delta. One event with a `kind` serves all
+four surfaces because each is cheap to re-read and consumed by exactly one pane (118-3).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `kind` | `"mcp" \| "arcs" \| "bots" \| "workspaces"` | Which family changed: re-fetch `GET /mcp`, `GET /arcs`, `GET /bots` or `GET /workspaces` (and `GET /workspace`, whose trust and declaration ride under `workspaces`). |
+
+Where it fires: `mcp` wherever the MCP registry notifies its subscribers (a server connecting,
+dropping, changing its catalog, and after `restart` and `enabled`); `arcs` wherever the arc
+service notifies (create, close, abandon, a session binding or release, airlock triage); `bots`
+after a bot is created or a session is bound to one; `workspaces` after the workspace is trusted
+and declared, a named workspace is created or chosen, and a focus dir is linked or unlinked. A
+verb that changed nothing fires nothing. The payload carries no detail on purpose: the family's
+`GET` is the source of truth.
+
+### session.removed
+
+Fires after `DELETE /sessions/{id}` moves a session to the trash (`<sessionDir>/.trash/`). The
+session no longer appears in `GET /sessions`; a client drops its row and closes any view of it.
+Memory notes it wrote stay, forks keep pointing at it, and `POST /trash/{id}/restore` undoes the
+move. A session with a running turn is never removed (the route answers 409).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sessionId` | `string` | The removed session. |
+
+### session.restored
+
+Fires after `POST /trash/{id}/restore` moves a session back from the trash. It appears in
+`GET /sessions` again with everything it had.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sessionId` | `string` | The restored session. |
 
 ### session.state
 
-Fires after every session verb that changes the session's standing state: `POST
-/sessions/{id}/model`, `/thinking`, `/effort`, `/compact`, `/undo`, `/redo`, `/rename` and
-`/leaf`. The payload is the whole current state, not a delta, so a client replaces what it
-holds.
+The one server event that belongs to a session: its `sessionId` is the session's id, not the
+empty string. Fires after every session verb (`prompt`, `model`, `thinking`, `effort`,
+`compact`, `undo`, `redo`, `rename`) and again once a turn's messages are persisted, carrying
+the whole current state rather than what changed, so a client replaces its copy. It replaces
+nothing in the engine vocabulary: `turn.started` still opens a turn and `queue.changed` still
+announces the queue.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `model` | `string`, optional | The model in force as `provider/model`; absent when the provider reports no model id. |
-| `thinking` | `boolean` | Whether the model is asked to show its reasoning. |
-| `effort` | `EffortLevel`, optional | `low`, `medium`, `high`, `xhigh` or `max`; absent when the provider decides. |
-| `title` | `string` | The session title. |
-| `leafId` | `string \| null` | The session entry the next prompt will follow; `null` at the root. |
-| `undoable` | `boolean` | Whether `POST /sessions/{id}/undo` has something to take back. |
-| `redoable` | `boolean` | Whether `POST /sessions/{id}/redo` has something to bring back. |
+| `model` | `string`, optional | The model in force as `provider/model`; absent when the provider declares no model id and the session recorded no choice. |
+| `thinking` | `boolean` | Whether extended thinking is requested for the next prompt. |
+| `effort` | `EffortLevel`, optional | The reasoning effort in force; absent means the provider default. |
+| `title` | `string` | The session's title, pinned or not. |
+| `leafId` | `string \| null` | The session entry the next message will follow; `null` for an empty session. |
+| `arc` | `string`, optional | The arc the session is bound to; absent when unbound. |
+| `bot` | `string`, optional | The bot the session runs as; absent when it runs as no bot. |
+| `undoable` | `boolean` | Whether `POST /sessions/{id}/undo` has a prompt or a file checkpoint to take back. |
+| `redoable` | `boolean` | Whether `POST /sessions/{id}/redo` has a staged undo or a file checkpoint to restore. |
+
+It also fires after `POST /sessions/{id}/arc` and `POST /sessions/{id}/bot` change a live
+session's binding, and when an arc close releases the session.
+
+### session.settled
+
+Fires when the after-turn settler did something to a session: a memory flush ran, the session
+was compacted, or settling produced a notice. The same settler the terminal pane runs (memory
+flush when the context passes the flush line, compaction when it passes the compaction line,
+once per turn, and between tool batches when a running turn passes the compaction line) runs
+under `keywork serve`, so a client sees the same flushes and compactions the pane would. A quiet
+settle fires nothing. Carries the session's id.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `phase` | `"after-turn" \| "between-tool-batches" \| "requested"` | When it ran: after the turn, between two tool batches of a running turn, or on `POST /sessions/{id}/compact`. |
+| `flushed` | `number` | How many messages the memory flush exchanged with the model (0 when no flush ran). |
+| `compacted` | `CompactionEntry \| null` | The compaction entry written, or `null` when nothing was compacted. |
+| `notices` | `string[]` | What the pane would have shown: the compaction line, or why a flush or compaction failed. |
+
+### session.tree
+
+Fires after a verb changes the shape of a session's entry tree, so a client re-fetches
+`GET /sessions/{id}/entries` rather than patching its copy. Carries the session's id, like
+`session.state`. `POST /sessions/{id}/leaf` also records a `session.state` envelope (the host
+writes it as part of the move, so it arrives first) because the leaf is part of the state.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `reason` | `"fork" \| "label" \| "leaf"` | Which verb changed the tree: `POST /sessions/{id}/fork`, `/label` or `/leaf`. |
+| `entryId` | `string \| null` | The entry the verb named; `null` only for a leaf move to the empty root. |
+| `forkedTo` | `string`, optional | On `fork`, the new session's id. The event rides the session that was forked, not the new one. |
+
+### changes.updated
+
+Fires when the files the workspace diff shows may have changed: after every finished `write`,
+`edit` or `bash` tool call (the same pairing of `tool.started` and `tool.finished` the terminal
+diff pane follows, `followMutations` in the engine), and after `POST /sessions/{id}/undo` or
+`/redo` put files back. Carries the id of the session whose turn or verb did it. `paths` is the
+whole list `GET /sessions/{id}/changes` would answer at that moment, not a delta, so a client
+replaces its list; the per-file sides still come from `GET /sessions/{id}/changes/file`. Never
+fires on a server started with `--no-checkpoints`, where there is no baseline to diff against.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `paths` | `string[]` | Every path that differs from the session-start baseline, relative to the workspace root, as `changedSince` lists it. |
+| `turn` | `number`, optional | The highest 1-based turn ordinal attributed to those paths, which is the turn that just touched them; absent when nothing differs or nothing is attributed. |
 
 ## SSE framing
 
@@ -379,18 +414,19 @@ oldest envelope, the replay is preceded by a comment naming the loss:
 : resumed with a gap, events 12 to 41 are gone
 ```
 
-## Filtering with `?session=`
+## Filtering with `?session=<id>`
 
 `GET /events?session=<id>` keeps the envelopes whose `sessionId` equals the id **and** every
-envelope with an empty `sessionId`, so a pane bound to one session still learns about
-process-level state such as a preset switch. `&only=session` drops the process-level
-envelopes too. The filter applies to the `Last-Event-ID` replay as well as to live delivery,
-and ids are never renumbered: a filtered stream still carries the server's ids, so resuming
-with the last id seen works the same way.
+envelope with an empty `sessionId`, so a session pane still learns about process-level state
+(`memory.inbox`, `surface.changed`) without a second stream. The filter applies to the
+`Last-Event-ID` replay and to the live tail alike; ids are not renumbered, so a filtered
+client resumes with the same `Last-Event-ID` it would send unfiltered. `diagnostics.published`
+rides the session's bus and passes when its session matches. An empty `session=` is the same
+as no filter.
 
 ## The one translation: `engine.error`
 
-Every type but one crosses the wire as `JSON.stringify(envelope)` with no per-type
+Fourteen of the fifteen types cross the wire as `JSON.stringify(envelope)` with no per-type
 code. `engine.error` carries an `Error` instance, which `JSON.stringify` would flatten to
 `{}`. The server serializes every `Error` value anywhere in an envelope as
 

@@ -19,6 +19,7 @@ interface World {
   closed: string[];
   abandoned: string[];
   attached: string[];
+  removed: string[];
   attachResult: boolean;
   closeOutcome: ArcCloseOutcome;
   arcListeners: Array<() => void>;
@@ -60,6 +61,7 @@ function worldOf(): World {
     closed: [],
     abandoned: [],
     attached: [],
+    removed: [],
     attachResult: true,
     closeOutcome: { kind: "closed", delivered: 2, released: 1 },
     arcListeners: [],
@@ -110,6 +112,11 @@ function portsOver(world: World): Pick<ArcsPaneOptions, "arcs" | "sessions"> {
         return () => {
           world.unsubscribed += 1;
         };
+      },
+      remove: async (sessionId) => {
+        world.removed.push(sessionId);
+        world.items = world.items.filter((item) => item.id !== sessionId);
+        return "removed";
       },
     },
   };
@@ -475,7 +482,12 @@ describe("ArcsPane command tray", () => {
     expect(pane.tray.open).toBe(false);
     expect(pane.model.level()).toBe("sessions");
     press(pane, "/");
-    expect(pane.tray.matches().map((command) => command.name)).toEqual(["open", "back", "refresh"]);
+    expect(pane.tray.matches().map((command) => command.name)).toEqual([
+      "open",
+      "remove",
+      "back",
+      "refresh",
+    ]);
   });
 
   it("never opens while an arc name is being typed", async () => {
@@ -485,5 +497,25 @@ describe("ArcsPane command tray", () => {
     press(pane, "n", "/");
     expect(pane.tray.open).toBe(false);
     expect(pane.model.nameDraft).toBe("/");
+  });
+});
+
+describe("ArcsPane session removal", () => {
+  it("x inside a drilled arc asks, escape cancels, enter trashes the cursored session", async () => {
+    const world = worldOf();
+    const { pane, recorded } = paneOver(world);
+    await pane.settled();
+    press(pane, "enter");
+    expect(pane.model.level()).toBe("sessions");
+    press(pane, "x");
+    expect(pane.model.sessions.removalPrompt()).toContain('remove "title-s1"?');
+    press(pane, "escape");
+    expect(pane.model.level()).toBe("sessions");
+    expect(pane.model.sessions.removal()).toBeUndefined();
+    press(pane, "x", "enter");
+    await pane.settled();
+    expect(world.removed).toEqual(["s1"]);
+    expect(recorded.notices[0]).toContain('removed "title-s1"');
+    expect(pane.model.sessions.sessionRows().map((row) => row.id)).toEqual(["s2"]);
   });
 });

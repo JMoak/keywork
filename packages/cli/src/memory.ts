@@ -9,7 +9,6 @@ import {
   CitationLedger,
   citationAuditEvent,
   citationUsefulnessFeed,
-  curingStage,
   type EmbeddingsPort,
   Gardener,
   type LayeredSearchHit,
@@ -25,17 +24,21 @@ import {
   type RecallTap,
   type RetrievalSource,
   readSkillTelemetry,
+  reconcileVault,
   type SearchHit,
   type SkillEvidence,
   type SkillLibrary,
   type StagedItem,
   type StagedWrite,
+  SweepLease,
   titleKey,
+  vaultHost,
 } from "@keywork/engine";
 import { resolveVaultPath, toError } from "@keywork/shared";
 import type {
   AirlockDigestView,
   ArcAirlockPort,
+  CuringStage,
   InboxItemView,
   LedgerEventView,
   MemoryLayerView,
@@ -56,6 +59,7 @@ export interface WorkspaceMemory {
   gardener: Gardener;
   askGate: AskGateLedger;
   embeddings?: EmbeddingsPort;
+  lease?: SweepLease;
 }
 
 export type MemoryAccess = () => WorkspaceMemory | undefined;
@@ -77,15 +81,18 @@ export function openWorkspaceMemory(
 ): WorkspaceMemory | undefined {
   const vaultRoot = resolveVaultPath(cwd, slug);
   if (vaultRoot === undefined) return undefined;
-  const store = new MemoryStore({ vaultRoot, trusted });
+  const host = vaultHost(vaultRoot);
+  const store = new MemoryStore({ vaultRoot, trusted, ...(host !== undefined && { host }) });
+  const lease = host === undefined ? undefined : new SweepLease({ vaultRoot, host });
   return {
     vaultRoot,
     store,
     search: new MemorySearch(store),
-    gardener: new Gardener({ store }),
+    gardener: new Gardener({ store, ...(lease !== undefined && { lease }) }),
     askGate: trusted
       ? new AskGateLedger({ filePath: join(vaultRoot, ".staging", "ask-gate.json") })
       : new AskGateLedger(),
+    ...(lease !== undefined && { lease }),
   };
 }
 
@@ -215,9 +222,15 @@ export async function bootstrapInjection(
   memory: WorkspaceMemory | undefined,
 ): Promise<BootstrapInjection | undefined> {
   if (memory === undefined) return undefined;
+  await healAfterSync(memory);
   return bootstrapMemory([
     { name: workspaceLayerId, store: memory.store, budget: memoryBootstrapBudget },
   ]);
+}
+
+export async function healAfterSync(memory: WorkspaceMemory): Promise<void> {
+  if (!memory.store.trusted) return;
+  await reconcileVault({ store: memory.store }).catch(() => undefined);
 }
 
 export function withMemoryPrompt(systemPrompt: string, injection: string): string {
@@ -298,8 +311,15 @@ export function botLayerId(slug: string): string {
   return `bot:${slug}`;
 }
 
-export { curingStage };
+export function curingStage(note: Note): CuringStage {
+  if (note.provenance === "user" || note.pinned) return 3;
+  const usefulness = note.usefulness ?? 0;
+  if (usefulness >= settledUsefulness) return 3;
+  if (usefulness > 0) return 2;
+  return note.confidence === undefined ? 0 : 1;
+}
 
+const settledUsefulness = 0.5;
 const emptyMemoryPane: MemoryPaneInputs = { layers: [], notes: [], inbox: [], ledger: [] };
 
 interface LoadedLayer {

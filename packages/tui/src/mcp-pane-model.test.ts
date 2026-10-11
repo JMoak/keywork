@@ -447,3 +447,39 @@ describe("McpPaneModel navigation edges", () => {
     }
   });
 });
+
+describe("McpPaneModel sign-in rows", () => {
+  it("adds an alert row pointing at keywork mcp login when a server needs sign-in", () => {
+    const { model } = modelOver([
+      {
+        name: "github",
+        state: "down",
+        toolCount: 0,
+        lastError: "github wants you to sign in first",
+      },
+    ]);
+    model.setServers([
+      {
+        ...serverOf({ name: "github", state: "down", toolCount: 0, lastError: "needs sign-in" }),
+        transport: "http",
+        auth: "sign-in-needed",
+      },
+    ]);
+    expect(texts(model)).toEqual([
+      "░ github · ▛ · http",
+      "  needs sign-in",
+      "  sign in: keywork mcp login github, then restart",
+    ]);
+    const row = model.rows().find((candidate) => candidate.kind === "sign-in");
+    expect(row?.tone).toBe("alert");
+    expect(row?.selectable).toBe(false);
+  });
+
+  it("marks a signed-in http server on its status line", () => {
+    const { model } = modelOver([]);
+    model.setServers([
+      { ...serverOf({ name: "github", toolCount: 4 }), transport: "http", auth: "signed-in" },
+    ]);
+    expect(texts(model)).toEqual(["█ github · 4 tools · http · signed in"]);
+  });
+});

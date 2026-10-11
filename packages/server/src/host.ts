@@ -2,14 +2,15 @@ import type {
   ArcStatus,
   AuditEntry,
   CacheMiss,
+  CandidateTriage,
   ChangedPath,
-  CheckpointReads,
   CompactionEntry,
   ContextReading,
   CostRollup,
-  CuringStage,
   DailyEntry,
   EffortLevel,
+  InferenceBinding,
+  LearningLevel,
   LedgerEntry,
   McpServerStatus,
   Message,
@@ -19,10 +20,14 @@ import type {
   PromptOrigin,
   Provenance,
   Provider,
+  QuestionTriage,
+  Resolution,
   ResolutionFailure,
   RevertOutcome,
   SendBehavior,
+  SessionBinding,
   SessionEntry,
+  SettlePhase,
   StagedItem,
   Usage,
   WriteResult,
@@ -34,8 +39,10 @@ import type {
   PermissionRule,
   PresetName,
   TrustDecision,
+  WorkspaceAnchor,
 } from "@keywork/shared";
 import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
+import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 
 export interface SessionSummary {
   id: string;
@@ -43,12 +50,12 @@ export interface SessionSummary {
   createdAt: string;
   lastActivityAt: string;
   messageCount: number;
-  model?: string;
-  thinking?: boolean;
-  effort?: EffortLevel;
   costNanos?: number;
   arc?: string;
   bot?: string;
+  model?: string;
+  thinking?: boolean;
+  effort?: EffortLevel;
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -56,30 +63,73 @@ export interface SessionDetail extends SessionSummary {
   live: boolean;
   messages: readonly Message[];
   asOf: number;
+  parentSession?: string;
+  forkedFrom?: ForkOrigin;
 }
+
+export interface ForkOrigin {
+  sessionId?: string;
+  removed: boolean;
+}
+
+export interface SessionLifecyclePort {
+  remove(id: string): Promise<SessionSummary | Refusal>;
+  trash(): Promise<readonly SessionSummary[]>;
+  restore(id: string): Promise<SessionSummary | undefined>;
+  discard(id: string): Promise<SessionSummary | undefined>;
+  purge(): Promise<number>;
+}
+
+export type PromptOutcome = "accepted" | "missing";
+
+export type InjectOutcome = "started" | "queued" | "missing";
+
+export type AbortOutcome = "aborted" | "idle" | "missing";
+
+export type Refusal = "missing" | "busy";
+
+export type EntryRefusal = "missing" | "unknown-entry";
 
 export interface SessionEntries {
   sessionId: string;
   name?: string;
   leafId: string | null;
   entries: readonly SessionEntry[];
-  labels: Readonly<Record<string, string>>;
+  labels: Record<string, string>;
   activePath: readonly string[];
 }
 
-export interface SessionChanges {
+export interface LabelOutcome {
+  entryId: string;
+  label: string | null;
+}
+
+export interface LeafOutcome {
+  leafId: string | null;
+}
+
+export interface SessionTreePort {
+  entries(id: string): Promise<SessionEntries | "missing">;
+  fork(id: string, entryId: string): Promise<{ sessionId: string } | EntryRefusal>;
+  label(id: string, entryId: string, label: string | null): Promise<LabelOutcome | EntryRefusal>;
+  moveLeaf(id: string, entryId: string | null): Promise<LeafOutcome | Refusal | "unknown-entry">;
+}
+
+export interface ChangesReport {
   baseline: string;
   files: readonly ChangedPath[];
 }
 
-export type ChangedFileNote = "binary" | "new" | "deleted" | "unreadable";
+export interface FileSides {
+  before: string | undefined;
+  after: string | undefined;
+}
 
-export interface ChangedFile {
-  path: string;
-  before: string | null;
-  after: string | null;
-  note?: ChangedFileNote;
-  truncated: boolean;
+export type ChangesRefusal = "missing" | "no-baseline";
+
+export interface ChangesPort {
+  list(id: string): Promise<ChangesReport | ChangesRefusal>;
+  file(id: string, path: string): Promise<FileSides | ChangesRefusal>;
 }
 
 export interface SessionState {
@@ -88,93 +138,52 @@ export interface SessionState {
   effort?: EffortLevel;
   title: string;
   leafId: string | null;
+  arc?: string;
+  bot?: string;
   undoable: boolean;
   redoable: boolean;
 }
 
-export type PromptOutcome = "started" | "queued" | "missing";
-
-export type InjectOutcome = "started" | "queued" | "missing";
-
-export type AbortOutcome = "aborted" | "idle" | "missing";
-
-export type ForkOutcome = SessionSummary | "missing" | "unknown-entry";
-
-export type LabelOutcome = "labelled" | "missing" | "unknown-entry";
-
-export type LeafOutcome = { leafId: string | null } | "missing" | "unknown-entry" | "busy";
-
-export type ChangesOutcome<Reading> = Reading | "missing" | "untrusted" | "no-baseline";
-
-export type BindOutcome = "bound" | "missing";
-
-export type SwitchBotOutcome = "switched" | "busy" | "missing";
-
-export class HostRefusal extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "HostRefusal";
-  }
-}
-
-export type BoundModel =
-  | { ok: true; provider: Provider; reference: string }
-  | { ok: false; failure: ResolutionFailure };
-
-export interface SessionInference {
-  bind(selection: string | undefined): BoundModel;
-}
-
-export type ModelOutcome =
-  | "missing"
-  | "busy"
-  | { ok: true; model: ModelReference; notice: string }
-  | { ok: false; failure: ResolutionFailure };
-
-export type ThinkingOutcome = "missing" | { thinking: boolean };
-
-export type EffortOutcome = "missing" | { effort: EffortLevel | null };
-
-export interface Compacted {
+export interface SessionSettlement {
+  phase: SettlePhase | "requested";
+  flushed: number;
   compacted: CompactionEntry | null;
   notices: readonly string[];
 }
 
-export type CompactOutcome = "missing" | "busy" | Compacted;
+export interface SessionInference {
+  bind(reference: string): Resolution;
+  provider(binding: InferenceBinding): Provider;
+}
+
+export type ModelSwitch =
+  | { model: ModelReference; notice: string }
+  | { failure: ResolutionFailure };
+
+export interface CompactionReport {
+  compacted: CompactionEntry | null;
+  notices: readonly string[];
+}
 
 export interface UndonePrompt {
   entryId: string;
   text: string;
 }
 
-export interface Undone {
+export interface UndoReport {
   prompt: UndonePrompt | null;
   filesNote: string;
   undoable: boolean;
   redoable: boolean;
 }
 
-export type UndoOutcome = "missing" | "busy" | "staged" | "nothing" | Undone;
-
-export interface Redone {
+export interface RedoReport {
   restored: true;
   undoable: boolean;
   redoable: boolean;
 }
 
-export type RedoOutcome = "missing" | "busy" | "nothing" | Redone;
-
-export interface ContextReport extends ContextReading {
-  fullness: number;
-  flushDue: boolean;
-  compactionDue: boolean;
-  basis: "estimated";
-}
-
-export interface ModelCost {
+export interface ModelSpend {
   reference: string;
   turns: number;
   usage: Usage;
@@ -184,93 +193,175 @@ export interface ModelCost {
 export interface CostReport {
   rollup: CostRollup;
   usage: Usage;
-  basis: string;
+  modelId?: string;
   cacheMiss?: CacheMiss;
-  models: readonly ModelCost[];
+  models: readonly ModelSpend[];
 }
 
 export type ExportScope = "path" | "tree";
 
-export interface ExportRequest {
-  scope: ExportScope;
-  out?: string | undefined;
+export type ExportOutcome = { html: string } | { file: string } | "missing" | "outside-scope";
+
+export interface PresetHost {
+  active(): ActivePreset;
+  apply(name: PresetName): Promise<void>;
 }
 
-export type ExportOutcome = "missing" | { html: string } | { file: string } | { refused: string };
-
-export type RenameOutcome = "missing" | { title: string };
-
 export type PresetOutcome =
-  | "unavailable"
+  | { from: ActivePreset; to: PresetName }
   | "needs-confirmation"
-  | { from: ActivePreset; to: PresetName };
+  | "unavailable";
 
-export type CheckpointsOutcome = "missing" | "off" | CheckpointReads;
-
-export interface SessionHost extends WorkspaceHost, SurfaceHost {
+export interface SessionHost {
   list(): Promise<readonly SessionSummary[]>;
   read(id: string): Promise<SessionDetail | undefined>;
   create(): Promise<SessionSummary>;
-  prompt(id: string, text: string, behavior: SendBehavior): Promise<PromptOutcome>;
+  prompt(id: string, text: string, behavior?: SendBehavior): Promise<InjectOutcome>;
   inject(id: string, text: string, origin: PromptOrigin): Promise<InjectOutcome>;
   abort(id: string): Promise<AbortOutcome>;
-  entries(id: string): Promise<SessionEntries | undefined>;
-  fork(id: string, entryId: string): Promise<ForkOutcome>;
-  label(id: string, entryId: string, label: string | undefined): Promise<LabelOutcome>;
-  moveLeaf(id: string, entryId: string | null): Promise<LeafOutcome>;
-  changes(id: string): Promise<ChangesOutcome<SessionChanges>>;
-  changedFile(id: string, path: string): Promise<ChangesOutcome<ChangedFile>>;
-  spill(id: string, spillId: string, range: FileRange): Promise<SpillOutcome>;
-  setModel(id: string, reference: string): Promise<ModelOutcome>;
-  setThinking(id: string, on: boolean): Promise<ThinkingOutcome>;
-  setEffort(id: string, level: EffortLevel | null): Promise<EffortOutcome>;
-  compact(id: string, focus: string | undefined): Promise<CompactOutcome>;
-  undo(id: string): Promise<UndoOutcome>;
-  redo(id: string): Promise<RedoOutcome>;
-  context(id: string): Promise<ContextReport | "missing">;
+  setModel(id: string, reference: string): Promise<ModelSwitch | Refusal>;
+  setThinking(id: string, on: boolean): Promise<{ thinking: boolean } | "missing">;
+  setEffort(
+    id: string,
+    level: EffortLevel | null,
+  ): Promise<{ effort: EffortLevel | null } | Refusal>;
+  compact(id: string, focus?: string): Promise<CompactionReport | Refusal>;
+  undo(id: string): Promise<UndoReport | Refusal | "nothing">;
+  redo(id: string): Promise<RedoReport | Refusal | "nothing">;
+  context(id: string): Promise<ContextReading | "missing">;
   cost(id: string): Promise<CostReport | "missing">;
-  export(id: string, request: ExportRequest): Promise<ExportOutcome>;
-  rename(id: string, title: string): Promise<RenameOutcome>;
-  checkpointsOf(id: string): Promise<CheckpointsOutcome>;
-  setPreset(name: PresetName, confirmed: boolean): Promise<PresetOutcome>;
+  exportHtml(id: string, scope: ExportScope, out?: string): Promise<ExportOutcome>;
+  rename(id: string, title: string): Promise<{ title: string } | "missing">;
+  applyPreset(name: PresetName, confirmed: boolean): Promise<PresetOutcome>;
+  tree: SessionTreePort;
+  changes: ChangesPort;
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
   permissions(): Promise<PermissionsView>;
   revokeWorkspaceGrant(rule: PermissionRule): Promise<boolean>;
-  memory: MemoryHost;
   close(): Promise<void>;
+  memory?: MemoryPort;
+  workspace?: WorkspacePort;
+  mcp?: McpPort;
+  arcs?: ArcsPort;
+  bots?: BotsPort;
+  workspaces?: WorkspacesPort;
+  themes?: ThemesPort;
+  lifecycle?: SessionLifecyclePort;
 }
 
-export interface WorkspaceHost {
-  workspace(): Promise<WorkspaceView>;
-  tree(path: string): Promise<TreeListing>;
-  readFile(path: string, range: FileRange): Promise<FileSlice>;
-  trustWorkspace(): Promise<TrustGrant>;
-  themes(): Promise<ThemesView>;
+export interface MemoryPort {
+  trusted(): boolean;
+  overview(): Promise<MemoryOverview>;
+  inbox(): Promise<readonly StagedItem[]>;
+  approve(id: string): Promise<WriteResult | undefined>;
+  discard(id: string): Promise<void>;
+  notes(): Promise<readonly MemoryNoteRecord[]>;
+  note(name: string): Promise<MemoryNoteDetail | undefined>;
+  dailyDates(): Promise<readonly string[]>;
+  daily(date: string): Promise<readonly DailyEntry[]>;
+  ledger(): readonly LedgerEntry[];
+  revert(ledgerId: string): Promise<RevertOutcome>;
+  query(text: string, arc?: string): Promise<MemoryQueryOutcome>;
+  airlock: ArcAirlockPort;
+  subscribe?(listener: () => void): () => void;
 }
 
-export interface SurfaceHost {
-  mcpServers(): Promise<readonly McpServerStatus[]>;
-  restartMcpServer(name: string): Promise<McpServerStatus>;
-  setMcpServerEnabled(name: string, enabled: boolean): Promise<McpServerStatus>;
-  mcpServerTools(name: string): Promise<readonly string[]>;
-  arcs(): Promise<ArcsView>;
-  createArc(slug: string | undefined): Promise<ArcSummary>;
-  closeArc(slug: string, direction: string | undefined): Promise<ArcCloseOutcome>;
-  abandonArc(slug: string): Promise<void>;
-  bindArc(sessionId: string, slug: string | null): Promise<BindOutcome>;
-  bots(): Promise<readonly BotSummary[]>;
-  createBot(draft: BotDraft): Promise<BotEntry>;
-  switchBot(sessionId: string, name: string | null): Promise<SwitchBotOutcome>;
-  workspaces(): Promise<readonly WorkspaceChoice[]>;
-  createWorkspace(slug: string): Promise<void>;
-  useWorkspace(slug: string | null): Promise<void>;
-  focusWorkspace(slug: string | null, dir: string): Promise<string>;
-  unfocusWorkspace(slug: string | null, dir: string): Promise<void>;
+export interface MemoryOverview {
+  layers: readonly MemoryLayerRecord[];
+  inbox: readonly StagedItem[];
+  ledger: readonly LedgerEntry[];
+  audit: readonly AuditEntry[];
+  gardener?: GardenerActivity;
+  airlocks: readonly ArcCloseDigestRecord[];
 }
 
-export interface WorkspaceView {
-  anchor: { root: string; source: "declaration" | "git" | "launch" };
+export interface MemoryLayerRecord {
+  id: string;
+  kind: "workspace" | "arc" | "user";
+  label: string;
+  arc?: string;
+  prompt?: { budget: number; used: number };
+}
+
+export interface GardenerActivity {
+  state: "idle" | "working" | "failed";
+  sweptAt?: string;
+}
+
+export type MemoryNoteRecord = Note & {
+  layer: string;
+  file: string;
+  injected: boolean;
+  recalls: number;
+};
+
+export interface NoteRelation {
+  name: string;
+  predicate: string;
+  direction: "out" | "in";
+}
+
+export type MemoryNoteDetail = MemoryNoteRecord & { relations: readonly NoteRelation[] };
+
+export interface MemoryQueryHit {
+  note: string;
+  layer: string;
+  ranks: Partial<Record<"lexical" | "semantic" | "graph", number>>;
+  boost?: number;
+  superseded: boolean;
+}
+
+export interface MemoryQueryOutcome {
+  hits: MemoryQueryHit[];
+  source: "lexical" | "hybrid" | "lexical-degraded";
+  embeddings?: string;
+}
+
+export interface AirlockCandidateRecord {
+  note: string;
+  title: string;
+  provenance: Provenance;
+  eligible: boolean;
+  shortfalls: string[];
+  created?: string;
+  choice?: CandidateTriage;
+}
+
+export interface AirlockQuestionRecord {
+  title: string;
+  provenance: Provenance;
+  created?: string;
+  choice?: QuestionTriage;
+}
+
+export interface ArcCloseDigestRecord {
+  arc: string;
+  candidates: AirlockCandidateRecord[];
+  questions: AirlockQuestionRecord[];
+  successor?: string;
+  sweep?: { acked: number; wedged: number };
+  direction?: string;
+}
+
+export type AirlockFinishOutcome =
+  | { kind: "closed"; delivered: number; released: number; notice?: string }
+  | { kind: "pending"; candidates: number; questions: number; wedged: number; notice?: string }
+  | { kind: "undecided"; items: string[] }
+  | { kind: "wedged"; sessions: string[] };
+
+export interface ArcAirlockPort {
+  digest(slug: string): Promise<ArcCloseDigestRecord | undefined>;
+  triageCandidate(slug: string, note: string, choice: CandidateTriage): Promise<void>;
+  triageQuestion(slug: string, title: string, choice: QuestionTriage): Promise<void>;
+  deliverEligible(slug: string): Promise<number>;
+  finish(slug: string, options?: { force?: boolean }): Promise<AirlockFinishOutcome>;
+}
+
+export type WorkspaceReadiness = "ready" | "undeclared" | "undecided" | "refused";
+
+export interface WorkspaceReport {
+  anchor: WorkspaceAnchor;
   identity: string;
   slug?: string;
   name?: string;
@@ -281,57 +372,29 @@ export interface WorkspaceView {
   focusDirs: readonly string[];
   vault?: string;
   trust: TrustDecision;
-  readiness: "ready" | "undeclared" | "undecided" | "refused";
+  readiness: WorkspaceReadiness;
 }
-
-export interface TreeEntry {
-  name: string;
-  kind: "file" | "dir";
-  ignored: boolean;
-  hidden: boolean;
-}
-
-export interface TreeListing {
-  path: string;
-  entries: readonly TreeEntry[];
-}
-
-export interface FileRange {
-  from?: number;
-  to?: number;
-}
-
-export interface FileSlice {
-  path: string;
-  bytes: number;
-  from: number;
-  to: number;
-  text: string;
-  truncated: boolean;
-  eof: boolean;
-  encoding: "utf-8";
-}
-
-export interface SpillSlice extends Omit<FileSlice, "path"> {
-  spillId: string;
-}
-
-export type SpillOutcome = SpillSlice | "missing";
-
-export const maxFileSliceBytes = 1024 * 1024;
-
-export const maxFileBytes = 20 * 1024 * 1024;
 
 export interface TrustGrant {
   trusted: true;
   root: string;
+  vault: string;
   reopens: boolean;
 }
 
-export interface ThemesView {
-  themes: readonly CompleteTheme[];
-  active: string;
-  placeholders: readonly string[];
+export interface WorkspacePort {
+  report(): Promise<WorkspaceReport>;
+  trust(): Promise<TrustGrant>;
+  tree(path: string, hidden: boolean): Promise<TreeListing>;
+  file(path: string, range: ByteRange): Promise<FileSlice>;
+}
+
+export interface McpPort {
+  status(): Promise<McpServerStatus[]>;
+  restart(name: string): Promise<void>;
+  setEnabled(name: string, on: boolean): Promise<void>;
+  listTools(name: string): Promise<string[]>;
+  subscribe(listener: () => void): () => void;
 }
 
 export interface ArcSummary {
@@ -341,14 +404,16 @@ export interface ArcSummary {
   sessions: number;
 }
 
-export interface ArcsView {
-  arcs: readonly ArcSummary[];
-  ordinals: Readonly<Record<string, number>>;
-}
+export type ArcCloseOutcome = Extract<AirlockFinishOutcome, { kind: "closed" | "pending" }>;
 
-export type ArcCloseOutcome =
-  | { kind: "closed"; delivered: number; released: number; notice?: string }
-  | { kind: "pending"; candidates: number; questions: number; wedged: number; notice?: string };
+export interface ArcsPort {
+  list(): Promise<ArcSummary[]>;
+  create(slug: string): Promise<ArcSummary>;
+  close(slug: string, direction?: string): Promise<ArcCloseOutcome>;
+  abandon(slug: string): Promise<void>;
+  bindSession(id: string, slug: string | null): Promise<SessionBinding | undefined>;
+  subscribe(listener: () => void): () => void;
+}
 
 export type BotScope = "project" | "user";
 
@@ -358,7 +423,7 @@ export interface BotEntry {
   source: BotScope;
   description?: string;
   model?: string;
-  learning?: string;
+  learning?: LearningLevel;
 }
 
 export interface BotSummary extends BotEntry {
@@ -373,6 +438,12 @@ export interface BotDraft {
   purpose?: string;
 }
 
+export interface BotsPort {
+  list(): Promise<BotSummary[]>;
+  create(draft: BotDraft): Promise<BotEntry>;
+  bindSession(id: string, name: string | null): Promise<SessionBinding | undefined>;
+}
+
 export interface WorkspaceChoice {
   slug: string | undefined;
   name: string;
@@ -384,132 +455,41 @@ export interface WorkspaceChoice {
   lastUsed: number | undefined;
 }
 
-export function sliceBounds(
-  bytes: number,
-  range: FileRange,
-): Omit<FileSlice, "path" | "text" | "encoding"> {
-  const from = Math.min(Math.max(range.from ?? 0, 0), bytes);
-  const requestedTo = Math.min(Math.max(range.to ?? bytes, from), bytes);
-  const to = Math.min(requestedTo, from + maxFileSliceBytes);
-  return { bytes, from, to, truncated: to < requestedTo, eof: to >= bytes };
+export interface WorkspacesPort {
+  list(): Promise<WorkspaceChoice[]>;
+  create(slug: string): Promise<void>;
+  use(slug: string | undefined): Promise<void>;
+  linkFocusDir(slug: string | undefined, dir: string): Promise<string>;
+  unlinkFocusDir(slug: string | undefined, dir: string): Promise<void>;
 }
 
-export interface MemoryHost {
-  trusted(): Promise<boolean>;
-  garden(): Promise<MemoryGarden>;
-  inbox(): Promise<InboxItem[]>;
-  approve(id: string): Promise<WriteResult | undefined>;
-  discard(id: string): Promise<void>;
-  notes(layer?: string): Promise<MemoryNote[] | undefined>;
-  note(name: string, layer?: string): Promise<MemoryNote | undefined>;
-  dailyDates(): Promise<string[]>;
-  daily(date: string): Promise<DailyEntry[]>;
-  ledger(): Promise<readonly LedgerEntry[]>;
-  revert(ledgerId: string): Promise<RevertOutcome>;
-  ask(query: string, arc?: string): Promise<MemoryQueryOutcome>;
-  airlock: MemoryAirlock;
-  recount(): Promise<void>;
+export interface ThemesReport {
+  themes: readonly CompleteTheme[];
+  active: string;
+  placeholders: readonly string[];
 }
 
-export type MemoryLayerKind = "workspace" | "arc";
-
-export interface MemoryLayer {
-  id: string;
-  kind: MemoryLayerKind;
-  label: string;
-  arc?: string;
-  notes: number;
-  curing: Record<CuringStage, number>;
-  prompt?: { budget: number; used: number };
+export interface ThemesPort {
+  list(): Promise<ThemesReport>;
 }
 
-export interface NoteRelation {
-  name: string;
-  predicate: string;
-  direction: "out" | "in";
+export class SurfaceUnavailableError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "SurfaceUnavailableError";
+  }
 }
 
-export interface MemoryNote extends Note {
-  layer: string;
-  curing: CuringStage;
-  injected: boolean;
-  recalls: number;
-  relations: NoteRelation[];
+export class SessionBusyError extends Error {
+  constructor() {
+    super("a turn is running");
+    this.name = "SessionBusyError";
+  }
 }
 
-export type InboxItem = StagedItem & { bot?: string };
-
-export interface GardenerActivity {
-  state: "idle" | "working" | "failed";
-  sweptAt?: string;
-}
-
-export interface MemoryGarden {
-  trusted: boolean;
-  layers: MemoryLayer[];
-  inbox: InboxItem[];
-  ledger: readonly LedgerEntry[];
-  audit: AuditEntry[];
-  gardener: GardenerActivity;
-  airlocks: AirlockDigest[];
-}
-
-export type QueryLeg = "lexical" | "semantic" | "graph";
-
-export interface MemoryQueryHit {
-  note: string;
-  layer: string;
-  ranks: Partial<Record<QueryLeg, number>>;
-  boost?: number;
-  superseded: boolean;
-}
-
-export interface MemoryQueryOutcome {
-  hits: MemoryQueryHit[];
-  source: "lexical" | "hybrid" | "lexical-degraded";
-  embeddings?: string;
-}
-
-export type CandidateChoice = "deliver" | "leave";
-
-export type QuestionChoice = "resolve" | "carry" | "drop";
-
-export interface AirlockCandidate {
-  note: string;
-  title: string;
-  provenance: Provenance;
-  eligible: boolean;
-  shortfalls: string[];
-  created?: string;
-  choice?: CandidateChoice;
-}
-
-export interface AirlockQuestion {
-  title: string;
-  provenance: Provenance;
-  created?: string;
-  choice?: QuestionChoice;
-}
-
-export interface AirlockDigest {
-  arc: string;
-  candidates: AirlockCandidate[];
-  questions: AirlockQuestion[];
-  successor?: string;
-  sweep?: { acked: number; wedged: number };
-  direction?: string;
-}
-
-export type AirlockFinishOutcome =
-  | { kind: "closed"; delivered: number; released: number; notice?: string }
-  | { kind: "pending"; candidates: number; questions: number; wedged: number; notice?: string }
-  | { kind: "undecided"; items: string[] }
-  | { kind: "wedged"; sessions: string[] };
-
-export interface MemoryAirlock {
-  digest(slug: string): Promise<AirlockDigest | undefined>;
-  triageCandidate(slug: string, note: string, choice: CandidateChoice): Promise<void>;
-  triageQuestion(slug: string, title: string, choice: QuestionChoice): Promise<void>;
-  deliverEligible(slug: string): Promise<number>;
-  finish(slug: string, options?: { force?: boolean }): Promise<AirlockFinishOutcome>;
+export class TrustRefusedError extends Error {
+  constructor(root: string) {
+    super(`${root} is marked untrusted; keywork trust in a terminal reverses that`);
+    this.name = "TrustRefusedError";
+  }
 }

@@ -24,8 +24,8 @@
 │                                      │ │ ▸ /exit                close this pane · quits keywork if it's t…ctrl+k x │ │
 │                                      │ │   /export              write this session to a self-contained HTML file:… │ │
 │                                      │ │   /exit-all            close every pane and quit keywork           ctrl+q │ │
+│                                      │ │   /extensions          list loaded extensions, their standing and what e… │ │
 │                                      │ │   /theme-gruvbox-dark  repaint every surface in the gruvbox-dark theme    │ │
-│                                      │ │   /theme-flexoki-dark  repaint every surface in the flexoki-dark theme    │ │
 │                                      │ ╰───────────────────────────────────────────────────────────────────────────╯ │
 │                                      │ › /ex▌                                                                        │
 ╰──────────────────────────────────────╰───────────────────────────────────────────────────────────────────────────────╯

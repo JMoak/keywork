@@ -16,7 +16,7 @@ import { installLanguageServerShim } from "../../../packages/engine/src/testing/
 import { occurrences } from "../frame-queries.ts";
 import type { Scenario, Stage } from "../scenario.ts";
 
-const askRowMarker = "[y] allow  [a] always  [n] deny";
+const askRowMarker = "[y] allow  [n] deny";
 const blockHeader = "diagnostics (typescript) · 1 error · 1 warning";
 const blockRow = "cache.ts:1:22 · Cannot find name 'BROKEN'.";
 const calmHeader = /│ session-1 +│/;
