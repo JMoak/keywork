@@ -3,7 +3,7 @@ import type { SessionHost } from "../host.ts";
 import type { OpenApiDocument } from "../openapi.ts";
 import type { StreamRegistry } from "../sse.ts";
 
-export type HttpMethod = "GET" | "POST";
+export type HttpMethod = "GET" | "POST" | "DELETE";
 
 export type JsonSchema = Record<string, unknown>;
 

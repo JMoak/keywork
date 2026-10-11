@@ -8,6 +8,8 @@ Usage:
               [--session-dir <dir>]                         one-shot headless run
   keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
   keywork sessions export [id] [--tree] [--out <path>]      write a session to one HTML file
+  keywork sessions remove <id> [--yes]                      move a session to the trash
+  keywork sessions restore <id> | trash | purge [--yes]     bring one back, list, empty the trash
   keywork connect [target|url]                              add or verify an inference provider
                                                             (setup is an alias)
   keywork init                                              set up the workspace at its anchor
@@ -15,6 +17,7 @@ Usage:
   keywork bot [list|new|rm] [slug] [purpose] [--global]     personas with their own memory
   keywork memory drift [range]                              ask whether touched notes still hold
   keywork memory forget --session <id> [--apply]            stage removal of a session's memory
+  keywork memory sync [setup|merge ...]                     heal a synced vault, join more hosts
   keywork skills history <name> [--restore <version>]       a skill's actor ledger and versions
   keywork skills pin|unpin|archive|curate [name] [--apply]  curator hygiene for agent skills
   keywork extensions                                        list extensions and their standing

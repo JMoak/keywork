@@ -19,11 +19,13 @@ import {
 import type { ActivePreset, Flavor } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
+import type { ChangesSource } from "./changes.ts";
 import { keyworkClient } from "./client.ts";
 import { type BusEnvelope, type EngineEventType, EventLog, engineEventTypes } from "./events.ts";
 import type { ArcAirlockPort, McpPort, PresetHost } from "./host.ts";
 import { listen } from "./listen.ts";
 import { routes } from "./openapi.ts";
+import { fileChangeCapBytes } from "./routes/changes.ts";
 import { createKeyworkServer, type KeyworkServer } from "./server.ts";
 import {
   type MemorySurfaceOptions,
@@ -2007,4 +2009,478 @@ describe("session verbs (118 K1) over the memory host", () => {
     expect(await client.setThinking("nope", true)).toBeUndefined();
     await h.server.close();
   });
+});
+
+describe("session lifecycle (119) over the memory host", () => {
+  const remove = (h: Harness, id: string) => h.call(`/sessions/${id}`, { method: "DELETE" });
+  const payloadOf = (frame: SseFrame) => JSON.parse(frame.data) as BusEnvelope;
+
+  it("answers 503 on every lifecycle route when the host serves no trash", async () => {
+    const log = new EventLog();
+    const { lifecycle, ...host } = memorySessionHost({ log, provider: new MockProvider([]) });
+    expect(lifecycle).toBeDefined();
+    const server = createKeyworkServer({ token, host, log, version: "0.0.1-test" });
+    const call = (path: string, method: string) =>
+      server.fetch(
+        new Request(`${origin}${path}`, { method, headers: { authorization: `Bearer ${token}` } }),
+      );
+
+    const statuses = await Promise.all(
+      [
+        ["/sessions/s1", "DELETE"],
+        ["/trash", "GET"],
+        ["/trash/s1/restore", "POST"],
+        ["/trash/s1", "DELETE"],
+        ["/trash", "DELETE"],
+      ].map(async ([path, method]) => (await call(path ?? "", method ?? "")).status),
+    );
+
+    expect(statuses).toEqual([503, 503, 503, 503, 503]);
+    await server.close();
+  });
+
+  it("moves a session to the trash and back, announcing both at process level", async () => {
+    const h = harness();
+    const id = await createSession(h);
+    const reader = await h.stream();
+
+    const removed = await remove(h, id);
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({ id, title: `session ${id}` });
+    const listed = (await (await h.call("/sessions")).json()) as { sessions: unknown[] };
+    expect(listed.sessions).toEqual([]);
+    expect((await h.call(`/sessions/${id}`)).status).toBe(404);
+    const trashed = (await (await h.call("/trash")).json()) as { sessions: Array<{ id: string }> };
+    expect(trashed.sessions.map((session) => session.id)).toEqual([id]);
+    const removedEvent = payloadOf(await reader.next());
+    expect(removedEvent).toMatchObject({
+      sessionId: "",
+      type: "session.removed",
+      payload: { sessionId: id },
+    });
+
+    const restored = await h.call(`/trash/${id}/restore`, { method: "POST" });
+    expect(restored.status).toBe(201);
+    expect(await restored.json()).toMatchObject({ id });
+    expect((await h.call(`/sessions/${id}`)).status).toBe(200);
+    expect(((await (await h.call("/trash")).json()) as { sessions: unknown[] }).sessions).toEqual(
+      [],
+    );
+    expect(payloadOf(await reader.next())).toMatchObject({
+      sessionId: "",
+      type: "session.restored",
+      payload: { sessionId: id },
+    });
+    await reader.close();
+    await h.server.close();
+  });
+
+  it("refuses an unknown session, a running turn, and a miss in the trash", async () => {
+    const h = harness({ provider: hangingProvider() });
+    const id = await createSession(h);
+    expect((await remove(h, "nope")).status).toBe(404);
+    expect((await h.call("/trash/nope/restore", { method: "POST" })).status).toBe(404);
+    expect((await h.call("/trash/nope", { method: "DELETE" })).status).toBe(404);
+
+    await h.call(`/sessions/${id}/prompt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "hang" }),
+    });
+    const busy = await remove(h, id);
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toEqual({ error: "a turn is running" });
+    expect(
+      ((await (await h.call("/sessions")).json()) as { sessions: unknown[] }).sessions,
+    ).toHaveLength(1);
+    await h.server.close();
+  });
+
+  it("discards one trashed session and purges the rest, through the typed client", async () => {
+    const h = harness();
+    const client = keyworkClient(
+      { url: origin, token },
+      { fetch: (input, init) => h.server.fetch(new Request(input, init)) },
+    );
+    const first = await createSession(h);
+    const second = await createSession(h);
+    const third = await createSession(h);
+
+    expect(await client.removeSession(first)).toMatchObject({ id: first });
+    expect(await client.removeSession(second)).toMatchObject({ id: second });
+    expect(await client.removeSession(third)).toMatchObject({ id: third });
+    expect(await client.removeSession("nope")).toBe("missing");
+    expect((await client.trash()).map((session) => session.id)).toEqual([first, second, third]);
+    expect(await client.restoreSession(first)).toMatchObject({ id: first });
+    expect(await client.restoreSession(first)).toBeUndefined();
+    expect(await client.discardTrashedSession(second)).toBe(true);
+    expect(await client.discardTrashedSession(second)).toBe(false);
+    expect(await client.purgeTrash()).toEqual({ purged: 1 });
+    expect(await client.trash()).toEqual([]);
+    expect((await client.sessions()).map((session) => session.id)).toEqual([first]);
+    await h.server.close();
+  });
+});
+
+describe("tree and diff (118 K2) over the memory host", () => {
+  interface World {
+    before: Record<string, string>;
+    working: Record<string, string>;
+  }
+
+  function changesOver(world: World): ChangesSource {
+    return {
+      label: "session start",
+      changes: async () =>
+        [...new Set([...Object.keys(world.before), ...Object.keys(world.working)])]
+          .filter((path) => world.before[path] !== world.working[path])
+          .sort()
+          .map((path) => ({ path, added: 1, deleted: 0, turn: 1 })),
+      before: async (path) => world.before[path],
+      after: async (path) => world.working[path],
+    };
+  }
+
+  function writeTool(world: World): Tool {
+    return {
+      name: "write",
+      description: "writes",
+      parameters: { type: "object" },
+      execute: async (args) => {
+        const { path, content } = args as { path: string; content: string };
+        world.working[path] = content;
+        return "written";
+      },
+    };
+  }
+
+  function treeHarness(
+    options: { provider?: Provider; tools?: readonly Tool[]; changes?: ChangesSource } = {},
+  ) {
+    const log = new EventLog({ now: () => new Date("2026-10-11T09:00:00.000Z") });
+    const host = memorySessionHost({
+      log,
+      provider: options.provider ?? new MockProvider([]),
+      ...(options.tools !== undefined && { tools: options.tools }),
+      ...(options.changes !== undefined && { changes: options.changes }),
+    });
+    const server = createKeyworkServer({ token, host, log, version: "0.0.1-test" });
+    const call = (path: string, init: RequestInit = {}) =>
+      server.fetch(
+        new Request(`${origin}${path}`, {
+          ...init,
+          headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+        }),
+      );
+    const stream = async (lastEventId?: number) =>
+      sseReader(
+        await call("/events", {
+          headers: lastEventId === undefined ? {} : { "last-event-id": String(lastEventId) },
+        }),
+      );
+    const built: Harness = { server, log, call, stream };
+    return built;
+  }
+
+  const post = (h: Harness, path: string, body?: unknown) =>
+    h.call(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+  const envelopeIn = (frame: SseFrame) => JSON.parse(frame.data) as BusEnvelope;
+  const turnOf = async (h: Harness, id: string, text: string) => {
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text });
+    await collect(reader, (event) => event === "turn.completed");
+    await reader.close();
+  };
+  const body = async <Shape>(response: Response): Promise<Shape> =>
+    (await response.json()) as Shape;
+
+  it("lists the entry log with labels, leaf and active path, labels entries, and forks a session whose detail names its parent, announcing session.tree", async () => {
+    const h = treeHarness({ provider: new MockProvider([textTurn("hello back")]) });
+    const id = await createSession(h);
+    await turnOf(h, id, "hello");
+    const reader = await h.stream();
+
+    const entries = await body<{
+      sessionId: string;
+      name: string;
+      leafId: string;
+      entries: Array<{ id: string; parentId: string | null; type: string }>;
+      labels: Record<string, string>;
+      activePath: string[];
+    }>(await h.call(`/sessions/${id}/entries`));
+    expect(entries).toMatchObject({ sessionId: id, name: "session s1", leafId: "m1" });
+    expect(entries.entries.map(({ id, parentId, type }) => ({ id, parentId, type }))).toEqual([
+      { id: "m0", parentId: null, type: "message" },
+      { id: "m1", parentId: "m0", type: "message" },
+    ]);
+    expect(entries).toMatchObject({ labels: {}, activePath: ["m0", "m1"] });
+
+    const labelled = await post(h, `/sessions/${id}/label`, { entryId: "m0", label: "start" });
+    expect(await labelled.json()).toEqual({ entryId: "m0", label: "start" });
+    expect(
+      (await body<{ labels: Record<string, string> }>(await h.call(`/sessions/${id}/entries`)))
+        .labels,
+    ).toEqual({ m0: "start" });
+    expect(
+      await (await post(h, `/sessions/${id}/label`, { entryId: "m0", label: null })).json(),
+    ).toEqual({ entryId: "m0", label: null });
+
+    const forked = await post(h, `/sessions/${id}/fork`, { entryId: "m0" });
+    expect(forked.status).toBe(201);
+    const { sessionId } = await body<{ sessionId: string }>(forked);
+    expect(sessionId).not.toBe(id);
+    const detail = await body<{ parentSession?: string; messages: Message[] }>(
+      await h.call(`/sessions/${sessionId}`),
+    );
+    expect(detail.parentSession).toBe(id);
+    expect(detail.messages).toHaveLength(1);
+    expect(
+      await body<{ messages: Message[] }>(await h.call(`/sessions/${id}`)).then((d) => d.messages),
+    ).toHaveLength(2);
+
+    const changes = [];
+    while (changes.length < 3) {
+      const frame = (await collect(reader, (event) => event === "session.tree")).at(-1) as SseFrame;
+      changes.push(envelopeIn(frame));
+    }
+    expect(changes.every((envelope) => envelope.sessionId === id)).toBe(true);
+    expect(changes.map((envelope) => envelope.payload)).toEqual([
+      { reason: "label", entryId: "m0" },
+      { reason: "label", entryId: "m0" },
+      { reason: "fork", entryId: "m0", forkedTo: sessionId },
+    ]);
+    await reader.close();
+
+    expect((await post(h, `/sessions/${id}/fork`, { entryId: "m9" })).status).toBe(404);
+    expect(await (await post(h, `/sessions/${id}/fork`, { entryId: "m9" })).json()).toEqual({
+      error: "no entry has that id",
+    });
+    expect((await post(h, `/sessions/${id}/label`, { entryId: "m9", label: "x" })).status).toBe(
+      404,
+    );
+    expect((await post(h, "/sessions/nope/fork", { entryId: "m0" })).status).toBe(404);
+    expect((await h.call("/sessions/nope/entries")).status).toBe(404);
+    expect((await post(h, `/sessions/${id}/fork`, {})).status).toBe(400);
+    expect((await post(h, `/sessions/${id}/label`, { entryId: "m0" })).status).toBe(400);
+    expect((await post(h, `/sessions/${id}/label`, { entryId: "m0", label: "" })).status).toBe(400);
+  });
+
+  it("moves the leaf without forking, answers null for the root, refuses mid-turn, and announces session.tree then session.state", async () => {
+    const h = treeHarness({
+      provider: hangingThenScriptedK2([textTurn("one"), textTurn("two")]),
+    });
+    const id = await createSession(h);
+    const opening = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "first" });
+    await collect(opening, (event) => event === "turn.started");
+    const busy = await post(h, `/sessions/${id}/leaf`, { entryId: "m0" });
+    expect(busy.status).toBe(409);
+    await post(h, `/sessions/${id}/abort`);
+    await collect(opening, (event) => event === "turn.interrupted");
+    await opening.close();
+    await turnOf(h, id, "second");
+    await turnOf(h, id, "third");
+    expect((await body<{ leafId: string }>(await h.call(`/sessions/${id}/entries`))).leafId).toBe(
+      "m5",
+    );
+
+    const reader = await h.stream();
+    const moved = await post(h, `/sessions/${id}/leaf`, { entryId: "m3" });
+    expect(await moved.json()).toEqual({ leafId: "m3" });
+    expect(
+      (await body<{ messages: Message[] }>(await h.call(`/sessions/${id}`))).messages,
+    ).toHaveLength(4);
+    const [state, tree] = (await collect(reader, (event) => event === "session.tree")).map(
+      envelopeIn,
+    );
+    expect(state).toMatchObject({ type: "session.state", payload: { leafId: "m3" } });
+    expect(tree).toMatchObject({ sessionId: id, type: "session.tree" });
+    expect(tree?.payload).toEqual({ reason: "leaf", entryId: "m3" });
+    await reader.close();
+
+    expect(await (await post(h, `/sessions/${id}/leaf`, { entryId: null })).json()).toEqual({
+      leafId: null,
+    });
+    expect((await body<{ messages: Message[] }>(await h.call(`/sessions/${id}`))).messages).toEqual(
+      [],
+    );
+    expect((await post(h, `/sessions/${id}/leaf`, { entryId: "m9" })).status).toBe(404);
+    expect((await post(h, `/sessions/${id}/leaf`, {})).status).toBe(400);
+    expect((await post(h, "/sessions/nope/leaf", { entryId: null })).status).toBe(404);
+  });
+
+  it("answers no baseline when the host has none, and otherwise lists changes with their turn and fires changes.updated after a write tool", async () => {
+    const bare = treeHarness();
+    const bareId = await createSession(bare);
+    const refused = await bare.call(`/sessions/${bareId}/changes`);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: "no baseline" });
+    expect((await bare.call(`/sessions/${bareId}/changes/file?path=a`)).status).toBe(409);
+    expect((await bare.call("/sessions/nope/changes")).status).toBe(404);
+
+    const world: World = { before: {}, working: {} };
+    const h = treeHarness({
+      provider: new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "w1",
+          name: "write",
+          arguments: { path: "note.txt", content: "hello" },
+        }),
+        textTurn("wrote it"),
+      ]),
+      tools: [writeTool(world)],
+      changes: changesOver(world),
+    });
+    const id = await createSession(h);
+    expect(await (await h.call(`/sessions/${id}/changes`)).json()).toEqual({
+      baseline: "session start",
+      files: [],
+    });
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "write a note" });
+    const updated = (await collect(reader, (event) => event === "changes.updated")).at(
+      -1,
+    ) as SseFrame;
+    expect(envelopeIn(updated)).toMatchObject({
+      sessionId: id,
+      payload: { paths: ["note.txt"], turn: 1 },
+    });
+    await reader.close();
+    expect(await (await h.call(`/sessions/${id}/changes`)).json()).toEqual({
+      baseline: "session start",
+      files: [{ path: "note.txt", added: 1, deleted: 0, turn: 1 }],
+    });
+  });
+
+  it("answers both sides of a changed file with the new, deleted, binary and unreadable notes, capping each side at 1 MiB on a character boundary", async () => {
+    const cap = fileChangeCapBytes;
+    const world: World = {
+      before: {
+        "gone.txt": "was here",
+        "same.txt": "same",
+        "blob.bin": "a\0b",
+        "exact.txt": "a".repeat(cap),
+        "euro.txt": "€".repeat(Math.ceil((cap + 1) / 3)),
+      },
+      working: {
+        "new.txt": "fresh",
+        "same.txt": "same",
+        "blob.bin": "a\0c",
+        "exact.txt": "a".repeat(cap),
+        "over.txt": "b".repeat(cap + 1),
+      },
+    };
+    const h = treeHarness({ changes: changesOver(world) });
+    const id = await createSession(h);
+    const file = async (path: string) =>
+      body<{
+        path: string;
+        before: string | null;
+        after: string | null;
+        note?: string;
+        truncated: boolean;
+      }>(await h.call(`/sessions/${id}/changes/file?path=${encodeURIComponent(path)}`));
+
+    expect(await file("new.txt")).toEqual({
+      path: "new.txt",
+      before: null,
+      after: "fresh",
+      note: "new",
+      truncated: false,
+    });
+    expect(await file("gone.txt")).toEqual({
+      path: "gone.txt",
+      before: "was here",
+      after: null,
+      note: "deleted",
+      truncated: false,
+    });
+    expect(await file("same.txt")).toEqual({
+      path: "same.txt",
+      before: "same",
+      after: "same",
+      truncated: false,
+    });
+    expect(await file("blob.bin")).toEqual({
+      path: "blob.bin",
+      before: null,
+      after: null,
+      note: "binary",
+      truncated: false,
+    });
+    expect(await file("ghost.txt")).toEqual({
+      path: "ghost.txt",
+      before: null,
+      after: null,
+      note: "unreadable",
+      truncated: false,
+    });
+    const exact = await file("exact.txt");
+    expect(exact.truncated).toBe(false);
+    expect(exact.before?.length).toBe(cap);
+    const over = await file("over.txt");
+    expect(over).toMatchObject({ before: null, note: "new", truncated: true });
+    expect(over.after?.length).toBe(cap);
+    const euro = await file("euro.txt");
+    expect(euro).toMatchObject({ after: null, note: "deleted", truncated: true });
+    expect(euro.before?.length).toBe(Math.floor(cap / 3));
+    expect(euro.before?.includes("�")).toBe(false);
+    expect((await h.call(`/sessions/${id}/changes/file`)).status).toBe(400);
+    expect((await h.call("/sessions/nope/changes/file?path=new.txt")).status).toBe(404);
+  });
+
+  it("drives the tree and the diff through the typed client", async () => {
+    const world: World = { before: {}, working: { "new.txt": "fresh" } };
+    const h = treeHarness({
+      provider: new MockProvider([textTurn("hi")]),
+      changes: changesOver(world),
+    });
+    const client = keyworkClient(
+      { url: origin, token },
+      { fetch: (input, init) => h.server.fetch(new Request(input, init)) },
+    );
+    const { id } = await client.createSession();
+    await turnOf(h, id, "hello");
+    expect((await client.entries(id))?.activePath).toEqual(["m0", "m1"]);
+    expect(await client.labelEntry(id, "m1", "answer")).toEqual({ entryId: "m1", label: "answer" });
+    const forked = await client.fork(id, "m0");
+    expect((await client.session(forked?.sessionId ?? ""))?.parentSession).toBe(id);
+    expect(await client.moveLeaf(id, "m0")).toEqual({ leafId: "m0" });
+    expect((await client.changes(id))?.files).toEqual([
+      { path: "new.txt", added: 1, deleted: 0, turn: 1 },
+    ]);
+    expect(await client.changedFile(id, "new.txt")).toMatchObject({ after: "fresh", note: "new" });
+    expect(await client.entries("nope")).toBeUndefined();
+    expect(await client.fork(id, "m9")).toBeUndefined();
+    expect(await client.changes("nope")).toBeUndefined();
+
+    const bare = treeHarness();
+    const bareClient = keyworkClient(
+      { url: origin, token },
+      { fetch: (input, init) => bare.server.fetch(new Request(input, init)) },
+    );
+    const { id: bareId } = await bareClient.createSession();
+    await expect(bareClient.changes(bareId)).rejects.toMatchObject({ status: 409 });
+    await h.server.close();
+    await bare.server.close();
+  });
+
+  function hangingThenScriptedK2(turns: TurnDelta[][]): Provider {
+    const scripted = new MockProvider(turns);
+    let first = true;
+    const hanging = hangingProvider();
+    return {
+      name: "mock",
+      stream: (request) => {
+        if (!first) return scripted.stream(request);
+        first = false;
+        return hanging.stream(request);
+      },
+    };
+  }
 });

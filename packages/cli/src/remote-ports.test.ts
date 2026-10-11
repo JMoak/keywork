@@ -264,6 +264,21 @@ describe("remoteSessionTreePort", () => {
     expect(changed).toEqual([created.id]);
     await h.close();
   });
+
+  it("removes, lists the trash and restores through the server", async () => {
+    const h = harness(new MockProvider([]));
+    const trees = remoteSessionTreePort(h.client, h.feed);
+    const created = await h.client.createSession();
+
+    expect(await trees.remove?.(created.id)).toBe("removed");
+    expect(await trees.remove?.(created.id)).toBe("missing");
+    expect(await trees.overview?.()).toEqual([]);
+    expect((await trees.trash?.())?.map((item) => item.id)).toEqual([created.id]);
+    expect((await trees.restore?.(created.id))?.id).toBe(created.id);
+    expect(await trees.restore?.(created.id)).toBeUndefined();
+    expect((await trees.overview?.())?.map((item) => item.id)).toEqual([created.id]);
+    await h.close();
+  });
 });
 
 function settledTurn(feed: ServerFeed): Promise<void> {

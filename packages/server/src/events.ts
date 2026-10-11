@@ -2,7 +2,16 @@ import type { EngineEvents, EventBus } from "@keywork/engine";
 
 export type EngineEventType = keyof EngineEvents;
 
-export const serverEventTypes = ["memory.inbox", "session.state", "surface.changed"] as const;
+export const serverEventTypes = [
+  "memory.inbox",
+  "session.state",
+  "surface.changed",
+  "session.tree",
+  "changes.updated",
+  "session.removed",
+  "session.restored",
+  "session.settled",
+] as const;
 
 export type ServerEventType = (typeof serverEventTypes)[number];
 

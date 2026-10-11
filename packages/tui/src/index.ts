@@ -237,8 +237,12 @@ export type {
   SessionTurn,
   ThinkingSwitch,
 } from "./session-attachment.ts";
-export type { SessionTreeView } from "./session-tree-model.ts";
-export type { SessionTreePaneSeams, SessionTreePort } from "./session-tree-pane.ts";
+export type { ForkOrigin, SessionTreeView } from "./session-tree-model.ts";
+export type {
+  SessionRemoval,
+  SessionTreePaneSeams,
+  SessionTreePort,
+} from "./session-tree-pane.ts";
 export {
   type OverviewRow,
   type SessionGroupBy,

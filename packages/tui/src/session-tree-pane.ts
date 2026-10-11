@@ -40,6 +40,8 @@ import { slugChunks, slugInk } from "./slug-ink.ts";
 import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
 
+export type SessionRemoval = "removed" | "missing" | "busy";
+
 export interface SessionTreePort {
   load(sessionId: string): Promise<SessionTreeView | undefined>;
   setLabel(sessionId: string, entryId: string, label: string | undefined): Promise<void>;
@@ -47,6 +49,9 @@ export interface SessionTreePort {
   overview?(): Promise<SessionOverviewItem[]>;
   attach?(sessionId: string): Promise<boolean>;
   subscribe?(listener: (sessionId: string) => void): () => void;
+  remove?(sessionId: string): Promise<SessionRemoval>;
+  trash?(): Promise<SessionOverviewItem[]>;
+  restore?(sessionId: string): Promise<SessionOverviewItem | undefined>;
 }
 
 export interface SessionTreePaneSeams {
@@ -59,11 +64,12 @@ export interface SessionTreePaneSeams {
   scheduleFrame?: FrameScheduler;
 }
 
-type PaneLevel = "overview" | "entries";
+type PaneLevel = "overview" | "entries" | "trash";
 
 export class SessionTreePane implements Pane {
   readonly model: SessionTreeModel;
   readonly overview: SessionsOverviewModel;
+  readonly trashed: SessionsOverviewModel;
   readonly tray: PaneTrayModel;
   private paneLevel: PaneLevel = "overview";
   private sessionId: string | undefined;
@@ -78,7 +84,7 @@ export class SessionTreePane implements Pane {
   constructor(
     readonly id: string,
     notify: () => void,
-    intents: PaneIntents,
+    private readonly intents: PaneIntents,
     private readonly port: SessionTreePort,
     currentSession: () => string | undefined,
     seams: SessionTreePaneSeams = {},
@@ -92,15 +98,19 @@ export class SessionTreePane implements Pane {
     );
     this.model = new SessionTreeModel(() => this.tasks.emit(), {
       refresh: () => this.refresh(),
-      fork: (entryId) => this.tasks.track(() => this.fork(entryId, intents)),
+      fork: (entryId) => this.tasks.track(() => this.fork(entryId)),
       setLabel: (entryId, label) => this.tasks.track(() => this.relabel(entryId, label)),
     });
     this.overview = new SessionsOverviewModel(
       () => this.tasks.emit(),
       {
         refresh: () => this.refresh(),
-        activate: (sessionId) => this.tasks.track(() => this.focusOrOpen(sessionId, intents)),
+        activate: (sessionId) => this.tasks.track(() => this.focusOrOpen(sessionId)),
         drill: (sessionId) => this.drillInto(sessionId),
+        ...(port.remove !== undefined && {
+          remove: (sessionId: string, title: string) =>
+            this.tasks.track(() => this.remove(sessionId, title)),
+        }),
       },
       {
         currentSession,
@@ -109,6 +119,15 @@ export class SessionTreePane implements Pane {
         ...(seams.presence !== undefined && { presence: seams.presence }),
         ...(seams.now !== undefined && { now: seams.now }),
       },
+    );
+    this.trashed = new SessionsOverviewModel(
+      () => this.tasks.emit(),
+      {
+        refresh: () => this.refresh(),
+        activate: (sessionId) => this.tasks.track(() => this.restore(sessionId)),
+        drill: () => {},
+      },
+      { ...(seams.now !== undefined && { now: seams.now }) },
     );
     this.tray = new PaneTrayModel(
       () => this.tasks.emit(),
@@ -129,13 +148,25 @@ export class SessionTreePane implements Pane {
   }
 
   title(): string {
-    if (this.paneLevel === "overview") {
-      const count = this.overview.sessionCount();
-      return paneTitle("session tree", count === 0 ? undefined : pluralize(count, "session"));
+    switch (this.paneLevel) {
+      case "overview": {
+        const count = this.overview.sessionCount();
+        return paneTitle("session tree", count === 0 ? undefined : pluralize(count, "session"));
+      }
+      case "trash": {
+        const count = this.trashed.sessionCount();
+        return paneTitle("trash", count === 0 ? undefined : pluralize(count, "session"));
+      }
+      case "entries": {
+        const count = this.model.entryCount();
+        const facts = [
+          count === 0 ? undefined : `${count} entries`,
+          this.model.forkOriginFact(),
+        ].filter((fact) => fact !== undefined);
+        const name = this.model.sessionName() ?? "session tree";
+        return paneTitle(name, facts.length === 0 ? undefined : facts.join(" · "));
+      }
     }
-    const count = this.model.entryCount();
-    const name = this.model.sessionName() ?? "session tree";
-    return paneTitle(name, count === 0 ? undefined : `${count} entries`);
   }
 
   describe(): PaneDescriptor {
@@ -149,15 +180,25 @@ export class SessionTreePane implements Pane {
 
   handleKey(chord: Chord, sequence?: string): boolean {
     if (this.tray.open) return this.tray.handleKey(chord, sequence);
-    if (!this.model.labeling && this.tray.opensOn(chord)) {
+    if (!this.model.labeling && !this.confirming() && this.tray.opensOn(chord)) {
       this.tray.openTray();
       return true;
     }
-    if (this.paneLevel === "overview") return this.overview.handleKey(chord, this.lastPageRows);
-    if (!this.model.labeling && (chord.name === "escape" || chord.name === "backspace")) {
-      return this.returnToOverview();
+    switch (this.paneLevel) {
+      case "overview":
+        if (chord.name === "t" && !this.confirming() && this.port.trash !== undefined) {
+          return this.showTrash();
+        }
+        return this.overview.handleKey(chord, this.lastPageRows);
+      case "trash":
+        if (chord.name === "escape" || chord.name === "backspace") return this.returnToOverview();
+        return this.trashed.handleKey(chord, this.lastPageRows);
+      case "entries":
+        if (!this.model.labeling && (chord.name === "escape" || chord.name === "backspace")) {
+          return this.returnToOverview();
+        }
+        return this.model.handleKey(chord, this.lastPageRows, sequence);
     }
-    return this.model.handleKey(chord, this.lastPageRows, sequence);
   }
 
   handleMouse(local: { x: number; y: number }, event: PointerEvent): boolean {
@@ -165,8 +206,14 @@ export class SessionTreePane implements Pane {
     if (event.type !== "down" || this.tasks.failure() !== undefined) return false;
     const row = local.y - 1;
     if (row < 0 || row >= this.lastPageRows) return false;
-    if (this.paneLevel === "overview") return this.overview.activateVisible(row, this.lastPageRows);
-    return this.model.selectVisible(row, this.lastPageRows);
+    switch (this.paneLevel) {
+      case "overview":
+        return this.overview.activateVisible(row, this.lastPageRows);
+      case "trash":
+        return this.trashed.activateVisible(row, this.lastPageRows);
+      case "entries":
+        return this.model.selectVisible(row, this.lastPageRows);
+    }
   }
 
   settled(): Promise<void> {
@@ -176,6 +223,7 @@ export class SessionTreePane implements Pane {
   refresh(): void {
     const drilled = this.sessionId;
     if (this.paneLevel === "entries" && drilled !== undefined) this.refreshEntries(drilled);
+    else if (this.paneLevel === "trash") this.refreshTrash();
     else this.refreshOverview();
   }
 
@@ -183,28 +231,36 @@ export class SessionTreePane implements Pane {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
     const labelLine = this.labelLine(theme, focused);
+    const confirmLine = this.confirmLine(theme, innerWidth);
     const hintLine = this.groupingHint(theme, innerWidth);
     const tray = this.tray.open
       ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
       : undefined;
-    const trailing = (labelLine === undefined ? 0 : 1) + (hintLine === undefined ? 0 : 1);
-    this.lastPageRows = Math.max(0, paneContentHeight(context) - trailing - (tray?.rows ?? 0));
-    const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
-    this.trayFirstRow = 2 + body.length + trailing;
-    return paneChrome(
-      context,
-      this.title(),
-      ...body,
-      ...(labelLine === undefined ? [] : [labelLine]),
-      ...(hintLine === undefined ? [] : [hintLine]),
-      ...(tray?.children ?? []),
+    const trailing = [labelLine, confirmLine, hintLine].filter((line) => line !== undefined);
+    this.lastPageRows = Math.max(
+      0,
+      paneContentHeight(context) - trailing.length - (tray?.rows ?? 0),
     );
+    const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
+    this.trayFirstRow = 2 + body.length + trailing.length;
+    return paneChrome(context, this.title(), ...body, ...trailing, ...(tray?.children ?? []));
+  }
+
+  private confirming(): boolean {
+    return this.overview.removal() !== undefined;
   }
 
   private refreshOverview(): void {
     this.tasks.track(async () => {
       const items = (await this.port.overview?.()) ?? [];
       this.overview.setItems(items);
+    });
+  }
+
+  private refreshTrash(): void {
+    this.tasks.track(async () => {
+      const items = (await this.port.trash?.()) ?? [];
+      this.trashed.setItems(items);
     });
   }
 
@@ -219,6 +275,13 @@ export class SessionTreePane implements Pane {
     this.tasks.emit();
   }
 
+  private showTrash(): boolean {
+    this.paneLevel = "trash";
+    this.refreshTrash();
+    this.tasks.emit();
+    return true;
+  }
+
   private returnToOverview(): boolean {
     this.paneLevel = "overview";
     this.refreshOverview();
@@ -226,19 +289,40 @@ export class SessionTreePane implements Pane {
     return true;
   }
 
-  private focusOrOpen(sessionId: string, intents: PaneIntents): Promise<void> {
+  private focusOrOpen(sessionId: string): Promise<void> {
     return focusOrOpenSession(sessionId, {
       sessions: this.port,
-      intents,
+      intents: this.intents,
       live: () => this.tasks.live(),
       ...(this.presence !== undefined && { presence: this.presence }),
     });
   }
 
-  private async fork(entryId: string, intents: PaneIntents): Promise<void> {
+  private remove(sessionId: string, title: string): Promise<void> {
+    return removeSessionThrough(sessionId, title, {
+      sessions: this.port,
+      intents: this.intents,
+      live: () => this.tasks.live(),
+      refresh: () => this.refresh(),
+      ...(this.presence !== undefined && { presence: this.presence }),
+    });
+  }
+
+  private async restore(sessionId: string): Promise<void> {
+    const restored = await this.port.restore?.(sessionId);
+    if (!this.tasks.live()) return;
+    this.intents.notice?.(
+      restored === undefined
+        ? "that session is no longer in the trash"
+        : `restored "${restored.title}" · it is back in the session tree`,
+    );
+    this.refreshTrash();
+  }
+
+  private async fork(entryId: string): Promise<void> {
     if (this.sessionId === undefined) return;
     const forkedId = await this.port.fork(this.sessionId, entryId);
-    if (forkedId !== undefined && this.tasks.live()) intents.openSession(forkedId);
+    if (forkedId !== undefined && this.tasks.live()) this.intents.openSession(forkedId);
   }
 
   private async relabel(entryId: string, label: string | undefined): Promise<void> {
@@ -251,22 +335,30 @@ export class SessionTreePane implements Pane {
   private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
-    if (this.paneLevel === "overview") {
-      return rowsView(this.overview, rows, theme, width, {
-        empty: "░ no sessions yet",
-        text: (row) => overviewRowLine(row, true),
-        line: (row) => overviewRowView(row, theme, width, this.arcInkOf(theme)),
-      });
+    switch (this.paneLevel) {
+      case "overview":
+        return rowsView(this.overview, rows, theme, width, {
+          empty: "░ no sessions yet",
+          text: (row) => overviewRowLine(row, true),
+          line: (row) => overviewRowView(row, theme, width, this.arcInkOf(theme)),
+        });
+      case "trash":
+        return rowsView(this.trashed, rows, theme, width, {
+          empty: "░ the trash is empty · x in the overview sends a session here",
+          text: (row) => overviewRowLine(row, true),
+          line: (row) => overviewRowView(row, theme, width, this.arcInkOf(theme)),
+        });
+      case "entries":
+        if (this.model.sessionId() === undefined) {
+          return [paneLine("loading session…", theme.textDim, width)];
+        }
+        return rowsView(this.model, rows, theme, width, {
+          empty: "empty session",
+          text: entryRowText,
+          line: (row) =>
+            paneLine(entryRowText(row), row.onActivePath ? theme.accentSoft : theme.text, width),
+        });
     }
-    if (this.model.sessionId() === undefined) {
-      return [paneLine("loading session…", theme.textDim, width)];
-    }
-    return rowsView(this.model, rows, theme, width, {
-      empty: "empty session",
-      text: entryRowText,
-      line: (row) =>
-        paneLine(entryRowText(row), row.onActivePath ? theme.accentSoft : theme.text, width),
-    });
   }
 
   private arcInkOf(theme: Theme): (slug: string) => string {
@@ -274,14 +366,17 @@ export class SessionTreePane implements Pane {
   }
 
   private trayCommands(): TrayCommand[] {
-    const table = this.paneLevel === "overview" ? overviewTray : entriesTray;
-    return trayCommandsPressing((chord) => this.handleKey(chord), table);
+    return trayCommandsPressing((chord) => this.handleKey(chord), trayTables[this.paneLevel]);
   }
 
   private groupingHint(theme: Theme, width: number): PaneChild | undefined {
     const grouping = this.paneLevel === "overview" && this.tasks.failure() === undefined;
     if (!grouping || this.overview.sessionCount() < 2) return undefined;
     return paneLine(groupByHint(this.overview.groupBy()), theme.textDim, width);
+  }
+
+  private confirmLine(theme: Theme, width: number): PaneChild | undefined {
+    return removalConfirmLine(this.overview, theme, width);
   }
 
   private labelLine(theme: Theme, focused: boolean) {
@@ -306,6 +401,59 @@ export async function focusOrOpenSession(sessionId: string, opener: SessionOpene
   }
   const attached = (await opener.sessions.attach?.(sessionId)) ?? true;
   if (attached && opener.live()) opener.intents.openSession(sessionId);
+}
+
+export interface SessionRemover {
+  sessions: Pick<SessionTreePort, "remove">;
+  intents: PaneIntents;
+  presence?: SessionPresence;
+  live(): boolean;
+  refresh(): void;
+}
+
+export const busyRemovalNotice = "a turn is running · wait for it to finish before removing";
+
+export async function removeSessionThrough(
+  sessionId: string,
+  title: string,
+  remover: SessionRemover,
+): Promise<void> {
+  const remove = remover.sessions.remove;
+  if (remove === undefined) return;
+  const { intents, presence } = remover;
+  if (presence?.busy(sessionId) === true) {
+    intents.notice?.(busyRemovalNotice);
+    return;
+  }
+  const paneId = presence?.paneFor(sessionId);
+  if (paneId !== undefined && intents.closePane?.(paneId) !== true) {
+    intents.notice?.(`close the pane showing "${title}" first`);
+    return;
+  }
+  const outcome = await remove(sessionId);
+  if (!remover.live()) return;
+  intents.notice?.(removalNotice(outcome, title));
+  remover.refresh();
+}
+
+export function removalNotice(outcome: SessionRemoval, title: string): string {
+  switch (outcome) {
+    case "removed":
+      return `removed "${title}" · t in the session tree restores it, memory notes stay`;
+    case "busy":
+      return busyRemovalNotice;
+    case "missing":
+      return `"${title}" is already gone`;
+  }
+}
+
+export function removalConfirmLine(
+  overview: SessionsOverviewModel,
+  theme: Theme,
+  width: number,
+): PaneChild | undefined {
+  const prompt = overview.removalPrompt();
+  return prompt === undefined ? undefined : paneLine(prompt, theme.accent, width);
 }
 
 export function overviewRowView(
@@ -342,7 +490,15 @@ export const overviewTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "open the selected session", key: "enter" },
   { name: "entries", description: "browse the selected session's entries", key: "l" },
   { name: "group", description: "group by none · arc · bot", key: "g" },
+  { name: "remove", description: "move the selected session to the trash", key: "x" },
+  { name: "trash", description: "show trashed sessions, where enter restores", key: "t" },
   { name: "refresh", description: "reload the sessions list", key: "r" },
+];
+
+export const trashTray: readonly KeyedTrayCommand[] = [
+  { name: "restore", description: "bring the selected session back", key: "enter" },
+  { name: "back", description: "return to the sessions overview", key: "escape" },
+  { name: "refresh", description: "reload the trash", key: "r" },
 ];
 
 function groupLabelChunks(
@@ -363,6 +519,12 @@ export const entriesTray: readonly KeyedTrayCommand[] = [
   { name: "back", description: "return to the sessions overview", key: "escape" },
   { name: "refresh", description: "reload this session", key: "r" },
 ];
+
+const trayTables: Record<PaneLevel, readonly KeyedTrayCommand[]> = {
+  overview: overviewTray,
+  trash: trashTray,
+  entries: entriesTray,
+};
 
 function entryRowText(row: SessionTreeRow): string {
   const indent = "  ".repeat(row.depth);

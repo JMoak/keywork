@@ -19,6 +19,7 @@ import {
   parseReference,
   readContext,
   type SessionBinding,
+  type SessionEntry,
   type Tool,
   type ToolGuard,
   titleKey,
@@ -26,6 +27,7 @@ import {
 } from "@keywork/engine";
 import { type Flavor, requiresConfirmation, type TrustDecision } from "@keywork/shared";
 import { AskQueue } from "./asks.ts";
+import { ChangesFeed, type ChangesSource, changesPortOver } from "./changes.ts";
 import type { EventLog } from "./events.ts";
 import { workspaceFiles } from "./files.ts";
 import {
@@ -36,6 +38,8 @@ import {
   type CompactionReport,
   type CostReport,
   type ExportOutcome,
+  type LabelOutcome,
+  type LeafOutcome,
   type McpPort,
   type MemoryNoteRecord,
   type MemoryPort,
@@ -45,7 +49,9 @@ import {
   type RedoReport,
   SessionBusyError,
   type SessionDetail,
+  type SessionEntries,
   type SessionHost,
+  type SessionLifecyclePort,
   type SessionState,
   type SessionSummary,
   SurfaceUnavailableError,
@@ -120,6 +126,7 @@ export interface MemoryHostOptions {
   models?: Readonly<Record<string, Provider>>;
   presets?: PresetHost;
   surfaces?: MemorySurfaceOptions;
+  changes?: ChangesSource;
 }
 
 export interface MemorySurfaceOptions {
@@ -135,10 +142,13 @@ interface MemorySession {
   title: string;
   detach: () => void;
   staged: { prompt: UndonePrompt; cancel(): void } | undefined;
+  labels: Map<string, string>;
+  parent?: string;
 }
 
 export function memorySessionHost(options: MemoryHostOptions): SessionHost {
   const sessions = new Map<string, MemorySession>();
+  const trashed = new Map<string, MemorySession>();
   const now = options.now ?? (() => new Date());
   const asks = new AskQueue({
     now,
@@ -151,6 +161,15 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
       ...(options.tools !== undefined && { tools: options.tools }),
       ...(history !== undefined && { history }),
     });
+  const changes = new ChangesFeed(options.log, async () => options.changes);
+  const attach = (id: string, agent: Agent): (() => void) => {
+    const detach = options.log.attach(agent.bus, id);
+    const unfollow = changes.follow(agent.bus, id);
+    return () => {
+      detach();
+      unfollow();
+    };
+  };
   const swap = (
     id: string,
     session: MemorySession,
@@ -161,7 +180,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
     if (effort !== null) next.setEffort(effort);
     session.detach();
     session.agent = next;
-    session.detach = options.log.attach(next.bus, id);
+    session.detach = attach(id, next);
   };
   const stateOf = (session: MemorySession): SessionState => {
     const { agent } = session;
@@ -212,6 +231,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         live: true,
         messages: session.agent.history(),
         asOf: options.log.latestId(),
+        ...(session.parent !== undefined && { parentSession: session.parent }),
       };
       return detail;
     },
@@ -221,8 +241,9 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
       const session: MemorySession = {
         agent,
         title: `session ${id}`,
-        detach: options.log.attach(agent.bus, id),
+        detach: attach(id, agent),
         staged: undefined,
+        labels: new Map(),
       };
       sessions.set(id, session);
       return summaryOf(id, session);
@@ -372,6 +393,49 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
       for (const { agent } of sessions.values()) agent.bus.emit("gate.preset", { from, to: name });
       return { from, to: name };
     },
+    tree: {
+      entries: (id) => verb(id, (session) => entriesOf(id, session)),
+      fork: (id, entryId) =>
+        verb(id, (session): { sessionId: string } | "unknown-entry" => {
+          const index = entryIndexOf(session, entryId);
+          if (index === undefined) return "unknown-entry";
+          const forkedId = `s${sessions.size + 1}`;
+          const agent = buildAgent(
+            forkedId,
+            session.agent.provider,
+            session.agent.history().slice(0, index + 1),
+          );
+          sessions.set(forkedId, {
+            agent,
+            title: `session ${forkedId}`,
+            detach: attach(forkedId, agent),
+            staged: undefined,
+            labels: new Map(),
+            parent: id,
+          });
+          return { sessionId: forkedId };
+        }),
+      label: (id, entryId, label) =>
+        verb(id, (session): LabelOutcome | "unknown-entry" => {
+          if (entryIndexOf(session, entryId) === undefined) return "unknown-entry";
+          if (label === null) session.labels.delete(entryId);
+          else session.labels.set(entryId, label);
+          return { entryId, label };
+        }),
+      moveLeaf: (id, entryId) =>
+        verb(id, (session): LeafOutcome | "busy" | "unknown-entry" => {
+          const index = entryId === null ? -1 : entryIndexOf(session, entryId);
+          if (index === undefined) return "unknown-entry";
+          if (session.agent.busy()) return "busy";
+          session.staged = undefined;
+          const history = session.agent.history().slice(0, index + 1);
+          swap(id, session, buildAgent(id, session.agent.provider, history));
+          announce(id, session);
+          return { leafId: stateOf(session).leafId };
+        }),
+    },
+    changes: changesPortOver({ has: async (id) => sessions.has(id) }, async () => options.changes),
+    lifecycle: memoryTrash(sessions, trashed, summaryOf),
     asks: async () => asks.list(),
     answerAsk: async (callId, verdict) => asks.answer(callId, verdict),
     close: async () => {
@@ -389,6 +453,43 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         busy: (id) => sessions.get(id)?.agent.busy() ?? false,
         now,
       })),
+  };
+}
+
+function memoryTrash(
+  sessions: Map<string, MemorySession>,
+  trashed: Map<string, MemorySession>,
+  summaryOf: (id: string, session: MemorySession) => SessionSummary,
+): SessionLifecyclePort {
+  return {
+    remove: async (id) => {
+      const session = sessions.get(id);
+      if (session === undefined) return "missing";
+      if (session.agent.busy()) return "busy";
+      session.detach();
+      sessions.delete(id);
+      trashed.set(id, session);
+      return summaryOf(id, session);
+    },
+    trash: async () => [...trashed].map(([id, session]) => summaryOf(id, session)),
+    restore: async (id) => {
+      const session = trashed.get(id);
+      if (session === undefined) return undefined;
+      trashed.delete(id);
+      sessions.set(id, session);
+      return summaryOf(id, session);
+    },
+    discard: async (id) => {
+      const session = trashed.get(id);
+      if (session === undefined) return undefined;
+      trashed.delete(id);
+      return summaryOf(id, session);
+    },
+    purge: async () => {
+      const count = trashed.size;
+      trashed.clear();
+      return count;
+    },
   };
 }
 
@@ -611,6 +712,32 @@ function readinessOf(trust: TrustDecision): WorkspaceReadiness {
 }
 
 const nothingToCompact = "nothing to compact yet · the recent turns are all that's here";
+
+function entriesOf(id: string, session: MemorySession): SessionEntries {
+  const entries = session.agent.history().map(
+    (message, index): SessionEntry => ({
+      type: "message",
+      id: `m${index}`,
+      parentId: index === 0 ? null : `m${index - 1}`,
+      timestamp: "",
+      message,
+    }),
+  );
+  return {
+    sessionId: id,
+    name: session.title,
+    leafId: entries.at(-1)?.id ?? null,
+    entries,
+    labels: Object.fromEntries(session.labels),
+    activePath: entries.map((entry) => entry.id),
+  };
+}
+
+function entryIndexOf(session: MemorySession, entryId: string): number | undefined {
+  const match = /^m(\d+)$/.exec(entryId);
+  const index = match === null ? Number.NaN : Number(match[1]);
+  return index < session.agent.history().length ? index : undefined;
+}
 
 function lastPromptIndex(history: readonly Message[]): number {
   return history.findLastIndex((message) => message.role === "user");

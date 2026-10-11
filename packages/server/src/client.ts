@@ -27,9 +27,12 @@ import type {
   BotDraft,
   BotEntry,
   BotSummary,
+  ChangesReport,
   CompactionReport,
   ExportScope,
   FlavorsReport,
+  LabelOutcome,
+  LeafOutcome,
   MemoryNoteDetail,
   MemoryNoteRecord,
   MemoryOverview,
@@ -37,12 +40,14 @@ import type {
   PromptOutcome,
   RedoReport,
   SessionDetail,
+  SessionEntries,
   SessionSummary,
   TrustGrant,
   UndoReport,
   WorkspaceChoice,
   WorkspaceReport,
 } from "./host.ts";
+import type { FileChange } from "./routes/changes.ts";
 import type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
 import { readServerTicket, type ServerTicket } from "./token.ts";
 
@@ -127,6 +132,17 @@ export interface KeyworkClient {
   focusWorkspaceDir(slug: string | null, dir: string): Promise<string>;
   unfocusWorkspaceDir(slug: string | null, dir: string): Promise<void>;
   flavors(): Promise<FlavorsReport>;
+  entries(id: string): Promise<SessionEntries | undefined>;
+  fork(id: string, entryId: string): Promise<{ sessionId: string } | undefined>;
+  labelEntry(id: string, entryId: string, label: string | null): Promise<LabelOutcome | undefined>;
+  moveLeaf(id: string, entryId: string | null): Promise<LeafOutcome | undefined>;
+  changes(id: string): Promise<ChangesReport | undefined>;
+  changedFile(id: string, path: string): Promise<FileChange | undefined>;
+  removeSession(id: string): Promise<SessionSummary | "missing" | "busy">;
+  trash(): Promise<readonly SessionSummary[]>;
+  restoreSession(id: string): Promise<SessionSummary | undefined>;
+  discardTrashedSession(id: string): Promise<boolean>;
+  purgeTrash(): Promise<{ purged: number }>;
 }
 
 export interface ArcsAnswer {
@@ -396,6 +412,32 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       await json(await request("POST", workspacePath(slug, "unfocus"), { dir }));
     },
     flavors: () => request("GET", "/flavors").then(json<FlavorsReport>),
+    entries: (id) => unlessMissing(request("GET", sessionPath(id, "entries"))),
+    fork: (id, entryId) => unlessMissing(request("POST", sessionPath(id, "fork"), { entryId })),
+    labelEntry: (id, entryId, label) =>
+      unlessMissing(request("POST", sessionPath(id, "label"), { entryId, label })),
+    moveLeaf: (id, entryId) => unlessMissing(request("POST", sessionPath(id, "leaf"), { entryId })),
+    changes: (id) => unlessMissing(request("GET", sessionPath(id, "changes"))),
+    changedFile: (id, path) =>
+      unlessMissing(request("GET", `${sessionPath(id, "changes/file")}?${queryOf({ path })}`)),
+    removeSession: async (id) => {
+      const response = await request("DELETE", `/sessions/${encodeURIComponent(id)}`);
+      if (response.status === 404) return "missing";
+      if (response.status === 409) return "busy";
+      return json<SessionSummary>(response);
+    },
+    trash: async () => {
+      const listed = await json<{ sessions: SessionSummary[] }>(await request("GET", "/trash"));
+      return listed.sessions;
+    },
+    restoreSession: (id) => unlessMissing(request("POST", trashPath(id, "restore"))),
+    discardTrashedSession: async (id) => {
+      const response = await request("DELETE", `/trash/${encodeURIComponent(id)}`);
+      if (response.status === 404) return false;
+      await json(response);
+      return true;
+    },
+    purgeTrash: () => request("DELETE", "/trash").then(json<{ purged: number }>),
     events: (options = {}) =>
       resumingEvents(
         options,
@@ -502,6 +544,10 @@ async function json<T = unknown>(response: Response): Promise<T> {
 
 function sessionPath(id: string, verb: string): string {
   return `/sessions/${encodeURIComponent(id)}/${verb}`;
+}
+
+function trashPath(id: string, verb: string): string {
+  return `/trash/${encodeURIComponent(id)}/${verb}`;
 }
 
 function workspacePath(slug: string | null, verb: string): string {

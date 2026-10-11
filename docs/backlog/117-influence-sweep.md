@@ -648,4 +648,8 @@ through dynamic registration until it is set; the http schema's `headers` descri
 `shared/src/config/schema.ts` still says keywork runs no OAuth flow, which is now untrue for
 MCP servers and is outside this lane's files; after `keywork mcp login` the running pane
 needs a restart of that server (the reconciler's retries are what trigger the 401, and a
-separate process cannot see the new token until the next connect).
+separate process cannot see the new token until the next connect). Closed 2026-10-11 for a
+running `keywork serve`: `login` finds the workspace's serve ticket and calls
+`POST /mcp/{name}/restart` on it, which is the reconnect (`cli/src/mcp-reconnect.ts`, ledger
+"Serve parity" in [118](118-app-surface.md)); a pane with no server still restarts the server
+from its mcp pane row.

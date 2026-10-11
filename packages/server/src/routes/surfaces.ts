@@ -213,7 +213,7 @@ export const surfaceRoutes = [
     path: "/sessions/{id}/bot",
     operationId: "bindSessionBot",
     summary:
-      "Have a session run as a bot (a named role with its own prompt, tool allowance and memory layer), or as no bot with `name: null`. Refused while a turn is running, because the running agent cannot be swapped mid-turn. Answers as the session's whole binding (`arc`, `bot`).",
+      "Have a session run as a bot (a named role with its own prompt, tool allowance and memory layer), or as no bot with `name: null`. A live session's agent is rebuilt as that bot before the answer, and a `model` the bot declares becomes the session's model, so the next prompt runs as the bot. Refused while a turn is running, because the running agent cannot be swapped mid-turn. Answers as the session's whole binding (`arc`, `bot`); a `session.state` envelope follows.",
     authenticated: true,
     requestBody: botBindingBody,
     responses: {

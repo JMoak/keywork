@@ -1,5 +1,6 @@
 import type { SkillDefinition } from "../extensions/skills.ts";
 import type { SkillActivity, SkillTelemetrySnapshot } from "../skills/telemetry.ts";
+import type { LeaseClaim, SweepLease } from "./lease.ts";
 import { InvalidTitleError, titleKey } from "./naming.ts";
 import { isEntityPath, type Note, noteWriteTarget } from "./notes.ts";
 import { tokenize } from "./search.ts";
@@ -83,6 +84,12 @@ export interface SweepReport {
   superseded: { winner: string; loser: string }[];
   flagged: string[];
   usefulness: Record<string, number>;
+  deferred?: SweepDeferral;
+}
+
+export interface SweepDeferral {
+  host: string;
+  until: string;
 }
 
 export interface GardenerOptions {
@@ -92,6 +99,7 @@ export interface GardenerOptions {
   thresholds?: Partial<CurationThresholds>;
   proposeOnly?: boolean;
   now?: () => Date;
+  lease?: SweepLease;
 }
 
 export interface SweepOptions {
@@ -111,6 +119,7 @@ export class Gardener {
   private readonly thresholds: CurationThresholds;
   private readonly proposeOnly: boolean;
   private readonly now: () => Date;
+  private readonly lease: SweepLease | undefined;
   private readonly recallsBySession = new Map<string, Map<string, number>>();
 
   constructor(options: GardenerOptions) {
@@ -120,6 +129,7 @@ export class Gardener {
     this.thresholds = { ...defaultCurationThresholds, ...options.thresholds };
     this.proposeOnly = options.proposeOnly ?? false;
     this.now = options.now ?? (() => new Date());
+    this.lease = options.lease;
   }
 
   recordRecall(noteName: string, sessionId: string): void {
@@ -137,8 +147,27 @@ export class Gardener {
   }
 
   async sweep(options: SweepOptions = {}): Promise<SweepReport> {
+    if (!this.store.trusted) return { ...emptyReport(), inert: true };
+    if (this.lease === undefined) return this.runSweep(options);
+    const claim = await this.lease.acquire();
+    if (claim.kind === "foreign") return this.deferTo(claim);
+    try {
+      return await this.runSweep(options);
+    } finally {
+      await this.lease.release();
+    }
+  }
+
+  private async deferTo(claim: Extract<LeaseClaim, { kind: "foreign" }>): Promise<SweepReport> {
+    const deferred = { host: claim.host, until: claim.until };
+    await this.store.recordAudit(
+      `gardener deferred: ${deferred.host} holds the sweep lease until ${deferred.until}`,
+    );
+    return { ...emptyReport(), deferred };
+  }
+
+  private async runSweep(options: SweepOptions): Promise<SweepReport> {
     const report = emptyReport();
-    if (!this.store.trusted) return { ...report, inert: true };
     const proposals: ReviewProposal[] = [];
     await this.promoteFromDailyLogs(options, report, proposals);
     await this.curateNotePairs(report, proposals);

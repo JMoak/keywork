@@ -758,6 +758,65 @@ changed outside keywork, drops vectors for notes that vanished, and reports
 search. Evidence: `search-reconcile.test.ts` (edit outside keywork is picked up; a deleted
 note leaves no ghost; lexical-only is trivially reconciled). The multi-host half (per-host
 layout, merge driver, lease) stays open.
+**Landed (2026-10-11), the multi-host half.** `OWN` throughout; the P6 queue stayed the
+store's own `serialized` turn, so nothing from Pi was lifted and `NOTICE` is unchanged.
+- **Files.** `packages/engine/src/memory/hosts.ts` (host token, `.sync/layout.json`
+  marker, per-host paths, segment parsing, `mergeDailySegments` / `mergeAuditSegments` /
+  `segmentIndexes`), `lease.ts` (`SweepLease`: `inspect` / `acquire` / `release`,
+  `.sync/lease.json`, ten-minute TTL), `merge.ts` (`mergeVaultFile`, `splitConflictMarkers`,
+  `conflictMarkers`, `derivedFields`), `reconcile.ts` (`reconcileVault`,
+  `conflictArtifactOriginal`, `conflictSiblingName`, `conflictOfField`); `store.ts` gained
+  `host`, `notePaths`, `readNoteSource`, `segmentHosts`, `reconcileNoteFiles` and routes
+  daily / audit writes and `forget` landings through segments; `gardener.ts` gained the
+  `lease` option and `SweepReport.deferred`; `vault-files.ts` gained `syncDir` and treats
+  `curation.<host>.md` as structural. CLI: `memory.ts` opens the store with
+  `vaultHost(vaultRoot)`, builds the lease, and heals in `bootstrapInjection`;
+  `memory-command.ts` adds `keywork memory sync` (doctor-style report that also heals),
+  `sync setup` (marker + `.gitattributes` + git config), and `sync merge <base> <ours>
+  <theirs> [path]` (the driver, exit 0 merged / 1 conflict). Docs: `docs/memory.md`
+  "Multi-host vaults" and invariant 10.
+- **Shapes.** `daily/<date>.<host>.md`, `curation.<host>.md`, `.sync/layout.json`
+  (`{version: 1, layout: "per-host"}`), `.sync/lease.json` (`{host, acquired, expires}`),
+  `.sync/.gitignore` (`lease.json`), `<Note> (conflict copy[ n]).md` with
+  `conflict-of: "[[Note]]"`, one `contradiction` card per pair, `SweepReport.deferred:
+  {host, until}`, `VaultReconciliation {host, hosts, intake, restored, cards, lease, index}`.
+- **Decisions (all reversible).** Multi-host is a property of the vault (the synced marker),
+  never of one machine's config, so no config key was added. Host identity is the sanitized
+  `os.hostname()`. Reads union segments in every vault, writes partition only after the
+  marker exists, so a vault that never ran `sync setup` writes byte-identical files
+  (existing store tests untouched and green). The driver is a git merge driver proper
+  (exit 1 with whole-file markers on a true conflict) and the intake finishes the job, so
+  git's own hunk markers heal the same way. Derived fields resolve by rule rather than by
+  rematerializing from the audit union (highest usefulness / confidence, union lists,
+  later drift, pinned-if-either, ours for supersession links). The lease gates the
+  Gardener only; daily appends are safe by construction and note writes stay optimistic.
+  Healing runs before the first bootstrap read of a workspace open, not at close, because
+  a hunk marker inside frontmatter would otherwise break every read of the vault.
+- **Gaps.** Rematerializing derived frontmatter from the audit union (F1 point 2 in full);
+  OneDrive's `Name-<Computer>.md` artifact pattern (ambiguous with real titles, skipped);
+  arc and bot layer stores still open single-host; sweep debt is the deferred report plus
+  the next close, no persisted counter; no lint row for conflict patterns in the memory
+  pane (the CLI report carries them); `keywork sync setup` as a top-level verb was folded
+  under `keywork memory sync setup`.
+- **Tests.** `hosts.test.ts` (tokens, segment names, interleaving, marker),
+  `store-hosts.test.ts` (per-host writes, union reads, audit segments out of the note space,
+  forget across segments with byte-for-byte revert, two-vault append-case divergence by file
+  union), `merge.test.ts` (only-side-changed, derived-frontmatter case, later drift / ours
+  supersession, dual rewrite → markers, malformed → conflict, MOC set merge, append-only
+  never conflicts, hunk and diff3 marker splitting), `lease.test.ts` (take / renew / refuse
+  / release / stale takeover / corrupt file; Gardener defers with audit line then sweeps,
+  and sweeps unchanged without a lease), `reconcile.test.ts` (markers → sibling + one card,
+  idempotent; frontmatter hunk markers healed; Dropbox / Nextcloud / Syncthing artifacts →
+  siblings, orphan restored, revert; report fields; inert when untrusted),
+  `cli/src/memory.test.ts` (multi-host open, heal before bootstrap),
+  `cli/src/memory-sync.test.ts` (report, foreign and stale lease lines, refusals, setup with
+  a git seam and outside a repo, driver exit codes, and the merge-driver fixture resolving
+  a derived-frontmatter divergence at a real `git merge` through `bun main.ts`; skipped
+  when git or bun is missing).
+- **Proposed commit message:** `feat(memory): J14 multi-host sync self-reconciliation`
+  with body "per-host daily and curation segments behind a synced marker, deterministic
+  git merge driver for notes, MOC and logs, conflict intake into conflict-of siblings with
+  one inbox card, cross-host sweep lease, keywork memory sync verbs".
 
 ### Memory lane, 2026-10-07 (117 scope-first "Memory" bullet)
 

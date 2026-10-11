@@ -180,6 +180,7 @@ export class AppCore implements ActionTarget {
     holdPane: (id) => this.holdPane(id),
     showPane: (id, near) => this.showPane(id, near),
     paneHeld: (id) => this.paneHeld(id),
+    closePane: (id) => this.discardPane(id),
   };
   leaderArmed = false;
   costsShown = false;
@@ -373,6 +374,21 @@ export class AppCore implements ActionTarget {
     this.layout.close(id);
     this.touch();
     this.options.onPaneClosed?.(id);
+  }
+
+  discardPane(id: string): boolean {
+    const pane = this.panes.get(id);
+    if (pane === undefined) return false;
+    const shown = this.layout.panes();
+    if (shown.includes(id) && shown.length <= 1) return false;
+    pane.dispose?.();
+    this.panes.delete(id);
+    this.described.delete(id);
+    this.held.delete(id);
+    this.layout.close(id);
+    this.touch();
+    this.options.onPaneClosed?.(id);
+    return true;
   }
 
   summon(kind: SummonableKind): void {

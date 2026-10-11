@@ -2,6 +2,7 @@
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { debugEnabled, type PermissionResolver, ResolutionError } from "@keywork/engine";
+import type { KeyworkClient } from "@keywork/server";
 import {
   ConfigError,
   openWorkspace,
@@ -410,6 +411,7 @@ async function runSessions(
       tree: values.tree,
       out: values.out,
       cwd: context.cwd,
+      yes: values.yes,
       ...commandIo(context),
       confirm: terminalConfirm(),
     },
@@ -516,8 +518,19 @@ async function runMcp(context: CommandContext, { positionals }: ParsedInvocation
   return mcpCommand(positionals, {
     servers: config.mcpServers,
     vault: platformVault({ dataDir: defaultAuthDir() }),
+    runningServer: () => runningServerClient(context),
     ...commandIo(context),
   });
+}
+
+async function runningServerClient(context: CommandContext): Promise<KeyworkClient | undefined> {
+  const { runningServerAmong, ticketFilesFor } = await import("./serve.ts");
+  const { keyworkClient } = await import("@keywork/server");
+  const ticket = await runningServerAmong(
+    ticketFilesFor(context.cwd, context.workspaceSlug),
+    fetch,
+  );
+  return ticket === undefined ? undefined : keyworkClient(ticket);
 }
 
 async function runExtensions(
@@ -605,6 +618,7 @@ function parseInvocationArgs(args: readonly string[]) {
       out: { type: "string" },
       apply: { type: "boolean", default: false },
       restore: { type: "string" },
+      yes: { type: "boolean", default: false },
     },
   });
 }

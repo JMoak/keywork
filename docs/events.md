@@ -282,6 +282,26 @@ and declared, a named workspace is created or chosen, and a focus dir is linked 
 verb that changed nothing fires nothing. The payload carries no detail on purpose: the family's
 `GET` is the source of truth.
 
+### session.removed
+
+Fires after `DELETE /sessions/{id}` moves a session to the trash (`<sessionDir>/.trash/`). The
+session no longer appears in `GET /sessions`; a client drops its row and closes any view of it.
+Memory notes it wrote stay, forks keep pointing at it, and `POST /trash/{id}/restore` undoes the
+move. A session with a running turn is never removed (the route answers 409).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sessionId` | `string` | The removed session. |
+
+### session.restored
+
+Fires after `POST /trash/{id}/restore` moves a session back from the trash. It appears in
+`GET /sessions` again with everything it had.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sessionId` | `string` | The restored session. |
+
 ### session.state
 
 The one server event that belongs to a session: its `sessionId` is the session's id, not the
@@ -298,8 +318,57 @@ announces the queue.
 | `effort` | `EffortLevel`, optional | The reasoning effort in force; absent means the provider default. |
 | `title` | `string` | The session's title, pinned or not. |
 | `leafId` | `string \| null` | The session entry the next message will follow; `null` for an empty session. |
+| `arc` | `string`, optional | The arc the session is bound to; absent when unbound. |
+| `bot` | `string`, optional | The bot the session runs as; absent when it runs as no bot. |
 | `undoable` | `boolean` | Whether `POST /sessions/{id}/undo` has a prompt or a file checkpoint to take back. |
 | `redoable` | `boolean` | Whether `POST /sessions/{id}/redo` has a staged undo or a file checkpoint to restore. |
+
+It also fires after `POST /sessions/{id}/arc` and `POST /sessions/{id}/bot` change a live
+session's binding, and when an arc close releases the session.
+
+### session.settled
+
+Fires when the after-turn settler did something to a session: a memory flush ran, the session
+was compacted, or settling produced a notice. The same settler the terminal pane runs (memory
+flush when the context passes the flush line, compaction when it passes the compaction line,
+once per turn, and between tool batches when a running turn passes the compaction line) runs
+under `keywork serve`, so a client sees the same flushes and compactions the pane would. A quiet
+settle fires nothing. Carries the session's id.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `phase` | `"after-turn" \| "between-tool-batches" \| "requested"` | When it ran: after the turn, between two tool batches of a running turn, or on `POST /sessions/{id}/compact`. |
+| `flushed` | `number` | How many messages the memory flush exchanged with the model (0 when no flush ran). |
+| `compacted` | `CompactionEntry \| null` | The compaction entry written, or `null` when nothing was compacted. |
+| `notices` | `string[]` | What the pane would have shown: the compaction line, or why a flush or compaction failed. |
+
+### session.tree
+
+Fires after a verb changes the shape of a session's entry tree, so a client re-fetches
+`GET /sessions/{id}/entries` rather than patching its copy. Carries the session's id, like
+`session.state`. `POST /sessions/{id}/leaf` also records a `session.state` envelope (the host
+writes it as part of the move, so it arrives first) because the leaf is part of the state.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `reason` | `"fork" \| "label" \| "leaf"` | Which verb changed the tree: `POST /sessions/{id}/fork`, `/label` or `/leaf`. |
+| `entryId` | `string \| null` | The entry the verb named; `null` only for a leaf move to the empty root. |
+| `forkedTo` | `string`, optional | On `fork`, the new session's id. The event rides the session that was forked, not the new one. |
+
+### changes.updated
+
+Fires when the files the workspace diff shows may have changed: after every finished `write`,
+`edit` or `bash` tool call (the same pairing of `tool.started` and `tool.finished` the terminal
+diff pane follows, `followMutations` in the engine), and after `POST /sessions/{id}/undo` or
+`/redo` put files back. Carries the id of the session whose turn or verb did it. `paths` is the
+whole list `GET /sessions/{id}/changes` would answer at that moment, not a delta, so a client
+replaces its list; the per-file sides still come from `GET /sessions/{id}/changes/file`. Never
+fires on a server started with `--no-checkpoints`, where there is no baseline to diff against.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `paths` | `string[]` | Every path that differs from the session-start baseline, relative to the workspace root, as `changedSince` lists it. |
+| `turn` | `number`, optional | The highest 1-based turn ordinal attributed to those paths, which is the turn that just touched them; absent when nothing differs or nothing is attributed. |
 
 ## SSE framing
 

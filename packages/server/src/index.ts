@@ -7,6 +7,15 @@ export {
   type PendingAsk,
 } from "./asks.ts";
 export {
+  ChangesFeed,
+  type ChangesSource,
+  type ChangesSourceOf,
+  type ChangesUpdate,
+  changesPortOver,
+  changesUpdateOf,
+  type KnownSessions,
+} from "./changes.ts";
+export {
   type AirlockDigest,
   type ClientSeams,
   type CuredNote,
@@ -61,12 +70,20 @@ export type {
   AirlockQuestionRecord,
   ArcAirlockPort,
   ArcCloseDigestRecord,
+  ChangesPort,
+  ChangesRefusal,
+  ChangesReport,
   CompactionReport,
   CostReport,
+  EntryRefusal,
   ExportOutcome,
   ExportScope,
+  FileSides,
+  ForkOrigin,
   GardenerActivity,
   InjectOutcome,
+  LabelOutcome,
+  LeafOutcome,
   MemoryLayerRecord,
   MemoryNoteDetail,
   MemoryNoteRecord,
@@ -83,10 +100,14 @@ export type {
   RedoReport,
   Refusal,
   SessionDetail,
+  SessionEntries,
   SessionHost,
   SessionInference,
+  SessionLifecyclePort,
+  SessionSettlement,
   SessionState,
   SessionSummary,
+  SessionTreePort,
   UndonePrompt,
   UndoReport,
 } from "./host.ts";
@@ -125,6 +146,12 @@ export {
   routes,
   type WorkspaceInfo,
 } from "./openapi.ts";
+export {
+  type FileChange,
+  type FileChangeNote,
+  fileChangeCapBytes,
+  fileChangeOf,
+} from "./routes/changes.ts";
 export type {
   HandlersOf,
   RouteContext,
@@ -132,8 +159,10 @@ export type {
   RouteHandler,
   RouteParams,
 } from "./routes/family.ts";
+export { sessionRemoved, sessionRestored } from "./routes/lifecycle.ts";
 export type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
 export { arcOrdinals } from "./routes/surfaces.ts";
+export type { TreeChange, TreeChangeReason } from "./routes/tree.ts";
 export {
   createKeyworkServer,
   defaultPort,

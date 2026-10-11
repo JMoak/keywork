@@ -26,6 +26,7 @@ import type {
   SessionAttachment,
   SessionOverviewItem,
   SessionPort,
+  SessionRemoval,
   SessionTreePort,
   SessionTreeView,
 } from "@keywork/tui";
@@ -132,6 +133,12 @@ export function remoteSessionTreePort(client: KeyworkClient, feed: ServerFeed): 
     fork: async () => {
       throw new Error("forking stays on the server · not available while attached");
     },
+    remove: (sessionId) => client.removeSession(sessionId).then(removalOf),
+    trash: async () => (await client.trash()).map(overviewItemOf),
+    restore: async (sessionId) => {
+      const restored = await client.restoreSession(sessionId);
+      return restored === undefined ? undefined : overviewItemOf(restored);
+    },
     subscribe: (listener) =>
       feed.subscribe((envelope) => {
         if (envelope.type === "turn.completed" || envelope.type === "turn.interrupted") {
@@ -139,6 +146,10 @@ export function remoteSessionTreePort(client: KeyworkClient, feed: ServerFeed): 
         }
       }),
   };
+}
+
+function removalOf(answer: SessionSummary | "missing" | "busy"): SessionRemoval {
+  return typeof answer === "string" ? answer : "removed";
 }
 
 export function replayMessages(messages: readonly Message[], bus: EventBus<EngineEvents>): void {

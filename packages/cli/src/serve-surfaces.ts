@@ -32,6 +32,7 @@ import { fileWorkspaceRecall, workspaceRecallFile, workspacesPort } from "./work
 export interface ServedSession {
   store: SessionStore;
   busy(): boolean;
+  adoptBinding?(): Promise<void>;
 }
 
 export interface SurfacePortsOptions {
@@ -134,6 +135,7 @@ export function surfacePorts(options: SurfacePortsOptions): SurfacePorts {
         if (session.store.arcBinding() !== arc) await session.store.appendArcBinding(arc);
         await arcs.attached(session.store);
         arcs.recordBinding(id, arc);
+        await session.adoptBinding?.();
         return session.store.binding();
       },
       subscribe: (listener) =>
@@ -156,6 +158,7 @@ export function surfacePorts(options: SurfacePortsOptions): SurfacePorts {
           throw new Error(`no bot named ${bot} · keywork bot list shows the roster`);
         }
         if (session.store.botBinding() !== bot) await session.store.appendBotBinding(bot);
+        await session.adoptBinding?.();
         return session.store.binding();
       },
     },

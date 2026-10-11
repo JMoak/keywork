@@ -3,18 +3,16 @@ import { join } from "node:path";
 import {
   type Agent,
   addUsage,
+  type BotDefinition,
   type Checkpoints,
   type ContextReading,
   type CostRollup,
-  compactNow,
-  contextBudgetFor,
-  declaredContextWindow,
+  compactionDue,
   type EffortLevel,
   estimateConversationTokens,
   formatReference,
   isEffortLevel,
   type JournalTap,
-  type MemoryFlush,
   type Message,
   type MessageEntry,
   type ModelChangeEntry,
@@ -31,17 +29,22 @@ import {
   scopeContains,
   type ToolGuard,
   type ToolScope,
+  type TurnSettlement,
   tapJournal,
   type Usage,
 } from "@keywork/engine";
 import {
   AskQueue,
+  ChangesFeed,
+  type ChangesSource,
   type CompactionReport,
   type CostReport,
+  changesPortOver,
   EventLog,
   type ExportOutcome,
   type ExportScope,
   issueToken,
+  type LeafOutcome,
   listen,
   type ModelSpend,
   type ModelSwitch,
@@ -51,9 +54,11 @@ import {
   readServerTicket,
   removeServerTicket,
   type ServerTicket,
+  SessionBusyError,
   type SessionDetail,
   type SessionHost,
   type SessionInference,
+  type SessionSettlement,
   type SessionState,
   type SessionSummary,
   type UndoReport,
@@ -72,20 +77,24 @@ import {
   resolveAnchor,
 } from "@keywork/shared";
 import { persistNewMessages } from "./chat.ts";
-import {
-  type AgentComposition,
-  type Composition,
-  closeExtensionHost,
-  composeAgents,
-  composeWorkspace,
-  sessionReasonFor,
-} from "./compose.ts";
 import { defaultSessionDir, keyworkHome, workspaceIdentity } from "./paths.ts";
+import { checkpointChanges } from "./serve-changes.ts";
+import { servedLifecycle } from "./serve-lifecycle.ts";
 import { servedMemory } from "./serve-memory.ts";
-import { type ServedSession, servedArcService, surfacePorts } from "./serve-surfaces.ts";
+import { type ServedSession, surfacePorts } from "./serve-surfaces.ts";
+import { servedTree } from "./serve-tree.ts";
+import { composeServedWorkspace, type ServedWorkspace } from "./serve-workspace.ts";
+import {
+  budgetOf,
+  compactSessionNow,
+  type SessionFlushes,
+  type SettlingSession,
+  settleSessionTurn,
+} from "./session-settle.ts";
 import { exportSession } from "./sessions/export.ts";
 import { sessionHtml } from "./sessions/export-html.ts";
-import { rewindBefore } from "./sessions/ports.ts";
+import { forkOrigin } from "./sessions/lifecycle.ts";
+import { moveLeaf, rewindBefore } from "./sessions/ports.ts";
 import {
   findSession,
   newSessionFileName,
@@ -125,6 +134,7 @@ export interface HostOptions {
   thinking?: KeyworkConfig["thinking"] | undefined;
   flavor?: string | undefined;
   theme?: FlavorTokenOverrides | undefined;
+  closingProvider?: Provider | undefined;
   notice?: ((text: string) => void) | undefined;
 }
 
@@ -225,9 +235,8 @@ export function fileSessionHost(options: HostOptions & { log: EventLog }): Sessi
 export async function servedHost(options: HostOptions & { log: EventLog }): Promise<SessionHost> {
   const asks = askQueueFor(options);
   const sessions = new LiveSessions(options, asks);
-  const { composition } = await sessions.composed();
+  const { composition, arcs, bots } = await sessions.composed();
   const sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
-  const arcs = servedArcService({ ...options, sessionDir }, composition);
   return {
     ...sessionVerbsHost(sessions, asks),
     ...surfacePorts({
@@ -237,7 +246,7 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
       composition: () => Promise.resolve(composition),
       session: (id) => sessions.bound(id),
     }),
-    memory: servedMemory({ memory: composition.memory, arcs }),
+    memory: servedMemory({ memory: composition.memory, arcs, bots }),
   };
 }
 
@@ -277,6 +286,20 @@ function sessionVerbsHost(sessions: LiveSessions, asks: AskQueue): SessionHost {
     exportHtml: (id, scope, out) => onLive(id, (live) => live.exportHtml(scope, out)),
     rename: (id, title) => onLive(id, (live) => live.rename(title)),
     applyPreset: (name, confirmed) => sessions.applyPreset(name, confirmed),
+    tree: servedTree({
+      sessionDir: sessions.sessionDir,
+      bound: (id) => sessions.bound(id),
+      moveLeaf: (id, entryId) => onLive(id, (live) => live.moveLeaf(entryId)),
+    }),
+    changes: changesPortOver({ has: async (id) => (await sessions.bound(id)) !== undefined }, () =>
+      sessions.changesSource(),
+    ),
+    lifecycle: servedLifecycle({
+      sessionDir: sessions.sessionDir,
+      bound: (id) => sessions.bound(id),
+      release: (id) => sessions.release(id),
+      summaryOf: storedSummary,
+    }),
     asks: async () => asks.list(),
     answerAsk: async (callId, verdict) => asks.answer(callId, verdict),
     close: async () => {
@@ -286,33 +309,32 @@ function sessionVerbsHost(sessions: LiveSessions, asks: AskQueue): SessionHost {
   };
 }
 
-interface Workspace {
-  composition: Composition;
-  agents: AgentComposition;
-}
-
 interface SessionRuntime {
   log: EventLog;
   cwd: string;
   scope: ToolScope;
   checkpoints: Checkpoints | undefined;
+  changes: ChangesFeed;
   inference: SessionInference | undefined;
   fallback: Provider;
+  flushes: SessionFlushes;
   notice(text: string): void;
   forge(provider: Provider, history: readonly Message[]): Agent;
-  flushFor(provider: Provider): MemoryFlush | undefined;
+  botNamed(name: string | undefined): BotDefinition | undefined;
 }
 
 class LiveSessions {
+  readonly sessionDir: string;
   private readonly live = new Map<string, LiveSession>();
-  private readonly sessionDir: string;
-  private workspace: Promise<Workspace> | undefined;
+  private readonly changes: ChangesFeed;
+  private workspace: Promise<ServedWorkspace> | undefined;
 
   constructor(
     private readonly options: HostOptions & { log: EventLog },
     private readonly asks: AskQueue,
   ) {
     this.sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
+    this.changes = new ChangesFeed(options.log, () => this.changesSource());
   }
 
   async list(): Promise<SessionSummary[]> {
@@ -329,16 +351,30 @@ class LiveSessions {
 
   async read(id: string): Promise<SessionDetail | undefined> {
     const live = this.liveOnly(id);
-    if (live !== undefined) return live.detail(this.options.log.latestId());
+    if (live !== undefined) return this.withForkOrigin(live.detail(this.options.log.latestId()));
     const store = await this.stored(id);
     if (store === undefined) return undefined;
-    return {
+    return this.withForkOrigin({
       ...storedSummary(await summarize(store), store),
       cwd: store.header.cwd,
       live: false,
       messages: store.messages(),
       asOf: this.options.log.latestId(),
-    };
+      ...parentSessionOf(store),
+    });
+  }
+
+  async release(id: string): Promise<void> {
+    const live = this.live.get(id);
+    if (live === undefined) return;
+    this.live.delete(id);
+    await live.close();
+    await (await this.composed()).released(id);
+  }
+
+  private async withForkOrigin(detail: SessionDetail): Promise<SessionDetail> {
+    const forkedFrom = await forkOrigin(this.sessionDir, detail.parentSession);
+    return forkedFrom === undefined ? detail : { ...detail, forkedFrom };
   }
 
   async create(): Promise<SessionSummary> {
@@ -364,6 +400,14 @@ class LiveSessions {
     return findSession(this.sessionDir, id);
   }
 
+  async changesSource(): Promise<ChangesSource | undefined> {
+    const { composition } = await this.composed();
+    const { checkpoints } = composition;
+    return checkpoints === undefined
+      ? undefined
+      : checkpointChanges(checkpoints, composition.scope);
+  }
+
   async bound(id: string): Promise<ServedSession | undefined> {
     const live = this.liveOnly(id);
     if (live !== undefined) return live.served();
@@ -385,11 +429,9 @@ class LiveSessions {
   async close(): Promise<void> {
     for (const live of this.live.values()) await live.close();
     this.live.clear();
+    await this.changes.settled();
     if (this.workspace === undefined) return;
-    const { composition } = await this.workspace;
-    await closeExtensionHost(composition.host);
-    await composition.languagePort?.dispose();
-    await composition.mcp?.stop();
+    await (await this.workspace).close();
   }
 
   private async summaryOf(
@@ -401,7 +443,8 @@ class LiveSessions {
   }
 
   private async adopt(store: SessionStore): Promise<LiveSession> {
-    const { composition, agents } = await this.composed();
+    const workspace = await this.composed();
+    const { composition, agents } = workspace;
     const { options } = this;
     const id = store.header.id;
     const shell = new ShellSession(options.cwd);
@@ -411,55 +454,63 @@ class LiveSessions {
       cwd: composition.scope.cwd,
       scope: composition.scope,
       checkpoints: composition.checkpoints,
+      changes: this.changes,
       inference: options.inference,
       fallback: options.provider,
+      flushes: agents,
       notice: (text) => options.notice?.(`keywork serve: ${text}`),
       forge: (provider, history) =>
-        agents.build({ provider, guard, shell, history, sessionId: id, spills: store.spills() }),
-      flushFor: (provider) => agents.flushFor(id, provider),
+        agents.build({
+          provider,
+          guard,
+          shell,
+          history,
+          sessionId: id,
+          spills: store.spills(),
+          bot: workspace.botNamed(store.botBinding()),
+        }),
+      botNamed: workspace.botNamed,
     };
     const live = new LiveSession(store, shell, runtime);
     this.live.set(id, live);
-    await composition.host.startSession({ reason: sessionReasonFor(store), store });
+    await workspace.attached(store);
     return live;
   }
 
-  composed(): Promise<Workspace> {
+  composed(): Promise<ServedWorkspace> {
     this.workspace ??= this.compose();
     return this.workspace;
   }
 
-  private async compose(): Promise<Workspace> {
+  private compose(): Promise<ServedWorkspace> {
     const { options } = this;
-    const composition = await composeWorkspace({
+    return composeServedWorkspace({
       cwd: options.cwd,
       projectTrusted: options.projectTrusted,
       workspaceSlug: options.workspaceSlug,
+      sessionDir: this.sessionDir,
+      userRoot: options.userRoot ?? homedir(),
+      provider: options.provider,
+      closingProvider: options.closingProvider,
+      permissions: options.permissions,
+      thinking: options.thinking === "on",
       prompts: options.prompts,
       mcpServers: options.mcpServers,
       repoMap: options.repoMap,
       models: options.models,
+      lsp: options.lsp,
       checkpoints: options.checkpoints ?? "on",
       checkpointsGitDir: options.checkpointsGitDir,
-      reportCheckpointsUnavailable: (message) =>
-        options.notice?.(`keywork serve: can't undo files: ${message}`),
-      lsp: options.lsp,
       notice: (text) => options.notice?.(`keywork serve: ${text}`),
-      userRoot: options.userRoot ?? homedir(),
+      storeOf: (id) => this.live.get(id)?.served().store,
+      onReleased: (id) => void this.live.get(id)?.adoptBinding(),
     });
-    for (const failure of composition.extensions.failures) {
-      options.notice?.(`keywork serve: skipped extension ${failure.file} · ${failure.reason}`);
-    }
-    const agents = composeAgents(composition, {
-      permissions: options.permissions,
-      thinking: options.thinking === "on",
-    });
-    return { composition, agents };
   }
 }
 
 interface BoundAgent {
   agent: Agent;
+  bot: string | undefined;
   journal: JournalTap;
   detach: () => void;
 }
@@ -504,8 +555,11 @@ class LiveSession {
   ): "started" | "queued" {
     const outcome = this.agent.busy() ? "queued" : "started";
     this.staged = undefined;
-    const turn = this.agent.send(text, sendOptionsOf(options)).catch(() => undefined);
-    this.settled = this.settled.then(() => turn).then(() => this.afterTurn());
+    const turn = this.agent.send(text, sendOptionsOf(options)).then(
+      () => undefined,
+      () => undefined,
+    );
+    this.settled = this.settled.then(() => turn);
     this.announce();
     return outcome;
   }
@@ -559,16 +613,10 @@ class LiveSession {
 
   async compact(focus?: string): Promise<CompactionReport | "busy"> {
     if (!(await this.idle())) return "busy";
-    const { provider } = this.agent;
-    const settlement = await compactNow({
-      store: this.store,
-      provider,
-      budget: contextBudgetFor(declaredContextWindow(provider)),
-      instructions: focus,
-      flush: this.runtime.flushFor(provider),
-    });
+    const settlement = await compactSessionNow(this.settling(), focus, this.runtime.flushes);
+    this.reportSettlement("requested", settlement);
     if (settlement.history !== undefined) {
-      await this.swap(this.runtime.forge(provider, settlement.history));
+      await this.swap(this.runtime.forge(this.agent.provider, settlement.history));
     }
     this.announce();
     return { compacted: settlement.compacted ?? null, notices: settlement.notices };
@@ -612,10 +660,7 @@ class LiveSession {
   }
 
   context(): ContextReading {
-    return readContext(
-      estimateConversationTokens(this.agent.history()),
-      contextBudgetFor(declaredContextWindow(this.agent.provider)),
-    );
+    return readContext(estimateConversationTokens(this.agent.history()), budgetOf(this.agent));
   }
 
   cost(): CostReport {
@@ -627,6 +672,16 @@ class LiveSession {
     if (out === undefined) return { html: sessionHtml(this.store, scope) };
     if (!scopeContains(this.runtime.scope, out)) return "outside-scope";
     return { file: await exportSession(this.store, { scope, out, cwd: this.runtime.cwd }) };
+  }
+
+  async moveLeaf(entryId: string | null): Promise<LeafOutcome | "busy" | "unknown-entry"> {
+    if (entryId !== null && this.store.entry(entryId) === undefined) return "unknown-entry";
+    if (!(await this.idle())) return "busy";
+    this.staged = undefined;
+    moveLeaf(this.store, entryId);
+    await this.swap(this.runtime.forge(this.agent.provider, this.store.messages()));
+    this.announce();
+    return { leafId: this.store.leafId() };
   }
 
   async rename(title: string): Promise<{ title: string }> {
@@ -648,6 +703,7 @@ class LiveSession {
       createdAt: this.store.header.timestamp,
       lastActivityAt: stats.lastActivityAt,
       messageCount: this.agent.history().length,
+      ...this.store.binding(),
       ...(model !== undefined && { model }),
       thinking,
       ...(effort !== undefined && { effort }),
@@ -661,6 +717,7 @@ class LiveSession {
       live: true,
       messages: this.agent.history(),
       asOf,
+      ...parentSessionOf(this.store),
     };
   }
 
@@ -673,6 +730,7 @@ class LiveSession {
       ...(effort !== undefined && { effort }),
       title: this.title(),
       leafId: this.store.leafId(),
+      ...this.store.binding(),
       ...this.travel(),
     };
   }
@@ -685,7 +743,21 @@ class LiveSession {
   }
 
   served(): ServedSession {
-    return { store: this.store, busy: () => this.agent.busy() };
+    return {
+      store: this.store,
+      busy: () => this.agent.busy(),
+      adoptBinding: () => this.adoptBinding(),
+    };
+  }
+
+  async adoptBinding(): Promise<void> {
+    const bot = this.store.botBinding();
+    if (bot !== this.bound.bot) {
+      if (!(await this.idle())) throw new SessionBusyError();
+      const provider = await this.providerSeededBy(this.runtime.botNamed(bot));
+      await this.swap(this.runtime.forge(provider, this.agent.history()));
+    }
+    this.announce();
   }
 
   private title(): string {
@@ -718,13 +790,83 @@ class LiveSession {
   }
 
   private async afterTurn(): Promise<void> {
+    await this.persistTurn(this.agent.history());
+    const settlement = await settleSessionTurn(
+      this.settling(),
+      this.agent.history(),
+      "after-turn",
+      this.runtime.flushes,
+    );
+    this.reportSettlement("after-turn", settlement);
+    if (settlement.history !== undefined) {
+      await this.swap(this.runtime.forge(this.agent.provider, settlement.history));
+    }
+    this.announce();
+  }
+
+  private async settleToolBatch(
+    history: readonly Message[],
+  ): Promise<readonly Message[] | undefined> {
+    const reading = readContext(estimateConversationTokens(history), budgetOf(this.agent));
+    if (!compactionDue(reading)) return undefined;
+    await this.persistTurn(history);
+    const settlement = await settleSessionTurn(
+      this.settling(),
+      history,
+      "between-tool-batches",
+      this.runtime.flushes,
+    );
+    this.reportSettlement("between-tool-batches", settlement);
+    if (settlement.history !== undefined) this.persisted = settlement.history.length;
+    return settlement.history;
+  }
+
+  private async persistTurn(history: readonly Message[]): Promise<void> {
     this.persisted = await persistNewMessages(
       this.store,
-      this.agent.history(),
+      history,
       this.persisted,
       this.runtime.checkpoints,
     );
-    this.announce();
+  }
+
+  private settling(): SettlingSession {
+    return { sessionId: this.id, store: this.store, agent: this.agent };
+  }
+
+  private reportSettlement(
+    phase: SessionSettlement["phase"],
+    settlement: Pick<TurnSettlement, "flushed" | "compacted" | "notices">,
+  ): void {
+    const quiet =
+      settlement.flushed.length === 0 &&
+      settlement.compacted === undefined &&
+      settlement.notices.length === 0;
+    if (quiet) return;
+    const report: SessionSettlement = {
+      phase,
+      flushed: settlement.flushed.length,
+      compacted: settlement.compacted ?? null,
+      notices: settlement.notices,
+    };
+    this.runtime.log.record(this.id, "session.settled", report);
+  }
+
+  private async providerSeededBy(bot: BotDefinition | undefined): Promise<Provider> {
+    const { inference } = this.runtime;
+    if (bot?.model === undefined || inference === undefined) return this.agent.provider;
+    const bound = inference.bind(bot.model);
+    if (!bound.ok) {
+      this.runtime.notice(
+        `bot ${bot.name} asks for ${bot.model} · ${bound.failure.message} · keeping the session's model`,
+      );
+      return this.agent.provider;
+    }
+    const model = bound.binding.reference;
+    if (!sameSelection(this.store.modelSelection(), model)) {
+      await this.store.appendModelChange(model.provider, model.model);
+    }
+    return inference.provider(bound.binding);
   }
 
   private storedProvider(): Provider {
@@ -747,10 +889,18 @@ class LiveSession {
   }
 
   private bind(agent: Agent): BoundAgent {
+    agent.settleTurnsWith(() => this.afterTurn());
+    agent.settleToolBatchesWith((history) => this.settleToolBatch(history));
+    const detach = this.runtime.log.attach(agent.bus, this.id);
+    const unfollow = this.runtime.changes.follow(agent.bus, this.id);
     return {
       agent,
+      bot: this.store.botBinding(),
       journal: tapJournal(agent.bus, this.store),
-      detach: this.runtime.log.attach(agent.bus, this.id),
+      detach: () => {
+        detach();
+        unfollow();
+      },
     };
   }
 
@@ -769,6 +919,8 @@ class LiveSession {
   }
 
   private async release(bound: BoundAgent): Promise<void> {
+    bound.agent.settleTurnsWith(undefined);
+    bound.agent.settleToolBatchesWith(undefined);
     bound.journal.stop();
     await bound.journal.flush();
     bound.detach();
@@ -777,21 +929,28 @@ class LiveSession {
   private async undoFilesOnly(): Promise<UndoReport | "nothing"> {
     const { checkpoints } = this.runtime;
     if (checkpoints === undefined || !(await checkpoints.undo())) return "nothing";
+    await this.runtime.changes.announce(this.id);
     this.announce();
     return { prompt: null, filesNote: "files put back", ...this.travel() };
   }
 
   private async redoFilesOnly(): Promise<boolean> {
     const { checkpoints } = this.runtime;
-    return checkpoints !== undefined && (await checkpoints.redo());
+    if (checkpoints === undefined || !(await checkpoints.redo())) return false;
+    await this.runtime.changes.announce(this.id);
+    return true;
   }
 
   private async stageFiles(checkpoint: string | undefined): Promise<StagedFiles> {
     const { checkpoints } = this.runtime;
     if (checkpoints === undefined || checkpoint === undefined) return untouchedFiles;
     const left = await checkpoints.snapshot();
-    await checkpoints.restoreTo(checkpoint);
-    return { note: "files put back", restore: () => checkpoints.restoreTo(left) };
+    const travel = async (tree: string): Promise<void> => {
+      await checkpoints.restoreTo(tree);
+      await this.runtime.changes.announce(this.id);
+    };
+    await travel(checkpoint);
+    return { note: "files put back", restore: () => travel(left) };
   }
 }
 
@@ -890,6 +1049,11 @@ function sameSelection(
   model: { provider: string; model: string },
 ): boolean {
   return selection?.provider === model.provider && selection.modelId === model.model;
+}
+
+function parentSessionOf(store: SessionStore): { parentSession?: string } {
+  const { parentSession } = store.header;
+  return parentSession === undefined ? {} : { parentSession };
 }
 
 function storedSummary(summary: StoredSummary, store: SessionStore): SessionSummary {

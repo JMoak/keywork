@@ -3,22 +3,15 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  type Agent,
   type BotDefinition,
   type Checkpoints,
-  type ContextBudget,
   type CurationJudgmentPort,
   closingJudgment,
-  compactNow,
-  contextBudgetFor,
   coreTools,
-  declaredContextWindow,
-  type MemoryFlush,
   type Provider,
   renderCommand,
   type SessionStore,
   scanTemplate,
-  settleTurn,
   suggestTitle,
   tapJournal,
 } from "@keywork/engine";
@@ -51,7 +44,8 @@ import {
   type WorkspacesPort,
   workingFileReader,
 } from "@keywork/tui";
-import { arcService, arcsUnavailable, type ClosingRequest } from "./arcs.ts";
+import { closingSeamFor, latestArcActivity } from "./arc-seams.ts";
+import { arcService, arcsUnavailable } from "./arcs.ts";
 import { type BotMemory, botMemory } from "./bot-memory.ts";
 import { botService } from "./bots.ts";
 import { commandRuntime, type WorkspaceExtensions } from "./commands.ts";
@@ -84,6 +78,7 @@ import {
   workspaceStateFile,
 } from "./paths.ts";
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
+import { compactSessionNow, settleSessionTurn, sweepFlushFor } from "./session-settle.ts";
 import { sessionExporter } from "./sessions/export.ts";
 import {
   boundSessionCounts,
@@ -92,7 +87,6 @@ import {
   sessionPort,
   sessionTreePort,
 } from "./sessions/ports.ts";
-import { listSessions } from "./sessions/store.ts";
 import { userConfigDir } from "./user-config.ts";
 import { keyworkVersion } from "./version.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
@@ -213,8 +207,8 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     workspaceSlug,
     memory,
     boundSessionCounts: () => boundSessionCounts(options.sessionDir),
-    flushFor: (sessionId) => airlockFlushFor(stores.get(sessionId), agents.flushOf(sessionId)),
-    closing: (request) => closingSeam(request),
+    flushFor: (sessionId) => sweepFlushFor(stores.get(sessionId), agents.flushOf(sessionId)),
+    closing: closingSeamFor((arc) => closingProviderFor(arc)),
     citedNotes: (slug) => citations.citedNotes(slug),
     lastActivity: (slug) => latestArcActivity(options.sessionDir, slug),
     onReleased: (sessionId) => changes.emit(sessionId),
@@ -259,15 +253,6 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
   };
   const closingProviderFor = (arc: string): Provider | undefined =>
     closingProvider(arcs.bindings.sessionsBoundTo(arc));
-  const closingSeam = (request: ClosingRequest): CurationJudgmentPort | undefined => {
-    const provider = closingProviderFor(request.arc);
-    if (provider === undefined) return undefined;
-    return closingJudgment({
-      provider,
-      ...(request.direction !== undefined && { direction: request.direction }),
-      onDegrade: request.onDegrade,
-    });
-  };
   const botJudgment = (bot: BotDefinition): CurationJudgmentPort | undefined => {
     const bound = [...stores.values()]
       .filter((store) => store.botBinding() === bot.name)
@@ -397,15 +382,6 @@ function namingProvider(options: PanesOptions): Provider | undefined {
   return resolution.ok ? state.runtime.provider(resolution.binding) : undefined;
 }
 
-async function latestArcActivity(sessionDir: string, slug: string): Promise<string | undefined> {
-  const { sessions } = await listSessions(sessionDir);
-  return sessions
-    .filter((session) => session.arc === slug)
-    .map((session) => session.lastActivityAt)
-    .sort()
-    .at(-1);
-}
-
 function workspaceStateStore(cwd: string, slug: string | undefined, fresh: boolean): WorkspacePort {
   const store = workspaceFile(workspaceStateFile(workspaceIdentity(cwd, slug)));
   return fresh ? freshWorkspace(store) : store;
@@ -465,14 +441,7 @@ function settleAfterTurn(
   return async ({ sessionId, history, agent, phase }) => {
     const store = stores.get(sessionId);
     if (store === undefined) return undefined;
-    const settlement = await settleTurn({
-      store,
-      provider: agent.provider,
-      history,
-      budget: budgetOf(agent),
-      flush: agents.flushFor(sessionId, agent.provider),
-      phase,
-    });
+    const settlement = await settleSessionTurn({ sessionId, store, agent }, history, phase, agents);
     if (settlement.history !== undefined) changed(sessionId);
     return settlement;
   };
@@ -513,29 +482,10 @@ function compactOnRequest(
   return async ({ sessionId, agent }, instructions) => {
     const store = stores.get(sessionId);
     if (store === undefined) throw new Error("no session store for this pane");
-    const settlement = await compactNow({
-      store,
-      provider: agent.provider,
-      budget: budgetOf(agent),
-      instructions,
-      flush: agents.flushFor(sessionId, agent.provider),
-    });
+    const settlement = await compactSessionNow({ sessionId, store, agent }, instructions, agents);
     if (settlement.history !== undefined) changed(sessionId);
     return settlement;
   };
-}
-
-function airlockFlushFor(
-  store: SessionStore | undefined,
-  flush: MemoryFlush | undefined,
-): (() => Promise<unknown>) | undefined {
-  if (store === undefined) return undefined;
-  if (flush === undefined) return async () => undefined;
-  return () => flush.flushNow(store.messages());
-}
-
-function budgetOf(agent: Agent): ContextBudget {
-  return contextBudgetFor(declaredContextWindow(agent.provider));
 }
 
 function extensionsView(extensions: WorkspaceExtensions, cwd: string): ExtensionsPort {

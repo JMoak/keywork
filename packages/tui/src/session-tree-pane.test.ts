@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { FrameScheduler } from "./frame-scheduler.ts";
 import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
-import type { SessionTreeView } from "./session-tree-model.ts";
-import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
+import type { ForkOrigin, SessionTreeView } from "./session-tree-model.ts";
+import { busyRemovalNotice, SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import {
   overviewRowLine,
   type SessionGroupBy,
@@ -23,12 +23,18 @@ interface TreeWorld {
   forkedFrom: string[];
   unsubscribed: number;
   listeners: Array<(sessionId: string) => void>;
+  trashed: SessionOverviewItem[];
+  removed: string[];
+  restored: string[];
+  origin?: ForkOrigin;
 }
 
 interface RecordedIntents {
   intents: PaneIntents;
   opened: string[];
   focused: string[];
+  closed: string[];
+  notices: string[];
 }
 
 function itemOf(id: string, modifiedAt = 0): SessionOverviewItem {
@@ -53,11 +59,23 @@ function worldOf(...sessionIds: string[]): TreeWorld {
     forkedFrom: [],
     unsubscribed: 0,
     listeners: [],
+    trashed: [],
+    removed: [],
+    restored: [],
   };
 }
 
-function chainView(sessionId: string, entryIds: readonly string[]): SessionTreeView {
-  return { sessionId, name: `name-${sessionId}`, roots: chainNodes(entryIds, null) };
+function chainView(
+  sessionId: string,
+  entryIds: readonly string[],
+  origin?: ForkOrigin,
+): SessionTreeView {
+  return {
+    sessionId,
+    name: `name-${sessionId}`,
+    roots: chainNodes(entryIds, null),
+    ...(origin !== undefined && { forkedFrom: origin }),
+  };
 }
 
 function chainNodes(ids: readonly string[], parentId: string | null): SessionTreeNode[] {
@@ -87,7 +105,7 @@ function portOver(world: TreeWorld, forkResult: () => Promise<string | undefined
     load: async (sessionId) => {
       world.entryLoads.push(sessionId);
       const entries = world.entriesBySession.get(sessionId);
-      return entries === undefined ? undefined : chainView(sessionId, entries);
+      return entries === undefined ? undefined : chainView(sessionId, entries, world.origin);
     },
     setLabel: async () => {},
     fork: async (_sessionId, entryId) => {
@@ -104,6 +122,26 @@ function portOver(world: TreeWorld, forkResult: () => Promise<string | undefined
         world.unsubscribed += 1;
       };
     },
+    remove: async (sessionId) => {
+      if (!world.items.some((item) => item.id === sessionId)) return "missing";
+      world.removed.push(sessionId);
+      const [gone] = world.items.splice(
+        world.items.findIndex((item) => item.id === sessionId),
+        1,
+      );
+      if (gone !== undefined) world.trashed.push(gone);
+      return "removed";
+    },
+    trash: async () => [...world.trashed],
+    restore: async (sessionId) => {
+      const at = world.trashed.findIndex((item) => item.id === sessionId);
+      if (at === -1) return undefined;
+      const [back] = world.trashed.splice(at, 1);
+      if (back === undefined) return undefined;
+      world.restored.push(sessionId);
+      world.items.push(back);
+      return back;
+    },
   };
   return port;
 }
@@ -111,13 +149,22 @@ function portOver(world: TreeWorld, forkResult: () => Promise<string | undefined
 function recordedIntents(): RecordedIntents {
   const opened: string[] = [];
   const focused: string[] = [];
+  const closed: string[] = [];
+  const notices: string[] = [];
   return {
     opened,
     focused,
+    closed,
+    notices,
     intents: {
       openFile: () => {},
       openSession: (sessionId) => opened.push(sessionId),
       focusPane: (id) => focused.push(id),
+      notice: (text) => notices.push(text),
+      closePane: (id) => {
+        closed.push(id);
+        return true;
+      },
     },
   };
 }
@@ -577,6 +624,8 @@ describe("SessionTreePane command tray", () => {
       "open",
       "entries",
       "group",
+      "remove",
+      "trash",
       "refresh",
     ]);
     press(pane, "enter");
@@ -706,5 +755,121 @@ describe("SessionTreePane group-by", () => {
     expect(contents(describePaneTree(lone.view(paneContext())))).not.toContain(
       "g · group by arc or bot",
     );
+  });
+});
+
+describe("SessionTreePane removal and the trash", () => {
+  const presenceOf = (
+    paneFor: (sessionId: string) => string | undefined,
+    busy: (sessionId: string) => boolean = () => false,
+  ): SessionPresence => ({ paneFor, busy, waiting: () => false });
+
+  it("x asks in-pane, enter closes the session's pane and trashes it, then relists", async () => {
+    const world = worldOf("s1", "s2");
+    const { pane, recorded } = paneOver(world, {
+      presence: presenceOf((sessionId) => (sessionId === "s1" ? "session-9" : undefined)),
+    });
+    await pane.settled();
+    const loads = world.overviewLoads;
+    press(pane, "x");
+    expect(pane.overview.removalPrompt()).toContain('remove "title-s1"?');
+    expect(JSON.stringify(describePaneTree(pane.view(paneContext())))).toContain(
+      'remove \\"title-s1\\"?',
+    );
+    press(pane, "enter");
+    await pane.settled();
+    expect(recorded.closed).toEqual(["session-9"]);
+    expect(world.removed).toEqual(["s1"]);
+    expect(recorded.notices).toEqual([
+      'removed "title-s1" · t in the session tree restores it, memory notes stay',
+    ]);
+    expect(world.overviewLoads).toBe(loads + 1);
+    expect(pane.overview.sessionRows().map((row) => row.id)).toEqual(["s2"]);
+  });
+
+  it("refuses while the session's turn is running and leaves its pane alone", async () => {
+    const world = worldOf("s1");
+    const { pane, recorded } = paneOver(world, {
+      presence: presenceOf(
+        () => "session-9",
+        () => true,
+      ),
+    });
+    await pane.settled();
+    press(pane, "x", "enter");
+    await pane.settled();
+    expect(recorded.closed).toEqual([]);
+    expect(world.removed).toEqual([]);
+    expect(recorded.notices).toEqual([busyRemovalNotice]);
+  });
+
+  it("any other key cancels, and a port without remove has no x key", async () => {
+    const world = worldOf("s1", "s2");
+    const { pane } = paneOver(world);
+    await pane.settled();
+    press(pane, "x", "j");
+    await pane.settled();
+    expect(pane.overview.removal()).toBeUndefined();
+    expect(world.removed).toEqual([]);
+    expect(pane.overview.cursorSession()).toBe("s1");
+
+    const bare: SessionTreePort = {
+      load: async () => undefined,
+      setLabel: async () => {},
+      fork: async () => undefined,
+      overview: async () => [itemOf("s1")],
+    };
+    const plain = new SessionTreePane(
+      "tree-2",
+      () => {},
+      recordedIntents().intents,
+      bare,
+      () => "s1",
+    );
+    await plain.settled();
+    expect(plain.handleKey(parseChord("x"))).toBe(false);
+    expect(plain.handleKey(parseChord("t"))).toBe(false);
+  });
+
+  it("t shows the trash, enter restores the cursored session, escape returns", async () => {
+    const world = worldOf("s1");
+    world.trashed = [itemOf("gone", 5)];
+    const { pane, recorded } = paneOver(world);
+    await pane.settled();
+    press(pane, "t");
+    await pane.settled();
+    expect(pane.level()).toBe("trash");
+    expect(pane.title()).toBe(" trash · 1 session ");
+    expect(pane.trashed.sessionRows().map((row) => row.id)).toEqual(["gone"]);
+    press(pane, "/");
+    expect(pane.tray.matches().map((command) => command.name)).toEqual([
+      "restore",
+      "back",
+      "refresh",
+    ]);
+    press(pane, "escape");
+    press(pane, "enter");
+    await pane.settled();
+    expect(world.restored).toEqual(["gone"]);
+    expect(recorded.notices).toEqual(['restored "title-gone" · it is back in the session tree']);
+    expect(pane.title()).toBe(" trash ");
+    press(pane, "escape");
+    await pane.settled();
+    expect(pane.level()).toBe("overview");
+    expect(pane.overview.sessionRows().map((row) => row.id)).toEqual(["gone", "s1"]);
+  });
+
+  it("names a removed fork parent in the entries title", async () => {
+    const world = worldOf("s1");
+    world.origin = { sessionId: "abcdef0123456789", removed: true };
+    const { pane } = paneOver(world);
+    await pane.settled();
+    press(pane, "l");
+    await pane.settled();
+    expect(pane.title()).toBe(" name-s1 · 2 entries · fork of abcdef01 (removed) ");
+    world.origin = { removed: true };
+    press(pane, "r");
+    await pane.settled();
+    expect(pane.title()).toBe(" name-s1 · 2 entries · fork of a removed session ");
   });
 });

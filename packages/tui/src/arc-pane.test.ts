@@ -17,6 +17,7 @@ const now = 120 * minute;
 interface World {
   items: SessionOverviewItem[];
   overviews: number;
+  removed: string[];
   attached: string[];
   attachResult: boolean;
   listeners: Array<(sessionId: string) => void>;
@@ -30,6 +31,7 @@ interface Recorded {
   held: Set<string>;
   shows: Array<[string, readonly string[] | undefined]>;
   notices: string[];
+  closed: string[];
 }
 
 function itemOf(id: string, createdMinutesAgo: number, arc?: string): SessionOverviewItem {
@@ -55,6 +57,7 @@ function worldOf(): World {
       itemOf("unbound", 1),
     ],
     overviews: 0,
+    removed: [],
     attached: [],
     attachResult: true,
     listeners: [],
@@ -68,12 +71,14 @@ function recordedIntents(): Recorded {
   const held = new Set<string>();
   const shows: Recorded["shows"] = [];
   const notices: string[] = [];
+  const closed: string[] = [];
   return {
     opened,
     focused,
     held,
     shows,
     notices,
+    closed,
     intents: {
       openFile: () => {},
       openSession: (sessionId) => opened.push(sessionId),
@@ -89,6 +94,10 @@ function recordedIntents(): Recorded {
         return true;
       },
       paneHeld: (id) => held.has(id),
+      closePane: (id) => {
+        closed.push(id);
+        return true;
+      },
     },
   };
 }
@@ -123,6 +132,11 @@ function paneOver(world: World, presence?: SessionPresence, extra: Partial<ArcPa
         return () => {
           world.unsubscribed += 1;
         };
+      },
+      remove: async (sessionId) => {
+        world.removed.push(sessionId);
+        world.items = world.items.filter((item) => item.id !== sessionId);
+        return "removed";
       },
     },
     currentSession: () => "middle",
@@ -340,5 +354,24 @@ describe("ArcPane folds", () => {
     press(pane, "space");
     expect(recorded.held.size).toBe(0);
     expect(recorded.notices).toEqual(["closed session · enter opens it"]);
+  });
+});
+
+describe("ArcPane member removal", () => {
+  it("x asks about the cursored member and enter closes its pane, trashes it and relists", async () => {
+    const world = worldOf();
+    const { pane, recorded } = paneOver(world, membersOpen);
+    await pane.settled();
+    press(pane, "x");
+    expect(pane.members.removalPrompt()).toContain('remove "title-middle"?');
+    press(pane, "space");
+    expect(pane.members.removal()).toBeUndefined();
+    expect(recorded.held.size).toBe(0);
+    press(pane, "x", "enter");
+    await pane.settled();
+    expect(recorded.closed).toEqual(["pane-middle"]);
+    expect(world.removed).toEqual(["middle"]);
+    expect(recorded.notices[0]).toContain('removed "title-middle"');
+    expect(pane.title()).toBe(" #dock-v2 · 2 sessions ");
   });
 });

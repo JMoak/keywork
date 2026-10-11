@@ -62,6 +62,12 @@ export interface SessionsOverviewEffects {
   refresh(): void;
   activate(sessionId: string): void;
   drill(sessionId: string): void;
+  remove?(sessionId: string, title: string): void;
+}
+
+export interface PendingRemoval {
+  sessionId: string;
+  title: string;
 }
 
 export type SessionOrder = "recent" | "created";
@@ -80,6 +86,7 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
 
   private items: SessionOverviewItem[] = [];
   private grouping: SessionGroupBy;
+  private pendingRemoval: PendingRemoval | undefined;
 
   constructor(
     notify: () => void,
@@ -131,7 +138,18 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
     return this.withCursorSession((sessionId) => this.effects.activate(sessionId));
   }
 
+  removal(): PendingRemoval | undefined {
+    return this.pendingRemoval;
+  }
+
+  removalPrompt(): string | undefined {
+    const pending = this.pendingRemoval;
+    if (pending === undefined) return undefined;
+    return `remove "${pending.title}"? enter trashes it, memory notes stay · any other key cancels`;
+  }
+
   handleKey(chord: Chord, pageRows: number): boolean {
+    if (this.pendingRemoval !== undefined) return this.handleRemovalKey(chord);
     if (chord.shift || chord.ctrl || chord.meta) return false;
     if (this.navigate(chord, pageRows)) return true;
     switch (chord.name) {
@@ -143,12 +161,32 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
         return this.withCursorSession((sessionId) => this.effects.drill(sessionId));
       case "g":
         return this.cycleGroupBy();
+      case "x":
+        return this.beginRemoval();
       case "r":
         this.effects.refresh();
         return true;
       default:
         return false;
     }
+  }
+
+  private beginRemoval(): boolean {
+    if (this.effects.remove === undefined) return false;
+    const row = this.cursorRow();
+    if (row?.kind === "session") this.pendingRemoval = { sessionId: row.id, title: row.title };
+    this.notify();
+    return true;
+  }
+
+  private handleRemovalKey(chord: Chord): boolean {
+    const pending = this.pendingRemoval;
+    this.pendingRemoval = undefined;
+    this.notify();
+    if (pending !== undefined && (chord.name === "enter" || chord.name === "return")) {
+      this.effects.remove?.(pending.sessionId, pending.title);
+    }
+    return true;
   }
 
   protected buildRows(): OverviewRow[] {

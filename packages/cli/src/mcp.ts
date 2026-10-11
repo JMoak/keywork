@@ -8,6 +8,11 @@ import {
 import type { McpServerConfig, SecretVault } from "@keywork/shared";
 import type { McpPanePort, McpServerView } from "@keywork/tui";
 import { type CommandIo, resolveCommandIo } from "./command-io.ts";
+import {
+  describeReconnect,
+  type RunningServerSeam,
+  reconnectOnRunningServer,
+} from "./mcp-reconnect.ts";
 
 export interface McpRegistryLike {
   status(): McpServerStatus[];
@@ -23,6 +28,7 @@ export interface McpCommandOptions extends CommandIo {
   vault: SecretVault | undefined;
   fetchFn?: FetchLike;
   loginTimeoutMs?: number;
+  runningServer?: RunningServerSeam | undefined;
 }
 
 export function mcpPanePort(registry: McpRegistryLike): McpPanePort {
@@ -54,7 +60,9 @@ export async function mcpCommand(
     case "logout": {
       const server = httpServerNamed(servers, name, verb);
       if (typeof server === "string") return refuse(server, io.printError);
-      return verb === "login" ? login(server, oauth, io) : logout(server, oauth, io.print);
+      return verb === "login"
+        ? login(server, oauth, io, options.runningServer)
+        : logout(server, oauth, io.print);
     }
     default:
       return refuse(
@@ -97,11 +105,13 @@ async function login(
   server: NamedHttpServer,
   oauth: McpOAuth,
   io: { print: (line: string) => void; printError: (line: string) => void },
+  runningServer: RunningServerSeam | undefined,
 ): Promise<number> {
   try {
     const summary = await oauth.login(server.name, server.url, { say: io.print });
     io.print(`signed in to ${server.name} through ${summary.issuer}`);
-    io.print(`restart ${server.name} from the mcp pane, or relaunch keywork, to use it`);
+    const outcome = await reconnectOnRunningServer(server.name, await runningServer?.());
+    io.print(describeReconnect(server.name, outcome));
     return 0;
   } catch (cause) {
     io.printError(`keywork mcp login ${server.name}: ${messageOf(cause)}`);

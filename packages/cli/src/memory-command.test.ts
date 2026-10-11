@@ -220,8 +220,13 @@ describe("keywork memory forget", () => {
     expect(await memoryCommand([], { cwd, trusted: true }, io)).toBe(2);
     expect(await memoryCommand(["forget"], { cwd, trusted: false }, io, { session: "x" })).toBe(2);
     expect(io.err).toEqual([
-      'keywork memory: unknown subcommand "bogus" (expected drift or forget)',
-      "usage: keywork memory drift [range]\n       keywork memory forget --session <id> [--apply]",
+      'keywork memory: unknown subcommand "bogus" (expected drift, forget or sync)',
+      [
+        "usage: keywork memory drift [range]",
+        "       keywork memory forget --session <id> [--apply]",
+        "       keywork memory sync [setup]",
+        "       keywork memory sync merge <base> <ours> <theirs> [path]",
+      ].join("\n"),
       "keywork memory: memory is inert in an untrusted workspace",
     ]);
   });

@@ -80,6 +80,34 @@
             "description": "No session has that id."
           }
         }
+      },
+      "delete": {
+        "operationId": "removeSession",
+        "summary": "Move a session to the trash: its log and spilled tool output leave the session directory together, so `GET /sessions` stops listing it at once, and `POST /trash/{id}/restore` brings it back whole. An open idle session is closed first; a session with a running turn is refused. Memory notes the session wrote stay (they carry its id as `origin_session`), and forks keep pointing at it: `GET /sessions/{fork}` then reports `forkedFrom.removed`. Fires `session.removed`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The removed session's summary."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "A turn is running."
+          },
+          "503": {
+            "description": "This host serves no trash."
+          }
+        }
       }
     },
     "/sessions/{id}/prompt": {
@@ -1506,7 +1534,7 @@
     "/sessions/{id}/bot": {
       "post": {
         "operationId": "bindSessionBot",
-        "summary": "Have a session run as a bot (a named role with its own prompt, tool allowance and memory layer), or as no bot with `name: null`. Refused while a turn is running, because the running agent cannot be swapped mid-turn. Answers as the session's whole binding (`arc`, `bot`).",
+        "summary": "Have a session run as a bot (a named role with its own prompt, tool allowance and memory layer), or as no bot with `name: null`. A live session's agent is rebuilt as that bot before the answer, and a `model` the bot declares becomes the session's model, so the next prompt runs as the bot. Refused while a turn is running, because the running agent cannot be swapped mid-turn. Answers as the session's whole binding (`arc`, `bot`); a `session.state` envelope follows.",
         "parameters": [
           {
             "name": "id",
@@ -1810,6 +1838,312 @@
           }
         }
       }
+    },
+    "/sessions/{id}/entries": {
+      "get": {
+        "operationId": "readSessionEntries",
+        "summary": "The session's whole entry log as the engine stores it, for a client that draws the conversation tree itself. `entries` is every entry in file order, each with its `id` and `parentId`; `message` entries carry their message whole, and the rest (`compaction`, `branch_summary`, `label`, `session_info`, `model_change`, `thinking_level_change`, `effort_change`, `context_edit`, `binding`, `custom`, `custom_message`) carry their own fields. `labels` maps entry ids to the label in force, `leafId` is the entry the next message will follow, and `activePath` lists the ids from the root to that leaf. Folding the flat log into a tree is the client's job (parent links suffice).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ sessionId, name?, leafId, entries, labels, activePath }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/fork": {
+      "post": {
+        "operationId": "forkSession",
+        "summary": "Start a new session from one entry of this one: the path from the root to `entryId` is copied into a fresh session whose header records the file it was forked from as `parentSession`. This session is untouched. A `session.tree` envelope with `reason: \"fork\"` and `forkedTo` follows on this session.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entryId"],
+                "properties": {
+                  "entryId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "`{ sessionId }`: the new session, readable at GET /sessions/{sessionId}."
+          },
+          "400": {
+            "description": "The body is not `{ entryId: string }`."
+          },
+          "404": {
+            "description": "No session has that id, or no entry in it has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/label": {
+      "post": {
+        "operationId": "labelSessionEntry",
+        "summary": "Name an entry so a branch is easy to find again, or pass `null` to remove the name. The label is written to the session as its own entry, so it survives a restart. A `session.tree` envelope with `reason: \"label\"` follows.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entryId", "label"],
+                "properties": {
+                  "entryId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "label": {
+                    "type": ["string", "null"],
+                    "description": "`null` removes the label."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ entryId, label }`, `label` being `null` once removed."
+          },
+          "400": {
+            "description": "The body is not `{ entryId: string, label: string | null }`."
+          },
+          "404": {
+            "description": "No session has that id, or no entry in it has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/leaf": {
+      "post": {
+        "operationId": "moveSessionLeaf",
+        "summary": "Move the session's leaf to `entryId` (or to the empty root with `null`) without forking: the next prompt continues from there, as a new branch if the entry already has children. The session's agent is rebuilt over the shorter path, the same move POST /undo makes without putting files back. Needs an idle session. A `session.tree` envelope with `reason: \"leaf\"` and a `session.state` envelope follow.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entryId"],
+                "properties": {
+                  "entryId": {
+                    "type": ["string", "null"],
+                    "description": "`null` moves to the empty root, before the first entry."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ leafId }`."
+          },
+          "400": {
+            "description": "The body is not `{ entryId: string | null }`."
+          },
+          "404": {
+            "description": "No session has that id, or no entry in it has that id."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/changes": {
+      "get": {
+        "operationId": "readSessionChanges",
+        "summary": "Every file in the workspace that differs from the checkpoint taken when this server first captured it (`baseline` names it: `session start`). Each entry carries the path relative to the workspace root, the lines `added` and `deleted`, and `turn`, the 1-based ordinal of the turn that last touched it, where a turn in this process did. The list is recomputed on every call; `changes.updated` says when to call again.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ baseline, files: [{ path, added, deleted, turn? }] }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "`{ error: \"no baseline\" }`: checkpoints are off for this server, so there is no session start to diff against."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/changes/file": {
+      "get": {
+        "operationId": "readChangedFile",
+        "summary": "Both sides of one changed file, for a client that renders the diff itself: `before` as it was at the baseline and `after` as it is in the working tree, each `null` when the file did not exist on that side (`note` says `new` or `deleted`; `unreadable` when neither side could be read). A file with a NUL byte on either side answers `note: \"binary\"` with no text. Each side is capped at 1 MiB of UTF-8, cut on a character boundary, and `truncated` says when a side was cut. `path` is the query parameter, relative to the workspace root as GET /sessions/{id}/changes lists it, and is confined to the workspace scope.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ path, before, after, note?: \"binary\" | \"new\" | \"deleted\" | \"unreadable\", truncated }`."
+          },
+          "400": {
+            "description": "No `path` query parameter."
+          },
+          "403": {
+            "description": "The path escapes the workspace scope."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "`{ error: \"no baseline\" }`: checkpoints are off for this server, so there is no session start to diff against."
+          }
+        }
+      }
+    },
+    "/trash": {
+      "get": {
+        "operationId": "listTrash",
+        "summary": "Sessions in the trash, newest first, summarized exactly as `GET /sessions` summarizes a live one.",
+        "responses": {
+          "200": {
+            "description": "The trashed sessions."
+          },
+          "503": {
+            "description": "This host serves no trash."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "purgeTrash",
+        "summary": "Empty the trash. `purged` counts the sessions deleted. There is no undo.",
+        "responses": {
+          "200": {
+            "description": "The trash is empty."
+          },
+          "503": {
+            "description": "This host serves no trash."
+          }
+        }
+      }
+    },
+    "/trash/{id}/restore": {
+      "post": {
+        "operationId": "restoreSession",
+        "summary": "Move a trashed session back into the session directory, log and spills together. It lists again at once. Fires `session.restored`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The restored session's summary."
+          },
+          "404": {
+            "description": "Nothing in the trash has that id."
+          },
+          "503": {
+            "description": "This host serves no trash."
+          }
+        }
+      }
+    },
+    "/trash/{id}": {
+      "delete": {
+        "operationId": "discardTrashedSession",
+        "summary": "Delete one trashed session for good. There is no undo.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session was deleted."
+          },
+          "404": {
+            "description": "Nothing in the trash has that id."
+          },
+          "503": {
+            "description": "This host serves no trash."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1851,7 +2185,12 @@
               "engine.error",
               "memory.inbox",
               "session.state",
-              "surface.changed"
+              "surface.changed",
+              "session.tree",
+              "changes.updated",
+              "session.removed",
+              "session.restored",
+              "session.settled"
             ]
           },
           "payload": {}

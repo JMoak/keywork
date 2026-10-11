@@ -3,6 +3,7 @@ import type {
   AuditEntry,
   CacheMiss,
   CandidateTriage,
+  ChangedPath,
   CompactionEntry,
   ContextReading,
   CostRollup,
@@ -24,6 +25,8 @@ import type {
   RevertOutcome,
   SendBehavior,
   SessionBinding,
+  SessionEntry,
+  SettlePhase,
   StagedItem,
   Usage,
   WriteResult,
@@ -57,6 +60,21 @@ export interface SessionDetail extends SessionSummary {
   live: boolean;
   messages: readonly Message[];
   asOf: number;
+  parentSession?: string;
+  forkedFrom?: ForkOrigin;
+}
+
+export interface ForkOrigin {
+  sessionId?: string;
+  removed: boolean;
+}
+
+export interface SessionLifecyclePort {
+  remove(id: string): Promise<SessionSummary | Refusal>;
+  trash(): Promise<readonly SessionSummary[]>;
+  restore(id: string): Promise<SessionSummary | undefined>;
+  discard(id: string): Promise<SessionSummary | undefined>;
+  purge(): Promise<number>;
 }
 
 export type PromptOutcome = "accepted" | "missing";
@@ -67,14 +85,67 @@ export type AbortOutcome = "aborted" | "idle" | "missing";
 
 export type Refusal = "missing" | "busy";
 
+export type EntryRefusal = "missing" | "unknown-entry";
+
+export interface SessionEntries {
+  sessionId: string;
+  name?: string;
+  leafId: string | null;
+  entries: readonly SessionEntry[];
+  labels: Record<string, string>;
+  activePath: readonly string[];
+}
+
+export interface LabelOutcome {
+  entryId: string;
+  label: string | null;
+}
+
+export interface LeafOutcome {
+  leafId: string | null;
+}
+
+export interface SessionTreePort {
+  entries(id: string): Promise<SessionEntries | "missing">;
+  fork(id: string, entryId: string): Promise<{ sessionId: string } | EntryRefusal>;
+  label(id: string, entryId: string, label: string | null): Promise<LabelOutcome | EntryRefusal>;
+  moveLeaf(id: string, entryId: string | null): Promise<LeafOutcome | Refusal | "unknown-entry">;
+}
+
+export interface ChangesReport {
+  baseline: string;
+  files: readonly ChangedPath[];
+}
+
+export interface FileSides {
+  before: string | undefined;
+  after: string | undefined;
+}
+
+export type ChangesRefusal = "missing" | "no-baseline";
+
+export interface ChangesPort {
+  list(id: string): Promise<ChangesReport | ChangesRefusal>;
+  file(id: string, path: string): Promise<FileSides | ChangesRefusal>;
+}
+
 export interface SessionState {
   model?: string;
   thinking: boolean;
   effort?: EffortLevel;
   title: string;
   leafId: string | null;
+  arc?: string;
+  bot?: string;
   undoable: boolean;
   redoable: boolean;
+}
+
+export interface SessionSettlement {
+  phase: SettlePhase | "requested";
+  flushed: number;
+  compacted: CompactionEntry | null;
+  notices: readonly string[];
 }
 
 export interface SessionInference {
@@ -159,6 +230,8 @@ export interface SessionHost {
   exportHtml(id: string, scope: ExportScope, out?: string): Promise<ExportOutcome>;
   rename(id: string, title: string): Promise<{ title: string } | "missing">;
   applyPreset(name: PresetName, confirmed: boolean): Promise<PresetOutcome>;
+  tree: SessionTreePort;
+  changes: ChangesPort;
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(callId: string, verdict: AskVerdict): Promise<AnswerOutcome>;
   close(): Promise<void>;
@@ -169,6 +242,7 @@ export interface SessionHost {
   bots?: BotsPort;
   workspaces?: WorkspacesPort;
   flavors?: FlavorsPort;
+  lifecycle?: SessionLifecyclePort;
 }
 
 export interface MemoryPort {

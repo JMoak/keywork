@@ -5,6 +5,8 @@ import { textMessage } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { sessionsCommand } from "./command.ts";
+import { forkOrigin, listTrash } from "./lifecycle.ts";
+import { boundSessionCounts } from "./ports.ts";
 import { listSessions, openOrResumeSession } from "./store.ts";
 
 const tempDir = scratchDirs("keywork-sessions-command-");
@@ -89,7 +91,7 @@ describe("keywork sessions list", () => {
     ]);
   });
 
-  it("offers a prompted cleanup of header-only session files and deletes on consent", async () => {
+  it("offers a prompted cleanup of header-only session files and trashes them on consent", async () => {
     const { dir, emptyFile, keptFile } = await litteredDir();
     const { out, io } = consoleOf();
     const questions: string[] = [];
@@ -105,12 +107,13 @@ describe("keywork sessions list", () => {
     expect(code).toBe(0);
     expect(questions).toHaveLength(1);
     expect(out.join("\n")).toContain("found 1 empty session file");
-    expect(out.join("\n")).toContain("removed 1 empty session file");
+    expect(out.join("\n")).toContain("trashed 1 empty session file");
     expect(existsSync(emptyFile)).toBe(false);
+    expect(existsSync(join(dir, ".trash", "1000000000000-0001-1.jsonl"))).toBe(true);
     expect(existsSync(keptFile)).toBe(true);
   });
 
-  it("takes the spill directory along with an empty session it deletes", async () => {
+  it("takes the spill directory along with an empty session it trashes", async () => {
     const { dir, emptyFile, keptFile } = await litteredDir();
     const spillDir = join(dir, "1000000000000-0001-1.spills");
     await mkdir(spillDir, { recursive: true });
@@ -119,6 +122,9 @@ describe("keywork sessions list", () => {
     await sessionsCommand(["list"], dir, { ...io, confirm: async () => true });
     expect(existsSync(emptyFile)).toBe(false);
     expect(existsSync(spillDir)).toBe(false);
+    expect(existsSync(join(dir, ".trash", "1000000000000-0001-1.spills", "abandoned.txt"))).toBe(
+      true,
+    );
     expect(existsSync(keptFile)).toBe(true);
   });
 
@@ -234,8 +240,147 @@ describe("keywork sessions usage", () => {
 
     expect(await sessionsCommand(["bogus"], await tempDir(), io)).toBe(2);
     expect(err).toEqual([
-      'keywork sessions: unknown subcommand "bogus" (expected list, tree, fork, or export)',
+      'keywork sessions: unknown subcommand "bogus" (expected list, tree, fork, export, remove, restore, trash, purge)',
     ]);
     expect(out).toEqual([]);
+  });
+});
+
+describe("keywork sessions remove, restore, trash and purge", () => {
+  it("asks before moving a session to the trash, where list no longer shows it and trash does", async () => {
+    const { dir, id } = await seededDir();
+    const { out, io } = consoleOf();
+    const questions: string[] = [];
+    const confirm = async (question: string) => {
+      questions.push(question);
+      return true;
+    };
+
+    expect(await sessionsCommand(["remove", id.slice(0, 8)], dir, { ...io, confirm })).toBe(0);
+
+    expect(questions[0]).toContain(`remove session ${id.slice(0, 8)}`);
+    expect(questions[0]).toContain("memory notes it wrote stay");
+    expect(out[0]).toBe(`removed ${id.slice(0, 8)} · start`);
+    expect(out[1]).toContain(`keywork sessions restore ${id.slice(0, 8)}`);
+    expect(out[2]).toContain("keywork memory forget");
+    expect((await listSessions(dir)).sessions).toEqual([]);
+    expect((await listTrash(dir)).sessions.map((session) => session.id)).toEqual([id]);
+
+    const listed = consoleOf();
+    await sessionsCommand(["trash"], dir, listed.io);
+    expect(listed.out[0]).toMatch(new RegExp(`^${id.slice(0, 8)}  .*start$`));
+    expect(listed.out[1]).toContain("keywork sessions restore <id>");
+  });
+
+  it("skips the prompt with --yes, refuses without a terminal, and leaves the session on no", async () => {
+    const { dir, id } = await seededDir();
+    const quiet = consoleOf();
+    expect(await sessionsCommand(["remove", id.slice(0, 8)], dir, quiet.io)).toBe(2);
+    expect(quiet.err[0]).toContain("--yes");
+    expect((await listSessions(dir)).sessions).toHaveLength(1);
+
+    const declined = consoleOf();
+    expect(
+      await sessionsCommand(["remove", id.slice(0, 8)], dir, {
+        ...declined.io,
+        confirm: async () => false,
+      }),
+    ).toBe(0);
+    expect(declined.out).toEqual(["left as it was"]);
+    expect((await listSessions(dir)).sessions).toHaveLength(1);
+
+    const forced = consoleOf();
+    expect(
+      await sessionsCommand(["remove", id.slice(0, 8)], dir, { ...forced.io, yes: true }),
+    ).toBe(0);
+    expect((await listSessions(dir)).sessions).toEqual([]);
+  });
+
+  it("restores a trashed session so chat can resume it, and names a miss on stderr", async () => {
+    const { dir, id } = await seededDir();
+    const { out, io } = consoleOf();
+    await sessionsCommand(["remove", id.slice(0, 8)], dir, { ...io, yes: true });
+
+    expect(await sessionsCommand(["restore", id.slice(0, 8)], dir, io)).toBe(0);
+
+    expect(out.at(-2)).toBe(`restored ${id.slice(0, 8)} · start`);
+    expect(out.at(-1)).toBe(`resume it with: keywork chat --resume ${id.slice(0, 8)}`);
+    expect((await listTrash(dir)).sessions).toEqual([]);
+    const resumed = await openOrResumeSession(dir, ".", { resumeId: id.slice(0, 8) });
+    expect(resumed.seeded).toHaveLength(2);
+
+    const missing = consoleOf();
+    expect(await sessionsCommand(["restore", "nope"], dir, missing.io)).toBe(1);
+    expect(missing.err).toEqual(["nothing in the trash matches id nope"]);
+    const noId = consoleOf();
+    expect(await sessionsCommand(["remove"], dir, noId.io)).toBe(2);
+    expect(await sessionsCommand(["remove", "nope"], dir, { ...noId.io, yes: true })).toBe(1);
+  });
+
+  it("purges the trash after a confirm and says when it is already empty", async () => {
+    const { dir, id } = await seededDir();
+    const { out, io } = consoleOf();
+    expect(await sessionsCommand(["purge"], dir, io)).toBe(0);
+    expect(out).toEqual(["the trash is empty"]);
+    await sessionsCommand(["remove", id.slice(0, 8)], dir, { ...io, yes: true });
+
+    const questions: string[] = [];
+    const purged = consoleOf();
+    expect(
+      await sessionsCommand(["purge"], dir, {
+        ...purged.io,
+        confirm: async (question) => {
+          questions.push(question);
+          return true;
+        },
+      }),
+    ).toBe(0);
+
+    expect(questions[0]).toContain("delete 1 trashed session for good");
+    expect(purged.out).toEqual(["purged 1 session"]);
+    expect(existsSync(join(dir, ".trash"))).toBe(false);
+    const json = consoleOf();
+    await sessionsCommand(["trash"], dir, { ...json.io, json: true });
+    expect(JSON.parse(json.out.join("\n"))).toEqual([]);
+  });
+
+  it("leaves a fork pointing at its removed parent, which still lists, opens and names its origin", async () => {
+    const { dir, id } = await seededDir();
+    const { io } = consoleOf();
+    await sessionsCommand(["fork", id.slice(0, 8), "good-path"], dir, io);
+    const fork = (await listSessions(dir)).sessions.find((session) => session.id !== id);
+    const forkStore = await openOrResumeSession(dir, ".", { resumeId: fork?.id ?? "" });
+    expect(await forkOrigin(dir, forkStore.store.header.parentSession)).toEqual({
+      sessionId: id,
+      removed: false,
+    });
+
+    await sessionsCommand(["remove", id.slice(0, 8)], dir, { ...io, yes: true });
+
+    expect((await listSessions(dir)).sessions.map((session) => session.id)).toEqual([fork?.id]);
+    const reopened = await openOrResumeSession(dir, ".", { resumeId: fork?.id ?? "" });
+    expect(reopened.store.header.parentSession).toBeDefined();
+    expect(reopened.seeded).toHaveLength(2);
+    expect(await forkOrigin(dir, reopened.store.header.parentSession)).toEqual({
+      sessionId: id,
+      removed: true,
+    });
+    await sessionsCommand(["purge"], dir, { ...io, yes: true });
+    expect(await forkOrigin(dir, reopened.store.header.parentSession)).toEqual({ removed: true });
+    const tree = consoleOf();
+    expect(await sessionsCommand(["tree", fork?.id.slice(0, 8) ?? ""], dir, tree.io)).toBe(0);
+  });
+
+  it("drops the arc bound count on its own once the session is trashed", async () => {
+    const { dir, id } = await seededDir();
+    const bound = await openOrResumeSession(dir, ".", { resumeId: id.slice(0, 8) });
+    await bound.store.appendArcBinding("alpha");
+    expect((await boundSessionCounts(dir)).get("alpha")).toBe(1);
+
+    await sessionsCommand(["remove", id.slice(0, 8)], dir, { ...consoleOf().io, yes: true });
+
+    expect((await boundSessionCounts(dir)).get("alpha")).toBeUndefined();
+    await sessionsCommand(["restore", id.slice(0, 8)], dir, consoleOf().io);
+    expect((await boundSessionCounts(dir)).get("alpha")).toBe(1);
   });
 });

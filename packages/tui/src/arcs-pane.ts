@@ -25,7 +25,13 @@ import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
-import { focusOrOpenSession, overviewRowView, type SessionTreePort } from "./session-tree-pane.ts";
+import {
+  focusOrOpenSession,
+  overviewRowView,
+  removalConfirmLine,
+  removeSessionThrough,
+  type SessionTreePort,
+} from "./session-tree-pane.ts";
 import { overviewRowLine, type SessionPresence, withoutArcTag } from "./sessions-overview-model.ts";
 import { slugChunks, slugInk } from "./slug-ink.ts";
 import type { Theme } from "./theme.ts";
@@ -33,7 +39,7 @@ import { clipSpans } from "./width.ts";
 
 export interface ArcsPaneOptions {
   arcs: ArcsPort;
-  sessions: Pick<SessionTreePort, "overview" | "attach" | "subscribe">;
+  sessions: Pick<SessionTreePort, "overview" | "attach" | "subscribe" | "remove">;
   currentSession: () => string | undefined;
   presence?: SessionPresence;
   arcOrdinal?: ArcOrdinals;
@@ -70,6 +76,10 @@ export class ArcsPane implements Pane {
         close: (slug) => this.tasks.track(() => this.close(slug)),
         abandon: (slug) => this.tasks.track(() => this.abandon(slug)),
         reject: (reason) => intents.notice?.(reason),
+        ...(options.sessions.remove !== undefined && {
+          removeSession: (sessionId: string, title: string) =>
+            this.tasks.track(() => this.remove(sessionId, title)),
+        }),
       },
       {
         currentSession: options.currentSession,
@@ -117,7 +127,7 @@ export class ArcsPane implements Pane {
 
   handleKey(chord: Chord, sequence?: string): boolean {
     if (this.tray.open) return this.tray.handleKey(chord, sequence);
-    if (!this.model.naming && this.tray.opensOn(chord)) {
+    if (!this.model.naming && !this.model.confirming && this.tray.opensOn(chord)) {
       this.tray.openTray();
       return true;
     }
@@ -150,23 +160,20 @@ export class ArcsPane implements Pane {
   view(context: PaneContext): PaneView {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
-    const nameLine = this.nameLine(theme, focused);
+    const trailing = [
+      this.nameLine(theme, focused),
+      removalConfirmLine(this.model.sessions, theme, innerWidth),
+    ].filter((line) => line !== undefined);
     const tray = this.tray.open
       ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
       : undefined;
     this.lastPageRows = Math.max(
       0,
-      paneContentHeight(context) - (nameLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
+      paneContentHeight(context) - trailing.length - (tray?.rows ?? 0),
     );
     const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
-    this.trayFirstRow = 2 + body.length + (nameLine === undefined ? 0 : 1);
-    return paneChrome(
-      context,
-      this.title(),
-      ...body,
-      ...(nameLine === undefined ? [] : [nameLine]),
-      ...(tray?.children ?? []),
-    );
+    this.trayFirstRow = 2 + body.length + trailing.length;
+    return paneChrome(context, this.title(), ...body, ...trailing, ...(tray?.children ?? []));
   }
 
   private focusOrOpen(sessionId: string): Promise<void> {
@@ -174,6 +181,16 @@ export class ArcsPane implements Pane {
       sessions: this.options.sessions,
       intents: this.intents,
       live: () => this.tasks.live(),
+      ...(this.options.presence !== undefined && { presence: this.options.presence }),
+    });
+  }
+
+  private remove(sessionId: string, title: string): Promise<void> {
+    return removeSessionThrough(sessionId, title, {
+      sessions: this.options.sessions,
+      intents: this.intents,
+      live: () => this.tasks.live(),
+      refresh: () => this.refresh(),
       ...(this.options.presence !== undefined && { presence: this.options.presence }),
     });
   }
@@ -248,6 +265,7 @@ export const arcsTray: readonly KeyedTrayCommand[] = [
 
 export const arcSessionsTray: readonly KeyedTrayCommand[] = [
   { name: "open", description: "open the selected session", key: "enter" },
+  { name: "remove", description: "move the selected session to the trash", key: "x" },
   { name: "back", description: "return to the arcs list", key: "escape" },
   { name: "refresh", description: "reload arcs and sessions", key: "r" },
 ];

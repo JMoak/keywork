@@ -1,6 +1,7 @@
 import { engineEventTypes, serverEventTypes } from "./events.ts";
 import { airlockFamily } from "./routes/airlock.ts";
 import { askFamily } from "./routes/asks.ts";
+import { changesFamily } from "./routes/changes.ts";
 import { documentFamily } from "./routes/document.ts";
 import { eventFamily } from "./routes/events.ts";
 import type {
@@ -12,10 +13,12 @@ import type {
 } from "./routes/family.ts";
 import { fileFamily } from "./routes/files.ts";
 import { flavorFamily } from "./routes/flavors.ts";
+import { lifecycleFamily } from "./routes/lifecycle.ts";
 import { memoryFamily } from "./routes/memory.ts";
 import { sessionVerbFamily } from "./routes/session-verbs.ts";
 import { sessionFamily } from "./routes/sessions.ts";
 import { surfaceFamily } from "./routes/surfaces.ts";
+import { treeFamily } from "./routes/tree.ts";
 import { workspaceFamily } from "./routes/workspace.ts";
 
 export type { HttpMethod, JsonSchema, RouteSpec, WorkspaceInfo } from "./routes/family.ts";
@@ -32,6 +35,9 @@ export const routeFamilies = [
   fileFamily,
   surfaceFamily,
   flavorFamily,
+  treeFamily,
+  changesFamily,
+  lifecycleFamily,
 ] as const;
 
 export type Route = (typeof routeFamilies)[number]["routes"][number];

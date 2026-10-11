@@ -4,6 +4,18 @@ import { type AuditEntry, auditLine, parseAuditLog } from "./audit.ts";
 import { type BootstrapSelection, mostUsefulFirst, selectWithinBudget } from "./bootstrap.ts";
 import { type Frontmatter, parseDocument, serializeDocument } from "./frontmatter.ts";
 import {
+  auditSegmentHost,
+  type DailySegment,
+  dailySegmentDate,
+  dailySegmentHost,
+  hostAuditPath,
+  hostDailyPath,
+  mergeAuditSegments,
+  mergeDailySegments,
+  type PlacedDailyEntry,
+  segmentIndexes,
+} from "./hosts.ts";
+import {
   contentHash,
   type FileDelta,
   fileDelta,
@@ -57,7 +69,14 @@ import {
   stagedSubjectPath,
   stagedWriteDeltas,
 } from "./staging.ts";
-import { auditFile, dailyDir, mocFile, ReservedPathError, VaultFiles } from "./vault-files.ts";
+import {
+  auditFile,
+  dailyDir,
+  isAuditSegmentPath,
+  mocFile,
+  ReservedPathError,
+  VaultFiles,
+} from "./vault-files.ts";
 
 export interface MemoryStoreOptions {
   vaultRoot: string;
@@ -67,6 +86,12 @@ export interface MemoryStoreOptions {
   reservedPaths?: readonly string[];
   ledgerCapacity?: number;
   learnedBy?: string;
+  host?: string;
+}
+
+export interface NoteFileChange {
+  path: string;
+  content: string | null;
 }
 
 export interface NoteInput {
@@ -136,6 +161,7 @@ type ForgetReview = Extract<StagedItem, { kind: "forget-proposal" }>;
 export class MemoryStore {
   readonly vaultRoot: string;
   readonly trusted: boolean;
+  readonly host: string | undefined;
   private readonly files: VaultFiles;
   private readonly staging: StagingArea;
   private readonly now: () => Date;
@@ -154,6 +180,7 @@ export class MemoryStore {
     this.secrets = Object.entries(options.secrets ?? {}).map(([name, value]) => ({ name, value }));
     this.ledgerCapacity = options.ledgerCapacity ?? defaultLedgerCapacity;
     this.learnedBy = options.learnedBy;
+    this.host = options.host;
   }
 
   async listNotes(): Promise<Note[]> {
@@ -164,6 +191,23 @@ export class MemoryStore {
       if (note !== undefined) notes.push(note);
     }
     return notes;
+  }
+
+  async notePaths(): Promise<string[]> {
+    if (!this.trusted) return [];
+    return this.files.walkNotes();
+  }
+
+  async readNoteSource(path: string): Promise<string | null> {
+    if (!this.trusted || !this.files.isNotePath(path)) return null;
+    return this.files.read(path);
+  }
+
+  async segmentHosts(): Promise<string[]> {
+    if (!this.trusted) return [];
+    const daily = (await this.files.fileNames(dailyDir)).map(dailySegmentHost);
+    const audit = (await this.files.fileNames("")).map(auditSegmentHost);
+    return [...new Set([...daily, ...audit].filter(isDefined))].sort();
   }
 
   async readNote(name: string): Promise<Note | undefined> {
@@ -186,16 +230,14 @@ export class MemoryStore {
 
   async readDaily(date?: string): Promise<DailyEntry[]> {
     if (!this.trusted) return [];
-    const raw = await this.files.read(dailyPath(date ?? dailyDateOf(this.now())));
-    return raw === null ? [] : parseDailyEntries(raw);
+    const placed = await this.placedDailyEntries(date ?? dailyDateOf(this.now()));
+    return placed.map((item) => item.entry);
   }
 
   async listDailyDates(): Promise<string[]> {
     if (!this.trusted) return [];
-    return (await this.files.fileNames(dailyDir))
-      .filter((file) => file.endsWith(".md"))
-      .map(noteName)
-      .filter(isDailyDate);
+    const dates = (await this.files.fileNames(dailyDir)).map(dailySegmentDate);
+    return [...new Set(dates.filter(isDefined))];
   }
 
   async readReserved(path: string): Promise<string | null> {
@@ -220,8 +262,13 @@ export class MemoryStore {
 
   async readAudit(): Promise<AuditEntry[]> {
     if (!this.trusted) return [];
-    const raw = await this.files.read(auditFile);
-    return raw === null ? [] : parseAuditLog(raw);
+    const segments = (await this.files.fileNames("")).filter(isAuditSegmentPath);
+    const logs: AuditEntry[][] = [];
+    for (const path of [auditFile, ...segments]) {
+      const raw = await this.files.read(path);
+      if (raw !== null) logs.push(parseAuditLog(raw));
+    }
+    return mergeAuditSegments(logs);
   }
 
   async bootstrap(tokenBudget: number): Promise<BootstrapSelection> {
@@ -283,7 +330,7 @@ export class MemoryStore {
   async appendDaily(text: string, provenance: Provenance, session?: string): Promise<WriteResult> {
     this.gate();
     return this.serialized(async () => {
-      const path = dailyPath(dailyDateOf(this.now()));
+      const path = this.dailyPathFor(dailyDateOf(this.now()));
       const entry = dailyEntryLines(
         this.redact(text),
         provenance,
@@ -333,6 +380,23 @@ export class MemoryStore {
   async recordAudit(event: string): Promise<void> {
     this.gate();
     await this.serialized(() => this.audit(this.redact(event)));
+  }
+
+  async reconcileNoteFiles(changes: readonly NoteFileChange[]): Promise<WriteResult> {
+    this.gate();
+    for (const change of changes) {
+      if (!this.files.isNotePath(change.path))
+        throw new ReservedPathError(change.path, "not an atomic note path");
+    }
+    return this.serialized(async () => {
+      const deltas: FileDelta[] = [];
+      for (const change of changes) {
+        const before = await this.files.read(change.path);
+        const after = change.content === null ? null : this.redact(change.content);
+        deltas.push(fileDelta(change.path, before, after));
+      }
+      return this.commit("edit", deltas, changes[0]?.path ?? "", false);
+    });
   }
 
   async approve(stagedId: string): Promise<WriteResult> {
@@ -391,6 +455,28 @@ export class MemoryStore {
     return this.files.isReserved(path) ? path : undefined;
   }
 
+  private dailyPathFor(date: string): string {
+    return this.host === undefined ? dailyPath(date) : hostDailyPath(date, this.host);
+  }
+
+  private auditPath(): string {
+    return this.host === undefined ? auditFile : hostAuditPath(this.host);
+  }
+
+  private async placedDailyEntries(date: string): Promise<PlacedDailyEntry[]> {
+    dailyPath(date);
+    const names = (await this.files.fileNames(dailyDir)).filter(
+      (name) => dailySegmentDate(name) === date,
+    );
+    const segments: DailySegment[] = [];
+    for (const name of names) {
+      const path = `${dailyDir}/${name}`;
+      const raw = await this.files.read(path);
+      if (raw !== null) segments.push({ path, entries: parseDailyEntries(raw) });
+    }
+    return mergeDailySegments(segments);
+  }
+
   private async readNoteFile(path: string): Promise<Note | undefined> {
     const raw = await this.files.read(path);
     return raw === null ? undefined : parseNote(path, raw);
@@ -401,7 +487,7 @@ export class MemoryStore {
       input.entity !== undefined
         ? await this.resolveEntityTarget(this.redact(input.entity))
         : await this.resolveTitleTarget(this.redact(input.title ?? ""));
-    if (this.files.isReserved(target.path))
+    if (!this.files.isNotePath(target.path))
       throw new InvalidTitleError(target.name, "reserved by the vault layout");
     return target;
   }
@@ -570,11 +656,13 @@ export class MemoryStore {
       if (path !== undefined && raw !== null) deltas.push(fileDelta(path, raw, null));
     }
     for (const [date, indexes] of dailyEntryIndexesByDate(forget.entries)) {
-      const path = dailyPath(date);
-      const raw = await this.files.read(path);
-      if (raw === null) continue;
-      const kept = withoutDailyEntries(raw, indexes);
-      deltas.push(fileDelta(path, raw, kept.trim() === "" ? null : kept));
+      const placed = await this.placedDailyEntries(date);
+      for (const [path, dropped] of segmentIndexes(placed, indexes)) {
+        const raw = await this.files.read(path);
+        if (raw === null) continue;
+        const kept = withoutDailyEntries(raw, dropped);
+        deltas.push(fileDelta(path, raw, kept.trim() === "" ? null : kept));
+      }
     }
     return deltas;
   }
@@ -650,8 +738,9 @@ export class MemoryStore {
 
   private async audit(event: string): Promise<void> {
     const line = auditLine(this.now().toISOString(), event);
-    const before = await this.files.read(auditFile);
-    await this.apply(fileDelta(auditFile, before, `${before ?? ""}${line}`));
+    const path = this.auditPath();
+    const before = await this.files.read(path);
+    await this.apply(fileDelta(path, before, `${before ?? ""}${line}`));
   }
 
   private async delta(path: string, after: string): Promise<FileDelta> {
@@ -685,6 +774,10 @@ function dailyEntryIndexesByDate(entryIds: readonly string[]): Map<string, Set<n
     byDate.set(date, indexes);
   }
   return byDate;
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }
 
 function ensureTrailingNewline(text: string): string {

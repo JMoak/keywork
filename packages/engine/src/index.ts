@@ -504,6 +504,7 @@ export {
   type SkillEvidence,
   type SkillEvidenceEntry,
   type SkillReviewReason,
+  type SweepDeferral,
   type SweepOptions,
   type SweepReport,
 } from "./memory/gardener.ts";
@@ -524,12 +525,46 @@ export {
   type SkippedRelation,
 } from "./memory/graph.ts";
 export {
+  auditSegmentHost,
+  dailySegmentDate,
+  dailySegmentHost,
+  hostAuditPath,
+  hostDailyPath,
+  hostToken,
+  isMultiHostVault,
+  layoutMarker,
+  localHost,
+  markMultiHostVault,
+  vaultHost,
+} from "./memory/hosts.ts";
+export {
+  defaultLeaseTtlMs,
+  isFresh,
+  type LeaseClaim,
+  type LeaseRecord,
+  leaseFile,
+  SweepLease,
+  type SweepLeaseOptions,
+} from "./memory/lease.ts";
+export {
   contentHash,
   type FileDelta,
   type LedgerEntry,
   type LedgerOp,
   type RevertOutcome,
 } from "./memory/ledger.ts";
+export {
+  type ConflictSides,
+  conflictMarkers,
+  derivedFields,
+  isAppendOnlyPath,
+  type MergeOutcome,
+  type MergeSides,
+  mergeFrontmatter,
+  mergeText,
+  mergeVaultFile,
+  splitConflictMarkers,
+} from "./memory/merge.ts";
 export { canonicalEntityPath, InvalidTitleError, titleKey } from "./memory/naming.ts";
 export {
   botMocLink,
@@ -578,6 +613,16 @@ export {
   memorySearchTool,
   type RecallListener,
 } from "./memory/recall-tools.ts";
+export {
+  type ConflictIntake,
+  type ConflictSource,
+  conflictArtifactOriginal,
+  conflictOfField,
+  conflictSiblingName,
+  type ReconcileOptions,
+  reconcileVault,
+  type VaultReconciliation,
+} from "./memory/reconcile.ts";
 export { type NamedSecret, redactForPersistence } from "./memory/redaction.ts";
 export {
   type BotIdentity,
@@ -622,6 +667,7 @@ export {
   MemoryStore,
   type MemoryStoreOptions,
   MissingNoteError,
+  type NoteFileChange,
   type NoteInput,
   type WriteResult,
 } from "./memory/store.ts";
@@ -629,6 +675,7 @@ export {
   isMissingFileError,
   PathOutsideVaultError,
   ReservedPathError,
+  syncDir,
   VaultFiles,
   writeFileAtomic,
 } from "./memory/vault-files.ts";
@@ -657,6 +704,7 @@ export {
   textTurn,
   toolCallTurn,
 } from "./mock-provider.ts";
+export { followMutations, mutatingToolNames } from "./mutations.ts";
 export {
   type CostRollup,
   carriesUsage,
@@ -834,6 +882,12 @@ export {
   type SessionStats,
   SessionStore,
 } from "./session/store.ts";
+export {
+  SessionFileCollisionError,
+  SessionTrash,
+  sessionFilePair,
+  trashDirName,
+} from "./session/trash.ts";
 export {
   type AgentAuthoredSkill,
   authoredByKey,

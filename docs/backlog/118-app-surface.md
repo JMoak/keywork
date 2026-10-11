@@ -513,3 +513,155 @@ without a switch answers 501. Exports confine `out` with `scopeContains` over th
 tool scope. Tests: `server.test.ts` "session verbs (118 K1) over the memory host" (eleven
 cases including the typed client and the `?session=` filter), `serve.test.ts` "K0 and K1 under
 serve" (eight cases over a real JSONL store and a temp shadow repo). Gate: see the report.
+
+### K2 · tree and diff over HTTP · landed 2026-10-11
+
+Families `packages/server/src/routes/tree.ts` (`GET /sessions/{id}/entries`, `POST
+/sessions/{id}/fork`, `/label`, `/leaf`) and `packages/server/src/routes/changes.ts` (`GET
+/sessions/{id}/changes`, `GET /sessions/{id}/changes/file?path=`), registered last in
+`routeFamilies` in that order. `SessionHost` gains two required sub-ports, `tree:
+SessionTreePort` (`entries`, `fork`, `label`, `moveLeaf`, with the string refusals `"missing"`
+/ `"unknown-entry"` mapped to 404 and `"busy"` to 409 in the family) and `changes: ChangesPort`
+(`list`, `file`, with `"no-baseline"` mapped to 409 `{ error: "no baseline" }`). `/entries`
+answers `store.entries()` verbatim beside `leafId`, `labels` (the map as an object) and
+`activePath` (ids), so the client runs `buildTree`; `SessionDetail` gains `parentSession`, the
+header field as the engine writes it. The per-file rules live in the family (`fileChangeOf`):
+NUL on either side answers `note: "binary"` with no text, a missing side answers `new` /
+`deleted` / `unreadable`, and each side is capped at `fileChangeCapBytes` (1 MiB of UTF-8, cut
+back to a character boundary) with `truncated: true`.
+
+`followMutations` moved into the engine (`packages/engine/src/mutations.ts`, with
+`mutatingToolNames`); the TUI's `followMutations(bus, feed)` is now a one-line delegate and its
+tests are untouched. The server's `packages/server/src/changes.ts` builds on it:
+`ChangesSource` (`label`, `changes`, `before`, `after`) is what a host supplies, `changesPortOver`
+turns it into the `ChangesPort`, and `ChangesFeed` follows each agent's bus and records
+`changes.updated` with the post-refresh `changedSince` paths (queued, so two rapid mutations
+cannot land out of order). `cli/src/serve-changes.ts` supplies the source from the composition's
+`Checkpoints` and tool scope (`after` confines the path with `scopeContains` and throws
+`WorkspaceScopeError` for 403); `cli/src/serve-tree.ts` supplies the tree port over
+`LiveSessions.bound(id)` (fork clones through `store.clone`, label appends through
+`store.setLabel`), and `LiveSession.moveLeaf` is the one verb that needs a live session: it
+moves the leaf with `moveLeaf` from `sessions/ports.ts`, rebuilds the agent over
+`store.messages()`, clears any staged undo, and announces `session.state`. Undo, redo and the
+staged restore announce `changes.updated` after their `restoreTo`. The memory host in
+`server/src/testing.ts` derives entries from the agent's history (`m<n>` ids, the same
+convention its `leafId` already used), forks by slicing it, and takes a `changes` source through
+its options. `client.ts` gains `entries`, `fork`, `labelEntry`, `moveLeaf`, `changes` and
+`changedFile`.
+
+**Decisions taken (all reversible):** `session.tree` is recorded by the route family after the
+verb returns (the only caller over HTTP), while `changes.updated` is recorded by the host
+because only the host sees the bus; on `/leaf` the host's `session.state` therefore arrives
+before the family's `session.tree`. `session.tree.entryId` is `string | null` so a leaf move to
+the root is the same event. `changes.updated.turn` is the highest attributed turn among the
+listed paths (the open turn attributes as the last ordinal), absent when no path is attributed.
+`parentSession` on the wire is the engine's header value, the parent's file, because
+`store.test.ts` pins that contract and the session-removal lane's `forkedFrom` resolves it to a
+session; the app reads `forkedFrom` for the link and `parentSession` only as provenance. Both
+ports are required on `SessionHost` (as the K1 verbs are) rather than optional with 503,
+because every host has an entry log and the no-checkpoints case is the 409. The two tree verbs
+that only need the store (`fork`, `label`) run over `bound(id)` without making the session
+live. `/changes` on a stored session composes the workspace lazily, as `onLive` does.
+
+**Gaps found, not built:** a label written over HTTP to a live session moves that session's
+leaf to the label entry (the store's `persistAsLeaf` contract, same as the TUI), so the next
+message parents under the label; harmless but worth a `SessionStore.setLabel` that does not
+move the leaf. `/changes/file` reads the working file whole before capping (the TUI does the
+same); a 20 MiB cap like `/files` would need a stat first. `changes.updated` fires per mutating
+call, so a turn with five writes announces five times; coalescing on a frame tick would need a
+host-level scheduler. `Checkpoints.changedSince` snapshots the worktree on every call (`git
+add -A`), which is the cost of `/changes` on a large tree.
+
+Tests: `engine/src/mutations.test.ts` (two cases), `server.test.ts` "tree and diff (118 K2)
+over the memory host" (five cases: entries, labels, fork with `parentSession`, leaf moves and
+their 409, no baseline, `changes.updated` after a write tool, the four notes and the 1 MiB
+boundary on ASCII and on a three-byte character, the typed client), `serve.test.ts` "K2 under
+serve" (seven cases: a fixture JSONL with a fork, a label, a compaction and a binding round-trips
+through `/entries`; fork into a readable session with `parentSession`; label into the file;
+leaf move over a live session branching the next prompt; 409 mid-turn; `changes.updated` with
+`turn: 1` after a real write through the shadow repo, both sides, binary, 403 and undo / redo;
+409 under `--no-checkpoints`; the ports through `servedHost`). The OpenAPI fixture was
+regenerated.
+
+Proposed commit message:
+
+```
+feat(server): tree and diff route families for keywork serve (118 K2)
+
+GET /sessions/{id}/entries, POST fork, label and leaf, GET changes and changes/file,
+with session.tree and changes.updated on /events. followMutations moves from the TUI
+into the engine so the server and the pane share one pairing; the TUI delegates.
+```
+
+### Serve parity · landed 2026-10-11
+
+The four gaps 115's pickup item 3 named, each closed by giving `serve` the pane's own code
+rather than a copy of it.
+
+**Files.** New: `cli/src/session-settle.ts` (`settleSessionTurn`, `compactSessionNow`,
+`budgetOf`, `sweepFlushFor`: the settle call both paths make, with the budget and flush lookup
+in one place), `cli/src/arc-seams.ts` (`closingSeamFor`, `latestArcActivity`: the arc service
+seams both paths pass), `cli/src/serve-workspace.ts` (`composeServedWorkspace`: the served
+composition with the arc service, bot memory layers, citation trail and agents wired as
+`compose-panes.ts` wires them, plus `attached`, `released`, `close`), `cli/src/mcp-reconnect.ts`
+(`reconnectOnRunningServer`, `describeReconnect`). Changed: `cli/src/serve.ts` (`LiveSession`
+settles through the agent's own `settleTurnsWith` and `settleToolBatchesWith`, forges agents
+with the store's bot, `adoptBinding`, `SessionRuntime.flushes` and `botNamed`,
+`HostOptions.closingProvider`; `LiveSessions.compose` and `close` delegate to the served
+workspace; `release` goes through `workspace.released`), `cli/src/serve-surfaces.ts`
+(`ServedSession.adoptBinding?`, called after an arc or bot binding is written),
+`cli/src/compose-panes.ts` (uses the shared settle and seam modules; its private copies are
+gone), `cli/src/mcp.ts` (`McpCommandOptions.runningServer`, login reports the reconnect),
+`cli/src/main.ts` (`runMcp` resolves the workspace ticket into a client), `server/src/host.ts`
+(`SessionState.arc` and `.bot`, `SessionSettlement`), `server/src/events.ts`
+(`session.settled`), `server/src/routes/surfaces.ts` (bot binding summary) and the fixture,
+`docs/events.md`.
+
+**Shapes.** `session.settled { phase: "after-turn" | "between-tool-batches" | "requested",
+flushed, compacted, notices }` on the session's id, recorded only when the settle did
+something; `session.state` carries `arc?` and `bot?` and fires after both binding verbs and
+when an arc close releases the session. The bot verb rebuilds a live session's agent through
+the same `swap` seam K1's undo uses, seeds the bot's `model` as a `model_change` when the
+registry resolves it (a later `/model` wins, unbinding keeps the model in force, an
+unresolvable seed keeps the session's model with a notice), and answers 409 while a turn runs.
+`POST /arcs/{slug}/close` now sweeps each bound live session's memory (`flushNow` over its
+store) into the arc layer and runs the closing judgment before the airlock, with the pane's
+`direction` steering; `surface.changed` rides the arc service's own subscription as before.
+`keywork mcp login <server>` ends by looking for the workspace's serve ticket
+(`runningServerAmong(ticketFilesFor(cwd, slug))`) and calling `POST /mcp/{name}/restart` on
+it, printing the server's status after; with no server it prints the old restart hint.
+
+**Decisions (reversible).** No new reconnect verb: `restart` already drops the connection and
+opens a fresh one, which reads the new token, so a second verb would be the same thing under
+another name. The settle under `serve` runs inside the agent's turn (the agent is busy until
+it settles, so a prompt that arrives mid-settle queues), which is how the pane does it and
+what keeps the once-per-turn rule from 117's mid-run compaction. The between-batches check
+uses the conversation estimate (`estimateConversationTokens`, the same reading `GET
+/sessions/{id}/context` answers) because `serve` has no ledger of provider-reported usage.
+The closing provider under `serve` is `HostOptions.closingProvider` when the host passes one
+(`main.ts` does not yet; the `roles.closing` config needs the registry), else the first bound
+live session's provider, else the server's own provider, so the judgment always runs when a
+session is bound. No auto-polling of the vault anywhere. The bot memory layers (`botMemory`)
+and the citation trail now compose under `serve` too, so a bot's bootstrap, skills and flush
+target and an arc candidate's cited eligibility match the pane.
+
+**Gaps not built.** The exit sweep the pane runs in its closers (`sweepOnClose`,
+`botLayers.sweep`) still does not run when `serve` stops. `keywork chat` keeps its own
+settle call in `chat.ts` (it could take `settleSessionTurn` too). `main.ts` does not pass
+`closingProvider` from `roles.closing` yet. A session's first turn that uses a tool journals
+its `permission_decision` entry before the prompt is persisted, so the compaction planner
+(which never cuts at index 0) finds nothing to summarize on that turn; the pane has the same
+ordering, so it is an engine planner item rather than a serve one.
+
+**Tests.** `cli/src/serve-parity.test.ts` (5: after-turn flush and compaction with
+`session.settled` once per turn, mid-run compaction between tool batches with no second
+compaction, bot bind rebuilding the agent with its seeded model and unbinding, 409 while
+busy, arc close flushing into the arc layer and distilling through the judgment with the
+direction), `cli/src/mcp-reconnect.test.ts` (2), `cli/src/arc-seams.test.ts` (2);
+`compose-panes.test.ts`, `mcp.test.ts`, `serve.test.ts` and `packages/server` unchanged in
+intent and green. The 118 K2 lane's in-progress tests in `serve.test.ts` were failing in the
+shared tree while this landed; the ask-routing test there passed with this lane's changes
+applied alone to a clean checkout.
+
+Proposed commit message: `feat(serve): pane parity for settle, bot binding, arc close and
+mcp login reconnect`.

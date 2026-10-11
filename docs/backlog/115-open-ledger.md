@@ -4,10 +4,21 @@
 > owns it. Read this first when resuming, then the owning overlay before building. Strike items
 > as they land and add the landing date; when a section empties, delete it.
 
-## Where the tree stands (2026-10-10)
+## Where the tree stands (2026-10-11)
 
-The 2026-10-07 round is committed and merged to `main` (`bc33378`). On top of it, uncommitted,
-the 2026-10-10 wave: 118 K0 + K1 (checkpoints and per-session inference under `serve`, the
+The 2026-10-10 wave is committed on `main` (`4b35b5e`). On top of it, uncommitted, the
+2026-10-11 wave: 118 K2 (entries, fork, label, leaf, changes and per-file diff over HTTP,
+`session.tree` and `changes.updated`, `followMutations` shared from the engine), session
+removal and restore across every surface (new overlay [119](119-session-lifecycle.md):
+`SessionTrash`, `keywork sessions remove | restore | trash | purge`, `DELETE /sessions/{id}`
+and the `/trash` family, `x` with an in-pane confirm in the tree, arcs and arc panes), serve
+parity (after-turn settle with `session.settled`, bot binding rebuilds the agent, arc close
+with flushes and the closing judgment, `keywork mcp login` reconnects a running server), and
+J14 multi-host memory sync (per-host segments, git merge driver, conflict intake, sweep
+lease, `keywork memory sync`). Gate on the quiet tree: `bun run check` clean, vitest 342
+files / 4645 tests (1 skipped), e2e 49 of 49.
+
+Earlier state (2026-10-10): the 2026-10-10 wave: 118 K0 + K1 (checkpoints and per-session inference under `serve`, the
 session verbs, `session.state`, `/events?session=`), K3 (workspace, files, trust, surfaces,
 flavors, `surface.changed`), K4 (memory and the arc airlock over HTTP, `memory.inbox`), the
 extension host wired into panes, chat, run and the CLI (per-session hosting,
@@ -34,14 +45,22 @@ ledger at the end of that file, gate 302 files / 4229 tests, e2e 47 of 47, all u
 remains of it is SW10 (Bun, decision 117-3), SW11 (the terminal pane spike) and the scope-first
 items, plus the calls listed under "Where the tree stands" there.
 
-1. Jordan reviews and commits the 2026-10-10 wave (commit messages proposed per lane in the
-   118 / 40 / 117 ledgers); installs Bun 1.3.14 locally so the e2e harness stops segfaulting
+1. Jordan reviews and commits the 2026-10-11 wave (commit messages proposed per lane in the
+   118 / 119 / 95 ledgers); installs Bun 1.3.14 locally so the e2e harness stops segfaulting
    on Ctrl+C.
-2. 118 K2 (tree and diff families): unblocked now that K0's checkpoints run under `serve`.
-3. `serve` gaps the wave named: no after-turn settle (flush, auto-compaction) under `serve`;
-   binding a session to a bot records the binding but builds no bot agent; an arc close under
-   `serve` runs with no flushes or closing judgment; after `keywork mcp login` a running pane
-   needs a manual server restart.
+2. ~~118 K2 (tree and diff families)~~ landed 2026-10-11. Next on the app surface: the gaps the
+   K2 and serve-parity ledgers name (no exit sweep when `serve` stops, `changes.updated` fires
+   per mutating call, `/changes/file` reads whole files before capping, `chat.ts` keeps its own
+   settle call, `main.ts` does not pass `closingProvider`).
+2b. Permissions: bash asks for every inspection command under `standard` and `[a] always` is a
+   pane-local flag; trust grants no permissions. Proposed (2026-10-11, waiting on Jordan's call
+   on scope): a read-only bash classifier in the built-in posture, a standing grant carried by
+   workspace trust, and a durable, resource-scoped `always`.
+3. `serve` gaps the wave named (all four closed 2026-10-11, ledger "Serve parity" in
+   [118](118-app-surface.md)): ~~no after-turn settle (flush, auto-compaction) under `serve`~~;
+   ~~binding a session to a bot records the binding but builds no bot agent~~; ~~an arc close
+   under `serve` runs with no flushes or closing judgment~~; ~~after `keywork mcp login` a
+   running pane needs a manual server restart~~.
 4. Linux walk for SW11 (`docs/windows.md` lists the steps) and the launch runway walk.
 5. Options-first notes for P2.3 and E8 (E8 gates the LSP runner seam per 114).
 6. One sitting for the decisions below; the newest calls are listed first.
@@ -61,8 +80,9 @@ items, plus the calls listed under "Where the tree stands" there.
 | ~~Extension host product wiring~~ | [40](40-extensions.md) | 5 | landed 2026-10-10 |
 | ~~MCP elicitation retry through the ask gate · MCP OAuth~~ | [117](117-influence-sweep.md) "MCP lane" | 3 + 5 | landed 2026-10-10; CIMD waits on a document URL |
 | 118 K2 tree and diff families | [118](118-app-surface.md) | 3 | K0, K1, K3, K4 landed 2026-10-10 |
+| ~~Session removal and restore (engine trash, `keywork sessions remove`, `restore`, `trash`, `purge`, the overview `x` key and trash view, `DELETE /sessions/{id}` and the `/trash` family)~~ | [119](119-session-lifecycle.md) | 4 | landed 2026-10-11; Q-SL1 to Q-SL3 for Jordan |
 | SW11 Linux verification · SW10 Bun trial | [117](117-influence-sweep.md), `../windows.md` | 1 + 2 | pane landed 2026-10-07 by construction; steps written |
-| J14 multi-host half (per-host layout, merge driver, lease) | [95](95-memory-and-skills.md) | 3 | single-vault reconcile landed 2026-10-07 |
+| ~~J14 multi-host half (per-host layout, merge driver, lease)~~ | [95](95-memory-and-skills.md) | 3 | landed 2026-10-11; single-vault reconcile landed 2026-10-07 |
 | FR6.18 enterprise security scoping doc | [101](101-feedback-round-4.md) | 2 | a document |
 | ~~AB2 honest MCP denial hint~~, AB5 agentbox first boot | [116](116-agentbox.md) | 1 each | AB2 and AB3 landed 2026-10-02; AB1 waits on Q-AB1; AB5 needs a Docker host |
 | Audit phase 3 crumbs | [111](111-code-audit.md) | 1 | `isPresetName` guards in `presets.ts`, `clip` in `mcp-pane-model.ts`, five-field copy in `cli/src/mcp.ts` |

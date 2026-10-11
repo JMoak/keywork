@@ -13,6 +13,12 @@ export interface SessionTreeView {
   sessionId: string;
   name?: string;
   roots: SessionTreeNode[];
+  forkedFrom?: ForkOrigin;
+}
+
+export interface ForkOrigin {
+  sessionId?: string;
+  removed: boolean;
 }
 
 export interface SessionTreeEffects {
@@ -52,6 +58,14 @@ export class SessionTreeModel extends RowCursor<SessionTreeRow> {
 
   sessionName(): string | undefined {
     return this.view?.name;
+  }
+
+  forkOriginFact(): string | undefined {
+    const origin = this.view?.forkedFrom;
+    if (origin === undefined) return undefined;
+    if (origin.sessionId === undefined) return "fork of a removed session";
+    const short = origin.sessionId.slice(0, 8);
+    return origin.removed ? `fork of ${short} (removed)` : `fork of ${short}`;
   }
 
   get labeling(): boolean {
