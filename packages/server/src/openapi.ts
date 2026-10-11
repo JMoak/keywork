@@ -1,5 +1,6 @@
-import { engineEventTypes } from "./events.ts";
+import { eventTypes } from "./events.ts";
 import { askFamily } from "./routes/asks.ts";
+import { changeFamily } from "./routes/changes.ts";
 import { documentFamily } from "./routes/document.ts";
 import { eventFamily } from "./routes/events.ts";
 import type {
@@ -9,11 +10,31 @@ import type {
   RouteSpec,
   WorkspaceInfo,
 } from "./routes/family.ts";
+import { memoryFamily } from "./routes/memory.ts";
+import { permissionFamily } from "./routes/permissions.ts";
+import { presetFamily } from "./routes/presets.ts";
+import { sessionVerbFamily } from "./routes/session-verbs.ts";
 import { sessionFamily } from "./routes/sessions.ts";
+import { statusFamily } from "./routes/status.ts";
+import { treeFamily } from "./routes/tree.ts";
+import { workspaceFamily } from "./routes/workspace.ts";
 
 export type { HttpMethod, JsonSchema, RouteSpec, WorkspaceInfo } from "./routes/family.ts";
 
-export const routeFamilies = [documentFamily, eventFamily, sessionFamily, askFamily] as const;
+export const routeFamilies = [
+  documentFamily,
+  eventFamily,
+  sessionFamily,
+  askFamily,
+  treeFamily,
+  changeFamily,
+  workspaceFamily,
+  statusFamily,
+  memoryFamily,
+  sessionVerbFamily,
+  presetFamily,
+  permissionFamily,
+] as const;
 
 export type Route = (typeof routeFamilies)[number]["routes"][number];
 
@@ -83,8 +104,11 @@ const envelopeSchema: JsonSchema = {
   properties: {
     id: { type: "integer", minimum: 1 },
     ts: { type: "string", format: "date-time" },
-    sessionId: { type: "string" },
-    type: { type: "string", enum: [...engineEventTypes] },
+    sessionId: {
+      type: "string",
+      description: "The session the event concerns; empty for a process-level server event.",
+    },
+    type: { type: "string", enum: [...eventTypes] },
     payload: {},
   },
 };

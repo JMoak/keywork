@@ -1,15 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Checkpoints, coreTools, EventBus, toolScope } from "@keywork/engine";
+import { Checkpoints, coreTools, EventBus, followMutations, toolScope } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import {
-  checkpointBaseline,
-  DiffModel,
-  FileChangeFeed,
-  followMutations,
-  workingFileReader,
-} from "./diff-model.ts";
+import { checkpointBaseline, DiffModel, FileChangeFeed, workingFileReader } from "./diff-model.ts";
 
 const scratch = scratchDirs("keywork-diff-shell-");
 
@@ -23,7 +17,7 @@ async function shellWorld(files: Record<string, string>) {
   const checkpoints = await Checkpoints.open({ worktree, gitDir: join(root, "shadow") });
   const bus = new EventBus();
   const feed = new FileChangeFeed();
-  followMutations(bus, feed);
+  followMutations(bus, () => feed.emit());
   const model = new DiffModel(
     {
       baseline: checkpointBaseline(checkpoints),

@@ -1,10 +1,10 @@
 import { type ContextReading, formatTokenCount } from "@keywork/engine";
-import type { Flavor } from "@keywork/shared";
+import type { Theme } from "@keywork/shared";
 import { density, type GlyphSupport, resolveMark, resolveRamp, tile } from "./capability.ts";
 
 export type GaugeStyle = "ramp" | "bar" | "bare" | "steps" | "tile";
 
-export type InstrumentTier = Flavor["instruments"];
+export type InstrumentTier = Theme["instruments"];
 
 export interface GaugeOptions {
   readonly style: GaugeStyle;

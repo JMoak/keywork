@@ -198,6 +198,7 @@ export interface AgentBuildSpec {
   onRetrieval?: ((disclosure: string) => void) | undefined;
   shell?: ShellSession | undefined;
   spills?: SpillStore | SpillSource | undefined;
+  permissions?: PermissionResolver | undefined;
 }
 
 export interface AgentComposition {
@@ -389,8 +390,9 @@ function buildAgent(
   const tools =
     composition.mcp === undefined ? () => baseTools : composition.mcp.surface(baseTools);
   const bot = spec.bot;
+  const basePermissions = spec.permissions ?? options.permissions;
   const permissions =
-    bot === undefined ? options.permissions : narrowedPermissions(bot, options.permissions);
+    bot === undefined ? basePermissions : narrowedPermissions(bot, basePermissions);
   const learning = bot === undefined ? undefined : options.bots?.bootstrapFor(bot);
   const prompt = promptFor(composition, spec.provider.modelId, bot, learning);
   const agent = new Agent({

@@ -1,4 +1,4 @@
-import { apcaLc, parseFlavor } from "@keywork/shared";
+import { apcaLc, parseTheme } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
 import {
   arcAnchor,
@@ -19,8 +19,8 @@ import {
   shiftLightness,
   spawnRankPositions,
 } from "./chroma.ts";
+import { keyworkNight } from "./palette.ts";
 import type { LifecycleState } from "./pane.ts";
-import { keyworkNight } from "./theme.ts";
 
 describe("inkClearingFloor", () => {
   it("returns an ink that already clears the floor untouched", () => {
@@ -66,7 +66,7 @@ describe("shiftLightness and blendToward", () => {
 
 const ramp = keyworkNight.ramp;
 
-const firstLight = parseFlavor({
+const firstLight = parseTheme({
   name: "first-light",
   appearance: "light",
   tokens: {
@@ -291,7 +291,7 @@ describe("paneBorder", () => {
     }
   });
 
-  it("keeps a light flavor's focus border above its borderFocus contrast floor at every rank", () => {
+  it("keeps a light theme's focus border above its borderFocus contrast floor at every rank", () => {
     for (const t of [0, 0.25, 0.5, 0.75, 1]) {
       const focused = paneBorder(firstLight, t, true);
       expect(apcaLc(focused, firstLight.background)).toBeGreaterThanOrEqual(borderFocusFloorLc);

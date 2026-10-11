@@ -22,7 +22,7 @@ Usage:
   keywork doctor                                            show what your terminal supports
   keywork serve [--port <n>|0] [--model <model>]
                 [--preset careful|standard|open]
-                [--session-dir <dir>]                       HTTP + SSE server on 127.0.0.1
+                [--session-dir <dir>] [--no-checkpoints]    HTTP + SSE server on 127.0.0.1
   keywork attach [--pane conversation|session-tree] [--session <id>]
                  [--url <url>] [--token <token>]            mount a pane over keywork serve
   keywork --version                                         print the version and exit

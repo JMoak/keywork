@@ -61,9 +61,12 @@ screenshots read as designed, not broken.
 
 Light themes are designed, not inverted; every theme (light and dark) meets the
 contrast floor for all token pairs actually composited in panes.
-**Accept:** gallery ships ≥1 first-class light flavor; contrast checks pass for every
-token pair in every shipped flavor.
-**Ratchet:** contrast-floor script runs over all shipped flavors in CI.
+**Accept:** gallery ships ≥1 first-class light theme; contrast checks pass for every
+token pair in every shipped theme.
+**Ratchet:** contrast-floor script runs over all shipped themes in CI.
+**Status 2026-10-11 (118/K6):** the gallery ships nine light themes beside ten dark ones,
+and `gallery.test.ts` runs `contrastFailures` over every one in CI, sections included
+(syntax, ANSI 16, diff grounds, selection, cursor); see `themes.md`.
 
 ## T7: Empty states that teach
 

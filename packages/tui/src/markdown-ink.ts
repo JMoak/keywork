@@ -1,8 +1,8 @@
 import { bg, bold, fg, italic, link, type TextChunk, underline } from "@opentui/core";
 import type { MarkdownSpan, MarkdownTone } from "./markdown.ts";
-import type { Theme } from "./theme.ts";
+import type { Palette } from "./palette.ts";
 
-export function markdownChunk(span: MarkdownSpan, theme: Theme, panel: boolean): TextChunk {
+export function markdownChunk(span: MarkdownSpan, theme: Palette, panel: boolean): TextChunk {
   let chunk = fg(markdownInk(span.tone, theme))(span.text);
   if (span.bold === true) chunk = bold(chunk);
   if (span.italic === true) chunk = italic(chunk);
@@ -13,7 +13,7 @@ export function markdownChunk(span: MarkdownSpan, theme: Theme, panel: boolean):
   return chunk;
 }
 
-export function markdownInk(tone: MarkdownTone, theme: Theme): string {
+export function markdownInk(tone: MarkdownTone, theme: Palette): string {
   switch (tone) {
     case "body":
     case "code":
@@ -54,6 +54,6 @@ export function markdownInk(tone: MarkdownTone, theme: Theme): string {
   }
 }
 
-function rampStop(theme: Theme, stop: number): string {
+function rampStop(theme: Palette, stop: number): string {
   return theme.ramp[Math.min(stop, theme.ramp.length - 1)] ?? theme.accent;
 }

@@ -1,6 +1,7 @@
 import { toError } from "@keywork/shared";
 import { type Chord, parseChord } from "./keys.ts";
 import { type McpAction, McpPaneModel, type McpServerView, stateGlyph } from "./mcp-pane-model.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import {
   type PaneChild,
@@ -16,7 +17,6 @@ import {
 import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import type { PointerEvent } from "./pointer.ts";
-import type { Theme } from "./theme.ts";
 
 export interface McpPanePort {
   load(): Promise<McpServerView[]>;
@@ -169,7 +169,7 @@ export class McpPane implements Pane {
     this.model.setServers(await this.port.load());
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     return rowsView(this.model, rows, theme, width, {

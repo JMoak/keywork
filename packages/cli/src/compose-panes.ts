@@ -22,7 +22,12 @@ import {
   suggestTitle,
   tapJournal,
 } from "@keywork/engine";
-import type { KeyworkConfig, TrustStore } from "@keywork/shared";
+import {
+  type KeyworkConfig,
+  paletteOverridesOf,
+  startupThemeName,
+  type TrustStore,
+} from "@keywork/shared";
 import {
   type AfterTurn,
   type AgentFactory,
@@ -43,7 +48,7 @@ import {
   readinessNotice,
   runApp,
   stdioColorTransport,
-  systemFlavor,
+  systemTheme,
   type TerminalColors,
   untrustedNotice,
   type WorkspacePort,
@@ -93,6 +98,7 @@ import { listSessions } from "./sessions/store.ts";
 import { userConfigDir } from "./user-config.ts";
 import { keyworkVersion } from "./version.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
+import { workspacePermissions } from "./workspace-permissions.ts";
 import { workspaceSetupPort } from "./workspace-setup.ts";
 import { type WorkspaceRecall, workspacesPort } from "./workspaces.ts";
 
@@ -152,7 +158,7 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
   const colors = await (seams.terminalColors ?? processTerminalColors)();
   await runApp({
     ...app,
-    flavors: [systemFlavor(colors)],
+    themes: [systemTheme(colors)],
     ...(seams.createRenderer !== undefined && { createRenderer: seams.createRenderer }),
     exit: (code) => {
       if (pendingReopen !== undefined && seams.reopen !== undefined) {
@@ -229,8 +235,15 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     skills: extensions.skills,
   });
   await botLayers.prepare();
+  const permissions = workspacePermissions({
+    cwd,
+    projectTrusted,
+    workspaceSlug,
+    userRoot: options.userRoot,
+    user: presets?.resolver,
+  }).resolverFor();
   const agents = composeAgents(composition, {
-    permissions: presets?.resolver,
+    permissions,
     arcs,
     bots: botLayers,
     citations,
@@ -309,7 +322,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       guardedShellEscape({
         tools: () => coreTools(composition.scope),
         guard,
-        ...(presets?.resolver !== undefined && { permissions: presets.resolver }),
+        permissions,
       }),
     closers: [
       async () => sweepOnClose(memory(), await workspaceSkillEvidence()),
@@ -322,8 +335,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     notices,
     terminalPane: { trusted: projectTrusted },
     extensions: extensionsView(extensions, cwd),
-    ...(config.theme !== undefined && { themeOverrides: config.theme }),
-    ...(config.flavor !== undefined && { flavor: config.flavor }),
+    ...themeChoice(config),
     keybindings: fileKeybindings({
       userDir: userConfigDir(),
       projectDir: join(cwd, ".keywork"),
@@ -595,5 +607,14 @@ function noticeFeed(): NoticeSource & { post: (text: string) => void } {
       posts.add(post);
       return () => posts.delete(post);
     },
+  };
+}
+
+function themeChoice(config: KeyworkConfig): Pick<AppOptions, "theme" | "paletteOverrides"> {
+  const theme = startupThemeName(config);
+  const paletteOverrides = paletteOverridesOf(config);
+  return {
+    ...(theme !== undefined && { theme }),
+    ...(paletteOverrides !== undefined && { paletteOverrides }),
   };
 }

@@ -145,10 +145,29 @@ describe("composePanes", () => {
       type: "tool-call",
       callId: "user-shell-1",
       name: "bash",
+      arguments: { command: "printf wired" },
+    });
+    expect(asked).toEqual(["printf wired"]);
+    expect(result?.isError).toBe(false);
+    expect(result?.output.trim()).toBe("wired");
+  });
+
+  it("runs a read-only shell escape in a trusted workspace without asking", async () => {
+    const asked: string[] = [];
+    const { app } = await composedIn(await tempDir());
+    const port = app.shellEscape?.({
+      confirm: async (call) => {
+        asked.push((call.arguments as { command: string }).command);
+        return true;
+      },
+    });
+    const result = await port?.run({
+      type: "tool-call",
+      callId: "user-shell-1",
+      name: "bash",
       arguments: { command: "echo wired" },
     });
-    expect(asked).toEqual(["echo wired"]);
-    expect(result?.isError).toBe(false);
+    expect(asked).toEqual([]);
     expect(result?.output.trim()).toBe("wired");
   });
 
@@ -165,7 +184,7 @@ describe("composePanes", () => {
       config: { theme: { accent: "#ff0000" }, page: { columnAt: 90 } },
     });
     expect(app.workspaces).toBe(workspaces);
-    expect(app.themeOverrides).toEqual({ accent: "#ff0000" });
+    expect(app.paletteOverrides).toEqual({ accent: "#ff0000" });
     expect(app.page).toEqual({ columnAt: 90 });
   });
 });

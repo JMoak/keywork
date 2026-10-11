@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { Entry, ReadDirectory } from "./browser-model.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { parseChord } from "./keys.ts";
+import { resolvePalette } from "./palette.ts";
 import type { PaneIntents } from "./pane.ts";
 import { paneContext } from "./testing/workflow-probe.ts";
-import { resolveTheme } from "./theme.ts";
 
 const inertIntents: PaneIntents = {
   openFile: () => {},
@@ -105,7 +105,7 @@ describe("BrowserPane ignored entries", () => {
       },
     );
     await pane.settled();
-    const theme = resolveTheme();
+    const theme = resolvePalette();
     for (const spec of ["j", "j", "j"]) pane.handleKey(parseChord(spec), undefined);
     const view = pane.view({ ...paneContext(), theme, focused: false });
     expect(inkOf(view, "▸ dist")).toBe(theme.textDim);

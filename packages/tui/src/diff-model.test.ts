@@ -1,4 +1,4 @@
-import { EventBus } from "@keywork/engine";
+import { EventBus, followMutations } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import {
   type ChangedFile,
@@ -7,7 +7,6 @@ import {
   type DiffSeams,
   FileChangeFeed,
   firstHunkLine,
-  followMutations,
   gitHeadBaseline,
   noBaselineNotice,
   refreshingCheckpoints,
@@ -241,7 +240,7 @@ describe("followMutations", () => {
     feed.subscribe(() => {
       announced += 1;
     });
-    followMutations(bus, feed);
+    followMutations(bus, () => feed.emit());
     const call = (callId: string, name: string) => ({
       type: "tool-call" as const,
       callId,

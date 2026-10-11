@@ -17,11 +17,11 @@ import {
 import { type LifecycleChrome, lifecycleChrome, rampColor } from "./chroma.ts";
 import { type Chord, parseChord } from "./keys.ts";
 import { assumedGlyphs } from "./marks.ts";
+import type { Palette, PaletteColorToken } from "./palette.ts";
 import type { ChromeWeight, LifecycleState, PaneContext, PaneView } from "./pane.ts";
 import type { TrayCommand } from "./pane-tray.ts";
 import type { RowCursor } from "./row-cursor.ts";
 import { slugInk, slugParts } from "./slug-ink.ts";
-import type { Theme, ThemeColorToken } from "./theme.ts";
 import { isLabelZone, type TitleSpan } from "./title-bar.ts";
 import { clipSpans, padEnd, take, width } from "./width.ts";
 
@@ -128,7 +128,7 @@ export const focusMark = { tier1: "▎", tier0: ">" } satisfies TieredMark;
 export function rowsView<Row>(
   list: Pick<RowCursor<Row>, "visibleRows">,
   rowCount: number,
-  theme: Theme,
+  theme: Palette,
   width: number,
   paint: RowPaint<Row>,
 ): PaneChild[] {
@@ -142,7 +142,7 @@ export function rowsView<Row>(
   });
 }
 
-export function selectedLine(content: string, theme: Theme, width: number): PaneChild {
+export function selectedLine(content: string, theme: Palette, width: number): PaneChild {
   return Text({
     content: padEnd(take(content, width), width),
     fg: theme.background,
@@ -154,11 +154,11 @@ export function paneLine(content: string, ink: string, width: number): PaneChild
   return Text({ content: take(content, width), fg: ink });
 }
 
-export function paneFailureLine(failure: string, theme: Theme, width: number): PaneChild {
+export function paneFailureLine(failure: string, theme: Palette, width: number): PaneChild {
   return paneLine(failure, theme.error, width);
 }
 
-export function toneInk(theme: Theme, tone: RowTone): string {
+export function toneInk(theme: Palette, tone: RowTone): string {
   return theme[toneTokens[tone]];
 }
 
@@ -340,13 +340,13 @@ function cellsOf(spans: readonly { text: string }[]): number {
   return spans.reduce((total, span) => total + width(span.text), 0);
 }
 
-function labelSpans(span: TitleSpan, ink: string, theme: Theme): RowSpan[] {
+function labelSpans(span: TitleSpan, ink: string, theme: Palette): RowSpan[] {
   if (span.zone !== "slug") return [{ text: span.text, fg: ink }];
   const inks = slugInk(theme, ink);
   return slugParts(span.text).map((part) => ({ text: part.text, fg: inks[part.role] }));
 }
 
-function tailInk(span: TitleSpan, theme: Theme): string {
+function tailInk(span: TitleSpan, theme: Palette): string {
   return span.zone === "telemetry" || span.zone === "bot" ? theme.textMid : theme.textDim;
 }
 
@@ -366,7 +366,7 @@ interface CellRange {
   readonly to: number;
 }
 
-function paintGround(row: RowSpan[], range: CellRange, ground: string, theme: Theme): RowSpan[] {
+function paintGround(row: RowSpan[], range: CellRange, ground: string, theme: Palette): RowSpan[] {
   const painted: RowSpan[] = [];
   let at = 0;
   for (const span of row) {
@@ -399,7 +399,7 @@ function chunkOf(span: RowSpan): TextChunk {
   return span.bg === undefined ? chunk : bg(span.bg)(chunk);
 }
 
-const toneTokens: Record<RowTone, ThemeColorToken> = {
+const toneTokens: Record<RowTone, PaletteColorToken> = {
   dim: "textDim",
   normal: "text",
   heading: "accentSoft",

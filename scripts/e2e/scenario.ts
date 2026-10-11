@@ -2,10 +2,10 @@ import type { Tool, TurnDelta } from "../../packages/engine/src/index.ts";
 import type {
   AgentFactory,
   AppOptions,
-  Flavor,
   FocusOutline,
   GlyphSupport,
   PresetsPort,
+  Theme,
 } from "../../packages/tui/src/index.ts";
 import type { CapturedFrame } from "./frame.ts";
 
@@ -62,7 +62,7 @@ export interface Scenario {
   readonly agentFactory?: AgentFactory;
   readonly script?: "per-agent" | "shared";
   readonly contextWindow?: number;
-  readonly flavors?: readonly Flavor[];
+  readonly themes?: readonly Theme[];
   readonly glyphs?: GlyphSupport;
   readonly focusOutline?: FocusOutline;
   readonly app?: Partial<AppOptions>;

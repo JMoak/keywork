@@ -227,7 +227,7 @@ function isMessageEntry(entry: SessionEntry): entry is MessageEntry {
   return entry.type === "message";
 }
 
-function rewindBefore(store: SessionStore, promptId: string): RewoundPrompt | undefined {
+export function rewindBefore(store: SessionStore, promptId: string): RewoundPrompt | undefined {
   const prompt = store.entry(promptId);
   if (prompt?.type !== "message" || prompt.message.role !== "user") return undefined;
   const leaf = store.leafId();

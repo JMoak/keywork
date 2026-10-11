@@ -2,9 +2,9 @@ import { Text } from "@opentui/core";
 import type { GlyphSupport } from "./capability.ts";
 import { FilterPicker } from "./filter-picker.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import { rankByFuzzy } from "./picker-keys.ts";
 import type { PointerEvent } from "./pointer.ts";
-import type { Theme } from "./theme.ts";
 import { clipLine, type TrayChild, type TrayItem, trayBox, trayRows } from "./tray.ts";
 
 export interface TrayCommand extends TrayItem {
@@ -95,7 +95,7 @@ export class PaneTrayModel {
 export function paneTrayView(
   tray: PaneTrayModel,
   width: number,
-  theme: Theme,
+  theme: Palette,
   glyphs?: GlyphSupport,
 ): PaneTrayView {
   const matches = tray.matches();

@@ -1,13 +1,20 @@
 #!/usr/bin/env bun
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
-import { debugEnabled, type PermissionResolver, ResolutionError } from "@keywork/engine";
+import {
+  debugEnabled,
+  formatReference,
+  type PermissionResolver,
+  ResolutionError,
+} from "@keywork/engine";
 import {
   ConfigError,
   openWorkspace,
   type PermissionsConfig,
   type PresetName,
+  permissionPresets,
   presetOrder,
+  startupThemeName,
   TrustStore,
 } from "@keywork/shared";
 import type { CommandIo } from "./command-io.ts";
@@ -283,7 +290,7 @@ async function runHeadlessPrompt(
 }
 
 async function runServe(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
-  const { io, cwd, projectTrusted, workspaceSlug } = context;
+  const { io, cwd, projectTrusted, workspaceSlug, trustStore, workspaceRecall } = context;
   const port = parsePort(values.port);
   if (port === "invalid") {
     io.printError(`keywork serve: --port wants a whole number from 0 to 65535 (0 picks a free port)
@@ -299,7 +306,8 @@ ${usage}`);
     return exitCodes.usage;
   }
   const { config, runtime } = (await context.openInference()).current();
-  const bound = runtime.resolve({ override: values.model, default: config.model });
+  const selection = { override: values.model, default: config.model };
+  const bound = runtime.resolve(selection);
   if (!bound.ok) {
     io.printError(
       `${bound.failure.message} · ${nextActionFor(bound.failure, shellCommands)}
@@ -308,6 +316,9 @@ ${connectHint}`,
     );
     return exitCodes.unresolved;
   }
+  const presets = userPresetSwitch(
+    preset === undefined ? config.permissions : permissionPresets[preset],
+  );
   const { serve } = await import("./serve.ts");
   return untilInterrupted((signal) =>
     serve({
@@ -316,8 +327,24 @@ ${connectHint}`,
       workspaceSlug,
       port,
       provider: runtime.provider(bound.binding),
-      permissions: headlessPermissions(preset, config.permissions),
+      inference: {
+        bind: (selected) => {
+          const resolution = runtime.resolve({ ...selection, selection: selected });
+          if (!resolution.ok) return resolution;
+          return {
+            ok: true,
+            provider: runtime.provider(resolution.binding),
+            reference: formatReference(resolution.binding.reference),
+          };
+        },
+      },
+      permissions: presets.resolver,
+      presets,
+      checkpoints: values["no-checkpoints"] ? "off" : "on",
       sessionDir: values["session-dir"],
+      trustStore,
+      workspaceRecall,
+      theme: startupThemeName(config),
       prompts: config.prompts,
       mcpServers: config.mcpServers,
       repoMap: config.repoMap,
@@ -551,6 +578,7 @@ function parseInvocationArgs(args: readonly string[]) {
       fresh: { type: "boolean", default: false },
       resume: { type: "string" },
       "session-dir": { type: "string" },
+      "no-checkpoints": { type: "boolean", default: false },
       workspace: { type: "string" },
       port: { type: "string" },
       pane: { type: "string" },

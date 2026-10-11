@@ -1,19 +1,19 @@
-import type { Flavor } from "@keywork/shared";
+import type { Theme } from "@keywork/shared";
 import type { Box } from "@opentui/core";
 import type { GlyphSupport } from "./capability.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { PointerEvent } from "./pointer.ts";
 import type { SessionGroupBy } from "./sessions-overview-model.ts";
-import type { Theme } from "./theme.ts";
 
 export type PaneView = ReturnType<typeof Box>;
 
-export type ChromeWeight = Flavor["chromeWeight"];
+export type ChromeWeight = Theme["chromeWeight"];
 
 export type LifecycleState = "idle" | "working" | "needs-you" | "finished-unseen" | "failed";
 
 export interface PaneContext {
-  theme: Theme;
+  theme: Palette;
   focused: boolean;
   width: number;
   height: number;
@@ -21,7 +21,7 @@ export interface PaneContext {
   costs?: boolean;
   hue?: string;
   glyphs?: GlyphSupport;
-  instruments?: Flavor["instruments"];
+  instruments?: Theme["instruments"];
   pinMark?: string;
 }
 

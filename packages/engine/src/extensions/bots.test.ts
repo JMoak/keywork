@@ -179,6 +179,16 @@ describe("narrowedPermissions", () => {
     const resolver = narrowedPermissions(bot({ overrides: { allow: ["bash"], deny: ["bash"] } }));
     expect(resolver(call("bash"))).toBe("deny");
   });
+
+  it("keeps the base ruling and its origin unless the override is stricter", () => {
+    const trusted = { permission: "allow", gate: "trusted" } as const;
+    expect(
+      narrowedPermissions(bot({ overrides: { allow: ["bash"] } }), () => trusted)(call("bash")),
+    ).toBe(trusted);
+    expect(
+      narrowedPermissions(bot({ overrides: { ask: ["bash"] } }), () => trusted)(call("bash")),
+    ).toBe("ask");
+  });
 });
 
 describe("a bot in a mock conversation", () => {

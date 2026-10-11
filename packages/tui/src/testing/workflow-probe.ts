@@ -1,7 +1,7 @@
 import type { Chord } from "../keys.ts";
+import { resolvePalette } from "../palette.ts";
 import type { Pane } from "../pane.ts";
 import type { AppProbe } from "../probe.ts";
-import { resolveTheme } from "../theme.ts";
 import { parseWorkspaceState, type WorkspaceState } from "../workspace-state.ts";
 
 export function mustParse(value: unknown): WorkspaceState {
@@ -48,7 +48,7 @@ export function pinnedIds(probe: AppProbe): string[] {
 }
 
 export function paneContext() {
-  return { theme: resolveTheme(), focused: true, width: 60, height: 20 };
+  return { theme: resolvePalette(), focused: true, width: 60, height: 20 };
 }
 
 export function describePaneTree(node: unknown): unknown {

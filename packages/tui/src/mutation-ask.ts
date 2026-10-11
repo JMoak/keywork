@@ -1,4 +1,5 @@
 import type { ToolCallPart } from "@keywork/engine";
+import { grantCandidates, type PermissionRule, SessionGrants } from "@keywork/shared";
 import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import type { Chord } from "./keys.ts";
 import { compactJson } from "./transcript-feed.ts";
@@ -6,6 +7,8 @@ import { compactJson } from "./transcript-feed.ts";
 export interface PendingAsk {
   summary: string;
   diff?: DiffLine[];
+  remembers: readonly PermissionRule[];
+  call: ToolCallPart;
   resolve(allowed: boolean): void;
 }
 
@@ -17,7 +20,7 @@ export interface AskDiffWindow {
 
 export class MutationAsk {
   private readonly asks: PendingAsk[] = [];
-  private alwaysAllow = false;
+  private readonly grants = new SessionGrants();
   private closed = false;
   private scroll = 0;
 
@@ -30,9 +33,13 @@ export class MutationAsk {
     return this.asks[0];
   }
 
+  get sessionRules(): readonly PermissionRule[] {
+    return this.grants.rules;
+  }
+
   confirm(call: ToolCallPart): Promise<boolean> {
     if (this.closed) return Promise.resolve(false);
-    if (this.alwaysAllow) return Promise.resolve(true);
+    if (this.grants.covers(call.name, call.arguments)) return Promise.resolve(true);
     return new Promise((resolve) => {
       const diff =
         this.readFile === undefined
@@ -41,6 +48,8 @@ export class MutationAsk {
       this.asks.push({
         summary: `${call.name} ${compactJson(call.arguments)}`,
         ...(diff !== undefined && { diff }),
+        remembers: grantCandidates(call.name, call.arguments),
+        call,
         resolve,
       });
       this.notify();
@@ -61,7 +70,7 @@ export class MutationAsk {
     if (ask.diff !== undefined && this.scrollDiff(chord, pageRows)) return true;
     const verdict = askVerdict(chord);
     if (verdict === undefined) return true;
-    if (verdict === "always") this.alwaysAllow = true;
+    if (verdict === "always") this.grants.remember(ask.call.name, ask.call.arguments);
     this.answer(verdict !== "deny");
     return true;
   }

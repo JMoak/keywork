@@ -46,7 +46,7 @@ export function workspaceReadiness(
   }
 }
 
-function setupRoot(cwd: string, anchors: AnchorMemory): string {
+export function setupRoot(cwd: string, anchors: AnchorMemory = fileAnchorMemory()): string {
   const anchor = resolveAnchor(cwd);
   if (anchor.source !== "launch") return anchor.root;
   return anchors.recall(cwd) ?? anchor.root;

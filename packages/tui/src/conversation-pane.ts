@@ -42,7 +42,9 @@ import { markdownChunk } from "./markdown-ink.ts";
 import { assumedGlyphs, type PageMarks, pageMarks } from "./marks.ts";
 import { headline, wearsMasthead } from "./masthead.ts";
 import { type Animator, inkAt } from "./motion.ts";
+import type { PendingAsk } from "./mutation-ask.ts";
 import { type PageGrammar, type PageThresholds, pageTierThresholds, resolvePage } from "./page.ts";
+import type { Palette } from "./palette.ts";
 import type { LifecycleState, Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import {
   type PaneTitle,
@@ -53,7 +55,6 @@ import {
   paneTitle,
 } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
-import type { Theme } from "./theme.ts";
 import { type TitleBot, titleSpans } from "./title-bar.ts";
 import type { TranscriptLine } from "./transcript-view.ts";
 import { trayBox, trayRows } from "./tray.ts";
@@ -647,13 +648,13 @@ export class ConversationPane implements Pane {
             ),
           ]),
       ...diffRows,
-      ...(ask === undefined ? [] : [askRow(ask.summary, innerWidth, theme)]),
+      ...(ask === undefined ? [] : [askRow(ask, innerWidth, theme)]),
       ...keyHint,
       ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
     );
   }
 
-  private keyHint(theme: Theme) {
+  private keyHint(theme: Palette) {
     if (this.model.backtracking()) {
       return [Text({ content: this.model.pickerHint(), fg: theme.accent })];
     }
@@ -702,14 +703,14 @@ export class ConversationPane implements Pane {
     return Math.min(1, reading.used / reading.window);
   }
 
-  private agedInk(theme: Theme, line: TranscriptLine): string {
+  private agedInk(theme: Palette, line: TranscriptLine): string {
     const entries = this.model.entries;
     const at = line.source === undefined ? entries.length - 1 : entries.indexOf(line.source);
     const age = entries.length <= 1 ? 1 : Math.max(0, at) / (entries.length - 1);
     return rampColor([theme.textDim, lineColor(line, theme)], 0.35 + 0.65 * age);
   }
 
-  private scrollMapTint(theme: Theme, rows: number, row: number): RowTint | undefined {
+  private scrollMapTint(theme: Palette, rows: number, row: number): RowTint | undefined {
     const entries = this.model.entries;
     if (entries.length === 0 || rows === 0) return undefined;
     const entry = entries[Math.min(entries.length - 1, Math.floor((row / rows) * entries.length))];
@@ -723,7 +724,7 @@ export class ConversationPane implements Pane {
     };
   }
 
-  private askDiffRows(theme: Theme) {
+  private askDiffRows(theme: Palette) {
     const window = this.model.askDiffWindow(askDiffRows);
     return [
       ...(window.above > 0 ? [Text({ content: `↑ ${window.above} more`, fg: theme.textDim })] : []),
@@ -734,6 +735,7 @@ export class ConversationPane implements Pane {
 }
 
 const askControls = "  [y] allow  [a] always  [n] deny";
+const onceOnlyAskControls = "  [y] allow  [n] deny";
 
 export const queueEditHint =
   "queue · ↑↓ pick · shift+↑↓ move · backspace cancels · enter sends now · esc done";
@@ -743,16 +745,17 @@ function queuedRow(
   at: number,
   selected: number | undefined,
   paneWidth: number,
-  theme: Theme,
+  theme: Palette,
 ) {
   const content = `⋯ ${text}`;
   if (at !== selected) return Text({ content, fg: theme.textDim });
   return Text({ content: padEnd(content, paneWidth), fg: theme.background, bg: theme.accent });
 }
 
-function askRow(summary: string, paneWidth: number, theme: Theme) {
-  const room = Math.max(0, paneWidth - askControls.length - 2);
-  return Text({ content: `? ${clip(summary, room)}${askControls}`, fg: theme.accent });
+function askRow(ask: PendingAsk, paneWidth: number, theme: Palette) {
+  const controls = ask.remembers.length > 0 ? askControls : onceOnlyAskControls;
+  const room = Math.max(0, paneWidth - controls.length - 2);
+  return Text({ content: `? ${clip(ask.summary, room)}${controls}`, fg: theme.accent });
 }
 
 interface RowTint {
@@ -761,7 +764,7 @@ interface RowTint {
   readonly bodyInk?: string;
 }
 
-function transcriptRow(line: TranscriptLine, paneWidth: number, theme: Theme, tint?: RowTint) {
+function transcriptRow(line: TranscriptLine, paneWidth: number, theme: Palette, tint?: RowTint) {
   const stamp = tint?.stampText ?? line.stamp ?? "";
   if (line.selected === true) {
     return Text({
@@ -801,7 +804,7 @@ function linked(chunk: TextChunk, href: string | undefined): TextChunk {
   return href === undefined ? chunk : link(href)(chunk);
 }
 
-function stampColor(line: TranscriptLine, theme: Theme): string {
+function stampColor(line: TranscriptLine, theme: Palette): string {
   switch (line.kind) {
     case "user":
       return theme.accent;
@@ -822,7 +825,7 @@ function styledRow(
   spans: MarkdownSpan[],
   panel: boolean,
   bodyWidth: number,
-  theme: Theme,
+  theme: Palette,
 ) {
   if (lead.length === 0 && spans.length === 0) return Text({ content: " " });
   const chunks = [...lead, ...spans.map((span) => markdownChunk(span, theme, panel))];
@@ -844,7 +847,7 @@ function lifecycleGlyphs(glyphs: GlyphSupport): LifecycleGlyphs {
   };
 }
 
-function diffRow(line: DiffLine, theme: Theme) {
+function diffRow(line: DiffLine, theme: Palette) {
   switch (line.kind) {
     case "add":
       return Text({ content: `+ ${line.text}`, fg: theme.success });
@@ -869,7 +872,7 @@ function promptLines(buffer: InputBuffer, focused: boolean): string[] {
   });
 }
 
-function lineColor(line: TranscriptLine, theme: Theme): string {
+function lineColor(line: TranscriptLine, theme: Palette): string {
   switch (line.kind) {
     case "user":
       return theme.accent;

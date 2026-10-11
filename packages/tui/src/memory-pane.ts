@@ -10,6 +10,7 @@ import {
   type MemoryQueryOutcome,
 } from "./memory-pane-model.ts";
 import type { DigestTreatment, GardenHeat, MemoryRow, SpanInk } from "./memory-rows.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type KeyedTrayCommand,
@@ -28,7 +29,6 @@ import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
-import type { Theme } from "./theme.ts";
 import { clip, clipSpans, width as textWidth } from "./width.ts";
 
 export type RevertOutcome = "reverted" | "needs-rebase";
@@ -267,7 +267,7 @@ export class MemoryPane implements Pane {
     this.options.intents?.notice?.(text);
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     return rowsView(this.model, rows, theme, width, {
@@ -277,7 +277,7 @@ export class MemoryPane implements Pane {
     });
   }
 
-  private paintRow(row: MemoryRow, theme: Theme, width: number, cursored: boolean): PaneChild {
+  private paintRow(row: MemoryRow, theme: Palette, width: number, cursored: boolean): PaneChild {
     const rail = railText(row, cursored);
     if (row.kind === "state") return this.paintStateRow(row, theme, width);
     if (row.markdown !== undefined) {
@@ -299,7 +299,7 @@ export class MemoryPane implements Pane {
     return styled(chunks, width);
   }
 
-  private paintStateRow(row: MemoryRow, theme: Theme, width: number): PaneChild {
+  private paintStateRow(row: MemoryRow, theme: Palette, width: number): PaneChild {
     const spans = row.spans ?? [];
     const hint = spans.at(-1);
     const facts = spans.slice(0, -1).map((span) => span.text);
@@ -316,7 +316,7 @@ export class MemoryPane implements Pane {
     return styled([fg(theme.textMid)(shown), fg(theme.textDim)(`${gap}${hint.text}`)], width);
   }
 
-  private inkOf(ink: SpanInk, row: MemoryRow, theme: Theme): string {
+  private inkOf(ink: SpanInk, row: MemoryRow, theme: Palette): string {
     switch (ink) {
       case "text":
         return theme.text;

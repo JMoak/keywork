@@ -1,7 +1,9 @@
 import { z } from "zod";
-import { flavorTokenOverridesSchema } from "./flavor.ts";
+import { type ThemeTokenOverrides, themeTokenOverridesSchema } from "./theme.ts";
 
 const keybinding = z.union([z.string(), z.array(z.string()), z.literal("none")]);
+
+const themeName = z.string().regex(/^[a-z][a-z0-9-]*$/, "theme names are lowercase slugs");
 
 const mcpTrusted = z
   .boolean()
@@ -315,14 +317,16 @@ export const configSchema = z
       .describe(
         'Action-name to chord overrides: a single chord, an array of alternative chords, or the literal "none" to unbind the action; exists because fully rebindable keys are a core product value.',
       ),
-    flavor: z
-      .string()
-      .regex(/^[a-z][a-z0-9-]*$/, "flavor names are lowercase slugs")
+    theme: z
+      .union([themeName, themeTokenOverridesSchema])
       .describe(
-        'Which closet flavor keywork wears at startup: "keywork-night" (the default) or "system", which derives its palette from the terminal (OSC 10/11 for ink and ground, OSC 4 for the ANSI 16, COLORFGBG when the terminal stays silent) so keywork looks native with zero config (30/C17); theme overrides lay over whichever flavor is worn, so this stays one mechanism (100/PD15).',
+        'Which theme keywork wears at startup: any gallery name (keywork-night, the default, and keywork-day, catppuccin-mocha/-latte, nord/nord-light, gruvbox-dark/-light, everforest-dark/-light, kanagawa-wave/-lotus, rose-pine/rose-pine-dawn, matte-black, osaka-jade, ristretto, flexoki-dark/-light) or "system", which derives its palette from the terminal (OSC 10/11 for ink and ground, OSC 4 for the ANSI 16, COLORFGBG when the terminal stays silent) so keywork looks native with zero config (30/C17). An object here is the deprecated pre-rename override shape, still read as `palette` for one release.',
       ),
-    theme: flavorTokenOverridesSchema.describe(
-      "Token-by-token #rrggbb overrides (plus the 1-6 stop ramp) laid over the worn flavor's palette and checked against the flavor token schema, so a misspelled token or malformed color fails at config load; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface).",
+    flavor: themeName.describe(
+      "Deprecated alias for `theme` from before flavors were renamed themes; still read for one release when `theme` names no theme. Write `theme` instead.",
+    ),
+    palette: themeTokenOverridesSchema.describe(
+      "Token-by-token #rrggbb overrides (plus the 1-6 stop ramp) laid over the worn theme's palette and checked against the theme token schema, so a misspelled token or malformed color fails at config load; exists because wholesale theming is a core product value (Omarchy-style: one token set drives every surface). The worn theme's terminal, syntax, diff, selection, and cursor sections are re-derived from the overridden palette so they stay readable on it.",
     ),
     page: z
       .object({
@@ -401,3 +405,24 @@ export type ConnectionProtocol = NonNullable<ConnectionConfig["protocol"]>;
 export const defaultConfig: KeyworkConfig = {
   keybindings: {},
 };
+
+export function startupThemeName(config: KeyworkConfig): string | undefined {
+  return typeof config.theme === "string" ? config.theme : config.flavor;
+}
+
+export function paletteOverridesOf(config: KeyworkConfig): ThemeTokenOverrides | undefined {
+  const legacy = typeof config.theme === "object" ? config.theme : undefined;
+  if (legacy === undefined) return config.palette;
+  return { ...legacy, ...config.palette };
+}
+
+export function withCurrentThemeKeys(config: KeyworkConfig): KeyworkConfig {
+  const { theme, flavor, palette, ...rest } = config;
+  const name = startupThemeName(config);
+  const overrides = paletteOverridesOf(config);
+  return {
+    ...rest,
+    ...(name !== undefined && { theme: name }),
+    ...(overrides !== undefined && { palette: overrides }),
+  };
+}

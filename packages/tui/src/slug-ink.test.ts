@@ -1,7 +1,7 @@
 import { RGBA } from "@opentui/core";
 import { describe, expect, it } from "vitest";
+import { keyworkNight } from "./palette.ts";
 import { slugChunks, slugInk, slugParts, slugWords } from "./slug-ink.ts";
-import { keyworkNight } from "./theme.ts";
 
 describe("the slug display grammar", () => {
   it("splits a slug into lit words and dim separators", () => {

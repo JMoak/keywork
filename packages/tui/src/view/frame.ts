@@ -2,9 +2,9 @@ import { Box, Text } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
 import { type GlyphSupport, resolveMark } from "../capability.ts";
 import { dimmedTheme, lifecycleChrome, rampColor, rampPositions } from "../chroma.ts";
-import type { Flavor } from "../flavor.ts";
 import { fullRect, type Rect, type Screen } from "../geometry.ts";
 import { pinMark } from "../marks.ts";
+import type { Palette } from "../palette.ts";
 import type { ChromeWeight, LifecycleState, PaneView } from "../pane.ts";
 import { hasHeaderRow, isSeamed, paneContentHeight, paneContentWidth } from "../pane-chrome.ts";
 import { drawnRect } from "../pane-geometry.ts";
@@ -35,7 +35,7 @@ export interface FrameInputs extends StatusBarInputs {
   gap: number;
   dim?: boolean;
   focusOutline?: FocusOutline;
-  instruments: Flavor["instruments"];
+  instruments: Theme["instruments"];
   glyphs: GlyphSupport;
   arcOf(paneId: string): string | undefined;
 }
@@ -208,7 +208,7 @@ function paneViewFor(
   rect: Rect,
   focused: boolean,
   hue: string,
-  unfocusedTheme: Theme,
+  unfocusedTheme: Palette,
 ): PaneView {
   const { chrome } = inputs;
   const theme = focused ? inputs.theme : unfocusedTheme;
@@ -245,7 +245,7 @@ function placedBox(rect: Rect, view: PaneView) {
   );
 }
 
-function dropPreviewBox(rect: Rect, theme: Theme) {
+function dropPreviewBox(rect: Rect, theme: Palette) {
   return Box({
     position: "absolute",
     left: rect.x,
@@ -260,7 +260,7 @@ function dropPreviewBox(rect: Rect, theme: Theme) {
   });
 }
 
-function idleMainView(theme: Theme, bare: boolean, tip: string | undefined) {
+function idleMainView(theme: Palette, bare: boolean, tip: string | undefined) {
   return Box(
     {
       flexGrow: 1,
@@ -274,7 +274,7 @@ function idleMainView(theme: Theme, bare: boolean, tip: string | undefined) {
   );
 }
 
-function overflowedView(theme: Theme) {
+function overflowedView(theme: Palette) {
   return Box(
     {
       flexGrow: 1,
@@ -287,7 +287,7 @@ function overflowedView(theme: Theme) {
   );
 }
 
-function emptyView(theme: Theme, tip?: string) {
+function emptyView(theme: Palette, tip?: string) {
   return Box(
     { flexGrow: 1, flexDirection: "column", alignItems: "center", justifyContent: "center" },
     ...noSessionsLines(tip).map((line) => Text({ content: line, fg: theme.textDim })),

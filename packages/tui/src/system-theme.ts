@@ -1,7 +1,6 @@
-import { type Flavor, parseFlavor } from "@keywork/shared";
+import { parseTheme, type Theme } from "@keywork/shared";
 import { blendToward, hexToOklch, inkClearingFloor, shiftLightness } from "./chroma.ts";
 import { type DebounceTiming, realTiming } from "./debounce.ts";
-import { keyworkNightFlavor } from "./flavor.ts";
 import {
   colorQueries,
   colorRepliesComplete,
@@ -11,7 +10,8 @@ import {
   type TerminalColors,
   themeChangeReported,
 } from "./osc.ts";
-import type { Theme } from "./theme.ts";
+import type { Palette } from "./palette.ts";
+import { keyworkNightTheme } from "./theme.ts";
 
 export interface ColorTransport {
   write(bytes: string): void;
@@ -31,7 +31,7 @@ export type RawInput = NodeJS.ReadStream & {
   isRaw?: boolean | undefined;
 };
 
-export const systemFlavorName = "system";
+export const systemThemeName = "system";
 export const colorQueryTimeoutMs = 200;
 
 export async function detectTerminalColors(
@@ -71,14 +71,14 @@ export function queryTerminalColors(
   });
 }
 
-export interface SystemFlavorCloset {
-  refit(flavor: Flavor): boolean;
+export interface SystemThemeCloset {
+  refit(theme: Theme): boolean;
 }
 
 export interface ThemeFollow {
   readonly transport: ColorTransport;
-  readonly closet: SystemFlavorCloset;
-  readonly dress: (flavor: Flavor) => Flavor;
+  readonly closet: SystemThemeCloset;
+  readonly dress: (theme: Theme) => Theme;
   readonly repaint: () => void;
   readonly timing?: DebounceTiming;
   readonly timeoutMs?: number;
@@ -89,7 +89,7 @@ export function followTerminalTheme(follow: ThemeFollow): () => void {
   let querying = false;
   let changedMidQuery = false;
   const rederive = (colors: TerminalColors): void => {
-    if (follow.closet.refit(follow.dress(systemFlavor(colors)))) follow.repaint();
+    if (follow.closet.refit(follow.dress(systemTheme(colors)))) follow.repaint();
   };
   const requery = (): void => {
     if (querying) {
@@ -127,14 +127,17 @@ export function colorsFromEnv(
   return { ...(foreground !== undefined && { foreground }), background, ansi: new Map() };
 }
 
-export function systemFlavor(
+export function systemTheme(
   colors: TerminalColors | undefined,
-  fallback: Flavor = keyworkNightFlavor,
-): Flavor {
-  if (colors?.background === undefined) return { ...fallback, name: systemFlavorName };
+  fallback: Theme = keyworkNightTheme,
+): Theme {
+  if (colors?.background === undefined) {
+    const { pair, ...unpaired } = fallback;
+    return { ...unpaired, name: systemThemeName };
+  }
   const tokens = systemTokens(colors);
-  return parseFlavor({
-    name: systemFlavorName,
+  return parseTheme({
+    name: systemThemeName,
     appearance: isDark(tokens.background) ? "dark" : "light",
     tokens,
     density: { light: "textDim", medium: "textMid", heavy: "text", full: "accent" },
@@ -144,7 +147,7 @@ export function systemFlavor(
   });
 }
 
-export function systemTokens(colors: TerminalColors): Theme {
+export function systemTokens(colors: TerminalColors): Palette {
   const background = colors.background;
   if (background === undefined) throw new Error("systemTokens needs the terminal background");
   const dark = isDark(background);

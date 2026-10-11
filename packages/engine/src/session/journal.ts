@@ -1,24 +1,27 @@
+import type { AskScope, PermissionRule } from "@keywork/shared";
 import type { EngineEvents, EventBus } from "../bus.ts";
 import type { CustomEntry, SessionEntry } from "./entries.ts";
 import type { SessionStore } from "./store.ts";
 
 export type PermissionVerdict = "granted" | "denied";
-export type PermissionGate = "policy" | "default" | "user" | "headless";
+export type PermissionGate = "policy" | "default" | "trusted" | "user" | "headless";
 
 export interface PermissionDecision {
   tool: string;
   callId: string;
   verdict: PermissionVerdict;
   gate: PermissionGate;
+  scope?: AskScope;
 }
 
-export type AskRule = Extract<PermissionGate, "policy" | "default">;
+export type AskRule = Extract<PermissionGate, "policy" | "default" | "trusted">;
 
 export interface PermissionAsk {
   tool: string;
   callId: string;
   arguments: unknown;
   rule: AskRule;
+  rules: PermissionRule[];
 }
 
 export type InjectionSource =

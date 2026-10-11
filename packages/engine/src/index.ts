@@ -6,8 +6,12 @@ export {
   type ConfirmingGate,
   type DelegatedOutcome,
   type DelegatedTurn,
+  type GrantedScope,
   type PermissionResolver,
+  type PermissionRuling,
+  permissionOf,
   QueuedPromptCancelledError,
+  rulingOf,
   type SendOptions,
   type SpillSource,
   type ToolBatchSettler,
@@ -29,6 +33,7 @@ export {
   type PromptOrigin,
   type QueuedPrompt,
   type SendBehavior,
+  type TreeChangeReason,
 } from "./bus.ts";
 export {
   declaredCapabilitiesFor,
@@ -404,6 +409,7 @@ export {
   type RecallTap,
   type UsefulnessSink,
 } from "./memory/citations.ts";
+export { type CuringStage, curingStage, settledUsefulness } from "./memory/curing.ts";
 export {
   checkDrift,
   type DiffChanges,
@@ -616,9 +622,18 @@ export {
   textTurn,
   toolCallTurn,
 } from "./mock-provider.ts";
+export { followMutations, mutatingToolNames } from "./mutations.ts";
+export {
+  memoryGrants,
+  PermissionLedger,
+  type PermissionLedgerOptions,
+  type PermissionsView,
+  type WorkspaceGrants,
+} from "./permission-ledger.ts";
 export {
   type CostRollup,
   carriesUsage,
+  costBasis,
   costNanosOf,
   emptyCostRollup,
   formatCostNanos,
@@ -911,5 +926,12 @@ export {
 } from "./tools/shell-session.ts";
 export { writeTool } from "./tools/write.ts";
 export { findTool, type Tool, ToolNotFoundError } from "./tools.ts";
+export {
+  ledgerKey,
+  type ModelRow,
+  type ModelTotals,
+  turnsOf,
+  UsageLedger,
+} from "./usage-ledger.ts";
 
 export { engineVersion } from "./version.ts";

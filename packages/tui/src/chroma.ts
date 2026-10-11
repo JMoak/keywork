@@ -1,7 +1,7 @@
 import { apcaLc, canonicalHex, hexChannels } from "@keywork/shared";
 import { clamp } from "./clamp.ts";
+import type { Palette } from "./palette.ts";
 import type { LifecycleState } from "./pane.ts";
-import type { Theme } from "./theme.ts";
 
 export interface Oklch {
   readonly l: number;
@@ -9,10 +9,10 @@ export interface Oklch {
   readonly h: number;
 }
 
-export type PaneBorderTheme = Pick<Theme, "border" | "borderFocus" | "ramp">;
+export type PaneBorderTheme = Pick<Palette, "border" | "borderFocus" | "ramp">;
 
 export type LifecycleTheme = PaneBorderTheme &
-  Pick<Theme, "background" | "text" | "textMid" | "error">;
+  Pick<Palette, "background" | "text" | "textMid" | "error">;
 
 export interface LifecycleChrome {
   readonly labelInk: string;
@@ -64,7 +64,7 @@ export function dimStep(hex: string, groundHex: string): string {
   return oklchToHex(mixOklch(hexToOklch(hex), hexToOklch(groundHex), dimBlend));
 }
 
-export function dimmedTheme(theme: Theme): Theme {
+export function dimmedTheme(theme: Palette): Palette {
   const recede = (hex: string): string => dimStep(hex, theme.background);
   return {
     ...theme,

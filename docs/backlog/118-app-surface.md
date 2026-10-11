@@ -367,3 +367,388 @@ server-side switch, so this family never needs a change when a kind is added.
 pre-split document key for key and in order, with the envelope's `type` enum taken from the
 live `engineEventTypes` because the vocabulary is the engine's; unique operation ids). Pure
 refactor: 66 server, serve and attach tests unchanged and green.
+
+### K2 · tree and diff · landed 2026-10-07
+
+`packages/server/src/routes/tree.ts` (`GET /sessions/{id}/entries`, `POST …/fork`, `POST
+…/label`, `POST …/leaf`) and `routes/changes.ts` (`GET …/changes`, `GET …/changes/file?path=`),
+registered last in `routeFamilies`; `host.ts` grows `entries`, `fork`, `label`, `moveLeaf`,
+`changes`, `changedFile`; `tree.ts` (`entriesOf`, `moveLeafOf`, `treeChange`) and `changes.ts`
+(`changedFilesOf`, `changedFileOf` with the 1 MiB per-side cap, `announceChanges`) are the
+helpers both hosts share. `followMutations` moved from `tui/src/diff-model.ts` to
+`engine/src/mutations.ts` so the TUI feed and the server announce from one pairing. Two bus
+events, `session.tree { sessionId, leafId, reason, entryId?, forkedTo? }` and
+`changes.updated { sessionId, paths }`, in `EngineEvents`, `engineEventTypes`, `docs/events.md`
+("Tree and files"). `fileSessionHost` composes checkpoints as the TUI does (`checkpointsGitDir`
+on `HostOptions`, the guard's `beforeMutation` captures, `persistNewMessages` takes the turn
+tag), which is K0's first half and a one-line overlap with K1 at the former `checkpoints: "off"`
+site; `/leaf` rebuilds the agent over the shorter path and refuses 409 while busy; untrusted
+answers `{ trusted: false, files: [] }`. The memory host keeps a `SessionStore` per session in a
+temp dir and takes a `ChangeSource | "untrusted"` seam. `client.ts` gains one method per route.
+Tests: `server.test.ts` 28 → 38, `serve.test.ts` 8 → 12, `/doc` fixture regenerated with the
+six rows. Not done: `session.state` after a leaf move (K1 owns it), `/changes` 409 under the file
+host (only reachable when the shadow repo cannot open; covered through the memory host).
+
+### K3 · landed 2026-10-07
+
+`packages/server/src/routes/workspace.ts` (`GET /workspace`, `GET /tree?path=`,
+`GET /files?path=&from=&to=`, `POST /workspace/trust`, `GET /flavors`) and
+`routes/status.ts` (`GET /mcp`, `POST /mcp/{name}/restart`, `POST /mcp/{name}/enabled
+{ enabled }`, `GET /mcp/{name}/tools`, `GET /arcs`, `POST /arcs { slug? }`,
+`POST /arcs/{slug}/close { direction? }`, `POST /arcs/{slug}/abandon`,
+`POST /sessions/{id}/arc { slug | null }`, `GET /bots`, `POST /bots`,
+`POST /sessions/{id}/bot { slug | null }`, `GET /workspaces`, `POST /workspaces { slug }`,
+`POST /workspaces/use { slug | null }`, `POST /workspaces/{slug}/focus|unfocus { dir }`),
+registered last in `routeFamilies`; `/doc` fixture regenerated (28 paths). Two families
+rather than four because the status surfaces share one host seam and one event.
+`SessionHost` grows `WorkspaceHost` and `SurfaceHost`; refusals travel as `HostRefusal
+(status, message)` thrown by the host and answered by one `.catch` in `server.ts`, so a
+handler is one line. The file host lives in `cli/src/serve-workspace.ts` (tool jail via
+`confinedPath(workspaceToolScope(...))` resolved against the anchor root, `.gitignore` rules
+read along the path exactly as the browser accumulates them, byte ranges through
+`sliceBounds`) and `cli/src/serve-surfaces.ts` (the TUI ports over HTTP: `arcService`,
+`botService`, `workspacesPort`, `McpRegistry`); `serve.ts` composes `arcService` into
+`composeAgents`, attaches each adopted store, and rebuilds a session's agent over the same
+bus for a bot switch. The memory host mirrors every verb in `server/src/testing-surfaces.ts`.
+`surface.changed { kind }` is the first entry of `serverEventTypes`; `BusEnvelope.type` is the
+union, `EventLog.surfaceChanged(kind)` records it with an empty `sessionId`, and
+`keywork attach` drops non-engine envelopes before relaying to its local bus. `docs/events.md`
+gains the "Server events" section. Tests: 66 → 102 across server, serve and attach (51 in
+`server.test.ts`, 21 in `serve.test.ts`, the MCP fixture through toggle and restart, real arcs
+through the airlock, a junction out of the root refused).
+
+Deviations from the table, all recorded in `/doc` summaries: `/tree` has no `hidden=`
+query (entries carry `hidden`, the client filters, per 118-2); `/files` adds `eof` beside
+`truncated` and checks the requested slice for NUL rather than the whole file; `/flavors`
+answers `placeholders: ["system"]` rather than omitting it (Q-AS8 taken as yes, reversible
+in one line); `/workspace/trust` answers `reopens: false` when trust was already recorded,
+and does not materialize a declaration (that is `/init`'s second half, not `keywork trust`);
+`/mcp/{name}/enabled` takes `{ enabled }`, not `{ on }`; a bot's pinned model is ignored under
+`serve` until K0 gives sessions their own provider. Context-dir linking stays off the wire
+(Q-AS7).
+
+### K4 memory · landed 2026-10-07
+
+`packages/server/src/routes/memory.ts` (new, registered last in `routeFamilies`): `GET
+/memory`, `GET /memory/inbox`, `POST /memory/inbox/{id}/approve|discard`, `GET
+/memory/notes[?layer=]`, `GET /memory/notes/{name}[?layer=]`, `GET /memory/daily[/{date}]`,
+`GET /memory/ledger`, `POST /memory/ledger/{id}/revert` (`needs-rebase` is a 200 outcome),
+`POST /memory/ask { query, arc? }` (the pane's `?`: lexical or hybrid search, no model call,
+20 hits, 2000-character query cap), and the airlock verbs `GET /arcs/{slug}/airlock`, `POST
+.../candidates/{note} { choice }`, `POST .../questions { title, choice }`, `POST
+.../deliver`, `POST .../finish { force? }`. `finish` stages the close review itself when none
+is staged (the TUI reaches that through `/arc close`, which K3 owns), so a client can walk
+finish → digest → triage → finish without a close route. `StagedItem` and `Note` cross the
+wire as the engine's own rows (a bot layer's items gain only `bot`), so the in-flux staging
+kinds are wire renames only; the family holds no `kind` switch.
+
+The host grew one port: `SessionHost.memory: MemoryHost` (`host.ts`), built by
+`memoryHost(seams)` in `packages/server/src/memory.ts` over an async `MemoryWorkspace`
+(`vault`, `arcs`, `airlock`, `botInbox`). `fileSessionHost` composes `arcService`, `botMemory`
+and the citation trail into `keywork serve` (`cli/src/serve.ts`) and recounts the inbox after
+every settled turn; `memorySessionHost` takes a `memory` seam. Inert workspace: reads answer
+`{ trusted: false, ... }` empties, writes 403 with `MemoryInertError`'s exact message.
+
+`memory.inbox { count, kinds }` is the first **server event**: `serverEventTypes` beside
+`engineEventTypes` in `events.ts`, `EventLog.announce` records it with an empty `sessionId`,
+the envelope schema's `type` enum is their union, `docs/events.md` gained the "Server events"
+section (the threshold of 3 stays client-side, P2.4 rising edge), `engine/src/bus.test.ts`
+holds only the engine section to its rule and `server.test.ts` the server one. The payload
+is `kinds` (a tally per engine kind) rather than 118-3's five named counts, so a new kind
+needs no server change. `remote-ports.ts` relays engine events only.
+
+Engine touched additively: `memory/curing.ts` (new; `curingStage` moved from `cli/src/
+memory.ts`, which re-exports it) and one index line. Tests: `server.test.ts` 32 → 42 (every
+route's inert and live shape against a temp vault through `MemoryStore`, approve/discard with
+the event and the audit lines, every staged kind passing through verbatim, notes by layer,
+daily, revert incl. `needs-rebase` after an outside edit, ask layered with an arc, the
+airlock mapping with its 400/404/409s), `serve.test.ts` 8 → 11 (inert file host, approve
+through the composed vault, the real airlock walk: bound session, `finish` → `undecided`,
+carry → successor, `finish` → `closed`, binding released on disk), `openapi-document.fixture.
+json` regenerated for the sixteen new rows.
+
+### Integration of K2, K3 and K4 · 2026-10-07
+
+The three lanes were folded onto one branch (`app-surface/all`) in lane order. Where they
+met: `serverEventTypes` is one list, `["surface.changed", "memory.inbox"]`, with
+`eventTypes` the engine ∪ server union and one `isEngineEventType` guard; `EventLog.announce`
+is the single process-level recorder (K3's `surfaceChanged(kind)` became
+`announce("surface.changed", { kind })`); `routeFamilies` runs document, events, sessions,
+asks, tree, changes, workspace, status, memory, and the `/doc` fixture was regenerated from
+that composition; `fileSessionHost` composes `arcService` once (with K4's `flushFor` and
+`citedNotes`) and carries K2's checkpoints, K3's surfaces and K4's `botMemory`, citation
+trail and inbox recount side by side; the memory host keeps K2's per-session stores and
+takes K3's `surfaces` and K4's `memory` seams; `docs/events.md` has one "Server events"
+section holding both events. K1 folds in by the same procedure (`C:\src\keywork-lanes\INTEGRATION.md`).
+
+### K0 + K1 · landed 2026-10-07
+
+**What landed.** `keywork serve` now composes checkpoints exactly as the TUI does (`compose`
+default, the shadow repo under `snapshotGitDir`, no trust gate; `--no-checkpoints` keeps the
+old behavior), wires `guard.beforeMutation` to `capture()` and tags each user message
+through `persistNewMessages(…, checkpoints)` as `chat.ts` does. Inference is per session:
+`HostOptions.inference: SessionInference` (`bind(selection) → { provider, reference } |
+failure`, built in `main.ts` from the runtime's `resolve({ override, selection, default })`)
+and `LiveSessions.providerFor(store)` reads `store.modelSelection()`; the session's
+`thinking_level_change` and `effort_change` entries are applied on adopt. `SessionHost`
+gained `checkpointsOf(id)` (`CheckpointReads | "missing" | "off"`, the capability K2's
+`/changes` reads through) and one method per verb. New family
+`routes/session-verbs.ts` (`/model`, `/thinking`, `/effort`, `/compact`, `/undo`, `/redo`,
+`/context`, `/cost`, `/export`, `/rename`) and `routes/presets.ts` (`POST /preset`),
+registered last in that order; `/prompt` gained `behavior` (default `queue`) and answers
+`{ sessionId, accepted, queued, behavior }`; `/events?session=` filters per 118-4 and
+`&only=session` was one boolean, so it shipped (Q-AS5 answered by code). `SessionSummary`
+gained `model`, `thinking`, `effort` (stored and live). `session.state` is the first server
+event: `serverEventTypes` beside `engineEventTypes`, `eventTypes` their union in the `/doc`
+envelope enum; `docs/events.md` gained a "Server events" section and the `?session=`
+paragraph, and `bus.test.ts` scans only the engine sections. The retired-model map moved
+from `tui/session-ledger.ts` into the engine as `UsageLedger` (with `costBasis` in
+`pricing.ts`), so `/cost` answers the honesty line and a `models` row per reference, and a
+model switch no longer zeroes the session's spend; the TUI ledger delegates to it. `client.ts`
+has one method per route; `remote-ports` relays only engine events to an attached pane.
+
+**Evidence.** `server.test.ts` 21 → 34 cases (memory host: every verb's 2xx/400/404/409,
+steer ahead of the queue, the filter in replay and live with `Last-Event-ID`, `session.state`
+payloads, `/preset` with `gate.preset` at `sessionId: ""`); `serve.test.ts` 8 → 17 (the
+checkpoint tag on the user message and `canUndo()` after a `write`, `checkpoints: "off"`
+leaving no tag, a stored `model_change` + thinking + effort reaching the provider request
+and `GET /sessions/{id}`, undo putting `note.txt` back to the previous turn and redo restoring
+turn and file, compaction over a real store with a focus, export inline / to a workspace
+directory / refused outside it, rename persisted to the JSONL, the preset port and its
+absence); `client.test.ts` 11 → 12; `openapi-document.fixture.json` regenerated with the
+eleven new rows. Full suite: 4250 passing, the only misses two 5 s timeouts under load in
+`cli/src/arcs.test.ts` and `cli/src/compose.test.ts` (untouched here, green in isolation);
+`bun run check` green under bun 1.3.9.
+
+**Findings.** `turn.completed` fires before the turn's messages are persisted, so the
+rewriting verbs (`/model`, `/compact`, `/undo`, `/redo`) answer 409 while busy and otherwise
+wait for the pending persist before touching the store. Compaction's `budget` comes from the
+provider's declared `contextWindow`, so `/compact` on an undeclared model assumes 200k like
+the TUI. `exportSession` writes into an existing directory or to a file path; it never creates
+the directory (TUI parity).
+
+**Assumptions Jordan may reverse.** `/rename` pins by construction: the TUI's `adoptTitle`
+sets `titleRequested`, so a stored name is never re-titled, and `serve` runs no titler at all
+(Q-AS3, no extra flag). `effort: null` records an `effort_change` entry of `"default"`, which
+`effortOf` reads back as "provider decides" (Q-AS3). `/cost` `models` rows are the
+in-process ledger, not the JSONL (Q-AS4: the map moved to the engine, so lineage is real for
+this process and starts empty on adopt, like the TUI's). `POST /preset` persists to the user
+config through `userPresetSwitch`, with `--preset` seeding the switch's initial rules; a body
+`confirmed: true` is the whole confirmation (Q-AS2). `/undo` with no prompt on the path falls
+back to a files-only `checkpoints.undo()` and answers `prompt: null`. The memory host's
+`/compact` answers `compacted: null` with a notice saying it keeps no store, and its `/export`
+refuses `out`.
+
+### Integration onto main + K1 + spills · landed 2026-10-10
+
+Branch `app-surface/next`, based on `bc33378` (main after PR #6, agentbox). Main already held
+the wave-0 route split byte for byte, so those hunks did not apply and nothing about them
+needed resolving. The K2+K3+K4 integration (`app-surface/all`) was taken as one delta against
+its reconstructed base (25e9f67 plus `wave0-server.patch` plus the wave-0 files, with main's
+own copy of this document as that file's base) and applied with `git apply --3way`; K1 was
+folded the same way on top. Agentbox touched none of `serve.ts`, `host.ts` or `testing.ts`;
+the only server-contract change it made is the engine event `extension.notice`.
+
+| File | Sides | Resolution |
+|---|---|---|
+| `packages/engine/src/bus.ts` | main, K2 | Both: `extension.notice` beside `session.tree` and `changes.updated` in `EngineEvents`. |
+| `packages/engine/src/bus.test.ts` | main, K2, K1 | Both list entries; K4's `serverEventsHeading` split kept over K1's literal. |
+| `packages/server/src/events.ts` | main, K2, K3+K4, K1 | One `ServerEvents` with `surface.changed`, `memory.inbox`, `session.state` (K1's `SessionState` import); one `serverEventTypes`; `eventTypes` the `as const` union; `vocabularyIsComplete` over the whole `EventType`; one `isEngineEventType`; `processLevelSessionId` kept. |
+| `packages/server/src/server.test.ts` | main, all, K1 | Rebuilt from the pre-K1 merge plus K1's edits (D7 loop over `engineEventTypes`, `/prompt` answer with `queued` and `behavior`) and K1's four describe blocks appended; git had interleaved K1's blocks into K2's. `samplePayloads` carries all three engine additions. |
+| `docs/events.md` | main, K2, K3+K4, K1 | `extension.notice` section, then "Tree and files"; one "Server events" section whose intro now says which server events are process-level (`surface.changed`, `memory.inbox`) and that `session.state` carries its session's id; sections in order `surface.changed`, `memory.inbox`, `session.state`. Envelope `sessionId` row merged. |
+| `docs/backlog/118-app-surface.md` | K2..K4, K1 | Both ledgers, K1's after the K2..K4 integration entry. |
+| `packages/server/src/host.ts` | all, K1 | Imports unioned; K2's tree and change types and K1's `SessionState`; K1's `PromptOutcome` (`started \| queued \| missing`); all's outcome types and `HostRefusal` then K1's; `SessionHost extends WorkspaceHost, SurfaceHost` carrying both verb sets. |
+| `packages/server/src/index.ts` | all, K1 | One events export block and one host export block holding every name. |
+| `packages/server/src/openapi.ts` | all, K1 | `routeFamilies`: document, events, sessions, asks, tree, changes, workspace, status, memory, sessionVerbs, presets (K1 added two families; appended after memory). Envelope `sessionId` description: "empty for a process-level server event". |
+| `packages/server/src/client.ts` | all, K1 | Both method sets and imports (deduplicated). |
+| `packages/server/src/testing.ts` | all, K1 | One store-backed `MemorySession`: K1's agent swap, ledger, `session.state` and verbs over K2's per-session `SessionStore`, persist and tree events, inside all's `MemorySessions` (K3 bindings, K4 memory seam). Undo and redo move the store's leaf instead of slicing agent history, so the store and the agent never disagree; the undone prompt's `entryId` is now the real entry id (K1's test expected `m0`), and `/compact` says "this host never compacts". `gate.preset` records at `processLevelSessionId`. |
+| `packages/cli/src/serve.ts` | all, K1 | Hand-merged: K1's `HostOptions` (`inference`, `presets`, `checkpoints`) beside K3's; K1's per-session provider, settings adoption and verbs on `LiveSession`; all's `Composed` with `arcService`, `botMemory` and citations composed once; one `AgentBuild` seam (history, provider, bus, bot) so model switches, compaction, undo and leaf moves keep a bot; `switchBot` and `moveLeaf` became `LiveSession` verbs that swap in place (queue adopted, ledger kept) instead of K2's release-and-readopt; K4's `afterTurn` recount after persist; K1's "can't undo files" notice. |
+| `packages/cli/src/serve.test.ts` | all, K1 | Rebuilt like `server.test.ts`; K1's undo test now waits for `session.state` by type, since K2's `session.tree` and `changes.updated` arrive first. |
+| `packages/cli/src/remote-ports.ts` | all, K1 | All's shared `isEngineEventType`; K1's private copy dropped. |
+| `packages/cli/src/sessions/ports.ts` | main, K1 | Main's `contextEditTarget` kept; `rewindBefore` exported for K1. |
+| `packages/server/src/sse.ts` | K1 | Clean apply; the `?session=` filter compares against `processLevelSessionId`. |
+
+Two parity fixes rode along. Serve's tool guard now calls `checkpoints.beginTurn()` before
+each turn, as agentbox made `chat.ts` do, and serve passes the session's `SpillStore` to
+`agents.build`, so a served session spills oversized tool output exactly as the TUI does
+(before this, serve kept whole outputs in the transcript). A leaf move now announces
+`session.state` on both hosts, the gap K2's ledger left for K1.
+
+**Spill route.** `GET /sessions/{id}/spills/{spillId}?from=&to=`, a row in the sessions
+family (operation `readSpill`). The engine already keys spills: `SpillReference.id` is a
+UUID minted by `SpillStore.keep`, the file is `<session>.spills/<id>.txt` beside the JSONL,
+and the reference carries `bytes`, `elidedFrom` and `elidedTo`. The answer is `/files`'s
+slice with `spillId` for `path`: `{ spillId, bytes, from, to, text, truncated, eof,
+encoding: "utf-8" }`, `[from, to)` defaulting to the whole spill, cut to 1 MiB with
+`truncated: true`. 400 when `from` or `to` is not a whole number; 404 for an unknown session
+(`no session has that id`) or an unknown or malformed spill id (`no spill <id> in this
+session`; ids outside `[A-Za-z0-9-]{1,64}` never reach the filesystem); 415 when the slice
+holds a NUL. A stored session answers without being made live. `spillSliceOf` in
+`server/src/spills.ts` serves both hosts; `SessionHost.spill`, `SpillSlice`, `SpillOutcome`
+and `client.spill(id, spillId, range?)` are the new surface.
+
+**Vocabulary and `/doc`.** `engineEventTypes` (19): turn.started, turn.delta,
+turn.completed, turn.interrupted, queue.changed, tool.started, tool.output, tool.finished,
+gate.ask, gate.permission, gate.preset, session.mode, context.injected,
+diagnostics.published, shell.reset, extension.notice, session.tree, changes.updated,
+engine.error. `serverEventTypes` (3): surface.changed, memory.inbox, session.state. `/doc`:
+62 paths across eleven families; the fixture was regenerated from the composed document.
+
+**Evidence.** `server.test.ts` 98, `serve.test.ts` 38, `client.test.ts` 13, `attach` 17,
+`remote-ports` 7, `bus.test.ts` 7, `openapi.test.ts` 2. Full gate under bun 1.3.9:
+`check:types`, `lint`, `check:prose`, `check:pins`, `check:guardrails` and `bun run test`
+all exit 0; the suite is 325 files, 4533 passed, 1 skipped (the pre-existing skip).
+
+### Findings from the app's side · 2026-10-10
+
+keywork-app's wave 5 consumed every route above (K1 through the spill route) and drove the
+wave-2 panes against a real `keywork serve`. What it found, each a candidate row for the open
+ledger:
+
+- **`keywork serve` refuses a second workspace.** Serve writes the user-level
+  `~/.keywork/server.json` for every workspace and `runningServerAmong` treats any live ticket
+  there as this workspace's server, so with workspace B serving, `keywork serve` in workspace A
+  exits 2 with "a keywork server for this workspace is already listening at …". `keywork attach`
+  shares the mix-up. Fix: check `/doc`'s `info.workspace.identity` before trusting a ticket, or
+  stop writing the user-level ticket now that the per-workspace one exists.
+- **The identity rule is not on the wire before connecting.** A client that wants the
+  per-workspace ticket must re-derive `workspaceIdentity` (the app does, pinned by fixtures
+  computed from keywork itself). Documenting the rule, or `keywork identity`, removes the drift.
+- **`/doc` is unauthenticated, so a client cannot check a token without a side effect.** The
+  app probes `/asks`. A cheap authenticated ping would be honest.
+- **No `GET /preset` and no `GET /models`.** The app learns the active preset only from the
+  first `gate.preset` and builds its model list from session summaries and the `known` /
+  `available` / `candidates` lists in a 400 refusal.
+- **Refusals told apart only by text.** `/preset` answers 409 both for "loosening needs
+  `confirmed: true`" and "this process has no preset switch"; `/undo` answers 404 both for a
+  missing session and "nothing to undo", and 409 both for busy and already-staged. A `code`
+  field beside `error` would make clients robust.
+- **`costBasis` says "metered by the provider" when nothing was priced** (`meteredTurns ===
+  pricedTurns` is true at 0 and 0).
+- **`GET /flavors` serves only `keywork-night`** plus the `system` placeholder, not
+  `keywork-day` or user flavor files.
+- **`/memory/ledger` discard entries carry only the staging path**, so a client can show
+  `discard .staging/<uuid>.md` but not the note's name.
+- **An untrusted workspace still lets the agent write in the root** (`write proof.txt`
+  succeeded with `projectTrusted: false`): not a bug, but client copy must not claim read-only.
+- **`/prompt` and `/inject` are text-only** although agentbox added `promptMessage(text, images)`.
+- **File-host undo sends `session.state` but not `session.tree`**; `docs/events.md` still lists
+  `engine.error` under "Tree and files".
+
+### K6 · the themes · landed 2026-10-11
+
+Jordan asked for an Omarchy-grade gallery where one theme dresses every surface. Mid-lane
+he renamed the unit: "flavor" is now **theme** everywhere a person sees it and in code.
+
+**Renames (the app lanes mirror these).** Shared: `flavorSchema` → `themeSchema`, `Flavor`
+→ `Theme`, `FlavorTokens` → `ThemeTokens`, `FlavorTokenOverrides` → `ThemeTokenOverrides`,
+`flavorTokensSchema` → `themeTokensSchema`, `flavorTokenOverridesSchema` →
+`themeTokenOverridesSchema`, `parseFlavor` → `parseTheme`; files `config/flavor.ts` →
+`config/theme.ts`. Route: `GET /flavors` (`listFlavors`, `{ flavors, active, placeholders }`)
+→ `GET /themes` (`listThemes`, `{ themes, active, placeholders }`); `/flavors` is gone; host
+port `flavors()` → `themes()`, `FlavorsView` → `ThemesView`. Config: the startup key is
+`theme` and the overrides key is `palette`; for one release `flavor` still reads as `theme`
+and an object under `theme` still reads as `palette` (normalized per layer at load, so
+project layers still merge token by token). TUI: its bare-token `Theme` type is now
+`Palette` (`ThemeOverrides` → `PaletteOverrides`, `ThemeColorToken` → `PaletteColorToken`,
+`resolveTheme` → `resolvePalette`, `themeOf` → `paletteOf`, `theme.ts` → `palette.ts`);
+`FlavorSwitch` → `ThemeSwitch` (its `.theme` getter → `.palette`), `startupFlavors` →
+`startupThemes`, `registerFlavorCommands` → `registerThemeCommands`, `keyworkNightFlavor`
+→ `keyworkNightTheme`, `systemFlavor`/`systemFlavorName` → `systemTheme`/`systemThemeName`,
+`AppOptions.flavor`/`flavors`/`themeOverrides` → `theme`/`themes`/`paletteOverrides`;
+palette commands are `theme-<name>` and notices say "theme now …".
+
+**Schema.** Optional sections on `themeSchema`, so older files still load: `terminal` (the
+ANSI 16 by name), `syntax` (fifteen roles), `diff` (`insertedLine`, `deletedLine`,
+`insertedText`, `deletedText`), `selection` (`background`, optional `text`), `cursor`, and
+`pair`. Floors in `contrastFailures`: syntax ≥ 30 on panel (comment 15); the six terminal
+hues and their bright twins ≥ 30 on background; selection text ≥ 45; text ≥ 60 on both diff
+line grounds; cursor ≥ 40. `pair` symmetry and opposite appearance are proved in
+`gallery.test.ts`.
+
+**Derivation.** `completeTheme` fills a missing section from the thirteen base tokens and
+keeps hand-set ones; the rule is in `docs/themes.md` and the describe strings. Every floored
+derived ink steps toward `text` and every derived ground steps back toward its panel, so the
+rule always ends on a passing theme. Palette overrides drop the worn theme's hand-set
+sections so they re-derive from the new palette.
+
+**Gallery.** Nineteen themes, every section by hand: keywork-night (tokens unchanged) and
+keywork-day; catppuccin-mocha/-latte; nord/nord-light; gruvbox-dark/-light;
+everforest-dark/-light; kanagawa-wave/-lotus; rose-pine/rose-pine-dawn;
+flexoki-dark/-light; matte-black, osaka-jade, ristretto unpaired. Taste: Nord and Gruvbox
+`regular`, matte-black and osaka-jade `borderless`, the rest `seams`; gap 1 on Catppuccin,
+Everforest, Rosé Pine, Flexoki, and matte-black; `cockpit` on matte-black and ristretto;
+density `medium` on accentSoft for Catppuccin and Kanagawa, `full` on error for Everforest,
+Rosé Pine, Flexoki, and ristretto. Twenty-six canonical shades were stepped to clear a floor
+(Nord's red and the light Nord greens, cyans and yellow; gruvbox-dark's error and dark
+terminal red/blue/magenta; everforest-dark's green diff line; Kanagawa's dark terminal red
+and invalid; Rosé Pine's border and pine; flexoki-dark's error), each tabled in
+`gallery.test.ts` with its canonical value. Sources are recorded in `NOTICE` under "Themes".
+
+**`GET /themes`.** `{ themes: CompleteTheme[], active: string, placeholders: ["system"] }`:
+the gallery plus any closet theme (a closet theme replaces a gallery theme of the same
+name, via `wardrobe`), each run through `completeTheme` so the wire always carries every
+section; `pair` rides on each theme, so no separate `pairs` field. The TUI wardrobe lists
+the same gallery, so `theme-<name>` exists for all nineteen. The TUI paints from base tokens
+only (its design language keeps syntax inside the tokens), so the sections are for the app.
+
+**Evidence.** Full gate under bun 1.3.9: `check:types`, `lint`, `check:prose`,
+`check:pins`, `check:guardrails` and `bun run test` exit 0; the suite is 327 files, 4595
+passed, 1 skipped. e2e goldens for chrome-states, tray-tour, and discovery were refreshed
+(theme commands now fill the slash completions).
+
+### K7 · trusted reads and ask scopes · landed 2026-10-11
+
+Jordan asked whether trusting a workspace could pre-load read permissions so the app stops
+asking for `ls` and `git status` in every session. His three decisions are recorded verbatim
+in `50-trust.md` E1: the bundle applies on trust with no second confirmation, it is fixed in
+keywork with user rules above it, and grants beyond `once` cover `bash` and MCP tools only.
+
+**Posture.** A trusted workspace gets `trustedReadRules` (listed in `50-trust.md` E1): allow
+rules for read-only shell commands plus a few asks for their write-capable forms. An
+untrusted workspace and every headless run get nothing new. Decisions under it report
+`gate: "trusted"`; an ask it raises reports `rule: "trusted"`.
+
+**`POST /asks/{callId}`.** Body `{ verdict: "granted" | "denied", scope?: "once" | "session"
+| "workspace" }`, `scope` defaulting to `once`; a denial ignores it. `session` records the
+ask's `rules` for that session; `workspace` records them for every session of the workspace in
+`~/.keywork/workspaces/<identity>/permissions.json`. A write or edit answered beyond `once` is
+`400 { error: "write and edit are approved once at a time" }`; a call with no rule to derive
+(a command whose every part redirects or substitutes, or a tool that is neither bash nor
+MCP) is `400 { error: "this call has nothing a grant could remember; approve it once" }`. In
+both cases the ask stays pending for a `once` answer. `200`, `404` and `409` are unchanged.
+
+**`gate.ask`** gains `rules: PermissionRule[]`, the candidates a `session` or `workspace`
+answer would record (also on each `GET /asks` entry): bash yields one rule per command part,
+`{ action: "bash", resource: "<program> <second word> *", effect: "allow" }` when the second
+word is a plain word or flag (`git push *`, `rm -rf *`, `npm run *`), else `<program> *`;
+parts with redirection or substitution and wildcard program words yield none. An MCP tool yields
+`{ action: "<server>__<tool>", resource: "*", effect: "allow" }`. **`gate.permission`** gains
+`gate: "trusted"` and an optional `scope`: `once | session | workspace` on an answered ask,
+`session | workspace` with `gate: "user"` on a later call an earlier grant covered.
+
+**`GET /permissions`** (`listPermissions`) answers `{ trusted: boolean, bundle:
+PermissionRule[], workspace: PermissionRule[], session: Record<sessionId, PermissionRule[]> }`;
+`bundle` is empty when untrusted. **`POST /permissions/workspace/revoke`**
+(`revokeWorkspaceGrant`) takes `{ rule: { action, resource, effect: "allow" } }` and answers
+`200 { revoked: rule }`, `400` on a malformed rule, `404` when no grant matches. The family is
+`permissionFamily`, last in `routeFamilies`.
+
+**Layering.** The configured rules (the preset switch) decide first; where they say nothing,
+one ordered list decides, last match winning: bundle, then workspace grants, then session
+grants. The engine's `PermissionResolver` may now return a `PermissionRuling`
+(`{ permission, gate: "policy" | "trusted" }` or `{ permission: "allow", gate: "user",
+scope }`); a bare string still means `policy`. `PermissionLedger` in the engine composes the
+layers for `serve`, the panes TUI and the line REPL alike. The TUI's and the REPL's `always`
+record the derived session rules (and the ask hides `[a]` when there is nothing to remember).
+
+**Evidence.** Full gate under bun 1.3.9: `check:types`, `lint`, `check:prose`,
+`check:pins`, `check:guardrails` and `bun run test` exit 0; 329 files, 4685 passed, 1
+skipped. New: `shared` `trusted-reads.test.ts` (the bundle's allow, ask and still-asking
+tables, a user rule over the bundle, `activePreset` unaffected) and `grants.test.ts`
+(derivation, refusals, `SessionGrants`, the strict private store); `server.test.ts` (bundle
+with `gate: "trusted"`, empty untrusted bundle, session scope stops the second ask,
+workspace grant listed and revoked, write refused beyond once); `serve.test.ts` (a real
+`echo` under the bundle runs without an ask while a compound still asks, the session grant,
+a workspace grant surviving a reopen until revoke restores the ask); `mutation-ask.test.ts`
+and `chat.test.ts` for rule-derived `always`.

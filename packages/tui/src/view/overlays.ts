@@ -5,8 +5,8 @@ import type { BotCreateModel } from "../bot-create-model.ts";
 import type { GlyphSupport } from "../capability.ts";
 import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
 import type { HelpPage, OverlayFrame } from "../overlays/index.ts";
+import type { Palette } from "../palette.ts";
 import type { ChromeWeight } from "../pane.ts";
-import type { Theme } from "../theme.ts";
 import { type TrayChild, trayRows } from "../tray.ts";
 import { clip, clipSpans, padEnd, width } from "../width.ts";
 import { setupPrompt, type WorkspaceReadiness } from "../workspace-setup.ts";
@@ -21,7 +21,7 @@ import {
 import { frameInset } from "./frame.ts";
 
 export interface OverlayInputs {
-  theme: Theme;
+  theme: Palette;
   chrome: ChromeWeight;
   arcOrdinal: ArcOrdinals;
   glyphs?: GlyphSupport;
@@ -45,7 +45,7 @@ export function overlayView(core: AppCore, inputs: OverlayInputs) {
   );
 }
 
-export function scrimInk(theme: Theme): string {
+export function scrimInk(theme: Palette): string {
   return `${theme.background}99`;
 }
 
@@ -92,7 +92,7 @@ function composedOverlay(core: AppCore, inputs: OverlayInputs) {
   return undefined;
 }
 
-function setupRows(readiness: WorkspaceReadiness, theme: Theme) {
+function setupRows(readiness: WorkspaceReadiness, theme: Palette) {
   return [
     Text({ content: ` ${setupPrompt(readiness) ?? ""}`, fg: theme.text }),
     Text({ content: " y sets it up · n cancels", fg: theme.accent }),
@@ -111,7 +111,7 @@ export function overlayPosition(frame: OverlayFrame, inset = 0): OverlayPlacemen
 
 function panel(
   title: string,
-  theme: Theme,
+  theme: Palette,
   placement: OverlayPlacement,
   rows: TrayChild[],
   borderColor = theme.accent,
@@ -141,7 +141,7 @@ function innerWidth(placement: OverlayPlacement): number {
 
 function paletteOverlay(
   core: AppCore,
-  theme: Theme,
+  theme: Palette,
   placement: OverlayPlacement,
   glyphs?: GlyphSupport,
 ) {
@@ -162,7 +162,7 @@ function paletteOverlay(
   ]);
 }
 
-function helpOverlay(page: HelpPage, theme: Theme, placement: OverlayPlacement) {
+function helpOverlay(page: HelpPage, theme: Palette, placement: OverlayPlacement) {
   const room = innerWidth(placement);
   const rows = page.rows.map((row) =>
     splitRow(
@@ -208,7 +208,7 @@ function splitRow(
   );
 }
 
-function presetRows(core: AppCore, theme: Theme) {
+function presetRows(core: AppCore, theme: Palette) {
   const confirmation = core.presetConfirmation();
   if (confirmation !== undefined) {
     return [
@@ -233,22 +233,22 @@ function presetRows(core: AppCore, theme: Theme) {
   return rows;
 }
 
-function botCreateRows(model: BotCreateModel, theme: Theme, room: number) {
+function botCreateRows(model: BotCreateModel, theme: Palette, room: number) {
   return model.rows().map((row) => connectRowView(row, theme, room));
 }
 
-function connectRows(model: ConnectModel, theme: Theme, room: number) {
+function connectRows(model: ConnectModel, theme: Palette, room: number) {
   return model.rows().map((row) => connectRowView(row, theme, room));
 }
 
-function connectRowView(row: ConnectRow, theme: Theme, room: number) {
+function connectRowView(row: ConnectRow, theme: Palette, room: number) {
   const chunks = row.spans.map((part) =>
     fg(row.selected ? theme.accent : connectToneInk(part.tone, theme))(part.text),
   );
   return Text({ content: new StyledText(clipSpans(chunks, room)) });
 }
 
-function connectToneInk(tone: ConnectTone, theme: Theme): string {
+function connectToneInk(tone: ConnectTone, theme: Palette): string {
   switch (tone) {
     case "text":
       return theme.text;

@@ -35,6 +35,13 @@ export function workspaceStateFile(identity: WorkspaceIdentity): string {
   return join(keyworkHome(), "workspaces", `${identity}.json`);
 }
 
+export function workspacePermissionsFile(
+  identity: WorkspaceIdentity,
+  userRoot: string = homedir(),
+): string {
+  return join(keyworkHome(userRoot), "workspaces", identity, "permissions.json");
+}
+
 export function skillTelemetryFile(
   identity: WorkspaceIdentity,
   userRoot: string = homedir(),

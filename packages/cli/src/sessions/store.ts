@@ -1,6 +1,9 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  type EffortLevel,
+  formatReference,
+  isEffortLevel,
   isMissingFileError,
   knownCostNanos,
   type Message,
@@ -31,6 +34,9 @@ export interface SessionSummary {
   entryCount: number;
   branchCount: number;
   labelCount: number;
+  model?: string;
+  thinking?: boolean;
+  effort?: EffortLevel;
   costNanos?: number;
   arc?: string;
   bot?: string;
@@ -104,6 +110,9 @@ export async function summarize(store: SessionStore): Promise<SessionSummary> {
   const costNanos = knownCostNanos(stats.cost);
   const arc = store.arcBinding();
   const bot = store.botBinding();
+  const model = selectedModelOf(store);
+  const thinking = thinkingSwitchOf(store);
+  const effort = effortOf(store);
   return {
     id: store.header.id,
     file: store.file,
@@ -115,6 +124,9 @@ export async function summarize(store: SessionStore): Promise<SessionSummary> {
     entryCount: stats.entries,
     branchCount: stats.branchPoints,
     labelCount: stats.labels,
+    ...(model !== undefined && { model }),
+    ...(thinking !== undefined && { thinking }),
+    ...(effort !== undefined && { effort }),
     ...(costNanos !== undefined && { costNanos }),
     ...(arc !== undefined && { arc }),
     ...(bot !== undefined && { bot }),
@@ -123,6 +135,22 @@ export async function summarize(store: SessionStore): Promise<SessionSummary> {
 
 function sessionTitle(store: SessionStore): string {
   return store.name() ?? firstUserText(store) ?? "(untitled session)";
+}
+
+export function selectedModelOf(store: SessionStore): string | undefined {
+  const selection = store.modelSelection();
+  if (selection === undefined) return undefined;
+  return formatReference({ provider: selection.provider, model: selection.modelId });
+}
+
+export function thinkingSwitchOf(store: SessionStore): boolean | undefined {
+  const level = store.thinkingLevel();
+  return level === "on" || level === "off" ? level === "on" : undefined;
+}
+
+export function effortOf(store: SessionStore): EffortLevel | undefined {
+  const level = store.effort();
+  return level !== undefined && isEffortLevel(level) ? level : undefined;
 }
 
 let sessionSequence = 0;

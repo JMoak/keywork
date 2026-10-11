@@ -12,6 +12,13 @@ const writeCall: ToolCallPart = {
 
 const askRows = 8;
 
+const bashCall = (command: string): ToolCallPart => ({
+  type: "tool-call",
+  callId: `call-${command}`,
+  name: "bash",
+  arguments: { command },
+});
+
 describe("MutationAsk", () => {
   it("holds the ask open, swallowing unrelated keys until answered", async () => {
     const gate = new MutationAsk(() => {});
@@ -36,13 +43,37 @@ describe("MutationAsk", () => {
     expect(await second).toBe(false);
   });
 
-  it("remembers a for the rest of the session", async () => {
+  it("remembers a as the call's derived rule for the rest of the session", async () => {
     const gate = new MutationAsk(() => {});
-    const first = gate.confirm(writeCall);
+    const first = gate.confirm(bashCall("git push origin main"));
+    expect(gate.pending?.remembers).toEqual([
+      { action: "bash", resource: "git push *", effect: "allow" },
+    ]);
     gate.handleKey(parseChord("a"), askRows);
     expect(await first).toBe(true);
-    expect(await gate.confirm(writeCall)).toBe(true);
+    expect(gate.sessionRules).toEqual([
+      { action: "bash", resource: "git push *", effect: "allow" },
+    ]);
+    expect(await gate.confirm(bashCall("git push origin dev"))).toBe(true);
     expect(gate.pending).toBeUndefined();
+
+    const other = gate.confirm(bashCall("rm -rf build"));
+    expect(gate.pending?.summary).toContain("rm -rf build");
+    gate.handleKey(parseChord("n"), askRows);
+    expect(await other).toBe(false);
+  });
+
+  it("approves write once on a and keeps asking, since writes never persist", async () => {
+    const gate = new MutationAsk(() => {});
+    const first = gate.confirm(writeCall);
+    expect(gate.pending?.remembers).toEqual([]);
+    gate.handleKey(parseChord("a"), askRows);
+    expect(await first).toBe(true);
+    expect(gate.sessionRules).toEqual([]);
+    const second = gate.confirm(writeCall);
+    expect(gate.pending).toBeDefined();
+    gate.handleKey(parseChord("n"), askRows);
+    expect(await second).toBe(false);
   });
 
   it("ignores modified chords so ctrl+a and meta+y neither approve nor remember", async () => {

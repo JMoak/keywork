@@ -1,18 +1,10 @@
+export { type CompleteTheme, completeTheme } from "./complete-theme.ts";
 export {
   type Workspace,
   type WorkspaceDeclaration,
   workspaceDeclarationSchema,
 } from "./declaration.ts";
-export {
-  contrastFailures,
-  type Flavor,
-  type FlavorTokenOverrides,
-  type FlavorTokens,
-  flavorSchema,
-  flavorTokenOverridesSchema,
-  flavorTokensSchema,
-  parseFlavor,
-} from "./flavor.ts";
+export { gallery, themeNamed, wardrobe } from "./gallery.ts";
 export {
   ConfigError,
   type ConfigSource,
@@ -46,6 +38,9 @@ export {
   type PermissionsConfig,
   type PromptOverride,
   type PromptsConfig,
+  paletteOverridesOf,
+  startupThemeName,
+  withCurrentThemeKeys,
 } from "./schema.ts";
 export {
   InvalidSlugError,
@@ -55,6 +50,25 @@ export {
   slugProblem,
   validateSlug,
 } from "./slug.ts";
+export {
+  contrastFailures,
+  parseTheme,
+  type SyntaxRole,
+  sectionFloors,
+  syntaxRoles,
+  type TerminalSlot,
+  type Theme,
+  type ThemeDiff,
+  type ThemeSelection,
+  type ThemeSyntax,
+  type ThemeTerminal,
+  type ThemeTokenOverrides,
+  type ThemeTokens,
+  terminalSlots,
+  themeSchema,
+  themeTokenOverridesSchema,
+  themeTokensSchema,
+} from "./theme.ts";
 export {
   openWorkspace,
   resolveAnchor,

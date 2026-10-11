@@ -1,22 +1,23 @@
 import {
   type Agent,
-  addUsage,
   type CacheMiss,
   type ContextReading,
   type CostRollup,
   carriesUsage,
   contextBudgetFor,
+  costBasis,
   declaredContextWindow,
   type EffortLevel,
-  emptyCostRollup,
   estimateConversationTokens,
   formatCostNanos,
   formatTokenCount,
   knownCostNanos,
-  mergeCostRollups,
-  modelReferenceOf,
+  type ModelRow,
+  type ModelTotals,
   readContext,
+  turnsOf,
   type Usage,
+  UsageLedger,
 } from "@keywork/engine";
 import { contextReadout } from "./context-gauge.ts";
 
@@ -24,16 +25,11 @@ export class SessionLedger {
   sessionId: string | undefined;
   arc: string | undefined;
   bot: string | undefined;
-  private readonly retired = new Map<string, ModelTotals>();
+  private readonly ledger = new UsageLedger();
   private context: { agent: Agent; messages: number; reading: ContextReading } | undefined;
 
   retire(agent: Agent): void {
-    const key = ledgerKey(agent);
-    const carried = this.retired.get(key);
-    this.retired.set(
-      key,
-      carried === undefined ? liveTotals(agent) : add(carried, liveTotals(agent)),
-    );
+    this.ledger.retire(agent);
   }
 
   usageSummary(agent: Agent | undefined): string {
@@ -50,9 +46,8 @@ export class SessionLedger {
     if (!carriesUsage(usage) && cost.unpricedTurns === 0) {
       return "no usage yet · send a prompt first";
     }
-    const rows = this.rows(agent);
-    const perModel =
-      rows.length < 2 ? [] : rows.map(([reference, totals]) => modelLine(reference, totals));
+    const rows = this.ledger.rows(agent);
+    const perModel = rows.length < 2 ? [] : rows.map(modelLine);
     const miss = agent.cacheMiss();
     return [
       tokenLine(usage),
@@ -92,40 +87,8 @@ export class SessionLedger {
   }
 
   private sessionTotals(agent: Agent): ModelTotals {
-    return this.rows(agent)
-      .map(([, totals]) => totals)
-      .reduce(add, { usage: { inputTokens: 0, outputTokens: 0 }, cost: emptyCostRollup() });
+    return this.ledger.totals(agent);
   }
-
-  private rows(agent: Agent): [string, ModelTotals][] {
-    const rows = new Map(this.retired);
-    const key = ledgerKey(agent);
-    const carried = rows.get(key);
-    rows.set(key, carried === undefined ? liveTotals(agent) : add(carried, liveTotals(agent)));
-    return [...rows].filter(
-      ([, totals]) => carriesUsage(totals.usage) || totals.cost.unpricedTurns > 0,
-    );
-  }
-}
-
-interface ModelTotals {
-  usage: Usage;
-  cost: CostRollup;
-}
-
-function liveTotals(agent: Agent): ModelTotals {
-  return { usage: agent.usage(), cost: agent.cost() };
-}
-
-function add(left: ModelTotals, right: ModelTotals): ModelTotals {
-  return {
-    usage: addUsage(left.usage, right.usage),
-    cost: mergeCostRollups(left.cost, right.cost),
-  };
-}
-
-function ledgerKey(agent: Agent): string {
-  return modelReferenceOf(agent.provider) ?? agent.provider.name;
 }
 
 function tokenLine(usage: Usage): string {
@@ -155,15 +118,9 @@ function spendLine(cost: CostRollup, modelId: string | undefined): string {
   return `cost unknown · no pricing for ${modelId ?? "this model"}`;
 }
 
-function costBasis(cost: CostRollup, modelId: string | undefined): string {
-  if (cost.meteredTurns === cost.pricedTurns) return "metered by the provider";
-  if (cost.meteredTurns > 0) return "partly metered, partly estimated";
-  return `estimated from ${modelId ?? "list"} rates`;
-}
-
-function modelLine(reference: string, totals: ModelTotals): string {
+function modelLine({ reference, ...totals }: ModelRow): string {
   const known = knownCostNanos(totals.cost);
-  const turns = totals.cost.pricedTurns + totals.cost.unpricedTurns;
+  const turns = turnsOf(totals);
   const spend =
     known !== undefined
       ? formatCostNanos(known)

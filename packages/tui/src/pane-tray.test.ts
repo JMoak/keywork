@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
+import { resolvePalette } from "./palette.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
 import { press } from "./testing/index.ts";
-import { resolveTheme } from "./theme.ts";
 
 function trayOver(names: string[] = ["fork", "label", "refresh"]) {
   const ran: string[] = [];
@@ -102,7 +102,7 @@ describe("PaneTrayModel", () => {
   it("sizes its view to the matches plus chrome and prompt", () => {
     const { tray } = trayOver();
     tray.openTray();
-    const theme = resolveTheme();
+    const theme = resolvePalette();
     expect(paneTrayView(tray, 60, theme).rows).toBe(6);
     press(tray, "z");
     expect(paneTrayView(tray, 60, theme).rows).toBe(4);

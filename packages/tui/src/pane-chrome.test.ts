@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { lifecycleChrome, paneBorder, rampColor, rampPositions } from "./chroma.ts";
+import { keyworkNight } from "./palette.ts";
 import type { ChromeWeight, LifecycleState, PaneContext } from "./pane.ts";
 import {
   focusMark,
@@ -15,7 +16,6 @@ import {
 } from "./pane-chrome.ts";
 import { AppProbe } from "./probe.ts";
 import { RowCursor } from "./row-cursor.ts";
-import { keyworkNight } from "./theme.ts";
 import { titleSpans } from "./title-bar.ts";
 import { width } from "./width.ts";
 

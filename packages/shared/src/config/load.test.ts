@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigError, loadConfig, mergeConfigs } from "./load.ts";
-import { defaultConfig } from "./schema.ts";
+import { defaultConfig, startupThemeName } from "./schema.ts";
 
 const tempDirs: string[] = [];
 
@@ -196,85 +196,85 @@ describe("loadConfig", () => {
     expect(config.apiKeys).toEqual({ openai: "user-key" });
   });
 
-  it("deep-merges theme so a project token cannot clobber sibling user tokens", async () => {
+  it("deep-merges palette so a project token cannot clobber sibling user tokens", async () => {
     const userDir = await dirWithConfig({
-      theme: { accent: "#112233", background: "#000000" },
+      palette: { accent: "#112233", background: "#000000" },
     });
-    const projectDir = await dirWithConfig({ theme: { accent: "#445566" } });
+    const projectDir = await dirWithConfig({ palette: { accent: "#445566" } });
 
     const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
-    expect(config.theme).toEqual({ accent: "#445566", background: "#000000" });
+    expect(config.palette).toEqual({ accent: "#445566", background: "#000000" });
   });
 
-  it("rejects theme values that are not #rrggbb, pointing at the token", async () => {
-    const userDir = await dirWithConfig({ theme: { accent: "hotpink" } });
+  it("rejects palette values that are not #rrggbb, pointing at the token", async () => {
+    const userDir = await dirWithConfig({ palette: { accent: "hotpink" } });
 
     await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
-    await expect(loadConfig({ userDir })).rejects.toThrow(/#rrggbb[\s\S]*at theme\.accent/);
+    await expect(loadConfig({ userDir })).rejects.toThrow(/#rrggbb[\s\S]*at palette\.accent/);
   });
 
-  it("rejects a misspelled theme token at load instead of inside the app", async () => {
-    const userDir = await dirWithConfig({ theme: { acent: "#ff00ff" } });
+  it("rejects a misspelled palette token at load instead of inside the app", async () => {
+    const userDir = await dirWithConfig({ palette: { acent: "#ff00ff" } });
 
     await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
     await expect(loadConfig({ userDir })).rejects.toThrow(
-      /Unrecognized key: "acent"[\s\S]*at theme/,
+      /Unrecognized key: "acent"[\s\S]*at palette/,
     );
   });
 
-  it("accepts any real flavor token as a theme override", async () => {
+  it("accepts any real theme token as a palette override", async () => {
     const userDir = await dirWithConfig({
-      theme: { panelLift: "#24283b", textMid: "#828bb8", borderFocus: "#bb9af7" },
+      palette: { panelLift: "#24283b", textMid: "#828bb8", borderFocus: "#bb9af7" },
     });
 
     const config = await loadConfig({ userDir });
 
-    expect(config.theme).toEqual({
+    expect(config.palette).toEqual({
       panelLift: "#24283b",
       textMid: "#828bb8",
       borderFocus: "#bb9af7",
     });
   });
 
-  it("accepts uppercase hex theme values", async () => {
-    const userDir = await dirWithConfig({ theme: { accent: "#AABBCC" } });
+  it("accepts uppercase hex palette values", async () => {
+    const userDir = await dirWithConfig({ palette: { accent: "#AABBCC" } });
 
     const config = await loadConfig({ userDir });
 
-    expect(config.theme).toEqual({ accent: "#AABBCC" });
+    expect(config.palette).toEqual({ accent: "#AABBCC" });
   });
 
-  it("round-trips a theme ramp beside token overrides", async () => {
+  it("round-trips a palette ramp beside token overrides", async () => {
     const userDir = await dirWithConfig({
-      theme: { accent: "#112233", ramp: ["#bb9af7", "#7aa2f7", "#7dcfff"] },
+      palette: { accent: "#112233", ramp: ["#bb9af7", "#7aa2f7", "#7dcfff"] },
     });
 
     const config = await loadConfig({ userDir });
 
-    expect(config.theme).toEqual({
+    expect(config.palette).toEqual({
       accent: "#112233",
       ramp: ["#bb9af7", "#7aa2f7", "#7dcfff"],
     });
   });
 
   it("accepts a one-stop ramp", async () => {
-    const userDir = await dirWithConfig({ theme: { ramp: ["#112233"] } });
+    const userDir = await dirWithConfig({ palette: { ramp: ["#112233"] } });
 
     const config = await loadConfig({ userDir });
 
-    expect(config.theme?.ramp).toEqual(["#112233"]);
+    expect(config.palette?.ramp).toEqual(["#112233"]);
   });
 
   it("rejects a ramp that is empty, oversized, malformed, or not an array", async () => {
-    const empty = await dirWithConfig({ theme: { ramp: [] } });
+    const empty = await dirWithConfig({ palette: { ramp: [] } });
     const oversized = await dirWithConfig({
-      theme: {
+      palette: {
         ramp: ["#000001", "#000002", "#000003", "#000004", "#000005", "#000006", "#000007"],
       },
     });
-    const malformed = await dirWithConfig({ theme: { ramp: ["#112233", "teal"] } });
-    const notArray = await dirWithConfig({ theme: { ramp: "#112233" } });
+    const malformed = await dirWithConfig({ palette: { ramp: ["#112233", "teal"] } });
+    const notArray = await dirWithConfig({ palette: { ramp: "#112233" } });
 
     for (const userDir of [empty, oversized, malformed, notArray]) {
       await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
@@ -283,13 +283,56 @@ describe("loadConfig", () => {
 
   it("lets a project ramp override the user ramp wholesale", async () => {
     const userDir = await dirWithConfig({
-      theme: { accent: "#112233", ramp: ["#000001", "#000002"] },
+      palette: { accent: "#112233", ramp: ["#000001", "#000002"] },
     });
-    const projectDir = await dirWithConfig({ theme: { ramp: ["#0000aa", "#0000bb"] } });
+    const projectDir = await dirWithConfig({ palette: { ramp: ["#0000aa", "#0000bb"] } });
 
     const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
-    expect(config.theme).toEqual({ accent: "#112233", ramp: ["#0000aa", "#0000bb"] });
+    expect(config.palette).toEqual({ accent: "#112233", ramp: ["#0000aa", "#0000bb"] });
+  });
+
+  it("names the startup theme with theme", async () => {
+    const userDir = await dirWithConfig({ theme: "catppuccin-latte" });
+
+    const config = await loadConfig({ userDir });
+
+    expect(config.theme).toBe("catppuccin-latte");
+    expect(startupThemeName(config)).toBe("catppuccin-latte");
+  });
+
+  it("still reads the deprecated flavor key as the startup theme for one release", async () => {
+    const userDir = await dirWithConfig({ flavor: "nord" });
+
+    const config = await loadConfig({ userDir });
+
+    expect(config.theme).toBe("nord");
+    expect(config.flavor).toBeUndefined();
+  });
+
+  it("still reads a pre-rename theme override object as the palette, layer by layer", async () => {
+    const userDir = await dirWithConfig({ theme: { accent: "#112233", background: "#000000" } });
+    const projectDir = await dirWithConfig({ theme: { accent: "#445566" } });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.theme).toBeUndefined();
+    expect(config.palette).toEqual({ accent: "#445566", background: "#000000" });
+  });
+
+  it("lets theme win over the deprecated flavor key", async () => {
+    const userDir = await dirWithConfig({ theme: "rose-pine", flavor: "nord" });
+
+    expect(startupThemeName(await loadConfig({ userDir }))).toBe("rose-pine");
+  });
+
+  it("never lets a project layer pick the startup theme", async () => {
+    const userDir = await dirWithConfig({ theme: "gruvbox-dark" });
+    const projectDir = await dirWithConfig({ theme: "matte-black" });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.theme).toBe("gruvbox-dark");
   });
 
   it("accepts stdio and http MCP servers with a trusted flag", async () => {
@@ -398,12 +441,12 @@ describe("mergeConfigs", () => {
     expect(merged.keybindings).toEqual({ a: "ctrl+a", b: "ctrl+b" });
   });
 
-  it("merges theme and apiKeys records instead of replacing them", () => {
+  it("merges palette and apiKeys records instead of replacing them", () => {
     const merged = mergeConfigs(
-      { theme: { accent: "#112233" }, apiKeys: { openrouter: "a" } },
-      { theme: { background: "#000000" }, apiKeys: { openai: "b" } },
+      { palette: { accent: "#112233" }, apiKeys: { openrouter: "a" } },
+      { palette: { background: "#000000" }, apiKeys: { openai: "b" } },
     );
-    expect(merged.theme).toEqual({ accent: "#112233", background: "#000000" });
+    expect(merged.palette).toEqual({ accent: "#112233", background: "#000000" });
     expect(merged.apiKeys).toEqual({ openrouter: "a", openai: "b" });
   });
 

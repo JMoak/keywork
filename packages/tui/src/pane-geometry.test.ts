@@ -7,6 +7,7 @@ import { Layout } from "./layout.ts";
 import { McpPane } from "./mcp-pane.ts";
 import { MemoryPane } from "./memory-pane.ts";
 import { emptyMemoryInputs } from "./memory-pane-model.ts";
+import { resolvePalette } from "./palette.ts";
 import type { ChromeWeight, Pane, PaneIntents, PaneView } from "./pane.ts";
 import {
   type ChromeExtent,
@@ -16,7 +17,6 @@ import {
 } from "./pane-chrome.ts";
 import { drawnRect } from "./pane-geometry.ts";
 import { SessionTreePane } from "./session-tree-pane.ts";
-import { resolveTheme } from "./theme.ts";
 import { fieldOf, innerRect, seamCells } from "./view/seams.ts";
 
 const paneSizes = [
@@ -176,7 +176,7 @@ function assertFitsAtEverySize(pane: Pane): void {
 
 function assertTextsFit(pane: Pane, extent: Required<ChromeExtent>): void {
   const { width, height, chrome } = extent;
-  const view = pane.view({ theme: resolveTheme(), focused: true, width, height, chrome });
+  const view = pane.view({ theme: resolvePalette(), focused: true, width, height, chrome });
   const texts = collectTexts(view);
   const contentWidth = paneContentWidth(extent);
   const place = `${pane.id} at ${width}x${height} (${chrome})`;

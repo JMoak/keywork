@@ -2,9 +2,9 @@ import { Agent, type Message, MockProvider, messageText, textTurn } from "@keywo
 import { describe, expect, it } from "vitest";
 import { ConversationPane } from "./conversation-pane.ts";
 import type { CheckpointsPort } from "./fork.ts";
+import { keyworkNight } from "./palette.ts";
 import { AppProbe } from "./probe.ts";
 import { bindSessionLifecycle, type SessionAttachment } from "./session-attachment.ts";
-import { keyworkNight } from "./theme.ts";
 
 interface TreeEntry {
   id: string;

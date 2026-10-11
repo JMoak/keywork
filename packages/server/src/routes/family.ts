@@ -1,5 +1,5 @@
 import type { EventLog } from "../events.ts";
-import type { SessionHost } from "../host.ts";
+import { type FileRange, HostRefusal, type SessionHost } from "../host.ts";
 import type { OpenApiDocument } from "../openapi.ts";
 import type { StreamRegistry } from "../sse.ts";
 
@@ -88,4 +88,36 @@ export function fieldsOf<Shape extends Record<string, unknown>>(
 
 export function nonBlank(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+export function queryOf(request: Request): URLSearchParams {
+  return new URL(request.url).searchParams;
+}
+
+export function wholeNumberOf(value: string | null): number | undefined | "invalid" {
+  if (value === null || value === "") return undefined;
+  return /^\d+$/.test(value) ? Number(value) : "invalid";
+}
+
+export function byteRangeOf(query: URLSearchParams): FileRange | "invalid" {
+  const from = wholeNumberOf(query.get("from"));
+  const to = wholeNumberOf(query.get("to"));
+  if (from === "invalid" || to === "invalid") return "invalid";
+  return { ...(from !== undefined && { from }), ...(to !== undefined && { to }) };
+}
+
+export function slugOrNullOf(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return nonBlank(value);
+}
+
+export const defaultWorkspaceSlug = "default";
+
+export function workspaceSlugParam(slug: string | undefined): string | null {
+  return slug === undefined || slug === defaultWorkspaceSlug ? null : slug;
+}
+
+export function refusalResponse(cause: unknown): Response {
+  if (cause instanceof HostRefusal) return json(cause.status, { error: cause.message });
+  throw cause;
 }

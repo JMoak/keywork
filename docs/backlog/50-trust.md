@@ -31,6 +31,43 @@ Presets are rule lists, `activePreset` compares rule sets, so the status-line la
 same. The project layer still contributes no permissions at all (load test covers the new
 shape).
 
+**Trusted read posture and ask scopes · 2026-10-11 (118 K7).** Jordan asked to "pre-load
+some initial permissions to not have to approve the read access in every new
+workspace/session". His decisions, verbatim:
+
+1. Trusting a workspace applies a read-only bundle automatically (no second confirmation).
+2. The bundle is fixed in keywork (no config option); user `permissions` rules still win over
+   it (last match wins, bundle sits beneath user rules).
+3. Workspace-scoped grants cover `bash` and MCP tools only. `write` and `edit` never persist
+   beyond `once`; bulk approval for writes is a separate future design (E7).
+
+The bundle is `trustedReadRules` in `shared/src/trust/trusted-reads.ts`, bash command globs
+only. Allowed: `git status*`, `git log*`, `git diff*`, `git show*`, `git rev-parse*`,
+`git remote -v`, `git branch` with `-a`, `-r`, `-v`, `-vv`, `--all`, `--remotes`,
+`--show-current`, and `--list *`, `--contains *`, `--merged *`, `--no-merged *`; `ls*`,
+`dir*`, `cat *`, `head *`, `tail *`, `wc *`, `pwd`, `which *`, `where *`, `rg *`, `grep *`,
+`find *`, `tree*`, `stat *`, `file *`, `echo *`, `type *`, and `--version` for `node`, `bun`,
+`npm`, `git` and `python`. Asked even so, because these forms write or run something:
+`find *-delete*`, `find *-exec*`, `find *-ok*`, `find *-fprint*`, `find *-fls*`,
+`rg *--pre*`, `--output` on `git log`, `git diff` and `git show`, `tree*-o*` and
+`file *-C*`. The `git branch` reads replace a bare `git branch*` because that glob would
+allow `git branch -D` and `git branch <new>`. The compound rule is unchanged, so
+`cat x | sh`, `rg foo > out` and `ls; rm -rf .` still ask. Decisions report `gate: "trusted"`;
+the bundle never counts toward `activePreset`, since it is posture rather than user rules,
+so a trusted workspace on an empty config still reads `standard`.
+
+An ask now answers with a scope: `once`, `session` (the rest of this session) or `workspace`
+(every session of this workspace, persisted to `~/.keywork/workspaces/<identity>/permissions.json`,
+a private atomic write parsed strictly into `{ rules: [{ action, resource, effect: "allow" }] }`).
+Grants derive from the call: a bash command's leading literal words per part, an MCP tool's
+full name. Layering: the user's configured rules decide first; where they say nothing, one
+ordered list decides with last match winning: bundle, then workspace grants, then session
+grants. A compound command whose parts are allowed by different layers (one by a user rule,
+one by the bundle) asks; that is stricter than one merged list and never looser. The TUI's
+and the line REPL's `always` record the same derived session rules instead of approving every
+later call, so `always` on a write approves that one write. Headless runs keep their posture:
+no bundle, no grants, and every ask answers no.
+
 ### E2 (1pt): Permission presets UX
 Design direction (Jordan, 2026-08-10): **named presets + status word**. Two or three
 named policy presets defined as bundles in the policy file, **`careful` · `standard` ·

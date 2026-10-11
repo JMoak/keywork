@@ -5,12 +5,12 @@ import {
   toolScope,
   writeTool,
 } from "../../../packages/engine/src/index.ts";
-import { parseFlavor } from "../../../packages/shared/src/index.ts";
+import { parseTheme } from "../../../packages/shared/src/index.ts";
 import { dimStep, paneBorder } from "../../../packages/tui/src/chroma.ts";
 import {
   type FocusOutline,
   keyworkNight,
-  keyworkNightFlavor,
+  keyworkNightTheme,
 } from "../../../packages/tui/src/index.ts";
 import type { CapturedFrame } from "../frame.ts";
 import { occurrences, rowOf } from "../frame-queries.ts";
@@ -18,9 +18,9 @@ import type { Scenario, Stage } from "../scenario.ts";
 import { notesAfter, notesBefore } from "./fixtures.ts";
 
 const askRowMarker = "[y] allow  [a] always  [n] deny";
-const boxed = parseFlavor({ ...keyworkNightFlavor, name: "boxed", chromeWeight: "regular" });
-const bare = parseFlavor({ ...keyworkNightFlavor, name: "bare", chromeWeight: "borderless" });
-const gapped = parseFlavor({ ...keyworkNightFlavor, name: "gapped", gap: 1 });
+const boxed = parseTheme({ ...keyworkNightTheme, name: "boxed", chromeWeight: "regular" });
+const bare = parseTheme({ ...keyworkNightTheme, name: "bare", chromeWeight: "borderless" });
+const gapped = parseTheme({ ...keyworkNightTheme, name: "gapped", gap: 1 });
 
 const askTurn: TurnDelta[] = [
   { type: "text", text: "Shouting the middle line of notes.txt now." },
@@ -44,7 +44,7 @@ function chromeStates(name: string, description: string, tier: 0 | 2, goldens: s
     files: { "notes.txt": notesBefore },
     tools: (workspaceDir) => [writeTool(toolScope(workspaceDir))],
     turns: [askTurn, textTurn("Left it alone."), askTurn, textTurn("Left it alone."), askTurn],
-    flavors: [boxed, bare, gapped],
+    themes: [boxed, bare, gapped],
     glyphs: { glyphTier: tier, nerdFont: false },
     goldens,
     run: async (stage) => {
@@ -56,14 +56,14 @@ function chromeStates(name: string, description: string, tier: 0 | 2, goldens: s
         return;
       }
 
-      await stage.type("/flavor-boxed");
+      await stage.type("/theme-boxed");
       await stage.press("enter");
       await stage.settle();
       const boxedIdle = await stage.capture("boxed-idle");
       assert.ok(boxedIdle.includes("╭─ session-1 "), "the boxed weight draws its own title row");
       await askAndCapture(stage, "boxed", tier);
 
-      await stage.type("/flavor-bare");
+      await stage.type("/theme-bare");
       await stage.press("enter");
       await stage.settle();
       const bareIdle = await stage.capture("bare-idle");
@@ -71,7 +71,7 @@ function chromeStates(name: string, description: string, tier: 0 | 2, goldens: s
       assert.equal(occurrences(bareIdle, "▎"), 1, "focus reads from one density mark");
       await askAndCapture(stage, "bare", tier);
 
-      await stage.type("/flavor-gapped");
+      await stage.type("/theme-gapped");
       await stage.press("enter");
       await stage.settle();
       await stage.capture("gapped-idle");

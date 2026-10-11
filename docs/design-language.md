@@ -132,7 +132,7 @@ The reading surface gets its grammar. One honest constraint frames everything: t
 cell size is fixed, so **the type scale is a content scale**: what renders and how
 condensed varies, font size never does; "big type" exists only as block-glyph headlines.
 
-**The width-tier grammar.** A pane's width tier governs the page the way flavors govern
+**The width-tier grammar.** A pane's width tier governs the page the way themes govern
 chrome: one resolution, every page property derives from it (working thresholds,
 refined in implementation):
 
@@ -167,6 +167,15 @@ tokens only; the ramp does double duty, no dedicated highlight colors.
 `textDim` (chrome), with `textFaint` reserved to the broadsheet tier. The `panel`
 surface earns its keep (fences, elevated blocks). `textMid`/`panelLift` land before
 C49 freezes the flavor schema.
+
+**One theme dresses every surface (2026-10-11, 118/K6).** A theme (the unit PD15 called a
+flavor) carries the tokens above plus optional terminal (ANSI 16), syntax, diff, selection,
+and cursor sections, each floored like the tokens. The terminal page keeps the restraint
+above: syntax through the existing tokens, outcome words rather than tinted diff grounds.
+The sections serve surfaces that paint those things directly, and a theme that omits one
+gets it derived from its own tokens by the one shared rule, so the terminal and the app
+never disagree about a color. `themes.md` is the record: schema, floors, derivation, and
+the curated gallery of nineteen themes in matched light and dark pairs.
 
 **The tool row.** One designed line: fold-stamp · verb · subject · duration/size ·
 outcome, and outcome is the only colored word. Expanded detail hangs under a faint rule;

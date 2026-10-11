@@ -17,15 +17,18 @@ import {
   type SendBehavior,
   type SessionStore,
   settleTurn,
+  type ToolCallPart,
   type ToolGuard,
   type TurnSettlement,
 } from "@keywork/engine";
 import {
+  grantCandidates,
   type KeyworkConfig,
   type LspConfig,
   type McpServerConfig,
   type ModelCapabilitiesConfig,
   type PromptsConfig,
+  SessionGrants,
   toError,
 } from "@keywork/shared";
 import { type BotMemory, botMemory } from "./bot-memory.ts";
@@ -54,6 +57,7 @@ import {
   terminalInput,
 } from "./terminal-input.ts";
 import { compactJson, firstLine } from "./text.ts";
+import { workspacePermissions } from "./workspace-permissions.ts";
 
 export interface ChatOptions {
   cwd: string;
@@ -325,7 +329,13 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     opened.store,
     composition,
     composeAgents(composition, {
-      permissions: options.permissions,
+      permissions: workspacePermissions({
+        cwd: options.cwd,
+        projectTrusted: options.projectTrusted === true,
+        workspaceSlug: options.workspaceSlug,
+        userRoot: options.userRoot,
+        user: options.permissions,
+      }).resolverFor(),
       bots,
       citations,
       thinking: options.thinking === "on",
@@ -487,20 +497,18 @@ async function timeTravel(repl: Repl, direction: "undo" | "redo"): Promise<void>
 }
 
 function mutationGuard(io: ChatIo, checkpoints: Checkpoints | undefined): ToolGuard {
-  let alwaysAllow = false;
+  const grants = new SessionGrants();
   return {
     gate: io.interactive ? "user" : "headless",
     confirm: async (call) => {
-      if (alwaysAllow) return true;
+      if (grants.covers(call.name, call.arguments)) return true;
       if (!io.interactive) {
         io.printError(`  ? ${call.name} needs approval and there is no terminal to ask · refused`);
         return false;
       }
-      io.print(
-        `\n  ? ${call.name} ${compactJson(call.arguments, 80)}  [y] allow  [a] always  [n] deny`,
-      );
+      io.print(`\n  ? ${call.name} ${compactJson(call.arguments, 80)}  ${askControlsFor(call)}`);
       const answer = await nextAnswer(io);
-      alwaysAllow = answer === "always";
+      if (answer === "always") grants.remember(call.name, call.arguments);
       return answer !== "deny";
     },
     ...(checkpoints !== undefined && {
@@ -508,6 +516,12 @@ function mutationGuard(io: ChatIo, checkpoints: Checkpoints | undefined): ToolGu
       beforeTurn: () => checkpoints.beginTurn(),
     }),
   };
+}
+
+function askControlsFor(call: ToolCallPart): string {
+  return grantCandidates(call.name, call.arguments).length > 0
+    ? "[y] allow  [a] always  [n] deny"
+    : "[y] allow  [n] deny";
 }
 
 type Answer = "allow" | "always" | "deny";

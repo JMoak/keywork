@@ -8,6 +8,7 @@ import {
 } from "./browser-model.ts";
 import type { DebounceTiming } from "./debounce.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type PaneChild,
@@ -19,7 +20,6 @@ import {
   paneTitle,
   rowsView,
 } from "./pane-chrome.ts";
-import type { Theme } from "./theme.ts";
 
 export class BrowserPane implements Pane {
   private readonly model: BrowserModel;
@@ -78,7 +78,7 @@ export class BrowserPane implements Pane {
     );
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const failure = this.model.rootFailure();
     if (failure !== undefined) {
       return [paneFailureLine(`${this.model.rootPath}: ${failure}`, theme, width)];
@@ -91,7 +91,7 @@ export class BrowserPane implements Pane {
     });
   }
 
-  private filterLine(theme: Theme, focused: boolean) {
+  private filterLine(theme: Palette, focused: boolean) {
     const { filtering, filterQuery } = this.model;
     if (!filtering && filterQuery === "") return undefined;
     const caret = filtering && focused ? "▌" : "";
@@ -106,7 +106,7 @@ function rowText(row: BrowserRow): string {
   return `${indent}${affordance}${row.name}${suffix}`;
 }
 
-function rowInk(row: BrowserRow, theme: Theme): string {
+function rowInk(row: BrowserRow, theme: Palette): string {
   if (row.load === "failed") return theme.error;
   if (row.hidden || row.ignored) return theme.textDim;
   return row.kind === "dir" ? theme.accentSoft : theme.text;

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { Agent, CheckpointReads } from "@keywork/engine";
+import { type CheckpointReads, followMutations } from "@keywork/engine";
 import { clampScroll } from "./clamp.ts";
 import { type DiffLine, unifiedDiff } from "./diff-render.ts";
 import type { CheckpointsPort } from "./fork.ts";
@@ -112,21 +112,6 @@ export function refreshingCheckpoints(
     redo: () => announced(port.redo()),
     restoreTo: (tree) => announced(port.restoreTo(tree)),
     ...(port.snapshot !== undefined && { snapshot: port.snapshot.bind(port) }),
-  };
-}
-
-export function followMutations(bus: Agent["bus"], feed: FileChangeFeed): () => void {
-  const mutating = new Set<string>();
-  const stops = [
-    bus.on("tool.started", ({ call }) => {
-      if (mutatingTools.has(call.name)) mutating.add(call.callId);
-    }),
-    bus.on("tool.finished", ({ callId }) => {
-      if (mutating.delete(callId)) feed.emit();
-    }),
-  ];
-  return () => {
-    for (const stop of stops) stop();
   };
 }
 
@@ -304,7 +289,6 @@ export class DiffModel extends RowCursor<ChangedFile> {
   }
 }
 
-const mutatingTools: ReadonlySet<string> = new Set(["write", "edit", "bash"]);
 const hunkHeaderShape = /^@@ -\d+(?:,\d+)? \+(\d+)/;
 
 function diffOf(before: string | undefined, after: string | undefined): DiffLine[] {
@@ -327,7 +311,7 @@ function halfPageOf(rows: number): number {
 function announcingFactory(factory: AgentFactory, feed: FileChangeFeed): AgentFactory {
   return (...args) => {
     const agent = factory(...args);
-    followMutations(agent.bus, feed);
+    followMutations(agent.bus, () => feed.emit());
     return agent;
   };
 }

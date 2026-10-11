@@ -9,6 +9,7 @@ import {
   CitationLedger,
   citationAuditEvent,
   citationUsefulnessFeed,
+  curingStage,
   type EmbeddingsPort,
   Gardener,
   type LayeredSearchHit,
@@ -35,7 +36,6 @@ import { resolveVaultPath, toError } from "@keywork/shared";
 import type {
   AirlockDigestView,
   ArcAirlockPort,
-  CuringStage,
   InboxItemView,
   LedgerEventView,
   MemoryLayerView,
@@ -298,15 +298,8 @@ export function botLayerId(slug: string): string {
   return `bot:${slug}`;
 }
 
-export function curingStage(note: Note): CuringStage {
-  if (note.provenance === "user" || note.pinned) return 3;
-  const usefulness = note.usefulness ?? 0;
-  if (usefulness >= settledUsefulness) return 3;
-  if (usefulness > 0) return 2;
-  return note.confidence === undefined ? 0 : 1;
-}
+export { curingStage };
 
-const settledUsefulness = 0.5;
 const emptyMemoryPane: MemoryPaneInputs = { layers: [], notes: [], inbox: [], ledger: [] };
 
 interface LoadedLayer {

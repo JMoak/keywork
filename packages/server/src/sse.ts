@@ -1,4 +1,4 @@
-import type { BusEnvelope, EventLog } from "./events.ts";
+import { type BusEnvelope, type EventLog, processLevelSessionId } from "./events.ts";
 
 export function serializeEnvelope(envelope: BusEnvelope): string {
   return JSON.stringify(envelope, errorsAsPlainObjects);
@@ -14,6 +14,18 @@ export function lastEventIdOf(request: Request): number | undefined {
   return Number(header);
 }
 
+export type EnvelopeFilter = (envelope: BusEnvelope) => boolean;
+
+export function envelopeFilterOf(request: Request): EnvelopeFilter {
+  const query = new URL(request.url).searchParams;
+  const session = query.get("session");
+  if (session === null || session === "") return () => true;
+  const processLevelPasses = query.get("only") !== "session";
+  return (envelope) =>
+    envelope.sessionId === session ||
+    (processLevelPasses && envelope.sessionId === processLevelSessionId);
+}
+
 export interface StreamRegistry {
   add(close: () => void): () => void;
 }
@@ -26,7 +38,7 @@ export function eventStreamResponse(
   let connection: SseConnection | undefined;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      connection = new SseConnection(controller, log, request, streams);
+      connection = new SseConnection(controller, log, request, streams, envelopeFilterOf(request));
       connection.open(lastEventIdOf(request));
     },
     cancel() {
@@ -52,12 +64,13 @@ class SseConnection {
     private readonly log: EventLog,
     private readonly request: Request,
     private readonly streams: StreamRegistry,
+    private readonly passes: EnvelopeFilter,
   ) {}
 
   open(resumeFrom: number | undefined): void {
     this.write(": connected\n\n");
     if (resumeFrom !== undefined) this.replay(resumeFrom);
-    this.teardown.push(this.log.subscribe((envelope) => this.write(sseFrame(envelope))));
+    this.teardown.push(this.log.subscribe((envelope) => this.deliver(envelope)));
     this.teardown.push(this.streams.add(() => this.close()));
     const onAbort = (): void => this.close();
     this.request.signal.addEventListener("abort", onAbort, { once: true });
@@ -78,7 +91,11 @@ class SseConnection {
     if (oldest !== undefined && resumeFrom + 1 < oldest) {
       this.write(`: resumed with a gap, events ${resumeFrom + 1} to ${oldest - 1} are gone\n\n`);
     }
-    for (const envelope of this.log.since(resumeFrom)) this.write(sseFrame(envelope));
+    for (const envelope of this.log.since(resumeFrom)) this.deliver(envelope);
+  }
+
+  private deliver(envelope: BusEnvelope): void {
+    if (this.passes(envelope)) this.write(sseFrame(envelope));
   }
 
   private write(text: string): void {

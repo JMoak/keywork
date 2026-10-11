@@ -128,6 +128,47 @@ Adaptations:
 
 ---
 
+Themes: palettes adapted for the theme gallery
+
+Tokyo Night (https://github.com/enkia/tokyo-night-vscode-theme)
+Copyright (c) 2018-present Enkia
+Catppuccin (https://github.com/catppuccin/catppuccin)
+Copyright (c) 2021 Catppuccin
+Nord (https://github.com/nordtheme/nord)
+Copyright (c) 2016-present Sven Greb
+gruvbox (https://github.com/morhetz/gruvbox)
+MIT/X11 per its README; the repository publishes no copyright line
+(author: Pavel Pertsev, morhetz)
+Everforest (https://github.com/sainnhe/everforest)
+Copyright (c) 2019 sainnhe
+Kanagawa (https://github.com/rebelot/kanagawa.nvim)
+Copyright (c) 2021 Tommaso Laurenzi
+Rosé Pine (https://github.com/rose-pine/rose-pine-theme)
+Copyright (c) 2023 Rosé Pine
+Flexoki (https://github.com/kepano/flexoki)
+Copyright (c) 2023 Steph Ango
+Omarchy (https://github.com/basecamp/omarchy)
+Copyright (c) David Heinemeier Hansson
+Each licensed under the MIT License (full text below); copyright lines verified against
+the upstream LICENSE files on 2026-10-11.
+
+Adaptations:
+- 118/K6 (packages/shared/src/config/themes/): gallery palettes taken from each project's
+  published color values: keywork-night from Tokyo Night (night variant, with its terminal
+  colors); catppuccin-mocha and catppuccin-latte from Catppuccin's Mocha and Latte
+  palettes; nord and nord-light from Nord's sixteen colors (nord-light grounds on Snow
+  Storm); gruvbox-dark and gruvbox-light from gruvbox's dark and light palettes;
+  everforest-dark and everforest-light from Everforest's medium-contrast palettes;
+  kanagawa-wave and kanagawa-lotus from Kanagawa's wave and lotus palettes; rose-pine and
+  rose-pine-dawn from Rosé Pine's main and dawn palettes; flexoki-dark and flexoki-light
+  from Flexoki's base and accent scales; matte-black and osaka-jade after Omarchy's themes
+  of the same names. Shades that missed keywork's contrast floors were stepped by the
+  smallest OKLCh lightness change that clears them; packages/shared/src/config/
+  gallery.test.ts lists each with its canonical value. ristretto and keywork-day are
+  keywork's own palettes.
+
+---
+
 Crush (https://github.com/charmbracelet/crush) is FSL-1.1-MIT licensed and is
 deliberately NOT a source for keywork: no code has ever been adapted from it, and as of
 2026-08-10 it is not a design source either; features once discussed alongside it in

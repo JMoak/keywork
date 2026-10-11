@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { z } from "zod";
 import { type JsonFileStore, jsonFileStore } from "../json-file-store.ts";
-import { configSchema, defaultConfig, type KeyworkConfig } from "./schema.ts";
+import { configSchema, defaultConfig, type KeyworkConfig, withCurrentThemeKeys } from "./schema.ts";
 
 export interface ConfigSource {
   userDir?: string;
@@ -44,7 +44,7 @@ export function mergeConfigs(base: KeyworkConfig, overlay: KeyworkConfig): Keywo
     ...base,
     ...overlay,
     ...mergedRecord("keybindings", base, overlay),
-    ...mergedRecord("theme", base, overlay),
+    ...mergedRecord("palette", base, overlay),
     ...mergedRecord("apiKeys", base, overlay),
     ...mergedRecord("mcpServers", base, overlay),
     ...mergedPrompts(base, overlay),
@@ -54,7 +54,7 @@ export function mergeConfigs(base: KeyworkConfig, overlay: KeyworkConfig): Keywo
 function preferencesAllowedFromProjectLayer(layer: KeyworkConfig): KeyworkConfig {
   return {
     ...(layer.keybindings !== undefined && { keybindings: layer.keybindings }),
-    ...(layer.theme !== undefined && { theme: layer.theme }),
+    ...(layer.palette !== undefined && { palette: layer.palette }),
   };
 }
 
@@ -67,7 +67,7 @@ function applyLayers(
     .reduce(mergeConfigs, base);
 }
 
-type RecordField = "keybindings" | "theme" | "apiKeys" | "mcpServers";
+type RecordField = "keybindings" | "palette" | "apiKeys" | "mcpServers";
 
 function mergedRecord<F extends RecordField>(
   field: F,
@@ -95,5 +95,6 @@ function mergedPrompts(
 
 function readLayer(dir: string | undefined): KeyworkConfig | undefined {
   if (dir === undefined) return undefined;
-  return keyworkConfigStore(join(dir, "keywork.json")).read();
+  const layer = keyworkConfigStore(join(dir, "keywork.json")).read();
+  return layer === undefined ? undefined : withCurrentThemeKeys(layer);
 }

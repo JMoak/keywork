@@ -4,7 +4,9 @@ The engine emits typed events on an in-process bus (`packages/engine/src/bus.ts`
 `EngineEvents`). The TUI subscribes in process; `keywork serve` streams the same events over
 SSE (`packages/server/src/events.ts`, `sse.ts`). Names are API: a new event gets a section
 here in the same change that adds it to `EngineEvents`, and `packages/engine/src/bus.test.ts`
-fails when the two drift. Vision D7 is the decision behind the shape.
+fails when the two drift. Vision D7 is the decision behind the shape. The server adds a
+second, process-level vocabulary of its own (`ServerEvents`, the "Server events" section at
+the end); `packages/server/src/server.test.ts` holds that section to the same rule.
 
 ## Envelope
 
@@ -19,7 +21,7 @@ stamps each payload into an envelope before it leaves the process:
 |---|---|
 | `id` | Monotonic per server process, starting at 1. The SSE `id:` line carries the same number. |
 | `ts` | ISO 8601 time the envelope was stamped. |
-| `sessionId` | The session whose bus produced the event. |
+| `sessionId` | The session the event concerns. Empty (`""`) for a process-level event, which belongs to the process rather than to one session: `surface.changed`, `memory.inbox`, and `gate.preset` from `POST /preset`. |
 | `type` | One of the event names below. |
 | `payload` | The event's fields, exactly as emitted, with one translation (see `engine.error`). |
 
@@ -154,10 +156,19 @@ and never replayed.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `ask` | `PermissionAsk` | `{ tool, callId, arguments, rule }`. |
+| `ask` | `PermissionAsk` | `{ tool, callId, arguments, rule, rules }`. |
 
 `rule` says why the gate is asking: `policy` (a configured rule says ask) or `default` (the
 tool mutates and no rule covers it).
+
+`rule` can also be `trusted`: the trusted read posture allows a command but asks for its
+write-capable form (`find … -delete`, `rg --pre`, `git log --output=…`). `rules` is the list
+of `{ action, resource, effect: "allow" }` rules a `session` or `workspace` answer would
+record, so a client can show them before the person picks: for `bash`, one rule per part of
+the command built from its leading literal words (`git push *` from `git push origin main`),
+none for a part with redirection or substitution; for an MCP tool, its full name with
+resource `*`; for `write`, `edit` and every other tool, empty, since those are approved once
+at a time.
 
 ### gate.permission
 
@@ -171,9 +182,16 @@ Fires when the trust gate decides on a tool call.
 `default` (the preset's fallback), `user` (an interactive answer) or `headless` (no one to
 ask; the answer is no and `keywork run` flags it).
 
+`gate` can also be `trusted`: the fixed read-only posture a trusted workspace gets decided it.
+The decision carries an optional `scope` when a person's grant decided it: `once`,
+`session` or `workspace` on the answer to an ask (`POST /asks/{callId}`), and `session` or
+`workspace` with `gate: "user"` on a later call an earlier grant covered without asking. A
+denial carries no `scope`.
+
 ### gate.preset
 
-Fires when the active permission preset changes.
+Fires when the active permission preset changes. Over `keywork serve` the switch is
+`POST /preset`, and the envelope is process-level: its `sessionId` is empty.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -228,6 +246,40 @@ extension wrote through its own logger. A consumer that toasts shows `error` and
 | `message` | `string` | One readable line. |
 | `detail` | `unknown` | Optional structured context the extension attached. |
 
+## Tree and files
+
+These two events carry what the TUI's in-process feeds carry: the session tree pane's
+`SessionChangeFeed` and the diff pane's `FileChangeFeed`. `keywork serve` records them on the
+session's log where those feeds fire; a remote tree or diff pane refetches on them instead of
+polling. Neither is replayed.
+
+### session.tree
+
+Fires when the session's entry tree changes other than by streaming a turn: after a fork,
+a label, a leaf move, or once a finished turn's messages are written to the JSONL.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sessionId` | `string` | The session whose tree changed (the source session, for a fork). |
+| `leafId` | `string \| null` | The session's active leaf after the change; `null` is the empty root. |
+| `reason` | `"fork" \| "label" \| "leaf" \| "entry"` | What changed. |
+| `entryId` | `string`, optional | The entry forked at, labelled, or moved to. |
+| `forkedTo` | `string`, optional | The new session's id, on `fork`. |
+
+A client answers it by refetching `GET /sessions/{id}/entries`.
+
+### changes.updated
+
+Fires after a `write`, `edit` or `bash` tool call finishes, once the checkpoint store has
+re-read the worktree.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sessionId` | `string` | The session whose turn ran the tool. |
+| `paths` | `string[]` | Every path changed since the session's baseline, after the refresh; a client replaces its list rather than merging. |
+
+The counts and provenance behind each path come from `GET /sessions/{id}/changes`.
+
 ### engine.error
 
 Fires when a listener throws, when a turn fails, or when post-turn settling fails. A listener
@@ -236,6 +288,67 @@ that throws while handling `engine.error` is dropped silently, so the bus cannot
 | Field | Type | Meaning |
 |---|---|---|
 | `error` | `Error` | The failure. |
+
+## Server events
+
+`keywork serve` adds a second vocabulary beside the engine's (`serverEventTypes` in
+`packages/server/src/events.ts`; the envelope's `type` is the union of both lists, and `/doc`
+publishes the union). These events never appear on the in-process bus and never replay. The
+engine vocabulary above is unchanged by them. `surface.changed` and `memory.inbox` belong to
+the process: their envelope carries an empty `sessionId` (`""`), and a client filtering
+`/events` by session keeps them unless it adds `only=session`. `session.state` carries its
+session's id.
+
+### surface.changed
+
+Fires when one of the process-level surfaces changed and a client should fetch it whole
+again. It fires where the terminal's own panes refresh today: on every `McpRegistry` status
+change (`kind: "mcp"`), on every arc registry change and session binding (`kind: "arcs"`),
+after a bot is defined or a session switches bot (`kind: "bots"`), after a workspace is
+declared, chosen, focused or unfocused (`kind: "workspaces"`), and after trust is recorded for
+the served root (`kind: "workspace"`).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `kind` | `"mcp" \| "arcs" \| "bots" \| "workspaces" \| "workspace"` | Which surface changed: `GET /mcp`, `GET /arcs`, `GET /bots`, `GET /workspaces` or `GET /workspace`. |
+
+One event with a `kind` rather than four names, because every surface is cheap to re-fetch
+whole and read by exactly one pane (118-3; Q-AS6 may split it).
+
+### memory.inbox
+
+Fires whenever the memory review inbox changes under the server: a staged write landing at
+the end of a turn, an approval or discard through `POST /memory/inbox/{id}/...`, a revert
+that re-stages or un-stages an item, and every arc airlock verb (a close review staged by
+`finish`, a triage, a delivery). Fired only when the count or the kind tally actually
+differs from the last one announced, so a verb that leaves the inbox as it was is silent.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `count` | `number` | How many items wait in the inbox, the workspace vault's and every bot layer's together. |
+| `kinds` | `Record<string, number>` | The count per staged kind, keyed by the engine's own `StagedItem.kind` (`note`, `daily`, `moc`, `borderline-promotion`, `contradiction`, `arc-question`, ...), so a kind the engine adds later appears here without a server change. |
+
+The needs-you threshold stays on the client: the TUI notifies on the rising edge of
+`count >= 3` (`defaultInboxThreshold`, `packages/tui/src/notifications.ts`), and a remote
+client applies the same rule to this payload. The server carries the count, never the
+decision.
+
+### session.state
+
+Fires after every session verb that changes the session's standing state: `POST
+/sessions/{id}/model`, `/thinking`, `/effort`, `/compact`, `/undo`, `/redo`, `/rename` and
+`/leaf`. The payload is the whole current state, not a delta, so a client replaces what it
+holds.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `model` | `string`, optional | The model in force as `provider/model`; absent when the provider reports no model id. |
+| `thinking` | `boolean` | Whether the model is asked to show its reasoning. |
+| `effort` | `EffortLevel`, optional | `low`, `medium`, `high`, `xhigh` or `max`; absent when the provider decides. |
+| `title` | `string` | The session title. |
+| `leafId` | `string \| null` | The session entry the next prompt will follow; `null` at the root. |
+| `undoable` | `boolean` | Whether `POST /sessions/{id}/undo` has something to take back. |
+| `redoable` | `boolean` | Whether `POST /sessions/{id}/redo` has something to bring back. |
 
 ## SSE framing
 
@@ -266,9 +379,18 @@ oldest envelope, the replay is preceded by a comment naming the loss:
 : resumed with a gap, events 12 to 41 are gone
 ```
 
+## Filtering with `?session=`
+
+`GET /events?session=<id>` keeps the envelopes whose `sessionId` equals the id **and** every
+envelope with an empty `sessionId`, so a pane bound to one session still learns about
+process-level state such as a preset switch. `&only=session` drops the process-level
+envelopes too. The filter applies to the `Last-Event-ID` replay as well as to live delivery,
+and ids are never renumbered: a filtered stream still carries the server's ids, so resuming
+with the last id seen works the same way.
+
 ## The one translation: `engine.error`
 
-Fourteen of the fifteen types cross the wire as `JSON.stringify(envelope)` with no per-type
+Every type but one crosses the wire as `JSON.stringify(envelope)` with no per-type
 code. `engine.error` carries an `Error` instance, which `JSON.stringify` would flatten to
 `{}`. The server serializes every `Error` value anywhere in an envelope as
 

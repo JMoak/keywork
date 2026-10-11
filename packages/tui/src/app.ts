@@ -51,13 +51,6 @@ import {
 import { externalEditorFor } from "./external-editor.ts";
 import { FileIndex, fileJumpSource, fileJumpsAllowed } from "./file-index.ts";
 import { FilePane } from "./file-pane.ts";
-import {
-  dressedIn,
-  type Flavor,
-  FlavorSwitch,
-  registerFlavorCommands,
-  startupFlavors,
-} from "./flavor.ts";
 import type { CheckpointsPort } from "./fork.ts";
 import { FrameCoalescer, type FrameScheduler } from "./frame-scheduler.ts";
 import { fullRect, type Rect, type Screen } from "./geometry.ts";
@@ -88,6 +81,7 @@ import {
 } from "./osc.ts";
 import type { PresetsPort } from "./overlays/index.ts";
 import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
+import type { PaletteOverrides } from "./palette.ts";
 import type { PaneIntents } from "./pane.ts";
 import { drawnRect } from "./pane-geometry.ts";
 import type { PaneFactories } from "./pane-kinds.ts";
@@ -105,14 +99,20 @@ import {
 } from "./session-attachment.ts";
 import { type SessionPaneDeps, SessionPanes } from "./session-panes.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
-import { followTerminalTheme, systemFlavorName } from "./system-theme.ts";
+import { followTerminalTheme, systemThemeName } from "./system-theme.ts";
 import {
   mirrorSourceOverPanes,
   type TerminalPanePort,
   terminalPaneFactory,
 } from "./terminal-pane.ts";
 import { embeddedTerminalSurfaces } from "./terminal-surface.ts";
-import type { ThemeOverrides } from "./theme.ts";
+import {
+  dressedIn,
+  registerThemeCommands,
+  startupThemes,
+  type Theme,
+  ThemeSwitch,
+} from "./theme.ts";
 import {
   appFrame,
   discardFrame,
@@ -130,8 +130,8 @@ import type { WorkspaceState } from "./workspace-state.ts";
 import { WorkspacesPane } from "./workspaces-pane.ts";
 
 export interface AppOptions {
-  themeOverrides?: ThemeOverrides;
-  flavor?: string;
+  paletteOverrides?: PaletteOverrides;
+  theme?: string;
   keybindings?: KeybindingSource;
   pointer?: "on" | "off";
   masthead?: "on" | "off";
@@ -143,7 +143,7 @@ export interface AppOptions {
   elevation?: TranscriptElevation;
   doctorReport?: () => Promise<string>;
   gardenHeat?: GardenHeat;
-  flavors?: readonly Flavor[];
+  themes?: readonly Theme[];
   page?: PageThresholdOverrides;
   glyphs?: GlyphSupport;
   hyperlinks?: boolean;
@@ -210,8 +210,8 @@ export type InputTap = (listener: (bytes: string) => void) => () => void;
 export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
   const fileChanges = new FileChangeFeed();
   const options = announcingFileChanges(launchOptions, fileChanges);
-  const flavors = new FlavorSwitch(
-    startupFlavors(options.themeOverrides, options.flavors, options.flavor),
+  const themes = new ThemeSwitch(
+    startupThemes(options.paletteOverrides, options.themes, options.theme),
   );
   const escrow = sessionEscrow(options.sessions);
   const restore = await loadRestorePlan(options, escrow);
@@ -286,11 +286,11 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
   const shutDownWithRenderer = (): void => queueMicrotask(() => core.shutdown());
   let releaseFatalGuards: () => void = () => {};
   const core: AppCore = new AppCore({
-    screen: () => screenWithin(renderer, flavors.active.chromeWeight),
+    screen: () => screenWithin(renderer, themes.active.chromeWeight),
     drawnRect: (rect: Rect, screen: Screen) =>
       drawnRect(rect, fullRect(screen), {
-        chrome: flavors.active.chromeWeight,
-        gap: flavors.active.gap,
+        chrome: themes.active.chromeWeight,
+        gap: themes.active.gap,
       }),
     ...paneFactories(options, sessions, trees, paneSessions, arcIndex, () => core),
     createTerminalPane: terminalPaneFactory({
@@ -313,7 +313,7 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
         write: terminal.write,
         modes: () => ({
           focusReporting: terminal.notifier.transport !== "off",
-          themeReports: terminal.interactive && flavors.names().includes(systemFlavorName),
+          themeReports: terminal.interactive && themes.names().includes(systemThemeName),
         }),
         afterResume: () => {
           terminal.reporter.refresh();
@@ -366,12 +366,12 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
         renderer,
         core,
         {
-          theme: flavors.theme,
-          screen: screenWithin(renderer, flavors.active.chromeWeight),
-          chrome: flavors.active.chromeWeight,
-          gap: flavors.active.gap,
+          theme: themes.palette,
+          screen: screenWithin(renderer, themes.active.chromeWeight),
+          chrome: themes.active.chromeWeight,
+          gap: themes.active.gap,
           dim: options.dim === "on",
-          instruments: flavors.active.instruments,
+          instruments: themes.active.instruments,
           glyphs,
           ...(options.focusOutline !== undefined && { focusOutline: options.focusOutline }),
           arcOrdinal: arcIndex.ordinalOf,
@@ -398,7 +398,7 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
       core.postNotice(recoveredNotice);
     }
   };
-  registerHostCommands(core, options, sessions, flavors, render, terminal);
+  registerHostCommands(core, options, sessions, themes, render, terminal);
   core.registry.register(
     bugCommand({
       facts: () => bugFacts(options, sessions, terminal, glyphs, recorder.recent()),
@@ -422,7 +422,7 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     core,
     contain,
     render,
-    () => frameInset(flavors.active.chromeWeight),
+    () => frameInset(themes.active.chromeWeight),
     pointerOn,
     () => animator.settleAll(),
   );
@@ -444,8 +444,8 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     sessions.focused()?.pane.model.terminalFocusChanged(focused),
   );
   stopThemeFollow = watchTheme(terminal, options.terminal?.input ?? stdinTap, {
-    flavors,
-    overrides: options.themeOverrides,
+    themes,
+    overrides: options.paletteOverrides,
     repaint: render,
   });
   renderer.once("destroy", shutDownWithRenderer);
@@ -462,8 +462,8 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
   };
   if (options.keybindings !== undefined) await applyKeybindings(keybindingSeams);
   const unwatchKeybindings = watchKeybindings(keybindingSeams);
-  if (options.flavor !== undefined && flavors.active.name !== options.flavor) {
-    core.postNotice(`no flavor named "${options.flavor}" · wearing ${flavors.active.name}`);
+  if (options.theme !== undefined && themes.active.name !== options.theme) {
+    core.postNotice(`no theme named "${options.theme}" · wearing ${themes.active.name}`);
   }
   const readiness = options.workspaceSetup?.readiness();
   const blocker = readiness === undefined ? undefined : readinessNotice(readiness);
@@ -594,7 +594,7 @@ function registerHostCommands(
   core: AppCore,
   options: AppOptions,
   sessions: SessionPanes,
-  flavors: FlavorSwitch,
+  themes: ThemeSwitch,
   render: () => void,
   terminal: Terminal,
 ): void {
@@ -626,7 +626,7 @@ function registerHostCommands(
   })) {
     core.registry.register(command);
   }
-  registerFlavorCommands(core.registry, flavors, { repaint: render, notice });
+  registerThemeCommands(core.registry, themes, { repaint: render, notice });
   const extensions = options.extensions;
   if (extensions === undefined) return;
   const shadowed = registerExtensions(core.registry, extensions, {
@@ -682,17 +682,17 @@ function watchFocus(
 }
 
 interface ThemeWatch {
-  readonly flavors: FlavorSwitch;
-  readonly overrides: ThemeOverrides | undefined;
+  readonly themes: ThemeSwitch;
+  readonly overrides: PaletteOverrides | undefined;
   readonly repaint: () => void;
 }
 
 function watchTheme(terminal: Terminal, tap: InputTap, watch: ThemeWatch): () => void {
-  if (!terminal.interactive || !watch.flavors.names().includes(systemFlavorName)) return () => {};
+  if (!terminal.interactive || !watch.themes.names().includes(systemThemeName)) return () => {};
   return followTerminalTheme({
     transport: { write: terminal.write, onData: tap },
-    closet: watch.flavors,
-    dress: (flavor) => dressedIn(flavor, watch.overrides),
+    closet: watch.themes,
+    dress: (theme) => dressedIn(theme, watch.overrides),
     repaint: watch.repaint,
   });
 }

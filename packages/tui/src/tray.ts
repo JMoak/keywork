@@ -1,7 +1,7 @@
 import { Box, Text } from "@opentui/core";
 import { type GlyphSupport, resolveMark, type TieredMark } from "./capability.ts";
 import { assumedGlyphs } from "./marks.ts";
-import type { Theme } from "./theme.ts";
+import type { Palette } from "./palette.ts";
 import { clip, padEnd, width } from "./width.ts";
 
 export interface TrayItem {
@@ -21,7 +21,7 @@ export function trayRows(
   items: readonly TrayItem[],
   selected: number,
   width: number,
-  theme: Theme,
+  theme: Palette,
   style: TrayStyle = {},
 ): TrayChild[] {
   const prefix = style.namePrefix ?? "";
@@ -32,7 +32,7 @@ export function trayRows(
   );
 }
 
-export function trayBox(theme: Theme, rows: readonly TrayChild[]): TrayChild {
+export function trayBox(theme: Palette, rows: readonly TrayChild[]): TrayChild {
   return Box(
     {
       border: true,
@@ -63,7 +63,7 @@ function trayRow(
   marker: string,
   column: number,
   rowWidth: number,
-  theme: Theme,
+  theme: Palette,
   prefix: string,
 ): TrayChild {
   const selected = marker !== " ";

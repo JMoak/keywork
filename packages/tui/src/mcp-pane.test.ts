@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
 import type { McpServerView } from "./mcp-pane-model.ts";
+import { resolvePalette } from "./palette.ts";
 import { AppProbe } from "./probe.ts";
 import { dockedIds, dockOf, mustParse, paneIds, stubFilePane } from "./testing/workflow-probe.ts";
-import { resolveTheme } from "./theme.ts";
 
 interface World {
   loads: number;
@@ -263,7 +263,7 @@ describe("mcpDropWatcher", () => {
 });
 
 function context() {
-  return { theme: resolveTheme(), focused: true, width: 60, height: 20 };
+  return { theme: resolvePalette(), focused: true, width: 60, height: 20 };
 }
 
 function describeTree(node: unknown): unknown {

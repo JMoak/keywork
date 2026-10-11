@@ -1,8 +1,8 @@
 import { type ArcRecord, type ArcStatus, kebabTitle, validateArcSlug } from "@keywork/engine";
 import { toError } from "@keywork/shared";
 import { arcAnchor } from "./chroma.ts";
+import type { Palette } from "./palette.ts";
 import { pluralize } from "./pluralize.ts";
-import type { Theme } from "./theme.ts";
 
 export type { ArcStatus };
 
@@ -77,7 +77,7 @@ export function arcOrdinalsOf(arcs: readonly ArcSummary[]): ArcOrdinals {
   return (slug) => ordinals.get(slug);
 }
 
-export function arcInk(theme: Theme, ordinal: number | undefined): string {
+export function arcInk(theme: Palette, ordinal: number | undefined): string {
   return ordinal === undefined ? theme.textDim : arcAnchor(theme.ramp, ordinal);
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AppCore } from "../app-core.ts";
-import { keyworkNight } from "../theme.ts";
+import { keyworkNight } from "../palette.ts";
 import { overlayView, scrimInk } from "./overlays.ts";
 
 function paletteCore(): AppCore {

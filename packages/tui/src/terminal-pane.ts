@@ -1,6 +1,7 @@
 import type { PtySupport } from "@keywork/engine";
 import { ConversationPane } from "./conversation-pane.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView, TerminalMode } from "./pane.ts";
 import {
   type PaneChild,
@@ -28,7 +29,6 @@ import {
 } from "./terminal-model.ts";
 import { PtyShell } from "./terminal-shell.ts";
 import type { TerminalSurfaceFactory } from "./terminal-surface.ts";
-import type { Theme } from "./theme.ts";
 
 export interface TerminalPaneOptions {
   cwd?: string;
@@ -163,13 +163,13 @@ export class TerminalPane implements Pane {
     return paneChrome(context, this.title(), shell.view());
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const lines = this.model?.visibleLines(rows, width) ?? [];
     if (lines.length === 0) return [paneLine(emptyText(this.mode), theme.textDim, width)];
     return lines.map((line) => paneLine(line.text, inkOf(line, theme), width));
   }
 
-  private promptLine(theme: Theme, focused: boolean, width: number): PaneChild {
+  private promptLine(theme: Palette, focused: boolean, width: number): PaneChild {
     const caret = focused ? "▌" : "";
     return paneLine(`❯ ${this.model?.input ?? ""}${caret}`, theme.accent, width);
   }
@@ -188,11 +188,11 @@ function emptyText(mode: TerminalMode): string {
   return mode === "mirror" ? "agent shell commands appear here" : "type a command and press enter";
 }
 
-function inkOf(line: TerminalLine, theme: Theme): string {
+function inkOf(line: TerminalLine, theme: Palette): string {
   return inks(theme)[line.tone];
 }
 
-function inks(theme: Theme): Record<TerminalTone, string> {
+function inks(theme: Palette): Record<TerminalTone, string> {
   return {
     command: theme.accent,
     input: theme.accentSoft,

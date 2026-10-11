@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { validateSlug } from "@keywork/shared";
 import { z } from "zod";
-import type { PermissionResolver, ToolPermission } from "../agent.ts";
+import { type PermissionResolver, permissionOf, type ToolPermission } from "../agent.ts";
 import type { Frontmatter } from "../memory/frontmatter.ts";
 import type { Tool } from "../tools.ts";
 import {
@@ -63,8 +63,10 @@ export function narrowedPermissions(
     const baseVerdict = base?.(call);
     const override = overrides.get(call.name);
     if (override === undefined) return baseVerdict;
-    if (baseVerdict === undefined) return override === "allow" ? undefined : override;
-    return stricter(baseVerdict, override);
+    const basePermission = permissionOf(baseVerdict);
+    if (basePermission === undefined) return override === "allow" ? undefined : override;
+    const strictest = stricter(basePermission, override);
+    return strictest === basePermission ? baseVerdict : strictest;
   };
 }
 

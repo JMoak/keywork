@@ -1,14 +1,14 @@
 import { strict as assert } from "node:assert";
 import { colorQueries, popTitle, pushTitle } from "../../../packages/tui/src/osc.ts";
-import { systemFlavor, systemFlavorName } from "../../../packages/tui/src/system-theme.ts";
+import { systemTheme, systemThemeName } from "../../../packages/tui/src/system-theme.ts";
 import type { Scenario, Stage } from "../scenario.ts";
 
 export const terminalHygiene: Scenario = {
   name: "terminal-hygiene",
   description: "SIGTERM pops every terminal mode keywork and the renderer pushed",
   captureTerminal: true,
-  flavors: [systemFlavor({ background: "#1a1b26", foreground: "#c0caf5", ansi: new Map() })],
-  app: { flavor: systemFlavorName },
+  themes: [systemTheme({ background: "#1a1b26", foreground: "#c0caf5", ansi: new Map() })],
+  app: { theme: systemThemeName },
   run: async (stage) => {
     await stage.settle();
     await answersThemeReport(stage);

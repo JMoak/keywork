@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ArcPane, type ArcPaneOptions, memberRowLine } from "./arc-pane.ts";
 import { parseChord } from "./keys.ts";
+import { resolvePalette } from "./palette.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { PointerEvent } from "./pointer.ts";
 import {
@@ -9,7 +10,6 @@ import {
   type SessionPresence,
 } from "./sessions-overview-model.ts";
 import { press } from "./testing/index.ts";
-import { resolveTheme } from "./theme.ts";
 
 const minute = 60_000;
 const now = 120 * minute;
@@ -223,7 +223,7 @@ describe("ArcPane", () => {
     expect(pane.title()).toBe(" #dock-v2 ");
     expect(rowLines(pane)).toEqual([]);
     expect(() =>
-      pane.view({ theme: resolveTheme(), focused: true, width: 60, height: 8 }),
+      pane.view({ theme: resolvePalette(), focused: true, width: 60, height: 8 }),
     ).not.toThrow();
   });
 });
@@ -238,7 +238,7 @@ describe("ArcPane return delta", () => {
     });
     await pane.settled();
     expect(() =>
-      pane.view({ theme: resolveTheme(), focused: true, width: 60, height: 10 }),
+      pane.view({ theme: resolvePalette(), focused: true, width: 60, height: 10 }),
     ).not.toThrow();
     expect(pane.handleMouse({ x: 2, y: 1 }, down)).toBe(false);
     expect(pane.handleMouse({ x: 2, y: 2 }, down)).toBe(true);
