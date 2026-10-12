@@ -3,7 +3,7 @@ import { textTurn, toolScope, writeTool } from "../../../packages/engine/src/ind
 import type { Scenario } from "../scenario.ts";
 import { notesAfter, notesBefore } from "./fixtures.ts";
 
-const askRowMarker = "[y] allow  [a] always  [n] deny";
+const askRowMarker = "[y] allow  [n] deny";
 const calmHeader = /│ session-1 +│/;
 const emptyRow = "no changes since session start";
 const changedRow = "notes.txt  +1 -1 · turn 1";

@@ -102,6 +102,10 @@ function writeCall(callId: string, path: string, content: string): ToolCallPart 
   return { type: "tool-call", callId, name: "write", arguments: { path, content } };
 }
 
+function bashCall(callId: string, command: string): ToolCallPart {
+  return { type: "tool-call", callId, name: "bash", arguments: { command } };
+}
+
 describe("chat REPL", () => {
   it("greets, runs a prompt through the agent, streams the reply, and persists the turn", async () => {
     const { options, sessionDir, cwd } = await world();
@@ -399,22 +403,37 @@ describe("chat mutation guard", () => {
     expect(io.out.some((line) => line.startsWith("  ✗ not approved"))).toBe(true);
   });
 
-  it("asks once per call and stops asking after 'always'", async () => {
+  it("asks once per command and stops asking after 'always' covers it", async () => {
+    const { options } = await world();
+    const provider = new MockProvider([
+      toolCallTurn(bashCall("call-1", "printf %s one")),
+      toolCallTurn(bashCall("call-2", "printf %s two")),
+      textTurn("done"),
+    ]);
+    const io = scriptedIo({ lines: ["print twice"], keys: ["x", "a"] });
+
+    await chat(options(provider), io);
+
+    expect(io.out.filter((line) => line.includes("[y] allow  [a] always  [n] deny"))).toHaveLength(
+      1,
+    );
+    expect(io.out.filter((line) => line.startsWith("  ✓ "))).toHaveLength(2);
+  });
+
+  it("asks for every write even after 'always', since writes are approved once at a time", async () => {
     const { options, cwd } = await world();
     const provider = new MockProvider([
       toolCallTurn(writeCall("call-1", "one.txt", "1")),
       toolCallTurn(writeCall("call-2", "two.txt", "2")),
       textTurn("done"),
     ]);
-    const io = scriptedIo({ lines: ["write two notes"], keys: ["x", "a"] });
+    const io = scriptedIo({ lines: ["write two notes"], keys: ["a", "y"] });
 
     await chat(options(provider), io);
 
     expect(await readFile(join(cwd, "one.txt"), "utf8")).toBe("1");
     expect(await readFile(join(cwd, "two.txt"), "utf8")).toBe("2");
-    expect(io.out.filter((line) => line.includes("[y] allow  [a] always  [n] deny"))).toHaveLength(
-      1,
-    );
+    expect(io.out.filter((line) => line.includes("[y] allow  [n] deny"))).toHaveLength(2);
   });
 
   it("denies on 'n' and records the refusal in the transcript", async () => {

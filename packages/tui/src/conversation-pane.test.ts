@@ -5,8 +5,8 @@ import type { ConversationModel } from "./conversation-model.ts";
 import { ConversationPane, queueEditHint } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
 import { Animator, type Scheduler, tempos } from "./motion.ts";
+import { keyworkNight } from "./palette.ts";
 import type { PaneContext } from "./pane.ts";
-import { keyworkNight } from "./theme.ts";
 
 const hue = rampColor(keyworkNight.ramp, 0.5);
 

@@ -256,7 +256,7 @@ async function composeMockApp(
     ...app,
     ...(scenario.provider !== "none" && { agentFactory: mockAgentFactory(scenario, paths) }),
     ...(scenario.presets !== undefined && { presets: scenario.presets(paths.root) }),
-    ...(scenario.flavors !== undefined && { flavors: scenario.flavors }),
+    ...(scenario.themes !== undefined && { themes: scenario.themes }),
     tips: "off",
     hyperlinks: false,
     ...scenario.app,

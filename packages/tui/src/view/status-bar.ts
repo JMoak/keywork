@@ -1,10 +1,10 @@
 import { Box, fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
 import { type ArcOrdinals, arcInk, arcTag } from "../arcs.ts";
-import type { Theme } from "../theme.ts";
+import type { Palette } from "../palette.ts";
 
 export interface StatusBarInputs {
-  theme: Theme;
+  theme: Palette;
   label: string | undefined;
   focusedArc: string | undefined;
   arcOrdinal: ArcOrdinals;

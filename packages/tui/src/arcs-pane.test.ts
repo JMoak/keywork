@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { ArcCloseOutcome, ArcSummary, ArcsPort } from "./arcs.ts";
 import { ArcsPane, type ArcsPaneOptions } from "./arcs-pane.ts";
 import type { FrameScheduler } from "./frame-scheduler.ts";
+import { resolvePalette } from "./palette.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { SessionOverviewItem, SessionPresence } from "./sessions-overview-model.ts";
 import { press } from "./testing/index.ts";
-import { resolveTheme } from "./theme.ts";
 
 const minute = 60_000;
 const now = 60 * minute;
@@ -184,7 +184,7 @@ function paneOver(world: World, setup: PaneSetup = {}) {
 }
 
 function context() {
-  return { theme: resolveTheme(), focused: true, width: 60, height: 12 };
+  return { theme: resolvePalette(), focused: true, width: 60, height: 12 };
 }
 
 function rendered(pane: ArcsPane): string {

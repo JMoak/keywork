@@ -2,6 +2,7 @@ import { fg, StyledText, Text } from "@opentui/core";
 import { type ArcOrdinals, arcInk, arcTag } from "./arcs.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type KeyedTrayCommand,
@@ -33,7 +34,6 @@ import {
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
 import { slugChunks, slugInk } from "./slug-ink.ts";
-import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
 
 export interface ArcPaneOptions {
@@ -278,7 +278,7 @@ export class ArcPane implements Pane {
     });
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     const ink = arcInk(theme, this.options.arcOrdinal?.(this.options.slug));
@@ -326,7 +326,7 @@ const foldMark = "░";
 const needsYouStamp = "█";
 const deltaRowCap = 3;
 
-function deltaRowView(line: string, theme: Theme, width: number): PaneChild {
+function deltaRowView(line: string, theme: Palette, width: number): PaneChild {
   return Text({ content: new StyledText(clipSpans([fg(theme.textDim)(`· ${line}`)], width)) });
 }
 
@@ -352,7 +352,7 @@ function stateWord(liveness: SessionLiveness, placement: MemberPlacement): strin
 function memberRowView(
   row: SessionOverviewRow,
   placement: MemberPlacement,
-  theme: Theme,
+  theme: Palette,
   width: number,
   arcHue: string,
 ): PaneChild {

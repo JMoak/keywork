@@ -9,6 +9,7 @@ import {
 } from "./arcs-pane-model.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type KeyedTrayCommand,
@@ -34,7 +35,6 @@ import {
 } from "./session-tree-pane.ts";
 import { overviewRowLine, type SessionPresence, withoutArcTag } from "./sessions-overview-model.ts";
 import { slugChunks, slugInk } from "./slug-ink.ts";
-import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
 
 export interface ArcsPaneOptions {
@@ -213,7 +213,7 @@ export class ArcsPane implements Pane {
     this.refresh();
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     if (this.model.level() === "arcs") {
@@ -230,7 +230,7 @@ export class ArcsPane implements Pane {
     });
   }
 
-  private arcLine(row: ArcGroupRow, theme: Theme, width: number): PaneChild {
+  private arcLine(row: ArcGroupRow, theme: Palette, width: number): PaneChild {
     const archived = row.status === "archived";
     const ink = archived ? theme.textDim : row.current ? theme.accentSoft : theme.text;
     const { lead, label, facts } = arcGroupParts(row, false);
@@ -239,7 +239,7 @@ export class ArcsPane implements Pane {
     return Text({ content: new StyledText(clipSpans(chunks, width)) });
   }
 
-  private arcInkFor(key: ArcGroupKey, theme: Theme): string {
+  private arcInkFor(key: ArcGroupKey, theme: Palette): string {
     return arcInk(theme, key.kind === "arc" ? this.options.arcOrdinal?.(key.slug) : undefined);
   }
 
@@ -248,7 +248,7 @@ export class ArcsPane implements Pane {
     return trayCommandsPressing((chord) => this.handleKey(chord), table);
   }
 
-  private nameLine(theme: Theme, focused: boolean) {
+  private nameLine(theme: Palette, focused: boolean) {
     if (!this.model.naming) return undefined;
     const caret = focused ? "▌" : "";
     return Text({ content: `new arc: ${this.model.nameDraft ?? ""}${caret}`, fg: theme.accent });

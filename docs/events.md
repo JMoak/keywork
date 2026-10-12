@@ -154,10 +154,19 @@ and never replayed.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `ask` | `PermissionAsk` | `{ tool, callId, arguments, rule }`. |
+| `ask` | `PermissionAsk` | `{ tool, callId, arguments, rule, rules }`. |
 
 `rule` says why the gate is asking: `policy` (a configured rule says ask) or `default` (the
 tool mutates and no rule covers it).
+
+`rule` can also be `trusted`: the trusted read posture allows a command but asks for its
+write-capable form (`find … -delete`, `rg --pre`, `git log --output=…`). `rules` is the list
+of `{ action, resource, effect: "allow" }` rules a `session` or `workspace` answer would
+record, so a client can show them before the person picks: for `bash`, one rule per part of
+the command built from its leading literal words (`git push *` from `git push origin main`),
+none for a part with redirection or substitution; for an MCP tool, its full name with
+resource `*`; for `write`, `edit` and every other tool, empty, since those are approved once
+at a time.
 
 ### gate.permission
 
@@ -165,11 +174,17 @@ Fires when the trust gate decides on a tool call.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `decision` | `PermissionDecision` | `{ tool, callId, verdict, gate }`. |
+| `decision` | `PermissionDecision` | `{ tool, callId, verdict, gate, scope? }`. |
 
 `verdict` is `granted` or `denied`. `gate` says who decided: `policy` (a preset rule),
 `default` (the preset's fallback), `user` (an interactive answer) or `headless` (no one to
 ask; the answer is no and `keywork run` flags it).
+
+`gate` can also be `trusted`: the fixed read-only posture a trusted workspace gets decided it.
+The decision carries an optional `scope` when a person's grant decided it: `once`,
+`session` or `workspace` on the answer to an ask (`POST /asks/{callId}`), and `session` or
+`workspace` with `gate: "user"` on a later call an earlier grant covered without asking. A
+denial carries no `scope`.
 
 ### gate.preset
 

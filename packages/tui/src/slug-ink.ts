@@ -1,5 +1,5 @@
 import { fg, type TextChunk } from "@opentui/core";
-import type { Theme } from "./theme.ts";
+import type { Palette } from "./palette.ts";
 
 export type SlugRole = "word" | "separator" | "colon";
 
@@ -30,7 +30,7 @@ export interface SlugInk {
   readonly colon: string;
 }
 
-export function slugInk(theme: Theme, word: string = theme.text): SlugInk {
+export function slugInk(theme: Palette, word: string = theme.text): SlugInk {
   return { word, separator: theme.textDim, colon: theme.accentSoft };
 }
 

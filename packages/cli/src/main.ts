@@ -10,6 +10,7 @@ import {
   type PresetName,
   permissionPresets,
   presetOrder,
+  startupThemeName,
   TrustStore,
 } from "@keywork/shared";
 import type { CommandIo } from "./command-io.ts";
@@ -337,8 +338,7 @@ ${connectHint}`,
       lsp: config.lsp,
       models: config.models,
       thinking: config.thinking,
-      flavor: config.flavor,
-      theme: config.theme,
+      theme: startupThemeName(config),
       signal,
       print: io.print,
       printError: io.printError,

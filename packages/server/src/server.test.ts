@@ -16,7 +16,7 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
-import type { ActivePreset, Flavor } from "@keywork/shared";
+import { type ActivePreset, type CompleteTheme, completeTheme } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import type { ChangesSource } from "./changes.ts";
@@ -55,6 +55,7 @@ function harness(
     askTimeoutMs?: number;
     workspace?: { anchor: string; identity: string };
     surfaces?: MemorySurfaceOptions;
+    trusted?: boolean;
   } = {},
 ) {
   const log = new EventLog({
@@ -68,6 +69,7 @@ function harness(
     ...(options.asks !== undefined && { asks: options.asks }),
     ...(options.askTimeoutMs !== undefined && { askTimeoutMs: options.askTimeoutMs }),
     ...(options.surfaces !== undefined && { surfaces: options.surfaces }),
+    ...(options.trusted !== undefined && { trusted: options.trusted }),
   });
   const server = createKeyworkServer({
     token,
@@ -120,7 +122,13 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
   "tool.output": { chunk: "line\n", callId: "c1" },
   "tool.finished": { callId: "c1", output: "line\n", isError: false },
   "gate.ask": {
-    ask: { tool: "bash", callId: "c2", arguments: { command: "rm x" }, rule: "default" },
+    ask: {
+      tool: "bash",
+      callId: "c2",
+      arguments: { command: "rm x" },
+      rule: "default",
+      rules: [{ action: "bash", resource: "rm *", effect: "allow" }],
+    },
   },
   "gate.permission": {
     decision: { tool: "bash", callId: "c2", verdict: "denied", gate: "headless" },
@@ -444,6 +452,7 @@ describe("asks", () => {
       callId: "c1",
       arguments: { path: "a" },
       rule: "default",
+      rules: [],
     });
     const listed = (await (await h.call("/asks")).json()) as { asks: unknown[] };
     expect(listed.asks).toEqual([
@@ -465,6 +474,7 @@ describe("asks", () => {
       callId: "c1",
       verdict: "granted",
       gate: "user",
+      scope: "once",
     });
     await collect(reader, (event) => event === "turn.completed");
     expect((await post(h, "/asks/c1", JSON.stringify({ verdict: "denied" }))).status).toBe(409);
@@ -489,6 +499,170 @@ describe("asks", () => {
       verdict: "denied",
       gate: "headless",
     });
+    await reader.close();
+  });
+});
+
+describe("ask scopes and grants", () => {
+  const shell: Tool = {
+    name: "bash",
+    description: "runs a command",
+    parameters: { type: "object" },
+    mutates: true,
+    execute: async (args) => `ran ${(args as { command: string }).command}`,
+  };
+  const write: Tool = { ...shell, name: "write", execute: async () => "written" };
+  const bashCall = (callId: string, command: string) =>
+    toolCallTurn({ type: "tool-call", callId, name: "bash", arguments: { command } });
+  const post = (h: Harness, path: string, body: unknown) =>
+    h.call(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const pushRule = { action: "bash", resource: "git push *", effect: "allow" };
+  const decisions = (frames: readonly { event: string | undefined; data: string }[]) =>
+    frames
+      .filter((frame) => frame.event === "gate.permission")
+      .map((frame) => JSON.parse(frame.data).payload.decision);
+  const askRules = (frames: readonly { data: string }[]) =>
+    JSON.parse(frames.at(-1)?.data ?? "{}").payload.ask.rules;
+
+  it("lets a trusted workspace run read-only commands under the bundle, reported as gate trusted", async () => {
+    const h = harness({
+      provider: new MockProvider([bashCall("c1", "git status --short"), textTurn("done")]),
+      tools: [shell],
+      asks: "queue",
+      trusted: true,
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "look" });
+    const frames = await collect(reader, (event) => event === "turn.completed");
+    expect(frames.some((frame) => frame.event === "gate.ask")).toBe(false);
+    expect(decisions(frames)).toEqual([
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted" },
+    ]);
+    const permissions = (await (await h.call("/permissions")).json()) as {
+      trusted: boolean;
+      bundle: unknown[];
+    };
+    expect(permissions.trusted).toBe(true);
+    expect(permissions.bundle).toContainEqual({
+      action: "bash",
+      resource: "git status*",
+      effect: "allow",
+    });
+    await reader.close();
+  });
+
+  it("answers an untrusted workspace with an empty bundle and asks for a read-only command", async () => {
+    const h = harness({
+      provider: new MockProvider([bashCall("c1", "git status"), textTurn("done")]),
+      tools: [shell],
+      asks: "queue",
+    });
+    expect(await (await h.call("/permissions")).json()).toEqual({
+      trusted: false,
+      bundle: [],
+      workspace: [],
+      session: {},
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "look" });
+    const asked = await collect(reader, (event) => event === "gate.ask");
+    expect(askRules(asked)).toEqual([
+      { action: "bash", resource: "git status *", effect: "allow" },
+    ]);
+    await post(h, "/asks/c1", { verdict: "denied", scope: "workspace" });
+    await collect(reader, (event) => event === "turn.completed");
+    const after = (await (await h.call("/permissions")).json()) as { workspace: unknown[] };
+    expect(after.workspace).toEqual([]);
+    await reader.close();
+  });
+
+  it("stops asking for the rest of the session after a session-scoped grant", async () => {
+    const h = harness({
+      provider: new MockProvider([
+        bashCall("c1", "git push origin main"),
+        bashCall("c2", "git push origin dev"),
+        textTurn("done"),
+      ]),
+      tools: [shell],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "push both" });
+    const asked = await collect(reader, (event) => event === "gate.ask");
+    expect(askRules(asked)).toEqual([pushRule]);
+    const answered = await post(h, "/asks/c1", { verdict: "granted", scope: "session" });
+    expect(answered.status).toBe(200);
+    const frames = await collect(reader, (event) => event === "turn.completed");
+    expect(frames.some((frame) => frame.event === "gate.ask")).toBe(false);
+    expect(decisions(frames)).toEqual([
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "session" },
+      { tool: "bash", callId: "c2", verdict: "granted", gate: "user", scope: "session" },
+    ]);
+    expect(await (await h.call("/permissions")).json()).toMatchObject({
+      workspace: [],
+      session: { [id]: [pushRule] },
+    });
+    await reader.close();
+  });
+
+  it("records a workspace grant, lists it, and revokes it", async () => {
+    const h = harness({
+      provider: new MockProvider([bashCall("c1", "git push origin main"), textTurn("done")]),
+      tools: [shell],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "push" });
+    await collect(reader, (event) => event === "gate.ask");
+    await post(h, "/asks/c1", { verdict: "granted", scope: "workspace" });
+    const frames = await collect(reader, (event) => event === "turn.completed");
+    expect(decisions(frames)).toEqual([
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "workspace" },
+    ]);
+    expect(await (await h.call("/permissions")).json()).toMatchObject({
+      workspace: [pushRule],
+      session: {},
+    });
+    const revoke = (body: unknown) => post(h, "/permissions/workspace/revoke", body);
+    expect((await revoke({})).status).toBe(400);
+    expect((await revoke({ rule: { ...pushRule, effect: "deny" } })).status).toBe(400);
+    const revoked = await revoke({ rule: pushRule });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toEqual({ revoked: pushRule });
+    expect((await revoke({ rule: pushRule })).status).toBe(404);
+    const after = (await (await h.call("/permissions")).json()) as { workspace: unknown[] };
+    expect(after.workspace).toEqual([]);
+    await reader.close();
+  });
+
+  it("refuses to grant write beyond once and keeps the ask open for a once answer", async () => {
+    const h = harness({
+      provider: new MockProvider([
+        toolCallTurn({ type: "tool-call", callId: "c1", name: "write", arguments: { path: "a" } }),
+        textTurn("done"),
+      ]),
+      tools: [write],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "write" });
+    await collect(reader, (event) => event === "gate.ask");
+    const refused = await post(h, "/asks/c1", { verdict: "granted", scope: "session" });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: "write and edit are approved once at a time" });
+    const unknownScope = await post(h, "/asks/c1", { verdict: "granted", scope: "sometimes" });
+    expect(unknownScope.status).toBe(400);
+    expect((await post(h, "/asks/c1", { verdict: "granted" })).status).toBe(200);
+    await collect(reader, (event) => event === "turn.completed");
     await reader.close();
   });
 });
@@ -1178,7 +1352,7 @@ describe("workspace, files, trust and status (K3)", () => {
       "/arcs",
       "/bots",
       "/workspaces",
-      "/flavors",
+      "/themes",
     ]) {
       expect((await h.call(path)).status, path).toBe(503);
     }
@@ -1443,18 +1617,19 @@ describe("workspace, files, trust and status (K3)", () => {
     expect(await surfaceEvents(h, "workspaces")).toHaveLength(6);
   });
 
-  it("lists the flavor closet with the active name", async () => {
+  it("lists the theme closet with the active name and the system placeholder", async () => {
     const root = await roots();
-    const h = harness({ surfaces: { root, flavors: [testFlavor] } });
-    expect(await bodyOf(await h.call("/flavors"))).toEqual({
-      flavors: [testFlavor],
+    const h = harness({ surfaces: { root, themes: [testTheme] } });
+    expect(await bodyOf(await h.call("/themes"))).toEqual({
+      themes: [testTheme],
       active: "test-dusk",
+      placeholders: ["system"],
     });
   });
 
   it("drives every surface through the typed client", async () => {
     const root = await populatedRoot();
-    const h = harness({ surfaces: { root, trust: "trusted", flavors: [testFlavor] } });
+    const h = harness({ surfaces: { root, trust: "trusted", themes: [testTheme] } });
     const client = keyworkClient(
       { url: origin, token },
       { fetch: (input, init) => h.server.fetch(new Request(input, init)) },
@@ -1480,7 +1655,7 @@ describe("workspace, files, trust and status (K3)", () => {
     await client.unfocusWorkspaceDir("docs", "packages/docs");
     expect((await client.workspaces()).map((choice) => choice.slug)).toEqual([undefined, "docs"]);
     expect(await client.useWorkspace("docs")).toEqual({ slug: "docs", reopens: true });
-    expect((await client.flavors()).active).toBe("test-dusk");
+    expect((await client.themes()).active).toBe("test-dusk");
     expect(await client.mcpServers()).toEqual([]);
     await expect(client.restartMcpServer("nope")).rejects.toMatchObject({ status: 404 });
     expect(await client.trustWorkspace()).toMatchObject({ trusted: true, reopens: false });
@@ -1529,7 +1704,7 @@ function fakeRegistry() {
   return { port, calls, status };
 }
 
-const testFlavor: Flavor = {
+const testTheme: CompleteTheme = completeTheme({
   name: "test-dusk",
   appearance: "dark",
   tokens: {
@@ -1551,7 +1726,7 @@ const testFlavor: Flavor = {
   gap: 0,
   chromeWeight: "seams",
   instruments: "calm",
-};
+});
 
 describe("session verbs (118 K1) over the memory host", () => {
   interface VerbHarness extends Harness {

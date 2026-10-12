@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveTheme } from "./theme.ts";
+import { resolvePalette } from "./palette.ts";
 import { clipLine, type TrayChild, trayRows } from "./tray.ts";
 import { width } from "./width.ts";
 
-const theme = resolveTheme();
+const theme = resolvePalette();
 
 function rowTexts(child: TrayChild): string[] {
   const texts: string[] = [];

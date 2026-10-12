@@ -4,7 +4,7 @@ import { type ArcOrdinals, arcInk } from "../arcs.ts";
 import { type BotPicker, type BotPickerRow, botRowParts, describeBotRow } from "../bot-picker.ts";
 import type { FilterPicker } from "../filter-picker.ts";
 import { describeModelRow, type ModelPicker, type ModelPickerRow } from "../model-picker.ts";
-import type { Theme } from "../theme.ts";
+import type { Palette } from "../palette.ts";
 import { clipLine } from "../tray.ts";
 import {
   describeWorkspaceRow,
@@ -16,7 +16,7 @@ export interface FilterOverlaySpec<Row> {
   picker: FilterPicker<Row>;
   title: string;
   emptyHint: string;
-  rowInk(row: Row, selected: boolean, theme: Theme): TextChunk[];
+  rowInk(row: Row, selected: boolean, theme: Palette): TextChunk[];
 }
 
 export interface OverlayPlacement {
@@ -29,7 +29,7 @@ export interface OverlayPlacement {
 
 export function filterOverlay<Row>(
   spec: FilterOverlaySpec<Row>,
-  theme: Theme,
+  theme: Palette,
   placement: OverlayPlacement,
 ) {
   const rows = spec.picker.rows();
@@ -124,7 +124,7 @@ export function botPickerSpec(picker: BotPicker): FilterOverlaySpec<BotPickerRow
   };
 }
 
-function markedRow(ink: TextChunk[], selected: boolean, theme: Theme) {
+function markedRow(ink: TextChunk[], selected: boolean, theme: Palette) {
   const marker = fg(selected ? theme.accent : theme.text)(selected ? "▸ " : "  ");
   return Text({ content: new StyledText([marker, ...ink]) });
 }

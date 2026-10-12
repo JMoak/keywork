@@ -31,7 +31,13 @@ import {
   type SseReader,
   sseReader,
 } from "@keywork/server/testing";
-import { type ActivePreset, TrustStore } from "@keywork/shared";
+import {
+  type ActivePreset,
+  type CompleteTheme,
+  contrastFailures,
+  gallery,
+  TrustStore,
+} from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterAll, describe, expect, it } from "vitest";
 import { type ArcService, arcService } from "./arcs.ts";
@@ -99,7 +105,7 @@ describe("servedHost", () => {
       );
 
     const answered = await Promise.all(
-      ["/workspace", "/flavors", "/mcp", "/arcs", "/memory", "/bots", "/workspaces"].map(
+      ["/workspace", "/themes", "/mcp", "/arcs", "/memory", "/bots", "/workspaces"].map(
         async (path) => [path, (await call(path)).status] as const,
       ),
     );
@@ -266,6 +272,174 @@ describe("fileSessionHost", () => {
     }
     await stream.close();
     await second.server.close();
+  });
+});
+
+describe("fileSessionHost permission layers", () => {
+  const bash = (callId: string, command: string) =>
+    toolCallTurn({ type: "tool-call", callId, name: "bash", arguments: { command } });
+  const printfRule = { action: "bash", resource: "printf *", effect: "allow" };
+  const json = (body: unknown): RequestInit => ({
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  async function layeredOptions(provider: MockProvider, projectTrusted: boolean) {
+    return { ...(await hostOptions(provider)), projectTrusted, permissions: () => undefined };
+  }
+
+  async function prompted(served: ReturnType<typeof serverOver>, id: string, text: string) {
+    const reader = sseReader(await served.call("/events"));
+    await served.call(`/sessions/${id}/prompt`, json({ text }));
+    return {
+      until: async (event: string) => {
+        const frames: Array<{ event: string | undefined; data: string }> = [];
+        for (;;) {
+          const frame = await reader.next();
+          frames.push(frame);
+          if (frame.event === event) return frames;
+        }
+      },
+      close: () => reader.close(),
+    };
+  }
+
+  function decisionsIn(frames: ReadonlyArray<{ event: string | undefined; data: string }>) {
+    return frames
+      .filter((frame) => frame.event === "gate.permission")
+      .map((frame) => JSON.parse(frame.data).payload.decision);
+  }
+
+  async function sessionOn(served: ReturnType<typeof serverOver>): Promise<string> {
+    return ((await (await served.call("/sessions", { method: "POST" })).json()) as { id: string })
+      .id;
+  }
+
+  it("runs a read-only command in a trusted workspace without an ask, and still asks for a compound", async () => {
+    const options = await layeredOptions(
+      new MockProvider([
+        bash("c1", "echo trusted"),
+        bash("c2", "echo a; printf b"),
+        textTurn("done"),
+      ]),
+      true,
+    );
+    const served = serverOver(options);
+    const id = await sessionOn(served);
+    const turn = await prompted(served, id, "look");
+    const beforeAsk = await turn.until("gate.ask");
+    expect(beforeAsk.some((frame) => frame.event === "tool.output")).toBe(true);
+    expect(decisionsIn(beforeAsk)).toEqual([
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted" },
+    ]);
+    await served.call("/asks/c2", json({ verdict: "denied" }));
+    await turn.until("turn.completed");
+    await turn.close();
+    await served.server.close();
+  });
+
+  it("keeps an untrusted workspace on the built-in posture", async () => {
+    const options = await layeredOptions(
+      new MockProvider([bash("c1", "echo plain"), textTurn("done")]),
+      false,
+    );
+    const served = serverOver(options);
+    const id = await sessionOn(served);
+    const turn = await prompted(served, id, "look");
+    const asked = await turn.until("gate.ask");
+    expect(JSON.parse(asked.at(-1)?.data ?? "{}").payload.ask).toMatchObject({
+      rule: "default",
+      rules: [{ action: "bash", resource: "echo plain *", effect: "allow" }],
+    });
+    await served.call("/asks/c1", json({ verdict: "denied" }));
+    await turn.until("turn.completed");
+    await turn.close();
+    expect(await (await served.call("/permissions")).json()).toMatchObject({
+      trusted: false,
+      bundle: [],
+    });
+    await served.server.close();
+  });
+
+  it("stops the second ask after a session grant", async () => {
+    const options = await layeredOptions(
+      new MockProvider([
+        bash("c1", "printf %s one"),
+        bash("c2", "printf %s two"),
+        textTurn("done"),
+      ]),
+      false,
+    );
+    const served = serverOver(options);
+    const id = await sessionOn(served);
+    const turn = await prompted(served, id, "print");
+    await turn.until("gate.ask");
+    expect(
+      (await served.call("/asks/c1", json({ verdict: "granted", scope: "session" }))).status,
+    ).toBe(200);
+    const frames = await turn.until("turn.completed");
+    expect(frames.some((frame) => frame.event === "gate.ask")).toBe(false);
+    expect(decisionsIn(frames)).toEqual([
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "session" },
+      { tool: "bash", callId: "c2", verdict: "granted", gate: "user", scope: "session" },
+    ]);
+    expect(await (await served.call("/permissions")).json()).toMatchObject({
+      workspace: [],
+      session: { [id]: [printfRule] },
+    });
+    await turn.close();
+    await served.server.close();
+  });
+
+  it("keeps a workspace grant across a reopen until it is revoked", async () => {
+    const first = await layeredOptions(
+      new MockProvider([bash("c1", "printf %s one"), textTurn("done")]),
+      false,
+    );
+    const opened = serverOver(first);
+    const firstTurn = await prompted(opened, await sessionOn(opened), "print");
+    await firstTurn.until("gate.ask");
+    await opened.call("/asks/c1", json({ verdict: "granted", scope: "workspace" }));
+    await firstTurn.until("turn.completed");
+    await firstTurn.close();
+    await opened.server.close();
+
+    const reopened = serverOver({
+      ...(await layeredOptions(
+        new MockProvider([
+          bash("c2", "printf %s two"),
+          textTurn("done"),
+          bash("c3", "printf %s three"),
+          textTurn("done"),
+        ]),
+        false,
+      )),
+      cwd: first.cwd,
+    });
+    expect(
+      ((await (await reopened.call("/permissions")).json()) as { workspace: unknown[] }).workspace,
+    ).toEqual([printfRule]);
+    const id = await sessionOn(reopened);
+    const granted = await prompted(reopened, id, "print again");
+    const frames = await granted.until("turn.completed");
+    expect(decisionsIn(frames)).toEqual([
+      { tool: "bash", callId: "c2", verdict: "granted", gate: "user", scope: "workspace" },
+    ]);
+    await granted.close();
+
+    const revoked = await reopened.call(
+      "/permissions/workspace/revoke",
+      json({ rule: printfRule }),
+    );
+    expect(revoked.status).toBe(200);
+    const asking = await prompted(reopened, id, "print once more");
+    const asked = await asking.until("gate.ask");
+    expect(JSON.parse(asked.at(-1)?.data ?? "{}").payload.ask.callId).toBe("c3");
+    await reopened.call("/asks/c3", json({ verdict: "denied" }));
+    await asking.until("turn.completed");
+    await asking.close();
+    await reopened.server.close();
   });
 });
 
@@ -1071,7 +1245,7 @@ describe("the surface ports over a served workspace (K3)", () => {
     userRoot?: string;
     projectTrusted?: boolean;
     mcp?: boolean;
-    flavor?: string;
+    theme?: string;
   }
   async function surfacedServer(overrides: SurfacedOptions = {}) {
     const options = await hostOptions(new MockProvider([]));
@@ -1101,7 +1275,7 @@ describe("the surface ports over a served workspace (K3)", () => {
         projectTrusted,
         userRoot,
         sessionDir,
-        flavor: overrides.flavor,
+        theme: overrides.theme,
         composition: () => Promise.resolve(composition),
         session: async (id) => {
           const store = await findSession(sessionDir, id);
@@ -1372,14 +1546,27 @@ describe("the surface ports over a served workspace (K3)", () => {
     }
   });
 
-  it("lists the flavor closet without the terminal-derived system flavor", async () => {
-    const world = await surfacedServer({ flavor: "system" });
+  it("lists the whole gallery complete, names the configured theme, and leaves system to the client", async () => {
+    const world = await surfacedServer({ theme: "system" });
     try {
-      const listed = await answer<{ flavors: Array<{ name: string }>; active: string }>(
-        await world.call("/flavors"),
-      );
-      expect(listed.flavors.map((flavor) => flavor.name)).toEqual(["keywork-night"]);
+      const listed = await answer<{
+        themes: CompleteTheme[];
+        active: string;
+        placeholders: string[];
+      }>(await world.call("/themes"));
+      expect(listed.themes.map((theme) => theme.name)).toEqual(gallery.map((theme) => theme.name));
+      for (const theme of listed.themes) {
+        expect(contrastFailures(theme), theme.name).toEqual([]);
+        expect(Object.keys(theme.terminal)).toHaveLength(16);
+        expect(theme.syntax.keyword).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(theme.diff.insertedLine).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(theme.selection.background).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(theme.cursor).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+      const night = listed.themes.find((theme) => theme.name === "keywork-night");
+      expect(night?.pair).toBe("keywork-day");
       expect(listed.active).toBe("system");
+      expect(listed.placeholders).toEqual(["system"]);
     } finally {
       await world.close();
     }

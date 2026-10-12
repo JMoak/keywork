@@ -111,14 +111,6 @@ export {
   routeExtensionNotice,
   watchExtensionNotices,
 } from "./extension-host.ts";
-export {
-  type Flavor,
-  FlavorSwitch,
-  keyworkNightFlavor,
-  registerFlavorCommands,
-  startupFlavors,
-  themeOf,
-} from "./flavor.ts";
 export type { CheckpointsPort } from "./fork.ts";
 export {
   type Highlighter,
@@ -222,6 +214,7 @@ export {
   resolvePage,
   resolvePageThresholds,
 } from "./page.ts";
+export { keyworkNight, type Palette, type PaletteOverrides, resolvePalette } from "./palette.ts";
 export type { LifecycleState } from "./pane.ts";
 export type { ArcOrigin, PaneOrigin } from "./pane-kinds.ts";
 export type { WorkspacePort } from "./restore-plan.ts";
@@ -269,10 +262,17 @@ export {
   detectTerminalColors,
   queryTerminalColors,
   stdioColorTransport,
-  systemFlavor,
-  systemFlavorName,
+  systemTheme,
+  systemThemeName,
 } from "./system-theme.ts";
-export { keyworkNight, resolveTheme, type Theme, type ThemeOverrides } from "./theme.ts";
+export {
+  keyworkNightTheme,
+  paletteOf,
+  registerThemeCommands,
+  startupThemes,
+  type Theme,
+  ThemeSwitch,
+} from "./theme.ts";
 export { curatedTips, rotatingTip, type Tip, type TipSignals, tipRotationMs } from "./tips.ts";
 export { type TitleBarState, type TitleSpan, titleBar, titleSpans } from "./title-bar.ts";
 export type { FocusOutline } from "./view/frame.ts";

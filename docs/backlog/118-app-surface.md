@@ -665,3 +665,177 @@ applied alone to a clean checkout.
 
 Proposed commit message: `feat(serve): pane parity for settle, bot binding, arc close and
 mcp login reconnect`.
+
+### K6 · the themes · landed 2026-10-11
+
+Jordan asked for an Omarchy-grade gallery where one theme dresses every surface. Mid-lane
+he renamed the unit: "flavor" is now **theme** everywhere a person sees it and in code.
+
+**Renames (the app lanes mirror these).** Shared: `flavorSchema` → `themeSchema`, `Flavor`
+→ `Theme`, `FlavorTokens` → `ThemeTokens`, `FlavorTokenOverrides` → `ThemeTokenOverrides`,
+`flavorTokensSchema` → `themeTokensSchema`, `flavorTokenOverridesSchema` →
+`themeTokenOverridesSchema`, `parseFlavor` → `parseTheme`; files `config/flavor.ts` →
+`config/theme.ts`. Route: `GET /flavors` (`listFlavors`, `{ flavors, active }`) → `GET
+/themes` (`listThemes`, `{ themes, active, placeholders }`); `/flavors` is gone; the optional
+host port `flavors?: FlavorsPort` → `themes?: ThemesPort` (`FlavorsReport` →
+`ThemesReport`), the client's `flavors()` → `themes()`, and `HostOptions.flavor` plus the
+token-override `theme` → one `theme` name. Config: the startup key is
+`theme` and the overrides key is `palette`; for one release `flavor` still reads as `theme`
+and an object under `theme` still reads as `palette` (normalized per layer at load, so
+project layers still merge token by token). TUI: its bare-token `Theme` type is now
+`Palette` (`ThemeOverrides` → `PaletteOverrides`, `ThemeColorToken` → `PaletteColorToken`,
+`resolveTheme` → `resolvePalette`, `themeOf` → `paletteOf`, `theme.ts` → `palette.ts`);
+`FlavorSwitch` → `ThemeSwitch` (its `.theme` getter → `.palette`), `startupFlavors` →
+`startupThemes`, `registerFlavorCommands` → `registerThemeCommands`, `keyworkNightFlavor`
+→ `keyworkNightTheme`, `systemFlavor`/`systemFlavorName` → `systemTheme`/`systemThemeName`,
+`AppOptions.flavor`/`flavors`/`themeOverrides` → `theme`/`themes`/`paletteOverrides`;
+palette commands are `theme-<name>` and notices say "theme now …".
+
+**Schema.** Optional sections on `themeSchema`, so older files still load: `terminal` (the
+ANSI 16 by name), `syntax` (fifteen roles), `diff` (`insertedLine`, `deletedLine`,
+`insertedText`, `deletedText`), `selection` (`background`, optional `text`), `cursor`, and
+`pair`. Floors in `contrastFailures`: syntax ≥ 30 on panel (comment 15); the six terminal
+hues and their bright twins ≥ 30 on background; selection text ≥ 45; text ≥ 60 on both diff
+line grounds; cursor ≥ 40. `pair` symmetry and opposite appearance are proved in
+`gallery.test.ts`.
+
+**Derivation.** `completeTheme` fills a missing section from the thirteen base tokens and
+keeps hand-set ones; the rule is in `docs/themes.md` and the describe strings. Every floored
+derived ink steps toward `text` and every derived ground steps back toward its panel, so the
+rule always ends on a passing theme. Palette overrides drop the worn theme's hand-set
+sections so they re-derive from the new palette.
+
+**Gallery.** Nineteen themes, every section by hand: keywork-night (tokens unchanged) and
+keywork-day; catppuccin-mocha/-latte; nord/nord-light; gruvbox-dark/-light;
+everforest-dark/-light; kanagawa-wave/-lotus; rose-pine/rose-pine-dawn;
+flexoki-dark/-light; matte-black, osaka-jade, ristretto unpaired. Taste: Nord and Gruvbox
+`regular`, matte-black and osaka-jade `borderless`, the rest `seams`; gap 1 on Catppuccin,
+Everforest, Rosé Pine, Flexoki, and matte-black; `cockpit` on matte-black and ristretto;
+density `medium` on accentSoft for Catppuccin and Kanagawa, `full` on error for Everforest,
+Rosé Pine, Flexoki, and ristretto. Twenty-six canonical shades were stepped to clear a floor
+(Nord's red and the light Nord greens, cyans and yellow; gruvbox-dark's error and dark
+terminal red/blue/magenta; everforest-dark's green diff line; Kanagawa's dark terminal red
+and invalid; Rosé Pine's border and pine; flexoki-dark's error), each tabled in
+`gallery.test.ts` with its canonical value. Sources are recorded in `NOTICE` under "Themes".
+
+**`GET /themes`.** `{ themes: CompleteTheme[], active: string, placeholders: ["system"] }`:
+the gallery plus any closet theme (a closet theme replaces a gallery theme of the same
+name, via `wardrobe`), each run through `completeTheme` so the wire always carries every
+section; `pair` rides on each theme, so no separate `pairs` field. The TUI wardrobe lists
+the same gallery, so `theme-<name>` exists for all nineteen. The TUI paints from base tokens
+only (its design language keeps syntax inside the tokens), so the sections are for the app.
+
+**Evidence.** Full gate under bun 1.3.9: `check:types`, `lint`, `check:prose`,
+`check:pins`, `check:guardrails` and `bun run test` exit 0; the suite is 327 files, 4595
+passed, 1 skipped. e2e goldens for chrome-states, tray-tour, and discovery were refreshed
+(theme commands now fill the slash completions).
+
+### K7 · trusted reads and ask scopes · landed 2026-10-11
+
+Jordan asked whether trusting a workspace could pre-load read permissions so the app stops
+asking for `ls` and `git status` in every session. His three decisions are recorded verbatim
+in `50-trust.md` E1: the bundle applies on trust with no second confirmation, it is fixed in
+keywork with user rules above it, and grants beyond `once` cover `bash` and MCP tools only.
+
+**Posture.** A trusted workspace gets `trustedReadRules` (listed in `50-trust.md` E1): allow
+rules for read-only shell commands plus a few asks for their write-capable forms. An
+untrusted workspace and every headless run get nothing new. Decisions under it report
+`gate: "trusted"`; an ask it raises reports `rule: "trusted"`.
+
+**`POST /asks/{callId}`.** Body `{ verdict: "granted" | "denied", scope?: "once" | "session"
+| "workspace" }`, `scope` defaulting to `once`; a denial ignores it. `session` records the
+ask's `rules` for that session; `workspace` records them for every session of the workspace in
+`~/.keywork/workspaces/<identity>/permissions.json`. A write or edit answered beyond `once` is
+`400 { error: "write and edit are approved once at a time" }`; a call with no rule to derive
+(a command whose every part redirects or substitutes, or a tool that is neither bash nor
+MCP) is `400 { error: "this call has nothing a grant could remember; approve it once" }`. In
+both cases the ask stays pending for a `once` answer. `200`, `404` and `409` are unchanged.
+
+**`gate.ask`** gains `rules: PermissionRule[]`, the candidates a `session` or `workspace`
+answer would record (also on each `GET /asks` entry): bash yields one rule per command part,
+`{ action: "bash", resource: "<program> <second word> *", effect: "allow" }` when the second
+word is a plain word or flag (`git push *`, `rm -rf *`, `npm run *`), else `<program> *`;
+parts with redirection or substitution and wildcard program words yield none. An MCP tool yields
+`{ action: "<server>__<tool>", resource: "*", effect: "allow" }`. **`gate.permission`** gains
+`gate: "trusted"` and an optional `scope`: `once | session | workspace` on an answered ask,
+`session | workspace` with `gate: "user"` on a later call an earlier grant covered.
+
+**`GET /permissions`** (`listPermissions`) answers `{ trusted: boolean, bundle:
+PermissionRule[], workspace: PermissionRule[], session: Record<sessionId, PermissionRule[]> }`;
+`bundle` is empty when untrusted. **`POST /permissions/workspace/revoke`**
+(`revokeWorkspaceGrant`) takes `{ rule: { action, resource, effect: "allow" } }` and answers
+`200 { revoked: rule }`, `400` on a malformed rule, `404` when no grant matches. The family is
+`permissionFamily`, last in `routeFamilies`.
+
+**Layering.** The configured rules (the preset switch) decide first; where they say nothing,
+one ordered list decides, last match winning: bundle, then workspace grants, then session
+grants. The engine's `PermissionResolver` may now return a `PermissionRuling`
+(`{ permission, gate: "policy" | "trusted" }` or `{ permission: "allow", gate: "user",
+scope }`); a bare string still means `policy`. `PermissionLedger` in the engine composes the
+layers for `serve`, the panes TUI and the line REPL alike. The TUI's and the REPL's `always`
+record the derived session rules (and the ask hides `[a]` when there is nothing to remember).
+
+**Evidence.** Full gate under bun 1.3.9: `check:types`, `lint`, `check:prose`,
+`check:pins`, `check:guardrails` and `bun run test` exit 0; 329 files, 4685 passed, 1
+skipped. New: `shared` `trusted-reads.test.ts` (the bundle's allow, ask and still-asking
+tables, a user rule over the bundle, `activePreset` unaffected) and `grants.test.ts`
+(derivation, refusals, `SessionGrants`, the strict private store); `server.test.ts` (bundle
+with `gate: "trusted"`, empty untrusted bundle, session scope stops the second ask,
+workspace grant listed and revoked, write refused beyond once); `serve.test.ts` (a real
+`echo` under the bundle runs without an ask while a compound still asks, the session grant,
+a workspace grant surviving a reopen until revoke restores the ask); `mutation-ask.test.ts`
+and `chat.test.ts` for rule-derived `always`.
+
+### Merge with main · 2026-10-11
+
+`main` (d308505) landed K0 through K4, serve parity and session removal in its own shape
+while `app-surface/next` (8f86c05) carried the same lanes in a different one plus K6 and K7.
+The merge keeps main's architecture wherever main covers the ground and lands K6 and K7 whole
+on top of it. Every conflicted file was rebuilt from main's version with only the K6 and K7
+hunks re-applied by hand.
+
+**Dropped from the branch in favour of main.** The branch's route modules `routes/status.ts`
+and `routes/presets.ts` (main's `session-verbs.ts` holds `applyPreset`, `undoSession`,
+`redoSession`; main's `surfaces.ts` holds the MCP, arc, bot and workspace routes `status.ts`
+served); its own `routes/{tree,changes,memory,workspace,session-verbs,sessions,events}.ts`
+(main's are kept with main's ids: `readTree`, `labelSessionEntry`, `moveSessionLeaf`,
+`readSessionChanges`, `listMemoryInbox`, `readAirlock`, `deliverAirlock`, `finishAirlock`,
+`bindSessionBot`); the helper modules `server/src/{tree,memory,reports,spills,testing-surfaces}.ts`
+(main's `changes.ts`, `files.ts`, `routes/memory.ts` and `testing.ts` cover them); the spill
+route `readSpill` (main serves spills through `GET /files` with `elidedFrom`/`elidedTo`);
+`engine/src/usage-ledger.ts` with `costBasis` in `pricing.ts` and the TUI `SessionLedger`
+rewrite (main keeps `SpendLedger` in serve and `costBasisOf` in the verbs family);
+`engine/src/memory/curing.ts` (main computes `curingStage` in `cli/src/memory.ts` and the
+memory family); `session.tree` and `changes.updated` on the engine bus (main records them as
+server events); the branch's `cli/src/serve-workspace.ts` workspace host, `serve-surfaces.ts`
+and `sessions/store.ts` summary fields (main's `serve-workspace.ts`, `surfacePorts` and
+`storedSummary` cover them); `setupRoot` exported from `workspace-setup.ts`;
+`refusalResponse` and the query helpers in `routes/family.ts`; `Agent.setEffort(undefined)`;
+the TUI's `browser-model` and `IgnoreRules` exports; `followMutations(bus, emit)` in the diff
+model tests; and the K1 and spill cases in `client.test.ts`. Tests that exercised those
+shapes went with them.
+
+**K6 and K7 in main's shape.** `routes/flavors.ts` became `routes/themes.ts` (`themeFamily`,
+`listThemes`, 503 without the port, every theme through `completeTheme`); `serve-surfaces.ts`
+answers the gallery from `wardrobe()` with `active` from `HostOptions.theme` and
+`placeholders: ["system"]`; the memory host lists `MemorySurfaceOptions.themes`.
+`routeFamilies` is document, events, sessions, asks, memory, airlock, sessionVerbs,
+workspace, files, surfaces, themes, tree, changes, lifecycle, permissions: fifteen families,
+66 paths, 72 operations in `/doc`. `SessionHost` gains `answerAsk(callId, verdict, scope?)`,
+`permissions()` and `revokeWorkspaceGrant(rule)` as required methods beside `asks()`;
+`fileSessionHost` and `servedHost` build one `ServedGate` (the `AskQueue` with the
+`PermissionLedger` from `workspacePermissions` as its grant sink) and every session's agent
+takes `ledger.resolverFor(id)` through `AgentBuildSpec.permissions`; the memory host takes
+`trusted?` and a `memoryGrants()` ledger the same way. The client's `answerAsk` passes
+`scope` and maps the two 400 refusals to `write-once` and `nothing-to-remember`.
+`docs/events.md` is main's text with K7's paragraphs under `gate.ask` and `gate.permission`.
+
+**Evidence.** Under bun 1.3.9: `check:types`, `lint`, `check:prose`, `check:pins`,
+`check:guardrails` and `bun run test` exit 0; 346 files, 4797 passed, 1 skipped. The OpenAPI
+fixture was regenerated from the composed document. e2e: the discovery golden was rewritten
+for main's `/extensions` beside the theme commands. Six scenarios (first-conversation,
+lsp-loop, chrome-states, chrome-states-ascii, arc-fold, diff-pane) waited for the
+`[y] allow  [a] always  [n] deny` row on a write ask, which K7 shortens to `[y] allow  [n]
+deny` (they failed the same way on 8f86c05 alone).
+The e2e goldens were updated for the K7 ask row: the five `*-needs-you-*` captures under
+`chrome-states` and `chrome-states-ascii` changed in that row only, and all 49 scenarios pass.

@@ -16,6 +16,7 @@ import type {
   Message,
   ModelReference,
   Note,
+  PermissionsView,
   PromptOrigin,
   Provenance,
   Provider,
@@ -33,7 +34,9 @@ import type {
 } from "@keywork/engine";
 import type {
   ActivePreset,
-  Flavor,
+  AskScope,
+  CompleteTheme,
+  PermissionRule,
   PresetName,
   TrustDecision,
   WorkspaceAnchor,
@@ -233,7 +236,9 @@ export interface SessionHost {
   tree: SessionTreePort;
   changes: ChangesPort;
   asks(): Promise<readonly PendingAsk[]>;
-  answerAsk(callId: string, verdict: AskVerdict): Promise<AnswerOutcome>;
+  answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
+  permissions(): Promise<PermissionsView>;
+  revokeWorkspaceGrant(rule: PermissionRule): Promise<boolean>;
   close(): Promise<void>;
   memory?: MemoryPort;
   workspace?: WorkspacePort;
@@ -241,7 +246,7 @@ export interface SessionHost {
   arcs?: ArcsPort;
   bots?: BotsPort;
   workspaces?: WorkspacesPort;
-  flavors?: FlavorsPort;
+  themes?: ThemesPort;
   lifecycle?: SessionLifecyclePort;
 }
 
@@ -458,13 +463,14 @@ export interface WorkspacesPort {
   unlinkFocusDir(slug: string | undefined, dir: string): Promise<void>;
 }
 
-export interface FlavorsReport {
-  flavors: readonly Flavor[];
+export interface ThemesReport {
+  themes: readonly CompleteTheme[];
   active: string;
+  placeholders: readonly string[];
 }
 
-export interface FlavorsPort {
-  list(): Promise<FlavorsReport>;
+export interface ThemesPort {
+  list(): Promise<ThemesReport>;
 }
 
 export class SurfaceUnavailableError extends Error {

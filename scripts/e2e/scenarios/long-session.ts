@@ -9,8 +9,8 @@ import {
   textMessage,
   textTurn,
 } from "../../../packages/engine/src/index.ts";
-import { parseFlavor } from "../../../packages/shared/src/index.ts";
-import { keyworkNightFlavor } from "../../../packages/tui/src/index.ts";
+import { parseTheme } from "../../../packages/shared/src/index.ts";
+import { keyworkNightTheme } from "../../../packages/tui/src/index.ts";
 import { occurrences } from "../frame-queries.ts";
 import type { Scenario } from "../scenario.ts";
 
@@ -24,7 +24,7 @@ interface LongSessionScript {
 }
 
 const script = longSessionScript();
-const cockpit = parseFlavor({ ...keyworkNightFlavor, name: "cockpit", instruments: "cockpit" });
+const cockpit = parseTheme({ ...keyworkNightTheme, name: "cockpit", instruments: "cockpit" });
 const calmHeader = /│ session-1 +│/;
 
 export const longSession: Scenario = {
@@ -35,7 +35,7 @@ export const longSession: Scenario = {
   script: "shared",
   contextWindow: longSessionWindow,
   turns: script.turns,
-  flavors: [cockpit],
+  themes: [cockpit],
   run: async (stage) => {
     await stage.settle();
     const step = async (turn: number): Promise<string> => {
@@ -87,9 +87,9 @@ export const longSession: Scenario = {
       "the manual fold posts its own notice in the transcript",
     );
 
-    await stage.type("/flavor-cockpit");
+    await stage.type("/theme-cockpit");
     await stage.press("enter");
-    await stage.until("flavor now cockpit");
+    await stage.until("theme now cockpit");
     await stage.settle();
     const cockpitFrame = await stage.capture("gauge-cockpit-bar");
     assert.match(

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { FrameScheduler } from "./frame-scheduler.ts";
 import { parseChord } from "./keys.ts";
+import { resolvePalette } from "./palette.ts";
 import type { PaneIntents } from "./pane.ts";
-import { resolveTheme } from "./theme.ts";
 import type { WorkspaceChoice, WorkspacesPort } from "./workspace-picker.ts";
 import { WorkspacesPane, type WorkspacesPaneOptions } from "./workspaces-pane.ts";
 
@@ -107,7 +107,7 @@ function typeText(pane: WorkspacesPane, text: string): void {
   for (const character of text) press(pane, character === "/" ? "slash" : character, character);
 }
 
-const theme = resolveTheme();
+const theme = resolvePalette();
 
 function rendered(pane: WorkspacesPane): string {
   const view = pane.view({ theme, focused: true, width: 60, height: 12 });

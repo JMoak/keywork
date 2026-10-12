@@ -2,9 +2,9 @@ import { Agent, MockProvider, toolCallTurn } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { ConversationPane } from "./conversation-pane.ts";
 import { Animator } from "./motion.ts";
+import { resolvePalette } from "./palette.ts";
 import type { Pane } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
-import { resolveTheme } from "./theme.ts";
 import type { WorkspaceState } from "./workspace-state.ts";
 
 function countingPane(id: string, describes: string[]): Pane {
@@ -169,7 +169,7 @@ describe("closing a pane mid-animation", () => {
     for (let tick = 0; tick < 20 && probe.model("session-2")?.pendingAsk === undefined; tick += 1) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    pane?.view({ theme: resolveTheme(), focused: true, width: 60, height: 20 });
+    pane?.view({ theme: resolvePalette(), focused: true, width: 60, height: 20 });
     expect(animator.moving).toBe(true);
     probe.command("exit");
     expect(animator.moving).toBe(false);

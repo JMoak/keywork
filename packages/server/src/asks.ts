@@ -1,20 +1,33 @@
-import type { Confirmation, ToolCallPart, ToolGuard } from "@keywork/engine";
+import type { Confirmation, GrantedScope, ToolCallPart, ToolGuard } from "@keywork/engine";
+import {
+  type AskScope,
+  type GrantRefusal,
+  grantCandidates,
+  grantRefusal,
+  type PermissionRule,
+} from "@keywork/shared";
 
 export interface PendingAsk {
   sessionId: string;
   callId: string;
   tool: string;
   arguments: unknown;
+  rules: PermissionRule[];
   askedAt: string;
 }
 
 export type AskVerdict = "granted" | "denied";
 
-export type AnswerOutcome = "settled" | "missing" | "already-settled";
+export type AnswerOutcome = "settled" | "missing" | "already-settled" | GrantRefusal;
+
+export interface GrantSink {
+  record(sessionId: string, scope: GrantedScope, rules: readonly PermissionRule[]): void;
+}
 
 export interface AskQueueOptions {
   timeoutMs?: number;
   now?: () => Date;
+  grants?: GrantSink;
 }
 
 export const defaultAskTimeoutMs = 120_000;
@@ -24,10 +37,12 @@ export class AskQueue {
   private readonly settled: string[] = [];
   private readonly timeoutMs: number;
   private readonly now: () => Date;
+  private readonly grants: GrantSink | undefined;
 
   constructor(options: AskQueueOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? defaultAskTimeoutMs;
     this.now = options.now ?? (() => new Date());
+    this.grants = options.grants;
   }
 
   guardFor(sessionId: string): ToolGuard {
@@ -41,6 +56,7 @@ export class AskQueue {
         callId: call.callId,
         tool: call.name,
         arguments: call.arguments,
+        rules: grantCandidates(call.name, call.arguments),
         askedAt: this.now().toISOString(),
       };
       const timer = setTimeout(() => this.settle(call.callId, "timed-out"), this.timeoutMs);
@@ -53,19 +69,26 @@ export class AskQueue {
     return [...this.pending.values()].map(({ ask }) => ask);
   }
 
-  answer(callId: string, verdict: AskVerdict): AnswerOutcome {
-    if (this.pending.has(callId)) {
-      this.settle(callId, verdict);
-      return "settled";
+  answer(callId: string, verdict: AskVerdict, scope: AskScope = "once"): AnswerOutcome {
+    const waiting = this.pending.get(callId);
+    if (waiting === undefined) {
+      return this.settled.includes(callId) ? "already-settled" : "missing";
     }
-    return this.settled.includes(callId) ? "already-settled" : "missing";
+    const granted: AskScope = verdict === "granted" ? scope : "once";
+    if (granted !== "once") {
+      const refusal = grantRefusal(waiting.ask.tool, waiting.ask.rules);
+      if (refusal !== undefined) return refusal;
+      this.grants?.record(waiting.ask.sessionId, granted, waiting.ask.rules);
+    }
+    this.settle(callId, verdict, granted);
+    return "settled";
   }
 
   close(): void {
     for (const callId of [...this.pending.keys()]) this.settle(callId, "timed-out");
   }
 
-  private settle(callId: string, outcome: AskVerdict | "timed-out"): void {
+  private settle(callId: string, outcome: AskVerdict | "timed-out", scope?: AskScope): void {
     const waiting = this.pending.get(callId);
     if (waiting === undefined) return;
     this.pending.delete(callId);
@@ -74,7 +97,11 @@ export class AskQueue {
     waiting.resolve(
       outcome === "timed-out"
         ? { approved: false, gate: "headless" }
-        : { approved: outcome === "granted", gate: "user" },
+        : {
+            approved: outcome === "granted",
+            gate: "user",
+            ...(outcome === "granted" && scope !== undefined && { scope }),
+          },
     );
   }
 

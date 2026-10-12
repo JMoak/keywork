@@ -29,6 +29,7 @@ export {
   type PathKeyedStringStore,
   pathKeyedStringStore,
 } from "./json-file-store.ts";
+export { mixOklab } from "./oklab.ts";
 export * from "./secrets/index.ts";
 export { countOccurrences, toUnixEol } from "./text.ts";
 export * from "./trust/index.ts";

@@ -1,6 +1,7 @@
 import { fg, StyledText, Text } from "@opentui/core";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type KeyedTrayCommand,
@@ -19,7 +20,6 @@ import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { slugChunks, slugInk } from "./slug-ink.ts";
-import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
 import type { WorkspacesPort } from "./workspace-picker.ts";
 import {
@@ -171,7 +171,7 @@ export class WorkspacesPane implements Pane {
     this.refresh();
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     if (this.model.level() === "workspaces") {
@@ -188,7 +188,7 @@ export class WorkspacesPane implements Pane {
     });
   }
 
-  private workspaceRow(row: WorkspaceRow, theme: Theme, width: number): PaneChild {
+  private workspaceRow(row: WorkspaceRow, theme: Palette, width: number): PaneChild {
     const ink = row.current ? theme.accentSoft : row.declared ? theme.text : theme.textDim;
     const { lead, label, facts } = workspaceParts(row);
     const chunks = [
@@ -199,7 +199,7 @@ export class WorkspacesPane implements Pane {
     return Text({ content: new StyledText(clipSpans(chunks, width)) });
   }
 
-  private promptLine(theme: Theme, focused: boolean) {
+  private promptLine(theme: Palette, focused: boolean) {
     const pending = this.model.pendingSwitch;
     if (pending !== undefined) {
       return Text({ content: describeSwitch(pending), fg: theme.accent });

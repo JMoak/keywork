@@ -18,6 +18,7 @@ import {
   type ModelChangeEntry,
   mergeCostRollups,
   modelReferenceOf,
+  type PermissionLedger,
   type PermissionResolver,
   type PromptOrigin,
   type Provider,
@@ -66,7 +67,6 @@ import {
   writeServerTicket,
 } from "@keywork/server";
 import {
-  type FlavorTokenOverrides,
   type KeyworkConfig,
   type LspConfig,
   type McpServerConfig,
@@ -103,6 +103,7 @@ import {
   summarize,
 } from "./sessions/store.ts";
 import { keyworkVersion } from "./version.ts";
+import { workspacePermissions } from "./workspace-permissions.ts";
 
 export interface ServeOptions extends HostOptions {
   port?: number | undefined;
@@ -132,8 +133,7 @@ export interface HostOptions {
   lsp?: LspConfig | undefined;
   models?: ModelCapabilitiesConfig | undefined;
   thinking?: KeyworkConfig["thinking"] | undefined;
-  flavor?: string | undefined;
-  theme?: FlavorTokenOverrides | undefined;
+  theme?: string | undefined;
   closingProvider?: Provider | undefined;
   notice?: ((text: string) => void) | undefined;
 }
@@ -228,17 +228,17 @@ export async function answersAsKeywork(
 const healthCheckTimeoutMs = 1500;
 
 export function fileSessionHost(options: HostOptions & { log: EventLog }): SessionHost {
-  const asks = askQueueFor(options);
-  return sessionVerbsHost(new LiveSessions(options, asks), asks);
+  const gate = servedGate(options);
+  return sessionVerbsHost(new LiveSessions(options, gate), gate);
 }
 
 export async function servedHost(options: HostOptions & { log: EventLog }): Promise<SessionHost> {
-  const asks = askQueueFor(options);
-  const sessions = new LiveSessions(options, asks);
+  const gate = servedGate(options);
+  const sessions = new LiveSessions(options, gate);
   const { composition, arcs, bots } = await sessions.composed();
   const sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
   return {
-    ...sessionVerbsHost(sessions, asks),
+    ...sessionVerbsHost(sessions, gate),
     ...surfacePorts({
       ...options,
       sessionDir,
@@ -250,13 +250,21 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
   };
 }
 
-function askQueueFor(options: HostOptions): AskQueue {
-  return new AskQueue({
-    ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
-  });
+interface ServedGate {
+  asks: AskQueue;
+  ledger: PermissionLedger;
 }
 
-function sessionVerbsHost(sessions: LiveSessions, asks: AskQueue): SessionHost {
+function servedGate(options: HostOptions): ServedGate {
+  const ledger = workspacePermissions({ ...options, user: options.permissions });
+  const asks = new AskQueue({
+    grants: ledger,
+    ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
+  });
+  return { asks, ledger };
+}
+
+function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate): SessionHost {
   const onLive = async <T>(
     id: string,
     act: (live: LiveSession) => T | Promise<T>,
@@ -301,7 +309,9 @@ function sessionVerbsHost(sessions: LiveSessions, asks: AskQueue): SessionHost {
       summaryOf: storedSummary,
     }),
     asks: async () => asks.list(),
-    answerAsk: async (callId, verdict) => asks.answer(callId, verdict),
+    answerAsk: async (callId, verdict, scope) => asks.answer(callId, verdict, scope),
+    permissions: async () => ledger.view(),
+    revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
     close: async () => {
       asks.close();
       await sessions.close();
@@ -331,7 +341,7 @@ class LiveSessions {
 
   constructor(
     private readonly options: HostOptions & { log: EventLog },
-    private readonly asks: AskQueue,
+    private readonly gate: ServedGate,
   ) {
     this.sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
     this.changes = new ChangesFeed(options.log, () => this.changesSource());
@@ -448,7 +458,7 @@ class LiveSessions {
     const { options } = this;
     const id = store.header.id;
     const shell = new ShellSession(options.cwd);
-    const guard = checkpointingGuard(this.asks.guardFor(id), composition.checkpoints);
+    const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints);
     const runtime: SessionRuntime = {
       log: options.log,
       cwd: composition.scope.cwd,
@@ -467,6 +477,7 @@ class LiveSessions {
           history,
           sessionId: id,
           spills: store.spills(),
+          permissions: this.gate.ledger.resolverFor(id),
           bot: workspace.botNamed(store.botBinding()),
         }),
       botNamed: workspace.botNamed,

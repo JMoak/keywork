@@ -4,7 +4,7 @@ import { arcPickerOver } from "../arc-picker.ts";
 import { type ArcSummary, arcInk, arcOrdinalsOf } from "../arcs.ts";
 import type { ModelChoice } from "../inference-port.ts";
 import { modelPickerOver } from "../model-picker.ts";
-import { resolveTheme } from "../theme.ts";
+import { resolvePalette } from "../palette.ts";
 import { workspacePickerOver } from "../workspace-picker.ts";
 import {
   arcPickerSpec,
@@ -14,7 +14,7 @@ import {
   workspacePickerSpec,
 } from "./filter-overlay.ts";
 
-const theme = resolveTheme();
+const theme = resolvePalette();
 const placement: OverlayPlacement = { position: "absolute", left: 3, top: 3, width: 40, height: 9 };
 
 interface RenderedRow {

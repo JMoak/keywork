@@ -21,11 +21,11 @@
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │ ╭───────────────────────────────────────────────────────────────────────────╮ │
-│                                      │ │ ▸ /keys                  show the hotkeys overlay                ctrl+k / │ │
-│                                      │ │   /flavor-keywork-night  repaint every surface in the keywork-night flav… │ │
-│                                      │ │   /dock-left             dock this pane to the left edge                  │ │
-│                                      │ │   /dock-cycle            move this pane to its next home: main →…ctrl+k c │ │
-│                                      │ │   /dock-wider            widen this pane's dock                  ctrl+k . │ │
+│                                      │ │ ▸ /keys                 show the hotkeys overlay                 ctrl+k / │ │
+│                                      │ │   /theme-keywork-day    repaint every surface in the keywork-day theme    │ │
+│                                      │ │   /theme-keywork-night  repaint every surface in the keywork-night theme  │ │
+│                                      │ │   /theme-kanagawa-wave  repaint every surface in the kanagawa-wave theme  │ │
+│                                      │ │   /dock-left            dock this pane to the left edge                   │ │
 │                                      │ ╰───────────────────────────────────────────────────────────────────────────╯ │
 │                                      │ › /ke▌                                                                        │
 ╰──────────────────────────────────────╰───────────────────────────────────────────────────────────────────────────────╯

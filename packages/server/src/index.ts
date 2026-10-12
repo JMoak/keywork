@@ -4,6 +4,7 @@ export {
   type AskQueueOptions,
   type AskVerdict,
   defaultAskTimeoutMs,
+  type GrantSink,
   type PendingAsk,
 } from "./asks.ts";
 export {
@@ -120,11 +121,11 @@ export {
   type BotScope,
   type BotSummary,
   type BotsPort,
-  type FlavorsPort,
-  type FlavorsReport,
   type McpPort,
   SessionBusyError,
   SurfaceUnavailableError,
+  type ThemesPort,
+  type ThemesReport,
   type TrustGrant,
   TrustRefusedError,
   type WorkspaceChoice,

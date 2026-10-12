@@ -1,9 +1,9 @@
 import { Text } from "@opentui/core";
 import { FileModel } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { FileOpenOptions, Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
-import type { Theme } from "./theme.ts";
 import { take } from "./width.ts";
 
 export class FilePane implements Pane {
@@ -51,7 +51,7 @@ export class FilePane implements Pane {
     );
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number) {
+  private bodyLines(theme: Palette, rows: number, width: number) {
     const state = this.model.state;
     if (state.kind === "loading") return [Text({ content: "loading…", fg: theme.textDim })];
     if (state.kind === "failed") {

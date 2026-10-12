@@ -13,8 +13,10 @@ import {
   MemoryStore,
   type Message,
   MissingArcError,
+  memoryGrants,
   modelReferenceOf,
   type Note,
+  PermissionLedger,
   type Provider,
   parseReference,
   readContext,
@@ -25,7 +27,7 @@ import {
   titleKey,
   toolScope,
 } from "@keywork/engine";
-import { type Flavor, requiresConfirmation, type TrustDecision } from "@keywork/shared";
+import { type CompleteTheme, requiresConfirmation, type TrustDecision } from "@keywork/shared";
 import { AskQueue } from "./asks.ts";
 import { ChangesFeed, type ChangesSource, changesPortOver } from "./changes.ts";
 import type { EventLog } from "./events.ts";
@@ -127,6 +129,7 @@ export interface MemoryHostOptions {
   presets?: PresetHost;
   surfaces?: MemorySurfaceOptions;
   changes?: ChangesSource;
+  trusted?: boolean;
 }
 
 export interface MemorySurfaceOptions {
@@ -134,7 +137,7 @@ export interface MemorySurfaceOptions {
   identity?: string;
   trust?: TrustDecision;
   mcp?: McpPort;
-  flavors?: readonly Flavor[];
+  themes?: readonly CompleteTheme[];
 }
 
 interface MemorySession {
@@ -150,14 +153,21 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
   const sessions = new Map<string, MemorySession>();
   const trashed = new Map<string, MemorySession>();
   const now = options.now ?? (() => new Date());
+  const ledger = new PermissionLedger({
+    trusted: options.trusted ?? false,
+    workspace: memoryGrants(),
+    root: "/memory",
+  });
   const asks = new AskQueue({
     now,
+    grants: ledger,
     ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
   });
   const buildAgent = (id: string, provider: Provider, history?: readonly Message[]): Agent =>
     new Agent({
       provider,
       guard: options.asks === "queue" ? asks.guardFor(id) : headlessGuard,
+      permissions: ledger.resolverFor(id),
       ...(options.tools !== undefined && { tools: options.tools }),
       ...(history !== undefined && { history }),
     });
@@ -437,7 +447,9 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
     changes: changesPortOver({ has: async (id) => sessions.has(id) }, async () => options.changes),
     lifecycle: memoryTrash(sessions, trashed, summaryOf),
     asks: async () => asks.list(),
-    answerAsk: async (callId, verdict) => asks.answer(callId, verdict),
+    answerAsk: async (callId, verdict, scope) => asks.answer(callId, verdict, scope),
+    permissions: async () => ledger.view(),
+    revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
     close: async () => {
       asks.close();
       for (const session of sessions.values()) {
@@ -500,7 +512,7 @@ export interface SurfaceSessions {
 }
 
 export type MemorySurfacePorts = Required<
-  Pick<SessionHost, "workspace" | "mcp" | "arcs" | "bots" | "workspaces" | "flavors">
+  Pick<SessionHost, "workspace" | "mcp" | "arcs" | "bots" | "workspaces" | "themes">
 >;
 
 export function memorySurfacePorts(
@@ -679,10 +691,11 @@ export function memorySurfacePorts(
         dirs.splice(at, 1);
       },
     },
-    flavors: {
+    themes: {
       list: async () => ({
-        flavors: options.flavors ?? [],
-        active: options.flavors?.[0]?.name ?? "keywork-night",
+        themes: options.themes ?? [],
+        active: options.themes?.[0]?.name ?? "keywork-night",
+        placeholders: ["system"],
       }),
     },
   };

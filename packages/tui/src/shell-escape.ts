@@ -1,9 +1,10 @@
-import type {
-  PermissionDecision,
-  PermissionResolver,
-  Tool,
-  ToolCallPart,
-  ToolGuard,
+import {
+  type PermissionDecision,
+  type PermissionResolver,
+  rulingOf,
+  type Tool,
+  type ToolCallPart,
+  type ToolGuard,
 } from "@keywork/engine";
 
 export interface ShellEscapeResult {
@@ -49,19 +50,23 @@ export function guardedShellEscape(seams: ShellEscapeSeams): ShellEscapePort {
     run: async (call, signal) => {
       const tool = seams.tools().find((candidate) => candidate.name === call.name);
       if (tool === undefined) return failure(`no ${call.name} tool in this session`);
-      const verdict = seams.permissions?.(call);
-      const gate = verdict === undefined ? "default" : "policy";
-      if ((verdict ?? defaultVerdict(tool)) === "deny") {
+      const ruling = rulingOf(seams.permissions?.(call));
+      const gate = ruling?.gate ?? "default";
+      const permission = ruling?.permission ?? defaultVerdict(tool);
+      if (permission === "deny") {
         seams.onDecision?.(decision(call, "denied", gate));
         return failure("denied by permission policy");
       }
-      if ((verdict ?? defaultVerdict(tool)) === "ask") {
+      if (permission === "ask") {
         const approved = await (seams.guard.confirm?.(call) ?? Promise.resolve(true));
         const askedBy = seams.guard.confirm === undefined ? gate : (seams.guard.gate ?? "user");
         seams.onDecision?.(decision(call, approved ? "granted" : "denied", askedBy));
         if (!approved) return failure("declined by user");
       } else {
-        seams.onDecision?.(decision(call, "granted", gate));
+        seams.onDecision?.({
+          ...decision(call, "granted", gate),
+          ...(ruling?.gate === "user" && { scope: ruling.scope }),
+        });
       }
       if (tool.mutates === true) await seams.guard.beforeMutation?.();
       try {

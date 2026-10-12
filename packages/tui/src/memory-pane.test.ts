@@ -8,6 +8,7 @@ import {
   type MemoryPaneInputs,
   type MemoryQueryOutcome,
 } from "./memory-pane-model.ts";
+import { resolvePalette } from "./palette.ts";
 import { AppProbe } from "./probe.ts";
 import {
   describePaneTree,
@@ -16,7 +17,6 @@ import {
   paneContext,
   paneIds,
 } from "./testing/workflow-probe.ts";
-import { resolveTheme } from "./theme.ts";
 
 interface World {
   loads: number;
@@ -314,7 +314,7 @@ describe("MemoryPane", () => {
 });
 
 function context() {
-  return { theme: resolveTheme(), focused: true, width: 60, height: 20 };
+  return { theme: resolvePalette(), focused: true, width: 60, height: 20 };
 }
 
 function paintedRgb(hex: string): string {
@@ -513,7 +513,7 @@ describe("MemoryPane airlock digest", () => {
   });
 
   it("paints the arc layer header and the close row in the arc's hue, and the words carry the grouping alone", async () => {
-    const theme = resolveTheme();
+    const theme = resolvePalette();
     const wide = { ...context(), width: 100 };
     const { pane } = await digestPane({ ordinal: 3 });
     const painted = JSON.stringify(pane.view(wide));

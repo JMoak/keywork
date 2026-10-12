@@ -2,6 +2,7 @@ import { fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import { type ArcOrdinals, arcInk } from "./arcs.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type KeyedTrayCommand,
@@ -37,7 +38,6 @@ import {
   SessionsOverviewModel,
 } from "./sessions-overview-model.ts";
 import { slugChunks, slugInk } from "./slug-ink.ts";
-import type { Theme } from "./theme.ts";
 import { clipSpans } from "./width.ts";
 
 export type SessionRemoval = "removed" | "missing" | "busy";
@@ -332,7 +332,7 @@ export class SessionTreePane implements Pane {
     this.model.setView(await this.port.load(this.sessionId));
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     switch (this.paneLevel) {
@@ -361,7 +361,7 @@ export class SessionTreePane implements Pane {
     }
   }
 
-  private arcInkOf(theme: Theme): (slug: string) => string {
+  private arcInkOf(theme: Palette): (slug: string) => string {
     return (slug) => arcInk(theme, this.arcOrdinal?.(slug));
   }
 
@@ -369,17 +369,17 @@ export class SessionTreePane implements Pane {
     return trayCommandsPressing((chord) => this.handleKey(chord), trayTables[this.paneLevel]);
   }
 
-  private groupingHint(theme: Theme, width: number): PaneChild | undefined {
+  private groupingHint(theme: Palette, width: number): PaneChild | undefined {
     const grouping = this.paneLevel === "overview" && this.tasks.failure() === undefined;
     if (!grouping || this.overview.sessionCount() < 2) return undefined;
     return paneLine(groupByHint(this.overview.groupBy()), theme.textDim, width);
   }
 
-  private confirmLine(theme: Theme, width: number): PaneChild | undefined {
+  private confirmLine(theme: Palette, width: number): PaneChild | undefined {
     return removalConfirmLine(this.overview, theme, width);
   }
 
-  private labelLine(theme: Theme, focused: boolean) {
+  private labelLine(theme: Palette, focused: boolean) {
     if (!this.model.labeling) return undefined;
     const caret = focused ? "▌" : "";
     return Text({ content: `label: ${this.model.labelDraft ?? ""}${caret}`, fg: theme.accent });
@@ -449,7 +449,7 @@ export function removalNotice(outcome: SessionRemoval, title: string): string {
 
 export function removalConfirmLine(
   overview: SessionsOverviewModel,
-  theme: Theme,
+  theme: Palette,
   width: number,
 ): PaneChild | undefined {
   const prompt = overview.removalPrompt();
@@ -458,7 +458,7 @@ export function removalConfirmLine(
 
 export function overviewRowView(
   row: OverviewRow,
-  theme: Theme,
+  theme: Palette,
   width: number,
   arcInkOf: (slug: string) => string,
 ): PaneChild {
@@ -477,7 +477,7 @@ export function overviewRowView(
 
 export function groupRowView(
   row: SessionGroupRow,
-  theme: Theme,
+  theme: Palette,
   width: number,
   arcInkOf: (slug: string) => string,
 ): PaneChild {
@@ -503,7 +503,7 @@ export const trashTray: readonly KeyedTrayCommand[] = [
 
 function groupLabelChunks(
   row: SessionGroupRow,
-  theme: Theme,
+  theme: Palette,
   arcInkOf: (slug: string) => string,
 ): TextChunk[] {
   if (row.member === undefined) return [fg(theme.textDim)(row.label)];

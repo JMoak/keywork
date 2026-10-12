@@ -1,3 +1,4 @@
+import { type AskScope, grantCandidates } from "@keywork/shared";
 import {
   type AgentHooks,
   proceedWith,
@@ -40,7 +41,9 @@ import { findTool, type Tool } from "./tools.ts";
 
 export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
 
-export type Confirmation = boolean | { approved: boolean; gate: ConfirmingGate };
+export type Confirmation =
+  | boolean
+  | { approved: boolean; gate: ConfirmingGate; scope?: AskScope | undefined };
 
 export interface ToolGuard {
   confirm?(call: ToolCallPart): Promise<Confirmation>;
@@ -51,7 +54,26 @@ export interface ToolGuard {
 }
 
 export type ToolPermission = "allow" | "ask" | "deny";
-export type PermissionResolver = (call: ToolCallPart) => ToolPermission | undefined;
+export type GrantedScope = Exclude<AskScope, "once">;
+export type PermissionRuling =
+  | { permission: "allow"; gate: "user"; scope: GrantedScope }
+  | { permission: ToolPermission; gate: Exclude<AskRule, "default"> };
+export type PermissionResolver = (
+  call: ToolCallPart,
+) => ToolPermission | PermissionRuling | undefined;
+
+export function rulingOf(
+  verdict: ToolPermission | PermissionRuling | undefined,
+): PermissionRuling | undefined {
+  return typeof verdict === "string" ? { permission: verdict, gate: "policy" } : verdict;
+}
+
+export function permissionOf(
+  verdict: ToolPermission | PermissionRuling | undefined,
+): ToolPermission | undefined {
+  return rulingOf(verdict)?.permission;
+}
+
 export type ToolSource = () => readonly Tool[];
 
 export type ActionRecall = (call: ToolCallPart) => Promise<string | undefined>;
@@ -567,29 +589,28 @@ export class Agent {
   private async executeToolCall(call: ToolCallPart, signal: AbortSignal): Promise<ToolOutcome> {
     try {
       const tool = findTool(this.tools(), call.name);
-      const policyVerdict = this.permissions?.(call);
-      const verdict = policyVerdict ?? defaultPermission(tool);
-      const gate = policyVerdict === undefined ? "default" : "policy";
-      if (verdict === "deny") {
-        this.emitPermissionDecision(call, "denied", gate);
+      const ruling = this.rulingFor(call, tool);
+      if (ruling.permission === "deny") {
+        this.emitPermissionDecision(call, "denied", ruling.gate);
         return { callId: call.callId, output: "denied by permission policy", isError: true };
       }
-      if (verdict === "ask") {
+      if (ruling.permission === "ask") {
         const guardAsked = this.guard?.confirm !== undefined;
-        if (guardAsked) this.emitAsk(call, gate);
+        if (guardAsked) this.emitAsk(call, ruling.gate);
         const answer = await this.confirmWithGuard(call);
         const answeredBy = answer.gate ?? this.guard?.gate ?? "user";
         this.emitPermissionDecision(
           call,
           answer.approved ? "granted" : "denied",
-          guardAsked ? answeredBy : gate,
+          guardAsked ? answeredBy : ruling.gate,
+          answer.scope,
         );
         if (!answer.approved) {
           this.declineEndedRun = this.guard?.declineEndsRun === true;
           return { callId: call.callId, output: declinedOutput(answeredBy), isError: true };
         }
       } else {
-        this.emitPermissionDecision(call, "granted", gate);
+        this.emitPermissionDecision(call, "granted", ruling.gate, scopeOf(ruling));
       }
       if (tool.mutates === true) await this.checkpointOnce();
       const remembered = tool.mutates === true ? await this.actionRecall?.(call) : undefined;
@@ -605,25 +626,42 @@ export class Agent {
     }
   }
 
+  private rulingFor(call: ToolCallPart, tool: Tool): GateRuling {
+    return (
+      rulingOf(this.permissions?.(call)) ?? { permission: defaultPermission(tool), gate: "default" }
+    );
+  }
+
   private emitPermissionDecision(
     call: ToolCallPart,
     verdict: PermissionDecision["verdict"],
     gate: PermissionDecision["gate"],
+    scope?: AskScope,
   ): void {
     this.bus.emit("gate.permission", {
-      decision: { tool: call.name, callId: call.callId, verdict, gate },
+      decision: {
+        tool: call.name,
+        callId: call.callId,
+        verdict,
+        gate,
+        ...(scope !== undefined && { scope }),
+      },
     });
   }
 
   private emitAsk(call: ToolCallPart, rule: AskRule): void {
     this.bus.emit("gate.ask", {
-      ask: { tool: call.name, callId: call.callId, arguments: call.arguments, rule },
+      ask: {
+        tool: call.name,
+        callId: call.callId,
+        arguments: call.arguments,
+        rule,
+        rules: grantCandidates(call.name, call.arguments),
+      },
     });
   }
 
-  private async confirmWithGuard(
-    call: ToolCallPart,
-  ): Promise<{ approved: boolean; gate: ConfirmingGate | undefined }> {
+  private async confirmWithGuard(call: ToolCallPart): Promise<AnsweredConfirmation> {
     const answer = await (this.guard?.confirm?.(call) ?? Promise.resolve(true));
     return typeof answer === "boolean" ? { approved: answer, gate: undefined } : answer;
   }
@@ -648,6 +686,18 @@ function toolSource(tools: readonly Tool[] | ToolSource | undefined): ToolSource
 function spillSource(spills: SpillStore | SpillSource | undefined): SpillSource {
   if (typeof spills === "function") return spills;
   return () => spills;
+}
+
+type GateRuling = PermissionRuling | { permission: ToolPermission; gate: "default" };
+
+interface AnsweredConfirmation {
+  approved: boolean;
+  gate: ConfirmingGate | undefined;
+  scope?: AskScope | undefined;
+}
+
+function scopeOf(ruling: GateRuling): GrantedScope | undefined {
+  return ruling.gate === "user" ? ruling.scope : undefined;
 }
 
 function defaultPermission(tool: Tool): ToolPermission {

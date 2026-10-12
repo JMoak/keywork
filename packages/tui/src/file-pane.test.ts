@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FilePane } from "./file-pane.ts";
 import { parseChord } from "./keys.ts";
-import { resolveTheme } from "./theme.ts";
+import { resolvePalette } from "./palette.ts";
 
 const tempDirs: string[] = [];
 
@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 function context(height = 8) {
-  return { theme: resolveTheme(), focused: true, width: 40, height };
+  return { theme: resolvePalette(), focused: true, width: 40, height };
 }
 
 function lines(pane: FilePane, height = 8): string[] {

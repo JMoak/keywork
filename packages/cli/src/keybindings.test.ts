@@ -29,7 +29,7 @@ describe("fileKeybindings", () => {
     const dirs = scratch();
     writeConfig(
       dirs.userDir,
-      JSON.stringify({ flavor: "system", keybindings: { "app.quit": "ctrl+t" } }),
+      JSON.stringify({ theme: "system", keybindings: { "app.quit": "ctrl+t" } }),
     );
     writeConfig(dirs.projectDir, JSON.stringify({ keybindings: { "pane.split": "ctrl+s" } }));
     const trusted = fileKeybindings({ ...dirs, projectTrusted: true });

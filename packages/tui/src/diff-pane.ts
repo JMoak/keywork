@@ -2,6 +2,7 @@ import { Text } from "@opentui/core";
 import { type ChangedFile, type DiffBody, DiffModel, type DiffSeams } from "./diff-model.ts";
 import type { DiffLine } from "./diff-render.ts";
 import type { Chord } from "./keys.ts";
+import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneIntents, PaneView } from "./pane.ts";
 import {
   type PaneChild,
@@ -13,7 +14,6 @@ import {
   paneTitle,
   rowsView,
 } from "./pane-chrome.ts";
-import type { Theme } from "./theme.ts";
 import { take } from "./width.ts";
 
 export class DiffPane implements Pane {
@@ -67,7 +67,7 @@ export class DiffPane implements Pane {
     );
   }
 
-  private fileLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private fileLines(theme: Palette, rows: number, width: number): PaneChild[] {
     if (rows === 0) return [];
     return rowsView(this.model, rows, theme, width, {
       empty: emptyText(this.model.body(), this.model.baselineLabel()),
@@ -76,7 +76,7 @@ export class DiffPane implements Pane {
     });
   }
 
-  private bodyLines(theme: Theme, rows: number, width: number): PaneChild[] {
+  private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     if (rows === 0) return [];
     const body = this.model.body();
     const rule = paneLine("─".repeat(width), theme.border, width);
@@ -107,7 +107,7 @@ function emptyText(body: DiffBody, baseline: string | undefined): string {
   return baseline === undefined ? "no changes" : `no changes since ${baseline}`;
 }
 
-function diffRow(line: DiffLine, theme: Theme, width: number): PaneChild {
+function diffRow(line: DiffLine, theme: Palette, width: number): PaneChild {
   switch (line.kind) {
     case "add":
       return Text({ content: take(`+ ${line.text}`, width), fg: theme.success });

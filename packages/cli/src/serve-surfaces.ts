@@ -3,23 +3,18 @@ import { type McpRegistry, McpServerNotFoundError, type SessionStore } from "@ke
 import {
   type ArcsPort,
   type BotsPort,
-  type FlavorsPort,
   type McpPort,
   SessionBusyError,
   SurfaceUnavailableError,
+  type ThemesPort,
   TrustRefusedError,
   type WorkspacePort,
   type WorkspaceReport,
   type WorkspacesPort,
   workspaceFiles,
 } from "@keywork/server";
-import {
-  type FlavorTokenOverrides,
-  openWorkspace,
-  resolveAnchor,
-  TrustStore,
-} from "@keywork/shared";
-import { type BotsPort as BotRoster, keyworkNightFlavor, startupFlavors } from "@keywork/tui";
+import { completeTheme, openWorkspace, resolveAnchor, TrustStore, wardrobe } from "@keywork/shared";
+import { type BotsPort as BotRoster, keyworkNightTheme, systemThemeName } from "@keywork/tui";
 import { anchorMemoryFile, fileAnchorMemory } from "./anchor.ts";
 import { type ArcService, arcService, arcsUnavailable } from "./arcs.ts";
 import { botService } from "./bots.ts";
@@ -41,8 +36,7 @@ export interface SurfacePortsOptions {
   workspaceSlug?: string | undefined;
   userRoot?: string | undefined;
   sessionDir?: string | undefined;
-  flavor?: string | undefined;
-  theme?: FlavorTokenOverrides | undefined;
+  theme?: string | undefined;
   composition(): Promise<Composition>;
   session(id: string): Promise<ServedSession | undefined>;
   arcs?: ArcService | undefined;
@@ -54,7 +48,7 @@ export interface SurfacePorts {
   arcs: ArcsPort;
   bots: BotsPort;
   workspaces: WorkspacesPort;
-  flavors: FlavorsPort;
+  themes: ThemesPort;
 }
 
 export const projectBotsNeedTrust =
@@ -169,10 +163,11 @@ export function surfacePorts(options: SurfacePortsOptions): SurfacePorts {
       requestSwitch: () => undefined,
       sessionDirFor: (slug) => (slug === workspaceSlug ? sessionDir : defaultSessionDir(cwd, slug)),
     }),
-    flavors: {
+    themes: {
       list: async () => ({
-        flavors: startupFlavors(options.theme ?? {}, [], options.flavor),
-        active: options.flavor ?? keyworkNightFlavor.name,
+        themes: wardrobe().map(completeTheme),
+        active: options.theme ?? keyworkNightTheme.name,
+        placeholders: [systemThemeName],
       }),
     },
   };

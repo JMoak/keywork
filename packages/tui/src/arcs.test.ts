@@ -12,7 +12,7 @@ import {
   suggestArcSlug,
 } from "./arcs.ts";
 import { arcAnchor } from "./chroma.ts";
-import { keyworkNight } from "./theme.ts";
+import { keyworkNight } from "./palette.ts";
 
 const arcs: ArcSummary[] = [
   { slug: "later", status: "active", created: "2026-08-21T09:00:00.000Z", sessions: 0 },

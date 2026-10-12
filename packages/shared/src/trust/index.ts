@@ -1,7 +1,22 @@
+export { GrantStore, GrantStoreError, type GrantStoreOptions } from "./grant-store.ts";
 export {
+  type AskScope,
+  type GrantRefusal,
+  grantCandidates,
+  grantRefusal,
+  SessionGrants,
+  sameRule,
+  withRules,
+} from "./grants.ts";
+export {
+  type LayeredPolicy,
+  layeredPolicy,
   type PermissionPolicy,
   type PermissionPolicyOptions,
   permissionPolicy,
+  type RuleLayer,
+  type RuleOrigin,
+  type Ruling,
 } from "./permissions.ts";
 export {
   type ActivePreset,
@@ -20,3 +35,4 @@ export {
   TrustStoreError,
   type TrustStoreOptions,
 } from "./store.ts";
+export { trustedReadRules } from "./trusted-reads.ts";

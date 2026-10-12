@@ -5,7 +5,7 @@ import { textTurn, toolScope, writeTool } from "../../../packages/engine/src/ind
 import type { Scenario, Stage } from "../scenario.ts";
 import { notesAfter, notesBefore } from "./fixtures.ts";
 
-const askRowMarker = "[y] allow  [a] always  [n] deny";
+const askRowMarker = "[y] allow  [n] deny";
 const calmHeader = /│ session-1 +│/;
 const shoutPrompt = "please shout the middle line of notes.txt";
 

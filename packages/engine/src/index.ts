@@ -6,8 +6,12 @@ export {
   type ConfirmingGate,
   type DelegatedOutcome,
   type DelegatedTurn,
+  type GrantedScope,
   type PermissionResolver,
+  type PermissionRuling,
+  permissionOf,
   QueuedPromptCancelledError,
+  rulingOf,
   type SendOptions,
   type SpillSource,
   type ToolBatchSettler,
@@ -705,6 +709,13 @@ export {
   toolCallTurn,
 } from "./mock-provider.ts";
 export { followMutations, mutatingToolNames } from "./mutations.ts";
+export {
+  memoryGrants,
+  PermissionLedger,
+  type PermissionLedgerOptions,
+  type PermissionsView,
+  type WorkspaceGrants,
+} from "./permission-ledger.ts";
 export {
   type CostRollup,
   carriesUsage,

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { FileModel } from "./file-model.ts";
 import { paletteFrame, paletteRowLimit } from "./overlays/index.ts";
+import { resolvePalette } from "./palette.ts";
 import { AppProbe } from "./probe.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import { dockedIds, paneIds, stubFilePane } from "./testing/workflow-probe.ts";
-import { resolveTheme } from "./theme.ts";
 
 describe("mouse", () => {
   const modelFilePane = () => {
@@ -163,7 +163,7 @@ describe("entity tray pointer", () => {
 
   function renderTree(probe: AppProbe, pane: SessionTreePane) {
     const rect = probe.rect("tree-1");
-    pane.view({ theme: resolveTheme(), focused: true, width: rect.width, height: rect.height });
+    pane.view({ theme: resolvePalette(), focused: true, width: rect.width, height: rect.height });
     return rect;
   }
 

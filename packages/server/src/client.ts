@@ -14,7 +14,7 @@ import type {
   StagedItem,
   WriteResult,
 } from "@keywork/engine";
-import type { ActivePreset, PresetName } from "@keywork/shared";
+import type { ActivePreset, AskScope, PresetName } from "@keywork/shared";
 import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
 import type { BusEnvelope } from "./events.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
@@ -30,7 +30,6 @@ import type {
   ChangesReport,
   CompactionReport,
   ExportScope,
-  FlavorsReport,
   LabelOutcome,
   LeafOutcome,
   MemoryNoteDetail,
@@ -42,11 +41,13 @@ import type {
   SessionDetail,
   SessionEntries,
   SessionSummary,
+  ThemesReport,
   TrustGrant,
   UndoReport,
   WorkspaceChoice,
   WorkspaceReport,
 } from "./host.ts";
+import { askRefusals } from "./routes/asks.ts";
 import type { FileChange } from "./routes/changes.ts";
 import type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
 import { readServerTicket, type ServerTicket } from "./token.ts";
@@ -84,7 +85,7 @@ export interface KeyworkClient {
   rename(id: string, title: string): Promise<{ title: string } | undefined>;
   applyPreset(name: PresetName, confirmed?: boolean): Promise<PresetAnswer>;
   asks(): Promise<readonly PendingAsk[]>;
-  answerAsk(callId: string, verdict: AskVerdict): Promise<AnswerOutcome>;
+  answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
   events(options?: EventStreamOptions): AsyncIterable<BusEnvelope>;
   memory(): Promise<Trusted<MemoryOverview>>;
   memoryInbox(): Promise<Trusted<{ items: StagedItem[]; count: number }>>;
@@ -131,7 +132,7 @@ export interface KeyworkClient {
   useWorkspace(slug: string | null): Promise<{ slug: string | null; reopens: boolean }>;
   focusWorkspaceDir(slug: string | null, dir: string): Promise<string>;
   unfocusWorkspaceDir(slug: string | null, dir: string): Promise<void>;
-  flavors(): Promise<FlavorsReport>;
+  themes(): Promise<ThemesReport>;
   entries(id: string): Promise<SessionEntries | undefined>;
   fork(id: string, entryId: string): Promise<{ sessionId: string } | undefined>;
   labelEntry(id: string, entryId: string, label: string | null): Promise<LabelOutcome | undefined>;
@@ -291,10 +292,18 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       const listed = await json<{ asks: PendingAsk[] }>(await request("GET", "/asks"));
       return listed.asks;
     },
-    answerAsk: async (callId, verdict) => {
-      const response = await request("POST", `/asks/${encodeURIComponent(callId)}`, { verdict });
+    answerAsk: async (callId, verdict, scope) => {
+      const response = await request("POST", `/asks/${encodeURIComponent(callId)}`, {
+        verdict,
+        ...(scope !== undefined && { scope }),
+      });
       if (response.status === 404) return "missing";
       if (response.status === 409) return "already-settled";
+      if (response.status === 400) {
+        const refusal = askRefusalOf(await refusalDetail(response));
+        if (refusal !== undefined) return refusal;
+        throw new ServerRefusal(400, "the server refused the answer");
+      }
       await json(response);
       return "settled";
     },
@@ -411,7 +420,7 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
     unfocusWorkspaceDir: async (slug, dir) => {
       await json(await request("POST", workspacePath(slug, "unfocus"), { dir }));
     },
-    flavors: () => request("GET", "/flavors").then(json<FlavorsReport>),
+    themes: () => request("GET", "/themes").then(json<ThemesReport>),
     entries: (id) => unlessMissing(request("GET", sessionPath(id, "entries"))),
     fork: (id, entryId) => unlessMissing(request("POST", sessionPath(id, "fork"), { entryId })),
     labelEntry: (id, entryId, label) =>
@@ -576,6 +585,11 @@ async function timeTravel<T>(pending: Promise<Response>): Promise<T | "missing" 
   if (response.status !== 404) return json<T>(response);
   const detail = await refusalDetail(response);
   return detail.startsWith("nothing to") ? "nothing" : "missing";
+}
+
+function askRefusalOf(error: string): Exclude<AnswerOutcome, "settled"> | undefined {
+  const refusals = Object.entries(askRefusals) as [keyof typeof askRefusals, string][];
+  return refusals.find(([, message]) => message === error)?.[0];
 }
 
 async function refusalDetail(response: Response): Promise<string> {

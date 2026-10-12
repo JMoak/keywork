@@ -4,7 +4,7 @@ import { paneTitleCount } from "../frame-queries.ts";
 import type { Scenario } from "../scenario.ts";
 import { notesAfter, notesBefore } from "./fixtures.ts";
 
-const askRowMarker = "[y] allow  [a] always  [n] deny";
+const askRowMarker = "[y] allow  [n] deny";
 const foldedRow = "░ (untitled session) · folded · now";
 const waitingRow = "█ (untitled session) · needs you · now";
 
