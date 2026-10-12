@@ -133,3 +133,53 @@ session entry.
 **Accept:** Plan agent's write attempt is denied by config, not by prompt hope; Tab switch
 mid-session preserves context.
 **Strategy:** `LIFT:opencode` (markdown agent format verbatim + permission wiring).
+
+### Permissions surface · 2026-10-12
+
+K7 left the trusted read bundle, workspace grants and the revoke reachable over HTTP only.
+This lands the keyboard surface for the same state, read from the same places: the
+`PermissionLedger` the server composes and the workspace store at
+`~/.keywork/workspaces/<identity>/permissions.json`. Nothing here edits the bundle; it is
+fixed in keywork with user rules above it, as E1 decision 2 says, and grants beyond `once`
+still cover `bash` and MCP tools only.
+
+**CLI.** `keywork permissions [list]` prints three groups: `trusted reads` (every bundle rule,
+allows first, then the write-capable forms that still ask; `off until this folder is trusted`
+when untrusted), `workspace grants` with a `last changed` stamp taken from the store file's
+mtime (the store keeps no per-rule timestamp, so that is the honest "when"), and `session
+grants`. Session grants never touch disk, so the CLI asks a running `keywork serve` for them
+through `GET /permissions` when a ticket answers, and otherwise says they live in the running
+app. `keywork permissions revoke <action> <resource>` takes the rule exactly as `list` prints it
+(`keywork permissions revoke bash "git push *"`), writes the same store the server reads, and
+exits 1 when no grant matches. `keywork link <dir>` in the usage text now starts its description
+in the same column as every other row. `permissions.ts` owns the command; `main.ts` only gained
+the dispatch entry.
+
+**TUI.** `/permissions` (alias `/grants`) opens a `RowOverlay`, the primitive `/connect` uses.
+First row: `ran without asking · <call> · trusted reads | session grant | workspace grant`,
+fed by a `QuietRunLog` on the focused conversation that pairs `tool.started` with
+`gate.permission` (`gate: "trusted"`, or `gate: "user"` with a session or workspace scope),
+so the user can see why nothing asked. Then the bundle folded to one summary row (`b`
+unfolds it, every rule dim and grouped under `still asks:`), the workspace grants with their
+stamp, and the focused pane's session grants. `↑↓` picks a grant, `r` revokes a workspace grant
+through the ledger, `d` drops a session grant from that pane's `SessionGrants`, `esc` or `q`
+closes. Rows window around the selection on short screens. The key hint is the last row.
+
+**Ask row.** A bash ask shows `[a] always` but said nothing about what it would remember. A
+dim line now sits under the ask row: `[a] remembers bash git push * for this session`,
+listing every derived rule. Write asks still show `[y] allow  [n] deny` with no hint. No
+e2e golden shows a bash ask, so no golden changed.
+
+**Evidence.** `check:types`, `check:guardrails` and biome are clean on every touched file.
+Under bun 1.3.9 with `vitest run`: `cli/permissions.test.ts` (list against a temp store with
+the bundle, the stamp and the seeded grant; untrusted and empty wording; session grants
+fetched from a stubbed server with the bearer token; revoke as printed, a missing grant, a
+malformed rule, stray arguments), `tui/permissions-model.test.ts` (the three groups, folded
+and unfolded bundle, windowing, wrap-around selection, `r` and `d` with wrong-layer refusals,
+close keys, `QuietRunLog` in both event orders, the reasons that count), `tui/mutation-ask.test.ts`
+(forgetting a session rule makes the next call ask), `tui/conversation-pane.test.ts` (the
+remember hint under a bash ask and none under a write ask), `shared/trust/grants.test.ts`
+(`SessionGrants.forget`, `ruleLabel` and `grantFromLabel` round trip). Open: shell escapes
+(`!cmd`) run through `guardedShellEscape` without an `onDecision` seam in the panes
+composition, so a quiet `!git status` does not show in the first row; `keywork attach` composes
+no permissions port, so `/permissions` is absent there until serve parity carries it.

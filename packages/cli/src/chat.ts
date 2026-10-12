@@ -4,13 +4,9 @@ import {
   type BotDefinition,
   type Checkpoints,
   type CommandRuntime,
-  compactNow,
-  contextBudgetFor,
-  declaredContextWindow,
   type ExtensionNotice,
   extensionLoadNotices,
   gatherReturnDelta,
-  type MemoryFlush,
   type Message,
   type PermissionResolver,
   type Provider,
@@ -18,7 +14,6 @@ import {
   replaySession,
   type SendBehavior,
   type SessionStore,
-  settleTurn,
   type ToolCallPart,
   type ToolGuard,
   type TurnSettlement,
@@ -49,9 +44,10 @@ import {
   composeWorkspace,
 } from "./compose.ts";
 import { describeExtensionHost } from "./extensions-command.ts";
-import { citationTrail, skillEvidenceOf, sweepOnClose } from "./memory.ts";
-import { defaultSessionDir, skillTelemetryFile, workspaceIdentity } from "./paths.ts";
+import { citationTrail, sweepOnClose } from "./memory.ts";
+import { defaultSessionDir } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
+import { compactSessionNow, type SettlingSession, settleSessionTurn } from "./session-settle.ts";
 import { openOrResumeSession } from "./sessions/store.ts";
 import {
   type KeyPress,
@@ -62,6 +58,7 @@ import {
 } from "./terminal-input.ts";
 import { compactJson, firstLine } from "./text.ts";
 import { workspacePermissions } from "./workspace-permissions.ts";
+import { workspaceSkillEvidence } from "./workspace-sweep.ts";
 
 export interface ChatOptions {
   cwd: string;
@@ -239,8 +236,8 @@ class Repl {
     this.agent.interrupt();
   }
 
-  flush(): MemoryFlush | undefined {
-    return this.agents.flushFor(this.store.header.id, this.options.provider);
+  settling(): SettlingSession {
+    return { sessionId: this.store.header.id, store: this.store, agent: this.agent };
   }
 
   private async afterTurn(agent: Agent): Promise<void> {
@@ -253,13 +250,12 @@ class Repl {
         this.persisted,
         this.checkpoints,
       );
-      const settlement = await settleTurn({
-        store: this.store,
-        provider: agent.provider,
-        history: agent.history(),
-        budget: contextBudgetFor(declaredContextWindow(agent.provider)),
-        flush: this.flush(),
-      });
+      const settlement = await settleSessionTurn(
+        this.settling(),
+        agent.history(),
+        "after-turn",
+        this.agents,
+      );
       reportSettlement(settlement, this.io);
       if (this.builtWith !== this.activeBot || settlement.history !== undefined) {
         this.rebuild(settlement.history ?? agent.history());
@@ -283,11 +279,7 @@ class Repl {
   }
 
   private async sweepMemory(): Promise<void> {
-    const telemetryFile = skillTelemetryFile(
-      workspaceIdentity(this.options.cwd, this.options.workspaceSlug),
-      this.options.userRoot,
-    );
-    const evidence = await skillEvidenceOf(this.composition.skills, telemetryFile);
+    const evidence = await workspaceSkillEvidence(this.composition.skills, this.options);
     await sweepOnClose(this.composition.memory(), evidence);
   }
 }
@@ -467,13 +459,7 @@ function printExtensionNotice(notice: ExtensionNotice, io: ChatIo): void {
 }
 
 async function compactSession(repl: Repl, instructions: string): Promise<void> {
-  const settlement = await compactNow({
-    store: repl.store,
-    provider: repl.options.provider,
-    budget: contextBudgetFor(declaredContextWindow(repl.options.provider)),
-    instructions,
-    flush: repl.flush(),
-  });
+  const settlement = await compactSessionNow(repl.settling(), instructions, repl.agents);
   reportSettlement(settlement, repl.io);
   if (settlement.history !== undefined) repl.rebuild(settlement.history);
 }

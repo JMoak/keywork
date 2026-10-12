@@ -4,7 +4,24 @@
 > owns it. Read this first when resuming, then the owning overlay before building. Strike items
 > as they land and add the landing date; when a section empties, delete it.
 
-## Where the tree stands (2026-10-11)
+## Where the tree stands (2026-10-12)
+
+PR #7 merged `app-surface/next` into `main` (`8952a27`): K6 themes and K7 trusted reads and ask
+scopes landed with it, so the permissions proposal below is built. On top of it, uncommitted,
+the 2026-10-12 wave in five lanes: the reliability floor (two e2e flakes fixed at the cause,
+two shown to be load; ledger in [117](117-influence-sweep.md)), the serve gaps and the merge
+audit (exit sweep under `serve`, `chat` on the shared settle, `closingProvider` from
+`main`, stat-first on `/changes/file` with 413, `changes.updated` once per burst, the
+`changedSince` cost measured and left; ledger in [118](118-app-surface.md)), contract hardening
+(strict fixture gates for the OpenAPI document and the event shapes, `x-keywork-contract` on
+`/doc`, `bun run contract:fixtures`, the promise in `docs/events.md`, a consumer test the app
+can copy; ledger in [118](118-app-surface.md)), the permissions surface (`keywork permissions
+list | revoke`, `/permissions` with revoke and drop keys, the ask row names what `[a]` would
+remember; ledger in [50](50-trust.md)), and a voice and experience pass over everything
+user-facing since August (ledger in [112](112-feel-and-look-wave.md)). Gate on the integrated
+tree: `bun run check` clean, vitest 353 files / 4840 tests (1 skipped), e2e 49 of 49.
+
+Earlier state (2026-10-11):
 
 The 2026-10-10 wave is committed on `main` (`4b35b5e`). On top of it, uncommitted, the
 2026-10-11 wave: 118 K2 (entries, fork, label, leaf, changes and per-file diff over HTTP,
@@ -48,14 +65,15 @@ items, plus the calls listed under "Where the tree stands" there.
 1. Jordan reviews and commits the 2026-10-11 wave (commit messages proposed per lane in the
    118 / 119 / 95 ledgers); installs Bun 1.3.14 locally so the e2e harness stops segfaulting
    on Ctrl+C.
-2. ~~118 K2 (tree and diff families)~~ landed 2026-10-11. Next on the app surface: the gaps the
-   K2 and serve-parity ledgers name (no exit sweep when `serve` stops, `changes.updated` fires
-   per mutating call, `/changes/file` reads whole files before capping, `chat.ts` keeps its own
-   settle call, `main.ts` does not pass `closingProvider`).
-2b. Permissions: bash asks for every inspection command under `standard` and `[a] always` is a
-   pane-local flag; trust grants no permissions. Proposed (2026-10-11, waiting on Jordan's call
-   on scope): a read-only bash classifier in the built-in posture, a standing grant carried by
-   workspace trust, and a durable, resource-scoped `always`.
+2. ~~118 K2 (tree and diff families)~~ landed 2026-10-11. ~~Next on the app surface: the gaps the
+   K2 and serve-parity ledgers name~~ all closed 2026-10-12 (ledger "Serve gaps and merge debt"
+   in [118](118-app-surface.md)). Still open there: `costBasisOf` in the server verbs and the
+   private `costBasis` in the TUI ledger are the same three branches and want one engine home;
+   `keywork attach` composes no permissions port so `/permissions` is absent in attach mode;
+   pane shell escapes (`!cmd`) do not reach the quiet-run log the `/permissions` view shows.
+2b. ~~Permissions: bash asks for every inspection command under `standard` and `[a] always` is a
+   pane-local flag; trust grants no permissions.~~ Built as K7 (2026-10-11, Jordan's three
+   decisions in [50](50-trust.md) E1) and given a keyboard surface 2026-10-12.
 3. `serve` gaps the wave named (all four closed 2026-10-11, ledger "Serve parity" in
    [118](118-app-surface.md)): ~~no after-turn settle (flush, auto-compaction) under `serve`~~;
    ~~binding a session to a bot records the binding but builds no bot agent~~; ~~an arc close
@@ -115,6 +133,10 @@ items, plus the calls listed under "Where the tree stands" there.
 | Q-P1 needs-you stamp · C71-c main-area pins · C72-c heat candidates · C57 frame-budget bar | [113](113-arcs-and-chrome-wave.md), [112](112-feel-and-look-wave.md), [100](100-visual-craft.md) | render options, Jordan picks |
 | Lens grammar Q1–Q9 | [102](102-instrument-grammar.md) | design session never scheduled |
 | First tag, npm name, README one-liner, Linux walk | [`../launch-runway.md`](../launch-runway.md) | the launch button |
+| Contract: keywork-app should pin the `x-keywork-contract` major instead of `protocolVersion = "0.1.1"` (app repo) · enforce the version bump mechanically when a fixture changes, or leave it as prose · whether the `progress` delta is meant for external clients or gets filtered in `sse.ts` | [118](118-app-surface.md) "Contract hardening" | app attach check; a guardrail; one filter |
+| Memory ledger: an approve writes its op and its audit echo a millisecond apart, so the top row of the ledger lens is sometimes the echo and `u` from the top does nothing; fix is a store clock seam or a sort that keeps the op above its echo | [95](95-memory-and-skills.md), found by the 2026-10-12 reliability lane | a one-key revert that always works |
+| Windows: `taskkill /t` never reaches a `sleep` behind a forked Git Bash shape, so the bash tool's timeout leaks that grandchild and resolves through the 1 s fallback; a job object is the real fix and Bun has none | [`../windows.md`](../windows.md) | accept or find a job-object path |
+| Local Bun is 1.3.9 against the 1.3.14 pin (Jordan installs) | [117](117-influence-sweep.md) 117-3 | the e2e harness Ctrl+C segfault |
 
 ## Parked by design
 

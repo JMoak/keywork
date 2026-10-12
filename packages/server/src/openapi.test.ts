@@ -1,21 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { engineEventTypes, serverEventTypes } from "./events.ts";
-import {
-  type OpenApiDocument,
-  openApiDocument,
-  type Route,
-  routeFamilies,
-  routes,
-} from "./openapi.ts";
+import { documentFixturePath, fixtureDocument, regenerateCommand } from "./contract-fixtures.ts";
+import { type Route, routeFamilies, routes } from "./openapi.ts";
 
 describe("the composed OpenAPI document", () => {
-  it("equals, key for key and in order, the document the single route table produced", () => {
-    const document = openApiDocument("http://127.0.0.1:4770", "0.0.0-fixture", {
-      anchor: "C:/work/anchor",
-      identity: "anchor-identity",
-    });
-    expect(JSON.stringify(document)).toBe(JSON.stringify(fixtureWithTodaysVocabulary()));
+  it("equals openapi-document.fixture.json key for key and in order", () => {
+    expect(
+      canonical(readFileSync(documentFixturePath, "utf8")),
+      `GET /doc drifted from openapi-document.fixture.json: run \`${regenerateCommand}\`, review the fixture diff for a breaking change, and commit it`,
+    ).toBe(canonical(fixtureDocument()));
   });
 
   it("lists every family's routes in composition order with unique operation ids", () => {
@@ -25,13 +18,6 @@ describe("the composed OpenAPI document", () => {
   });
 });
 
-function fixtureWithTodaysVocabulary(): OpenApiDocument {
-  const fixture = JSON.parse(
-    readFileSync(new URL("./openapi-document.fixture.json", import.meta.url), "utf8"),
-  ) as OpenApiDocument;
-  const envelope = fixture.components.schemas.BusEnvelope as {
-    properties: { type: { enum: string[] } };
-  };
-  envelope.properties.type.enum = [...engineEventTypes, ...serverEventTypes];
-  return fixture;
+function canonical(value: string | object): string {
+  return JSON.stringify(typeof value === "string" ? JSON.parse(value) : value, null, 2);
 }

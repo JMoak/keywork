@@ -217,6 +217,14 @@ export {
 export { keyworkNight, type Palette, type PaletteOverrides, resolvePalette } from "./palette.ts";
 export type { LifecycleState } from "./pane.ts";
 export type { ArcOrigin, PaneOrigin } from "./pane-kinds.ts";
+export {
+  type FocusedPermissionsPort,
+  PermissionsModel,
+  type PermissionsPort,
+  type QuietRun,
+  QuietRunLog,
+  type SessionGrantsPort,
+} from "./permissions-model.ts";
 export type { WorkspacePort } from "./restore-plan.ts";
 export type {
   AfterTurn,

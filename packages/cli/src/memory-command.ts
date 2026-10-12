@@ -160,9 +160,8 @@ async function syncReport(
   print: Print,
   printError: Print,
 ): Promise<number> {
-  const memory = openMemory(place, seams);
-  if (memory === undefined) return refuse(printError, "memory isn't set up here · keywork init");
-  if (!memory.store.trusted) return refuse(printError, "memory is inert in an untrusted workspace");
+  const memory = openTrustedMemory(place, seams, printError);
+  if (typeof memory === "number") return memory;
   const report = await reconcileVault({
     store: memory.store,
     search: memory.search,
@@ -179,9 +178,8 @@ async function syncSetup(
   print: Print,
   printError: Print,
 ): Promise<number> {
-  const memory = openMemory(place, seams);
-  if (memory === undefined) return refuse(printError, "memory isn't set up here · keywork init");
-  if (!memory.store.trusted) return refuse(printError, "memory is inert in an untrusted workspace");
+  const memory = openTrustedMemory(place, seams, printError);
+  if (typeof memory === "number") return memory;
   const marked = await markMultiHostVault(memory.vaultRoot);
   print(
     marked
@@ -257,9 +255,8 @@ async function driftCommand(
   print: Print,
   printError: Print,
 ): Promise<number> {
-  const memory = openMemory(place, seams);
-  if (memory === undefined) return refuse(printError, "memory isn't set up here · keywork init");
-  if (!memory.store.trusted) return refuse(printError, "memory is inert in an untrusted workspace");
+  const memory = openTrustedMemory(place, seams, printError);
+  if (typeof memory === "number") return memory;
   const judgment = await resolveJudgment(seams);
   if (judgment === undefined)
     return refuse(printError, "no inference provider to ask · keywork connect adds one");
@@ -291,9 +288,8 @@ async function forgetCommand(
   const session = flags.session?.trim();
   if (session === undefined || session === "")
     return refuse(printError, "keywork memory forget needs --session <id>");
-  const memory = openMemory(place, seams);
-  if (memory === undefined) return refuse(printError, "memory isn't set up here · keywork init");
-  if (!memory.store.trusted) return refuse(printError, "memory is inert in an untrusted workspace");
+  const memory = openTrustedMemory(place, seams, printError);
+  if (typeof memory === "number") return memory;
   const plan = await planForget(memory.store, session);
   for (const line of describeForgetPlan(plan)) print(line);
   if (isEmptyPlan(plan)) return exitCodes.completed;
@@ -308,6 +304,22 @@ async function forgetCommand(
       : `staged ${review.key} · approve it in the memory pane inbox`,
   );
   return exitCodes.completed;
+}
+
+function openTrustedMemory(
+  place: MemoryCommandPlace,
+  seams: MemoryCommandSeams,
+  printError: Print,
+): WorkspaceMemory | number {
+  const memory = openMemory(place, seams);
+  if (memory === undefined)
+    return refuse(printError, "memory isn't set up here · keywork init sets it up");
+  if (!memory.store.trusted)
+    return refuse(
+      printError,
+      "memory is inert in an untrusted workspace · keywork trust turns it on",
+    );
+  return memory;
 }
 
 function openMemory(

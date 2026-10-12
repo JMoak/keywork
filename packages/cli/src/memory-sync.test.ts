@@ -123,7 +123,7 @@ describe("keywork memory sync", () => {
     expect(await memoryCommand(["sync", "bogus"], { cwd, trusted: true }, io)).toBe(2);
     expect(await memoryCommand(["sync", "merge", "a"], { cwd, trusted: true }, io)).toBe(2);
     expect(io.err).toEqual([
-      "keywork memory: memory is inert in an untrusted workspace",
+      "keywork memory: memory is inert in an untrusted workspace · keywork trust turns it on",
       'keywork memory: unknown sync verb "bogus" (expected setup or merge)',
       "keywork memory: sync merge needs <base> <ours> <theirs> [path]",
     ]);

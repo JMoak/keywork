@@ -37,6 +37,10 @@ export class MutationAsk {
     return this.grants.rules;
   }
 
+  forgetSessionRule(rule: PermissionRule): boolean {
+    return this.grants.forget(rule);
+  }
+
   confirm(call: ToolCallPart): Promise<boolean> {
     if (this.closed) return Promise.resolve(false);
     if (this.grants.covers(call.name, call.arguments)) return Promise.resolve(true);

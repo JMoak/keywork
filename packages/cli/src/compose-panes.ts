@@ -3,10 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  type BotDefinition,
   type Checkpoints,
-  type CurationJudgmentPort,
-  closingJudgment,
   coreTools,
   type Provider,
   renderCommand,
@@ -69,19 +66,8 @@ import type { LiveInference } from "./inference-state.ts";
 import { fileKeybindings } from "./keybindings.ts";
 import { type DeferredMaterialization, deferredMaterialization } from "./materialize.ts";
 import { mcpPanePort } from "./mcp.ts";
-import {
-  citationTrail,
-  type MemoryAccess,
-  memoryPanePort,
-  skillEvidenceOf,
-  sweepOnClose,
-} from "./memory.ts";
-import {
-  defaultSessionDir,
-  skillTelemetryFile,
-  workspaceIdentity,
-  workspaceStateFile,
-} from "./paths.ts";
+import { citationTrail, type MemoryAccess, memoryPanePort } from "./memory.ts";
+import { defaultSessionDir, workspaceIdentity, workspaceStateFile } from "./paths.ts";
 import { type PresetSwitch, presetsPortFor } from "./presets.ts";
 import { compactSessionNow, settleSessionTurn, sweepFlushFor } from "./session-settle.ts";
 import { sessionExporter } from "./sessions/export.ts";
@@ -95,8 +81,14 @@ import {
 import { userConfigDir } from "./user-config.ts";
 import { keyworkVersion } from "./version.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
-import { workspacePermissions } from "./workspace-permissions.ts";
+import { workspacePermissions, workspacePermissionsRecordedAt } from "./workspace-permissions.ts";
 import { workspaceSetupPort } from "./workspace-setup.ts";
+import {
+  botJudgmentFrom,
+  sweepWorkspaceOnClose,
+  type WorkspaceSweep,
+  workspaceSkillEvidence,
+} from "./workspace-sweep.ts";
 import { type WorkspaceRecall, workspacesPort } from "./workspaces.ts";
 
 export interface PanesLaunch {
@@ -232,13 +224,14 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     skills: extensions.skills,
   });
   await botLayers.prepare();
-  const permissions = workspacePermissions({
+  const ledger = workspacePermissions({
     cwd,
     projectTrusted,
     workspaceSlug,
     userRoot: options.userRoot,
     user: presets?.resolver,
-  }).resolverFor();
+  });
+  const permissions = ledger.resolverFor();
   const agents = composeAgents(composition, {
     permissions,
     arcs,
@@ -266,22 +259,17 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
   };
   const closingProviderFor = (arc: string): Provider | undefined =>
     closingProvider(arcs.bindings.sessionsBoundTo(arc));
-  const botJudgment = (bot: BotDefinition): CurationJudgmentPort | undefined => {
-    const bound = [...stores.values()]
-      .filter((store) => store.botBinding() === bot.name)
-      .map((store) => store.header.id);
-    const provider = closingProvider(bound);
-    if (provider === undefined) return undefined;
-    return closingJudgment({
-      provider,
-      subject: { kind: "bot", slug: bot.name, sigil: bot.sigil },
-    });
+  const sweep: WorkspaceSweep = {
+    memory,
+    skills: () =>
+      workspaceSkillEvidence(composition.skills, {
+        cwd,
+        workspaceSlug,
+        userRoot: options.userRoot,
+      }),
+    bots: botLayers,
+    judgmentFor: botJudgmentFrom(closingProvider, () => stores.values()),
   };
-  const workspaceSkillEvidence = () =>
-    skillEvidenceOf(
-      composition.skills,
-      skillTelemetryFile(workspaceIdentity(cwd, workspaceSlug), options.userRoot ?? homedir()),
-    );
   return {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
@@ -316,10 +304,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
         permissions,
       }),
     closers: [
-      async () => sweepOnClose(memory(), await workspaceSkillEvidence()),
-      async () => {
-        await botLayers.sweep(botJudgment);
-      },
+      () => sweepWorkspaceOnClose(sweep),
       ...(mcp === undefined ? [] : [() => mcp.stop()]),
       ...(port === undefined ? [] : [() => port.dispose()]),
       () => closeExtensionHost(host),
@@ -328,6 +313,12 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     terminalPane: { trusted: projectTrusted },
     extensions: extensionsView(extensions, cwd),
     extensionHost: extensionHostPort(host, composition.hostReport),
+    permissions: {
+      view: () => ledger.view(),
+      revokeWorkspace: (rule) => ledger.revokeWorkspace(rule),
+      recordedAt: () =>
+        workspacePermissionsRecordedAt({ cwd, workspaceSlug, userRoot: options.userRoot }),
+    },
     ...themeChoice(config),
     keybindings: fileKeybindings({
       userDir: userConfigDir(),

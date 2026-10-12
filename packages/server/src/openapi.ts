@@ -1,3 +1,4 @@
+import { contractVersion } from "./contract.ts";
 import { engineEventTypes, serverEventTypes } from "./events.ts";
 import { airlockFamily } from "./routes/airlock.ts";
 import { askFamily } from "./routes/asks.ts";
@@ -22,6 +23,7 @@ import { themeFamily } from "./routes/themes.ts";
 import { treeFamily } from "./routes/tree.ts";
 import { workspaceFamily } from "./routes/workspace.ts";
 
+export { contractMajorOf, contractVersion } from "./contract.ts";
 export type { HttpMethod, JsonSchema, RouteSpec, WorkspaceInfo } from "./routes/family.ts";
 
 export const routeFamilies = [
@@ -52,7 +54,13 @@ export const routes: readonly Route[] = routeFamilies.flatMap(
 
 export interface OpenApiDocument {
   openapi: "3.1.0";
-  info: { title: string; version: string; description: string; workspace?: WorkspaceInfo };
+  info: {
+    title: string;
+    version: string;
+    "x-keywork-contract": string;
+    description: string;
+    workspace?: WorkspaceInfo;
+  };
   servers: Array<{ url: string }>;
   paths: Record<string, Partial<Record<Lowercase<HttpMethod>, OpenApiOperation>>>;
   components: {
@@ -72,6 +80,8 @@ export interface OpenApiOperation {
     { description: string; content?: Record<string, { schema: JsonSchema }> }
   >;
   security?: Array<Record<string, string[]>>;
+  deprecated?: true;
+  "x-deprecated"?: string;
 }
 
 export function openApiDocument(
@@ -90,6 +100,7 @@ export function openApiDocument(
     info: {
       title: "keywork",
       version,
+      "x-keywork-contract": contractVersion,
       description:
         "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
       ...(workspace !== undefined && { workspace }),
@@ -122,7 +133,7 @@ const errorSchema: JsonSchema = {
   properties: { error: { type: "string" } },
 };
 
-function operationOf(route: RouteSpec): OpenApiOperation {
+export function operationOf(route: RouteSpec): OpenApiOperation {
   const responses: OpenApiOperation["responses"] = {};
   for (const [status, description] of Object.entries(route.responses)) {
     responses[status] = { description };
@@ -139,6 +150,7 @@ function operationOf(route: RouteSpec): OpenApiOperation {
     }),
     responses,
     ...(!route.authenticated && { security: [] }),
+    ...(route.deprecated !== undefined && { deprecated: true, "x-deprecated": route.deprecated }),
   };
 }
 

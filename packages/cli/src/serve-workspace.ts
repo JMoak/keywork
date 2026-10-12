@@ -1,10 +1,11 @@
 import { homedir } from "node:os";
 import type { BotDefinition, PermissionResolver, Provider, SessionStore } from "@keywork/engine";
-import type {
-  LspConfig,
-  McpServerConfig,
-  ModelCapabilitiesConfig,
-  PromptsConfig,
+import {
+  type LspConfig,
+  type McpServerConfig,
+  type ModelCapabilitiesConfig,
+  type PromptsConfig,
+  toError,
 } from "@keywork/shared";
 import { closingSeamFor, latestArcActivity } from "./arc-seams.ts";
 import { type ArcService, arcService } from "./arcs.ts";
@@ -20,6 +21,12 @@ import {
 import { citationTrail } from "./memory.ts";
 import { sweepFlushFor } from "./session-settle.ts";
 import { boundSessionCounts } from "./sessions/ports.ts";
+import {
+  botJudgmentFrom,
+  sweepWorkspaceOnClose,
+  type WorkspaceSweep,
+  workspaceSkillEvidence,
+} from "./workspace-sweep.ts";
 
 export interface ServedWorkspaceOptions {
   cwd: string;
@@ -40,6 +47,7 @@ export interface ServedWorkspaceOptions {
   checkpointsGitDir?: string | undefined;
   notice(text: string): void;
   storeOf(sessionId: string): SessionStore | undefined;
+  liveStores(): Iterable<SessionStore>;
   onReleased?: ((sessionId: string) => void) | undefined;
 }
 
@@ -79,13 +87,14 @@ export async function composeServedWorkspace(
   }
   const { memory, extensions, host } = composition;
   const citations = citationTrail(memory, () => composition.bootstrap);
-  const closingProviderFor = (arc: string): Provider =>
+  const closingProviderAmong = (sessionIds: readonly string[]): Provider =>
     options.closingProvider ??
-    arcs.bindings
-      .sessionsBoundTo(arc)
+    sessionIds
       .map((sessionId) => agents.providerOf(sessionId))
       .find((provider) => provider !== undefined) ??
     options.provider;
+  const closingProviderFor = (arc: string): Provider =>
+    closingProviderAmong(arcs.bindings.sessionsBoundTo(arc));
   const arcs = arcService({
     cwd,
     trusted: projectTrusted,
@@ -117,6 +126,12 @@ export async function composeServedWorkspace(
     thinking: options.thinking,
     notice,
   });
+  const sweep: WorkspaceSweep = {
+    memory,
+    skills: () => workspaceSkillEvidence(composition.skills, { cwd, workspaceSlug, userRoot }),
+    bots,
+    judgmentFor: botJudgmentFrom(closingProviderAmong, options.liveStores),
+  };
   return {
     composition,
     agents,
@@ -135,6 +150,9 @@ export async function composeServedWorkspace(
       await host.endSession("switch", sessionId);
     },
     close: async () => {
+      await sweepWorkspaceOnClose(sweep).catch((cause: unknown) => {
+        notice(`memory sweep failed: ${toError(cause).message}`);
+      });
       await closeExtensionHost(host);
       await composition.languagePort?.dispose();
       await composition.mcp?.stop();

@@ -548,3 +548,38 @@ superseded by the note here until the section is rewritten.
   fuzzy over panes and commands together, commands marked by a `/` glyph in the row.
   Recommendation: (b), one-line change plus the help text, and it rides C71 since that task
   already touches the palette chord. Not decided.
+
+### Voice and experience pass · 2026-10-12
+
+Read, by hand, every user-facing string that landed after the 2026-08-16 voice pass: the
+CLI subcommands (`sessions list/tree/fork/export/remove/restore/trash/purge`, `memory
+drift/forget/sync`, `mcp list/login/logout`, `extensions`, `skills`, `bot`, `link`,
+`init`, `doctor`), the engine's extension listing and arc delivery record, and the TUI
+surfaces (confirm prompts, the trash level of the session tree, theme commands, `/extensions`,
+`/export`, `/forget`, the away digest, the compaction offer, title bar, status line, tips,
+notices in app-core, the pane trays and empty states of the session tree, arcs, arc, memory,
+mcp, workspaces, browser and terminal panes, the help overlay, the bot-create and connect
+flows). Most of it already reads human and stayed as it was.
+
+What changed, all strings, no behaviour: the bot removal prompt gained the `[y/N]` tail the
+other confirms carry; `keywork link` swapped its mid-line periods for the `·` joint; the
+memory command's "isn't set up" and "inert" refusals now say what fixes them (`keywork init
+sets it up`, `keywork trust turns it on`); `keywork skills <verb>` with no name says
+`<verb> needs a skill name` like the other subcommands; the mcp empty state (CLI and pane)
+points at `mcpServers in keywork.json`; the compaction offer lost its "with a focus you
+pick" clause; `/mcp` lowercased its description; the restore notice says "it's back"; the
+arcs empty state names `/arc-new` rather than the legacy `/arc new`; the browser and
+session-entries empty states took the `░` lead like their neighbours; the away digest
+clips with `…` like every other clip in the tree.
+
+Verified by running: the touched vitest files (16 files, 301 tests green), biome check on
+the changed sources, `check:prose`, and the `session-lifecycle`, `arcs`, `discovery` and
+`extensions-tour` e2e scenarios (all pass; the seven goldens they carry verified unchanged,
+none refreshed). `check:types` fails on `packages/server/src/server.test.ts` from another
+lane's in-progress server work, not from this pass. Verified by reading only: `doctor`,
+`init`, the help overlay, the memory rows, the connect flow.
+
+Left alone on purpose: the two clipboard notices in app-core (different states, different
+wording is right); `init`'s period-joined sentences (they read human); `doctor`'s comma
+joins (consistent within that report); the arc delivery record's prose (a note body, not
+chrome); the `no sessions yet` empty state (no sensible next step to name).

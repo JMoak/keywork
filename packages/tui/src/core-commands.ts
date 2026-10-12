@@ -95,7 +95,7 @@ function builtinCommands(core: AppCore): CommandSpec[] {
     }),
     ...when(available("mcp"), {
       name: "mcp",
-      description: "open the MCP status pane: /mcp",
+      description: "open the mcp status pane: /mcp",
       run: () => core.summon("mcp"),
     }),
     ...(options.workspaces === undefined ? [] : workspaceCommands(core)),
@@ -126,6 +126,12 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       aliases: ["models"],
       description: "pick the model for this session: /model [provider/model]",
       run: (args) => core.openModelPicker(args),
+    }),
+    ...when(options.permissions !== undefined, {
+      name: "permissions",
+      aliases: ["grants"],
+      description: "see what runs here without asking, take a grant back: /permissions",
+      run: () => core.openPermissions(),
     }),
     ...when(options.connections !== undefined, {
       name: "connect",

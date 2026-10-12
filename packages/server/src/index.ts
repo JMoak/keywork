@@ -46,9 +46,12 @@ export {
   EventLog,
   type EventLogOptions,
   engineEventTypes,
+  type ServerEvents,
   type ServerEventType,
   serverEventTypes,
+  type WireEvents,
   type WireEventType,
+  type WirePayload,
 } from "./events.ts";
 export {
   BinaryFileError,
@@ -136,6 +139,8 @@ export {
 } from "./host.ts";
 export { type ListeningServer, type ListenOptions, listen, loopback } from "./listen.ts";
 export {
+  contractMajorOf,
+  contractVersion,
   type HttpMethod,
   type JsonSchema,
   type OpenApiDocument,

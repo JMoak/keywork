@@ -32,6 +32,27 @@ describe("MutationAsk", () => {
     expect(gate.pending).toBeUndefined();
   });
 
+  it("forgets a remembered session rule so the next call asks again", async () => {
+    const gate = new MutationAsk(() => {});
+    const first = gate.confirm(bashCall("git push origin main"));
+    gate.handleKey(parseChord("a"), askRows);
+    expect(await first).toBe(true);
+    expect(gate.sessionRules).toEqual([
+      { action: "bash", resource: "git push *", effect: "allow" },
+    ]);
+
+    expect(
+      gate.forgetSessionRule({ action: "bash", resource: "git push *", effect: "allow" }),
+    ).toBe(true);
+    expect(gate.sessionRules).toEqual([]);
+    const again = gate.confirm(bashCall("git push origin dev"));
+    expect(gate.pending?.remembers).toEqual([
+      { action: "bash", resource: "git push *", effect: "allow" },
+    ]);
+    gate.handleKey(parseChord("n"), askRows);
+    expect(await again).toBe(false);
+  });
+
   it("denies on n and on escape", async () => {
     const gate = new MutationAsk(() => {});
     const first = gate.confirm(writeCall);

@@ -145,7 +145,7 @@ function outsideFences(lines: readonly string[]): string[] {
 }
 
 function clipped(text: string): string {
-  return text.length > clipCells ? `${text.slice(0, clipCells - 3)}...` : text;
+  return text.length > clipCells ? `${text.slice(0, clipCells - 1)}…` : text;
 }
 
 const fileWritingTools = new Set(["write", "edit"]);

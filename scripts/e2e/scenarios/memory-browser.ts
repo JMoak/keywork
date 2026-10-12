@@ -101,6 +101,13 @@ const files: Record<string, string> = {
 };
 
 const frozenClock = (): number => Date.parse("2026-08-22T12:00:00.000Z");
+const memoryPaneColumn = 4;
+
+function screenRowOf(frame: string, text: string): number {
+  const row = frame.split("\n").findIndex((line) => line.includes(text));
+  assert.notEqual(row, -1, `no screen row reads "${text}"`);
+  return row;
+}
 
 const digestRows = {
   candidate: "░▓ Fold Habit · 3d",
@@ -183,6 +190,7 @@ export const memoryBrowser: Scenario = {
     const ledger = await stage.until("ledger · ");
     assert.ok(ledger.includes("approve · Web Claim"), "this run's approval heads the ledger");
     assert.ok(ledger.includes("gardener sweep"), "the persisted audit joins the feed");
+    await stage.click(memoryPaneColumn, screenRowOf(ledger, "approve · Web Claim"));
     await stage.press("u");
     await stage.until("reverted · the previous text is back");
     await stage.until("│ memory · 6 notes · ░1 ");

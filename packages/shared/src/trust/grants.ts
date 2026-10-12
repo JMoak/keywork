@@ -36,6 +36,23 @@ export class SessionGrants {
     this.held = withRules(this.held, candidates);
     return candidates;
   }
+
+  forget(rule: PermissionRule): boolean {
+    const kept = this.held.filter((held) => !sameRule(held, rule));
+    const dropped = kept.length !== this.held.length;
+    this.held = kept;
+    return dropped;
+  }
+}
+
+export function ruleLabel(rule: PermissionRule): string {
+  return `${rule.action} ${rule.resource}`;
+}
+
+export function grantFromLabel(label: string): PermissionRule | undefined {
+  const [action, ...resource] = label.trim().split(/\s+/);
+  if (action === undefined || action === "" || resource.length === 0) return undefined;
+  return allow(action, resource.join(" "));
 }
 
 export function sameRule(left: PermissionRule, right: PermissionRule): boolean {

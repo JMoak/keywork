@@ -62,7 +62,9 @@ const pair: ServerSpec[] = [
 describe("McpPaneModel empty state", () => {
   it("renders one calm dim line when constructed with no servers", () => {
     const { model } = modelOver([]);
-    expect(texts(model)).toEqual(["no mcp servers configured"]);
+    expect(texts(model)).toEqual([
+      "no mcp servers configured · mcpServers in keywork.json adds one",
+    ]);
     expect(model.rows()[0]?.tone).toBe("dim");
     expect(model.rows()[0]?.selectable).toBe(false);
   });

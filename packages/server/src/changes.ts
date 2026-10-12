@@ -25,6 +25,8 @@ export interface KnownSessions {
 
 export type ChangesSourceOf = () => Promise<ChangesSource | undefined>;
 
+export const changesQuietMs = 16;
+
 export function changesPortOver(sessions: KnownSessions, source: ChangesSourceOf): ChangesPort {
   const baselineFor = async (id: string): Promise<ChangesSource | "missing" | "no-baseline"> => {
     if (!(await sessions.has(id))) return "missing";
@@ -39,8 +41,8 @@ export function changesPortOver(sessions: KnownSessions, source: ChangesSourceOf
     file: async (id, path) => {
       const baseline = await baselineFor(id);
       if (typeof baseline === "string") return baseline;
-      const [before, after] = await Promise.all([baseline.before(path), baseline.after(path)]);
-      const sides: FileSides = { before, after };
+      const after = await baseline.after(path);
+      const sides: FileSides = { before: await baseline.before(path), after };
       return sides;
     },
   };
@@ -48,6 +50,8 @@ export function changesPortOver(sessions: KnownSessions, source: ChangesSourceOf
 
 export class ChangesFeed {
   private queue: Promise<void> = Promise.resolve();
+  private readonly quiet = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly scheduled = new Set<string>();
 
   constructor(
     private readonly log: EventLog,
@@ -55,21 +59,40 @@ export class ChangesFeed {
   ) {}
 
   follow(bus: EventBus<EngineEvents>, sessionId: string): () => void {
-    return followMutations(bus, () => {
-      this.announce(sessionId);
-    });
+    return followMutations(bus, () => this.announceAfterQuiet(sessionId));
+  }
+
+  announceAfterQuiet(sessionId: string): void {
+    this.stopWaiting(sessionId);
+    this.quiet.set(
+      sessionId,
+      setTimeout(() => void this.announce(sessionId), changesQuietMs),
+    );
   }
 
   announce(sessionId: string): Promise<void> {
-    this.queue = this.queue.then(() => this.record(sessionId)).catch(() => undefined);
+    this.stopWaiting(sessionId);
+    if (!this.scheduled.has(sessionId)) {
+      this.scheduled.add(sessionId);
+      this.queue = this.queue.then(() => this.recordScheduled(sessionId)).catch(() => undefined);
+    }
     return this.queue;
   }
 
   settled(): Promise<void> {
+    for (const sessionId of [...this.quiet.keys()]) void this.announce(sessionId);
     return this.queue;
   }
 
-  private async record(sessionId: string): Promise<void> {
+  private stopWaiting(sessionId: string): void {
+    const timer = this.quiet.get(sessionId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.quiet.delete(sessionId);
+  }
+
+  private async recordScheduled(sessionId: string): Promise<void> {
+    this.scheduled.delete(sessionId);
     const baseline = await this.source();
     if (baseline === undefined) return;
     this.log.record(sessionId, "changes.updated", changesUpdateOf(await baseline.changes()));

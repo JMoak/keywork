@@ -851,7 +851,7 @@ describe("SessionTreePane removal and the trash", () => {
     press(pane, "enter");
     await pane.settled();
     expect(world.restored).toEqual(["gone"]);
-    expect(recorded.notices).toEqual(['restored "title-gone" · it is back in the session tree']);
+    expect(recorded.notices).toEqual([`restored "title-gone" · it's back in the session tree`]);
     expect(pane.title()).toBe(" trash ");
     press(pane, "escape");
     await pane.settled();

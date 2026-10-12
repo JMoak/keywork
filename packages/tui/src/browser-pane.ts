@@ -85,7 +85,7 @@ export class BrowserPane implements Pane {
     }
     if (this.model.rootLoading()) return [paneLine("loading…", theme.textDim, width)];
     return rowsView(this.model, rows, theme, width, {
-      empty: "no entries",
+      empty: "░ empty folder",
       text: rowText,
       line: (row) => paneLine(rowText(row), rowInk(row, theme), width),
     });

@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PermissionRule } from "../config/schema.ts";
 import { GrantStore, GrantStoreError } from "./grant-store.ts";
-import { grantCandidates, grantRefusal, SessionGrants } from "./grants.ts";
+import {
+  grantCandidates,
+  grantFromLabel,
+  grantRefusal,
+  ruleLabel,
+  SessionGrants,
+} from "./grants.ts";
 import { layeredPolicy } from "./permissions.ts";
 
 const bash = (command: string) => ({ command });
@@ -70,6 +76,30 @@ describe("SessionGrants", () => {
     expect(grants.remember("write", { path: "a" })).toEqual([]);
     expect(grants.covers("write", { path: "a" })).toBe(false);
     expect(grants.rules).toEqual([allowBash("git push *")]);
+  });
+
+  it("forgets one remembered rule so the call asks again", () => {
+    const grants = new SessionGrants();
+    grants.remember("bash", bash("git push origin main"));
+    grants.remember("bash", bash("npm run build"));
+    expect(grants.forget(allowBash("git push *"))).toBe(true);
+    expect(grants.forget(allowBash("git push *"))).toBe(false);
+    expect(grants.covers("bash", bash("git push origin dev"))).toBe(false);
+    expect(grants.rules).toEqual([allowBash("npm run *")]);
+  });
+});
+
+describe("rule labels", () => {
+  it("print a grant as one line and read it back the same way", () => {
+    expect(ruleLabel(allowBash("git push *"))).toBe("bash git push *");
+    expect(grantFromLabel("bash git push *")).toEqual(allowBash("git push *"));
+    expect(grantFromLabel("  github__search   * ")).toEqual({
+      action: "github__search",
+      resource: "*",
+      effect: "allow",
+    });
+    expect(grantFromLabel("bash")).toBeUndefined();
+    expect(grantFromLabel("")).toBeUndefined();
   });
 });
 

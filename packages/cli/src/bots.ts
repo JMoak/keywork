@@ -251,7 +251,7 @@ async function rmBot(
     );
     return exitCodes.usage;
   }
-  if (!(await confirm(`remove bot ${slug} and its folder ${dirname(found.file)}?`))) {
+  if (!(await confirm(`remove bot ${slug} and its folder ${dirname(found.file)}? [y/N] `))) {
     print(`kept ${slug}`);
     return 0;
   }

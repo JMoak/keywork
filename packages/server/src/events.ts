@@ -1,6 +1,22 @@
 import type { EngineEvents, EventBus } from "@keywork/engine";
+import type { ChangesUpdate } from "./changes.ts";
+import type { SessionSettlement, SessionState } from "./host.ts";
+import type { SurfaceKind } from "./routes/answers.ts";
+import type { InboxTally } from "./routes/memory.ts";
+import type { TreeChange } from "./routes/tree.ts";
 
 export type EngineEventType = keyof EngineEvents;
+
+export interface ServerEvents {
+  "memory.inbox": InboxTally;
+  "session.state": SessionState;
+  "surface.changed": { kind: SurfaceKind };
+  "session.tree": TreeChange;
+  "changes.updated": ChangesUpdate;
+  "session.removed": { sessionId: string };
+  "session.restored": { sessionId: string };
+  "session.settled": SessionSettlement;
+}
 
 export const serverEventTypes = [
   "memory.inbox",
@@ -11,11 +27,20 @@ export const serverEventTypes = [
   "session.removed",
   "session.restored",
   "session.settled",
-] as const;
+] as const satisfies readonly (keyof ServerEvents)[];
 
 export type ServerEventType = (typeof serverEventTypes)[number];
 
-export type WireEventType = EngineEventType | ServerEventType;
+type UnlistedServerEventType = Exclude<keyof ServerEvents, ServerEventType>;
+
+export const serverVocabularyIsComplete: [UnlistedServerEventType] extends [never] ? true : never =
+  true;
+
+export type WireEvents = EngineEvents & ServerEvents;
+
+export type WireEventType = keyof WireEvents;
+
+export type WirePayload<Type extends WireEventType> = WireEvents[Type];
 
 export interface BusEnvelope {
   id: number;
@@ -68,7 +93,11 @@ export class EventLog {
     this.now = options.now ?? (() => new Date());
   }
 
-  record(sessionId: string, type: WireEventType, payload: unknown): BusEnvelope {
+  record<Type extends WireEventType>(
+    sessionId: string,
+    type: Type,
+    payload: WirePayload<Type>,
+  ): BusEnvelope {
     const envelope: BusEnvelope = {
       id: this.nextId++,
       ts: this.now().toISOString(),

@@ -24,6 +24,7 @@ import {
   usage,
 } from "./dispatch.ts";
 import { nextActionFor, shellCommands } from "./inference/port.ts";
+import { closingRole, roleProvider } from "./inference/roles.ts";
 import { composeInference, connectHint } from "./inference/runtime.ts";
 import { type LiveInference, openInferenceState } from "./inference-state.ts";
 import { defaultSessionDir, ensureStateLayout } from "./paths.ts";
@@ -141,6 +142,7 @@ const commands: Record<CommandName, Command> = {
   mcp: runMcp,
   trust: (context) => runTrust("trust", context),
   untrust: (context) => runTrust("untrust", context),
+  permissions: runPermissions,
   doctor: runDoctor,
   serve: runServe,
   attach: runAttach,
@@ -324,6 +326,7 @@ ${connectHint}`,
       workspaceSlug,
       port,
       provider: runtime.provider(bound.binding),
+      closingProvider: roleProvider(runtime, config, closingRole),
       permissions: presets.resolver,
       presets,
       inference: {
@@ -559,6 +562,28 @@ async function defaultProvider(context: CommandContext) {
 async function runTrust(action: "trust" | "untrust", context: CommandContext): Promise<number> {
   const { trustCommand } = await import("./trust.ts");
   return trustCommand(action, context.cwd, context.trustStore, commandIo(context));
+}
+
+async function runPermissions(
+  context: CommandContext,
+  { positionals }: ParsedInvocation,
+): Promise<number> {
+  const { permissionsCommand } = await import("./permissions.ts");
+  const { runningServerAmong, ticketFilesFor } = await import("./serve.ts");
+  return permissionsCommand(
+    positionals,
+    {
+      cwd: context.cwd,
+      projectTrusted: context.projectTrusted,
+      workspaceSlug: context.workspaceSlug,
+      userRoot: homedir(),
+    },
+    commandIo(context),
+    {
+      runningServer: () =>
+        runningServerAmong(ticketFilesFor(context.cwd, context.workspaceSlug), fetch),
+    },
+  );
 }
 
 async function runDoctor(context: CommandContext): Promise<number> {

@@ -27,6 +27,7 @@ import type { MentionSource } from "./mention-completer.ts";
 import { type AskDiffWindow, MutationAsk, type PendingAsk } from "./mutation-ask.ts";
 import { columnPage, type PageGrammar } from "./page.ts";
 import type { FileOpenOptions } from "./pane.ts";
+import { QuietRunLog, type SessionGrantsPort } from "./permissions-model.ts";
 import {
   type CommandSuggestion,
   type CommandsPort,
@@ -96,6 +97,7 @@ export class ConversationModel {
   readonly feed: TranscriptFeed;
   readonly editor: PromptEditor;
   readonly ledger = new SessionLedger();
+  readonly quietRuns = new QuietRunLog();
   title: string | undefined;
   lastSend: Promise<unknown> = Promise.resolve();
   lastTitle: Promise<unknown> = Promise.resolve();
@@ -323,6 +325,13 @@ export class ConversationModel {
     return this.ask.confirm(call);
   }
 
+  sessionGrants(): SessionGrantsPort {
+    return {
+      rules: () => this.ask.sessionRules,
+      forget: (rule) => this.ask.forgetSessionRule(rule),
+    };
+  }
+
   askDiffWindow(rows: number): AskDiffWindow {
     return this.ask.diffWindow(rows);
   }
@@ -494,6 +503,7 @@ export class ConversationModel {
       }),
       agent.bus.on("queue.changed", () => this.touch()),
       this.away.follow(agent.bus),
+      this.quietRuns.follow(agent.bus),
     ];
     this.unfollow = () => {
       for (const stop of stops) stop();

@@ -6,6 +6,7 @@ import type { BotCreateOverlay } from "./bot-create.ts";
 import type { ConnectOverlay } from "./connect.ts";
 import type { HelpOverlay } from "./help.ts";
 import type { PaletteOverlay } from "./palette.ts";
+import type { PermissionsOverlay } from "./permissions.ts";
 import type { PickerOverlay } from "./picker.ts";
 import type { PresetConfirmOverlay, PresetOverlay } from "./preset.ts";
 import type { SetupConfirmOverlay } from "./setup.ts";
@@ -26,6 +27,7 @@ export type Overlay =
   | BotOverlay
   | BotCreateOverlay
   | ConnectOverlay
+  | PermissionsOverlay
   | SetupConfirmOverlay;
 
 export { BotCreateOverlay, type BotCreateSeams } from "./bot-create.ts";
@@ -48,6 +50,7 @@ export {
   paletteModeOf,
   paletteRowLimit,
 } from "./palette.ts";
+export { PermissionsOverlay, type PermissionsSeams } from "./permissions.ts";
 export { PickerOverlay } from "./picker.ts";
 export {
   type PresetConfirmation,

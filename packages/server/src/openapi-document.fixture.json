@@ -3,6 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
+    "x-keywork-contract": "1.0",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -18,7 +19,7 @@
     "/doc": {
       "get": {
         "operationId": "getDocument",
-        "summary": "This OpenAPI 3.1 document.",
+        "summary": "This OpenAPI 3.1 document. `info.version` is the keywork release; `info.x-keywork-contract` (also the `x-keywork-contract` response header) is the HTTP and SSE contract version a client checks before it trusts the rest.",
         "responses": {
           "200": {
             "description": "The document."
@@ -2066,6 +2067,9 @@
           },
           "409": {
             "description": "`{ error: \"no baseline\" }`: checkpoints are off for this server, so there is no session start to diff against."
+          },
+          "413": {
+            "description": "The working file is over the 20 MiB cap GET /files applies."
           }
         }
       }

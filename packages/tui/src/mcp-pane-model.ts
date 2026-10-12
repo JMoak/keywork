@@ -335,7 +335,7 @@ function calmRow(): McpRow {
   return {
     id: "calm",
     kind: "empty",
-    text: "no mcp servers configured",
+    text: "no mcp servers configured · mcpServers in keywork.json adds one",
     tone: "dim",
     selectable: false,
   };

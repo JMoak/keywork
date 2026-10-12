@@ -37,7 +37,7 @@ export async function linkCommand(
     return refusal.exitCode;
   }
   if (confirm === undefined) {
-    printError("keywork link asks before widening the workspace. run it from a terminal");
+    printError("keywork link asks before widening the workspace · run it from a terminal");
     return 1;
   }
   if (!(await confirm(`link ${dir} into workspace "${workspace.name}"? [y/N] `))) {
@@ -48,7 +48,7 @@ export async function linkCommand(
     ...declaration,
     contextDirs: [...(declaration.contextDirs ?? []), dir],
   }));
-  print(`linked ${dir}. tools and memory now cover it`);
+  print(`linked ${dir} · tools and memory now cover it`);
   return 0;
 }
 

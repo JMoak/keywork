@@ -34,6 +34,8 @@ export interface AppProbeOptions
       | "focusedArc"
       | "bots"
       | "focusedBot"
+      | "permissions"
+      | "focusedPermissions"
       | "workspaces"
       | "workspaceSetup"
       | "currentModel"

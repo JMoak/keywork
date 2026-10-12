@@ -1,0 +1,287 @@
+{
+  "envelope": {
+    "id": "number",
+    "payload": "object",
+    "sessionId": "string",
+    "ts": "string",
+    "type": "string"
+  },
+  "events": {
+    "turn.started": {
+      "entryId": "string",
+      "origin": {
+        "client": "string",
+        "kind": "string"
+      },
+      "userText": "string"
+    },
+    "turn.delta": [
+      {
+        "delta": {
+          "text": "string",
+          "type": "'text'"
+        }
+      },
+      {
+        "delta": {
+          "text": "string",
+          "type": "'visible-thinking'"
+        }
+      },
+      {
+        "delta": {
+          "part": {
+            "data": "string",
+            "owner": {
+              "model": "string",
+              "provider": "string"
+            },
+            "type": "'redacted-thinking'"
+          },
+          "type": "'redacted-thinking'"
+        }
+      },
+      {
+        "delta": {
+          "call": {
+            "arguments": {
+              "command": "string"
+            },
+            "callId": "string",
+            "name": "string",
+            "type": "'tool-call'"
+          },
+          "type": "'tool-call'"
+        }
+      },
+      {
+        "delta": {
+          "text": "string",
+          "type": "'progress'"
+        }
+      },
+      {
+        "delta": {
+          "cacheMiss": {
+            "cause": "string",
+            "missedTokens": "number"
+          },
+          "responseId": "string",
+          "type": "'done'",
+          "usage": {
+            "cacheCreationInputTokens": "number",
+            "cacheReadInputTokens": "number",
+            "costUsd": "number",
+            "inputTokens": "number",
+            "outputTokens": "number"
+          }
+        }
+      }
+    ],
+    "turn.completed": {
+      "message": {
+        "parts": [
+          {
+            "text": "string",
+            "type": "'text'"
+          },
+          {
+            "arguments": {
+              "command": "string"
+            },
+            "callId": "string",
+            "name": "string",
+            "type": "'tool-call'"
+          }
+        ],
+        "role": "string"
+      },
+      "usage": {
+        "cacheCreationInputTokens": "number",
+        "cacheReadInputTokens": "number",
+        "costUsd": "number",
+        "inputTokens": "number",
+        "outputTokens": "number"
+      }
+    },
+    "turn.interrupted": {
+      "message": {
+        "parts": [
+          {
+            "text": "string",
+            "type": "'text'"
+          },
+          {
+            "arguments": {
+              "command": "string"
+            },
+            "callId": "string",
+            "name": "string",
+            "type": "'tool-call'"
+          }
+        ],
+        "role": "string"
+      }
+    },
+    "queue.changed": {
+      "queued": [
+        {
+          "behavior": "string",
+          "id": "string",
+          "origin": {
+            "client": "string",
+            "kind": "string"
+          },
+          "text": "string"
+        }
+      ]
+    },
+    "tool.started": {
+      "call": {
+        "arguments": {
+          "command": "string"
+        },
+        "callId": "string",
+        "name": "string",
+        "type": "'tool-call'"
+      }
+    },
+    "tool.output": {
+      "callId": "string",
+      "chunk": "string"
+    },
+    "tool.finished": {
+      "callId": "string",
+      "isError": "boolean",
+      "output": "string",
+      "spill": {
+        "bytes": "number",
+        "elidedFrom": "number",
+        "elidedTo": "number",
+        "id": "string"
+      }
+    },
+    "gate.ask": {
+      "ask": {
+        "arguments": {
+          "command": "string"
+        },
+        "callId": "string",
+        "rule": "string",
+        "rules": [
+          {
+            "action": "string",
+            "effect": "string",
+            "resource": "string"
+          }
+        ],
+        "tool": "string"
+      }
+    },
+    "gate.permission": {
+      "decision": {
+        "callId": "string",
+        "gate": "string",
+        "scope": "string",
+        "tool": "string",
+        "verdict": "string"
+      }
+    },
+    "gate.preset": {
+      "from": "string",
+      "to": "string"
+    },
+    "session.mode": {
+      "mode": "string"
+    },
+    "context.injected": {
+      "injection": {
+        "id": "string",
+        "scope": "string",
+        "source": "string"
+      }
+    },
+    "diagnostics.published": {
+      "count": "number",
+      "path": "string"
+    },
+    "shell.reset": {
+      "replay": "boolean"
+    },
+    "extension.notice": {
+      "detail": {
+        "ms": "number"
+      },
+      "extension": "string",
+      "level": "string",
+      "message": "string"
+    },
+    "engine.error": {
+      "error": {
+        "message": "string",
+        "name": "string"
+      }
+    },
+    "memory.inbox": {
+      "airlock": "number",
+      "contradictions": "number",
+      "count": "number",
+      "proposals": "number",
+      "staged": "number"
+    },
+    "session.state": {
+      "arc": "string",
+      "bot": "string",
+      "effort": "string",
+      "leafId": "string",
+      "model": "string",
+      "redoable": "boolean",
+      "thinking": "boolean",
+      "title": "string",
+      "undoable": "boolean"
+    },
+    "surface.changed": {
+      "kind": "string"
+    },
+    "session.tree": {
+      "entryId": "string",
+      "forkedTo": "string",
+      "reason": "string"
+    },
+    "changes.updated": {
+      "paths": ["string"],
+      "turn": "number"
+    },
+    "session.removed": {
+      "sessionId": "string"
+    },
+    "session.restored": {
+      "sessionId": "string"
+    },
+    "session.settled": {
+      "compacted": {
+        "details": {
+          "modifiedFiles": [],
+          "readFiles": ["string"]
+        },
+        "firstKeptEntryId": "string",
+        "id": "string",
+        "parentId": "string",
+        "summary": "string",
+        "timestamp": "string",
+        "tokensBefore": "number",
+        "type": "'compaction'",
+        "usage": {
+          "cacheCreationInputTokens": "number",
+          "cacheReadInputTokens": "number",
+          "costUsd": "number",
+          "inputTokens": "number",
+          "outputTokens": "number"
+        }
+      },
+      "flushed": "number",
+      "notices": ["string"],
+      "phase": "string"
+    }
+  }
+}

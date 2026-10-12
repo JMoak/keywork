@@ -20,6 +20,7 @@ import {
 import {
   createKeyworkServer,
   EventLog,
+  maxFileBytes,
   readServerTicket,
   type SessionHost,
   type SessionInference,
@@ -1953,6 +1954,27 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
     const redone = envelopeIn(await until(reader, (frame) => frame.event === "changes.updated"));
     expect((redone.payload as { paths: string[] }).paths).toEqual(["blob.bin", "note.txt"]);
     await reader.close();
+    await server.close();
+  });
+
+  it("stats the working file first: exactly 20 MiB is served capped, one byte more is refused with 413", async () => {
+    const options = await checkpointed(new MockProvider([]));
+    const { server, call } = serverOver(options);
+    const { id } = await read<{ id: string }>(await call("/sessions", { method: "POST" }));
+    expect((await call(`/sessions/${id}/changes`)).status).toBe(200);
+    await writeFile(join(options.cwd, "at-cap.txt"), Buffer.alloc(maxFileBytes, "a"));
+    const atCap = await call(`/sessions/${id}/changes/file?path=at-cap.txt`);
+    expect(atCap.status).toBe(200);
+    expect(await read<{ note: string; truncated: boolean }>(atCap)).toMatchObject({
+      note: "new",
+      truncated: true,
+    });
+    await writeFile(join(options.cwd, "over-cap.txt"), Buffer.alloc(maxFileBytes + 1, "a"));
+    const overCap = await call(`/sessions/${id}/changes/file?path=over-cap.txt`);
+    expect(overCap.status).toBe(413);
+    expect(await overCap.json()).toEqual({
+      error: `over-cap.txt is ${maxFileBytes + 1} bytes, over the ${maxFileBytes} byte cap`,
+    });
     await server.close();
   });
 

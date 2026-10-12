@@ -91,6 +91,7 @@ import type { PaletteOverrides } from "./palette.ts";
 import type { PaneIntents } from "./pane.ts";
 import { drawnRect } from "./pane-geometry.ts";
 import type { PaneFactories } from "./pane-kinds.ts";
+import type { PermissionsPort } from "./permissions-model.ts";
 import { pointerEventOf } from "./pointer.ts";
 import { rendererHold } from "./renderer-hold.ts";
 import { loadRestorePlan, statKind, type WorkspacePort } from "./restore-plan.ts";
@@ -185,6 +186,7 @@ export interface AppOptions {
   notices?: NoticeSource;
   extensions?: ExtensionsPort;
   extensionHost?: ExtensionHostPort;
+  permissions?: PermissionsPort;
   terminal?: TerminalSeams;
   terminalPane?: TerminalPanePort;
   notifications?: NotificationPolicy;
@@ -599,9 +601,13 @@ function hostPorts(
       arcs: options.arcs,
       bots: options.bots,
       extensionHost: options.extensionHost,
+      permissions: options.permissions,
     }),
     ...(options.arcs !== undefined && { focusedArc: sessions.focusedArcPort() }),
     ...(options.bots !== undefined && { focusedBot: sessions.focusedBotPort() }),
+    ...(options.permissions !== undefined && {
+      focusedPermissions: sessions.focusedPermissionsPort(),
+    }),
     tips: {
       enabled: options.tips !== "off",
       ...(options.clock !== undefined && { now: options.clock }),

@@ -84,7 +84,7 @@ async function listServers(
 ): Promise<number> {
   const names = Object.keys(servers);
   if (names.length === 0) {
-    print("no mcp servers configured");
+    print("no mcp servers configured · mcpServers in keywork.json adds one");
     return 0;
   }
   for (const name of names) print(await describeServer(name, servers[name], oauth));

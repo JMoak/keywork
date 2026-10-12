@@ -28,6 +28,42 @@ history when a session is opened or resumed (`packages/engine/src/session/replay
 `journal.ts`); a consumer that paints the transcript treats them as the past, and a consumer
 that reacts to live activity ignores them.
 
+## What the contract promises
+
+The HTTP routes in `GET /doc` and the envelopes on `GET /events` are one contract, and it has
+a version of its own, separate from the keywork release. `info.version` in `/doc` is the
+release (`packages/cli/package.json`, or the build-time version in a release binary).
+`info.x-keywork-contract` is the contract version, `major.minor`, and the same string rides
+`/doc` as the `x-keywork-contract` response header so a client can read it before parsing
+anything. The constant lives in `packages/server/src/contract.ts` and is `1.0` today.
+
+Within a major, changes are additive. A route, an operation id, a response field or an event
+name that exists in `1.x` keeps existing and keeps its meaning through every later `1.y`.
+A payload field documented here keeps its name and type. New routes, new optional fields and
+new event names can arrive in a minor and a client treats unknown ones as noise. The fields
+that make up the envelope (`id`, `ts`, `sessionId`, `type`, `payload`) and the SSE framing
+below never change within a major.
+
+A route or an event that is going away is marked first and removed later. In `/doc` the
+operation carries `deprecated: true` and an `x-deprecated` note saying what replaces it and
+which major removes it; the note is set on the route's row (`deprecated` in `RouteSpec`).
+An event on its way out keeps firing with its section here marked the same way. The removal
+itself lands in the next major, and the major bump is the only time a client has to change
+anything to keep attaching.
+
+A client checks the major at attach time, with `info.x-keywork-contract` or the header, and
+refuses to proceed on a major it was not built for. keywork-app does exactly this.
+
+Two fixtures hold the contract still: `packages/server/src/openapi-document.fixture.json`
+is the whole `/doc` with a fixed version and workspace, and
+`packages/server/src/event-shapes.fixture.json` is the wire shape of every event payload
+(keys and types, with the `type` tag kept literal), one entry per event name.
+`openapi.test.ts` and `event-contract.test.ts` fail on any difference, with a message naming
+the way back: `bun run contract:fixtures` regenerates both. The diff of a regenerated fixture
+is the review surface for a contract change: a removed key or a renamed operation in that
+diff means a major bump, an added one means a minor bump, and either goes in
+`packages/server/src/contract.ts` in the same change.
+
 ## Turn lifecycle
 
 A prompt produces this sequence on the bus:
@@ -73,7 +109,8 @@ Fires once per streamed provider delta.
 | `visible-thinking` | `text` | A run of thinking the model chose to show. |
 | `redacted-thinking` | `part` | An opaque thinking block the provider kept sealed. |
 | `tool-call` | `call` | A complete tool call (`ToolCallPart`: `callId`, `name`, `arguments`). |
-| `done` | `usage` | The provider closed the stream; `usage` is the turn's token counts. |
+| `progress` | `text` | A line of provider progress that is not part of the message (a provider's thinking summary while it works). Not stored and not replayed. |
+| `done` | `usage` | The provider closed the stream; `usage` is the turn's token counts, with an optional `responseId` and `cacheMiss` (`{ cause, missedTokens? }`) from the provider. |
 
 Replay re-emits the `text`, `visible-thinking` and `tool-call` parts of each stored
 assistant message and never a `done`.
@@ -372,9 +409,10 @@ writes it as part of the move, so it arrives first) because the leaf is part of 
 
 ### changes.updated
 
-Fires when the files the workspace diff shows may have changed: after every finished `write`,
-`edit` or `bash` tool call (the same pairing of `tool.started` and `tool.finished` the terminal
-diff pane follows, `followMutations` in the engine), and after `POST /sessions/{id}/undo` or
+Fires when the files the workspace diff shows may have changed: once per burst of finished
+`write`, `edit` or `bash` tool calls (the same pairing of `tool.started` and `tool.finished` the
+terminal diff pane follows, `followMutations` in the engine; calls that land within the same
+16 ms quiet window, or while a listing is in flight, fold into one trailing event), and after `POST /sessions/{id}/undo` or
 `/redo` put files back. Carries the id of the session whose turn or verb did it. `paths` is the
 whole list `GET /sessions/{id}/changes` would answer at that moment, not a delta, so a client
 replaces its list; the per-file sides still come from `GET /sessions/{id}/changes/file`. Never

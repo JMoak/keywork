@@ -60,6 +60,7 @@ import {
   type OverlayKind,
   type PaletteMode,
   PaletteOverlay,
+  PermissionsOverlay,
   PickerOverlay,
   type PresetConfirmation,
   PresetOverlay,
@@ -83,6 +84,11 @@ import {
   type SummonableKind,
   summonRequests,
 } from "./pane-kinds.ts";
+import {
+  type FocusedPermissionsPort,
+  PermissionsModel,
+  type PermissionsPort,
+} from "./permissions-model.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { PanePointer } from "./pointer-routing.ts";
@@ -129,6 +135,8 @@ export interface AppCoreOptions extends PaneFactories {
   focusedArc?: FocusedArcPort;
   bots?: BotsPort;
   focusedBot?: FocusedBotPort;
+  permissions?: PermissionsPort;
+  focusedPermissions?: FocusedPermissionsPort;
   workspaces?: WorkspacesPort;
   workspaceSetup?: WorkspaceSetupPort;
   extensionHost?: ExtensionHostPort;
@@ -710,6 +718,17 @@ export class AppCore implements ActionTarget {
     this.overlay = new ConnectOverlay(model, this.overlaySeams);
   }
 
+  openPermissions(): void {
+    const port = this.options.permissions;
+    if (port === undefined) return;
+    const model = new PermissionsModel(port, {
+      notify: () => this.notify(),
+      notice: (text) => this.postNotice(text),
+      focused: this.options.focusedPermissions,
+    });
+    this.overlay = new PermissionsOverlay(model, this.overlaySeams);
+  }
+
   overlayFrame(): OverlayFrame | undefined {
     return this.overlay?.frame(this.screen());
   }
@@ -776,6 +795,10 @@ export class AppCore implements ActionTarget {
 
   connectModel(): ConnectModel | undefined {
     return this.overlay?.kind === "connect" ? this.overlay.model : undefined;
+  }
+
+  permissionsModel(): PermissionsModel | undefined {
+    return this.overlay?.kind === "permissions" ? this.overlay.model : undefined;
   }
 
   setupConfirmation(): WorkspaceReadiness | undefined {

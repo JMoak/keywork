@@ -2102,7 +2102,13 @@ describe("session verbs (118 K1) over the memory host", () => {
     const first = await createSession(h);
     const second = await createSession(h);
     await post(h, `/sessions/${first}/rename`, { title: "first" });
-    h.log.record("", "memory.inbox", { count: 1 });
+    h.log.record("", "memory.inbox", {
+      count: 1,
+      staged: 1,
+      airlock: 0,
+      proposals: 0,
+      contradictions: 0,
+    });
     await post(h, `/sessions/${second}/rename`, { title: "second" });
     const replayed = sseReader(
       await h.call(`/events?session=${second}&x=1`, { headers: { "last-event-id": "0" } }),

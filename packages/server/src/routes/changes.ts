@@ -46,6 +46,7 @@ export const changesRoutes = [
       "403": "The path escapes the workspace scope.",
       "404": missingResponse,
       "409": noBaselineResponse,
+      "413": "The working file is over the 20 MiB cap GET /files applies.",
     },
   },
 ] as const satisfies readonly RouteSpec[];

@@ -4,7 +4,7 @@ import type { ArcOrdinals } from "../arcs.ts";
 import type { BotCreateModel } from "../bot-create-model.ts";
 import type { GlyphSupport } from "../capability.ts";
 import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
-import type { HelpPage, OverlayFrame } from "../overlays/index.ts";
+import { type HelpPage, type OverlayFrame, panelRowRoom } from "../overlays/index.ts";
 import type { Palette } from "../palette.ts";
 import type { ChromeWeight } from "../pane.ts";
 import { type TrayChild, trayRows } from "../tray.ts";
@@ -60,7 +60,7 @@ function composedOverlay(core: AppCore, inputs: OverlayInputs) {
   }
   if (core.paletteOpen) return paletteOverlay(core, theme, placement, inputs.glyphs);
   const preset = presetRows(core, theme);
-  if (preset !== undefined) return panel(" permissions ", theme, placement, preset);
+  if (preset !== undefined) return panel(" permission mode ", theme, placement, preset);
   const model = core.modelPicker();
   if (model !== undefined) return filterOverlay(modelPickerSpec(model), theme, placement);
   const arc = core.arcPicker();
@@ -86,6 +86,16 @@ function composedOverlay(core: AppCore, inputs: OverlayInputs) {
   if (connect !== undefined) {
     const title = connect.stage.kind === "connections" ? " connections " : " connect ";
     return panel(title, theme, placement, connectRows(connect, theme, innerWidth(placement)));
+  }
+  const permissions = core.permissionsModel();
+  if (permissions !== undefined) {
+    const rows = permissions.rows(panelRowRoom(frame));
+    return panel(
+      " permissions ",
+      theme,
+      placement,
+      rows.map((row) => connectRowView(row, theme, innerWidth(placement))),
+    );
   }
   const setup = core.setupConfirmation();
   if (setup !== undefined) return panel(" workspace ", theme, placement, setupRows(setup, theme));

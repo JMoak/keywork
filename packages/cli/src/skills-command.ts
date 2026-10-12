@@ -45,12 +45,17 @@ export async function skillsCommand(
   try {
     switch (subcommand) {
       case "history":
-        return await historyCommand(roots, requireName(name), flags, print);
+        return await historyCommand(roots, requireName(subcommand, name), flags, print);
       case "pin":
       case "unpin":
-        return await pinCommand(roots, requireName(name), subcommand === "pin", print);
+        return await pinCommand(roots, requireName(subcommand, name), subcommand === "pin", print);
       case "archive":
-        return await archiveCommand(roots, requireName(name), flags.apply === true, print);
+        return await archiveCommand(
+          roots,
+          requireName(subcommand, name),
+          flags.apply === true,
+          print,
+        );
       case "curate":
         return await curateCommand(roots, flags.apply === true, print);
       default:
@@ -163,7 +168,7 @@ function describeLedgerEntry(entry: SkillLedgerEntry): string {
   return `${entry.at} ${entry.actor} ${entry.action} ${entry.skill}${version}`;
 }
 
-function requireName(name: string | undefined): string {
-  if (name === undefined || name.trim() === "") throw new Error("a skill name is required");
+function requireName(subcommand: string, name: string | undefined): string {
+  if (name === undefined || name.trim() === "") throw new Error(`${subcommand} needs a skill name`);
   return name;
 }

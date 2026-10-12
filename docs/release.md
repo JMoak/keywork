@@ -40,6 +40,12 @@ release and published only when the repository variable `NPM_PUBLISH` is `true` 
 The build refuses a tag that does not match the manifest (`--expect-tag`), so a stale
 `package.json` can never ship under a newer tag.
 
+The manifest version is also `info.version` in `keywork serve`'s `GET /doc`. The server
+contract has its own number beside it (`info.x-keywork-contract`, from
+`packages/server/src/contract.ts`), and a release that changed a route or an event bumps
+that one too; [`events.md`](events.md) says when a minor and when a major, and
+`bun run contract:fixtures` regenerates the two fixtures whose diff is the review.
+
 ## Locally
 
 ```sh

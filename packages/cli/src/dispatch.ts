@@ -22,8 +22,10 @@ Usage:
   keywork skills pin|unpin|archive|curate [name] [--apply]  curator hygiene for agent skills
   keywork extensions                                        list extensions and their standing
   keywork mcp [list|login|logout] [server]                  sign in to MCP servers that ask for it
-  keywork link <dir>                                    widen the workspace to another folder
+  keywork link <dir>                                        widen the workspace to another folder
   keywork trust | untrust                                   grant or revoke workspace trust
+  keywork permissions [list]                                what runs here without asking
+  keywork permissions revoke <action> <resource>            take a workspace grant back
   keywork doctor                                            show what your terminal supports
   keywork serve [--port <n>|0] [--model <model>]
                 [--preset careful|standard|open]
@@ -70,6 +72,7 @@ export const commandNames = [
   "link",
   "trust",
   "untrust",
+  "permissions",
   "doctor",
   "serve",
   "attach",
@@ -99,6 +102,7 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   link: { behavior: "runs", note: "confirmations are skipped, never assumed" },
   trust: { behavior: "runs" },
   untrust: { behavior: "runs" },
+  permissions: { behavior: "runs" },
   doctor: { behavior: "runs" },
   serve: { behavior: "runs", note: "prints the URL and token, then runs until SIGINT" },
   attach: { behavior: "refused", reason: "attach needs a terminal" },

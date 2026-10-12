@@ -4,11 +4,13 @@ import type { Scenario } from "../scenario.ts";
 
 const command = "bun test";
 const streamedOutput = ["3 files scanned", "12 tests passed", "no failures"];
+const frozenClock = (): number => Date.parse("2026-08-22T12:00:00.000Z");
 
 export const terminalMirror: Scenario = {
   name: "terminal-mirror",
   description: "leader T opens the terminal pane; a mock agent's bash command mirrors into it live",
   goldens: ["mirrored"],
+  app: { clock: frozenClock },
   agentFactory: (guard, history, seams) => {
     let agent: Agent | undefined;
     const bash: Tool = {

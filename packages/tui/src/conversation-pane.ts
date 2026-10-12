@@ -1,4 +1,5 @@
 import { type Agent, defaultSigil, type ToolCallPart } from "@keywork/engine";
+import { ruleLabel } from "@keywork/shared";
 import { Box, bg, fg, link, StyledText, Text, type TextChunk } from "@opentui/core";
 import type { BotEntry } from "./bots.ts";
 import {
@@ -597,6 +598,7 @@ export class ConversationPane implements Pane {
     const prompt = promptLines(this.model.editor.buffer, focused);
     const queued = this.model.queued();
     const ask = this.model.pendingAsk;
+    const rememberHint = ask === undefined ? undefined : askRememberHint(ask);
     const diffRows = ask?.diff === undefined ? [] : this.askDiffRows(theme);
     const keyHint = this.keyHint(theme);
     const trayChromeRows = 2;
@@ -607,6 +609,7 @@ export class ConversationPane implements Pane {
       diffRows.length +
       keyHint.length +
       (ask === undefined ? 0 : 1) +
+      (rememberHint === undefined ? 0 : 1) +
       (this.model.scrollBack > 0 ? 1 : 0);
     const maxRows = Math.max(0, paneContentHeight(context) - reservedRows);
     const lines = this.model.visibleTranscript(innerWidth, maxRows, page, this.marks);
@@ -649,6 +652,7 @@ export class ConversationPane implements Pane {
           ]),
       ...diffRows,
       ...(ask === undefined ? [] : [askRow(ask, innerWidth, theme)]),
+      ...(rememberHint === undefined ? [] : [Text({ content: rememberHint, fg: theme.textDim })]),
       ...keyHint,
       ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
     );
@@ -756,6 +760,12 @@ function askRow(ask: PendingAsk, paneWidth: number, theme: Palette) {
   const controls = ask.remembers.length > 0 ? askControls : onceOnlyAskControls;
   const room = Math.max(0, paneWidth - controls.length - 2);
   return Text({ content: `? ${clip(ask.summary, room)}${controls}`, fg: theme.accent });
+}
+
+export function askRememberHint(ask: Pick<PendingAsk, "remembers">): string | undefined {
+  if (ask.remembers.length === 0) return undefined;
+  const labels = ask.remembers.map((rule) => ruleLabel(rule)).join(" · ");
+  return `  [a] remembers ${labels} for this session`;
 }
 
 interface RowTint {

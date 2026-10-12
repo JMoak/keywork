@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   ArcRegistry,
@@ -234,6 +234,24 @@ describe("serve parity: closing an arc", () => {
     } finally {
       await world.close();
     }
+  });
+});
+
+describe("serve parity: the exit sweep", () => {
+  it("runs the pane's close sweep over the vault when the host closes", async () => {
+    const world = await servedWorld(parityProvider([textTurn("ok")]));
+    const memory = openWorkspaceMemory(world.cwd, true);
+    if (memory === undefined) throw new Error("expected a workspace memory");
+    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
+    const id = await world.createSession();
+    const reader = await world.events();
+    await world.post(`/sessions/${id}/prompt`, { text: "hello" });
+    await until(reader, (frame) => frame.event === "session.state");
+    await reader.close();
+    const auditFile = join(world.cwd, ".keywork", "memory", "curation.md");
+    await expect(readFile(auditFile, "utf8")).rejects.toThrow();
+    await world.close();
+    expect(await readFile(auditFile, "utf8")).toContain("gardener sweep");
   });
 });
 

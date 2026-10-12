@@ -314,7 +314,7 @@ export class SessionTreePane implements Pane {
     this.intents.notice?.(
       restored === undefined
         ? "that session is no longer in the trash"
-        : `restored "${restored.title}" · it is back in the session tree`,
+        : `restored "${restored.title}" · it's back in the session tree`,
     );
     this.refreshTrash();
   }
@@ -353,7 +353,7 @@ export class SessionTreePane implements Pane {
           return [paneLine("loading session…", theme.textDim, width)];
         }
         return rowsView(this.model, rows, theme, width, {
-          empty: "empty session",
+          empty: "░ empty session",
           text: entryRowText,
           line: (row) =>
             paneLine(entryRowText(row), row.onActivePath ? theme.accentSoft : theme.text, width),

@@ -329,6 +329,33 @@ describe("the masthead tile", () => {
     expect(drafting.at(-1)).toBe("› x");
   });
 
+  it("spells out what [a] will remember under a bash ask, and nothing under a write ask", () => {
+    const pane = new ConversationPane("session-1", undefined, () => {});
+    const shell = pane.confirmMutation({
+      type: "tool-call",
+      callId: "c1",
+      name: "bash",
+      arguments: { command: "git push origin main" },
+    });
+    const rows = frame(pane, true, 80);
+    const askAt = rows.findIndex((row) => row.includes("[a] always"));
+    expect(askAt).toBeGreaterThanOrEqual(0);
+    expect(rows[askAt + 1]).toBe("  [a] remembers bash git push * for this session");
+    pane.handleKey(parseChord("n"), undefined);
+
+    const write = pane.confirmMutation({
+      type: "tool-call",
+      callId: "c2",
+      name: "write",
+      arguments: { path: "a.txt" },
+    });
+    const writeRows = frame(pane, true, 80).join("\n");
+    expect(writeRows).toContain("[y] allow  [n] deny");
+    expect(writeRows).not.toContain("remembers");
+    pane.handleKey(parseChord("n"), undefined);
+    return Promise.all([shell, write]);
+  });
+
   it("never wears the masthead while an ask is pending", () => {
     const pane = new ConversationPane("session-1", undefined, () => {});
     const decision = pane.confirmMutation({

@@ -131,7 +131,7 @@ describe("keywork skills", () => {
     expect(await skillsCommand(["pin", "hand"], roots, io)).toBe(2);
     expect(io.err.at(-1)).toContain("a person owns this one");
     expect(await skillsCommand(["pin"], roots, io)).toBe(2);
-    expect(io.err.at(-1)).toBe("keywork skills: a skill name is required");
+    expect(io.err.at(-1)).toBe("keywork skills: pin needs a skill name");
     expect(await skillsCommand(["archive", "nope"], roots, io)).toBe(2);
     expect(io.err.at(-1)).toContain('unknown skill "nope"');
     expect(await skillsCommand(["bogus"], roots, io)).toBe(2);

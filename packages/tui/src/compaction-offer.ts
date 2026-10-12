@@ -1,7 +1,7 @@
 import type { ContextReading } from "@keywork/engine";
 
 export const compactionOfferNotice =
-  "context nearly full · /compact [focus] folds older turns into a summary with a focus you pick · left alone, keywork compacts at the line";
+  "context nearly full · /compact [focus] folds older turns into a summary now · left alone, keywork compacts at the line";
 
 export function compactionOfferDue(reading: ContextReading): boolean {
   return reading.used > reading.flushAt && reading.used <= reading.compactAt;

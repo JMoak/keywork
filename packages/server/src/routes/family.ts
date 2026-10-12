@@ -15,6 +15,7 @@ export interface RouteSpec {
   authenticated: boolean;
   requestBody?: JsonSchema;
   responses: Readonly<Record<string, string>>;
+  deprecated?: string;
 }
 
 export interface WorkspaceInfo {

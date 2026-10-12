@@ -839,3 +839,157 @@ lsp-loop, chrome-states, chrome-states-ascii, arc-fold, diff-pane) waited for th
 deny` (they failed the same way on 8f86c05 alone).
 The e2e goldens were updated for the K7 ask row: the five `*-needs-you-*` captures under
 `chrome-states` and `chrome-states-ascii` changed in that row only, and all 49 scenarios pass.
+
+### Contract hardening · 2026-10-12
+
+keywork-app is the first consumer outside this repo, so the serve contract got the gates a
+consumer can build on. Everything below was verified against source and the running tests;
+nothing in it changes a route shape.
+
+**The drift gate was already strict on routes and loose on events.** `openapi.test.ts`
+compared `JSON.stringify` of the composed document to the fixture, so a changed route family
+failed; but the test patched the fixture's `BusEnvelope.type` enum with today's vocabulary
+before comparing, so a renamed event passed, and the only way to regenerate the fixture was
+by hand (the 2026-10-11 ledger says it was "regenerated from the composed document" with no
+command). Now `packages/server/src/contract-fixtures.ts` is the one builder for both
+fixtures, `bun run contract:fixtures` regenerates them (the script also formats them, since
+biome owns the JSON layout), the enum patch is gone, and both tests fail with a message that
+names the command. Verified by renaming `listThemes` and by adding a field to a
+`session.removed` sample: each failed its test with the message, and reverting restored green.
+
+**Versioning.** `info.version` already tracked the CLI manifest: `serve.ts` passes
+`keyworkVersion` from `cli/src/version.ts` (the manifest, or `KEYWORK_BUILD_VERSION` in a
+release binary); the fixture pins `0.0.0-fixture` because `fixtureDocument()` passes that
+string. The contract now has its own number: `contractVersion` (`1.0`) in
+`packages/server/src/contract.ts` rides `/doc` as `info.x-keywork-contract` and as the
+`x-keywork-contract` response header, `contractMajorOf` is the comparison a client makes,
+and the typed client gained `document()`. A route row can carry `deprecated: "<note>"`,
+which renders as `deprecated: true` plus `x-deprecated` on the operation; no route carries it
+today and a test says so. keywork-app currently pins `protocolVersion = "0.1.1"` to the CLI
+version; the contract field is the number it should pin instead.
+
+**Event envelope stability.** `packages/server/src/events.ts` now types every server event
+(`ServerEvents`: `InboxTally`, `SessionState`, `{ kind: SurfaceKind }`, `TreeChange`,
+`ChangesUpdate`, `{ sessionId }` twice, `SessionSettlement`), `WireEvents` is the engine
+vocabulary and the server's together, and `EventLog.record` takes the payload type its event
+name declares, so an emitter cannot send a shape the contract does not know (one test in
+`server.test.ts` sent a partial `memory.inbox` and was completed). `contract-fixtures.ts`
+holds a typed sample per event (every optional field present, every `TurnDelta` variant);
+`event-shapes.fixture.json` is the wire shape of each sample after the SSE serializer, keys
+and types with the `type` tag kept literal, one entry per event name, and
+`event-contract.test.ts` holds it still, checks the entry list equals the enum, and checks
+`docs/events.md` has a section per server event (the engine half was already
+`bus.test.ts`'s job). A renamed or dropped field fails `tsc` on the sample and the fixture
+test on the shape.
+
+**Compatibility statement.** `docs/events.md` gained "What the contract promises": additive
+within a major, which fields are fixed, how a deprecation is announced, that a client checks
+the major at attach. `docs/release.md` points at it from the ritual. While writing it the
+`TurnDelta` table turned out to omit `progress` (the type has it, `agent.ts` forwards every
+delta to the bus, the Anthropic provider yields it for a thinking block when progress
+updates are on); the row was added, and `done` now mentions `responseId` and `cacheMiss`.
+
+**Consumer-side check.** `packages/cli/src/keywork-app-contract.test.ts` starts `serve()` on
+port 0 against temp dirs, fetches `/doc` without a token, and asserts the contract major, the
+74 method, path and operation id triples the app's `protocol/routes.ts` lists, that none is
+deprecated, that every event name the app listens to is on the envelope enum, and the bearer
+posture. The route table is the app's own, copied, so the app repo can lift the file and
+replace the `serve()` start with a spawned `keywork serve`.
+
+**Evidence.** `bun x vitest run packages/server/src packages/cli/src/serve.test.ts
+packages/cli/src/serve-parity.test.ts packages/engine/src/bus.test.ts
+packages/cli/src/keywork-app-contract.test.ts`: 9 files, 156 passed. `check:types` and
+`check:prose` exit 0 for this lane's files; the repo-wide `lint` and `check:types` failures at
+the time of writing are in `cli`, `shared/trust` and `tui` files another lane was mid-edit on.
+The regenerated `/doc` fixture differs from the committed one in two places only:
+`info.x-keywork-contract` and the `/doc` summary.
+
+### Serve gaps and merge debt · 2026-10-12
+
+The three serve-parity gaps and three K2 gaps the ledgers above named, closed with the pane's
+own code, plus the merge-debt audit scoped to PR #7.
+
+**Exit sweep under `serve`.** The pane's two sweep closers (the vault gardener with skill
+evidence, then every bot layer through its closing judgment) are now one shared function,
+`sweepWorkspaceOnClose` in `cli/src/workspace-sweep.ts`, with `workspaceSkillEvidence` (the
+telemetry file lookup the pane, `chat` and `serve` each spelled out) and `botJudgmentFrom`
+(the closing provider over the sessions bound to a bot) beside it. `composePanes` registers it
+as a single closer, so `compose-panes.test.ts` expects two closers instead of three;
+`ServedWorkspace.close()` runs it before the extension host, language port and MCP registry
+stop, and `LiveSessions.close()` keeps its live map until the workspace has closed so the bot
+lookup still sees each session's binding (`ServedWorkspaceOptions.liveStores` supplies them).
+A sweep failure under `serve` is a `keywork serve: memory sweep failed` notice, never an exit
+error, matching `chat`. A workspace that was never composed (no session bound) is not swept,
+because nothing ran. `chat` keeps its own memory-only sweep, now over the shared evidence
+helper. Verified in code: the pane ran both closers concurrently through `runClosers`, so the
+shared function runs both with `allSettled`, rethrows a lone failure unchanged (the pane's
+"memory close: ..." text survives) and aggregates two.
+
+**`chat` on `settleSessionTurn`.** `chat.ts` drops its private `settleTurn` and `compactNow`
+calls and the `flush()` accessor for `settleSessionTurn` and `compactSessionNow` from
+`session-settle.ts`, with the phase `after-turn`, which is what the engine's optional phase
+defaulted to. Behaviour is unchanged; `chat.test.ts` is green.
+
+**`closingProvider` from `roles.closing`.** `main.ts` passes
+`roleProvider(runtime, config, closingRole)` into `serve`, the same lookup `composePanes`
+makes, so `serve-workspace.ts` now prefers the configured closing role over a bound session's
+provider over the server's own. No new test: the lookup is covered in `roles`, the preference
+order in `serve-workspace.ts` is three lines, and a `main.test.ts` seam would have to intercept
+the dynamic `serve` import in a file another lane is editing.
+
+**`/changes/file` stats first.** `cli/src/serve-changes.ts` stats the working file before
+reading it and throws the server's `FileTooLargeError` over `maxFileBytes`, the same 20 MiB
+rule `/files` applies; `answering` already maps that error to 413, so the route family and the
+OpenAPI fixture did not change. The documented responses for `readChangedFile` do not list 413
+yet; that line belongs to the contract lane. `serve.test.ts` "K2 under serve" gains the
+boundary case: a file of exactly 20 MiB answers 200 with `truncated: true`, one byte more
+answers 413 with the file's byte count in the error. The port now reads the working side
+before the baseline side, so a refusal no longer leaves a `git cat-file` running after the
+answer (that orphan held the test's temp directory busy for about 100 ms on Windows).
+
+**`changes.updated` coalesced per session.** `ChangesFeed` in `server/src/changes.ts` keeps a
+16 ms quiet window per session (`changesQuietMs`): each finished mutating call restarts the
+timer and one announcement follows the burst. A session already queued for an announcement is
+not queued twice, so mutations that land while a listing is in flight fold into one trailing
+announcement. Explicit announcements (undo, redo, the staged restore) run at once and replace
+any waiting timer; `settled()` flushes waiting timers before the host closes. The recorded
+order is still the queue's. `server/src/changes.test.ts` (four cases) covers five writes in
+one burst, a mutation during an in-flight listing, two sessions apart with an explicit
+announcement standing in for a waiting one, and unfollow. `docs/events.md` still says the event
+fires after every finished mutating call; it now fires once per burst, a wording change for
+the contract lane.
+
+**`Checkpoints.changedSince` measured, left alone.** A scratch benchmark over a generated tree
+(bun 1.3.9, Windows, warm shadow index) gave, per `changedSince` call: 8,000 files about 110
+ms, 30,000 files about 200 ms, of which `git add -A` is 45 ms and 105 ms, `write-tree` 25 ms
+and 35 ms, the numstat `diff-tree` about 30 ms, and a bare `git --version` spawn 22 ms and 45
+ms. `git status --porcelain -z --untracked-files=all` costs the same as `add -A` (35 ms and 65
+ms) because both stat every path, and `git diff --numstat <tree>` without the add is slower at
+30,000 files (about 150 ms) and would miss untracked files. The first snapshot is the real cost
+(2 s and 17 s, hashing every blob once) and is paid at session start, not per `/changes`. There
+is no cheaper listing that keeps new files correct, so the call stays as it is; the per-session
+coalescing above is what cuts the number of calls a turn makes.
+
+**Merge-debt audit (PR #7).** A scan of every `export` in `packages/server/src` and
+`packages/cli/src` against every other source file found no export that nothing references:
+the candidates with no reference outside their file are route specs and option types used in
+place, barrel re-exports of public package surface, `regenerateCommand` (used by
+`openapi.test.ts`), `launchPanes` (used by `scripts/e2e/live.ts`) and the two
+`vocabularyIsComplete` build-time checks 80-p2-reach documents. The dropped names
+(`usage-ledger`, `costBasis`, `routes/status.ts`, `routes/presets.ts`, `readSpill`,
+`curing.ts`, `setupRoot`, `refusalResponse`) appear in `docs/` only in the merge ledger above,
+which records them as dropped; `setupRoot` and `costBasis` survive only as private helpers in
+`workspace-setup.ts` and `tui/src/session-ledger.ts`. One concept is carried twice: the cost
+basis phrase lives as `costBasisOf` in `server/src/routes/session-verbs.ts` and as `costBasis`
+in `tui/src/session-ledger.ts` with the same three branches (metered, partly metered,
+estimated) and the server adding the two no-pricing branches. Consolidating means a home in
+the engine's pricing module and a TUI edit outside this lane, so it is reported, not done.
+`SpendLedger` (per-model spend across agent swaps) and `costBasisOf` (the phrase) are
+different concepts, not a duplicate.
+
+Tests: `cli/src/workspace-sweep.test.ts` (5), `server/src/changes.test.ts` (4),
+`serve-parity.test.ts` "the exit sweep" (1), `serve.test.ts` "K2 under serve" boundary case
+(1); `compose-panes.test.ts`, `chat.test.ts`, `memory.test.ts`, `server.test.ts`,
+`client.test.ts` and the rest of `serve.test.ts` green. `check:types` exits 0 for `cli` and
+`server`; the `tui` errors and the `main.ts` formatter complaint at the time of writing belong
+to another lane mid-edit (that file is CRLF at HEAD).

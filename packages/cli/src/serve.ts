@@ -438,10 +438,9 @@ class LiveSessions {
 
   async close(): Promise<void> {
     for (const live of this.live.values()) await live.close();
-    this.live.clear();
     await this.changes.settled();
-    if (this.workspace === undefined) return;
-    await (await this.workspace).close();
+    if (this.workspace !== undefined) await (await this.workspace).close();
+    this.live.clear();
   }
 
   private async summaryOf(
@@ -514,6 +513,7 @@ class LiveSessions {
       checkpointsGitDir: options.checkpointsGitDir,
       notice: (text) => options.notice?.(`keywork serve: ${text}`),
       storeOf: (id) => this.live.get(id)?.served().store,
+      liveStores: () => [...this.live.values()].map((live) => live.served().store),
       onReleased: (id) => void this.live.get(id)?.adoptBinding(),
     });
   }

@@ -11,6 +11,7 @@ export type OverlayKind =
   | "arc"
   | "workspace"
   | "connect"
+  | "permissions"
   | "setup"
   | "bot"
   | "bot-new";

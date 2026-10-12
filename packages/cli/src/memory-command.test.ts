@@ -227,7 +227,7 @@ describe("keywork memory forget", () => {
         "       keywork memory sync [setup]",
         "       keywork memory sync merge <base> <ours> <theirs> [path]",
       ].join("\n"),
-      "keywork memory: memory is inert in an untrusted workspace",
+      "keywork memory: memory is inert in an untrusted workspace · keywork trust turns it on",
     ]);
   });
 });

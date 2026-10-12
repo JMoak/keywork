@@ -25,6 +25,7 @@ import { type CheckpointsPort, forkAtPrompt } from "./fork.ts";
 import type { Animator } from "./motion.ts";
 import type { PageThresholds } from "./page.ts";
 import type { PaneFactory, PaneOrigin } from "./pane-kinds.ts";
+import type { FocusedPermissionsPort } from "./permissions-model.ts";
 import {
   type AfterTurn,
   type AgentFactory,
@@ -178,6 +179,13 @@ export class SessionPanes {
     return {
       current: () => this.focused()?.pane.bot,
       switch: (name) => this.focused()?.controls.switchBot(name) ?? false,
+    };
+  }
+
+  focusedPermissionsPort(): FocusedPermissionsPort {
+    return {
+      session: () => this.focused()?.pane.model.sessionGrants(),
+      lastQuietRun: () => this.focused()?.pane.model.quietRuns.lastQuietRun,
     };
   }
 

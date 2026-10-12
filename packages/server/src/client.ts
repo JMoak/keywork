@@ -47,6 +47,7 @@ import type {
   WorkspaceChoice,
   WorkspaceReport,
 } from "./host.ts";
+import type { OpenApiDocument } from "./openapi.ts";
 import { askRefusals } from "./routes/asks.ts";
 import type { FileChange } from "./routes/changes.ts";
 import type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
@@ -65,6 +66,7 @@ export interface PresetAnswer {
 
 export interface KeyworkClient {
   readonly url: string;
+  document(): Promise<OpenApiDocument>;
   sessions(): Promise<readonly SessionSummary[]>;
   session(id: string): Promise<SessionDetail | undefined>;
   createSession(): Promise<SessionSummary>;
@@ -229,6 +231,7 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
     });
   return {
     url,
+    document: () => request("GET", "/doc").then(json<OpenApiDocument>),
     sessions: async () => {
       const listed = await json<{ sessions: SessionSummary[] }>(await request("GET", "/sessions"));
       return listed.sessions;
