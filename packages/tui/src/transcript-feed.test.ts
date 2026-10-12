@@ -433,3 +433,100 @@ describe("provenance on the rail", () => {
     expect(provenanceOf(settled("read", "[[x]] · provenance: untrusted"))).toBeUndefined();
   });
 });
+
+describe("child rows", () => {
+  const delegate = {
+    type: "tool-call" as const,
+    callId: "d1",
+    name: "delegate",
+    arguments: { title: "find the callers", prompt: "list every caller", bot: "scout" },
+  };
+
+  it("shows a delegate call as one child row with live state, its cost, and the answer as detail", () => {
+    let clock = 0;
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const ticks = steppingTick();
+    const feed = followed(agent, () => clock, ticks.tick);
+
+    agent.bus.emit("tool.started", { call: delegate });
+    expect(feed.entries[0]?.text).toBe("↳ scout · find the callers · starting");
+    agent.bus.emit("child.started", { callId: "d1", sessionId: "6f1c", title: "x", bot: "scout" });
+    agent.bus.emit("tool.output", { chunk: "read src/a.ts\n", callId: "d1" });
+    ticks.step();
+    expect(feed.entries[0]?.text).toBe("↳ scout · find the callers · read src/a.ts");
+    clock = 2500;
+    agent.bus.emit("child.finished", {
+      callId: "d1",
+      sessionId: "6f1c",
+      outcome: "completed",
+      usage: { inputTokens: 10, outputTokens: 2 },
+      costNanos: 3_100_000,
+    });
+    agent.bus.emit("tool.finished", {
+      callId: "d1",
+      output: "↳ child 6f1c · scout · completed\n\nrun.ts\nserve.ts",
+      isError: false,
+    });
+    ticks.step();
+
+    const [entry] = feed.entries;
+    expect(entry?.text).toBe("↳ scout · find the callers · 2.5s · $0.0031 · done");
+    expect(entry?.kind === "tool" && entry.run?.child).toEqual({
+      title: "find the callers",
+      bot: "scout",
+      sessionId: "6f1c",
+      outcome: "completed",
+      costNanos: 3_100_000,
+    });
+    expect(entry?.kind === "tool" && entry.run?.detail).toEqual(["run.ts", "serve.ts"]);
+  });
+
+  it("can be cursored while the child still works, so it is reachable from the start", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const feed = followed(agent);
+    agent.bus.emit("tool.started", { call: delegate });
+    expect(feed.disclosableIndices()).toEqual([0]);
+  });
+
+  it("names a child that stopped at a refusal, without the raw provenance as the reason", () => {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const feed = followed(agent);
+    agent.bus.emit("tool.started", { call: { ...delegate, arguments: { title: "clean up" } } });
+    agent.bus.emit("tool.finished", {
+      callId: "d1",
+      output: "↳ child unsaved · denied\n\nthe child stopped at a call no one could approve: bash",
+      isError: true,
+    });
+    expect(feed.entries[0]).toMatchObject({ failed: true });
+    expect(feed.entries[0]?.text).toMatch(/^↳ child · clean up · \d+ms · refused$/);
+  });
+
+  it("rebuilds the row from the stored result on replay, child id included", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "keywork-child-replay-"));
+    try {
+      const store = await SessionStore.create(join(dir, "s.jsonl"), dir);
+      await store.append({ role: "user", parts: [{ type: "text", text: "who calls it?" }] });
+      await store.append({ role: "assistant", parts: [delegate] });
+      await store.append({
+        role: "tool",
+        parts: [
+          {
+            type: "tool-result",
+            callId: "d1",
+            output: "↳ child 6f1c · scout · completed\n\nrun.ts",
+            isError: false,
+          },
+        ],
+      });
+      const agent = new Agent({ provider: new MockProvider([]) });
+      const feed = followed(agent);
+      replaySession(store, agent.bus);
+
+      const row = feed.entries.find((entry) => entry.kind === "tool");
+      expect(row?.text).toBe("↳ scout · find the callers · done");
+      expect(row?.kind === "tool" && row.run?.child?.sessionId).toBe("6f1c");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

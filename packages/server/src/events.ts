@@ -64,6 +64,8 @@ export const engineEventTypes = [
   "gate.preset",
   "session.mode",
   "context.injected",
+  "child.started",
+  "child.finished",
   "diagnostics.published",
   "shell.reset",
   "extension.notice",

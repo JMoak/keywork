@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { completeTheme } from "./complete-theme.ts";
 import {
   contrastFailures,
+  contrastMeasurements,
   parseTheme,
   type Theme,
   themeTokenOverridesSchema,
@@ -77,6 +78,50 @@ describe("parseTheme", () => {
 describe("contrastFailures", () => {
   it("reads clean on the reference palette", () => {
     expect(contrastFailures(night)).toEqual([]);
+  });
+
+  it("refuses a light theme that is a tinted dark one, sections included", () => {
+    const tinted = { ...completeTheme(night), name: "tinted", appearance: "light" as const };
+    expect(contrastFailures(tinted)).toEqual(
+      expect.arrayContaining([
+        "text on background reads light-on-dark in a light theme",
+        "syntax.keyword on panel reads light-on-dark in a light theme",
+        "cursor on background reads light-on-dark in a light theme",
+      ]),
+    );
+    expect(() => parseTheme(tinted)).toThrow(/reads light-on-dark in a light theme/);
+  });
+
+  it("lets a selection with its own ink read against the theme's polarity", () => {
+    const inverted = { ...night, selection: { background: "#c3a6ff", text: "#000000" } };
+    expect(contrastFailures(inverted)).toEqual([]);
+  });
+});
+
+describe("contrastMeasurements", () => {
+  it("measures every floored pair once, tokens apart from sections", () => {
+    const measurements = contrastMeasurements(completeTheme(night));
+    const pairs = measurements.map((measurement) => measurement.pair);
+    expect(new Set(pairs).size).toBe(pairs.length);
+    expect(measurements.filter((measurement) => measurement.layer === "tokens")).toHaveLength(15);
+    expect(measurements.filter((measurement) => measurement.layer === "sections")).toHaveLength(
+      12 + 15 + 2 + 1 + 1,
+    );
+    expect(contrastMeasurements(night).every((measurement) => measurement.layer === "tokens")).toBe(
+      true,
+    );
+  });
+
+  it("carries the floor and the measured Lc a failure message is built from", () => {
+    const [text] = contrastMeasurements(night);
+    expect(text).toMatchObject({
+      pair: "text on background",
+      ink: night.tokens.text,
+      ground: night.tokens.background,
+      floor: 60,
+      polarity: "native",
+    });
+    expect(text?.lc).toBeGreaterThan(60);
   });
 });
 

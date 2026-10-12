@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import type { BotDefinition, PermissionResolver, Provider, SessionStore } from "@keywork/engine";
 import {
+  type KeyworkConfig,
   type LspConfig,
   type McpServerConfig,
   type ModelCapabilitiesConfig,
@@ -43,6 +44,7 @@ export interface ServedWorkspaceOptions {
   repoMap?: "auto" | "off" | undefined;
   models?: ModelCapabilitiesConfig | undefined;
   lsp?: LspConfig | undefined;
+  sandbox?: KeyworkConfig["sandbox"] | undefined;
   checkpoints: "on" | "off";
   checkpointsGitDir?: string | undefined;
   notice(text: string): void;
@@ -79,6 +81,7 @@ export async function composeServedWorkspace(
     checkpointsGitDir: options.checkpointsGitDir,
     reportCheckpointsUnavailable: (message) => notice(`can't undo files: ${message}`),
     lsp: options.lsp,
+    sandbox: options.sandbox,
     notice,
     userRoot,
   });
@@ -87,6 +90,9 @@ export async function composeServedWorkspace(
   }
   const { memory, extensions, host } = composition;
   const citations = citationTrail(memory, () => composition.bootstrap);
+  const children = new Map<string, SessionStore>();
+  const storeOf = (sessionId: string): SessionStore | undefined =>
+    options.storeOf(sessionId) ?? children.get(sessionId);
   const closingProviderAmong = (sessionIds: readonly string[]): Provider =>
     options.closingProvider ??
     sessionIds
@@ -101,7 +107,7 @@ export async function composeServedWorkspace(
     workspaceSlug,
     memory,
     boundSessionCounts: () => boundSessionCounts(sessionDir),
-    flushFor: (sessionId) => sweepFlushFor(options.storeOf(sessionId), agents.flushOf(sessionId)),
+    flushFor: (sessionId) => sweepFlushFor(storeOf(sessionId), agents.flushOf(sessionId)),
     closing: closingSeamFor(closingProviderFor),
     citedNotes: (slug) => citations.citedNotes(slug),
     lastActivity: (slug) => latestArcActivity(sessionDir, slug),
@@ -114,7 +120,7 @@ export async function composeServedWorkspace(
     userRoot,
     memory,
     roster: extensions.bots,
-    bindingOf: (sessionId) => options.storeOf(sessionId)?.botBinding(),
+    bindingOf: (sessionId) => storeOf(sessionId)?.botBinding(),
     skills: extensions.skills,
   });
   await bots.prepare();
@@ -125,7 +131,29 @@ export async function composeServedWorkspace(
     citations,
     thinking: options.thinking,
     notice,
+    delegation: {
+      storeOf,
+      attach: (child) => {
+        children.set(child.header.id, child);
+        void attached(child);
+      },
+      release: (childId) => {
+        children.delete(childId);
+        void released(childId);
+      },
+    },
   });
+  const attached = async (store: SessionStore): Promise<void> => {
+    citations.forSession(store.header.id);
+    await arcs.attached(store);
+    await host.startSession({ reason: sessionReasonFor(store), store });
+  };
+  const released = async (sessionId: string): Promise<void> => {
+    agents.release(sessionId);
+    arcs.released(sessionId);
+    citations.release(sessionId);
+    await host.endSession("switch", sessionId);
+  };
   const sweep: WorkspaceSweep = {
     memory,
     skills: () => workspaceSkillEvidence(composition.skills, { cwd, workspaceSlug, userRoot }),
@@ -138,17 +166,8 @@ export async function composeServedWorkspace(
     arcs,
     bots,
     botNamed: (name) => extensions.bots.find((bot) => bot.name === name),
-    attached: async (store) => {
-      citations.forSession(store.header.id);
-      await arcs.attached(store);
-      await host.startSession({ reason: sessionReasonFor(store), store });
-    },
-    released: async (sessionId) => {
-      agents.release(sessionId);
-      arcs.released(sessionId);
-      citations.release(sessionId);
-      await host.endSession("switch", sessionId);
-    },
+    attached,
+    released,
     close: async () => {
       await sweepWorkspaceOnClose(sweep).catch((cause: unknown) => {
         notice(`memory sweep failed: ${toError(cause).message}`);

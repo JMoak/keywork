@@ -26,6 +26,7 @@ import {
   type SessionHeader,
   type SessionInfoEntry,
   type SessionTreeNode,
+  type SpawnLineage,
   sessionFormatVersion,
   type ThinkingLevelChangeEntry,
 } from "./entries.ts";
@@ -82,14 +83,19 @@ export class SessionStore {
     parentSession?: string,
   ): Promise<SessionStore> {
     const header: SessionHeader = {
-      type: "session",
-      version: sessionFormatVersion,
-      id: crypto.randomUUID(),
-      timestamp: now.toISOString(),
-      cwd,
+      ...freshHeader(cwd, now),
       ...(parentSession !== undefined && { parentSession }),
     };
     return new SessionStore(file, header, 0);
+  }
+
+  static createChild(
+    file: string,
+    cwd: string,
+    spawnedBy: SpawnLineage,
+    now = new Date(),
+  ): SessionStore {
+    return new SessionStore(file, { ...freshHeader(cwd, now), spawnedBy }, 0);
   }
 
   static async open(file: string): Promise<SessionStore> {
@@ -198,6 +204,10 @@ export class SessionStore {
 
   appendBotBinding(bot: string | undefined): Promise<BindingEntry> {
     return this.appendEntry({ type: "binding", bot: bot ?? null });
+  }
+
+  appendBinding(binding: SessionBinding): Promise<BindingEntry> {
+    return this.appendEntry({ type: "binding", ...binding });
   }
 
   binding(): SessionBinding {
@@ -345,6 +355,16 @@ export class SessionStore {
     if (entry === undefined) throw new Error(`no session entry with id ${id}`);
     return entry;
   }
+}
+
+function freshHeader(cwd: string, now: Date): SessionHeader {
+  return {
+    type: "session",
+    version: sessionFormatVersion,
+    id: crypto.randomUUID(),
+    timestamp: now.toISOString(),
+    cwd,
+  };
 }
 
 function countBranchPoints(entries: readonly SessionEntry[]): number {

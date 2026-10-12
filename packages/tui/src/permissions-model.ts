@@ -4,20 +4,24 @@ import type {
   PermissionsView,
   ToolCallPart,
 } from "@keywork/engine";
-import { type PermissionRule, ruleLabel } from "@keywork/shared";
+import { type PermissionRule, ruleLabel, toError } from "@keywork/shared";
 import type { ConnectRow, ConnectSpan, ConnectTone } from "./connect-model.ts";
 import type { Chord } from "./keys.ts";
 import { compactJson } from "./transcript-feed.ts";
 
+export type PermissionsSeat = "pane" | "attached";
+
 export interface PermissionsPort {
-  view(): PermissionsView;
-  revokeWorkspace(rule: PermissionRule): boolean;
+  readonly seat: PermissionsSeat;
+  view(): Promise<PermissionsView>;
+  revokeWorkspace(rule: PermissionRule): Promise<boolean>;
   recordedAt?(): Date | undefined;
+  sessionGrants?(sessionId: string): SessionGrantsPort;
 }
 
 export interface SessionGrantsPort {
-  rules(): readonly PermissionRule[];
-  forget(rule: PermissionRule): boolean;
+  rules(): Promise<readonly PermissionRule[]>;
+  forget(rule: PermissionRule): Promise<boolean>;
 }
 
 export interface FocusedPermissionsPort {
@@ -30,6 +34,7 @@ export type QuietReason = "trusted" | "session" | "workspace";
 export interface QuietRun {
   summary: string;
   reason: QuietReason;
+  shellEscape?: true;
 }
 
 export interface PermissionsHooks {
@@ -73,6 +78,10 @@ export class QuietRunLog {
     };
   }
 
+  noteShellEscape(call: ToolCallPart, decision: PermissionDecision): void {
+    this.settle(call, decision, { shellEscape: true });
+  }
+
   private noteCall(call: ToolCallPart): void {
     const decision = this.decisions.get(call.callId);
     if (decision === undefined) {
@@ -93,9 +102,13 @@ export class QuietRunLog {
     this.settle(call, decision);
   }
 
-  private settle(call: ToolCallPart, decision: PermissionDecision): void {
+  private settle(
+    call: ToolCallPart,
+    decision: PermissionDecision,
+    origin: Pick<QuietRun, "shellEscape"> = {},
+  ): void {
     const reason = quietReasonOf(decision);
-    if (reason !== undefined) this.last = { summary: callSummary(call), reason };
+    if (reason !== undefined) this.last = { summary: callSummary(call), reason, ...origin };
   }
 }
 
@@ -111,17 +124,30 @@ export function quietReasonOf(decision: PermissionDecision): QuietReason | undef
 export class PermissionsModel {
   index = 0;
   bundleShown = false;
+  private state: GrantsState = { kind: "reading" };
+  private reads = 0;
 
   constructor(
     private readonly port: PermissionsPort,
     private readonly hooks: PermissionsHooks,
   ) {}
 
+  async refresh(): Promise<void> {
+    this.reads += 1;
+    const read = this.reads;
+    const next = await this.readGrants();
+    if (read !== this.reads) return;
+    this.state = next;
+    this.index = Math.min(this.index, Math.max(0, this.entries().length - 1));
+    this.hooks.notify();
+  }
+
   entries(): GrantEntry[] {
-    const session = this.hooks.focused?.session();
+    if (this.state.kind !== "read") return [];
+    const { view, session } = this.state.grants;
     return [
-      ...this.port.view().workspace.map((rule) => ({ layer: "workspace" as const, rule })),
-      ...(session?.rules() ?? []).map((rule) => ({ layer: "session" as const, rule })),
+      ...view.workspace.map((rule) => ({ layer: "workspace" as const, rule })),
+      ...(session ?? []).map((rule) => ({ layer: "session" as const, rule })),
     ];
   }
 
@@ -159,13 +185,23 @@ export class PermissionsModel {
         this.hooks.notify();
         return "stay";
       case "r":
-        this.revokeSelected();
+        void this.revokeSelected();
         return "stay";
       case "d":
-        this.dropSelected();
+        void this.dropSelected();
         return "stay";
       default:
         return "stay";
+    }
+  }
+
+  private async readGrants(): Promise<GrantsState> {
+    try {
+      const sessionGrants = this.hooks.focused?.session();
+      const [view, session] = await Promise.all([this.port.view(), sessionGrants?.rules()]);
+      return { kind: "read", grants: { view, session } };
+    } catch (cause) {
+      return { kind: "failed", reason: toError(cause).message };
     }
   }
 
@@ -176,23 +212,20 @@ export class PermissionsModel {
     this.hooks.notify();
   }
 
-  private revokeSelected(): void {
+  private async revokeSelected(): Promise<void> {
     const entry = this.selected();
     if (entry?.layer !== "workspace") {
       this.hooks.notice("pick a workspace grant to revoke");
       return;
     }
     const label = ruleLabel(entry.rule);
-    const revoked = this.port.revokeWorkspace(entry.rule);
-    this.hooks.notice(
-      revoked
-        ? `revoked ${label} · it asks again from the next call on`
-        : `${label} was already gone`,
-    );
-    this.settleIndex();
+    await this.settleChange(this.port.revokeWorkspace(entry.rule), label, {
+      done: `revoked ${label} · it asks again from the next call on`,
+      failed: `couldn't revoke ${label}`,
+    });
   }
 
-  private dropSelected(): void {
+  private async dropSelected(): Promise<void> {
     const entry = this.selected();
     const session = this.hooks.focused?.session();
     if (entry?.layer !== "session" || session === undefined) {
@@ -200,35 +233,66 @@ export class PermissionsModel {
       return;
     }
     const label = ruleLabel(entry.rule);
-    const dropped = session.forget(entry.rule);
-    this.hooks.notice(dropped ? `dropped ${label} for this session` : `${label} was already gone`);
-    this.settleIndex();
+    await this.settleChange(session.forget(entry.rule), label, {
+      done: `dropped ${label} for this session`,
+      failed: `couldn't drop ${label}`,
+    });
   }
 
-  private settleIndex(): void {
-    this.index = Math.min(this.index, Math.max(0, this.entries().length - 1));
-    this.hooks.notify();
+  private async settleChange(
+    change: Promise<boolean>,
+    label: string,
+    notices: { done: string; failed: string },
+  ): Promise<void> {
+    try {
+      this.hooks.notice((await change) ? notices.done : `${label} was already gone`);
+    } catch (cause) {
+      this.hooks.notice(`${notices.failed} · ${toError(cause).message}`);
+    }
+    await this.refresh();
   }
 
   private allRows(): ConnectRow[] {
-    const view = this.port.view();
+    switch (this.state.kind) {
+      case "reading":
+        return [plain("checking grants", "dim"), plain(permissionsKeyHint, "dim")];
+      case "failed":
+        return [
+          plain(`can't read grants · ${this.state.reason}`, "danger"),
+          plain(permissionsKeyHint, "dim"),
+        ];
+      case "read":
+        return this.grantRows(this.state.grants);
+    }
+  }
+
+  private grantRows({ view, session }: Grants): ConnectRow[] {
     const entries = this.entries();
     const quiet = this.hooks.focused?.lastQuietRun();
+    const firstEncounter = quiet === undefined && entries.length === 0;
     return [
-      plain(quietRunLine(quiet), quiet === undefined ? "dim" : "text"),
+      firstEncounter
+        ? plain(firstEncounterLine(view, this.port.seat))
+        : plain(quietRunLine(quiet), quiet === undefined ? "dim" : "text"),
       ...bundleRows(view, this.bundleShown),
       plain(workspaceHeading(view.workspace, this.port.recordedAt?.())),
       ...grantRows(entries, "workspace", this.index),
-      plain(sessionHeading(entries, this.hooks.focused?.session())),
+      plain(sessionHeading(session)),
       ...grantRows(entries, "session", this.index),
       plain(permissionsKeyHint, "dim"),
     ];
   }
 }
 
+export function firstEncounterLine(view: PermissionsView, seat: PermissionsSeat): string {
+  const opening = view.trusted ? "trusted reads just run" : "nothing's granted yet";
+  return `${opening} · ${howGrantsHappen[seat]}`;
+}
+
 export function quietRunLine(run: QuietRun | undefined): string {
   if (run === undefined) return "nothing has run without asking yet";
-  return `ran without asking · ${run.summary} · ${quietReasonLabel(run.reason)}`;
+  const what = run.shellEscape === true ? `shell escape !${run.summary}` : run.summary;
+  return `ran without asking · ${what} · ${quietReasonLabel(run.reason)}`;
 }
 
 export function quietReasonLabel(reason: QuietReason): string {
@@ -246,7 +310,7 @@ export function bundleSummary(view: PermissionsView): string {
   if (!view.trusted) return "trusted reads · off until this folder is trusted";
   const allowed = view.bundle.filter((rule) => rule.effect === "allow").length;
   const asked = view.bundle.length - allowed;
-  return `trusted reads · ${allowed} read-only commands run, ${asked} write forms still ask · fixed in keywork, your rules win`;
+  return `trusted reads · ${allowed} read-only commands run, ${asked} write forms ask · your rules win`;
 }
 
 function bundleRows(view: PermissionsView, shown: boolean): ConnectRow[] {
@@ -268,14 +332,9 @@ function workspaceHeading(rules: readonly PermissionRule[], recordedAt: Date | u
   return `workspace grants${stamp}`;
 }
 
-function sessionHeading(
-  entries: readonly GrantEntry[],
-  session: SessionGrantsPort | undefined,
-): string {
+function sessionHeading(session: readonly PermissionRule[] | undefined): string {
   if (session === undefined) return "session grants · open a conversation to see this pane's";
-  return entries.some((entry) => entry.layer === "session")
-    ? "session grants · this pane"
-    : "session grants · none this session";
+  return session.length > 0 ? "session grants · this pane" : "session grants · none this session";
 }
 
 function grantRows(
@@ -294,6 +353,21 @@ function grantRow(entry: GrantEntry, selected: boolean): ConnectRow {
     spans: [span(selected ? "▸ " : "  ", "accent"), span(ruleLabel(entry.rule))],
   };
 }
+
+interface Grants {
+  view: PermissionsView;
+  session: readonly PermissionRule[] | undefined;
+}
+
+type GrantsState =
+  | { kind: "reading" }
+  | { kind: "read"; grants: Grants }
+  | { kind: "failed"; reason: string };
+
+const howGrantsHappen: Readonly<Record<PermissionsSeat, string>> = {
+  pane: "[a] on an ask grants this session, the app can grant the workspace",
+  attached: "grants come from answering an ask in the app with a scope",
+};
 
 const bundleRowWidth = 88;
 

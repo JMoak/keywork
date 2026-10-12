@@ -1,7 +1,7 @@
 import type { PermissionsView } from "@keywork/engine";
-import type { ServerTicket } from "@keywork/server";
+import type { GrantRevocation, KeyworkClient } from "@keywork/server";
 import { grantFromLabel, type PermissionRule, ruleLabel } from "@keywork/shared";
-import { type CommandIo, resolveCommandIo } from "./command-io.ts";
+import { type CommandIo, type ResolvedCommandIo, resolveCommandIo } from "./command-io.ts";
 import { exitCodes } from "./dispatch.ts";
 import {
   type WorkspacePermissionsOptions,
@@ -12,8 +12,7 @@ import {
 export type PermissionsRoots = Omit<WorkspacePermissionsOptions, "user">;
 
 export interface PermissionsSeams {
-  runningServer?: () => Promise<ServerTicket | undefined>;
-  fetch?: typeof fetch;
+  runningServer?: () => Promise<KeyworkClient | undefined>;
 }
 
 export const permissionsUsage =
@@ -33,7 +32,7 @@ export async function permissionsCommand(
       for (const line of await describePermissions(roots, seams)) print(line);
       return exitCodes.completed;
     case "revoke":
-      return revokeGrant(rest.join(" "), roots, print, printError);
+      return revokeGrant(rest.join(" "), roots, seams, { print, printError });
     default:
       return refuse(`unknown verb "${verb}"`, printError);
   }
@@ -43,31 +42,45 @@ export async function describePermissions(
   roots: PermissionsRoots,
   seams: PermissionsSeams = {},
 ): Promise<string[]> {
-  const view = workspacePermissions(roots).view();
-  const sessions = await sessionGrantsFromServer(seams);
+  const server = await seams.runningServer?.();
+  const view =
+    server === undefined ? workspacePermissions(roots).view() : await server.listPermissions();
   return [
     ...bundleLines(view),
     "",
     ...workspaceLines(view.workspace, workspacePermissionsRecordedAt(roots)),
     "",
-    ...sessionLines(sessions),
+    ...sessionLines(server === undefined ? undefined : { url: server.url, grants: view.session }),
   ];
 }
 
-function revokeGrant(
+async function revokeGrant(
   label: string,
   roots: PermissionsRoots,
-  print: (line: string) => void,
-  printError: (line: string) => void,
-): number {
+  seams: PermissionsSeams,
+  { print, printError }: ResolvedCommandIo,
+): Promise<number> {
   const rule = grantFromLabel(label);
-  if (rule === undefined) return refuse("revoke wants the grant as list prints it", printError);
-  if (!workspacePermissions(roots).revokeWorkspace(rule)) {
-    printError(`keywork permissions: no workspace grant reads "${ruleLabel(rule)}"`);
-    return exitCodes.failed;
+  if (rule === undefined) return refuse(unprintedGrant, printError);
+  const server = await seams.runningServer?.();
+  const outcome =
+    server === undefined ? localRevocation(roots, rule) : await server.revokeWorkspaceGrant(rule);
+  switch (outcome) {
+    case "revoked":
+      print(`revoked ${ruleLabel(rule)} · it asks again from the next call on`);
+      return exitCodes.completed;
+    case "missing":
+      printError(`keywork permissions: no workspace grant reads "${ruleLabel(rule)}"`);
+      return exitCodes.failed;
+    case "malformed":
+      return refuse(unprintedGrant, printError);
   }
-  print(`revoked ${ruleLabel(rule)} · it asks again from the next call on`);
-  return exitCodes.completed;
+}
+
+const unprintedGrant = "revoke wants the grant as list prints it";
+
+function localRevocation(roots: PermissionsRoots, rule: PermissionRule): GrantRevocation {
+  return workspacePermissions(roots).revokeWorkspace(rule) ? "revoked" : "missing";
 }
 
 function bundleLines(view: PermissionsView): string[] {
@@ -110,21 +123,6 @@ function sessionLines(sessions: SessionGrants | undefined): string[] {
 interface SessionGrants {
   url: string;
   grants: Record<string, PermissionRule[]>;
-}
-
-async function sessionGrantsFromServer(
-  seams: PermissionsSeams,
-): Promise<SessionGrants | undefined> {
-  const ticket = await seams.runningServer?.();
-  if (ticket === undefined) return undefined;
-  const call = seams.fetch ?? fetch;
-  const url = ticket.url.replace(/\/+$/, "");
-  const response = await call(`${url}/permissions`, {
-    headers: { authorization: `Bearer ${ticket.token}` },
-  });
-  if (!response.ok) return undefined;
-  const view = (await response.json()) as PermissionsView;
-  return { url, grants: view.session };
 }
 
 function localStamp(at: Date): string {

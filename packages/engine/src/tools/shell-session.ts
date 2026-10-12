@@ -1,6 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { z } from "zod";
 import { killTree } from "../proc.ts";
+import { type Sandbox, sandboxedToolNote, unconfined } from "../sandbox/sandbox.ts";
+import { fixedSandbox, type ToolSandbox } from "../sandbox/session.ts";
 import type { Tool } from "../tools.ts";
 import { detectShell, type Shell } from "./bash.ts";
 import {
@@ -20,15 +22,17 @@ export interface ShellRunOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   onOutput?: (chunk: string) => void;
+  sandbox?: ToolSandbox;
 }
 
 export function persistentBashTool(
   session: ShellSession,
   onOutput?: (chunk: string) => void,
+  sandbox: ToolSandbox = fixedSandbox(unconfined),
 ): Tool {
   return defineTool({
     name: "bash",
-    description: `Run a command in ${session.shellName} from the working directory. The shell persists across calls: cwd changes, exported variables, and activated environments stay live.`,
+    description: `Run a command in ${session.shellName} from the working directory. The shell persists across calls: cwd changes, exported variables, and activated environments stay live.${sandboxedToolNote(sandbox.configured)}`,
     schema: z.object({
       command: z.string().min(1).describe("Shell command to execute."),
       timeoutMs: z.number().int().min(1).optional().describe("Kill the command after this long."),
@@ -39,6 +43,7 @@ export function persistentBashTool(
         ...(args.timeoutMs !== undefined && { timeoutMs: args.timeoutMs }),
         ...(signal !== undefined && { signal }),
         ...(onOutput !== undefined && { onOutput }),
+        sandbox,
       }),
   });
 }
@@ -88,8 +93,8 @@ export class ShellSession {
     await killTree(live.child, live.closed).catch(() => undefined);
   }
 
-  private spawnLive(): LiveShell {
-    const live = spawnShell(this.cwd, this.shell);
+  private spawnLive(sandbox: Sandbox): LiveShell {
+    const live = spawnShell(this.cwd, this.shell, sandbox);
     this.live = live;
     void live.closed.then(() => {
       if (this.live === live) this.live = undefined;
@@ -97,9 +102,19 @@ export class ShellSession {
     return live;
   }
 
-  private execute(command: string, options: ShellRunOptions): Promise<string> {
+  private async execute(command: string, options: ShellRunOptions): Promise<string> {
     options.signal?.throwIfAborted();
-    const live = this.live ?? this.spawnLive();
+    const live = this.live ?? (await this.startShell(options));
+    return this.runIn(live, command, options);
+  }
+
+  private async startShell(options: ShellRunOptions): Promise<LiveShell> {
+    const sandbox = (await options.sandbox?.current()) ?? unconfined;
+    options.signal?.throwIfAborted();
+    return this.spawnLive(sandbox);
+  }
+
+  private runIn(live: LiveShell, command: string, options: ShellRunOptions): Promise<string> {
     return new Promise((resolvePromise, rejectPromise) => {
       const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
       const sentinel = `__keywork_${crypto.randomUUID()}__`;
@@ -167,8 +182,15 @@ interface LiveShell {
   failureListeners: Set<(failure: Error) => void>;
 }
 
-function spawnShell(cwd: string, shell: Shell): LiveShell {
-  const child = spawn(shell.file, persistentArgs(shell), shellSpawnOptions(cwd));
+function spawnShell(cwd: string, shell: Shell, sandbox: Sandbox): LiveShell {
+  const options = shellSpawnOptions(cwd);
+  const launch = sandbox.confine({
+    file: shell.file,
+    args: persistentArgs(shell),
+    cwd,
+    env: options.env ?? {},
+  });
+  const child = spawn(launch.file, [...launch.args], { ...options, env: launch.env });
   const closed = childClosed(child);
   const failureListeners = new Set<(failure: Error) => void>();
   const broadcastFailure = (failure: Error) => {
@@ -263,8 +285,12 @@ export interface InteractiveShell {
   kill(): Promise<void>;
 }
 
-export function openInteractiveShell(cwd: string, shell: Shell = detectShell()): InteractiveShell {
-  const live = spawnShell(cwd, shell);
+export function openInteractiveShell(
+  cwd: string,
+  shell: Shell = detectShell(),
+  sandbox: Sandbox = unconfined,
+): InteractiveShell {
+  const live = spawnShell(cwd, shell, sandbox);
   const { child } = live;
   const onExit = (listener: (code: number | null) => void): (() => void) => {
     const handler = (code: number | null) => listener(code);

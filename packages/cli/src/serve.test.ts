@@ -2023,3 +2023,58 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
     };
   }
 });
+
+describe("delegation under serve (120)", () => {
+  it("streams child.started and child.finished on the parent's id and reads the nested child by id", async () => {
+    const options = await hostOptions(
+      new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "d1",
+          name: "delegate",
+          arguments: { title: "count the files", prompt: "count the files under src" },
+        }),
+        textTurn("twelve files"),
+        textTurn("there are twelve"),
+      ]),
+    );
+    const { server, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+
+    await call(`/sessions/${id}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: "how many files?" }),
+    });
+    const frames: SseFrame[] = [];
+    while (frames.at(-1)?.event !== "turn.completed") frames.push(await reader.next());
+    await reader.close();
+
+    const envelopeOf = (event: string) => {
+      const frame = frames.find((candidate) => candidate.event === event);
+      return frame === undefined ? undefined : JSON.parse(frame.data);
+    };
+    const started = envelopeOf("child.started");
+    expect(started).toMatchObject({
+      sessionId: id,
+      payload: { callId: "d1", title: "count the files" },
+    });
+    const childId = started.payload.sessionId as string;
+    expect(envelopeOf("child.finished")).toMatchObject({
+      sessionId: id,
+      payload: { callId: "d1", sessionId: childId, outcome: "completed" },
+    });
+    expect(envelopeOf("tool.finished").payload.output).toBe(
+      `↳ child ${childId} · completed\n\ntwelve files`,
+    );
+    const child = await call(`/sessions/${childId}`);
+    expect(child.status).toBe(200);
+    expect(((await child.json()) as { title: string }).title).toBe("count the files");
+    expect((await findSession(options.sessionDir ?? "", childId))?.header.spawnedBy).toEqual({
+      sessionId: id,
+      callId: "d1",
+    });
+    expect((await scanSessions(options.sessionDir ?? "")).stores).toHaveLength(1);
+    await server.close();
+  });
+});

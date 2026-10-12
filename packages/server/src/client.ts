@@ -6,6 +6,7 @@ import type {
   LedgerEntry,
   McpServerStatus,
   ModelReference,
+  PermissionsView,
   QuestionTriage,
   ResolutionFailure,
   RevertOutcome,
@@ -14,7 +15,7 @@ import type {
   StagedItem,
   WriteResult,
 } from "@keywork/engine";
-import type { ActivePreset, AskScope, PresetName } from "@keywork/shared";
+import type { ActivePreset, AskScope, PermissionRule, PresetName } from "@keywork/shared";
 import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
 import type { BusEnvelope } from "./events.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
@@ -59,6 +60,8 @@ export type ModelAnswer =
 
 export type ExportAnswer = { html: string } | { file: string };
 
+export type GrantRevocation = "revoked" | "missing" | "malformed";
+
 export interface PresetAnswer {
   from: ActivePreset;
   to: PresetName;
@@ -88,6 +91,9 @@ export interface KeyworkClient {
   applyPreset(name: PresetName, confirmed?: boolean): Promise<PresetAnswer>;
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
+  listPermissions(): Promise<PermissionsView>;
+  revokeWorkspaceGrant(rule: PermissionRule): Promise<GrantRevocation>;
+  revokeSessionGrant(sessionId: string, rule: PermissionRule): Promise<GrantRevocation>;
   events(options?: EventStreamOptions): AsyncIterable<BusEnvelope>;
   memory(): Promise<Trusted<MemoryOverview>>;
   memoryInbox(): Promise<Trusted<{ items: StagedItem[]; count: number }>>;
@@ -310,6 +316,13 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       await json(response);
       return "settled";
     },
+    listPermissions: () => request("GET", "/permissions").then(json<PermissionsView>),
+    revokeWorkspaceGrant: (rule) =>
+      revocation(request("POST", "/permissions/workspace/revoke", { rule })),
+    revokeSessionGrant: (sessionId, rule) =>
+      revocation(
+        request("POST", `/permissions/session/${encodeURIComponent(sessionId)}/revoke`, { rule }),
+      ),
     memory: () => request("GET", "/memory").then(json<Trusted<MemoryOverview>>),
     memoryInbox: () =>
       request("GET", "/memory/inbox").then(json<Trusted<{ items: StagedItem[]; count: number }>>),
@@ -588,6 +601,14 @@ async function timeTravel<T>(pending: Promise<Response>): Promise<T | "missing" 
   if (response.status !== 404) return json<T>(response);
   const detail = await refusalDetail(response);
   return detail.startsWith("nothing to") ? "nothing" : "missing";
+}
+
+async function revocation(pending: Promise<Response>): Promise<GrantRevocation> {
+  const response = await pending;
+  if (response.status === 404) return "missing";
+  if (response.status === 400) return "malformed";
+  await json(response);
+  return "revoked";
 }
 
 function askRefusalOf(error: string): Exclude<AnswerOutcome, "settled"> | undefined {

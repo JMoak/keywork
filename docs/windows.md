@@ -82,3 +82,13 @@ control bytes dropped, 2000 lines of scrollback per pane.
 Shell mode opens only in a trusted workspace (`/init`); typed lines are the user's own and
 never pass through the agent's permission gate. The mirror mode carries the agent's
 workflow on its own; the shell mode is a convenience scoped to the project.
+
+## Sandbox (103 E8, 2026-10-12)
+
+`"sandbox": "workspace"` and `"isolated"` refuse on Windows: there's no primitive keywork can
+reach from `node:child_process` (AppContainer and job objects need Win32 calls Bun doesn't
+expose), and confining file tools by path is already true in every mode, so it can't stand in
+for a shell sandbox. The refusal reads `windows has no sandbox keywork can use · run keywork
+inside wsl2 or set "sandbox": "off" in ~/.keywork/keywork.json`; the agent's first command asks
+once whether to run unconfined until keywork exits. Inside WSL2 the Linux runner (bubblewrap)
+applies, with the same Ubuntu 24.04 AppArmor step a Linux host needs.

@@ -727,6 +727,7 @@ export class AppCore implements ActionTarget {
       focused: this.options.focusedPermissions,
     });
     this.overlay = new PermissionsOverlay(model, this.overlaySeams);
+    void model.refresh();
   }
 
   overlayFrame(): OverlayFrame | undefined {

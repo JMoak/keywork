@@ -136,6 +136,13 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
   "gate.preset": { from: "standard", to: "open" },
   "session.mode": { mode: "plan" },
   "context.injected": { injection: { source: "memory-recall", id: "n1", scope: "workspace" } },
+  "child.started": { callId: "c3", sessionId: "s9", title: "find the callers", bot: "scout" },
+  "child.finished": {
+    callId: "c3",
+    sessionId: "s9",
+    outcome: "completed",
+    usage: { inputTokens: 40, outputTokens: 9 },
+  },
   "diagnostics.published": { path: "src/a.ts", count: 2 },
   "shell.reset": { replay: true },
   "extension.notice": { extension: "counter", level: "info", message: "counted 3" },
@@ -640,6 +647,42 @@ describe("ask scopes and grants", () => {
     expect((await revoke({ rule: pushRule })).status).toBe(404);
     const after = (await (await h.call("/permissions")).json()) as { workspace: unknown[] };
     expect(after.workspace).toEqual([]);
+    await reader.close();
+  });
+
+  it("drops a session grant on request, so that session asks again", async () => {
+    const h = harness({
+      provider: new MockProvider([
+        bashCall("c1", "git push origin main"),
+        textTurn("done"),
+        bashCall("c2", "git push origin dev"),
+        textTurn("done"),
+      ]),
+      tools: [shell],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "push" });
+    await collect(reader, (event) => event === "gate.ask");
+    await post(h, "/asks/c1", { verdict: "granted", scope: "session" });
+    await collect(reader, (event) => event === "turn.completed");
+    const revoke = (session: string, body: unknown) =>
+      post(h, `/permissions/session/${session}/revoke`, body);
+
+    expect((await revoke(id, {})).status).toBe(400);
+    expect((await revoke("nope", { rule: pushRule })).status).toBe(404);
+    const revoked = await revoke(id, { rule: pushRule });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toEqual({ revoked: pushRule });
+    expect((await revoke(id, { rule: pushRule })).status).toBe(404);
+    expect(await (await h.call("/permissions")).json()).toMatchObject({ session: {} });
+
+    await post(h, `/sessions/${id}/prompt`, { text: "push again" });
+    const asked = await collect(reader, (event) => event === "gate.ask");
+    expect(JSON.parse(asked.at(-1)?.data ?? "{}").payload.ask.callId).toBe("c2");
+    await post(h, "/asks/c2", { verdict: "denied" });
+    await collect(reader, (event) => event === "turn.completed");
     await reader.close();
   });
 
@@ -1531,6 +1574,32 @@ describe("workspace, files, trust and status (K3)", () => {
     const untrusted = harness({ surfaces: { root } });
     expect((await untrusted.call("/arcs")).status).toBe(403);
     expect((await post(untrusted, "/arcs", { slug: "gamma" })).status).toBe(403);
+  });
+
+  it("has an arc wear a served theme, or none, and refuses what it cannot dress", async () => {
+    const root = await roots();
+    const h = harness({ surfaces: { root, trust: "trusted", themes: [testTheme] } });
+    await post(h, "/arcs", { slug: "alpha" });
+    expect(await bodyOf(await post(h, "/arcs/alpha/theme", { theme: "test-dusk" }))).toEqual(
+      expect.objectContaining({ slug: "alpha", status: "active", theme: "test-dusk" }),
+    );
+    expect(await bodyOf<{ arcs: unknown[] }>(await h.call("/arcs"))).toMatchObject({
+      arcs: [{ slug: "alpha", theme: "test-dusk" }],
+    });
+    expect(await bodyOf(await post(h, "/arcs/alpha/theme", { theme: null }))).not.toHaveProperty(
+      "theme",
+    );
+    expect((await post(h, "/arcs/alpha/theme", {})).status).toBe(400);
+    expect((await post(h, "/arcs/alpha/theme", { theme: " " })).status).toBe(400);
+    const unknown = await post(h, "/arcs/alpha/theme", { theme: "velvet" });
+    expect(unknown.status).toBe(409);
+    expect(await unknown.json()).toEqual({
+      error: 'no theme named "velvet" · GET /themes lists the ones served',
+    });
+    expect((await post(h, "/arcs/nope/theme", { theme: "test-dusk" })).status).toBe(404);
+    await post(h, "/arcs/alpha/abandon");
+    expect((await post(h, "/arcs/alpha/theme", { theme: "test-dusk" })).status).toBe(409);
+    expect(await surfaceEvents(h, "arcs")).toHaveLength(4);
   });
 
   it("lists and creates bots and binds a session to one unless a turn is running", async () => {

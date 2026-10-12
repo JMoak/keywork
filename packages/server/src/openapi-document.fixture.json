@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.0",
+    "x-keywork-contract": "1.1",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -1490,6 +1490,60 @@
         }
       }
     },
+    "/arcs/{slug}/theme": {
+      "post": {
+        "operationId": "setArcTheme",
+        "summary": "Have an arc wear a theme, or none with `theme: null`. The theme is recorded on the arc itself, so every client dressing the arc's panes wears the same one; `theme` must name a theme `GET /themes` serves. Answers the arc as `GET /arcs` lists it. Fires `surface.changed` with `kind: \"arcs\"`.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["theme"],
+                "properties": {
+                  "theme": {
+                    "type": ["string", "null"],
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The arc after the change."
+          },
+          "400": {
+            "description": "The body is not `{ theme: string | null }`."
+          },
+          "403": {
+            "description": "The workspace is untrusted."
+          },
+          "404": {
+            "description": "No arc has that slug."
+          },
+          "409": {
+            "description": "The arc is not active, or no theme has that name."
+          },
+          "503": {
+            "description": "This host serves no arcs."
+          }
+        }
+      }
+    },
     "/sessions/{id}/arc": {
       "post": {
         "operationId": "bindSessionArc",
@@ -1834,7 +1888,7 @@
     "/themes": {
       "get": {
         "operationId": "listThemes",
-        "summary": "Every theme the server can hand a client whole: the curated gallery (keywork-night, keywork-day, and the Catppuccin, Nord, Gruvbox, Everforest, Kanagawa, Rosé Pine, Flexoki, matte-black, osaka-jade, and ristretto themes) plus any closet theme, which replaces a gallery theme of the same name. Each record is complete: name, appearance, tokens, density, gap, chromeWeight, instruments, and always terminal (the ANSI 16), syntax, diff, selection, and cursor, filled by keywork's derivation rule where the theme leaves one out, so every client paints from the same colors. `pair` names the opposite-appearance twin when there is one, so a client following the OS swaps between a matched light and dark. `active` is the configured startup theme. `placeholders` names themes the terminal derives from its own environment (`system`, from the terminal's colors); a client fills those from its own surface so both surfaces list the same names.",
+        "summary": "Every theme the server can hand a client whole: the curated gallery (keywork-night, keywork-day, and the Catppuccin, Nord, Gruvbox, Everforest, Kanagawa, Rosé Pine, Flexoki, matte-black, osaka-jade, ristretto, and whiplash themes) plus any closet theme, which replaces a gallery theme of the same name. Each record is complete: name, appearance, tokens, density, gap, chromeWeight, instruments, and always terminal (the ANSI 16), syntax, diff, selection, and cursor, filled by keywork's derivation rule where the theme leaves one out, so every client paints from the same colors. Every theme served has passed keywork's contrast floors and reads in its declared appearance (dark ink on a light ground or light on dark on every measured pair), so a client need not re-validate. `pair` names the opposite-appearance twin when there is one, so a client following the OS swaps between a matched light and dark. `active` is the configured startup theme. `placeholders` names themes the terminal derives from its own environment (`system`, from the terminal's colors); a client fills those from its own surface so both surfaces list the same names.",
         "responses": {
           "200": {
             "description": "The themes."
@@ -2214,6 +2268,66 @@
           }
         }
       }
+    },
+    "/permissions/session/{sessionId}/revoke": {
+      "post": {
+        "operationId": "revokeSessionGrant",
+        "summary": "Remove one grant a `scope: \"session\"` answer recorded for that session, so the call it covered asks again there. Other sessions and the workspace grants are untouched.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["rule"],
+                "properties": {
+                  "rule": {
+                    "type": "object",
+                    "required": ["action", "resource", "effect"],
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "resource": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "effect": {
+                        "type": "string",
+                        "const": "allow"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ revoked: rule }`."
+          },
+          "400": {
+            "description": "The body is not `{ rule: { action, resource, effect: \"allow\" } }`."
+          },
+          "404": {
+            "description": "That session holds no grant matching the rule."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2249,6 +2363,8 @@
               "gate.preset",
               "session.mode",
               "context.injected",
+              "child.started",
+              "child.finished",
               "diagnostics.published",
               "shell.reset",
               "extension.notice",

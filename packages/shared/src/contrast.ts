@@ -11,6 +11,12 @@ export function apcaLc(inkHex: string, groundHex: string): number {
   return magnitude < lowContrastClip ? 0 : (magnitude - lowContrastOffset) * 100;
 }
 
+export type ContrastPolarity = "dark-on-light" | "light-on-dark";
+
+export function contrastPolarity(inkHex: string, groundHex: string): ContrastPolarity {
+  return screenLuminance(inkHex) < screenLuminance(groundHex) ? "dark-on-light" : "light-on-dark";
+}
+
 const darkInkGroundExponent = 0.56;
 const darkInkExponent = 0.57;
 const lightInkGroundExponent = 0.65;

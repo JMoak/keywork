@@ -78,7 +78,8 @@ function builtinCommands(core: AppCore): CommandSpec[] {
     }),
     ...when(available("arcs"), {
       name: "arcs",
-      description: "open the arcs node: /arcs",
+      aliases: ["workstreams", "ws"],
+      description: "open the arcs node (arcs are workstreams, /ws works too): /arcs",
       run: () => core.summon("arcs"),
     }),
     ...when(available("workspaces"), {
@@ -175,32 +176,38 @@ function arcCommands(core: AppCore): CommandSpec[] {
   return [
     {
       name: "arc",
+      aliases: ["workstream"],
       description: "bind this session to an arc, or pick from a list: /arc [slug]",
       run: (args) => core.openArcCommand(args),
     },
     {
       name: "arc-new",
+      aliases: ["workstream-new", "ws-new"],
       description: "start an arc and bind this session to it: /arc-new [slug]",
       run: (args) => core.arcCommand({ verb: "new", slug: operandOf(args) }),
     },
     {
       name: "arc-close",
+      aliases: ["workstream-close", "ws-close"],
       description:
         "close the focused arc, with optional direction for the distiller: /arc-close [direction]",
       run: (args) => core.arcCommand({ verb: "close", direction: operandOf(args) }),
     },
     {
       name: "arc-abandon",
+      aliases: ["workstream-abandon", "ws-abandon"],
       description: "archive an arc without distilling, nothing deleted: /arc-abandon <slug>",
       run: (args) => core.arcCommand({ verb: "abandon", slug: operandOf(args) }),
     },
     {
       name: "arc-release",
+      aliases: ["workstream-release", "ws-release"],
       description: "unbind this session from its arc: /arc-release",
       run: () => core.arcCommand({ verb: "release" }),
     },
     {
       name: "arc-open",
+      aliases: ["workstream-open", "ws-open"],
       description: "open an arc pane, the focused session's arc by default: /arc-open [slug]",
       run: (args) => core.arcCommand({ verb: "open", slug: operandOf(args) }),
     },

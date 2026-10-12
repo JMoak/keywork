@@ -4,7 +4,37 @@
 > owns it. Read this first when resuming, then the owning overlay before building. Strike items
 > as they land and add the landing date; when a section empties, delete it.
 
-## Where the tree stands (2026-10-12)
+## Where the tree stands (2026-10-12, wave three)
+
+Uncommitted on top of the alias and theme lanes, four workstreams run on Opus 5.5 at high
+effort or above: subagents (new overlay [120](120-subagents.md): a child is its own session
+filed under its parent at `<parent>.children/`, the `delegate` tool, trust inherited never
+widened, cost rolls up, FR6.17 rows with `o` to open a finished child, `child.started` /
+`child.finished` over SSE, `keywork run --json` children, headless asks answer no), E8 sandbox
+modes (options note and ledger in [103](103-dsh-influence.md): the `Sandbox.confine` seam
+bash, the persistent shell, the pty and LSP go through, `sandbox: off | workspace | isolated`
+user-layer only, a bubblewrap runner for Linux that has only been read-checked, fail-closed
+refusal everywhere else routed through the ask gate as an `unconfined` call, `keywork doctor`
+row), permissions part 2 (ledger in [50](50-trust.md): `/permissions` in attach over typed
+client methods, `POST /permissions/session/{id}/revoke`, shell escapes in the quiet-run rows,
+two gate bugs fixed on the way), and three fixes at the cause (one clock per approve so an op
+stays above its echo, `costBasis` in `engine/src/pricing.ts` as the one home, and
+`scripts/check-contract.ts` in `bun run check` and CI). Contract bumped once to 1.1 for the
+additive route and events. Gate on the integrated tree: `bun run check` clean, vitest 363 files / 4992 tests (3 skipped), e2e 50 of 50 (the `delegation` scenario is new).
+
+Earlier state (2026-10-12, later):
+
+The five-lane wave below is committed (`6a9aa2d`). On top of it, uncommitted: workstream
+aliases for the arc family (`workstream`, `workstreams`, `ws` on all seven arc commands, the
+arcs node teaching line, `keywork attach ws` refused like `arcs`, the vocabulary note in
+`docs/README.md`; ledger in [110](110-arcs-on-screen.md)) and theme parity with keywork-app
+(the app's gallery and derivation were already a mirror of K6; keywork now carries
+`whiplash` and `whiplash-flash`, the polarity rule in `parseTheme`, `contrastMeasurements`
+and `auditTheme` in `shared/src/config/theme-audit.ts`; the OpenAPI fixture regenerated,
+contract still 1.0; ledger in [118](118-app-surface.md)). Gate on the integrated tree:
+`bun run check` clean, vitest 354 files / 4878 tests (1 skipped), e2e 49 of 49.
+
+Earlier state (2026-10-12):
 
 PR #7 merged `app-surface/next` into `main` (`8952a27`): K6 themes and K7 trusted reads and ask
 scopes landed with it, so the permissions proposal below is built. On top of it, uncommitted,
@@ -133,6 +163,12 @@ items, plus the calls listed under "Where the tree stands" there.
 | Q-P1 needs-you stamp · C71-c main-area pins · C72-c heat candidates · C57 frame-budget bar | [113](113-arcs-and-chrome-wave.md), [112](112-feel-and-look-wave.md), [100](100-visual-craft.md) | render options, Jordan picks |
 | Lens grammar Q1–Q9 | [102](102-instrument-grammar.md) | design session never scheduled |
 | First tag, npm name, README one-liner, Linux walk | [`../launch-runway.md`](../launch-runway.md) | the launch button |
+| Subagents Q-SA1 to Q-SA7 (off switch shape · four children per process · J6 recall scope for a child · a no to a child's ask keeps it going or ends it · the live child pane S5 next · removing a child alone restores it top-level · the name `delegate`) | [120](120-subagents.md) | phase two (S5 to S10) |
+| Sandbox Q-E8-1 to Q-E8-7 (keep the "run unconfined until exit" yes or refuse strictly · terminal pane and `!cmd` under the mode · template `!\`cmd\`` under the mode · bubblewrap plus the sysctl on the ubuntu CI job so the live tests run · honour `CARGO_HOME` / `GOMODCACHE` / `npm_config_cache` · Plan mode under `isolated` · flip the Linux default to `workspace` after dogfooding) | [103](103-dsh-influence.md) E8 note | the Linux walk is the first real run of the runner |
+| Permissions part 2: `last changed` on `GET /permissions` for attach · session grants into the ledger so pane, serve and REPL share one path · fall back to the local store when a server refuses the token | [50](50-trust.md) part 2 ledger | small follow-ups |
+| Contract gate: also require a major bump when an operation id or event name disappears · comparing only `HEAD^` on a multi-commit fast-forward push | [118](118-app-surface.md) "Contract version gate" | a stricter script |
+| Themes: polarity as a hard refusal in `parseTheme` or audit-only · keep `selection.text` as the one polarity-free pair (built that way) or refuse inverted selections like the app · the app drops `gallery.json` for house pair + `GET /themes`, or keeps the full sync · carry `minMarginLc` / `sectionMarginLc` per theme on `GET /themes` for the designer pane | [118](118-app-surface.md) "Theme parity" | the app can delete its derivation and audit copies once decided |
+| Arcs as workstreams: give keywork-app the same alias table and empty-state line now, or wait for the shared-term call · render matched aliases in the tray (`arc · also workstream`, touches the discovery golden) · carry the synonym in the `/arc-new` tip instead of the `/arcs` description | [110](110-arcs-on-screen.md) "Workstream aliases" | app parity; a render choice |
 | Contract: keywork-app should pin the `x-keywork-contract` major instead of `protocolVersion = "0.1.1"` (app repo) · enforce the version bump mechanically when a fixture changes, or leave it as prose · whether the `progress` delta is meant for external clients or gets filtered in `sse.ts` | [118](118-app-surface.md) "Contract hardening" | app attach check; a guardrail; one filter |
 | Memory ledger: an approve writes its op and its audit echo a millisecond apart, so the top row of the ledger lens is sometimes the echo and `u` from the top does nothing; fix is a store clock seam or a sort that keeps the op above its echo | [95](95-memory-and-skills.md), found by the 2026-10-12 reliability lane | a one-key revert that always works |
 | Windows: `taskkill /t` never reaches a `sleep` behind a forked Git Bash shape, so the bash tool's timeout leaks that grandchild and resolves through the 1 s fallback; a job object is the real fix and Bun has none | [`../windows.md`](../windows.md) | accept or find a job-object path |

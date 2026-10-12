@@ -8,6 +8,7 @@ import { keyworkDay, keyworkNight } from "./themes/keywork.ts";
 import { nord, nordLight } from "./themes/nord.ts";
 import { matteBlack, osakaJade, ristretto } from "./themes/originals.ts";
 import { rosePine, rosePineDawn } from "./themes/rose-pine.ts";
+import { whiplash, whiplashFlash } from "./themes/whiplash.ts";
 
 export const gallery: readonly Theme[] = [
   keyworkNight,
@@ -29,6 +30,8 @@ export const gallery: readonly Theme[] = [
   ristretto,
   flexokiDark,
   flexokiLight,
+  whiplash,
+  whiplashFlash,
 ].map((theme) => parseTheme(theme));
 
 export function themeNamed(name: string): Theme | undefined {

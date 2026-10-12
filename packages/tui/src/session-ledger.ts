@@ -6,6 +6,7 @@ import {
   type CostRollup,
   carriesUsage,
   contextBudgetFor,
+  costBasis,
   declaredContextWindow,
   type EffortLevel,
   emptyCostRollup,
@@ -148,17 +149,10 @@ function costLine(
 
 function spendLine(cost: CostRollup, modelId: string | undefined): string {
   const known = knownCostNanos(cost);
-  if (known !== undefined) return `cost ${formatCostNanos(known)} · ${costBasis(cost, modelId)}`;
-  if (cost.pricedTurns > 0) {
-    return `cost ${formatCostNanos(cost.nanos)} across ${cost.pricedTurns} priced turns · ${cost.unpricedTurns} more had no pricing`;
-  }
-  return `cost unknown · no pricing for ${modelId ?? "this model"}`;
-}
-
-function costBasis(cost: CostRollup, modelId: string | undefined): string {
-  if (cost.meteredTurns === cost.pricedTurns) return "metered by the provider";
-  if (cost.meteredTurns > 0) return "partly metered, partly estimated";
-  return `estimated from ${modelId ?? "list"} rates`;
+  const basis = costBasis(cost, modelId);
+  if (known !== undefined) return `cost ${formatCostNanos(known)} · ${basis}`;
+  if (cost.pricedTurns > 0) return `cost ${formatCostNanos(cost.nanos)} across ${basis}`;
+  return `cost unknown · ${basis}`;
 }
 
 function modelLine(reference: string, totals: ModelTotals): string {

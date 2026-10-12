@@ -10,6 +10,7 @@ import {
   ArcNotActiveError,
   ArcRegistry,
   type ArcRegistryOptions,
+  MissingArcError,
 } from "./registry.ts";
 
 const scratch = scratchDirs("keywork-arcs-");
@@ -83,6 +84,36 @@ describe("arc lifecycle", () => {
     await registry.createArc("dock-v2");
     await registry.archiveArc("dock-v2");
     await expect(registry.archiveArc("dock-v2")).rejects.toThrow(ArcNotActiveError);
+  });
+});
+
+describe("the theme an arc wears", () => {
+  it("records the theme on the MOC, keeps its body, and reads it back", async () => {
+    const { registry, root } = await vault();
+    await registry.createArc("dock-v2");
+    const worn = await registry.wearTheme("dock-v2", "rose-pine");
+    expect(worn.theme).toBe("rose-pine");
+    const raw = await readFile(join(root, "arcs", "dock-v2", "MOC.md"), "utf8");
+    expect(raw).toContain('theme: "rose-pine"');
+    expect(raw).toContain("arc dock-v2");
+    expect((await registry.readArc("dock-v2"))?.theme).toBe("rose-pine");
+  });
+
+  it("takes the theme off when none is given", async () => {
+    const { registry } = await vault();
+    await registry.createArc("dock-v2");
+    await registry.wearTheme("dock-v2", "rose-pine");
+    const bare = await registry.wearTheme("dock-v2", undefined);
+    expect(bare).not.toHaveProperty("theme");
+    expect(await registry.readArc("dock-v2")).not.toHaveProperty("theme");
+  });
+
+  it("dresses only active arcs", async () => {
+    const { registry } = await vault();
+    await registry.createArc("dock-v2");
+    await registry.archiveArc("dock-v2");
+    await expect(registry.wearTheme("dock-v2", "nord")).rejects.toThrow(ArcNotActiveError);
+    await expect(registry.wearTheme("ghost", "nord")).rejects.toThrow(MissingArcError);
   });
 });
 

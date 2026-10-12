@@ -25,7 +25,11 @@ import { type CheckpointsPort, forkAtPrompt } from "./fork.ts";
 import type { Animator } from "./motion.ts";
 import type { PageThresholds } from "./page.ts";
 import type { PaneFactory, PaneOrigin } from "./pane-kinds.ts";
-import type { FocusedPermissionsPort } from "./permissions-model.ts";
+import type {
+  FocusedPermissionsPort,
+  PermissionsPort,
+  SessionGrantsPort,
+} from "./permissions-model.ts";
 import {
   type AfterTurn,
   type AgentFactory,
@@ -40,8 +44,8 @@ import {
   type SessionPort,
   startFreshSession,
 } from "./session-attachment.ts";
-import type { SessionTreePort } from "./session-tree-pane.ts";
-import type { ShellEscapePort } from "./shell-escape.ts";
+import { focusOrOpenSession, type SessionTreePort } from "./session-tree-pane.ts";
+import type { ShellDecisionSink, ShellEscapePort } from "./shell-escape.ts";
 
 export interface SessionPaneDeps {
   core(): AppCore;
@@ -66,7 +70,7 @@ export interface SessionPaneDeps {
   botOf?: (name: string) => BotEntry | undefined;
   botSpend?: (name: string) => Promise<BotSummary | undefined>;
   now?: () => number;
-  shellEscape?: (guard: ToolGuard) => ShellEscapePort;
+  shellEscape?: (guard: ToolGuard, onDecision: ShellDecisionSink) => ShellEscapePort;
   spillFile?: (sessionId: string, spillId: string) => string | undefined;
   workspaceFiles?: NonNullable<ConversationPorts["workspaceFiles"]>;
 }
@@ -182,9 +186,12 @@ export class SessionPanes {
     };
   }
 
-  focusedPermissionsPort(): FocusedPermissionsPort {
+  focusedPermissionsPort(permissions: PermissionsPort): FocusedPermissionsPort {
     return {
-      session: () => this.focused()?.pane.model.sessionGrants(),
+      session: () => {
+        const pane = this.focused()?.pane;
+        return pane === undefined ? undefined : sessionGrantsOf(pane, permissions);
+      },
       lastQuietRun: () => this.focused()?.pane.model.quietRuns.lastQuietRun,
     };
   }
@@ -236,7 +243,7 @@ class PaneSession implements SessionControls {
     this.selectedModel = attachment?.modelReference;
     const checkpoints = deps.checkpoints;
     this.guard = {
-      confirm: (call) => this.pane.confirmMutation(call),
+      confirm: (call) => this.pane.mutationConfirmation(call),
       ...(checkpoints !== undefined && {
         beforeMutation: () => checkpoints.capture(),
         beforeTurn: () => checkpoints.beginTurn?.(),
@@ -266,11 +273,16 @@ class PaneSession implements SessionControls {
       ...(deps.botOf !== undefined && { botOf: deps.botOf }),
       ...(deps.now !== undefined && { now: deps.now }),
       ...(deps.shellEscape !== undefined && {
-        shellEscape: deps.shellEscape(this.guard),
+        shellEscape: deps.shellEscape(this.guard, (decision, call) =>
+          this.pane.model.quietRuns.noteShellEscape(call, decision),
+        ),
         recordShellEscape: (transcript: string) => this.recordShellEscape(transcript),
       }),
       spillFile: (spillId) => this.spillOnDisk(spillId),
       openFile: (path, options) => deps.core().intents.openFile(path, options),
+      ...(deps.trees !== undefined && {
+        openSession: (sessionId: string) => this.openSession(sessionId),
+      }),
       ...(deps.workspaceFiles !== undefined && { workspaceFiles: deps.workspaceFiles }),
     };
     this.pane = new ConversationPane(
@@ -359,6 +371,15 @@ class PaneSession implements SessionControls {
     if (this.live === undefined || this.pane.arc === arc) return;
     this.pane.arc = arc;
     this.notify();
+  }
+
+  private openSession(sessionId: string): void {
+    void focusOrOpenSession(sessionId, {
+      sessions: this.deps.trees ?? {},
+      intents: this.deps.core().intents,
+      presence: this.deps.paneSessions,
+      live: () => !this.pane.disposed(),
+    });
   }
 
   private spillOnDisk(spillId: string): string | undefined {
@@ -459,6 +480,13 @@ function buildAgent(
   } catch (cause) {
     return { failure: toError(cause).message };
   }
+}
+
+function sessionGrantsOf(pane: ConversationPane, permissions: PermissionsPort): SessionGrantsPort {
+  const sessionId = pane.sessionId;
+  return sessionId === undefined || permissions.sessionGrants === undefined
+    ? pane.model.sessionGrants()
+    : permissions.sessionGrants(sessionId);
 }
 
 function siblingTitles(core: AppCore, selfId: string): readonly string[] {

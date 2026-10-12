@@ -1,4 +1,4 @@
-import { type Agent, defaultSigil, type ToolCallPart } from "@keywork/engine";
+import { type Agent, type Confirmation, defaultSigil, type ToolCallPart } from "@keywork/engine";
 import { ruleLabel } from "@keywork/shared";
 import { Box, bg, fg, link, StyledText, Text, type TextChunk } from "@opentui/core";
 import type { BotEntry } from "./bots.ts";
@@ -248,6 +248,10 @@ export class ConversationPane implements Pane {
 
   confirmMutation(call: ToolCallPart): Promise<boolean> {
     return this.model.confirmMutation(call);
+  }
+
+  mutationConfirmation(call: ToolCallPart): Promise<Confirmation> {
+    return this.model.mutationConfirmation(call);
   }
 
   bindAfterTurn(hook: () => Promise<void>): void {
@@ -663,10 +667,9 @@ export class ConversationPane implements Pane {
       return [Text({ content: this.model.pickerHint(), fg: theme.accent })];
     }
     if (this.model.disclosing()) {
-      const spill = this.model.cursoredSpill() === undefined ? "" : " · o opens the spill";
       return [
         Text({
-          content: `disclose · tab toggles · shift+tab older${spill} · esc done`,
+          content: `disclose · tab toggles · shift+tab older${this.openHint()} · esc done`,
           fg: theme.accent,
         }),
       ];
@@ -676,6 +679,11 @@ export class ConversationPane implements Pane {
       return [Text({ content: busyPromptHint, fg: theme.textDim })];
     }
     return [];
+  }
+
+  private openHint(): string {
+    if (this.model.cursoredSpill() !== undefined) return " · o opens the spill";
+    return this.model.cursoredChild() === undefined ? "" : " · o opens the child";
   }
 
   private rowTint(

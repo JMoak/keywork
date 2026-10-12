@@ -8,6 +8,12 @@ import {
   type ProviderRegistration,
   RepoMap,
   type RepoMapFacts,
+  type SandboxHost,
+  type SandboxMode,
+  type SandboxRefusal,
+  type SandboxSupport,
+  sandboxPromise,
+  sandboxSupport,
 } from "@keywork/engine";
 import type { KeyworkConfig, LspConfig, McpServerConfig } from "@keywork/shared";
 import {
@@ -41,6 +47,12 @@ export interface DoctorFacts {
   lspSetting?: LspConfig;
   languageServers?: LanguageFacts;
   crashLog?: CrashLogFacts;
+  sandbox?: SandboxFacts;
+}
+
+export interface SandboxFacts {
+  setting: SandboxMode;
+  support: SandboxSupport;
 }
 
 export async function doctorCommand(
@@ -59,9 +71,11 @@ export async function workspaceDoctorFacts(
   cwd: string,
   trusted: boolean,
   config: KeyworkConfig,
+  sandboxHost?: SandboxHost,
 ): Promise<DoctorFacts> {
   const facts: DoctorFacts = {
     trusted,
+    sandbox: { setting: config.sandbox ?? "off", support: await sandboxSupport(sandboxHost) },
     ...(config.repoMap !== undefined && { repoMapSetting: config.repoMap }),
     ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
     ...(config.lsp !== undefined && { lspSetting: config.lsp }),
@@ -103,11 +117,37 @@ export function renderDoctorReport(report: DoctorReport): string {
 
 function workspaceRows(facts: DoctorFacts): DoctorRow[] {
   return [
+    ...sandboxRows(facts.sandbox),
     ...languageServerRows(facts),
     ...repoMapRows(facts),
     ...mcpServerRows(facts.mcpServers),
     ...crashRows(facts.crashLog),
   ];
+}
+
+function sandboxRows(sandbox: SandboxFacts | undefined): DoctorRow[] {
+  return sandbox === undefined ? [] : [{ label: "sandbox", value: sandboxLine(sandbox) }];
+}
+
+function sandboxLine({ setting, support }: SandboxFacts): string {
+  if (setting === "off") return `off · ${hostCapability(support)}`;
+  const refusal = support[setting];
+  return refusal === undefined
+    ? `${setting} · on · ${sandboxPromise(setting)}`
+    : `${setting} · refused · ${refusal.fact} · ${refusal.remedy}`;
+}
+
+function hostCapability({ workspace, isolated }: SandboxSupport): string {
+  if (workspace?.fact === isolated?.fact) {
+    return workspace === undefined
+      ? "workspace and isolated available here"
+      : `workspace and isolated refused here: ${workspace.fact}`;
+  }
+  return [modeCapability("workspace", workspace), modeCapability("isolated", isolated)].join(" · ");
+}
+
+function modeCapability(mode: string, refusal: SandboxRefusal | undefined): string {
+  return refusal === undefined ? `${mode} available` : `${mode} refused: ${refusal.fact}`;
 }
 
 function languageServerCount(setting: LspConfig | undefined): number {

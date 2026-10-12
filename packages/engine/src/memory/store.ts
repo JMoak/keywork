@@ -408,9 +408,7 @@ export class MemoryStore {
         ...(await this.staging.removalDeltas(item)),
       ];
       const landed = deltas[0]?.path ?? stagedSubjectPath(item);
-      const result = await this.commit("approve", deltas, landed, false);
-      await this.audit(`approved ${describeStaged(item)}`);
-      return result;
+      return this.commitWithEcho("approve", deltas, landed, `approved ${describeStaged(item)}`);
     });
   }
 
@@ -419,8 +417,8 @@ export class MemoryStore {
     await this.serialized(async () => {
       const item = await this.staging.require(stagedId);
       const deltas = await this.staging.removalDeltas(item);
-      await this.commit("discard", deltas, stagedSubjectPath(item), false);
-      await this.audit(`discarded ${describeStaged(item)}`);
+      const subject = stagedSubjectPath(item);
+      await this.commitWithEcho("discard", deltas, subject, `discarded ${describeStaged(item)}`);
     });
   }
 
@@ -712,17 +710,30 @@ export class MemoryStore {
     ];
   }
 
+  private async commitWithEcho(
+    op: LedgerOp,
+    deltas: FileDelta[],
+    path: string,
+    echo: string,
+  ): Promise<WriteResult> {
+    const moment = this.now();
+    const result = await this.commit(op, deltas, path, false, moment);
+    await this.audit(echo, moment);
+    return result;
+  }
+
   private async commit(
     op: LedgerOp,
     deltas: FileDelta[],
     path: string,
     staged: boolean,
+    moment = this.now(),
   ): Promise<WriteResult> {
     for (const delta of deltas) await this.apply(delta);
     const entry: LedgerEntry = {
       id: crypto.randomUUID(),
       op,
-      timestamp: this.now().toISOString(),
+      timestamp: moment.toISOString(),
       deltas,
     };
     this.log.push(entry);
@@ -736,8 +747,8 @@ export class MemoryStore {
     else await this.files.write(delta.path, delta.after);
   }
 
-  private async audit(event: string): Promise<void> {
-    const line = auditLine(this.now().toISOString(), event);
+  private async audit(event: string, moment = this.now()): Promise<void> {
+    const line = auditLine(moment.toISOString(), event);
     const path = this.auditPath();
     const before = await this.files.read(path);
     await this.apply(fileDelta(path, before, `${before ?? ""}${line}`));

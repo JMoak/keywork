@@ -43,6 +43,11 @@ function stagedTargets(items: StagedItem[]): string[] {
   return items.flatMap((item) => (isStagedWrite(item) ? [item.target] : []));
 }
 
+function tickingClock(): () => Date {
+  let millisecond = Date.parse("2026-08-10T14:30:00.000Z");
+  return () => new Date(millisecond++);
+}
+
 async function diskFiles(root: string, dir = ""): Promise<Map<string, string>> {
   const files = new Map<string, string>();
   for (const entry of await readdir(join(root, dir), { withFileTypes: true })) {
@@ -365,6 +370,23 @@ describe("staging (untrusted provenance)", () => {
     expect(await store.listStaged()).toEqual([]);
     expect(await readFile(join(root, "curation.md"), "utf8")).toContain("discarded note → Kept.md");
   });
+
+  it.each([
+    ["approve", "approved note → Planted.md"],
+    ["discard", "discarded note → Planted.md"],
+  ] as const)(
+    "%s and its audit echo share one moment while the clock runs",
+    async (verb, echoed) => {
+      const { store } = await vault({ now: tickingClock() });
+      await store.writeNote({ title: "Planted", body: "payload\n", provenance: "untrusted" });
+      const [item] = await store.listStaged();
+      await store[verb](item?.id ?? "");
+      const op = store.ledger().at(-1);
+      const echo = (await store.readAudit()).at(-1);
+      expect([op?.op, echo?.event]).toEqual([verb, echoed]);
+      expect(echo?.timestamp).toBe(op?.timestamp);
+    },
+  );
 
   it("defers supersession stamping until approval", async () => {
     const { store } = await vault();

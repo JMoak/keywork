@@ -1,6 +1,7 @@
 import { access, mkdir, readdir, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { isMissingFileError } from "../memory/vault-files.ts";
+import { childDirFor } from "./children.ts";
 import { removeSessionFiles, spillDirFor } from "./spill.ts";
 
 export const trashDirName = ".trash";
@@ -21,11 +22,11 @@ export class SessionTrash {
 
   async put(sessionFile: string): Promise<string> {
     await mkdir(this.dir, { recursive: true });
-    return moveSessionPair(sessionFile, join(this.dir, basename(sessionFile)));
+    return moveSessionFiles(sessionFile, join(this.dir, basename(sessionFile)));
   }
 
   restore(trashedFile: string): Promise<string> {
-    return moveSessionPair(trashedFile, join(this.sessionDir, basename(trashedFile)));
+    return moveSessionFiles(trashedFile, join(this.sessionDir, basename(trashedFile)));
   }
 
   async files(): Promise<string[]> {
@@ -52,18 +53,26 @@ export class SessionTrash {
   }
 }
 
-export function sessionFilePair(sessionFile: string): { log: string; spills: string } {
-  return { log: sessionFile, spills: spillDirFor(sessionFile) };
+export interface SessionFileSet {
+  log: string;
+  spills: string;
+  children: string;
 }
 
-async function moveSessionPair(from: string, to: string): Promise<string> {
-  const source = sessionFilePair(from);
-  const target = sessionFilePair(to);
-  if (await exists(target.log)) throw new SessionFileCollisionError(target.log);
-  if (await exists(target.spills)) throw new SessionFileCollisionError(target.spills);
+export function sessionFileSet(sessionFile: string): SessionFileSet {
+  return { log: sessionFile, spills: spillDirFor(sessionFile), children: childDirFor(sessionFile) };
+}
+
+async function moveSessionFiles(from: string, to: string): Promise<string> {
+  const source = sessionFileSet(from);
+  const target = sessionFileSet(to);
+  for (const path of [target.log, target.spills, target.children]) {
+    if (await exists(path)) throw new SessionFileCollisionError(path);
+  }
   await mkdir(dirname(to), { recursive: true });
   await rename(source.log, target.log);
   if (await exists(source.spills)) await rename(source.spills, target.spills);
+  if (await exists(source.children)) await rename(source.children, target.children);
   return to;
 }
 

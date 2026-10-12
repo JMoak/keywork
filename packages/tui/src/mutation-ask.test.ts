@@ -84,6 +84,23 @@ describe("MutationAsk", () => {
     expect(await other).toBe(false);
   });
 
+  it("tells the gate a session grant let a covered call through, and asks for the rest", async () => {
+    const gate = new MutationAsk(() => {});
+    const first = gate.confirmation(bashCall("git push origin main"));
+    gate.handleKey(parseChord("a"), askRows);
+    expect(await first).toBe(true);
+
+    expect(await gate.confirmation(bashCall("git push origin dev"))).toEqual({
+      approved: true,
+      gate: "user",
+      scope: "session",
+    });
+    const other = gate.confirmation(bashCall("rm -rf build"));
+    expect(gate.pending?.summary).toContain("rm -rf build");
+    gate.handleKey(parseChord("n"), askRows);
+    expect(await other).toBe(false);
+  });
+
   it("approves write once on a and keeps asking, since writes never persist", async () => {
     const gate = new MutationAsk(() => {});
     const first = gate.confirm(writeCall);

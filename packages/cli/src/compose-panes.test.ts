@@ -1,6 +1,11 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type ExtensionEntry, extensionEntries, type ToolGuard } from "@keywork/engine";
+import {
+  type ExtensionEntry,
+  extensionEntries,
+  type PermissionDecision,
+  type ToolGuard,
+} from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import type { AppOptions, ConnectionsPort, WorkspacePort } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
@@ -136,12 +141,15 @@ describe("composePanes", () => {
   it("runs a prompt-line shell escape through the workspace bash tool under the pane guard", async () => {
     const asked: string[] = [];
     const { app } = await composedIn(await tempDir());
-    const port = app.shellEscape?.({
-      confirm: async (call) => {
-        asked.push((call.arguments as { command: string }).command);
-        return true;
+    const port = app.shellEscape?.(
+      {
+        confirm: async (call) => {
+          asked.push((call.arguments as { command: string }).command);
+          return true;
+        },
       },
-    });
+      () => undefined,
+    );
     const result = await port?.run({
       type: "tool-call",
       callId: "user-shell-1",
@@ -153,15 +161,19 @@ describe("composePanes", () => {
     expect(result?.output.trim()).toBe("wired");
   });
 
-  it("runs a read-only shell escape in a trusted workspace without asking", async () => {
+  it("runs a read-only shell escape in a trusted workspace without asking, and reports the bundle let it", async () => {
     const asked: string[] = [];
+    const decisions: PermissionDecision[] = [];
     const { app } = await composedIn(await tempDir());
-    const port = app.shellEscape?.({
-      confirm: async (call) => {
-        asked.push((call.arguments as { command: string }).command);
-        return true;
+    const port = app.shellEscape?.(
+      {
+        confirm: async (call) => {
+          asked.push((call.arguments as { command: string }).command);
+          return true;
+        },
       },
-    });
+      (decision) => decisions.push(decision),
+    );
     const result = await port?.run({
       type: "tool-call",
       callId: "user-shell-1",
@@ -169,6 +181,9 @@ describe("composePanes", () => {
       arguments: { command: "echo wired" },
     });
     expect(asked).toEqual([]);
+    expect(decisions).toEqual([
+      { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "trusted" },
+    ]);
     expect(result?.output.trim()).toBe("wired");
   });
 

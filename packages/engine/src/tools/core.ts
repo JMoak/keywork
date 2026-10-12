@@ -1,6 +1,7 @@
 import { memoryRecallTools } from "../memory/recall-tools.ts";
 import type { MemorySearcher } from "../memory/search.ts";
 import type { MemoryStore } from "../memory/store.ts";
+import type { ToolSandbox } from "../sandbox/session.ts";
 import type { Tool } from "../tools.ts";
 import type { AfterSave } from "./after-save.ts";
 import { bashTool, detectShell } from "./bash.ts";
@@ -27,10 +28,11 @@ export interface CoreToolOptions {
   worktree?: WorktreeChanges | undefined;
   origin?: OriginSource | undefined;
   session?: SessionSource | undefined;
+  sandbox?: ToolSandbox | undefined;
 }
 
 export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool[] {
-  const { memory, shell, onToolOutput, afterSave } = options;
+  const { memory, shell, onToolOutput, afterSave, sandbox } = options;
   const vault = options.vault ?? memory?.store;
   const base = [
     readTool(scope),
@@ -38,8 +40,8 @@ export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool
     editTool(scope, { afterSave, vault, origin: options.origin, session: options.session }),
     reportingChanges(
       shell === undefined
-        ? bashTool(scope.cwd, detectShell(), onToolOutput)
-        : persistentBashTool(shell, onToolOutput),
+        ? bashTool(scope.cwd, detectShell(), onToolOutput, sandbox)
+        : persistentBashTool(shell, onToolOutput, sandbox),
       options.worktree,
     ),
   ];

@@ -51,6 +51,20 @@ export const permissionRoutes = [
       "404": "No workspace grant matches that rule.",
     },
   },
+  {
+    method: "POST",
+    path: "/permissions/session/{sessionId}/revoke",
+    operationId: "revokeSessionGrant",
+    summary:
+      'Remove one grant a `scope: "session"` answer recorded for that session, so the call it covered asks again there. Other sessions and the workspace grants are untouched.',
+    authenticated: true,
+    requestBody: revokeBody,
+    responses: {
+      "200": "`{ revoked: rule }`.",
+      "400": 'The body is not `{ rule: { action, resource, effect: "allow" } }`.',
+      "404": "That session holds no grant matching the rule.",
+    },
+  },
 ] as const satisfies readonly RouteSpec[];
 
 export const permissionFamily = {
@@ -58,19 +72,31 @@ export const permissionFamily = {
   handlers: ({ host }) => ({
     listPermissions: async () => json(200, await host.permissions()),
     revokeWorkspaceGrant: async (request) => {
-      const rule = grantedRuleOf(fieldsOf<{ rule: unknown }>(await bodyOf(request))?.rule);
-      if (rule === undefined) {
-        return json(400, {
-          error: 'the body must be { rule: { action, resource, effect: "allow" } }',
-        });
-      }
+      const rule = await revokedRuleOf(request);
+      if (rule === undefined) return malformedRule();
       if (!(await host.revokeWorkspaceGrant(rule))) {
         return json(404, { error: "no workspace grant matches that rule" });
       }
       return json(200, { revoked: rule });
     },
+    revokeSessionGrant: async (request, { sessionId }) => {
+      const rule = await revokedRuleOf(request);
+      if (rule === undefined) return malformedRule();
+      if (!(await host.revokeSessionGrant(sessionId ?? "", rule))) {
+        return json(404, { error: "that session holds no grant matching that rule" });
+      }
+      return json(200, { revoked: rule });
+    },
   }),
 } satisfies RouteFamily<typeof permissionRoutes>;
+
+async function revokedRuleOf(request: Request): Promise<PermissionRule | undefined> {
+  return grantedRuleOf(fieldsOf<{ rule: unknown }>(await bodyOf(request))?.rule);
+}
+
+function malformedRule(): Response {
+  return json(400, { error: 'the body must be { rule: { action, resource, effect: "allow" } }' });
+}
 
 function grantedRuleOf(value: unknown): PermissionRule | undefined {
   const fields = fieldsOf<PermissionRule>(value);

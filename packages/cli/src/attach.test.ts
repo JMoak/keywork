@@ -34,7 +34,7 @@ describe("choosePane", () => {
     }
   });
 
-  it.each(["memory", "mcp", "arcs", "workspaces"])(
+  it.each(["memory", "mcp", "arcs", "workstreams", "ws", "workspaces"])(
     "refuses %s for wanting the workspace",
     (name) => {
       const choice = choosePane(name);

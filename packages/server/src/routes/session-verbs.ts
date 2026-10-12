@@ -1,8 +1,8 @@
 import {
   type ContextReading,
-  type CostRollup,
   compactionDue,
   contextFullness,
+  costBasis,
   type EffortLevel,
   effortLevels,
   flushDue,
@@ -363,17 +363,7 @@ export function contextAnswerOf(reading: ContextReading): ContextAnswer {
 }
 
 export function costAnswerOf(report: CostReport): CostAnswer {
-  return { ...report, basis: costBasisOf(report.rollup, report.modelId) };
-}
-
-function costBasisOf(rollup: CostRollup, modelId: string | undefined): string {
-  if (rollup.pricedTurns === 0) return `no pricing for ${modelId ?? "this model"}`;
-  if (rollup.unpricedTurns > 0) {
-    return `${rollup.pricedTurns} priced turns · ${rollup.unpricedTurns} more had no pricing`;
-  }
-  if (rollup.meteredTurns === rollup.pricedTurns) return "metered by the provider";
-  if (rollup.meteredTurns > 0) return "partly metered, partly estimated";
-  return `estimated from ${modelId ?? "list"} rates`;
+  return { ...report, basis: costBasis(report.rollup, report.modelId) };
 }
 
 function refused(outcome: Refusal): Response {

@@ -25,6 +25,7 @@ export interface ArcGroupRow {
   cost: string | undefined;
   costPartial: boolean;
   current: boolean;
+  theme?: string;
 }
 
 export type ArcsLevel = "arcs" | "sessions";
@@ -241,6 +242,7 @@ export class ArcsPaneModel extends RowCursor<ArcGroupRow> {
       liveness: this.livenessOf(members),
       age: relativeAge(now, latest),
       ...this.costOf(members),
+      ...(arc.theme !== undefined && { theme: arc.theme }),
     };
   }
 
@@ -305,6 +307,7 @@ export interface ArcGroupParts {
 export function arcGroupParts(row: ArcGroupRow, cursored: boolean): ArcGroupParts {
   const facts = [sessionsFact(row.sessions), row.age];
   if (row.status === "archived") facts.unshift("archived");
+  if (row.theme !== undefined) facts.push(`wears ${row.theme}`);
   if (cursored && row.cost !== undefined)
     facts.push(row.costPartial ? `${row.cost} + unpriced` : row.cost);
   return {

@@ -16,6 +16,7 @@ import {
 } from "./chrome-states.ts";
 import { coldStart } from "./cold-start.ts";
 import { defectRepros } from "./defect-repros.ts";
+import { delegation } from "./delegation.ts";
 import { diffPane } from "./diff-pane.ts";
 import { discovery } from "./discovery.ts";
 import {
@@ -64,6 +65,7 @@ export const scenarios: readonly Scenario[] = [
   pageTiers,
   mastheadLadder,
   sessionLifecycle,
+  delegation,
   longSession,
   gaugeRamp,
   gaugeSteps,

@@ -145,6 +145,17 @@ const samples: Samples = {
   "gate.preset": [{ from: "ask", to: "trusted" }],
   "session.mode": [{ mode: "plan" }],
   "context.injected": [{ injection: { source: "skill", id: "deploy", scope: "workspace" } }],
+  "child.started": [{ callId: "c1", sessionId: "s2", title: "find the callers", bot: "scout" }],
+  "child.finished": [
+    {
+      callId: "c1",
+      sessionId: "s2",
+      outcome: "denied",
+      usage,
+      costNanos: 1200,
+      refused: [{ tool: "bash", callId: "c7" }],
+    },
+  ],
   "diagnostics.published": [{ path: "src/a.ts", count: 2 }],
   "shell.reset": [{ replay: true }],
   "extension.notice": [

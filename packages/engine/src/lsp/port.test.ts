@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
+import { refusingSandbox, type Sandbox, SandboxRefusal } from "../sandbox/sandbox.ts";
 import { installLanguageServerShim, lspFixtureServerPath } from "../testing/index.ts";
 import { toolScope } from "../tools/confine.ts";
 import type { SpawnLike } from "./path.ts";
@@ -170,6 +171,54 @@ describe("languagePort", () => {
     expect(world.missing).toEqual(["typescript"]);
     expect(world.log.map((line) => line.event)).toEqual(["lsp.missing"]);
     await world.port.dispose();
+  });
+
+  it("spawns nothing when the sandbox refuses and keeps the reason in its facts", async () => {
+    const refusal = new SandboxRefusal("workspace", "no primitive here", "turn it off");
+    const world = await harness("basic", { sandbox: refusingSandbox(refusal) });
+    expect((await saved(world, "a.ts", "BROKEN")).diagnostics).toEqual([]);
+    expect((await saved(world, "b.ts", "BROKEN")).diagnostics).toEqual([]);
+    expect(world.spawns()).toBe(0);
+    expect(world.port.facts().servers[0]).toMatchObject({
+      state: "failed",
+      detail: refusal.message,
+    });
+    expect(world.log.map((line) => line.event)).toEqual(["lsp.refused"]);
+    await world.port.dispose();
+  });
+
+  it("spawns the server launch the sandbox hands back", async () => {
+    const cwd = await tempDir();
+    const shim = installLanguageServerShim(cwd, shimName, "basic");
+    const spawned: string[][] = [];
+    const confining: Sandbox = {
+      mode: "workspace",
+      refusal: undefined,
+      confine: (launch) => ({
+        ...launch,
+        file: "confiner",
+        args: ["--", launch.file, ...launch.args],
+      }),
+    };
+    const port = languagePort(toolScope(cwd), {
+      servers: { typescript: { command: [shimName, "--stdio"], extensions: [".ts"] } },
+      searchPath: cwd,
+      sandbox: confining,
+      spawn: (file, args, options) => {
+        spawned.push([file, ...args]);
+        return spawn(process.execPath, [lspFixtureServerPath, "basic", shim.marker, shim.trace], {
+          cwd: options.cwd,
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+        });
+      },
+    });
+    const path = join(cwd, "cache.ts");
+    await writeFile(path, "BROKEN");
+    expect(await port.afterSave(path)).not.toEqual([]);
+    expect(spawned[0]?.slice(0, 2)).toEqual(["confiner", "--"]);
+    expect(spawned[0]?.at(-1)).toBe("--stdio");
+    await port.dispose();
   });
 
   it("fails a server that misses the initialize budget, logs it, and kills the child", async () => {

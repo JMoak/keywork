@@ -79,6 +79,45 @@ describe("guardedShellEscape", () => {
     ]);
   });
 
+  it("reports each gate with the call it decided, as the agent does for tool calls", async () => {
+    const reported: Array<[PermissionDecision, ToolCallPart]> = [];
+    const port = guardedShellEscape({
+      tools: () => [bashStub([])],
+      guard: {},
+      permissions: () => ({ permission: "allow", gate: "trusted" }),
+      onDecision: (decision, decided) => reported.push([decision, decided]),
+    });
+
+    await port.run(call);
+
+    expect(reported).toEqual([
+      [{ tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "trusted" }, call],
+    ]);
+  });
+
+  it("reads a guard's full answer, so a refusal stays a refusal and a grant keeps its scope", async () => {
+    const runs: string[] = [];
+    const decisions: PermissionDecision[] = [];
+    const answers = [
+      { approved: false, gate: "user" as const },
+      { approved: true, gate: "user" as const, scope: "session" as const },
+    ];
+    const port = guardedShellEscape({
+      tools: () => [bashStub(runs)],
+      guard: { confirm: async () => answers.shift() ?? false },
+      onDecision: (decision) => decisions.push(decision),
+    });
+
+    expect(await port.run(call)).toEqual({ output: "declined by user", isError: true });
+    expect(await port.run(call)).toEqual({ output: "ran echo hi", isError: false });
+
+    expect(runs).toEqual(["echo hi"]);
+    expect(decisions).toEqual([
+      { tool: "bash", callId: "user-shell-1", verdict: "denied", gate: "user" },
+      { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "user", scope: "session" },
+    ]);
+  });
+
   it("refuses when the guard declines and never runs the command", async () => {
     const runs: string[] = [];
     const port = guardedShellEscape({

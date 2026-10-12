@@ -490,7 +490,7 @@ function metaLine(kind: TranscriptLine["kind"], pieces: readonly LinkableSpan[])
 }
 
 function toolEntryLines(run: ToolRun, failed: boolean, layout: Layout): TranscriptLine[] {
-  const spans = clipSpans(layout.link(toolRowSpans(run)), layout.body, {
+  const spans = clipSpans(layout.link(toolRowSpans(run, layout.marks)), layout.body, {
     text: "…",
     tone: "meta",
   });

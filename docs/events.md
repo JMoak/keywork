@@ -62,7 +62,13 @@ is the whole `/doc` with a fixed version and workspace, and
 the way back: `bun run contract:fixtures` regenerates both. The diff of a regenerated fixture
 is the review surface for a contract change: a removed key or a renamed operation in that
 diff means a major bump, an added one means a minor bump, and either goes in
-`packages/server/src/contract.ts` in the same change.
+`packages/server/src/contract.ts` in the same change. Any change to either fixture needs
+one of the two, with a single exception: a reworded `summary` or `description` string in
+the OpenAPI document is documentation, so it needs no bump. Every key in the event shapes
+is contract, a payload field named `summary` included. `bun run check:contract` holds the
+rule. It compares both fixtures and `contractVersion` with `HEAD` (CI passes the commit
+before the change), and fails when a fixture moved but the version didn't move forward.
+Which of the two bumps a diff needs stays the reviewer's call.
 
 ## Turn lifecycle
 
@@ -179,6 +185,42 @@ Fires when a tool returns or throws.
 | `output` | `string` | The result text, bounded to the tool output budget. |
 | `isError` | `boolean` | True when the tool threw or was refused. |
 | `spill` | `SpillReference`, optional | Present when the output was clipped: `{ id, bytes, elidedFrom, elidedTo }` names the spill file beside the session. |
+
+## Child sessions
+
+The `delegate` tool hands a piece of work to a child session and waits for its answer
+([`backlog/120-subagents.md`](backlog/120-subagents.md)). Both events ride the parent's bus,
+inside the `delegate` call's `tool.started` / `tool.finished` pair, so their envelope carries
+the parent's `sessionId`. While the child works, the same call streams one `tool.output` line
+per child tool call (`read src/a.ts`, `needs you · bash git push`). The child's own turns stay
+on its own bus and in its own session file under `<parent>.children/`. Never replayed: a
+resumed transcript rebuilds its child rows from the `delegate` results, whose first line names
+the child.
+
+### child.started
+
+Fires once the child session exists and before its first turn.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `callId` | `string` | The `delegate` call that spawned it. |
+| `sessionId` | `string`, optional | The child's session id; absent when the parent session is not saved, so neither is the child. |
+| `title` | `string` | The few words the model named the work with. |
+| `bot` | `string`, optional | The bot the child runs as; absent when it runs as no bot. |
+
+### child.finished
+
+Fires when the child's turn has ended and its messages are saved, before the `delegate` result
+reaches the parent.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `callId` | `string` | Matches `child.started`. |
+| `sessionId` | `string`, optional | As on `child.started`. |
+| `outcome` | `"completed" \| "interrupted" \| "failed" \| "denied"` | `denied` means the child stopped at a call no one could approve, which only happens where a refusal ends the run (`keywork run`). |
+| `usage` | `Usage` | The child's token counts across its turn. |
+| `costNanos` | `number`, optional | What the child cost in nano-dollars, present only when every one of its model calls was priced. |
+| `refused` | `{ tool, callId }[]`, optional | The child's calls a headless gate refused, present only when there were any. |
 
 ## Gate and session state
 
@@ -328,8 +370,9 @@ four surfaces because each is cheap to re-read and consumed by exactly one pane 
 
 Where it fires: `mcp` wherever the MCP registry notifies its subscribers (a server connecting,
 dropping, changing its catalog, and after `restart` and `enabled`); `arcs` wherever the arc
-service notifies (create, close, abandon, a session binding or release, airlock triage); `bots`
-after a bot is created or a session is bound to one; `workspaces` after the workspace is trusted
+service notifies (create, close, abandon, a session binding or release, airlock triage, and a
+theme worn or taken off through `POST /arcs/{slug}/theme`, whose `theme` then rides on the arc in
+`GET /arcs` so every client dresses the arc alike); `bots` after a bot is created or a session is bound to one; `workspaces` after the workspace is trusted
 and declared, a named workspace is created or chosen, and a focus dir is linked or unlinked. A
 verb that changed nothing fires nothing. The payload carries no detail on purpose: the family's
 `GET` is the source of truth.
@@ -464,7 +507,7 @@ as no filter.
 
 ## The one translation: `engine.error`
 
-Fourteen of the fifteen types cross the wire as `JSON.stringify(envelope)` with no per-type
+Every type but this one crosses the wire as `JSON.stringify(envelope)` with no per-type
 code. `engine.error` carries an `Error` instance, which `JSON.stringify` would flatten to
 `{}`. The server serializes every `Error` value anywhere in an envelope as
 

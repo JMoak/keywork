@@ -7,6 +7,7 @@ import type {
   BotScope,
   BotsPort,
   McpPort,
+  ThemesPort,
   WorkspacesPort,
 } from "../host.ts";
 import { servedBy, surfaceChanged } from "./answers.ts";
@@ -45,6 +46,13 @@ const arcBindingBody: JsonSchema = {
   type: "object",
   required: ["slug"],
   properties: { slug: { type: ["string", "null"] } },
+  additionalProperties: false,
+};
+
+const arcThemeBody: JsonSchema = {
+  type: "object",
+  required: ["theme"],
+  properties: { theme: { type: ["string", "null"], minLength: 1 } },
   additionalProperties: false,
 };
 
@@ -190,6 +198,23 @@ export const surfaceRoutes = [
       "200": "The arc was abandoned.",
       "403": "The workspace is untrusted.",
       "404": "No arc has that slug.",
+      "503": "This host serves no arcs.",
+    },
+  },
+  {
+    method: "POST",
+    path: "/arcs/{slug}/theme",
+    operationId: "setArcTheme",
+    summary:
+      'Have an arc wear a theme, or none with `theme: null`. The theme is recorded on the arc itself, so every client dressing the arc\'s panes wears the same one; `theme` must name a theme `GET /themes` serves. Answers the arc as `GET /arcs` lists it. Fires `surface.changed` with `kind: "arcs"`.',
+    authenticated: true,
+    requestBody: arcThemeBody,
+    responses: {
+      "200": "The arc after the change.",
+      "400": "The body is not `{ theme: string | null }`.",
+      "403": "The workspace is untrusted.",
+      "404": "No arc has that slug.",
+      "409": "The arc is not active, or no theme has that name.",
       "503": "This host serves no arcs.",
     },
   },
@@ -365,6 +390,13 @@ export const surfaceFamily = {
         await port.abandon(slug ?? "");
         return json(200, { slug, abandoned: true });
       }),
+      setArcTheme: arcs(async (port, request, { slug }) => {
+        const theme = optionalThemeOf(fieldsOf<{ theme: unknown }>(await bodyOf(request))?.theme);
+        if (theme === undefined)
+          return json(400, { error: "the body must be { theme: string | null }" });
+        if (theme !== null) await requireServedTheme(host.themes, theme);
+        return json(200, await port.setTheme(slug ?? "", theme));
+      }),
       bindSessionArc: arcs(async (port, request, { id }) => {
         const slug = optionalSlugOf(fieldsOf<{ slug: unknown }>(await bodyOf(request))?.slug);
         if (slug === undefined)
@@ -461,6 +493,16 @@ function slugOf(body: unknown): string | undefined {
 function optionalSlugOf(value: unknown): string | null | undefined {
   if (value === null) return null;
   return typeof value === "string" && slugProblem(value) === undefined ? value : undefined;
+}
+
+function optionalThemeOf(value: unknown): string | null | undefined {
+  return value === null ? null : nonBlank(value);
+}
+
+async function requireServedTheme(themes: ThemesPort | undefined, name: string): Promise<void> {
+  const served = (await themes?.list())?.themes ?? [];
+  if (!served.some((theme) => theme.name === name))
+    throw new Error(`no theme named "${name}" · GET /themes lists the ones served`);
 }
 
 function workspaceSlugOf(param: string | undefined): string | undefined {

@@ -142,6 +142,12 @@ describe("ArcsPaneModel rows", () => {
     const { model } = modelOver();
     expect(model.arcCount()).toBe(2);
   });
+
+  it("says which theme an arc wears when one is recorded on it", () => {
+    const worn = arcs.map((arc) => (arc.slug === "infra" ? { ...arc, theme: "nord" } : arc));
+    const { model } = modelOver({}, { arcs: worn });
+    expect(lines(model.rows())[1]).toBe("░ infra · 1 session · 2m · wears nord");
+  });
 });
 
 describe("ArcsPaneModel keys", () => {

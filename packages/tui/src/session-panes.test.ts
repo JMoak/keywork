@@ -1,11 +1,21 @@
-import { Agent, MockProvider, textTurn } from "@keywork/engine";
+import {
+  Agent,
+  MockProvider,
+  type PermissionResolver,
+  type PermissionsView,
+  type Tool,
+  textTurn,
+} from "@keywork/engine";
+import type { PermissionRule } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
 import { arcIndexOf } from "./arc-index.ts";
 import type { BotEntry } from "./bots.ts";
 import { detectCapabilities } from "./capability.ts";
 import { ConversationPane } from "./conversation-pane.ts";
+import { parseChord } from "./keys.ts";
 import { Animator } from "./motion.ts";
 import { resolvePageThresholds } from "./page.ts";
+import { type PermissionsPort, quietRunLine } from "./permissions-model.ts";
 import { AppProbe } from "./probe.ts";
 import {
   paneSessionIndex,
@@ -13,7 +23,8 @@ import {
   type SessionPort,
   sessionEscrow,
 } from "./session-attachment.ts";
-import { SessionPanes } from "./session-panes.ts";
+import { type SessionPaneDeps, SessionPanes } from "./session-panes.ts";
+import { guardedShellEscape } from "./shell-escape.ts";
 import { waitFor } from "./testing/index.ts";
 
 interface Built {
@@ -51,7 +62,7 @@ function fakeAttachment(id: string, seed: Partial<SessionAttachment> = {}): Fake
   };
 }
 
-function world() {
+function world(extra: Partial<SessionPaneDeps> = {}) {
   const built: Built[] = [];
   const created: FakeAttachment[] = [];
   const sessions: SessionPort = {
@@ -84,6 +95,7 @@ function world() {
     },
     sessions,
     botOf: (name) => roster[name],
+    ...extra,
   });
   probe = new AppProbe({ createPane: panes.createPane });
   const pane = (id: string): ConversationPane => {
@@ -182,3 +194,102 @@ describe("SessionPanes.working", () => {
     await waitFor(() => expect(panes.working()).toBe(false));
   });
 });
+
+describe("SessionPanes permissions", () => {
+  const stubBash: Tool = {
+    name: "bash",
+    description: "runs a command",
+    parameters: { type: "object" },
+    mutates: true,
+    execute: async (args) => `ran ${(args as { command: string }).command}`,
+  };
+
+  function escapes(permissions?: PermissionResolver): Partial<SessionPaneDeps> {
+    return {
+      shellEscape: (guard, onDecision) =>
+        guardedShellEscape({
+          tools: () => [stubBash],
+          guard,
+          ...(permissions !== undefined && { permissions }),
+          onDecision,
+        }),
+    };
+  }
+
+  const paneSeat: PermissionsPort = {
+    seat: "pane",
+    view: async () => emptyView,
+    revokeWorkspace: async () => false,
+  };
+
+  it("names a quiet shell escape as one in the ran-without-asking row", async () => {
+    const { panes, created, pane } = world(
+      escapes(() => ({ permission: "allow", gate: "trusted" })),
+    );
+    await waitFor(() => expect(created).toHaveLength(1));
+
+    pane("session-1").model.submitText("!git status");
+
+    const focused = panes.focusedPermissionsPort(paneSeat);
+    await waitFor(() =>
+      expect(quietRunLine(focused.lastQuietRun())).toBe(
+        "ran without asking · shell escape !git status · trusted reads",
+      ),
+    );
+  });
+
+  it("reports a later escape an [a] grant covered as a session grant", async () => {
+    const { panes, created, pane } = world(escapes());
+    await waitFor(() => expect(created).toHaveLength(1));
+    const model = pane("session-1").model;
+
+    model.submitText("!npm run build");
+    await waitFor(() => expect(model.pendingAsk).toBeDefined());
+    model.handleKey(parseChord("a"), "a");
+    await waitFor(() => expect(model.busy).toBe(false));
+    expect(panes.focusedPermissionsPort(paneSeat).lastQuietRun()).toBeUndefined();
+
+    model.submitText("!npm run test");
+
+    await waitFor(() =>
+      expect(quietRunLine(panes.focusedPermissionsPort(paneSeat).lastQuietRun())).toBe(
+        "ran without asking · shell escape !npm run test · session grant",
+      ),
+    );
+    expect(model.pendingAsk).toBeUndefined();
+  });
+
+  it("reads session grants from the seat when it keeps them, and from the pane otherwise", async () => {
+    const { panes, created, pane } = world(escapes());
+    await waitFor(() => expect(created).toHaveLength(1));
+    const model = pane("session-1").model;
+    model.submitText("!npm run build");
+    await waitFor(() => expect(model.pendingAsk).toBeDefined());
+    model.handleKey(parseChord("a"), "a");
+    await waitFor(() => expect(model.busy).toBe(false));
+
+    expect(await panes.focusedPermissionsPort(paneSeat).session()?.rules()).toEqual([
+      allowBash("npm run *"),
+    ]);
+
+    const asked: string[] = [];
+    const attachedSeat: PermissionsPort = {
+      ...paneSeat,
+      seat: "attached",
+      sessionGrants: (sessionId) => {
+        asked.push(sessionId);
+        return { rules: async () => [allowBash("git push *")], forget: async () => true };
+      },
+    };
+    expect(await panes.focusedPermissionsPort(attachedSeat).session()?.rules()).toEqual([
+      allowBash("git push *"),
+    ]);
+    expect(asked).toEqual(["fresh-1"]);
+  });
+});
+
+const emptyView: PermissionsView = { trusted: true, bundle: [], workspace: [], session: {} };
+
+function allowBash(resource: string): PermissionRule {
+  return { action: "bash", resource, effect: "allow" };
+}

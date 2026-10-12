@@ -993,3 +993,104 @@ Tests: `cli/src/workspace-sweep.test.ts` (5), `server/src/changes.test.ts` (4),
 `client.test.ts` and the rest of `serve.test.ts` green. `check:types` exits 0 for `cli` and
 `server`; the `tui` errors and the `main.ts` formatter complaint at the time of writing belong
 to another lane mid-edit (that file is CRLF at HEAD).
+
+### Theme parity with keywork-app · 2026-10-12
+
+Jordan asked keywork to serve the latest the app expects, so the app can stop carrying its
+own copy of what the engine owns. The app's theme pass (uncommitted in its tree) was read
+end to end and compared with K6.
+
+**The diff.** The app's `theme/schema.ts`, `sections.ts`, `complete.ts`, `contrast.ts`
+and `oklab.ts` are mirrors of keywork's: the thirteen tokens, every optional section, the
+floors (syntax 30, comment 15, terminal 30, selection 45, diff line 60, cursor 40), the
+density floors, the derivation constants (bright step 0.2, line mix 0.14, text span 0.28,
+selection 0.3, 1% steps), and APCA are the same code modulo naming; its `sync-themes.test`
+proves `completeTheme` identical on every gallery theme with sections stripped. Its
+`gallery.json` is synced from keywork's `gallery.ts` by `scripts/sync-themes.ts`, and the
+nineteen shared themes are byte-identical, no shade differs. Two gaps only. The app's
+gallery has twenty-one themes: `whiplash` and `whiplash-flash`, drawn in its K8 lane
+(the plan says "keywork + app", but the keywork half never landed), so the app's
+`check:themes` drift gate was failing against this checkout. And the app's
+`contrast-audit.ts` adds a rule keywork lacked: every measured pair must read in the
+theme's declared polarity, which catches a dark palette relabelled light. Nothing keywork
+sends is ignored: the app's `ServerTheme` reads every field and runs each served theme
+through its own `parseTheme`. Its client fixture `themes.json` carries two bare themes
+(no sections) plus `active` and `placeholders`; `GET /themes` already answered that shape,
+only fuller, since every served theme is complete. Nothing in the fixture was unanswerable.
+
+**What keywork now owns.** `whiplash` and `whiplash-flash` in `config/themes/whiplash.ts`,
+values as the app drew them (they pass every floor unchanged), appended to the gallery in
+the app's order so the sync is byte-stable; the TUI gets `theme-whiplash` and
+`theme-whiplash-flash` for free, and the e2e goldens for `discovery` and `tray-tour` verify
+unchanged. The polarity rule now lives in `contrastFailures`, so `parseTheme` refuses the
+mismatch with the app's exact wording (`text on background reads light-on-dark in a light
+theme`), and the gallery test proves all twenty-one clean. One reasoned departure from the
+app: a theme that states its own `selection.text` may invert the selection (that is what
+the field is for), so that single pair is free of polarity; the app's rule would refuse a
+legitimate dark theme with a light selection ground. `contrastMeasurements` (structured,
+layered `tokens` / `sections`, with ink, ground, floor, Lc and polarity freedom) and
+`auditTheme` (`minMarginLc`, `sectionMarginLc`, `failures`) are exported from
+`@keywork/shared`, with `contrastPolarity` beside `apcaLc`; `theme-audit.test.ts` pins the
+headroom to the numbers the app ratchets (night 3.1 / 1.7, day 13.1 / 16.5, whiplash
+4.8 / 6.9, whiplash-flash 14.6 / 17.1), so both repos agree to the tenth. `docs/themes.md`
+carries the polarity rule, the audit, the two new rows, and a note on what stays app-side
+paint; `docs/README.md` and `design-language.md` say twenty-one.
+
+**The route.** `GET /themes` keeps its shape; the summary now names whiplash and states
+that every served theme passed the floors and reads in its declared appearance. `bun run
+contract:fixtures` rewrote only the OpenAPI document (summary text); event shapes are
+untouched; additive, so `contractVersion` stays 1.0. `keywork-app-contract.test.ts` gained
+a consumer test: every served theme carries exactly the fields the app's wardrobe reads
+(sections always present, `pair` only when set), the thirteen tokens, 16/15/4 section keys,
+both house themes, and every `pair` names a served theme.
+
+**What the app can delete.** `packages/ui/src/theme/gallery.json` can shrink to the two
+house themes it needs before the server answers (or `scripts/themes/house.json` alone) with
+the rest taken from `GET /themes`; `scripts/sync-themes.ts` then only has the house pair to
+check. `theme/contrast-audit.ts` and the polarity half of `textures.test.ts` are now
+keywork's rule, mirrored or dropped. `theme/complete.ts` and `oklab.ts` are dead against a
+real server (every served theme is complete) and needed only while the house themes ship
+bare; sync them complete and both files go. The fixture's `closet-mist` (a theme below the
+floor) exercises a refusal keywork can never produce, since a closet theme that fails
+`parseTheme` is never served.
+
+**Left alone, and why.** `code.ts` (lezer tag to role mapping), `variables.ts` (`--kw-*`
+names, fonts), `panes/terminal/theme.ts` (xterm slot mapping) and `attire.ts` (per-pane
+outfits) are rendering, the app's paint over keywork's roles and slots, like the TUI's
+glyph tiers. The TUI still paints from base tokens only. `NOTICE` is unchanged: whiplash is
+keywork's own design, no new source. Gate: `check:types`, `lint`, `check:prose` and
+`check:guardrails` exit 0; `shared/src/config` (273), `keywork-app-contract.test.ts`,
+`server.test.ts`, `tui/src/theme.test.ts` and `system-theme.test.ts` green (295 across the
+touched files); full `bun run test` and `bun run e2e` were not run, another lane was
+editing command and arc files.
+
+### Cost basis in one home · 2026-10-12
+
+The cost basis phrase the merge-debt audit above found twice now lives once, as
+`costBasis(rollup, modelId)` in `engine/src/pricing.ts` beside `knownCostNanos`, exported
+from the engine index. The name is the wire field's (`basis` on `GET /sessions/{id}/cost`)
+and the one the dropped branch gave it; the shape is the server's five branches, so it is the
+whole honesty line 102 asks for under cost with lineage (no pricing, partly priced, metered,
+partly metered, estimated), taking a `CostRollup`, which is what a lineage rollup will be too.
+`costAnswerOf` in `server/src/routes/session-verbs.ts` calls it, and `spendLine` in
+`tui/src/session-ledger.ts` now wraps it (`cost $x · basis`, `cost $x across basis`, `cost
+unknown · basis`) with every string unchanged. `pricing.test.ts` pins the five branches and
+both fallbacks; `server.test.ts`, `session-ledger.test.ts`, `conversation-model.test.ts`,
+`effort-and-cache.test.ts` and `context-gauge.test.ts` stay green (228 tests across the six
+files).
+
+### Contract version gate · 2026-10-12
+
+Open question 2 from "Contract hardening" (enforce the bump or leave it prose) is answered with
+a check. `scripts/check-contract.ts` (`bun run check:contract [ref]`, in `bun run check`, and
+in CI as `check:contract HEAD^` with `fetch-depth: 2`) fails when either contract fixture
+differs from the ref while `contractVersion` in `server/src/contract.ts` hasn't moved forward.
+The one exception is a reworded `summary` or `description` string in the OpenAPI document,
+which is documentation; the event shapes have no exception, since `session.settled` carries a
+payload field named `summary`. Key order is ignored, a fixture the ref never had passes, and a
+ref git can't resolve fails loudly instead of passing. The prose in `docs/events.md` said an
+added key needs a minor bump and was silent on wording, and the theme pass above shipped a
+summary-only change as 1.0; the paragraph now states the exception and names the check.
+Whether a diff needs the minor or the major stays a reviewer's call; the script only refuses
+a version that stood still or went back. Tests: `scripts/check-contract.test.ts` (8) over a
+file-reader seam, plus a read of this repo's `HEAD`.

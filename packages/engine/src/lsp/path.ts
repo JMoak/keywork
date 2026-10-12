@@ -5,7 +5,7 @@ import { delimiter, extname, join } from "node:path";
 export type SpawnLike = (
   file: string,
   args: readonly string[],
-  options: { cwd: string },
+  options: { cwd: string; env?: NodeJS.ProcessEnv },
 ) => ChildProcess;
 
 export function resolveOnPath(
@@ -28,6 +28,7 @@ export const spawnResolved: SpawnLike = (file, args, options) => {
   if (process.platform === "win32" && needsCommandInterpreter(file)) {
     return spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", quoteForCmd(file, args)], {
       cwd: options.cwd,
+      env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       windowsVerbatimArguments: true,
@@ -35,6 +36,7 @@ export const spawnResolved: SpawnLike = (file, args, options) => {
   }
   return spawn(file, [...args], {
     cwd: options.cwd,
+    env: options.env,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
     detached: process.platform !== "win32",

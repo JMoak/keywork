@@ -75,6 +75,7 @@ export interface ChatOptions {
   mcpServers?: Record<string, McpServerConfig>;
   repoMap?: "auto" | "off";
   lsp?: LspConfig;
+  sandbox?: KeyworkConfig["sandbox"];
   models?: ModelCapabilitiesConfig;
   thinking?: KeyworkConfig["thinking"];
   userRoot?: string;
@@ -304,6 +305,7 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     models: options.models,
     reportCheckpointsUnavailable: (message) => io.print(`can't undo: ${message}`),
     lsp: options.lsp,
+    sandbox: options.sandbox,
     notice: (text) => io.print(text),
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
     ...(options.checkpointsGitDir !== undefined && {

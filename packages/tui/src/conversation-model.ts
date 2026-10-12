@@ -1,5 +1,6 @@
 import {
   type Agent,
+  type Confirmation,
   type ContextReading,
   type EffortLevel,
   effortLevels,
@@ -44,7 +45,12 @@ import {
   shellEscapeTranscript,
 } from "./shell-escape.ts";
 import { answerAside } from "./side-question.ts";
-import { type ToolRun, type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
+import {
+  type ChildMark,
+  type ToolRun,
+  type TranscriptEntry,
+  TranscriptFeed,
+} from "./transcript-feed.ts";
 import { TranscriptNavigation } from "./transcript-navigation.ts";
 import { type TranscriptLine, TranscriptView } from "./transcript-view.ts";
 
@@ -69,6 +75,7 @@ export interface ConversationPorts {
   frameTick?: TickScheduler;
   spillFile?: (spillId: string) => string | undefined;
   openFile?: (path: string, options: FileOpenOptions) => void;
+  openSession?: (sessionId: string) => void;
   workspaceFiles?: MentionSource;
 }
 
@@ -243,9 +250,11 @@ export class ConversationModel {
   }
 
   cursoredSpill(): SpillReference | undefined {
-    const at = this.navigation.viewport().foldCursor;
-    const entry = at === undefined ? undefined : this.entries[at];
-    return entry?.kind === "tool" ? entry.run?.spill : undefined;
+    return this.cursoredRun()?.spill;
+  }
+
+  cursoredChild(): ChildMark | undefined {
+    return this.cursoredRun()?.child;
   }
 
   visibleTranscript(
@@ -268,8 +277,8 @@ export class ConversationModel {
     if (this.ask.pending !== undefined) return this.ask.handleKey(chord, viewport.askRows);
     if (this.navigation.backtracking()) return this.handleBacktrackKey(chord, sequence, viewport);
     if (this.editingQueue()) return this.handleQueueKey(chord, sequence, viewport);
-    if (isOpenSpillKey(chord) && this.cursoredSpill() !== undefined)
-      return this.openCursoredSpill();
+    if (isOpenKey(chord) && this.cursoredSpill() !== undefined) return this.openCursoredSpill();
+    if (isOpenKey(chord) && this.cursoredChild() !== undefined) return this.openCursoredChild();
     if (this.navigation.disclosing() && chord.name !== "tab") {
       this.navigation.exitDisclosure();
       if (chord.name === "escape") return true;
@@ -325,10 +334,14 @@ export class ConversationModel {
     return this.ask.confirm(call);
   }
 
+  mutationConfirmation(call: ToolCallPart): Promise<Confirmation> {
+    return this.ask.confirmation(call);
+  }
+
   sessionGrants(): SessionGrantsPort {
     return {
-      rules: () => this.ask.sessionRules,
-      forget: (rule) => this.ask.forgetSessionRule(rule),
+      rules: async () => this.ask.sessionRules,
+      forget: async (rule) => this.ask.forgetSessionRule(rule),
     };
   }
 
@@ -809,6 +822,23 @@ export class ConversationModel {
     });
   }
 
+  private cursoredRun(): ToolRun | undefined {
+    const at = this.navigation.viewport().foldCursor;
+    const entry = at === undefined ? undefined : this.entries[at];
+    return entry?.kind === "tool" ? entry.run : undefined;
+  }
+
+  private openCursoredChild(): boolean {
+    const run = this.cursoredRun();
+    const sessionId = run?.child?.sessionId;
+    const open = this.ports?.openSession;
+    if (run?.outcome === undefined) this.feed.post("info", childStillRunningNotice);
+    else if (sessionId === undefined) this.feed.post("info", unsavedChildNotice);
+    else if (open === undefined) this.feed.post("info", noSessionPaneNotice);
+    else open(sessionId);
+    return true;
+  }
+
   private openCursoredSpill(): boolean {
     const spill = this.cursoredSpill();
     if (spill === undefined) return false;
@@ -1058,7 +1088,11 @@ interface StagedPromptUndo {
 const noShellNotice = "no shell here · ! needs a workspace runtime";
 const noFilePaneNotice = "can't open the spill · no file panes here";
 
-function isOpenSpillKey(chord: Chord): boolean {
+const childStillRunningNotice = "the child is still working · o opens it once it's done";
+const unsavedChildNotice = "this child wasn't saved, so there's nothing to open";
+const noSessionPaneNotice = "can't open the child · no session panes here";
+
+function isOpenKey(chord: Chord): boolean {
   return chord.name === "o" && !chord.ctrl && !chord.meta && !chord.shift;
 }
 const noShellResult = { output: "no shell here", isError: true } as const;

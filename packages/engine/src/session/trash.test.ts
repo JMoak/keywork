@@ -3,8 +3,9 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
+import { childDirFor } from "./children.ts";
 import { spillDirFor } from "./spill.ts";
-import { SessionFileCollisionError, SessionTrash, sessionFilePair } from "./trash.ts";
+import { SessionFileCollisionError, SessionTrash, sessionFileSet } from "./trash.ts";
 
 const tempDir = scratchDirs("keywork-session-trash-");
 
@@ -18,12 +19,45 @@ async function sessionOn(dir: string, name: string, spilled: boolean): Promise<s
   return file;
 }
 
+async function withChild(file: string): Promise<string> {
+  await mkdir(childDirFor(file), { recursive: true });
+  const child = join(childDirFor(file), "3-0001-1.jsonl");
+  await writeFile(child, '{"type":"session","id":"child"}\n', "utf8");
+  return child;
+}
+
 describe("SessionTrash", () => {
-  it("pairs a session file with its spill dir in one rule", () => {
-    expect(sessionFilePair("/sessions/1-0001-9.jsonl")).toEqual({
+  it("names a session's log, spill dir and child dir in one rule", () => {
+    expect(sessionFileSet("/sessions/1-0001-9.jsonl")).toEqual({
       log: "/sessions/1-0001-9.jsonl",
       spills: join("/sessions", "1-0001-9.spills"),
+      children: join("/sessions", "1-0001-9.children"),
     });
+  });
+
+  it("moves a parent's children with it and brings them back on restore", async () => {
+    const dir = await tempDir();
+    const parent = await sessionOn(dir, "1-0001-1", false);
+    const child = await withChild(parent);
+    const trash = new SessionTrash(dir);
+
+    const trashed = await trash.put(parent);
+    expect(existsSync(child)).toBe(false);
+    expect(existsSync(join(childDirFor(trashed), "3-0001-1.jsonl"))).toBe(true);
+
+    await trash.restore(trashed);
+    expect(existsSync(child)).toBe(true);
+  });
+
+  it("discards a parent's children with it", async () => {
+    const dir = await tempDir();
+    const trash = new SessionTrash(dir);
+    const parent = await sessionOn(dir, "1-0001-1", false);
+    await withChild(parent);
+    const trashed = await trash.put(parent);
+
+    await trash.discard(trashed);
+    expect(existsSync(childDirFor(trashed))).toBe(false);
   });
 
   it("moves the log and its spills into .trash together and lists only the logs", async () => {

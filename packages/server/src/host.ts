@@ -239,6 +239,7 @@ export interface SessionHost {
   answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
   permissions(): Promise<PermissionsView>;
   revokeWorkspaceGrant(rule: PermissionRule): Promise<boolean>;
+  revokeSessionGrant(sessionId: string, rule: PermissionRule): Promise<boolean>;
   close(): Promise<void>;
   memory?: MemoryPort;
   workspace?: WorkspacePort;
@@ -402,6 +403,7 @@ export interface ArcSummary {
   status: ArcStatus;
   created: string;
   sessions: number;
+  theme?: string;
 }
 
 export type ArcCloseOutcome = Extract<AirlockFinishOutcome, { kind: "closed" | "pending" }>;
@@ -412,6 +414,7 @@ export interface ArcsPort {
   close(slug: string, direction?: string): Promise<ArcCloseOutcome>;
   abandon(slug: string): Promise<void>;
   bindSession(id: string, slug: string | null): Promise<SessionBinding | undefined>;
+  setTheme(slug: string, theme: string | null): Promise<ArcSummary>;
   subscribe(listener: () => void): () => void;
 }
 

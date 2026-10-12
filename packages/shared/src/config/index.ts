@@ -51,7 +51,10 @@ export {
   validateSlug,
 } from "./slug.ts";
 export {
+  type ContrastMeasurement,
   contrastFailures,
+  contrastMeasurements,
+  type MeasuredLayer,
   parseTheme,
   type SyntaxRole,
   sectionFloors,
@@ -69,6 +72,7 @@ export {
   themeTokenOverridesSchema,
   themeTokensSchema,
 } from "./theme.ts";
+export { auditTheme, type ThemeAudit } from "./theme-audit.ts";
 export {
   openWorkspace,
   resolveAnchor,

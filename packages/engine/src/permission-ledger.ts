@@ -63,6 +63,15 @@ export class PermissionLedger {
     return this.options.workspace.revoke(rule);
   }
 
+  revokeSession(sessionId: string, rule: PermissionRule): boolean {
+    const held = this.sessions.get(sessionId) ?? [];
+    const kept = held.filter((candidate) => !sameRule(candidate, rule));
+    if (kept.length === held.length) return false;
+    if (kept.length === 0) this.sessions.delete(sessionId);
+    else this.sessions.set(sessionId, kept);
+    return true;
+  }
+
   private policyFor(sessionId: string | undefined): LayeredPolicy {
     const layers: RuleLayer[] = [
       { origin: "trusted", rules: this.bundle() },

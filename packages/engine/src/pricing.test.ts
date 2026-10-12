@@ -6,6 +6,7 @@ import { Agent } from "./agent.ts";
 import type { Usage } from "./messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
 import {
+  costBasis,
   costNanosOf,
   emptyCostRollup,
   formatCostNanos,
@@ -182,6 +183,25 @@ describe("mergeCostRollups", () => {
       meteredTurns: 1,
       unpricedTurns: 3,
     });
+  });
+});
+
+describe("costBasis", () => {
+  const rollup = (pricedTurns: number, meteredTurns: number, unpricedTurns: number) => ({
+    nanos: 0,
+    pricedTurns,
+    meteredTurns,
+    unpricedTurns,
+  });
+
+  it("says how a total was reached, and owns up when part of it is missing", () => {
+    expect(costBasis(rollup(0, 0, 2), "house-model")).toBe("no pricing for house-model");
+    expect(costBasis(rollup(0, 0, 2), undefined)).toBe("no pricing for this model");
+    expect(costBasis(rollup(3, 0, 1), "gpt-5")).toBe("3 priced turns · 1 more had no pricing");
+    expect(costBasis(rollup(2, 2, 0), "gpt-5")).toBe("metered by the provider");
+    expect(costBasis(rollup(2, 1, 0), "gpt-5")).toBe("partly metered, partly estimated");
+    expect(costBasis(rollup(2, 0, 0), "gpt-5")).toBe("estimated from gpt-5 rates");
+    expect(costBasis(rollup(2, 0, 0), undefined)).toBe("estimated from list rates");
   });
 });
 

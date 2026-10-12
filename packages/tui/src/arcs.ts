@@ -6,7 +6,9 @@ import { pluralize } from "./pluralize.ts";
 
 export type { ArcStatus };
 
-export type ArcSummary = Pick<ArcRecord, "slug" | "status" | "created"> & { sessions: number };
+export type ArcSummary = Pick<ArcRecord, "slug" | "status" | "created" | "theme"> & {
+  sessions: number;
+};
 
 export type ArcCloseOutcome =
   | { kind: "closed"; delivered: number; released: number; notice?: string }

@@ -23,6 +23,7 @@ import {
 } from "@keywork/server";
 import type {
   AgentFactory,
+  PermissionsPort,
   SessionAttachment,
   SessionOverviewItem,
   SessionPort,
@@ -117,6 +118,18 @@ export function remoteSessionPort(client: KeyworkClient): SessionPort {
       return detail === undefined ? undefined : attachmentOf(detail, detail.messages);
     },
     create: async () => attachmentOf(await client.createSession(), []),
+  };
+}
+
+export function remotePermissionsPort(client: KeyworkClient): PermissionsPort {
+  return {
+    seat: "attached",
+    view: () => client.listPermissions(),
+    revokeWorkspace: async (rule) => (await client.revokeWorkspaceGrant(rule)) === "revoked",
+    sessionGrants: (sessionId) => ({
+      rules: async () => (await client.listPermissions()).session[sessionId] ?? [],
+      forget: async (rule) => (await client.revokeSessionGrant(sessionId, rule)) === "revoked",
+    }),
   };
 }
 

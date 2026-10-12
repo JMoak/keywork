@@ -28,6 +28,7 @@ export {
   envelopeOf,
   type Fetch,
   type FrameReader,
+  type GrantRevocation,
   type KeyworkClient,
   keyworkClient,
   type ModelAnswer,

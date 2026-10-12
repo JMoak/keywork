@@ -149,7 +149,7 @@ export function ledgerRows(inputs: MemoryPaneInputs, options: LedgerOptions): Me
   const focus = options.note === undefined ? undefined : findNote(inputs.notes, options.note);
   const events = inputs.ledger
     .filter((event) => options.note === undefined || event.notes.includes(options.note))
-    .sort((a, b) => b.at.localeCompare(a.at));
+    .sort(newestFirstOpsOnTop);
   const subject = focus?.title ?? options.note;
   const facts = [pluralize(events.length, "event"), ...(subject === undefined ? [] : [subject])];
   const rows = events.map((event, at) => ledgerRow(event, at, options.now));
@@ -910,6 +910,14 @@ function whyRow(hit: MemoryQueryHit, layer: MemoryLayerView | undefined, at: num
     tone: "dim",
     selectable: false,
   };
+}
+
+function newestFirstOpsOnTop(a: LedgerEventView, b: LedgerEventView): number {
+  return b.at.localeCompare(a.at) || Number(isOp(b)) - Number(isOp(a));
+}
+
+function isOp(event: LedgerEventView): boolean {
+  return event.id !== undefined;
 }
 
 function ledgerRow(event: LedgerEventView, at: number, now: number): MemoryRow {

@@ -1,6 +1,7 @@
 import { mkdir, open, rm, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { SpillReference } from "../messages.ts";
+import { childDirFor } from "./children.ts";
 
 export const defaultToolOutputBudget = 64 * 1024;
 
@@ -57,6 +58,7 @@ export function spillDirFor(sessionFile: string): string {
 export async function removeSessionFiles(sessionFile: string): Promise<void> {
   await unlink(sessionFile);
   await SpillStore.beside(sessionFile).remove();
+  await rm(childDirFor(sessionFile), { recursive: true, force: true });
 }
 
 export function boundToolOutput(

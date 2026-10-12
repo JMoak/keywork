@@ -58,6 +58,7 @@ const routesTheAppCalls = [
   ["POST", "/arcs", "createArc"],
   ["POST", "/arcs/{slug}/close", "closeArc"],
   ["POST", "/arcs/{slug}/abandon", "abandonArc"],
+  ["POST", "/arcs/{slug}/theme", "setArcTheme"],
   ["GET", "/arcs/{slug}/airlock", "readAirlock"],
   ["POST", "/arcs/{slug}/airlock/candidates/{note}", "triageAirlockCandidate"],
   ["POST", "/arcs/{slug}/airlock/questions", "triageAirlockQuestion"],
@@ -112,6 +113,56 @@ const eventsTheAppListensTo = [
   "session.restored",
   "session.settled",
 ] as const;
+
+const houseThemesTheAppBootsWith = ["keywork-night", "keywork-day"] as const;
+
+const fieldsTheAppReadsOnEveryTheme = [
+  "name",
+  "appearance",
+  "tokens",
+  "density",
+  "gap",
+  "chromeWeight",
+  "instruments",
+  "terminal",
+  "syntax",
+  "diff",
+  "selection",
+  "cursor",
+] as const;
+
+const tokensTheAppMaps = [
+  "background",
+  "panel",
+  "panelLift",
+  "text",
+  "textMid",
+  "textDim",
+  "border",
+  "borderFocus",
+  "accent",
+  "accentSoft",
+  "success",
+  "error",
+  "ramp",
+] as const;
+
+const hexTheAppAccepts = /^#[0-9a-fA-F]{6}$/;
+
+interface ThemesTheAppReads {
+  themes: readonly {
+    name: string;
+    tokens: Record<string, unknown>;
+    terminal: Record<string, string>;
+    syntax: Record<string, string>;
+    diff: Record<string, string>;
+    selection: { background: string; text?: string };
+    cursor: string;
+    pair?: string;
+  }[];
+  active: string;
+  placeholders: readonly string[];
+}
 
 const tempDir = scratchDirs("keywork-app-contract-");
 const userRoot = mkdtempSync(join(tmpdir(), "keywork-app-contract-user-"));
@@ -180,6 +231,28 @@ describe("a served keywork, as keywork-app attaches to it", () => {
       (name) => !envelope.properties.type.enum.includes(name),
     );
     expect(unknown).toEqual([]);
+  });
+
+  it("serves every theme whole in the shape the app's wardrobe reads, house themes and pairs included", async () => {
+    const listed = (await (
+      await fetch(`${url}/themes`, { headers: { authorization: `Bearer ${token}` } })
+    ).json()) as ThemesTheAppReads;
+    const names = listed.themes.map((theme) => theme.name);
+    expect(names).toEqual(expect.arrayContaining([...houseThemesTheAppBootsWith]));
+    expect(typeof listed.active).toBe("string");
+    expect(listed.placeholders).toContain("system");
+    for (const theme of listed.themes) {
+      expect(Object.keys(theme).sort(), theme.name).toEqual(
+        [...fieldsTheAppReadsOnEveryTheme, ...(theme.pair === undefined ? [] : ["pair"])].sort(),
+      );
+      expect(Object.keys(theme.tokens).sort(), theme.name).toEqual([...tokensTheAppMaps].sort());
+      expect(Object.keys(theme.terminal), theme.name).toHaveLength(16);
+      expect(Object.keys(theme.syntax), theme.name).toHaveLength(15);
+      expect(Object.keys(theme.diff), theme.name).toHaveLength(4);
+      expect(theme.selection.background).toMatch(hexTheAppAccepts);
+      expect(theme.cursor).toMatch(hexTheAppAccepts);
+      if (theme.pair !== undefined) expect(names, `${theme.name} pairs with`).toContain(theme.pair);
+    }
   });
 
   it("refuses an authenticated route without the ticket's token and answers with it", async () => {

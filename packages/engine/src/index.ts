@@ -7,6 +7,7 @@ export {
   type DelegatedOutcome,
   type DelegatedTurn,
   type GrantedScope,
+  NestedRefusalError,
   type PermissionResolver,
   type PermissionRuling,
   permissionOf,
@@ -28,10 +29,14 @@ export {
   toolsThroughHooks,
 } from "./agent-hooks.ts";
 export {
+  type ChildFinished,
+  type ChildOutcome,
+  type ChildStarted,
   type EngineEvents,
   EventBus,
   type PromptOrigin,
   type QueuedPrompt,
+  type RefusedCall,
   type SendBehavior,
 } from "./bus.ts";
 export {
@@ -59,6 +64,22 @@ export {
   frameTickMs,
   type TickScheduler,
 } from "./coalesce.ts";
+export {
+  type BotChoice,
+  type ChildHost,
+  type ChildProvenance,
+  ChildSlots,
+  type ChildSpec,
+  childGuardOf,
+  childProvenanceOf,
+  childResult,
+  childSlotLimit,
+  childTitleOf,
+  type DelegationSeams,
+  delegateTool,
+  delegateToolName,
+  maxChildDepth,
+} from "./delegation.ts";
 export {
   type DiagnosticsLevel,
   type DiagnosticsLine,
@@ -719,6 +740,7 @@ export {
 export {
   type CostRollup,
   carriesUsage,
+  costBasis,
   costNanosOf,
   emptyCostRollup,
   formatCostNanos,
@@ -802,6 +824,50 @@ export {
 } from "./repomap/map.ts";
 export { type IgnoreFileProblem, scanWorkspace, type WorkspaceScan } from "./repomap/scan.ts";
 export {
+  type BubblewrapHost,
+  bubblewrapArgs,
+  bubblewrapSandbox,
+  type ConfinementPlan,
+  confinementPlan,
+  type HomeLayout,
+} from "./sandbox/bubblewrap.ts";
+export {
+  realSandboxHost,
+  type SandboxHost,
+  type SandboxSupport,
+  sandboxFor,
+  sandboxSupport,
+  type TrialOutcome,
+} from "./sandbox/host.ts";
+export {
+  type ConfiningMode,
+  type Launch,
+  refusingSandbox,
+  type Sandbox,
+  type SandboxMode,
+  SandboxRefusal,
+  sandboxedToolNote,
+  sandboxPromise,
+  unconfined,
+} from "./sandbox/sandbox.ts";
+export {
+  askGateUnconfined,
+  fixedSandbox,
+  type ToolSandbox,
+  type UnconfinedAskOptions,
+  type UnconfinedConsent,
+  unconfinedCall,
+  unconfinedToolName,
+  type WorkspaceSandbox,
+  workspaceSandbox,
+} from "./sandbox/session.ts";
+export {
+  childDepthOf,
+  childDirFor,
+  childDirSuffix,
+  childSessionFile,
+} from "./session/children.ts";
+export {
   type CompactionOptions,
   type CompactionPlan,
   compactSession,
@@ -847,6 +913,7 @@ export {
   type SessionHeader,
   type SessionInfoEntry,
   type SessionTreeNode,
+  type SpawnLineage,
   sessionFormatVersion,
   type ThinkingLevelChangeEntry,
 } from "./session/entries.ts";
@@ -895,8 +962,9 @@ export {
 } from "./session/store.ts";
 export {
   SessionFileCollisionError,
+  type SessionFileSet,
   SessionTrash,
-  sessionFilePair,
+  sessionFileSet,
   trashDirName,
 } from "./session/trash.ts";
 export {

@@ -78,3 +78,27 @@ guardrails + biome clean, 2052 tests / 151 files, 11/11 e2e.
 - Arc jump rows in quick open (`jump: true` source over the arcs node).
 - FR2.6 workspaces node + focus dirs; `--workspace` for `run`/`chat`.
 - J21 arc briefing on bind (spec-first per Jordan).
+
+### Workstream aliases · 2026-10-12
+
+Arc stays the name of record; the slash commands now also answer to the word users bring.
+`/arcs` takes `workstreams` and `ws`, `/arc` takes `workstream`, and `arc-new`, `arc-close`,
+`arc-abandon`, `arc-release` and `arc-open` each take a `workstream-` and a `ws-` spelling
+(`packages/tui/src/core-commands.ts`). The registry already matched aliases in search and run,
+so `/ws` and `/workstream` complete to the arc family with no completion changes. Nothing on
+screen lists aliases, so the hint lives in two places a newcomer actually reads: the `/arcs`
+description now says "open the arcs node, an arc is a workstream", and the keys overlay row
+for `leader a` reads "arcs node · workstreams" (`app-actions.ts`). The arcs node empty state
+teaches it once: "no arcs yet · an arc is a workstream · n names one · /arc-new binds this
+session" (`arcs-pane.ts`). The only CLI arc surface is the pane-kind argument to
+`keywork attach`, which refuses `arcs` and `arc` with a reason; `workstreams`, `workstream` and
+`ws` now get the same reason instead of the unknown-kind usage error (`packages/cli/src/attach.ts`).
+No `--arc` flag exists on `run` or `chat`, so nothing to alias there. `docs/README.md` carries
+a one-paragraph vocabulary note above the index.
+
+Tests: `command-coverage.test.ts` checks the alias table, that `ws` and `workstream` lead the
+search with the whole arc family, that `/ws` and `/workstreams` run, and that the `/arcs`
+description carries the hint; `arcs-pane.test.ts` reads the new empty state; `attach.test.ts`
+covers the extra pane names. Evidence: `bun run check` green; `bun x vitest run` over the four
+touched suites green; `bun scripts/e2e-capture.ts arcs` passes (8 captures, no goldens) and
+`discovery` passes with all 5 goldens verified unchanged. No golden touched.

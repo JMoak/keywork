@@ -1,7 +1,7 @@
 export { canonicalPath } from "./canonical-path.ts";
 export { canonicalHex, hexChannels, hexColor } from "./color.ts";
 export * from "./config/index.ts";
-export { apcaLc } from "./contrast.ts";
+export { apcaLc, type ContrastPolarity, contrastPolarity } from "./contrast.ts";
 export { toError } from "./errors.ts";
 export {
   compileGlob,

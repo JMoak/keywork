@@ -79,6 +79,16 @@ export function knownCostNanos(rollup: CostRollup): number | undefined {
   return rollup.pricedTurns > 0 && rollup.unpricedTurns === 0 ? rollup.nanos : undefined;
 }
 
+export function costBasis(rollup: CostRollup, modelId: string | undefined): string {
+  if (rollup.pricedTurns === 0) return `no pricing for ${modelId ?? "this model"}`;
+  if (rollup.unpricedTurns > 0) {
+    return `${rollup.pricedTurns} priced turns · ${rollup.unpricedTurns} more had no pricing`;
+  }
+  if (rollup.meteredTurns === rollup.pricedTurns) return "metered by the provider";
+  if (rollup.meteredTurns > 0) return "partly metered, partly estimated";
+  return `estimated from ${modelId ?? "list"} rates`;
+}
+
 export function sessionCost(
   entries: readonly SessionEntry[],
   fallbackModelId?: string,

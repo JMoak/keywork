@@ -9,6 +9,12 @@ export interface SessionHeader {
   timestamp: string;
   cwd: string;
   parentSession?: string;
+  spawnedBy?: SpawnLineage;
+}
+
+export interface SpawnLineage {
+  sessionId: string;
+  callId: string;
 }
 
 export interface EntryBase {

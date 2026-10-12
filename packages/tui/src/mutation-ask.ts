@@ -1,4 +1,4 @@
-import type { ToolCallPart } from "@keywork/engine";
+import type { Confirmation, ToolCallPart } from "@keywork/engine";
 import { grantCandidates, type PermissionRule, SessionGrants } from "@keywork/shared";
 import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import type { Chord } from "./keys.ts";
@@ -60,6 +60,11 @@ export class MutationAsk {
     });
   }
 
+  confirmation(call: ToolCallPart): Promise<Confirmation> {
+    if (this.closed || !this.grants.covers(call.name, call.arguments)) return this.confirm(call);
+    return Promise.resolve(coveredBySessionGrant);
+  }
+
   diffWindow(rows: number): AskDiffWindow {
     const diff = this.pending?.diff ?? [];
     this.scroll = Math.min(Math.max(0, this.scroll), Math.max(0, diff.length - rows));
@@ -109,6 +114,8 @@ export class MutationAsk {
     return true;
   }
 }
+
+const coveredBySessionGrant: Confirmation = { approved: true, gate: "user", scope: "session" };
 
 function askVerdict(chord: Chord): "allow" | "always" | "deny" | undefined {
   if (chord.ctrl || chord.meta) return undefined;

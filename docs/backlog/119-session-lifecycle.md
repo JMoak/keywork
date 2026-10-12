@@ -73,6 +73,11 @@ preserves mtime, which is the session's last activity, and inventing a trashed-a
 sidecar, a renamed entry) is more machinery than the flag is worth; the trash listing shows
 each session's age instead, and `purge` is one confirm.
 
+*Amended 2026-10-12 by [`120`](120-subagents.md) 120-13:* a session's files are now three, the
+log, its spill dir and its child dir (`<stem>.children/`), named by `sessionFileSet`, which
+replaces `sessionFilePair`; every move, discard and purge carries the children with their
+parent.
+
 **119-2 · The engine owns the primitive.** `engine/src/session/trash.ts` exports
 `SessionTrash` (`put(file)`, `restore(file)`, `files()`, `purge()`, `dir`) beside `spill.ts`,
 with the file-pairing rule (`sessionFilePair`: the JSONL and its spill dir) in one place. A move

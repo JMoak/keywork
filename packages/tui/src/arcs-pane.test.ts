@@ -239,7 +239,7 @@ describe("ArcsPane two levels", () => {
     const { pane } = paneOver(world);
     await pane.settled();
     expect(pane.title()).toBe(" arcs ");
-    expect(rendered(pane)).toContain("no arcs yet");
+    expect(rendered(pane)).toContain("no arcs yet · an arc is a workstream");
   });
 
   it("revives drilled into an arc from its descriptor", async () => {

@@ -450,6 +450,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
     answerAsk: async (callId, verdict, scope) => asks.answer(callId, verdict, scope),
     permissions: async () => ledger.view(),
     revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
+    revokeSessionGrant: async (sessionId, rule) => ledger.revokeSession(sessionId, rule),
     close: async () => {
       asks.close();
       for (const session of sessions.values()) {
@@ -629,6 +630,14 @@ export function memorySurfacePorts(
       close: async (slug) => ({ kind: "closed", delivered: 0, released: archive(slug) }),
       abandon: async (slug) => {
         archive(slug);
+      },
+      setTheme: async (slug, theme) => {
+        const { theme: _previous, ...arc } = requireArc(slug);
+        if (arc.status !== "active") throw new ArcNotActiveError(slug, arc.status);
+        const worn: ArcSummary = { ...arc, ...(theme !== null && { theme }) };
+        arcs.set(slug, worn);
+        arcsChanged();
+        return { ...worn, sessions: boundTo(slug) };
       },
       bindSession: async (id, slug) => {
         if (!sessions.has(id)) return undefined;

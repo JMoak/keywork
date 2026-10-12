@@ -5,17 +5,24 @@ import {
   type AgentHooks,
   actionRecallBudget,
   askGateElicitation,
+  askGateUnconfined,
   type BootstrapInjection,
+  type BotChoice,
   type BotDefinition,
   buildSystemPrompt,
   Checkpoints,
+  ChildSlots,
   type ContextInjection,
+  childGuardOf,
   composeAfterSave,
   contextBudgetFor,
   coreTools,
+  type DelegationSeams,
   type DiagnosticsLog,
   type DiagnosticsPublication,
   declaredContextWindow,
+  delegateTool,
+  delegateToolName,
   diagnosticsObserver,
   type EngineEvents,
   EventBus,
@@ -41,6 +48,8 @@ import {
   RepoMap,
   repoMapTokenBudget,
   restrictTools,
+  type Sandbox,
+  type SandboxMode,
   type SessionStartReason,
   type SessionStore,
   type ShellSession,
@@ -48,12 +57,15 @@ import {
   SkillTelemetry,
   type SpillSource,
   type SpillStore,
+  sandboxFor,
   skillConventionDirs,
   skillLibraryTools,
   type Tool,
   type ToolGuard,
   type ToolScope,
   toolScope,
+  type WorkspaceSandbox,
+  workspaceSandbox,
 } from "@keywork/engine";
 import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
 import {
@@ -79,6 +91,7 @@ import {
   workspaceMemoryAccess,
 } from "./memory.ts";
 import { skillTelemetryFile, snapshotGitDir, workspaceIdentity } from "./paths.ts";
+import { newSessionFileName } from "./sessions/store.ts";
 
 export interface CompositionOptions {
   cwd: string;
@@ -89,6 +102,7 @@ export interface CompositionOptions {
   repoMap?: "auto" | "off" | undefined;
   models?: ModelCapabilitiesConfig | undefined;
   lsp?: LanguageServerSetting | undefined;
+  sandbox?: SandboxMode | undefined;
   onFileSaved?: ((path: string) => void) | undefined;
   notice?: ((text: string) => void) | undefined;
   diagnosticsLog?: (() => Pick<DiagnosticsLog, "log"> | undefined) | undefined;
@@ -114,6 +128,7 @@ export interface Composition {
   mcp: McpRegistry | undefined;
   repoMap: RepoMap | undefined;
   languagePort: LanguagePort | undefined;
+  sandbox: WorkspaceSandbox;
   afterSave: AfterSave | undefined;
   afterSaveFor(onPublished: (publication: DiagnosticsPublication) => void): AfterSave | undefined;
 }
@@ -150,7 +165,8 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   const mcp = startMcpRegistry(options.mcpServers);
   const scope = workspaceToolScope(cwd, projectTrusted, workspaceSlug);
   const { host, hostReport } = await openExtensionHost(scope, { cwd, projectTrusted, userRoot });
-  const port = openLanguagePort(scope, options);
+  const sandbox = await openSandbox(scope, options);
+  const port = openLanguagePort(scope, options, sandbox.configured);
   const afterSaveFor = (onPublished: (publication: DiagnosticsPublication) => void) =>
     composeAfterSave(
       [
@@ -178,6 +194,7 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
     mcp,
     repoMap,
     languagePort: port,
+    sandbox,
     afterSave: afterSaveFor(() => undefined),
     afterSaveFor,
   };
@@ -204,7 +221,7 @@ async function openExtensionHost(
 ): Promise<{ host: ExtensionHost; hostReport: ExtensionLoadReport }> {
   const host = new ExtensionHost({
     bus: new EventBus<EngineEvents>(),
-    reservedToolNames: coreTools(scope).map((tool) => tool.name),
+    reservedToolNames: [...coreTools(scope).map((tool) => tool.name), delegateToolName],
   });
   const hostReport = await loadExtensions({ userRoot, projectRoot: cwd, projectTrusted }, host);
   return { host, hostReport };
@@ -227,6 +244,13 @@ export interface AgentCompositionOptions {
   citations?: CitationTrail | undefined;
   thinking?: boolean | undefined;
   notice?: ((text: string) => void) | undefined;
+  delegation?: DelegationHost | undefined;
+}
+
+export interface DelegationHost {
+  storeOf(sessionId: string): SessionStore | undefined;
+  attach?(child: SessionStore): void;
+  release?(childId: string): void;
 }
 
 export interface AgentBuildSpec {
@@ -240,6 +264,11 @@ export interface AgentBuildSpec {
   shell?: ShellSession | undefined;
   spills?: SpillStore | SpillSource | undefined;
   permissions?: PermissionResolver | undefined;
+  child?: ChildPlacement | undefined;
+}
+
+export interface ChildPlacement {
+  toolCeiling: readonly string[] | undefined;
 }
 
 export interface AgentComposition {
@@ -256,9 +285,12 @@ export function composeAgents(
 ): AgentComposition {
   const flushes = new Map<string, MemoryFlush>();
   const providers = new Map<string, Provider>();
-  const replyTapped = new WeakSet<EventBus<EngineEvents>>();
+  const shared: SharedAgentState = {
+    replyTapped: new WeakSet<EventBus<EngineEvents>>(),
+    slots: new ChildSlots(),
+  };
   return {
-    build: (spec) => buildAgent(composition, options, spec, replyTapped),
+    build: (spec) => buildAgent(composition, options, spec, shared),
     flushFor: (sessionId, provider) => {
       const memory = composition.memory();
       if (memory === undefined) return undefined;
@@ -363,11 +395,25 @@ function refreshingOnSave(
   };
 }
 
-function openLanguagePort(scope: ToolScope, options: CompositionOptions): LanguagePort | undefined {
+async function openSandbox(
+  scope: ToolScope,
+  options: CompositionOptions,
+): Promise<WorkspaceSandbox> {
+  const configured = await sandboxFor(options.sandbox ?? "off", scope);
+  if (configured.refusal !== undefined) options.notice?.(configured.refusal.message);
+  return workspaceSandbox(configured);
+}
+
+function openLanguagePort(
+  scope: ToolScope,
+  options: CompositionOptions,
+  sandbox: Sandbox,
+): LanguagePort | undefined {
   const servers = languageServersFor(options.lsp);
   if (!options.projectTrusted || Object.keys(servers).length === 0) return undefined;
   return languagePort(scope, {
     servers,
+    sandbox,
     diagnostics: {
       log: (level, event, payload) => options.diagnosticsLog?.()?.log(level, event, payload),
     },
@@ -393,11 +439,16 @@ function followingProvider(current: () => Provider): Provider {
   };
 }
 
+interface SharedAgentState {
+  replyTapped: WeakSet<EventBus<EngineEvents>>;
+  slots: ChildSlots;
+}
+
 function buildAgent(
   composition: Composition,
   options: AgentCompositionOptions,
   spec: AgentBuildSpec,
-  replyTapped: WeakSet<EventBus<EngineEvents>>,
+  shared: SharedAgentState,
 ): Agent {
   let self: Agent | undefined;
   const recall = journalingRecall(
@@ -413,6 +464,14 @@ function buildAgent(
   const tap = options.citations?.tapFor(spec.sessionId);
   const skills =
     (spec.bot === undefined ? undefined : options.bots?.skillsFor(spec.bot)) ?? composition.skills;
+  const bot = spec.bot;
+  const basePermissions = spec.permissions ?? options.permissions;
+  const permissions =
+    bot === undefined ? basePermissions : narrowedPermissions(bot, basePermissions);
+  const delegation = delegationFor(composition, options, spec, shared, {
+    permissions,
+    agent: () => self,
+  });
   const baseTools = [
     ...coreTools(composition.scope, {
       shell: spec.shell,
@@ -424,11 +483,18 @@ function buildAgent(
       afterSave: composition.afterSaveFor((publication) =>
         self?.bus.emit("diagnostics.published", publication),
       ),
+      sandbox: composition.sandbox.forAgent(
+        askGateUnconfined(spec.guard, {
+          say: options.notice,
+          onDecision: (decision) => self?.bus.emit("gate.permission", { decision }),
+        }),
+      ),
     }),
     ...(recall === undefined
       ? []
       : memoryRecallTools(recall.store, recall.search, recall.onRecall, tap)),
     ...skillToolsFor(skills, () => self),
+    ...(delegation === undefined ? [] : [delegateTool(delegation)]),
   ];
   const tools =
     composition.mcp === undefined
@@ -436,18 +502,15 @@ function buildAgent(
       : composition.mcp.surface(baseTools, {
           elicit: askGateElicitation(spec.guard, { say: (line) => options.notice?.(line) }),
         });
-  const bot = spec.bot;
-  const basePermissions = spec.permissions ?? options.permissions;
-  const permissions =
-    bot === undefined ? basePermissions : narrowedPermissions(bot, basePermissions);
+  const narrowing = toolNarrowing(bot, spec.child?.toolCeiling);
   const learning = bot === undefined ? undefined : options.bots?.bootstrapFor(bot);
   const prompt = promptFor(composition, spec.provider.modelId, bot, learning);
   const session = () => resolveSessionKey(spec.sessionId);
   const hooks = composition.host.agentHooks({ session });
   const agent = new Agent({
     provider: spec.provider,
-    tools: bot === undefined ? tools : () => restrictTools(tools(), bot),
-    hooks: bot === undefined ? hooks : hooksRestrictedTo(hooks, bot),
+    tools: narrowing === undefined ? tools : () => narrowing(tools()),
+    hooks: narrowing === undefined ? hooks : hooksNarrowedBy(hooks, narrowing),
     systemPrompt: prompt.systemPrompt,
     standingInjections: prompt.standingInjections,
     guard: spec.guard,
@@ -470,13 +533,86 @@ function buildAgent(
   });
   self = agent;
   composition.host.observe(agent.bus, { session });
-  wireReplyCitations(agent, options.citations, spec.sessionId, replyTapped);
+  wireReplyCitations(agent, options.citations, spec.sessionId, shared.replyTapped);
   wireBootstrapCitations(agent, options.citations, spec.sessionId, prompt.bootstrap);
   return agent;
 }
 
-function hooksRestrictedTo(hooks: AgentHooks, bot: BotDefinition): AgentHooks {
-  return { ...hooks, tools: () => restrictTools(hooks.tools?.() ?? [], bot) };
+interface ParentAgent {
+  permissions: PermissionResolver | undefined;
+  agent: () => Agent | undefined;
+}
+
+function delegationFor(
+  composition: Composition,
+  options: AgentCompositionOptions,
+  spec: AgentBuildSpec,
+  shared: SharedAgentState,
+  parent: ParentAgent,
+): DelegationSeams | undefined {
+  const host = options.delegation;
+  if (host === undefined || spec.child !== undefined) return undefined;
+  const parentBot = spec.bot;
+  const parentStore = (): SessionStore | undefined => {
+    const id = resolveSessionKey(spec.sessionId);
+    return id === undefined ? undefined : host.storeOf(id);
+  };
+  return {
+    host: {
+      forge: ({ bot, bus, store }) =>
+        buildAgent(
+          composition,
+          options,
+          {
+            provider: spec.provider,
+            guard: childGuardOf(spec.guard),
+            bot: composition.extensions.bots.find((candidate) => candidate.name === bot),
+            bus,
+            sessionId: store?.header.id,
+            spills: store?.spills(),
+            permissions: parent.permissions,
+            child: { toolCeiling: parentBot?.tools },
+          },
+          shared,
+        ),
+      attach: (child) => host.attach?.(child),
+      release: (childId) => host.release?.(childId),
+    },
+    slots: shared.slots,
+    bots: composition.extensions.bots.map(botChoiceOf),
+    parentBot: parentBot?.name,
+    refusalEndsRun: spec.guard.declineEndsRun === true,
+    parentStore,
+    parentCall: () => parent.agent()?.runningCall(),
+    parentBus: () => parent.agent()?.bus,
+    reportActivity: (line) => parent.agent()?.reportToolOutput(`${line}\n`),
+    newSessionFileName,
+  };
+}
+
+function botChoiceOf(bot: BotDefinition): BotChoice {
+  return { name: bot.name, ...(bot.description !== undefined && { description: bot.description }) };
+}
+
+type ToolNarrowing = (tools: readonly Tool[]) => Tool[];
+
+function toolNarrowing(
+  bot: BotDefinition | undefined,
+  ceiling: readonly string[] | undefined,
+): ToolNarrowing | undefined {
+  if (bot === undefined && ceiling === undefined) return undefined;
+  return (tools) =>
+    withinCeiling(bot === undefined ? [...tools] : restrictTools(tools, bot), ceiling);
+}
+
+function withinCeiling(tools: Tool[], ceiling: readonly string[] | undefined): Tool[] {
+  if (ceiling === undefined) return tools;
+  const allowed = new Set(ceiling);
+  return tools.filter((tool) => allowed.has(tool.name));
+}
+
+function hooksNarrowedBy(hooks: AgentHooks, narrowing: ToolNarrowing): AgentHooks {
+  return { ...hooks, tools: () => narrowing(hooks.tools?.() ?? []) };
 }
 
 interface ComposedPrompt {

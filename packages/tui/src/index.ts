@@ -219,8 +219,11 @@ export type { LifecycleState } from "./pane.ts";
 export type { ArcOrigin, PaneOrigin } from "./pane-kinds.ts";
 export {
   type FocusedPermissionsPort,
+  firstEncounterLine,
   PermissionsModel,
   type PermissionsPort,
+  type PermissionsSeat,
+  permissionsKeyHint,
   type QuietRun,
   QuietRunLog,
   type SessionGrantsPort,
@@ -254,7 +257,12 @@ export {
   type SessionPresence,
   sessionGroupings,
 } from "./sessions-overview-model.ts";
-export { guardedShellEscape, type ShellEscapePort, type ShellEscapeSeams } from "./shell-escape.ts";
+export {
+  guardedShellEscape,
+  type ShellDecisionSink,
+  type ShellEscapePort,
+  type ShellEscapeSeams,
+} from "./shell-escape.ts";
 export {
   type SlugInk,
   type SlugPart,

@@ -1,8 +1,10 @@
-import { type SpawnOptions, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { killTree } from "../proc.ts";
+import { type Launch, sandboxedToolNote, unconfined } from "../sandbox/sandbox.ts";
+import { fixedSandbox, type ToolSandbox } from "../sandbox/session.ts";
 import {
   BoundedOutput,
   CommandRun,
@@ -11,6 +13,7 @@ import {
   commandResult,
   commandTimedOut,
   defaultTimeoutMs,
+  scrubbedEnv,
   shellSpawnOptions,
 } from "./command-run.ts";
 import { defineTool } from "./define.ts";
@@ -46,24 +49,27 @@ export function detectShell(platform: NodeJS.Platform = process.platform): Shell
   };
 }
 
-export function harnessSpawnOptions(cwd: string): SpawnOptions {
-  const options = shellSpawnOptions(cwd);
-  return { ...options, env: { ...options.env, ...harnessMarker } };
-}
-
 export function bashTool(
   cwd: string,
   shell: Shell = detectShell(),
   onOutput?: (chunk: string) => void,
+  sandbox: ToolSandbox = fixedSandbox(unconfined),
 ) {
   return defineTool({
     name: "bash",
-    description: `Run a command in ${shell.name} from the working directory.`,
+    description: `Run a command in ${shell.name} from the working directory.${sandboxedToolNote(sandbox.configured)}`,
     schema,
     mutates: true,
-    run: ({ command, timeoutMs = defaultTimeoutMs }, signal) =>
-      execute(shell, command, cwd, timeoutMs, signal, onOutput),
+    run: async ({ command, timeoutMs = defaultTimeoutMs }, signal) => {
+      const launch = (await sandbox.current()).confine(shellLaunch(shell, command, cwd));
+      return execute(launch, timeoutMs, signal, onOutput);
+    },
   });
+}
+
+function shellLaunch(shell: Shell, command: string, cwd: string): Launch {
+  const env = { ...scrubbedEnv(process.env), ...harnessMarker };
+  return { file: shell.file, args: shell.args(command), cwd, env };
 }
 
 function findGitBash(): string | undefined {
@@ -75,16 +81,17 @@ function findGitBash(): string | undefined {
 }
 
 function execute(
-  shell: Shell,
-  command: string,
-  cwd: string,
+  launch: Launch,
   timeoutMs: number,
   signal?: AbortSignal,
   onOutput?: (chunk: string) => void,
 ): Promise<string> {
   signal?.throwIfAborted();
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(shell.file, shell.args(command), harnessSpawnOptions(cwd));
+    const child = spawn(launch.file, [...launch.args], {
+      ...shellSpawnOptions(launch.cwd),
+      env: launch.env,
+    });
     const closed = childClosed(child);
     const output = new BoundedOutput(onOutput);
     let terminationReason: TerminationReason | undefined;

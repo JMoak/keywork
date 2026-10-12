@@ -35,7 +35,11 @@ refused and recorded as a `gate.permission` with `gate: "headless"`. The bus als
 `gate.ask` for that call, but `--json` leaves it out: the refusal follows at once, so the
 decision line already says everything. (Under `keywork serve` the same ask waits for a client
 to answer through `POST /asks/{callId}`.) Your configured preset
-still applies (`careful` · `standard` · `open`); to let a script mutate, say so for that run:
+still applies (`careful` · `standard` · `open`). A `sandbox` mode the host can't enforce
+(103 E8) is the same kind of refusal: stderr says why before the turn starts, every command
+returns that reason, and the run records a denied `gate.permission` for the tool `unconfined`
+and exits 4. It doesn't stop at that call, since the model already has the reason in hand. To
+let a script mutate, say so for that run:
 
 ```sh
 keywork run "fix the failing tests" --preset open --json
@@ -43,6 +47,13 @@ keywork run "fix the failing tests" --preset open --json
 
 `--preset` is run-scoped and never persisted. Explicit `deny` rules are not asks: a policy
 denial is a normal refused result and the run can still exit 0.
+
+A child the model starts with `delegate` runs under the same rule
+([`backlog/120-subagents.md`](backlog/120-subagents.md)): its asks are refused with
+`gate: "headless"`, the child stops at the first one, the parent stops right after the
+`delegate` result, and the run exits 4 with the child's refused calls in `refused`. Without
+`--json`, stderr names each child the run started (`keywork run: child 6f1c2d3e · count the
+files · completed`).
 
 ### The `--json` stream
 
@@ -59,10 +70,12 @@ invocation ends with exactly one `run.finished` carrying `outcome` and `exitCode
 | `tool.finished` | `callId`, `output`, `isError` |
 | `gate.permission` | `decision`: `tool`, `callId`, `verdict` (`granted` · `denied`), `gate` (`policy` · `default` · `user` · `headless`) |
 | `context.injected` | `injection`: `source` (`project-instructions` · `memory-bootstrap` · `memory-recall` · `skill` · `subagent`), optional `id`, `scope` |
+| `child.started` | `callId` of the `delegate` call, `sessionId` (absent without `--session-dir`), `title`, optional `bot` |
+| `child.finished` | `callId`, `sessionId`, `outcome` (`completed` · `interrupted` · `failed` · `denied`), `usage`, optional `costNanos` and `refused` |
 | `turn.completed` | `message`, `usage` |
 | `turn.interrupted` | `message` |
 | `engine.error` | `message` |
-| `run.finished` | `outcome`, `exitCode`, plus `message` (completed · denied · interrupted), `refused` (denied: `[{tool, callId}]`), `error` (failed · usage), or `failure` (unresolved: the typed IR-18 object plus the `nextAction` a person would be told) |
+| `run.finished` | `outcome`, `exitCode`, plus `message` (completed · denied · interrupted), `refused` (denied: `[{tool, callId}]`, a child's refusals included), `error` (failed · usage), or `failure` (unresolved: the typed IR-18 object plus the `nextAction` a person would be told); `children` (`[{callId, sessionId, title, bot, outcome, refused}]`) whenever the run started any |
 
 Bus events ride under their bus names with their bus payloads, so a CI script reads the
 same events a pane does. The same events land in the session JSONL as Pi-compatible

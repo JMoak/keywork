@@ -9,6 +9,7 @@ import {
 import { type AppOptions, runApp, type WorkspacePort, type WorkspaceState } from "@keywork/tui";
 import {
   remoteAgentFactory,
+  remotePermissionsPort,
   remoteSessionPort,
   remoteSessionTreePort,
   type ServerFeed,
@@ -30,6 +31,9 @@ const localWorkspacePanes: ReadonlySet<string> = new Set([
   "mcp",
   "arcs",
   "arc",
+  "workstreams",
+  "workstream",
+  "ws",
   "workspaces",
 ]);
 
@@ -155,6 +159,7 @@ function mount(
       sessions: remoteSessionPort(client),
       sessionTrees: remoteSessionTreePort(client, feed),
       agentFactory: remoteAgentFactory(client, feed),
+      permissions: remotePermissionsPort(client),
       workspace: mountedWorkspace(options.pane, options.session),
       statusLabel: attachedLabel(client),
       notices: {

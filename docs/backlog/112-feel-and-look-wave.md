@@ -583,3 +583,22 @@ Left alone on purpose: the two clipboard notices in app-core (different states, 
 wording is right); `init`'s period-joined sentences (they read human); `doctor`'s comma
 joins (consistent within that report); the arc delivery record's prose (a note body, not
 chrome); the `no sessions yet` empty state (no sensible next step to name).
+
+### C72 · an op stays above its own echo · 2026-10-12
+
+The one-key `u` from the top of the ledger lens missed about half the time after an approve
+(the `memory-browser` finding in [117](117-influence-sweep.md) "Reliability floor").
+`MemoryStore.approve` and `discard` stamped the ledger op and its `curation.md` echo from two
+clock reads, and the lens sorts by timestamp, so an echo a millisecond late sorted above its
+op. Fixed in both places on purpose. The store now takes one moment per act
+(`commitWithEcho`), so an op and its echo share a timestamp whatever the clock does: that is
+the cause, and it makes `curation.md` say the two were one act. `ledgerRows` breaks a tie
+with ops above audit lines (`newestFirstOpsOnTop`), so the order belongs to the lens instead
+of to the CLI happening to list ops before audit lines. Either half alone falls short: the
+store fix leans on that concatenation order, and a lens rule can't recognise an echo stamped
+later, because an audit line carries no ledger id. Tests: `store.test.ts` runs approve and
+discard on a clock that ticks on every read and asserts the shared stamp;
+`memory-rows.test.ts` feeds an echo ahead of its op at the same moment and gets the op on
+top. All three fail on the old code. The `memory-browser` scenario is back to `u` on the top
+row (the click and `screenRowOf` are gone) and passes alone and four at once, goldens
+unchanged.

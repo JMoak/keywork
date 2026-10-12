@@ -1,8 +1,13 @@
 import {
   type Agent,
   type BusEvent,
+  type ChildOutcome,
+  childProvenanceOf,
+  childTitleOf,
   coalesceDeltas,
+  delegateToolName,
   type EngineEvents,
+  formatCostNanos,
   frameTick,
   type SpillReference,
   type TickScheduler,
@@ -11,6 +16,7 @@ import {
 import type { SpanLinker } from "./file-references.ts";
 import { isForgettable } from "./forget.ts";
 import type { MarkdownSpan } from "./markdown.ts";
+import { defaultPageMarks, type PageMarks } from "./marks.ts";
 import { TailFollow } from "./tail-follow.ts";
 import {
   defaultVerbosity,
@@ -71,6 +77,15 @@ export interface ToolRun {
   outputChars?: number;
   detail?: string[];
   spill?: SpillReference;
+  child?: ChildMark;
+}
+
+export interface ChildMark {
+  title: string;
+  sessionId?: string;
+  bot?: string;
+  outcome?: ChildOutcome;
+  costNanos?: number;
 }
 
 export type TranscriptBus = Agent["bus"];
@@ -224,6 +239,12 @@ export class TranscriptFeed {
       case "tool.finished":
         this.settleTool(event.payload);
         break;
+      case "child.started":
+        this.markChild(event.payload.callId, event.payload);
+        break;
+      case "child.finished":
+        this.markChild(event.payload.callId, event.payload);
+        break;
       case "turn.completed":
         this.endTurn();
         break;
@@ -295,10 +316,25 @@ export class TranscriptFeed {
       ...(provenance !== undefined && { provenance }),
       startedAtMs: this.now(),
       folded: true,
+      ...(call.name === delegateToolName && { child: childMarkOf(call.arguments) }),
     };
     const entry: ToolEntry = { kind: "tool", text: toolRowText(run), failed: false, run };
     this.running.set(call.callId, { entry, run, tail: new TailFollow() });
     this.entries.push(entry);
+    this.notify();
+  }
+
+  private markChild(
+    callId: string,
+    news: Pick<ChildMark, "sessionId" | "bot" | "costNanos">,
+  ): void {
+    const running = this.running.get(callId);
+    const child = running?.run.child;
+    if (running === undefined || child === undefined) return;
+    if (news.sessionId !== undefined) child.sessionId = news.sessionId;
+    if (news.bot !== undefined) child.bot = news.bot;
+    if (news.costNanos !== undefined) child.costNanos = news.costNanos;
+    running.entry.text = toolRowText(running.run);
     this.notify();
   }
 
@@ -325,10 +361,11 @@ export class TranscriptFeed {
     const { entry, run } = running;
     run.durationMs = Math.max(0, this.now() - run.startedAtMs);
     run.outcome = isError ? "failed" : "done";
-    if (isError) run.reason = firstLine(output);
+    if (isError && run.child === undefined) run.reason = firstLine(output);
     run.outputChars = spill?.bytes ?? output.length;
     run.detail = detailLines(output);
     run.live = undefined;
+    if (run.child !== undefined) settleChild(run, run.child, output);
     if (spill !== undefined) run.spill = spill;
     if (carriesUntrustedRecall(run.name, output)) run.provenance = "external";
     entry.failed = isError;
@@ -337,7 +374,8 @@ export class TranscriptFeed {
   }
 }
 
-export function toolRowSpans(run: ToolRun): MarkdownSpan[] {
+export function toolRowSpans(run: ToolRun, marks: PageMarks = defaultPageMarks): MarkdownSpan[] {
+  if (run.child !== undefined) return childRowSpans(run, run.child, marks.lineage);
   const head = run.subject === "" ? run.name : `${run.name} ${run.subject}`;
   if (run.outcome === undefined) {
     return [
@@ -358,6 +396,26 @@ export function toolRowSpans(run: ToolRun): MarkdownSpan[] {
     spans.push({ text: ` · ${run.reason}`, tone: "meta" });
   }
   return spans;
+}
+
+export function childRowSpans(run: ToolRun, child: ChildMark, lineage: string): MarkdownSpan[] {
+  const head = `${lineage} ${child.bot ?? "child"} · ${child.title}`;
+  if (run.outcome === undefined) {
+    return [
+      { text: head, tone: "body" },
+      { text: ` · ${run.live ?? "starting"}`, tone: "meta" },
+    ];
+  }
+  const meta = [durationText(run), costText(child)]
+    .filter((part) => part !== undefined)
+    .map((part) => ` · ${part}`)
+    .join("");
+  const word = childOutcomeWords[child.outcome ?? fallbackOutcome(run)];
+  return [
+    { text: head, tone: "body" },
+    { text: `${meta} · `, tone: "meta" },
+    { text: word, tone: word === "done" ? "ok" : "bad" },
+  ];
 }
 
 export function thinkingRowSpans(entry: ThinkingEntry): MarkdownSpan[] {
@@ -381,6 +439,8 @@ const followedEvents = [
   "tool.started",
   "tool.output",
   "tool.finished",
+  "child.started",
+  "child.finished",
   "turn.completed",
   "turn.interrupted",
 ] as const;
@@ -393,7 +453,43 @@ const detailLineLimit = 12;
 
 function disclosable(entry: TranscriptEntry): boolean {
   if (entry.kind === "thinking") return true;
-  return entry.kind === "tool" && entry.run?.detail !== undefined;
+  if (entry.kind !== "tool") return false;
+  return entry.run?.detail !== undefined || entry.run?.child !== undefined;
+}
+
+const childOutcomeWords: Record<ChildOutcome, string> = {
+  completed: "done",
+  interrupted: "stopped",
+  failed: "failed",
+  denied: "refused",
+};
+
+function fallbackOutcome(run: ToolRun): ChildOutcome {
+  return run.outcome === "done" ? "completed" : "failed";
+}
+
+function childMarkOf(args: unknown): ChildMark {
+  const record = typeof args === "object" && args !== null ? (args as Record<string, unknown>) : {};
+  const named = typeof record.title === "string" ? childTitleOf(record.title) : "";
+  const title = named === "" ? "child" : named;
+  return { title, ...(typeof record.bot === "string" && { bot: record.bot }) };
+}
+
+function settleChild(run: ToolRun, child: ChildMark, output: string): void {
+  const provenance = childProvenanceOf(output);
+  if (provenance === undefined) return;
+  child.outcome = provenance.outcome;
+  if (provenance.sessionId !== undefined) child.sessionId = provenance.sessionId;
+  if (provenance.bot !== undefined) child.bot = provenance.bot;
+  run.detail = detailLines(answerOf(output));
+}
+
+function answerOf(delegateResult: string): string {
+  return delegateResult.split("\n").slice(2).join("\n");
+}
+
+function costText(child: ChildMark): string | undefined {
+  return child.costNanos === undefined ? undefined : formatCostNanos(child.costNanos);
 }
 
 const recallTools: ReadonlySet<string> = new Set(["memory_get", "memory_search"]);

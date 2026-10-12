@@ -178,3 +178,289 @@ the posture now so it doesn't arrive casually later (Q-DSH8 decides timing).
 - **Q-DSH9: ecosystem discovery.** dsh uses a GitHub topic + community awesome-list;
   keywork's omakase lean suggests a *curated* extension gallery instead of a
   marketplace. Decide at launch prep (G3/packaging), not before.
+
+### E8 sandbox modes · options note · 2026-10-12
+
+E8 sat at "scope first" from August until this note. It scopes the mode set, decides the seam,
+and records what landed with it: the seam with `off` and the refusal path everywhere (E8a), and
+`workspace` plus `isolated` on Linux through bubblewrap (E8b). Where it speaks it replaces the E8
+entry above, including that entry's modes (`read-only` · `workspace-write` · `full-access`).
+Nothing is adapted from dsh, sandbox-runtime or any other source; every line is `OWN`, so
+Q-DSH1 doesn't bear on it.
+
+**The seam.** `Sandbox` in `engine/src/sandbox/sandbox.ts` has one method:
+`confine(launch) → launch`, where a launch is `{ file, args, cwd, env }`. It either returns the
+launch to exec or throws `SandboxRefusal`. It never spawns: each launcher keeps its own spawn API
+(`node:child_process` for bash, `Bun.spawn({ terminal })` for the pty, `SpawnLike` for language
+servers) and gets its argv from the seam, so there's no path from a tool to a process that skips
+it, and a refusal throws before any process or pty exists. `off` is the identity. The agent side
+reads it through `ToolSandbox` (`session.ts`), which adds the one ask described below.
+
+| Launcher | Runs under the mode | Why |
+|---|---|---|
+| `bash`, one-shot and persistent | yes | the agent's hands; the persistent shell is confined once, when it starts |
+| language servers (114) | yes | the agent's edits start them, and a repo can run code through them (TypeScript server plugins from `node_modules`, rust-analyzer build scripts); 114's "spawns through the same runner seam" is now true |
+| delegated child agents | yes | they compose through the same `buildAgent` and share the workspace's answer |
+| terminal pane (pty and pipes) and `!cmd` shell escapes | through the seam, handed `off` | what you type is yours, the rule that already keeps typed lines out of the permission gate; following the mode instead is handing `composition.sandbox` to the `terminalPane` port and the shell-escape tools in `compose-panes.ts` (Q-E8-2) |
+| prompt-template `` !`cmd` `` interpolation (`commands.ts`) | not wired | the user invoked the template and each command is asked through the gate (Q-E8-3) |
+| MCP stdio servers | no | trusted executable code outside the jail (the framing above), configured from the user layer only; most need network and their own state, and their tools already ride the gate |
+| keywork's own git (checkpoints, the SW13 change snapshots) | no | keywork itself, not a tool |
+
+**The modes.**
+
+| | `off` (default) | `workspace` | `isolated` |
+|---|---|---|---|
+| Writes land in | anywhere you can write | the workspace roots (cwd, anchor root, PD11 linked dirs), the git dir of a worktree or submodule that lives elsewhere, `/tmp`, `/var/tmp`, `$TMPDIR`, and the package caches that exist | the workspace roots and their git dirs; `/tmp` and `~/.cache` are private and vanish with the process |
+| Network | open | open | none: its own namespace with loopback only |
+| Host sockets (docker, the D-Bus session bus, ssh-agent, X11) | open | open | hidden (`/run` and `/tmp` are fresh) |
+| keywork's own state (`~/.keywork`: keys, config, grants, sessions) | readable and writable | hidden | hidden |
+| Other processes | reachable | not: own pid namespace, so `kill -9 -1` reaches only the sandbox, and killing the shell takes every descendant with it | same |
+| Reads | everything | everything, `~/.ssh` and `~/.aws` included | everything, but nothing leaves through the command |
+
+Package caches, fixed in keywork the way the trusted read bundle is (no option): `~/.cache` or
+`$XDG_CACHE_HOME`, `~/.npm`, `~/.bun/install/cache`, `~/.cargo/registry` and `~/.cargo/git`,
+`~/go/pkg/mod`, `~/.gradle/caches`, `~/.m2/repository`, the pnpm store, the yarn berry cache,
+`~/.nuget/packages`. They're writable in `workspace` because a sandbox that fails `bun install` is
+one users turn off on day one; in `isolated` they're read-only and `~/.cache` is a private tmpfs.
+
+What `workspace` guarantees: every write the agent's shell makes is either one `/undo` can take
+back (the workspace) or disposable (temp, caches), and the agent can't rewrite its own config,
+grants or keys. What it doesn't: it's a guard against mistakes and casual injection, not a jail
+for hostile code. Reads and the network are open, so a command can still send `~/.aws` somewhere;
+host sockets are open, so `docker run -v /:/host` or `systemd-run --user` over the session bus
+runs outside it; a command can plant a package in a cache that a later unconfined build runs.
+Global installs, dotfile edits and `git worktree add ../x` fail with `Read-only file system`,
+and the bash tool's description says so, so the model reads the failure correctly.
+
+What `isolated` adds: nothing a command does survives outside the workspace, and nothing it
+reads leaves the machine through the command. It can't stop the model itself from carrying what
+it read: the tool result goes to the provider, and an MCP tool outside the sandbox could pass it
+on. Package installs and `git push` fail by design. It's the mode for running code you don't
+trust yet.
+
+`container` is not a mode. A boxed keywork is agentbox (116): the harness, the credentials and
+the network sit in a container, and inside it `sandbox` is `off` because nested user namespaces
+are blocked there and the box is the boundary. A per-command docker mode would be a devcontainer
+product (images, mounts, toolchains in the image) with the config surface D9 forbids.
+`read-only` from the August plan is declined for now: Plan mode's read-only toolset (PD12, E5)
+covers it at the gate, and Q-DSH3 stays open. `full-access` is `off`.
+
+**Fail-closed, and what the user sees.** A mode the host can't enforce refuses; nothing degrades
+quietly. The refusal is one line with the fact and the fix, for example
+`sandbox workspace refused: bubblewrap isn't installed · install it (apt install bubblewrap, dnf
+install bubblewrap) or set "sandbox": "off" in ~/.keywork/keywork.json`. It shows up four ways:
+
+1. Once at composition, through the notice channel every surface already has (the pane notice,
+   a `keywork chat` line, `keywork run:` on stderr, `keywork serve:` in the log).
+2. In the status bar lead beside the preset word: `standard · sandbox workspace` when it holds,
+   `standard · sandbox workspace refused` when it doesn't, and `standard · unconfined` once the
+   user has waived it. That's Q-DSH4's "two dials, one indicator"; the preset word was already
+   the lead.
+3. In `keywork doctor` and `/doctor`: `sandbox · workspace · on · <what it promises>`, or
+   `refused · <fact> · <fix>`, or with the mode off, what the host could run
+   (`off · workspace and isolated refused here: windows has no sandbox keywork can use`, read
+   live on this machine).
+4. At the agent's first command, as an ask through the existing gate, so it rides the needs-you
+   chrome, notifications and `GET /asks` with no new surface:
+   `? unconfined {"why":"bubblewrap isn't installed"}  [y] allow  [n] deny`, after the notice
+   `sandbox workspace can't run here: … · allow runs commands unconfined until keywork exits,
+   deny keeps them refused`. Yes runs the agent's commands unconfined until keywork exits, every
+   pane included; no keeps every command refused and returns the full line as the tool result.
+   There's no `always`, the agent can't press `y`, and the answer is journaled as a
+   `gate.permission` for the tool `unconfined`. Headless runs answer no and exit 4, and the
+   exit notice reads `the sandbox can't run on this host and no one could allow running
+   unconfined, so every command was refused · set "sandbox": "off" in ~/.keywork/keywork.json
+   or run where the sandbox can`.
+
+Why an ask at all: a refusal through the ask row needs two honest answers, and the only honest
+second answer is "proceed without it". Without one, a user whose synced config says `workspace`
+lands on a server without bubblewrap and turns the setting off everywhere, which is the outcome
+this design exists to avoid. Strict refusal is one line away if Jordan prefers it (Q-E8-1).
+
+**Platform reality.**
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| Primitive | bubblewrap (`bwrap`) | Seatbelt via `sandbox-exec` | none reachable from `node:child_process` |
+| State here | built | refuses: `the macos sandbox isn't built yet` | refuses: `windows has no sandbox keywork can use`, points at WSL2 |
+
+Linux, the evidence (read 2026-10-12 from Ubuntu, Codex and Claude Code docs and the util-linux
+2.40 release notes; not run here):
+
+| | bubblewrap | Landlock | seccomp |
+|---|---|---|---|
+| What it is | a CLI that builds mount, pid, ipc and net namespaces on unprivileged user namespaces | an LSM a process applies to itself, inherited across exec | a syscall filter |
+| Stock Ubuntu 24.04 | on desktop (libgnome-desktop depends on it), absent on server; `kernel.apparmor_restrict_unprivileged_userns=1` blocks it (`setting up uid map: Permission denied`) until bwrap has an AppArmor profile with `userns`; the `bwrap-userns-restrict` profile ships disabled in the `apparmor-profiles` extras (25.04 enables it) | enabled in Ubuntu kernels since 22.04, no root, no install | in every kernel |
+| Needs root | once, for the AppArmor profile on 24.04 (Codex and Claude Code document the same step) | never | never |
+| From Bun or Node | spawn it like any binary | needs a pre-exec hook Node and Bun don't have: `bun:ffi` in product code (against 117-3), a native helper per arch, or `setpriv --landlock-access` (util-linux 2.40; Ubuntu 24.04 ships 2.39.3) | the same pre-exec problem; bwrap's `--seccomp` fd is the usual carrier |
+| Covers `workspace` | yes | yes | no, it can't express paths |
+| Covers `isolated` | yes, a net namespace | no: TCP only (ABI 4, kernel 6.7+), UDP and unix sockets stay open | partly, by socket family |
+| Who ships it | Flatpak, Codex, Claude Code | Codex's original Linux sandbox | Codex and Claude Code, beside bwrap |
+
+Pick: bubblewrap. It expresses both modes from `node:child_process` with no FFI, so product code
+stays on `node:*`; the host setup it needs is the one Codex and Claude Code users already did;
+and keywork proves it with a trial run (`bwrap --ro-bind / / --dev /dev --proc /proc
+--unshare-pid --unshare-ipc [--unshare-net] --die-with-parent --chdir / -- true`, cached per
+process) instead of trusting presence, the lesson the pty probe taught. Inside a container the
+trial fails and the refusal says the container is the sandbox. Landlock is the zero-install
+upgrade once `setpriv` 2.40 is the floor (E8d).
+
+The launch, from `bubblewrapArgs`: `--ro-bind / /`, `--dev /dev`, `--proc /proc`, then every
+writable and hidden path in depth order (shallow first, so a workspace under a hidden `/tmp` and
+a `~/.keywork` inside a home-dir workspace both come out right) as `--bind p p` or `--tmpfs p`,
+then `--unshare-pid --unshare-ipc`, `--unshare-net` for `isolated`, `--die-with-parent`,
+`--chdir <cwd>`, `--`, the command. `isolated` also sets `TMPDIR=/tmp`. No `--new-session`: the
+shell keeps its controlling terminal for job control, and the spawn's own `setsid` already
+detaches it from keywork's terminal.
+
+macOS: `sandbox-exec` with an SBPL profile is the primitive. Its man page has called it
+deprecated since 10.12 (2016), but it's on every release since and both Codex and Claude Code
+sandbox macOS through Seatbelt. Not built here: there's no Mac to verify a profile on, and an
+unverified profile is worse than an honest refusal (E8c).
+
+Windows: AppContainer and restricted tokens need `CreateProcess` with attribute lists, and job
+objects need `SetInformationJobObject`; Bun exposes neither (the same gap the 117 reliability
+floor hit with `taskkill`), so either needs FFI or a native helper, and Codex's Windows sandbox
+needs an elevated one-time setup that creates sandbox users. "`workspace` by path policy in the
+tool layer" was considered and declined: `read`, `write` and `edit` are confined to the workspace
+by `confinedPath` in every mode already, and a shell can't be confined by parsing its command
+line, so the mode would claim a guarantee it can't keep. Windows refuses both modes; WSL2 runs
+the Linux runner.
+
+**Sizes.**
+
+| Task | Size | State |
+|---|---|---|
+| E8a: the seam, `off`, the `sandbox` key, the refusal ask, doctor and status | 2pt | landed |
+| E8b: bubblewrap `workspace` and `isolated` | 2pt | landed, Linux behaviour verified by reading only |
+| E8b-ci: run the Linux live tests on the ubuntu runner (install bubblewrap, allow userns) | 1pt | open; `ci.yml` belongs to another lane |
+| E8c: macOS `sandbox-exec` runner | 2pt | open, needs a Mac |
+| E8d: Landlock through `setpriv` once util-linux 2.40 is the floor | 2pt | watch |
+| E8e: Windows | | declined until the runtime exposes job objects or AppContainer; WSL2 is the answer |
+
+**Recommendation.** Ship the default `off`. Suggest `workspace` to Linux users once E8b-ci has
+proven it on a real runner and a week of dogfooding hasn't produced a build it breaks; keep
+`isolated` for code you don't trust. Flip no default before that: a sandbox that users switch
+off because it broke their build is worse than none.
+
+**What keywork declines.**
+
+- A domain allowlist proxy (Claude Code's `allowedDomains`, sandbox-runtime's proxy): a config
+  surface D9 forbids, and it only filters tools that honour proxy variables. `isolated` is all
+  or nothing instead.
+- Per-command escapes (Claude Code's `dangerouslyDisableSandbox` and `excludedCommands`, Codex's
+  on-failure retry): models learn to retry unsandboxed after any failure. A command that has to
+  run outside goes in the terminal pane, which is yours.
+- `allowWrite` and `denyRead` lists: PD11 linked dirs are the one declared way to widen writes.
+- A degrade-with-warning default and a `failIfUnavailable` switch: keywork has one behaviour,
+  refuse and ask, so there's nothing to switch.
+- Depending on `@anthropic-ai/sandbox-runtime` (Apache-2.0, the 117 scope-first spike): its
+  value is the proxy and the Seatbelt profiles, keywork wants neither the proxy nor its config,
+  and the bwrap arguments are a page of `OWN` code. Worth a second look for E8c, with
+  attribution, if its profile is the fastest honest path on macOS.
+
+**Decisions** (this lane, 2026-10-12; Jordan may reverse any):
+
+1. One seam, `Sandbox.confine`, that every launcher gets its argv from; the agent's commands, the
+   language servers and delegated children run under the mode, what the user types runs `off`,
+   MCP servers and keywork's own git stay outside.
+2. Three modes, `off` · `workspace` · `isolated`, as one user-layer key with `off` the default;
+   `container` is agentbox, `read-only` waits on Q-DSH3.
+3. A mode the host can't enforce refuses with one actionable line; the agent's first command
+   asks once whether to run unconfined until keywork exits; headless answers no and exits 4.
+4. The mode shows in the status bar beside the preset word, in `keywork doctor`, in the bash
+   tool's description for the model, and in the refusal ask; not on every command's ask row.
+5. Linux runs bubblewrap, proven by a trial run; macOS will run `sandbox-exec`; Windows refuses
+   and points at WSL2.
+6. The package-cache list and the hidden `~/.keywork` are fixed in keywork, like the trusted
+   read bundle; linked dirs are the only way to widen writes.
+
+**Open questions for Jordan.**
+
+- **Q-E8-1** The unconfined escape: keep it (a yes runs the agent's commands unconfined until
+  keywork exits; recommended) or strict (both answers refuse and the ask becomes a notice).
+- **Q-E8-2** The terminal pane and `!cmd`: stay yours and unconfined (recommended) or follow the
+  mode, so a pasted command an agent suggested is confined too.
+- **Q-E8-3** Prompt-template `` !`cmd` `` interpolation: stay with the user (asked per command
+  today) or follow the mode.
+- **Q-E8-4** CI: add bubblewrap and `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` to
+  the ubuntu job so the two live tests run; today they skip with the reason in the report.
+- **Q-E8-5** Caches: the fixed list only, or also honour `CARGO_HOME`, `GOMODCACHE` and
+  `npm_config_cache` when they point elsewhere.
+- **Q-E8-6** Q-DSH3 again, now concrete: does Plan mode run its shell under `isolated`?
+- **Q-E8-7** After E8b-ci and dogfooding, does Linux's default become `workspace`?
+
+### E8a + E8b · ledger · landed 2026-10-12
+
+**What landed.**
+
+- `engine/src/sandbox/`: `sandbox.ts` (`Sandbox`, `Launch`, `SandboxRefusal` with `fact` and
+  `remedy`, `unconfined`, `refusingSandbox`, the model note),
+  `bubblewrap.ts` (`confinementPlan` reads the host on every launch: the caches that exist, a
+  worktree's or submodule's git dir from its `.git` pointer and `commondir`; `bubblewrapArgs`
+  orders mounts shallow first), `host.ts` (`sandboxFor(mode, scope, host?)`,
+  `sandboxSupport(host?)`, the cached trial run, the refusal wording per platform and per trial
+  failure), `session.ts` (`ToolSandbox`, `workspaceSandbox` holding one answer per workspace and
+  the status word that follows it,
+  `askGateUnconfined` riding `guard.confirm` with a synthetic `unconfined` call after the
+  `mcp_elicitation` precedent).
+- Launchers: `bashTool`, `persistentBashTool` and `ShellSession.run` take a `ToolSandbox`;
+  `openInteractiveShell` and `probePtySupport` take a `Sandbox` (default `off`);
+  `LanguagePortOptions.sandbox` confines server spawns and marks a refused server `failed` with
+  the refusal as its detail and an `lsp.refused` log line; `SpawnLike` gained an optional `env`.
+  `harnessSpawnOptions` folded into the bash launch.
+- Config: `sandbox: "off" | "workspace" | "isolated"` with its `.describe()`; the project layer
+  drops it by construction, pinned by a load test.
+- Wiring: `composeWorkspace` builds the workspace sandbox once and posts the refusal notice;
+  `buildAgent` hands every agent `forAgent(askGateUnconfined(guard))` and journals the answer as
+  `gate.permission`; `main.ts` threads `config.sandbox` into chat, run and serve; the status bar
+  lead appends the sandbox word; `keywork doctor` gains the `sandbox` row; `keywork run` adds the
+  sandbox fix to the exit-4 notice when `unconfined` was refused; `docs/headless.md` says so.
+
+**Tests.** `engine/src/sandbox/seam.test.ts` (the contract with a recording fake: bash spawns
+what the seam hands back, refusal spawns nothing and leaves no marker, the persistent shell is
+confined once and not at all when refused, the pipe shell refuses, the pty spawns the confined
+argv and allocates no terminal when refused, the model note only when enforcing),
+`host.test.ts` (off touches nothing; windows, macos, other platforms, no bwrap, a namespace
+denial and any other trial failure each refuse with their wording; a passing trial confines;
+`isolated` trials with `--unshare-net`), `bubblewrap.test.ts` (plans per mode with real temp
+dirs, `XDG_CACHE_HOME`, worktree and submodule git dirs, exact argument order, `TMPDIR` for
+`isolated`, and two live Linux tests that skip with the reason when bubblewrap is absent or
+blocked: writes outside the workspace fail with a read-only file system, and `isolated` sees only
+`lo` in `/proc/net/dev` and a private `/tmp`), `session.test.ts` (one ask per workspace, yes
+runs unconfined, no and a throwing consent keep refusing, the call shape, the headless path that
+prints nothing, a guard with no one to ask fails closed, the status word before and after a
+yes and a no), `lsp/port.test.ts` (a refused sandbox
+spawns no server and keeps the reason in the facts; a confining sandbox's launch is what spawns),
+`shared/config/load.test.ts` (user layer only, the modes, `container` rejected),
+`cli/src/sandbox.test.ts` (live on win32: `keywork run` with `sandbox: "workspace"` leaves no
+marker, refuses `unconfined`, prints the reason first and the fix last, exits 4; a composed agent
+asks `bash`, `unconfined`, `bash` and runs both commands after a yes; the status bar reads
+`standard · sandbox workspace refused`; doctor rows for off, on, refused and a host that can't
+sandbox), `tui/src/unconfined-ask.test.ts` (the ask row reads `unconfined {"why":…}`, remembers
+nothing, shows no diff, and every built-in reason fits the 60-character clip).
+
+**Evidence.** Bun 1.3.9 on Windows 11 with `bun x vitest run`: the sandbox, LSP, tools, load,
+doctor, run, compose, compose-panes, chat, serve, serve-parity, main and tui terminal suites
+green, the live Linux pair skipped with `bubblewrap is linux only and this host is win32`.
+`tsc --noEmit` clean for shared, engine, tui and cli; `check:guardrails`, `check:prose`,
+`check:contract` and `check:pins` ok; biome clean on every touched file apart from hunks other
+lanes have in flight in `compose.ts` and `engine/src/index.ts`. `keywork doctor` run live printed
+the `sandbox` row quoted above.
+
+**Verified by reading only (this machine is Windows).** That each bwrap argument mounts as
+intended, in this order, on a real kernel; the trial run's stderr against real bwrap output (the
+strings come from vendor docs and bug reports); the `Read-only file system` wording a confined
+write produces; `/proc/net/dev` showing only `lo` under `--unshare-net`; `killTree`'s process
+group signal reaching processes inside the pid namespace; job control for a pty shell under bwrap
+(only reachable if Q-E8-2 flips); the Ubuntu 24.04 package and AppArmor facts. Inferred, not
+checked: GitHub's ubuntu runner lacks bubblewrap or blocks user namespaces, so the live pair will
+skip there until E8b-ci.
+
+**Deviations.** The consent is one per workspace process, not per session, so panes and children
+don't each ask; the journal entry still says `scope: "session"`, the closest existing `AskScope`.
+The waiver covers the agent's commands only: language servers keep the configured mode, so under
+a refused mode they stay off for the session and `/doctor` shows why.
+A headless sandbox refusal exits 4 but doesn't end the run at that call the way a gate decline
+does: the refusal comes from inside the tool, and ending the run from a tool needs the 117 gate
+`terminate` seam in `agent.ts`, which another lane owns.

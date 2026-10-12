@@ -61,8 +61,11 @@ describe("the gallery", () => {
         "ristretto",
         "flexoki-dark",
         "flexoki-light",
+        "whiplash",
+        "whiplash-flash",
       ]),
     );
+    expect(names).toHaveLength(21);
   });
 
   it("clears every contrast floor in every theme, light and dark (T6)", () => {
@@ -87,7 +90,7 @@ describe("the gallery", () => {
       expect(twin?.pair, `${theme.pair} names ${theme.name} back`).toBe(theme.name);
       expect(twin?.appearance).not.toBe(theme.appearance);
     }
-    expect(gallery.filter((theme) => theme.pair !== undefined)).toHaveLength(16);
+    expect(gallery.filter((theme) => theme.pair !== undefined)).toHaveLength(18);
   });
 
   it("keeps keywork-night's palette byte-identical to the shipped default", () => {

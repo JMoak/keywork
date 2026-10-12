@@ -131,6 +131,7 @@ export interface HostOptions {
   mcpServers?: Record<string, McpServerConfig> | undefined;
   repoMap?: "auto" | "off" | undefined;
   lsp?: LspConfig | undefined;
+  sandbox?: KeyworkConfig["sandbox"] | undefined;
   models?: ModelCapabilitiesConfig | undefined;
   thinking?: KeyworkConfig["thinking"] | undefined;
   theme?: string | undefined;
@@ -312,6 +313,7 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
     answerAsk: async (callId, verdict, scope) => asks.answer(callId, verdict, scope),
     permissions: async () => ledger.view(),
     revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
+    revokeSessionGrant: async (sessionId, rule) => ledger.revokeSession(sessionId, rule),
     close: async () => {
       asks.close();
       await sessions.close();
@@ -509,6 +511,7 @@ class LiveSessions {
       repoMap: options.repoMap,
       models: options.models,
       lsp: options.lsp,
+      sandbox: options.sandbox,
       checkpoints: options.checkpoints ?? "on",
       checkpointsGitDir: options.checkpointsGitDir,
       notice: (text) => options.notice?.(`keywork serve: ${text}`),

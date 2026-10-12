@@ -15,6 +15,7 @@ export interface ArcRecord {
   archived?: string;
   delivered?: string;
   abandoned: boolean;
+  theme?: string;
 }
 
 export interface ArcRegistryOptions {
@@ -136,6 +137,11 @@ export class ArcRegistry {
     return archived;
   }
 
+  async wearTheme(slug: string, theme: string | undefined): Promise<ArcRecord> {
+    const { theme: _previous, ...record } = await this.requireActive(slug);
+    return this.rewriteRecord({ ...record, ...(theme !== undefined && { theme }) });
+  }
+
   arcStore(slug: string): MemoryStore {
     validateArcSlug(slug);
     const cached = this.stores.get(slug);
@@ -161,6 +167,13 @@ export class ArcRegistry {
 
   private gate(): void {
     if (!this.trusted) throw new MemoryInertError();
+  }
+
+  private async rewriteRecord(record: ArcRecord): Promise<ArcRecord> {
+    const raw = await this.arcStore(record.slug).readReserved(arcMocFile);
+    const body = raw === null ? "" : parseDocument(raw, arcMocLink(record.slug)).body;
+    await this.writeMoc(record.slug, recordFrontmatter(record), body);
+    return record;
   }
 
   private async writeMoc(slug: string, frontmatter: Frontmatter, body: string): Promise<void> {
@@ -193,6 +206,7 @@ function recordFrontmatter(record: ArcRecord): Frontmatter {
     ...(record.archived !== undefined && { archived: record.archived }),
     ...(record.delivered !== undefined && { delivered: record.delivered }),
     ...(record.abandoned && { abandoned: true }),
+    ...(record.theme !== undefined && { theme: record.theme }),
   };
 }
 
@@ -201,6 +215,7 @@ function parseRecord(slug: string, frontmatter: Frontmatter): ArcRecord {
   const created = typeof frontmatter.created === "string" ? frontmatter.created : "";
   const archived = typeof frontmatter.archived === "string" ? frontmatter.archived : undefined;
   const delivered = typeof frontmatter.delivered === "string" ? frontmatter.delivered : undefined;
+  const theme = typeof frontmatter.theme === "string" ? frontmatter.theme : undefined;
   return {
     slug,
     status,
@@ -208,5 +223,6 @@ function parseRecord(slug: string, frontmatter: Frontmatter): ArcRecord {
     abandoned: frontmatter.abandoned === true,
     ...(archived !== undefined && { archived }),
     ...(delivered !== undefined && { delivered }),
+    ...(theme !== undefined && { theme }),
   };
 }

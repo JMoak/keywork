@@ -43,6 +43,21 @@ medium 30, heavy 45, full 40). The sections add, in APCA Lc:
 pair sits near the ground. `pair` is proved in the gallery test (it must name a gallery
 theme of the opposite appearance that names this one back), not in the schema.
 
+Every measured pair must also read in the theme's declared polarity: dark ink on a light
+ground in a `light` theme, light ink on a dark ground in a `dark` one. A dark palette
+relabelled `light` fails on every pair with `text on background reads light-on-dark in a
+light theme`, so `appearance` can be trusted by `system` and by a client's color scheme
+instead of guessed from luminance. The one pair free of this rule is `selection.text` on
+`selection.background`: a theme that states its own selected-text ink may invert the
+selection, which is what that field is for.
+
+`contrastMeasurements(theme)` returns every measured pair with its ink, ground, floor,
+measured Lc, and which layer it belongs to (`tokens` or `sections`), and `auditTheme(theme)`
+folds those into `minMarginLc` (the smallest headroom over a token floor), `sectionMarginLc`
+(the same over the section floors, infinite for a theme with no sections), and `failures`.
+Both surfaces record the same headroom: keywork-night 3.1 / 1.7, keywork-day 13.1 / 16.5,
+whiplash 4.8 / 6.9, whiplash-flash 14.6 / 17.1, pinned in `theme-audit.test.ts`.
+
 ## The derivation rule
 
 `completeTheme(theme)` fills every missing section from the thirteen base tokens, the same
@@ -89,6 +104,8 @@ Every gallery theme states all five sections by hand.
 | `ristretto` | dark | none | seams | 0 | cockpit | keywork's own warm espresso palette |
 | `flexoki-dark` | dark | `flexoki-light` | seams | 1 | calm | Flexoki (Steph Ango, MIT) |
 | `flexoki-light` | light | `flexoki-dark` | seams | 1 | calm | Flexoki (Steph Ango, MIT) |
+| `whiplash` | dark | `whiplash-flash` | borderless | 1 | calm | keywork's own: cold black, chrome greys, white-hot focus, ice cyan accent |
+| `whiplash-flash` | light | `whiplash` | borderless | 1 | calm | keywork's own, the light twin |
 
 Twins share composition (chrome weight, gap, instruments), so following the OS between
 them never relayouts. Density varies by palette: the Catppuccin and Kanagawa twins set
@@ -96,7 +113,10 @@ them never relayouts. Density varies by palette: the Catppuccin and Kanagawa twi
 needs-you `full` step in `error`.
 
 `ristretto` borrows a name, not a palette: Monokai Pro is not MIT, so ristretto is an
-original warm-espresso design. Where a project's canonical shade misses a floor, the
+original warm-espresso design. `whiplash` and `whiplash-flash` were drawn for keywork-app
+first (its plan calls them K8) and now live here, so one gallery feeds both surfaces and
+the app's `check:themes` sync has nothing to carry on its own. Where a project's canonical
+shade misses a floor, the
 gallery uses the smallest OKLCh lightness step that clears it; `gallery.test.ts` tables
 every such shade with its canonical value and proves the canonical one fails, so a
 deviation is always visible. Attributions are in `NOTICE` under "Themes".
@@ -113,3 +133,10 @@ The terminal UI paints from the base tokens only: its design language keeps synt
 the existing tokens, and its diff pane colors outcome words rather than line grounds. The
 sections exist for surfaces that paint code, terminals, and selections directly, today
 keywork-app, which receives them complete from `GET /themes`.
+
+What stays on the app's side is rendering, not theme truth: the `--kw-*` custom property
+names, the font stacks, the CodeMirror tag to syntax-role mapping (which lezer tags wear
+`keyword`, which wear `constant`, that headings are bold and links underlined), and the
+xterm slot mapping (which theme color backs the scrollbar or the inactive selection). Those
+are the app's paint, the way the TUI's glyph tiers are the TUI's; keywork owns the fifteen
+roles and sixteen slots they map onto.

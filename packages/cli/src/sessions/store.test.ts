@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { textMessage } from "@keywork/engine";
+import { childSessionFile, SessionStore, textMessage } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -224,6 +224,24 @@ describe("findSession", () => {
     const opened = await openOrResumeSession(dir, ".");
 
     expect(await findSession(dir, opened.store.header.id.slice(0, 6))).toBeUndefined();
+  });
+
+  it("finds a child through its parent's children dir while list and continue see only the parent", async () => {
+    const dir = await tempDir();
+    const parent = await openOrResumeSession(dir, ".");
+    await parent.store.append(textMessage("user", "delegate something"));
+    const child = SessionStore.createChild(
+      childSessionFile(parent.store.file, newSessionFileName()),
+      ".",
+      { sessionId: parent.store.header.id, callId: "d1" },
+    );
+    await child.append(textMessage("user", "the delegated work"));
+
+    expect((await findSession(dir, child.header.id.slice(0, 8)))?.file).toBe(child.file);
+    expect((await listSessions(dir)).sessions.map((session) => session.id)).toEqual([
+      parent.store.header.id,
+    ]);
+    expect(await latestSessionFile(dir)).toBe(parent.store.file);
   });
 
   it("looks past unreadable files", async () => {

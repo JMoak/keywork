@@ -187,6 +187,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     repoMap: config.repoMap,
     models: config.models,
     lsp: config.lsp,
+    sandbox: config.sandbox,
     onFileSaved: materialize === undefined ? undefined : (path) => materialize.fileSaved(path),
     notice: notices.post,
     userRoot: options.userRoot,
@@ -232,6 +233,19 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     user: presets?.resolver,
   });
   const permissions = ledger.resolverFor();
+  const attachSession = (store: SessionStore): void => {
+    stores.set(store.header.id, store);
+    citations.forSession(store.header.id);
+    void arcs.attached(store);
+    void host.startSession({ reason: sessionReasonFor(store), store });
+  };
+  const releaseSession = (sessionId: string): void => {
+    stores.delete(sessionId);
+    agents.release(sessionId);
+    arcs.released(sessionId);
+    citations.release(sessionId);
+    void host.endSession("switch", sessionId);
+  };
   const agents = composeAgents(composition, {
     permissions,
     arcs,
@@ -239,6 +253,11 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     citations,
     thinking: config.thinking === "on",
     notice: notices.post,
+    delegation: {
+      storeOf: (sessionId) => stores.get(sessionId),
+      attach: attachSession,
+      release: releaseSession,
+    },
   });
   const bots = botService({
     cwd,
@@ -274,19 +293,8 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
       checkpointTag: () => checkpoints?.takeTurnTag(),
-      onAttach: (store) => {
-        stores.set(store.header.id, store);
-        citations.forSession(store.header.id);
-        void arcs.attached(store);
-        void host.startSession({ reason: sessionReasonFor(store), store });
-      },
-      onRelease: (sessionId) => {
-        stores.delete(sessionId);
-        agents.release(sessionId);
-        arcs.released(sessionId);
-        citations.release(sessionId);
-        void host.endSession("switch", sessionId);
-      },
+      onAttach: attachSession,
+      onRelease: releaseSession,
       onChange: (sessionId) => changes.emit(sessionId),
       onArcBound: (sessionId, arc) => arcs.recordBinding(sessionId, arc),
     }),
@@ -297,11 +305,12 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
     spillFile: (sessionId, spillId) => stores.get(sessionId)?.spills().path(spillId),
-    shellEscape: (guard) =>
+    shellEscape: (guard, onDecision) =>
       guardedShellEscape({
         tools: () => coreTools(composition.scope),
         guard,
         permissions,
+        onDecision,
       }),
     closers: [
       () => sweepWorkspaceOnClose(sweep),
@@ -314,8 +323,9 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     extensions: extensionsView(extensions, cwd),
     extensionHost: extensionHostPort(host, composition.hostReport),
     permissions: {
-      view: () => ledger.view(),
-      revokeWorkspace: (rule) => ledger.revokeWorkspace(rule),
+      seat: "pane",
+      view: async () => ledger.view(),
+      revokeWorkspace: async (rule) => ledger.revokeWorkspace(rule),
       recordedAt: () =>
         workspacePermissionsRecordedAt({ cwd, workspaceSlug, userRoot: options.userRoot }),
     },
@@ -366,7 +376,10 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     ...(setup !== undefined && { workspaceSetup: setup }),
     ...(presets !== undefined && {
       presets: presetsPortFor(presets),
-      statusLabel: () => presets.active(),
+      statusLabel: () =>
+        [presets.active(), composition.sandbox.status()]
+          .filter((word) => word !== undefined)
+          .join(" · "),
     }),
     ...(options.inference !== undefined &&
       inferenceSeams(options.inference, options, composition, agents, stores)),

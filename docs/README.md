@@ -9,6 +9,12 @@ synthesis documents distill it all into a head-to-head comparison and the UX pri
 with their open questions. Read them in the
 order given; later docs assume the earlier ones.
 
+One vocabulary note before the index: an **arc** is keywork's name for a workstream, the
+bundle of sessions that serve one piece of work ([`backlog/98-chroma-and-arcs.md`](backlog/98-chroma-and-arcs.md)).
+`arc` stays the word of record in code and docs; the slash commands also answer to
+`workstream`, `workstreams` and `ws` (`/ws`, `/workstream-new`, and so on) so the concept is
+findable by either name.
+
 ---
 
 ## Reading order
@@ -68,7 +74,7 @@ The open questions have been resolved and the plan written:
 | Doc | What it covers |
 |-----|----------------|
 | [`design-language.md`](design-language.md) | **Visual vocabulary of record** (Jordan, 2026-08-10): the density ramp (`░▒▓█`) as the one system across curing/provenance/staging/MCP/loading, the tile-fill progress mark (dwindle in miniature, never a spinner), the needs-you-only notification formula, status-line grammar. Supersedes placeholder glyphs in planning docs. |
-| [`themes.md`](themes.md) | **Themes of record** (2026-10-11, renamed from flavors): the theme record (base tokens, density, composition taste, and the optional terminal, syntax, diff, selection, cursor, and pair sections), every contrast floor, the derivation rule both surfaces share, and the curated nineteen-theme gallery with sources and pairs. |
+| [`themes.md`](themes.md) | **Themes of record** (2026-10-11, renamed from flavors): the theme record (base tokens, density, composition taste, and the optional terminal, syntax, diff, selection, cursor, and pair sections), every contrast floor, the derivation rule both surfaces share, and the curated twenty-one-theme gallery with sources and pairs, and the polarity rule that keeps `appearance` honest. |
 | [`textures.md`](textures.md) | **Textures of record** (2026-08-16): the perceived-quality bar, eight correctness textures (T1–T8: grapheme-correct editing, paste-flood survival, Windows parity proven, remote-terminal correctness, degraded-terminal grace, first-class light, empty states that teach, latency honesty), each carrying an acceptance bar and a CI ratchet per the `check-pins.ts` precedent; a texture without a ratchet is an aspiration, not a texture of record. |
 | [`vision.md`](vision.md) | Decision record D1–D10 resolving Q1–Q10: MCP in core (lazy schemas), minimal core + blessed default-on extensions, trust-ladder gate, three session layers, full code-intel stack phased, **native tiling with panes as bus clients** (the differentiator), in-process server-shaped bus, Pi JSONL persistence, one typed config, terminal-only v1. |
 | [`backlog/105-inference-resolution.md`](backlog/105-inference-resolution.md) | **Inference-resolution decisions of record** (2026-08-20): stable `IR-01`–`IR-19` engine references and `CD-01`–`CD-10` connection-surface references defining runtime-wide provider registration, session-local selection, explicit Chat/Responses protocols, transactional switching, neutral `/connect`, independent `/model`, verified saves, owned-credential removal, and side-effect-free onboarding. |

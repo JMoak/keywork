@@ -80,7 +80,7 @@ tasked (near-misses carry an honesty note).
 | Voice input: external injectors, never a microphone in the harness (Aider `/voice` and Amp dictation are the *internal* road not taken) | P2.6 + C34 posture (decided) |
 | Session sharing as local HTML export (Pi `/export`; Gemini `/chat share`) | P2.5 |
 | Shared live workspaces by cwd | P2.3 |
-| Subagents as navigable child sessions → panes (OpenCode child-session keybinds; Amp agents panel) | ux-principles §3.2 + C11 pane registry (design of record; no subagent primitive is planned in core, per D2/P6) |
+| Subagents as navigable child sessions → panes (OpenCode child-session keybinds; Amp agents panel) | ux-principles §3.2 + C11 pane registry; the primitive landed 2026-10-12 as [`backlog/120`](../backlog/120-subagents.md) (`delegate`, child sessions, 120-3 has the D2/P6 justification) |
 | Cross-session context recall (`@T-xxx` thread mentions in Amp) | Workstream J (J5 recall + J13 citations) |
 | Read-only review findings (Codex `/review`, Amp `.agents/checks/`) | C14 diff pane, findings variant named in ux-principles §3.1 |
 | Structured debug/diagnostics log (Gemini F12 console, `session diagnostics`) | A17 · done |

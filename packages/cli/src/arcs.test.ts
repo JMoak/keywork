@@ -134,6 +134,19 @@ describe("arcService lifecycle", () => {
     expect(notified).toBe(5);
   });
 
+  it("records the theme an arc wears, lists it, and notifies subscribers", async () => {
+    const { arcs } = await worldOf();
+    await arcs.port.create("dock-v2");
+    let notified = 0;
+    arcs.port.subscribe?.(() => {
+      notified += 1;
+    });
+    expect(await arcs.wear("dock-v2", "nord")).toMatchObject({ slug: "dock-v2", theme: "nord" });
+    expect(await arcs.port.list()).toMatchObject([{ slug: "dock-v2", theme: "nord" }]);
+    expect(await arcs.wear("dock-v2", undefined)).not.toHaveProperty("theme");
+    expect(notified).toBe(2);
+  });
+
   it("closes a clean arc straight through the airlock and releases its sessions", async () => {
     const { arcs } = await worldOf();
     await arcs.port.create("dock-v2");

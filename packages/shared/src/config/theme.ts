@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { hexColor } from "../color.ts";
-import { apcaLc } from "../contrast.ts";
+import { apcaLc, type ContrastPolarity, contrastPolarity } from "../contrast.ts";
 
 export function parseTheme(candidate: unknown): Theme {
   const theme = readShape(candidate);
@@ -13,7 +13,31 @@ export function parseTheme(candidate: unknown): Theme {
 }
 
 export function contrastFailures(theme: Theme): string[] {
-  return [...tokenFailures(theme), ...densityFailures(theme), ...sectionFailures(theme)];
+  const expected = nativePolarity[theme.appearance];
+  return contrastMeasurements(theme).flatMap((measurement) => [
+    ...floorShortfall(measurement),
+    ...polarityMismatch(measurement, expected, theme.appearance),
+  ]);
+}
+
+export type MeasuredLayer = "tokens" | "sections";
+
+export interface ContrastMeasurement {
+  readonly layer: MeasuredLayer;
+  readonly pair: string;
+  readonly ink: string;
+  readonly ground: string;
+  readonly floor: number;
+  readonly lc: number;
+  readonly polarity: "native" | "free";
+}
+
+export function contrastMeasurements(theme: Theme): ContrastMeasurement[] {
+  return [
+    ...tokenMeasurements(theme),
+    ...densityMeasurements(theme),
+    ...sectionMeasurements(theme),
+  ];
 }
 
 export const sectionFloors = {
@@ -309,87 +333,108 @@ const densityFloors: Record<(typeof densityLevels)[number], number> = {
   full: 40,
 };
 
-function tokenFailures({ tokens }: Theme): string[] {
-  return readabilityFloors.flatMap(({ ink, ground, floor }) =>
-    shortfall(ink, tokens[ink], ground, tokens[ground], floor),
+const nativePolarity: Record<Theme["appearance"], ContrastPolarity> = {
+  light: "dark-on-light",
+  dark: "light-on-dark",
+};
+
+function floorShortfall({ pair, lc, floor }: ContrastMeasurement): string[] {
+  return lc >= floor ? [] : [`${pair} measures Lc ${lc.toFixed(1)}, needs at least ${floor}`];
+}
+
+function polarityMismatch(
+  measurement: ContrastMeasurement,
+  expected: ContrastPolarity,
+  appearance: Theme["appearance"],
+): string[] {
+  if (measurement.polarity === "free") return [];
+  const reads = contrastPolarity(measurement.ink, measurement.ground);
+  return reads === expected ? [] : [`${measurement.pair} reads ${reads} in a ${appearance} theme`];
+}
+
+function tokenMeasurements({ tokens }: Theme): ContrastMeasurement[] {
+  return readabilityFloors.map(({ ink, ground, floor }) =>
+    measured("tokens", `${ink} on ${ground}`, tokens[ink], tokens[ground], floor),
   );
 }
 
-function densityFailures({ tokens, density }: Theme): string[] {
-  return densityLevels.flatMap((level) =>
-    shortfall(
-      density[level],
+function densityMeasurements({ tokens, density }: Theme): ContrastMeasurement[] {
+  return densityLevels.map((level) =>
+    measured(
+      "tokens",
+      `density ${level}: ${density[level]} on background`,
       tokens[density[level]],
-      "background",
       tokens.background,
       densityFloors[level],
-    ).map((failure) => `density ${level}: ${failure}`),
+    ),
   );
 }
 
-function sectionFailures(theme: Theme): string[] {
+function sectionMeasurements(theme: Theme): ContrastMeasurement[] {
   return [
-    ...terminalFailures(theme),
-    ...syntaxFailures(theme),
-    ...diffFailures(theme),
-    ...selectionFailures(theme),
-    ...cursorFailures(theme),
+    ...terminalMeasurements(theme),
+    ...syntaxMeasurements(theme),
+    ...diffMeasurements(theme),
+    ...selectionMeasurements(theme),
+    ...cursorMeasurements(theme),
   ];
 }
 
-function terminalFailures({ terminal, tokens }: Theme): string[] {
+function terminalMeasurements({ terminal, tokens }: Theme): ContrastMeasurement[] {
   if (terminal === undefined) return [];
-  return flooredTerminalSlots.flatMap((slot) =>
-    shortfall(
-      `terminal.${slot}`,
+  return flooredTerminalSlots.map((slot) =>
+    measured(
+      "sections",
+      `terminal.${slot} on background`,
       terminal[slot],
-      "background",
       tokens.background,
       sectionFloors.terminal,
     ),
   );
 }
 
-function syntaxFailures({ syntax, tokens }: Theme): string[] {
+function syntaxMeasurements({ syntax, tokens }: Theme): ContrastMeasurement[] {
   if (syntax === undefined) return [];
-  return syntaxRoles.flatMap((role) =>
-    shortfall(`syntax.${role}`, syntax[role], "panel", tokens.panel, syntaxFloor(role)),
+  return syntaxRoles.map((role) =>
+    measured("sections", `syntax.${role} on panel`, syntax[role], tokens.panel, syntaxFloor(role)),
   );
 }
 
-function diffFailures({ diff, tokens }: Theme): string[] {
+function diffMeasurements({ diff, tokens }: Theme): ContrastMeasurement[] {
   if (diff === undefined) return [];
-  return (["insertedLine", "deletedLine"] as const).flatMap((line) =>
-    shortfall("text", tokens.text, `diff.${line}`, diff[line], sectionFloors.diffLine),
+  return (["insertedLine", "deletedLine"] as const).map((line) =>
+    measured("sections", `text on diff.${line}`, tokens.text, diff[line], sectionFloors.diffLine),
   );
 }
 
-function selectionFailures({ selection, tokens }: Theme): string[] {
+function selectionMeasurements({ selection, tokens }: Theme): ContrastMeasurement[] {
   if (selection === undefined) return [];
-  return shortfall(
-    selection.text === undefined ? "text" : "selection.text",
+  const ownInk = selection.text !== undefined;
+  const measurement = measured(
+    "sections",
+    `${ownInk ? "selection.text" : "text"} on selection.background`,
     selection.text ?? tokens.text,
-    "selection.background",
     selection.background,
     sectionFloors.selection,
   );
+  return [ownInk ? { ...measurement, polarity: "free" } : measurement];
 }
 
-function cursorFailures({ cursor, tokens }: Theme): string[] {
+function cursorMeasurements({ cursor, tokens }: Theme): ContrastMeasurement[] {
   if (cursor === undefined) return [];
-  return shortfall("cursor", cursor, "background", tokens.background, sectionFloors.cursor);
+  return [
+    measured("sections", "cursor on background", cursor, tokens.background, sectionFloors.cursor),
+  ];
 }
 
-function shortfall(
+function measured(
+  layer: MeasuredLayer,
+  pair: string,
   ink: string,
-  inkHex: string,
   ground: string,
-  groundHex: string,
   floor: number,
-): string[] {
-  const value = apcaLc(inkHex, groundHex);
-  if (value >= floor) return [];
-  return [`${ink} on ${ground} measures Lc ${value.toFixed(1)}, needs at least ${floor}`];
+): ContrastMeasurement {
+  return { layer, pair, ink, ground, floor, lc: apcaLc(ink, ground), polarity: "native" };
 }
 
 function readShape(candidate: unknown): Theme {

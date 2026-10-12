@@ -201,6 +201,31 @@
         "source": "string"
       }
     },
+    "child.started": {
+      "bot": "string",
+      "callId": "string",
+      "sessionId": "string",
+      "title": "string"
+    },
+    "child.finished": {
+      "callId": "string",
+      "costNanos": "number",
+      "outcome": "string",
+      "refused": [
+        {
+          "callId": "string",
+          "tool": "string"
+        }
+      ],
+      "sessionId": "string",
+      "usage": {
+        "cacheCreationInputTokens": "number",
+        "cacheReadInputTokens": "number",
+        "costUsd": "number",
+        "inputTokens": "number",
+        "outputTokens": "number"
+      }
+    },
     "diagnostics.published": {
       "count": "number",
       "path": "string"

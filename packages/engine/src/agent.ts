@@ -131,6 +131,13 @@ export class QueuedPromptCancelledError extends Error {
   }
 }
 
+export class NestedRefusalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NestedRefusalError";
+  }
+}
+
 interface PendingPrompt extends QueuedPrompt {
   images: readonly ImagePart[];
   signal: AbortSignal | undefined;
@@ -621,6 +628,9 @@ export class Agent {
         isError: false,
       };
     } catch (cause) {
+      if (cause instanceof NestedRefusalError) {
+        this.declineEndedRun = this.guard?.declineEndsRun === true;
+      }
       const reason = cause instanceof Error ? cause.message : String(cause);
       return { callId: call.callId, output: reason, isError: true };
     }

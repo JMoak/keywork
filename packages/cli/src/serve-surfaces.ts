@@ -121,6 +121,7 @@ export function surfacePorts(options: SurfacePortsOptions): SurfacePorts {
       create: async (slug) => (await arcsOf()).port.create(slug),
       close: async (slug, direction) => (await arcsOf()).port.close(slug, direction),
       abandon: async (slug) => (await arcsOf()).port.abandon(slug),
+      setTheme: async (slug, theme) => (await arcsOf()).wear(slug, theme ?? undefined),
       bindSession: async (id, slug) => {
         const session = await options.session(id);
         if (session === undefined) return undefined;

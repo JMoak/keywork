@@ -3,6 +3,7 @@ import {
   ArcBindings,
   ArcCloseDraft,
   ArcRecall,
+  type ArcRecord,
   ArcRegistry,
   type ArcReview,
   type CurationJudgmentPort,
@@ -24,6 +25,7 @@ import type {
   AirlockFinishOutcome,
   ArcAirlockPort,
   ArcCloseOutcome,
+  ArcSummary,
   ArcsPort,
 } from "@keywork/tui";
 import type { SessionKey, WorkspaceMemory } from "./memory.ts";
@@ -58,6 +60,7 @@ export interface ArcService {
   attached(store: SessionStore): Promise<void>;
   released(sessionId: string): void;
   recordBinding(sessionId: string, arc: string | undefined): void;
+  wear(slug: string, theme: string | undefined): Promise<ArcSummary>;
   layerStoreFor(sessionId: string): MemoryStore | undefined;
   routeStragglers(slug: string): Promise<string[]>;
   searcher(
@@ -251,6 +254,7 @@ export function arcService(options: ArcServiceOptions): ArcService {
         status: record.status,
         created: record.created,
         sessions: counts.get(record.slug) ?? 0,
+        ...(record.theme !== undefined && { theme: record.theme }),
       }));
     },
     create: async (slug) => {
@@ -333,6 +337,11 @@ export function arcService(options: ArcServiceOptions): ArcService {
       else bindings.bind(sessionId, arc);
       changed();
     },
+    wear: async (slug, theme) => {
+      const worn = await requireRegistry().wearTheme(slug, theme);
+      changed();
+      return arcSummaryOf(worn, await options.boundSessionCounts());
+    },
     layerStoreFor: (sessionId) => {
       const arc = bindings.bindingOf(sessionId);
       if (arc === undefined) return undefined;
@@ -353,6 +362,16 @@ export function arcService(options: ArcServiceOptions): ArcService {
         return { hits: outcome.hits, source: outcome.workspaceSource };
       },
     }),
+  };
+}
+
+function arcSummaryOf(record: ArcRecord, counts: ReadonlyMap<string, number>): ArcSummary {
+  return {
+    slug: record.slug,
+    status: record.status,
+    created: record.created,
+    sessions: counts.get(record.slug) ?? 0,
+    ...(record.theme !== undefined && { theme: record.theme }),
   };
 }
 

@@ -606,7 +606,7 @@ function hostPorts(
     ...(options.arcs !== undefined && { focusedArc: sessions.focusedArcPort() }),
     ...(options.bots !== undefined && { focusedBot: sessions.focusedBotPort() }),
     ...(options.permissions !== undefined && {
-      focusedPermissions: sessions.focusedPermissionsPort(),
+      focusedPermissions: sessions.focusedPermissionsPort(options.permissions),
     }),
     tips: {
       enabled: options.tips !== "off",

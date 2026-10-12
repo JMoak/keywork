@@ -183,3 +183,90 @@ remember hint under a bash ask and none under a write ask), `shared/trust/grants
 (`!cmd`) run through `guardedShellEscape` without an `onDecision` seam in the panes
 composition, so a quiet `!git status` does not show in the first row; `keywork attach` composes
 no permissions port, so `/permissions` is absent there until serve parity carries it.
+
+### Permissions surface, part 2 · 2026-10-12
+
+The first part left three gaps open: `keywork attach` had no `/permissions`, pane shell escapes
+never reached the "ran without asking" row, and the overlay said nothing useful the first time
+it opened. All three are closed here. Nothing widens E1: the bundle is still fixed with user
+rules above it, grants beyond `once` still cover `bash` and MCP only, and every new path only
+reads or removes grants.
+
+**One port, two seats.** `PermissionsPort` (`tui/src/permissions-model.ts`) is now async and
+names its `seat`: `pane` for the local panes TUI, `attached` for `keywork attach`.
+`PermissionsModel.refresh()` reads the view and the focused pane's session grants together
+and renders from that reading: `checking grants` until it lands, `can't read grants · <why>`
+if it fails, and the same rows as before once it arrives. `r` and `d` await the port, post
+`couldn't revoke <rule> · <why>` when the call throws instead of claiming success, and read
+again afterwards. A seat that keeps session grants elsewhere supplies
+`sessionGrants(sessionId)`; `SessionPanes.focusedPermissionsPort(port)` uses it for a pane
+bound to a session and falls back to the pane's own `MutationAsk` grants otherwise.
+
+**Attach.** `KeyworkClient` gained `listPermissions()`, `revokeWorkspaceGrant(rule)` and
+`revokeSessionGrant(sessionId, rule)`; both revokes answer `GrantRevocation`, `revoked`,
+`missing` (404) or `malformed` (400). `remotePermissionsPort(client)` in
+`cli/src/remote-ports.ts` builds the attached seat over them and `attach.ts` mounts it, so
+`/permissions` appears in attach with the same rows and keys. Session grants recorded by
+`POST /asks` with `scope: "session"` had no way back, so one route was added to
+`permissionFamily`: **`POST /permissions/session/{sessionId}/revoke`**
+(`revokeSessionGrant`), body `{ rule }`, `200 { revoked: rule }`, `400` on a malformed rule,
+`404` when that session holds no matching grant. It touches only that session's layer.
+`PermissionLedger.revokeSession` backs it, `SessionHost` gained the method, and both
+`fileSessionHost` and the memory host implement it. No event rides with it (the workspace
+revoke has none either), so `docs/events.md` is unchanged. The change is additive; the
+OpenAPI fixture was regenerated with `bun run contract:fixtures` and `contractVersion` was
+left for the integration bump.
+
+**CLI.** `keywork permissions list` takes the whole view from a running server when one
+answers (bundle and trust as the server sees them, workspace grants, session grants), and
+`revoke` goes through `revokeWorkspaceGrant`. Both use the typed client; the hand-rolled
+fetch is gone. With no server the local store path is unchanged. The server lookup now reads
+only this workspace's ticket: the user-level `server.json` names whichever server started
+last, so the old fallback could list, or revoke against, another workspace's grants.
+
+**Shell escapes.** `SessionPaneDeps.shellEscape` now takes `(guard, onDecision)`, and the
+pane passes a sink into its `QuietRunLog.noteShellEscape(call, decision)`.
+`guardedShellEscape` reports each decision with its call. The row reads
+`ran without asking · shell escape !git status · trusted reads`. Two bugs turned up on the
+way. `guardedShellEscape` treated the guard's answer as a boolean, so an object answer of
+`{ approved: false }` would have counted as approval; it now reads the full `Confirmation`.
+And in the local panes a call covered by an `[a]` grant reported `gate: "user"` with no
+`scope`, so the "session grant" reason could never show for tool calls or escapes. The pane
+guard now calls `MutationAsk.confirmation`, which answers a covered call with
+`{ approved: true, gate: "user", scope: "session" }`, which is what `docs/events.md` already
+promised.
+
+**First look.** When nothing has run quietly and nothing is granted, the first row teaches
+once: `trusted reads just run · [a] on an ask grants this session, the app can grant the
+workspace` (or `nothing's granted yet · …` when untrusted). The attached seat can't answer
+asks, so there it says `grants come from answering an ask in the app with a scope`. The row
+below still sums up the bundle, so the lesson isn't repeated.
+
+**Evidence.** Under bun 1.3.9: `tsc --build`, `check:guardrails`, `check:prose`,
+`check:pins` and biome on every touched file are clean. `bun x vitest run` over
+`packages/server/src`, `packages/tui/src` and the CLI files below: 148 files, 2418 passed.
+New tests: `server/client.test.ts` (list, both revokes, `missing` and `malformed`, against the
+memory host with a queued ask), `server/server.test.ts` (the session revoke route's 400, 404
+and 200, then the next call asks again), `cli/remote-ports.test.ts` (the attached overlay's
+rows over a live memory server, `r` and `d` clearing them server side, then the attached
+lesson), `cli/permissions.test.ts` (list and revoke against a real `serve()` on port 0 with
+a session and a workspace grant answered through `POST /asks`; the CLI ran untrusted while
+the server was trusted, so the trusted bundle line shows the view came from the server),
+`cli/compose-panes.test.ts` (a trusted `echo` escape reports `gate: "trusted"` through the
+sink), `tui/session-panes.test.ts` (the shell-escape row from the real pane wiring, the
+session-grant reason after `[a]`, the seat choosing where session grants live; both wiring
+tests fail with the sink or the confirmation reverted), `tui/shell-escape.test.ts`,
+`tui/mutation-ask.test.ts` and `tui/permissions-model.test.ts` (the lesson in both trust
+states and both seats, reading and failure rows, a failed revoke). e2e `discovery`,
+`chrome-states` and `chrome-states-ascii` pass with no golden touched; no golden shows
+`/permissions`. Verified by reading the code, not tested: an attached pane has no ask
+answering (the remote agent gets no guard, and the attach notice says the server answers
+with no). `check:contract` fails until the coordinator moves `contractVersion`.
+
+**Open.** The attached seat shows no `last changed` stamp, since the store's mtime is local to
+the server; adding it to `GET /permissions` would be one more additive field. The bundle
+summary row is 102 characters and clips in the 96-column panel. In the local panes a call an
+`[a]` grant covers still fires `gate.ask` before the decision, because session grants live in
+`MutationAsk` rather than in the ledger's session layer (`compose-panes.ts` resolves through
+`ledger.resolverFor()` with no session id). Moving them into the ledger would make the pane,
+serve and the REPL one path.

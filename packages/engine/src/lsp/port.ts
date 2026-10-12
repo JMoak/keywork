@@ -3,6 +3,7 @@ import { basename, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { DiagnosticsLog } from "../diagnostics.ts";
 import { within } from "../proc.ts";
+import { type Launch, type Sandbox, SandboxRefusal, unconfined } from "../sandbox/sandbox.ts";
 import type { ToolScope } from "../tools/confine.ts";
 import { JsonRpcStdio } from "./jsonrpc.ts";
 import { resolveOnPath, type SpawnLike, spawnResolved } from "./path.ts";
@@ -62,6 +63,7 @@ export interface LanguagePortOptions {
   budgets?: Partial<LanguageBudgets> | undefined;
   diagnostics?: Pick<DiagnosticsLog, "log"> | undefined;
   spawn?: SpawnLike | undefined;
+  sandbox?: Sandbox | undefined;
   now?: (() => number) | undefined;
   searchPath?: string | undefined;
   scheduleIdleCheck?: IdleScheduler | undefined;
@@ -205,8 +207,12 @@ class LanguageServers implements LanguagePort {
     const [command = "", ...args] = slot.spec.command;
     const file = resolveOnPath(command, this.options.searchPath);
     if (file === undefined) return this.markMissing(slot, command);
+    const launch = this.confined(file, args);
+    if (launch instanceof SandboxRefusal) return this.markRefused(slot, launch);
     slot.state = "starting";
-    const client = new JsonRpcStdio(this.spawn(file, args, { cwd: this.scope.cwd }));
+    const client = new JsonRpcStdio(
+      this.spawn(launch.file, launch.args, { cwd: launch.cwd, env: launch.env }),
+    );
     slot.client = client;
     client.onNotification("textDocument/publishDiagnostics", (params) =>
       this.receivePublish(slot, params),
@@ -226,6 +232,26 @@ class LanguageServers implements LanguagePort {
     slot.state = "ready";
     this.touch(slot);
     return client;
+  }
+
+  private confined(file: string, args: readonly string[]): Launch | SandboxRefusal {
+    const launch = { file, args, cwd: this.scope.cwd, env: process.env };
+    try {
+      return (this.options.sandbox ?? unconfined).confine(launch);
+    } catch (cause) {
+      if (cause instanceof SandboxRefusal) return cause;
+      throw cause;
+    }
+  }
+
+  private markRefused(slot: ServerSlot, refusal: SandboxRefusal): undefined {
+    slot.state = "failed";
+    slot.detail = refusal.message;
+    this.options.diagnostics?.log("error", "lsp.refused", {
+      language: slot.language,
+      reason: refusal.message,
+    });
+    return undefined;
   }
 
   private markMissing(slot: ServerSlot, command: string): undefined {

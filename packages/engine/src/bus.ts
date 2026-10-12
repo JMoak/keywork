@@ -16,6 +16,29 @@ export interface QueuedPrompt {
   origin?: PromptOrigin;
 }
 
+export type ChildOutcome = "completed" | "interrupted" | "failed" | "denied";
+
+export interface RefusedCall {
+  tool: string;
+  callId: string;
+}
+
+export interface ChildStarted {
+  callId: string;
+  sessionId?: string;
+  title: string;
+  bot?: string;
+}
+
+export interface ChildFinished {
+  callId: string;
+  sessionId?: string;
+  outcome: ChildOutcome;
+  usage: Usage;
+  costNanos?: number;
+  refused?: readonly RefusedCall[];
+}
+
 interface LiveEvents {
   "turn.started": { userText: string; entryId?: string; origin?: PromptOrigin };
   "turn.delta": { delta: TurnDelta };
@@ -30,6 +53,8 @@ interface LiveEvents {
   "gate.preset": { from: string; to: string };
   "session.mode": { mode: string };
   "context.injected": { injection: ContextInjection };
+  "child.started": ChildStarted;
+  "child.finished": ChildFinished;
   "diagnostics.published": { path: string; count: number };
   "shell.reset": Record<never, never>;
   "extension.notice": {

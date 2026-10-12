@@ -175,7 +175,7 @@ above: syntax through the existing tokens, outcome words rather than tinted diff
 The sections serve surfaces that paint those things directly, and a theme that omits one
 gets it derived from its own tokens by the one shared rule, so the terminal and the app
 never disagree about a color. `themes.md` is the record: schema, floors, derivation, and
-the curated gallery of nineteen themes in matched light and dark pairs.
+the curated gallery of twenty-one themes in matched light and dark pairs.
 
 **The tool row.** One designed line: fold-stamp · verb · subject · duration/size ·
 outcome, and outcome is the only colored word. Expanded detail hangs under a faint rule;

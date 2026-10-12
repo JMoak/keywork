@@ -218,7 +218,7 @@ export class ArcsPane implements Pane {
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     if (this.model.level() === "arcs") {
       return rowsView(this.model, rows, theme, width, {
-        empty: "░ no arcs yet · n names one · /arc-new binds this session",
+        empty: "░ no arcs yet · an arc is a workstream · n names one · /arc-new binds this session",
         text: (row) => arcGroupLine(row, true),
         line: (row) => this.arcLine(row, theme, width),
       });

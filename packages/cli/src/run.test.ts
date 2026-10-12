@@ -300,7 +300,9 @@ describe("composition parity with panes", () => {
       userRoot: emptyUserRoot,
       checkpoints: "off",
     });
-    await composeAgents(composition).build({ provider: viaPanes, guard: {} }).send("hi");
+    await composeAgents(composition, { delegation: { storeOf: () => undefined } })
+      .build({ provider: viaPanes, guard: {} })
+      .send("hi");
 
     const names = (request: ProviderRequest | undefined) => request?.tools.map((tool) => tool.name);
     expect(names(viaHeadless.requests[0])).toEqual(names(viaPanes.requests[0]));
@@ -1304,5 +1306,124 @@ describe("visible thinking in headless runs", () => {
       print: (line) => plain.push(line),
     });
     expect(plain).toEqual(["answer"]);
+  });
+});
+
+describe("delegation under keywork run", () => {
+  const delegateCall = {
+    type: "tool-call" as const,
+    callId: "d1",
+    name: "delegate",
+    arguments: { title: "count the files", prompt: "count the files under src" },
+  };
+
+  it("lists each child on the stream and on run.finished, its session nested beside the run's", async () => {
+    const cwd = await tempDir();
+    const sessionDir = await tempDir();
+    const lines: string[] = [];
+
+    const outcome = await headless({
+      prompt: "how many files?",
+      cwd,
+      json: true,
+      sessionDir,
+      provider: new MockProvider([
+        toolCallTurn(delegateCall),
+        textTurn("twelve files"),
+        textTurn("there are twelve"),
+      ]),
+      print: (line) => lines.push(line),
+    });
+
+    expect(outcome.outcome).toBe("completed");
+    const events = lines.map((line) => JSON.parse(line));
+    const started = events.find((event) => event.type === "child.started");
+    expect(started).toMatchObject({ callId: "d1", title: "count the files" });
+    expect(events.find((event) => event.type === "child.finished")).toMatchObject({
+      callId: "d1",
+      sessionId: started.sessionId,
+      outcome: "completed",
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "run.finished",
+      outcome: "completed",
+      exitCode: 0,
+      children: [
+        {
+          callId: "d1",
+          sessionId: started.sessionId,
+          title: "count the files",
+          outcome: "completed",
+        },
+      ],
+    });
+    const [parentFile] = (await readdir(sessionDir)).filter((name) => name.endsWith(".jsonl"));
+    if (parentFile === undefined) throw new Error("no session file");
+    const childDir = join(sessionDir, parentFile.replace(/\.jsonl$/, ".children"));
+    const [childFile] = await readdir(childDir);
+    const child = await SessionStore.open(join(childDir, childFile ?? ""));
+    expect(child.header.id).toBe(started.sessionId);
+    expect(child.messages().map((message) => messageText(message))).toEqual([
+      "count the files under src",
+      "twelve files",
+    ]);
+  });
+
+  it("answers a child's ask with no, flags it, ends the run there and exits 4", async () => {
+    const cwd = await tempDir();
+    const lines: string[] = [];
+    const errors: string[] = [];
+
+    const outcome = await headless({
+      prompt: "clean up",
+      cwd,
+      json: true,
+      provider: new MockProvider([
+        toolCallTurn(delegateCall),
+        toolCallTurn({
+          type: "tool-call",
+          callId: "b1",
+          name: "bash",
+          arguments: { command: "rm -rf build" },
+        }),
+      ]),
+      print: (line) => lines.push(line),
+      printError: (line) => errors.push(line),
+    });
+
+    expect(outcome.outcome).toBe("denied");
+    expect(exitCodeOf(outcome)).toBe(4);
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events.find((event) => event.type === "child.finished")).toMatchObject({
+      outcome: "denied",
+      refused: [{ tool: "bash", callId: "b1" }],
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "run.finished",
+      outcome: "denied",
+      refused: [{ tool: "bash", callId: "b1" }],
+      children: [{ callId: "d1", outcome: "denied", refused: [{ tool: "bash", callId: "b1" }] }],
+    });
+    expect(events.filter((event) => event.type === "turn.started")).toHaveLength(1);
+  });
+
+  it("names each child on stderr when json is off", async () => {
+    const cwd = await tempDir();
+    const errors: string[] = [];
+
+    await headless({
+      prompt: "how many files?",
+      cwd,
+      json: false,
+      provider: new MockProvider([
+        toolCallTurn(delegateCall),
+        textTurn("twelve files"),
+        textTurn("there are twelve"),
+      ]),
+      print: () => {},
+      printError: (line) => errors.push(line),
+    });
+
+    expect(errors).toEqual(["keywork run: child unsaved · count the files · completed"]);
   });
 });

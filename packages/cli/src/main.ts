@@ -236,6 +236,7 @@ async function runChat(context: CommandContext, { values }: ParsedInvocation): P
     ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
     ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
     ...(config.lsp !== undefined && { lsp: config.lsp }),
+    ...(config.sandbox !== undefined && { sandbox: config.sandbox }),
     ...(config.models !== undefined && { models: config.models }),
     ...(config.thinking !== undefined && { thinking: config.thinking }),
     ...(values.resume !== undefined && { resumeId: values.resume }),
@@ -281,6 +282,7 @@ async function runHeadlessPrompt(
       ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
       ...(config.repoMap !== undefined && { repoMap: config.repoMap }),
       ...(config.lsp !== undefined && { lsp: config.lsp }),
+      ...(config.sandbox !== undefined && { sandbox: config.sandbox }),
       ...(config.models !== undefined && { models: config.models }),
       ...(config.thinking !== undefined && { thinking: config.thinking }),
       ...(values["session-dir"] !== undefined && { sessionDir: values["session-dir"] }),
@@ -339,6 +341,7 @@ ${connectHint}`,
       mcpServers: config.mcpServers,
       repoMap: config.repoMap,
       lsp: config.lsp,
+      sandbox: config.sandbox,
       models: config.models,
       thinking: config.thinking,
       theme: startupThemeName(config),
@@ -569,7 +572,6 @@ async function runPermissions(
   { positionals }: ParsedInvocation,
 ): Promise<number> {
   const { permissionsCommand } = await import("./permissions.ts");
-  const { runningServerAmong, ticketFilesFor } = await import("./serve.ts");
   return permissionsCommand(
     positionals,
     {
@@ -579,11 +581,18 @@ async function runPermissions(
       userRoot: homedir(),
     },
     commandIo(context),
-    {
-      runningServer: () =>
-        runningServerAmong(ticketFilesFor(context.cwd, context.workspaceSlug), fetch),
-    },
+    { runningServer: () => runningWorkspaceServer(context) },
   );
+}
+
+async function runningWorkspaceServer(context: CommandContext): Promise<KeyworkClient | undefined> {
+  const { runningServerAmong, workspaceTicketFile } = await import("./serve.ts");
+  const { keyworkClient } = await import("@keywork/server");
+  const ticket = await runningServerAmong(
+    [workspaceTicketFile(context.cwd, context.workspaceSlug)],
+    fetch,
+  );
+  return ticket === undefined ? undefined : keyworkClient(ticket);
 }
 
 async function runDoctor(context: CommandContext): Promise<number> {

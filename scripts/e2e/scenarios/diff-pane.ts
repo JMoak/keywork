@@ -7,9 +7,31 @@ const askRowMarker = "[y] allow  [n] deny";
 const calmHeader = /│ session-1 +│/;
 const emptyRow = "no changes since session start";
 const changedRow = "notes.txt  +1 -1 · turn 1";
-const hunkHeader = "@@ -1,3 +1,3 @@";
 const shoutPrompt = "please shout the middle line of notes.txt";
+const reply = "All set, beta is BETA now.";
+const treeTitle = "session tree · 1 session";
+const treeRow = `▓ ${shoutPrompt} · now`;
 const frozenClock = (): number => Date.parse("2026-09-07T12:00:00.000Z");
+
+const afterWrite = frameShowing(
+  treeTitle,
+  treeRow,
+  calmHeader,
+  reply,
+  "diff · 1 file · +1 -1",
+  changedRow,
+  "@@ -1,3 +1,3 @@",
+  "- beta",
+  "+ BETA",
+);
+
+const afterUndo = frameShowing(
+  treeTitle,
+  treeRow,
+  "undone · files put back",
+  `› ${shoutPrompt}`,
+  emptyRow,
+);
 
 export const diffPane: Scenario = {
   name: "diff-pane",
@@ -32,7 +54,7 @@ export const diffPane: Scenario = {
       },
       { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
     ],
-    textTurn("All set, beta is BETA now."),
+    textTurn(reply),
   ],
   app: { clock: frozenClock },
   goldens: ["after-write", "after-undo"],
@@ -50,20 +72,12 @@ export const diffPane: Scenario = {
     await stage.press("enter");
     await stage.until(askRowMarker);
     await stage.press("y");
-    await stage.until("All set, beta is BETA now.");
-    const written = await stage.until(changedRow);
-    assert.ok(written.includes("diff · 1 file · +1 -1"), "the title carries the totals");
-    await stage.until(calmHeader);
-    const settled = await stage.until(hunkHeader);
-    assert.ok(settled.includes("- beta"), "the removed line shows in the body");
-    assert.ok(settled.includes("+ BETA"), "the added line shows in the body");
+    await stage.until(afterWrite);
     await stage.capture("after-write");
 
     await stage.type("/undo");
     await stage.press("enter");
-    await stage.until("undone · files put back");
-    const undone = await stage.until(emptyRow);
-    assert.ok(undone.includes(`› ${shoutPrompt}`), "the prompt is back in the composer");
+    await stage.until(afterUndo);
     await stage.capture("after-undo");
 
     await stage.press(...Array.from(shoutPrompt, () => "backspace"));
@@ -79,3 +93,12 @@ export const diffPane: Scenario = {
     await stage.quit();
   },
 };
+
+function frameShowing(...markers: readonly (string | RegExp)[]): RegExp {
+  const everyMarker = markers.map((marker) => `(?=[\\s\\S]*${patternOf(marker)})`);
+  return new RegExp(`^${everyMarker.join("")}`);
+}
+
+function patternOf(marker: string | RegExp): string {
+  return typeof marker === "string" ? marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : marker.source;
+}

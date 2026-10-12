@@ -1,9 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { MockProvider, textTurn, toolCallTurn } from "@keywork/engine";
+import { type KeyworkClient, keyworkClient, type PendingAsk } from "@keywork/server";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { workspaceIdentity, workspacePermissionsFile } from "./paths.ts";
 import { permissionsCommand } from "./permissions.ts";
+import { runningServerAmong, serve } from "./serve.ts";
 
 const scratch = scratchDirs("keywork-cli-permissions-");
 
@@ -69,36 +72,6 @@ describe("keywork permissions list", () => {
     ]);
   });
 
-  it("asks a running server for its session grants", async () => {
-    const { cwd, userRoot, projectTrusted } = await roots();
-    const io = recorder();
-    const seen: string[] = [];
-    const fetchStub = (async (url: string | URL | Request, init?: RequestInit) => {
-      seen.push(`${String(url)} ${new Headers(init?.headers).get("authorization")}`);
-      return Response.json({
-        trusted: true,
-        bundle: [],
-        workspace: [],
-        session: {
-          "session-1": [{ action: "bash", resource: "npm run *", effect: "allow" }],
-          "session-2": [],
-        },
-      });
-    }) as typeof fetch;
-
-    await permissionsCommand([], { cwd, userRoot, projectTrusted }, io, {
-      runningServer: async () => ({ url: "http://127.0.0.1:4100/", token: "t0k" }),
-      fetch: fetchStub,
-    });
-
-    expect(seen).toEqual(["http://127.0.0.1:4100/permissions Bearer t0k"]);
-    expect(io.out.slice(-3)).toEqual([
-      "session grants · from the server at http://127.0.0.1:4100",
-      "  session-1",
-      "    bash npm run *",
-    ]);
-  });
-
   it("refuses a stray argument and an unknown verb with usage", async () => {
     const { cwd, userRoot, projectTrusted } = await roots();
     const io = recorder();
@@ -145,3 +118,94 @@ describe("keywork permissions revoke", () => {
     expect(io.err[1]).toContain("revoke wants the grant as list prints it");
   });
 });
+
+describe("keywork permissions against a running keywork serve", () => {
+  it("lists the server's grants and revokes a workspace grant through it", async () => {
+    const { cwd, userRoot } = await roots(false);
+    const served = await servedWith(
+      cwd,
+      userRoot,
+      new MockProvider([bash("c1", "printf %s one"), bash("c2", "true"), textTurn("done")]),
+    );
+    const { client } = served;
+    const session = await client.createSession();
+    await client.prompt(session.id, "print");
+    expect(await client.answerAsk((await nextAsk(client)).callId, "granted", "session")).toBe(
+      "settled",
+    );
+    expect(await client.answerAsk((await nextAsk(client)).callId, "granted", "workspace")).toBe(
+      "settled",
+    );
+    const cliRoots = { cwd, userRoot, projectTrusted: false };
+    const listed = recorder();
+
+    expect(await permissionsCommand([], cliRoots, listed, served.seams)).toBe(0);
+
+    expect(listed.out[0]).toBe("trusted reads · fixed in keywork, your own rules win over it");
+    expect(listed.out).toContain("  bash true *");
+    expect(listed.out.slice(-3)).toEqual([
+      `session grants · from the server at ${client.url}`,
+      `  ${session.id}`,
+      "    bash printf *",
+    ]);
+
+    const revoked = recorder();
+    expect(
+      await permissionsCommand(["revoke", "bash", "true *"], cliRoots, revoked, served.seams),
+    ).toBe(0);
+    expect(revoked.out).toEqual(["revoked bash true * · it asks again from the next call on"]);
+    expect((await client.listPermissions()).workspace).toEqual([]);
+    expect(
+      await permissionsCommand(["revoke", "bash", "true *"], cliRoots, revoked, served.seams),
+    ).toBe(1);
+    expect(revoked.err).toEqual(['keywork permissions: no workspace grant reads "bash true *"']);
+    await served.stop();
+  });
+});
+
+const bash = (callId: string, command: string) =>
+  toolCallTurn({ type: "tool-call", callId, name: "bash", arguments: { command } });
+
+async function servedWith(cwd: string, userRoot: string, provider: MockProvider) {
+  const ticketFile = join(await scratch(), "server.json");
+  const stop = new AbortController();
+  const finished = serve({
+    cwd,
+    userRoot,
+    sessionDir: await scratch(),
+    projectTrusted: true,
+    provider,
+    permissions: () => undefined,
+    port: 0,
+    ticketFile,
+    signal: stop.signal,
+    print: () => undefined,
+    printError: () => undefined,
+  });
+  const runningServer = async (): Promise<KeyworkClient | undefined> => {
+    const ticket = await runningServerAmong([ticketFile], fetch);
+    return ticket === undefined ? undefined : keyworkClient(ticket);
+  };
+  const client = await eventually(runningServer);
+  return {
+    client,
+    seams: { runningServer },
+    stop: async () => {
+      stop.abort();
+      await finished;
+    },
+  };
+}
+
+async function nextAsk(client: KeyworkClient): Promise<PendingAsk> {
+  return eventually(async () => (await client.asks())[0]);
+}
+
+async function eventually<T>(probe: () => Promise<T | undefined>): Promise<T> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const found = await probe();
+    if (found !== undefined) return found;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("gave up waiting");
+}

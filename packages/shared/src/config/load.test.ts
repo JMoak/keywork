@@ -414,6 +414,27 @@ describe("loadConfig", () => {
     ).rejects.toThrow(ConfigError);
   });
 
+  it("takes the sandbox mode from the user layer only, so a repo can never loosen it", async () => {
+    const userDir = await dirWithConfig({ sandbox: "isolated" });
+    const projectDir = await dirWithConfig({ sandbox: "off" });
+
+    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
+
+    expect(config.sandbox).toBe("isolated");
+    expect((await loadConfig({ projectDir, projectTrusted: true })).sandbox).toBeUndefined();
+  });
+
+  it("accepts the three sandbox modes and rejects anything else", async () => {
+    for (const mode of ["off", "workspace", "isolated"]) {
+      expect((await loadConfig({ userDir: await dirWithConfig({ sandbox: mode }) })).sandbox).toBe(
+        mode,
+      );
+    }
+    await expect(
+      loadConfig({ userDir: await dirWithConfig({ sandbox: "container" }) }),
+    ).rejects.toThrow(ConfigError);
+  });
+
   it("round-trips the notifications policy and rejects a transport it does not know", async () => {
     expect(await loadConfig({})).not.toHaveProperty("notifications");
     for (const policy of ["auto", "osc777", "osc9", "bell", "off"]) {

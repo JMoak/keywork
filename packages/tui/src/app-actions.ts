@@ -228,7 +228,7 @@ export const appActions: Record<string, AppAction> = {
   },
   "arcs.summon": {
     chords: "leader a",
-    help: "arcs node",
+    help: "arcs node · workstreams",
     chainable: true,
     invoke: (target) => target.summon("arcs"),
     coveredBy: "arcs",

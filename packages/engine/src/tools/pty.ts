@@ -1,4 +1,5 @@
 import { within } from "../proc.ts";
+import { type Launch, type Sandbox, unconfined } from "../sandbox/sandbox.ts";
 import { detectShell, type Shell } from "./bash.ts";
 import { scrubbedEnv } from "./command-run.ts";
 
@@ -35,13 +36,17 @@ export const ptyUnavailableInRuntime =
 export function probePtySupport(
   facts: PtyRuntimeFacts = realPtyRuntimeFacts(),
   shell: Shell = interactiveShell(facts),
+  sandbox: Sandbox = unconfined,
 ): PtySupport {
   if (facts.platform === "win32") return { available: false, reason: ptyUnavailableOnWindows };
   const runtime = facts.runtime;
   if (runtime === undefined) return { available: false, reason: ptyUnavailableInRuntime };
   const refusal = terminalRefusal(runtime);
   if (refusal !== undefined) return { available: false, reason: refusal };
-  return { available: true, open: (cwd, size) => openPtyChild(runtime, shell, cwd, size) };
+  return {
+    available: true,
+    open: (cwd, size) => openPtyChild(runtime, shell, sandbox.confine(ptyLaunch(shell, cwd)), size),
+  };
 }
 
 function terminalRefusal(runtime: BunPtyRuntime): string | undefined {
@@ -109,7 +114,17 @@ const terminalName = "xterm-256color";
 const hangupGraceMs = 2_000;
 const forceKillWaitMs = 1_000;
 
-function openPtyChild(runtime: BunPtyRuntime, shell: Shell, cwd: string, size: PtySize): PtyChild {
+function ptyLaunch(shell: Shell, cwd: string): Launch {
+  const env = { ...scrubbedEnv(process.env), TERM: terminalName };
+  return { file: shell.file, args: interactiveArgs(shell), cwd, env };
+}
+
+function openPtyChild(
+  runtime: BunPtyRuntime,
+  shell: Shell,
+  launch: Launch,
+  size: PtySize,
+): PtyChild {
   const outputListeners = new Set<(bytes: Uint8Array) => void>();
   const exitListeners = new Set<(code: number | null) => void>();
   const terminal = new runtime.Terminal({
@@ -120,9 +135,9 @@ function openPtyChild(runtime: BunPtyRuntime, shell: Shell, cwd: string, size: P
       for (const listener of outputListeners) listener(bytes);
     },
   });
-  const child = runtime.spawn([shell.file, ...interactiveArgs(shell)], {
-    cwd,
-    env: { ...scrubbedEnv(process.env), TERM: terminalName },
+  const child = runtime.spawn([launch.file, ...launch.args], {
+    cwd: launch.cwd,
+    env: launch.env,
     terminal,
   });
   let closed = false;

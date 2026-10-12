@@ -1640,6 +1640,66 @@ describe("spill open", () => {
   });
 });
 
+describe("child open", () => {
+  function delegatingModel(ports: ConversationPorts) {
+    const agent = new Agent({ provider: new MockProvider([]) });
+    const model = new ConversationModel(agent, () => {}, undefined, undefined, ports);
+    agent.bus.emit("tool.started", {
+      call: {
+        type: "tool-call",
+        callId: "d1",
+        name: "delegate",
+        arguments: { title: "find the callers", prompt: "list them" },
+      },
+    });
+    const finish = (output: string) =>
+      agent.bus.emit("tool.finished", { callId: "d1", output, isError: false });
+    return { model, finish };
+  }
+
+  it("opens a finished child's session from its row", () => {
+    const opened: string[] = [];
+    const { model, finish } = delegatingModel({ openSession: (id) => opened.push(id) });
+    finish("↳ child 6f1c2d3e · completed\n\nrun.ts");
+
+    model.handleKey(parseChord("shift+tab"), undefined);
+    expect(model.cursoredChild()?.sessionId).toBe("6f1c2d3e");
+    expect(model.handleKey(parseChord("o"), "o")).toBe(true);
+
+    expect(opened).toEqual(["6f1c2d3e"]);
+    expect(model.input).toBe("");
+  });
+
+  it("says so when the child is still working, and opens nothing", () => {
+    const opened: string[] = [];
+    const { model } = delegatingModel({ openSession: (id) => opened.push(id) });
+
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("o"), "o");
+
+    expect(opened).toEqual([]);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "the child is still working · o opens it once it's done",
+    });
+  });
+
+  it("says so when the child was never saved", () => {
+    const opened: string[] = [];
+    const { model, finish } = delegatingModel({ openSession: (id) => opened.push(id) });
+    finish("↳ child unsaved · completed\n\nrun.ts");
+
+    model.handleKey(parseChord("shift+tab"), undefined);
+    model.handleKey(parseChord("o"), "o");
+
+    expect(opened).toEqual([]);
+    expect(model.entries.at(-1)).toEqual({
+      kind: "info",
+      text: "this child wasn't saved, so there's nothing to open",
+    });
+  });
+});
+
 describe("ConversationModel @-mentions", () => {
   const workspace = [{ relative: "src/app.ts" }, { relative: "docs/guide.md" }];
   const disk: Record<string, string> = { "src/app.ts": "export const app = 1;" };

@@ -11,9 +11,11 @@ import {
 } from "@keywork/engine";
 import { createKeyworkServer, EventLog, type KeyworkClient, keyworkClient } from "@keywork/server";
 import { memorySessionHost } from "@keywork/server/testing";
+import { firstEncounterLine, PermissionsModel, permissionsKeyHint } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
 import {
   remoteAgentFactory,
+  remotePermissionsPort,
   remoteSessionPort,
   remoteSessionTreePort,
   replayMessages,
@@ -304,3 +306,84 @@ function hangingProvider(): Provider {
     },
   };
 }
+
+describe("remotePermissionsPort", () => {
+  const shell: Tool = {
+    name: "bash",
+    description: "runs a command",
+    parameters: { type: "object" },
+    mutates: true,
+    execute: async (args) => `ran ${(args as { command: string }).command}`,
+  };
+  const bashCall = (callId: string, command: string) =>
+    toolCallTurn({ type: "tool-call", callId, name: "bash", arguments: { command } });
+
+  function attachedServer(provider: Provider): KeyworkClient {
+    const log = new EventLog();
+    const host = memorySessionHost({ log, provider, tools: [shell], asks: "queue", trusted: true });
+    const server = createKeyworkServer({ token, host, log, version: "test" });
+    return keyworkClient(
+      { url: "http://keywork.test", token },
+      { fetch: (input, init) => server.fetch(new Request(input, init)) },
+    );
+  }
+
+  function attachedOverlay(client: KeyworkClient, sessionId: string) {
+    const notices: string[] = [];
+    const port = remotePermissionsPort(client);
+    const model = new PermissionsModel(port, {
+      notify: () => undefined,
+      notice: (text) => notices.push(text),
+      focused: { session: () => port.sessionGrants?.(sessionId), lastQuietRun: () => undefined },
+    });
+    const texts = () => model.rows().map((row) => row.spans.map((span) => span.text).join(""));
+    const press = async (key: string) => {
+      model.handleKey({ name: key, ctrl: false, meta: false, shift: false });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    return { model, notices, texts, press };
+  }
+
+  async function grant(client: KeyworkClient, callId: string, scope: "session" | "workspace") {
+    for (;;) {
+      if ((await client.asks()).some((ask) => ask.callId === callId)) break;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    await client.answerAsk(callId, "granted", scope);
+  }
+
+  it("shows the server's grants in the same rows and revokes them with the same keys", async () => {
+    const client = attachedServer(
+      new MockProvider([
+        bashCall("c1", "git push origin main"),
+        bashCall("c2", "npm run build"),
+        textTurn("done"),
+      ]),
+    );
+    const { id } = await client.createSession();
+    await client.prompt(id, "ship it");
+    await grant(client, "c1", "workspace");
+    await grant(client, "c2", "session");
+    const { model, notices, texts, press } = attachedOverlay(client, id);
+    await model.refresh();
+
+    expect(texts().slice(2)).toEqual([
+      "workspace grants",
+      "▸ bash git push *",
+      "session grants · this pane",
+      "  bash npm run *",
+      permissionsKeyHint,
+    ]);
+
+    await press("r");
+    expect(notices).toEqual(["revoked bash git push * · it asks again from the next call on"]);
+    expect((await client.listPermissions()).workspace).toEqual([]);
+
+    await press("d");
+    expect(notices.at(-1)).toBe("dropped bash npm run * for this session");
+    expect((await client.listPermissions()).session).toEqual({});
+    expect(texts()[0]).toBe(
+      firstEncounterLine({ trusted: true, bundle: [], workspace: [], session: {} }, "attached"),
+    );
+  });
+});

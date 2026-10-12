@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  childDirSuffix,
   isMissingFileError,
   knownCostNanos,
   type Message,
@@ -85,7 +86,10 @@ export async function findSession(
   idPrefix: string,
 ): Promise<SessionStore | undefined> {
   const { stores } = await scanSessions(dir);
-  return stores.find((store) => store.header.id.startsWith(idPrefix));
+  return (
+    stores.find((store) => store.header.id.startsWith(idPrefix)) ??
+    (await findChildSession(dir, idPrefix))
+  );
 }
 
 export async function latestSessionFile(dir: string): Promise<string | undefined> {
@@ -141,9 +145,21 @@ async function resumableStore(
   return file === undefined ? undefined : SessionStore.open(file);
 }
 
-async function sessionFileNames(dir: string): Promise<string[]> {
+async function findChildSession(dir: string, idPrefix: string): Promise<SessionStore | undefined> {
+  for (const childDir of await namesIn(dir, childDirSuffix)) {
+    const found = await findSession(join(dir, childDir), idPrefix);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function sessionFileNames(dir: string): Promise<string[]> {
+  return namesIn(dir, ".jsonl");
+}
+
+async function namesIn(dir: string, suffix: string): Promise<string[]> {
   try {
-    return (await readdir(dir)).filter((name) => name.endsWith(".jsonl"));
+    return (await readdir(dir)).filter((name) => name.endsWith(suffix));
   } catch (cause) {
     if (isMissingFileError(cause)) return [];
     throw cause;

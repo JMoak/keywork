@@ -1012,6 +1012,13 @@ tick flushing on unfollow rather than dropping; activity counted per raw event r
 per frame; `line` honored in `FileModel` on this lane's side since the diff lane opens with
 it.
 
+### Ledger order, 2026-10-12
+
+An approve or discard now stamps its ledger op and its `curation.md` echo with one moment,
+and the ledger lens ranks an op above an audit line of the same moment, so the J-D4 one-key
+revert from the top of the ledger lands on the op every time. Ledger in
+[112](112-feel-and-look-wave.md) "C72 · an op stays above its own echo".
+
 ## Non-goals (v1)
 
 - Cross-workspace federation (designed-for via J6's scope seam; built post-v1).

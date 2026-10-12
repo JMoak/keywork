@@ -376,6 +376,11 @@ export const configSchema = z
       .describe(
         "Named MCP server definitions the user mounts globally; exists to feed D8-D10/D14 tool mounting from one validated map (schema only until D8 wires execution). Honored from the user config layer only; a checked-in project file can never register servers or their credentials.",
       ),
+    sandbox: z
+      .enum(["off", "workspace", "isolated"])
+      .describe(
+        "OS-enforced confinement for what the agent runs (103/E8): off, the default, runs its commands as you; workspace runs them, and the language servers its edits start, so they can write only inside the workspace, temp and package caches; isolated also takes the network away and keeps temp private. A mode this host can't enforce is refused, never weakened: the first command in a session asks whether to run that session unconfined, and headless runs answer no. Exists because how much of the machine an agent may touch is the user's call and differs per machine. Honored from the user config layer only; a checked-in project file can never pick or loosen it.",
+      ),
     permissions: permissions.describe(
       "Declarative allow | ask | deny policy for tool execution as an ordered list of {action, resource, effect} rules where the last match wins (the older {tools, bash} map still loads); exists because graduated trust (workstream E) must live in readable config, not code. Honored from the user config layer only; a checked-in project file can never widen permissions.",
     ),

@@ -5,9 +5,12 @@ import {
   MockProvider,
   type Provider,
   type ProviderRequest,
+  type Tool,
   type TurnDelta,
   textTurn,
+  toolCallTurn,
 } from "@keywork/engine";
+import type { PermissionRule } from "@keywork/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Fetch,
@@ -159,6 +162,81 @@ describe("keyworkClient routes", () => {
     await expect(take(wrong.events({ signal: stops.signal }), 1)).rejects.toMatchObject({
       status: 401,
     });
+  });
+});
+
+describe("keyworkClient permissions", () => {
+  const shell: Tool = {
+    name: "bash",
+    description: "runs a command",
+    parameters: { type: "object" },
+    mutates: true,
+    execute: async (args) => `ran ${(args as { command: string }).command}`,
+  };
+  const bashCall = (callId: string, command: string) =>
+    toolCallTurn({ type: "tool-call", callId, name: "bash", arguments: { command } });
+  const allowBash = (resource: string): PermissionRule => ({
+    action: "bash",
+    resource,
+    effect: "allow",
+  });
+
+  function granting(): KeyworkClient {
+    const log = new EventLog();
+    const host = memorySessionHost({
+      log,
+      provider: new MockProvider([
+        bashCall("c1", "git push origin main"),
+        bashCall("c2", "npm run build"),
+        textTurn("done"),
+      ]),
+      tools: [shell],
+      asks: "queue",
+      trusted: true,
+    });
+    const server = createKeyworkServer({ token, host, log, version: "test" });
+    return keyworkClient(
+      { url, token },
+      { fetch: (input, init) => server.fetch(new Request(input, init)) },
+    );
+  }
+
+  async function answered(client: KeyworkClient, callId: string, scope: "session" | "workspace") {
+    for (;;) {
+      if ((await client.asks()).some((ask) => ask.callId === callId)) break;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    expect(await client.answerAsk(callId, "granted", scope)).toBe("settled");
+  }
+
+  it("lists the bundle and both kinds of grant, and revokes each through its own route", async () => {
+    const client = granting();
+    const { id } = await client.createSession();
+    await client.prompt(id, "ship it");
+    await answered(client, "c1", "workspace");
+    await answered(client, "c2", "session");
+
+    const listed = await client.listPermissions();
+    expect(listed.trusted).toBe(true);
+    expect(listed.bundle.length).toBeGreaterThan(0);
+    expect(listed.workspace).toEqual([allowBash("git push *")]);
+    expect(listed.session).toEqual({ [id]: [allowBash("npm run *")] });
+
+    expect(await client.revokeWorkspaceGrant(allowBash("git push *"))).toBe("revoked");
+    expect(await client.revokeWorkspaceGrant(allowBash("git push *"))).toBe("missing");
+    expect(await client.revokeSessionGrant(id, allowBash("npm run *"))).toBe("revoked");
+    expect(await client.revokeSessionGrant(id, allowBash("npm run *"))).toBe("missing");
+    expect(await client.revokeSessionGrant("nope", allowBash("npm run *"))).toBe("missing");
+    expect(await client.listPermissions()).toMatchObject({ workspace: [], session: {} });
+  });
+
+  it("maps a rule the route can't take to malformed", async () => {
+    const client = granting();
+    const asked = { action: "bash", resource: "git push *", effect: "ask" } as const;
+    expect(await client.revokeWorkspaceGrant(asked)).toBe("malformed");
+    expect(
+      await client.revokeSessionGrant("s1", { ...asked, effect: "allow", resource: " " }),
+    ).toBe("malformed");
   });
 });
 

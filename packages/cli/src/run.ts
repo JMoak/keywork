@@ -3,6 +3,8 @@ import { join } from "node:path";
 import {
   type Agent,
   type BotDefinition,
+  type ChildFinished,
+  type ChildStarted,
   DiagnosticsLog,
   debugLogFile,
   type EngineEvents,
@@ -22,6 +24,7 @@ import {
   ShellSession,
   type ToolGuard,
   tapJournal,
+  unconfinedToolName,
 } from "@keywork/engine";
 import type {
   KeyworkConfig,
@@ -57,6 +60,7 @@ export interface RunOptions {
   mcpServers?: Record<string, McpServerConfig>;
   repoMap?: "auto" | "off";
   lsp?: LspConfig;
+  sandbox?: KeyworkConfig["sandbox"];
   models?: ModelCapabilitiesConfig;
   thinking?: KeyworkConfig["thinking"];
   signal?: AbortSignal;
@@ -79,13 +83,36 @@ export interface HeadlessIo {
   printError: (line: string) => void;
 }
 
+export interface ChildReport {
+  callId: string;
+  sessionId?: string;
+  title: string;
+  bot?: string;
+  outcome: ChildFinished["outcome"];
+  refused?: ChildFinished["refused"];
+}
+
 export function exitCodeOf(outcome: HeadlessOutcome): (typeof exitCodes)[ExitClass] {
   return exitCodes[outcome.outcome];
 }
 
-export function conclude(outcome: HeadlessOutcome, io: HeadlessIo): number {
-  if (io.json) io.print(JSON.stringify({ type: "run.finished", ...finishedPayload(outcome) }));
-  else narrate(outcome, io);
+export function conclude(
+  outcome: HeadlessOutcome,
+  io: HeadlessIo,
+  children: readonly ChildReport[] = [],
+): number {
+  if (io.json) {
+    io.print(
+      JSON.stringify({
+        type: "run.finished",
+        ...finishedPayload(outcome),
+        ...(children.length > 0 && { children }),
+      }),
+    );
+  } else {
+    narrateChildren(children, io);
+    narrate(outcome, io);
+  }
   return exitCodeOf(outcome);
 }
 
@@ -110,7 +137,7 @@ export async function runHeadless(options: RunOptions): Promise<HeadlessOutcome>
   const outcome = await sendPrompt(run, options, trace);
   const teardownFailures = await tearDown(run);
   const settled = teardownFailures.length === 0 ? outcome : failedTeardown(teardownFailures);
-  conclude(settled, io);
+  conclude(settled, io, trace.children);
   return settled;
 }
 
@@ -149,6 +176,7 @@ async function openRun(
     models: options.models,
     checkpoints: "off",
     lsp: options.lsp,
+    sandbox: options.sandbox,
     notice: (text) => io.printError(`keywork run: ${text}`),
     diagnosticsLog: () => diagnosticsRef.current,
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
@@ -166,6 +194,9 @@ async function openRun(
   const store = await openSessionStore(options);
   if (bot !== undefined) await store?.appendBotBinding(bot.name);
   await composition.host.startSession({ reason: "start", ...(store !== undefined && { store }) });
+  const children = new Map<string, SessionStore>();
+  const storeOf = (sessionId: string): SessionStore | undefined =>
+    sessionId === store?.header.id ? store : children.get(sessionId);
   const bots = botMemory({
     cwd: options.cwd,
     projectTrusted: options.projectTrusted === true,
@@ -173,7 +204,7 @@ async function openRun(
     userRoot: options.userRoot ?? homedir(),
     memory: composition.memory,
     roster: composition.extensions.bots,
-    bindingOf: () => store?.botBinding(),
+    bindingOf: (sessionId) => storeOf(sessionId)?.botBinding(),
   });
   await bots.prepare();
   const shell = new ShellSession(options.cwd);
@@ -181,6 +212,11 @@ async function openRun(
     permissions: options.permissions,
     bots,
     thinking: options.thinking === "on",
+    delegation: {
+      storeOf,
+      attach: (child) => children.set(child.header.id, child),
+      release: (childId) => children.delete(childId),
+    },
   }).build({
     provider,
     guard: headlessGuard,
@@ -209,6 +245,7 @@ async function openRun(
 interface TurnTrace {
   emit(type: string, payload: unknown): void;
   readonly refused: readonly PermissionDecision[];
+  readonly children: readonly ChildReport[];
   interrupted(): boolean;
 }
 
@@ -241,7 +278,40 @@ function traceTurn(bus: EventBus<EngineEvents>, io: HeadlessIo): TurnTrace {
     emit("turn.interrupted", payload);
   });
   bus.on("engine.error", ({ error }) => emit("engine.error", { message: error.message }));
-  return { emit, refused, interrupted: () => interrupted };
+  const children = traceChildren(bus, emit, (call) =>
+    refused.push({ ...call, verdict: "denied", gate: "headless" }),
+  );
+  return { emit, refused, children, interrupted: () => interrupted };
+}
+
+function traceChildren(
+  bus: EventBus<EngineEvents>,
+  emit: (type: string, payload: unknown) => void,
+  refuse: (call: { tool: string; callId: string }) => void,
+): readonly ChildReport[] {
+  const reports: ChildReport[] = [];
+  const started = new Map<string, ChildStarted>();
+  bus.on("child.started", (payload) => {
+    started.set(payload.callId, payload);
+    emit("child.started", payload);
+  });
+  bus.on("child.finished", (payload) => {
+    reports.push(childReportOf(started.get(payload.callId), payload));
+    for (const call of payload.refused ?? []) refuse(call);
+    emit("child.finished", payload);
+  });
+  return reports;
+}
+
+function childReportOf(started: ChildStarted | undefined, finished: ChildFinished): ChildReport {
+  return {
+    callId: finished.callId,
+    ...(finished.sessionId !== undefined && { sessionId: finished.sessionId }),
+    title: started?.title ?? "",
+    ...(started?.bot !== undefined && { bot: started.bot }),
+    outcome: finished.outcome,
+    ...(finished.refused !== undefined && { refused: finished.refused }),
+  };
 }
 
 async function sendPrompt(
@@ -332,6 +402,14 @@ function finishedPayload(outcome: HeadlessOutcome): Record<string, unknown> {
   }
 }
 
+function narrateChildren(children: readonly ChildReport[], io: HeadlessIo): void {
+  for (const child of children) {
+    const who = child.bot === undefined ? "" : ` · ${child.bot}`;
+    const where = child.sessionId === undefined ? "unsaved" : child.sessionId.slice(0, 8);
+    io.printError(`keywork run: child ${where}${who} · ${child.title} · ${child.outcome}`);
+  }
+}
+
 function narrate(outcome: HeadlessOutcome, io: HeadlessIo): void {
   switch (outcome.outcome) {
     case "completed":
@@ -368,10 +446,16 @@ function narrate(outcome: HeadlessOutcome, io: HeadlessIo): void {
 }
 
 function refusalNotice(refused: readonly PermissionDecision[]): string {
-  const tools = [...new Set(refused.map((decision) => decision.tool))];
-  const calls = refused.length === 1 ? "1 tool call" : `${refused.length} tool calls`;
-  return `keywork run: ${calls} needed an approval no one could give (${tools.join(", ")}), so the run stopped there · ${allowAdvice(tools)}`;
+  const gated = refused.filter((decision) => decision.tool !== unconfinedToolName);
+  const sandbox = gated.length < refused.length ? [sandboxRefusal] : [];
+  if (gated.length === 0) return `keywork run: ${sandboxRefusal}`;
+  const tools = [...new Set(gated.map((decision) => decision.tool))];
+  const calls = gated.length === 1 ? "1 tool call" : `${gated.length} tool calls`;
+  const gate = `${calls} needed an approval no one could give (${tools.join(", ")}), so the run stopped there · ${allowAdvice(tools)}`;
+  return `keywork run: ${[gate, ...sandbox].join(" · ")}`;
 }
+
+const sandboxRefusal = `the sandbox can't run on this host and no one could allow running unconfined, so every command was refused · set "sandbox": "off" in ~/.keywork/keywork.json or run where the sandbox can`;
 
 function allowAdvice(tools: readonly string[]): string {
   if (!tools.some(isMcpTool)) return "rerun with --preset open to allow them";

@@ -432,6 +432,21 @@ describe("ledgerRows", () => {
     expect(rows[3]?.ledgerId).toBeUndefined();
   });
 
+  it("keeps an op above the audit line that echoes it in the same moment", () => {
+    const moment = "2026-08-22T11:45:00.000Z";
+    const echo = { at: moment, verb: "approved", subject: "note → Web Claim.md", notes: [] };
+    const approval = { id: "op-3", at: moment, verb: "approve", subject: "Web Claim", notes: [] };
+    const rows = ledgerRows(inputsOf({ ledger: [...ledger, echo, approval] }), {
+      note: undefined,
+      now,
+    });
+    expect(texts(rows).slice(1, 3)).toEqual([
+      "15m · approve · Web Claim",
+      "15m · approved · note → Web Claim.md",
+    ]);
+    expect(rows[1]?.ledgerId).toBe("op-3");
+  });
+
   it("filters to one note and names it", () => {
     const rows = ledgerRows(inputsOf({ ledger, notes: [note({ name: "Dock Rule" })] }), {
       note: "Dock Rule",

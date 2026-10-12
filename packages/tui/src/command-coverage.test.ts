@@ -43,6 +43,19 @@ function fullyEquippedProbe(): AppProbe {
   });
 }
 
+function arcEquippedProbe(): AppProbe {
+  const summary = { status: "active", created: "2026-10-12T00:00:00.000Z", sessions: 0 } as const;
+  return new AppProbe({
+    createArcsPane: (id) => stubPane(id),
+    arcs: {
+      list: async () => [],
+      create: async (slug) => ({ slug, ...summary }),
+      close: async () => ({ kind: "closed", delivered: 0, released: 0 }),
+      abandon: async () => {},
+    },
+  });
+}
+
 function registeredNames(probe: AppProbe): Set<string> {
   return new Set(
     probe.core.registry.all().flatMap((command) => [command.name, ...(command.aliases ?? [])]),
@@ -155,5 +168,51 @@ describe("/forget", () => {
       kind: "info",
       text: "can't forget · no session store",
     });
+  });
+});
+
+describe("workstream aliases", () => {
+  const family: Record<string, readonly string[]> = {
+    arcs: ["workstreams", "ws"],
+    arc: ["workstream"],
+    "arc-new": ["workstream-new", "ws-new"],
+    "arc-close": ["workstream-close", "ws-close"],
+    "arc-abandon": ["workstream-abandon", "ws-abandon"],
+    "arc-release": ["workstream-release", "ws-release"],
+    "arc-open": ["workstream-open", "ws-open"],
+  };
+
+  it("resolves every workstream and ws spelling to its arc command", () => {
+    const probe = arcEquippedProbe();
+    const commands = probe.core.registry.all();
+    for (const [name, aliases] of Object.entries(family)) {
+      const command = commands.find((candidate) => candidate.name === name);
+      expect(command?.aliases, name).toEqual(aliases);
+    }
+  });
+
+  it("completes /ws and /workstream to the arc family", () => {
+    const probe = arcEquippedProbe();
+    const leading = (query: string) =>
+      probe.core.registry
+        .search(query)
+        .slice(0, Object.keys(family).length)
+        .map((command) => command.name)
+        .sort();
+    const arcFamily = Object.keys(family).sort();
+    expect(leading("ws")).toEqual(arcFamily);
+    expect(leading("workstream")).toEqual(arcFamily);
+  });
+
+  it("runs the arcs node through its ws spelling", () => {
+    const probe = arcEquippedProbe();
+    expect(probe.command("ws")).toBe(true);
+    expect(probe.command("workstreams")).toBe(true);
+  });
+
+  it("tells the first palette reader that an arc is a workstream", () => {
+    const probe = arcEquippedProbe();
+    const arcs = probe.core.registry.all().find((command) => command.name === "arcs");
+    expect(arcs?.description).toContain("arcs are workstreams");
   });
 });
