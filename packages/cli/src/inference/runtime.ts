@@ -23,9 +23,9 @@ import type { Credential, CredentialMap, OauthCredential } from "../auth-store.t
 import { codexAuthHeaders, freshAccessToken } from "../codex-login.ts";
 import {
   type BuiltInProvider,
-  builtInNames,
   builtInProviders,
   codexProviderName,
+  reservedNameOwner,
 } from "./builtins.ts";
 import type { ObservationMap } from "./observations.ts";
 
@@ -63,8 +63,9 @@ export function composeInference(inputs: InferenceInputs): InferenceRuntime {
     registry.register(builtInRegistration(builtIn, inputs, materials));
   }
   for (const [name, connection] of Object.entries(inputs.config.connections ?? {})) {
-    if (builtInNames.has(name)) {
-      warnings.push(`connections.${name} is ignored: that name belongs to a built-in provider`);
+    const owner = reservedNameOwner(name);
+    if (owner !== undefined) {
+      warnings.push(`connections.${name} is ignored: that name belongs to ${owner}`);
       continue;
     }
     registry.register(connectionRegistration(name, connection, inputs, materials));

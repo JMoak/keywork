@@ -1,0 +1,12 @@
+{
+  "kind": "drift-review",
+  "note": "Shell Timeout",
+  "against": "HEAD~1",
+  "reason": "the bash tool's default timeout changed",
+  "evidence": [
+    "packages/engine/src/tools/bash.ts:41 -const defaultTimeoutMs = 120_000;",
+    "packages/engine/src/tools/bash.ts:41 +const defaultTimeoutMs = 600_000;"
+  ],
+  "key": "drift:shell timeout",
+  "created": "2026-10-11T08:00:00.000Z"
+}

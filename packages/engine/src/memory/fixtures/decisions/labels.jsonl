@@ -1,0 +1,61 @@
+{"evidence":"cited 2 turns later","note":"Auth Store","point":"credentials#call-1","relevant":true,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Event Bus","point":"credentials#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Decider Port","point":"credentials#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Package Manager","point":"credentials#call-4","relevant":false,"source":"hindsight"}
+{"evidence":"cited 1 turn later","note":"Anthropic Provider","point":"credentials#call-4","relevant":true,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Test Gate","point":"credentials#call-4","relevant":false,"source":"hindsight"}
+{"evidence":"read with memory_get 1 turn later","note":"Decider Port","point":"decider#call-1","relevant":true,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Exact Pins","point":"decider#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Memory Vault Layout","point":"decider#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Package Manager","point":"decider#call-3","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Test Gate","point":"decider#call-3","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Event Bus","point":"decider#call-5","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Anthropic Provider","point":"decider#call-5","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Session Files","point":"decider#call-8","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Command Timeout","point":"decider#call-8","relevant":false,"source":"hindsight"}
+{"evidence":"cited 3 turns later","note":"Event Bus","point":"events#call-1","relevant":true,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Decider Port","point":"events#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Anthropic Provider","point":"events#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Memory Vault Layout","point":"events#call-2","relevant":false,"source":"hindsight"}
+{"evidence":"cited 1 turn later","note":"Contract Fixtures","point":"events#call-3","relevant":true,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Package Manager","point":"events#call-3","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Test Gate","point":"events#call-3","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Vitest Runner","point":"events#call-7","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Auth Store","point":"gate-and-lint#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Event Bus","point":"gate-and-lint#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Decider Port","point":"gate-and-lint#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Package Manager","point":"gate-and-lint#call-2","relevant":false,"source":"hindsight"}
+{"evidence":"cited 1 turn later","note":"Biome Lint","point":"gate-and-lint#call-2","relevant":true,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Test Gate","point":"gate-and-lint#call-2","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Vitest Runner","point":"gate-and-lint#call-5","relevant":false,"source":"hindsight"}
+{"evidence":"read with memory_get 1 turn later","note":"Release Pipeline","point":"release#call-3","relevant":true,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Exact Pins","point":"release#call-3","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Release Tagging","point":"release#call-3","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Package Manager","point":"release#call-6","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Contract Fixtures","point":"release#call-6","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Auth Store","point":"sessions-and-prose#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Event Bus","point":"sessions-and-prose#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Decider Port","point":"sessions-and-prose#call-1","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Memory Vault Layout","point":"sessions-and-prose#call-3","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Anthropic Provider","point":"sessions-and-prose#call-3","relevant":false,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Package Manager","point":"sessions-and-prose#call-4","relevant":false,"source":"hindsight"}
+{"evidence":"cited 1 turn later","note":"Em Dash Ban","point":"sessions-and-prose#call-4","relevant":true,"source":"hindsight"}
+{"evidence":"neither cited nor read in the next 3 turns","note":"Test Gate","point":"sessions-and-prose#call-4","relevant":false,"source":"hindsight"}
+{"evidence":"cited 1 turn later","note":"Theme Tokens","point":"sessions-and-prose#call-6","relevant":true,"source":"hindsight"}
+{"answer":"newer-supersedes-older","evidence":"approved supersession:old session format->session files at 2026-10-05T10:00:00.000Z","holds":true,"point":"pair:Old Session Format|Session Files","source":"inbox"}
+{"answer":"duplicate","evidence":"discarded merge:release pipeline<->release tagging at 2026-10-06T11:00:00.000Z","holds":false,"point":"pair:Release Tagging|Release Pipeline","source":"inbox"}
+{"answer":"contradiction","evidence":"approved contradiction:command timeout<->shell timeout at 2026-10-07T12:00:00.000Z","holds":true,"point":"pair:Shell Timeout|Command Timeout","source":"inbox"}
+{"answer":"link","evidence":"discarded link:biome lint->package manager at 2026-10-09T09:30:00.000Z","holds":false,"point":"mention:Biome Lint->Package Manager","source":"inbox"}
+{"answer":"link","evidence":"discarded link:test gate->package manager at 2026-10-10T09:30:00.000Z","holds":false,"point":"mention:Test Gate->Package Manager","source":"inbox"}
+{"evidence":"hand: the release workflow replaced hand tagging, as Release Pipeline says","note":"Release Tagging","point":"release#call-3","relevant":false,"source":"hand"}
+{"evidence":"hand: says what Test Gate says, so either note serves the gate run","note":"Vitest Runner","point":"gate-and-lint#call-5","relevant":true,"source":"hand"}
+{"evidence":"hand: check:prose is not the test gate","note":"Test Gate","point":"sessions-and-prose#call-4","relevant":false,"source":"hand"}
+{"evidence":"hand: docs/events.md has nothing to do with the vault layout","note":"Memory Vault Layout","point":"events#call-2","relevant":false,"source":"hand"}
+{"answer":"duplicate","evidence":"hand: the same rule twice; keep Test Gate","holds":true,"point":"pair:Test Gate|Vitest Runner","source":"hand"}
+{"answer":"newer-supersedes-older","evidence":"hand: the workflow replaced hand tagging","holds":true,"point":"pair:Release Tagging|Release Pipeline","source":"hand"}
+{"answer":"new-durable","evidence":"hand: a standing instruction from the user","holds":true,"point":"entry:2026-10-08#1","source":"hand"}
+{"answer":"reinforces-a-note","evidence":"hand: restates Test Gate","holds":true,"point":"entry:2026-10-08#2","source":"hand"}
+{"answer":"episodic","evidence":"hand: a look at screenshots, nothing to keep","holds":true,"point":"entry:2026-10-09#0","source":"hand"}
+{"answer":"changes-a-note","evidence":"hand: changes what Release Pipeline says the workflow does","holds":true,"point":"entry:2026-10-09#2","source":"hand"}
+{"answer":"stale","evidence":"hand: the default timeout is ten minutes now","holds":true,"point":"drift:Shell Timeout","source":"hand"}
+{"answer":"link","evidence":"hand: Release Pipeline means the Test Gate note","holds":true,"point":"mention:Release Pipeline->Test Gate","source":"hand"}

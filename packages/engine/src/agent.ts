@@ -30,14 +30,20 @@ import type {
   TurnDelta,
 } from "./provider.ts";
 import { ConversationMarks } from "./request-marks.ts";
+import {
+  type ReportedContext,
+  type RequestAnatomy,
+  reportedContextOf,
+} from "./session/context-map.ts";
 import type {
   AskRule,
   ContextInjection,
+  PermissionAsk,
   PermissionDecision,
   PermissionGate,
 } from "./session/journal.ts";
 import type { SpillStore } from "./session/spill.ts";
-import { findTool, type Tool } from "./tools.ts";
+import { findTool, type Tool, type ToolPreview } from "./tools.ts";
 
 export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
 
@@ -46,7 +52,7 @@ export type Confirmation =
   | { approved: boolean; gate: ConfirmingGate; scope?: AskScope | undefined };
 
 export interface ToolGuard {
-  confirm?(call: ToolCallPart): Promise<Confirmation>;
+  confirm?(call: ToolCallPart, ask?: PermissionAsk): Promise<Confirmation>;
   gate?: ConfirmingGate;
   declineEndsRun?: boolean;
   beforeMutation?(): Promise<void>;
@@ -98,6 +104,7 @@ export interface AgentOptions {
   provider: Provider;
   turns?: TurnDelegate;
   systemPrompt?: string;
+  promptInjections?: readonly string[];
   tools?: readonly Tool[] | ToolSource;
   hooks?: AgentHooks;
   bus?: EventBus<EngineEvents>;
@@ -159,6 +166,7 @@ export class Agent {
   readonly provider: Provider;
   private readonly baseSystemPrompt: string;
   private systemPrompt: string;
+  private readonly promptInjections: readonly string[];
   private readonly hooks: AgentHooks;
   private readonly tools: ToolSource;
   private readonly messages: Message[];
@@ -184,11 +192,13 @@ export class Agent {
   private readonly marks = new ConversationMarks();
   private previousResponseId: string | null = null;
   private turnCacheMiss: CacheMiss | undefined;
+  private reported: ReportedContext | undefined;
 
   constructor(options: AgentOptions) {
     this.provider = options.provider;
     this.baseSystemPrompt = options.systemPrompt ?? "";
     this.systemPrompt = this.baseSystemPrompt;
+    this.promptInjections = options.promptInjections ?? [];
     this.hooks = options.hooks ?? {};
     this.tools = toolsThroughHooks(toolSource(options.tools), this.hooks);
     this.bus = options.bus ?? new EventBus();
@@ -225,6 +235,19 @@ export class Agent {
 
   history(): readonly Message[] {
     return [...this.messages];
+  }
+
+  anatomy(): RequestAnatomy {
+    return {
+      systemPrompt: this.systemPrompt,
+      injected: [
+        ...this.promptInjections,
+        hookedAddition(this.baseSystemPrompt, this.systemPrompt),
+      ],
+      tools: this.tools(),
+      history: this.history(),
+      reported: this.reported,
+    };
   }
 
   usage(): Usage {
@@ -428,6 +451,7 @@ export class Agent {
         return this.finishInterrupted(turn.message);
       }
       this.remember(turn.message);
+      this.reported = reportedContextOf(turn.usage, this.messages.length) ?? this.reported;
 
       const calls = toolCalls(turn.message);
       if (calls.length === 0) return this.finishCompleted(turn);
@@ -443,7 +467,7 @@ export class Agent {
     if (settler === undefined) return;
     try {
       const rebuilt = await settler(this.history());
-      if (rebuilt !== undefined) this.messages.splice(0, this.messages.length, ...rebuilt);
+      if (rebuilt !== undefined) this.replaceHistory(rebuilt);
     } catch (cause) {
       this.bus.emit("engine.error", { error: errorOf(cause) });
     }
@@ -459,7 +483,7 @@ export class Agent {
     this.costTotals = withTurnCost(this.costTotals, outcome.usage, this.provider.modelId);
     if (outcome.history === undefined) this.remember(outcome.message);
     else {
-      this.messages.splice(0, this.messages.length, ...outcome.history);
+      this.replaceHistory(outcome.history);
       this.hooks.messageAppended?.(outcome.message);
     }
     if (outcome.interrupted) return this.finishInterrupted(outcome.message);
@@ -500,6 +524,11 @@ export class Agent {
   private remember(message: Message): void {
     this.messages.push(message);
     this.hooks.messageAppended?.(message);
+  }
+
+  private replaceHistory(messages: readonly Message[]): void {
+    this.messages.splice(0, this.messages.length, ...messages);
+    this.reported = undefined;
   }
 
   private systemPromptThroughHooks(): Promise<string> {
@@ -602,14 +631,15 @@ export class Agent {
         return { callId: call.callId, output: "denied by permission policy", isError: true };
       }
       if (ruling.permission === "ask") {
-        const guardAsked = this.guard?.confirm !== undefined;
-        if (guardAsked) this.emitAsk(call, ruling.gate);
-        const answer = await this.confirmWithGuard(call);
+        const ask =
+          this.guard?.confirm === undefined ? undefined : await askAbout(call, tool, ruling.gate);
+        if (ask !== undefined) this.bus.emit("gate.ask", { ask });
+        const answer = await this.confirmWithGuard(call, ask);
         const answeredBy = answer.gate ?? this.guard?.gate ?? "user";
         this.emitPermissionDecision(
           call,
           answer.approved ? "granted" : "denied",
-          guardAsked ? answeredBy : ruling.gate,
+          ask === undefined ? ruling.gate : answeredBy,
           answer.scope,
         );
         if (!answer.approved) {
@@ -659,20 +689,11 @@ export class Agent {
     });
   }
 
-  private emitAsk(call: ToolCallPart, rule: AskRule): void {
-    this.bus.emit("gate.ask", {
-      ask: {
-        tool: call.name,
-        callId: call.callId,
-        arguments: call.arguments,
-        rule,
-        rules: grantCandidates(call.name, call.arguments),
-      },
-    });
-  }
-
-  private async confirmWithGuard(call: ToolCallPart): Promise<AnsweredConfirmation> {
-    const answer = await (this.guard?.confirm?.(call) ?? Promise.resolve(true));
+  private async confirmWithGuard(
+    call: ToolCallPart,
+    ask: PermissionAsk | undefined,
+  ): Promise<AnsweredConfirmation> {
+    const answer = await (this.guard?.confirm?.(call, ask) ?? Promise.resolve(true));
     return typeof answer === "boolean" ? { approved: answer, gate: undefined } : answer;
   }
 
@@ -685,6 +706,30 @@ export class Agent {
 
 function errorOf(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
+}
+
+async function askAbout(call: ToolCallPart, tool: Tool, rule: AskRule): Promise<PermissionAsk> {
+  const preview = await bestEffortPreview(tool, call);
+  return {
+    tool: call.name,
+    callId: call.callId,
+    arguments: call.arguments,
+    rule,
+    rules: grantCandidates(call.name, call.arguments),
+    ...(preview !== undefined && { preview }),
+  };
+}
+
+async function bestEffortPreview(tool: Tool, call: ToolCallPart): Promise<ToolPreview | undefined> {
+  try {
+    return await tool.preview?.(call.arguments);
+  } catch {
+    return undefined;
+  }
+}
+
+function hookedAddition(base: string, hooked: string): string {
+  return hooked.startsWith(base) ? hooked.slice(base.length) : "";
 }
 
 function toolSource(tools: readonly Tool[] | ToolSource | undefined): ToolSource {

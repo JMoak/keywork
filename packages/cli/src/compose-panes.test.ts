@@ -11,7 +11,9 @@ import type { AppOptions, ConnectionsPort, WorkspacePort } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
 import { composePanes, type PanesOptions } from "./compose-panes.ts";
 import { composeInference } from "./inference/runtime.ts";
+import type { DeciderConnection } from "./inference/typesafe-connection.ts";
 import type { LiveInference } from "./inference-state.ts";
+import { memoryDeciderSetup } from "./memory-decider.ts";
 import { createPresetSwitch } from "./presets.ts";
 import { findSession } from "./sessions/store.ts";
 
@@ -49,10 +51,19 @@ function stubInference(): LiveInference {
     credentials: {},
   });
   const connections = {} as ConnectionsPort;
+  const decider = {} as DeciderConnection;
+  const memoryDecider = memoryDeciderSetup({
+    config: {},
+    credentials: {},
+    env: {},
+    observations: {},
+    notice: () => {},
+  });
   return {
-    current: () => ({ config: {}, credentials: {}, observations: {}, runtime }),
+    current: () => ({ config: {}, credentials: {}, observations: {}, runtime, memoryDecider }),
     reload: async () => {},
     connections,
+    decider,
   };
 }
 

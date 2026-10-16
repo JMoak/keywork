@@ -442,6 +442,93 @@ describe("fileSessionHost permission layers", () => {
     await asking.close();
     await reopened.server.close();
   });
+
+  it("shows a write's consequence on its ask, from the tool's own dry run, before anything is written", async () => {
+    const options = await layeredOptions(
+      new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "c1",
+          name: "edit",
+          arguments: { path: "notes.md", oldText: "draft", newText: "final" },
+        }),
+        toolCallTurn({
+          type: "tool-call",
+          callId: "c2",
+          name: "write",
+          arguments: { path: "docs/new.md", content: "fresh\n" },
+        }),
+        textTurn("done"),
+      ]),
+      false,
+    );
+    await writeFile(join(options.cwd, "notes.md"), "a draft\r\n");
+    const served = serverOver(options);
+    const id = await sessionOn(served);
+    const turn = await prompted(served, id, "finish the notes");
+    const edited = await turn.until("gate.ask");
+    expect(JSON.parse(edited.at(-1)?.data ?? "{}").payload.ask.preview).toEqual({
+      path: "notes.md",
+      before: "a draft\r\n",
+      after: "a final\r\n",
+    });
+    expect(await readFile(join(options.cwd, "notes.md"), "utf8")).toBe("a draft\r\n");
+    await served.call("/asks/c1", json({ verdict: "granted" }));
+    const written = await turn.until("gate.ask");
+    const preview = { path: "docs/new.md", before: null, after: "fresh\n" };
+    expect(JSON.parse(written.at(-1)?.data ?? "{}").payload.ask.preview).toEqual(preview);
+    expect(await (await served.call("/asks")).json()).toEqual({
+      asks: [expect.objectContaining({ callId: "c2", preview })],
+    });
+    expect(existsSync(join(options.cwd, "docs"))).toBe(false);
+    await served.call("/asks/c2", json({ verdict: "denied" }));
+    await turn.until("turn.completed");
+    await turn.close();
+    expect(await readFile(join(options.cwd, "notes.md"), "utf8")).toBe("a final\r\n");
+    await served.server.close();
+  });
+
+  it("records a grant ahead of an ask where an answered ask would, so a reopened server keeps it", async () => {
+    const first = await layeredOptions(new MockProvider([]), true);
+    const opened = serverOver(first);
+    const granted = await opened.call("/permissions/workspace/grant", json({ rule: printfRule }));
+    expect(granted.status).toBe(200);
+    const refused = await opened.call(
+      "/permissions/workspace/grant",
+      json({ rule: { action: "bash", resource: "rm *", effect: "allow" } }),
+    );
+    expect(refused.status).toBe(409);
+    expect(
+      (await opened.call("/permissions/session/nope/grant", json({ rule: printfRule }))).status,
+    ).toBe(404);
+    await opened.server.close();
+
+    const reopened = serverOver({
+      ...(await layeredOptions(
+        new MockProvider([bash("c1", "printf %s one"), textTurn("done")]),
+        true,
+      )),
+      cwd: first.cwd,
+    });
+    expect(await (await reopened.call("/permissions")).json()).toMatchObject({
+      trusted: true,
+      workspace: [printfRule],
+    });
+    const id = await sessionOn(reopened);
+    const turn = await prompted(reopened, id, "print");
+    const frames = await turn.until("turn.completed");
+    expect(decisionsIn(frames)).toEqual([
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "workspace" },
+    ]);
+    await turn.close();
+    await reopened.server.close();
+
+    const untrusted = serverOver(await layeredOptions(new MockProvider([]), false));
+    expect(
+      (await untrusted.call("/permissions/workspace/grant", json({ rule: printfRule }))).status,
+    ).toBe(409);
+    await untrusted.server.close();
+  });
 });
 
 describe("serve", () => {
@@ -1060,6 +1147,115 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
     });
     expect(await readFile(join(options.cwd, "kept.txt"), "utf8")).toBe("stays");
     await reader.close();
+    await server.close();
+  });
+
+  it("restores to before a turn in one step over the shadow repo, records it, and keeps it across a reopen", async () => {
+    const write = (callId: string, path: string, content: string) =>
+      toolCallTurn({ type: "tool-call", callId, name: "write", arguments: { path, content } });
+    const options = await checkpointed(
+      new MockProvider([
+        write("c1", "a.txt", "one\n"),
+        textTurn("wrote a"),
+        textTurn("just talking"),
+        write("c2", "b.txt", "two\n"),
+        write("c3", "a.txt", "uno\n"),
+        textTurn("wrote b and a"),
+      ]),
+    );
+    const { server, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+    let leaf: string | null = null;
+    for (const text of ["first", "second", "third"]) {
+      await post(call, `/sessions/${id}/prompt`, { text });
+      const previous: string | null = leaf;
+      const settled = await settledState(reader, (state) => state.leafId !== previous);
+      leaf = (payloadOf(settled) as { leafId: string | null }).leafId;
+    }
+    const messagesOf = async () =>
+      ((await (await call(`/sessions/${id}`)).json()) as { messages: Message[] }).messages;
+    expect(await messagesOf()).toHaveLength(12);
+
+    const restored = await post(call, `/sessions/${id}/restore`, { turn: 2 });
+    expect(restored.status).toBe(200);
+    const report = (await restored.json()) as { leafId: string };
+    expect(report).toMatchObject({
+      turn: 2,
+      prompt: { text: "second" },
+      undoneTurns: 2,
+      files: [
+        { path: "a.txt", added: 1, deleted: 1 },
+        { path: "b.txt", added: 0, deleted: 1 },
+      ],
+      filesNote: "files put back",
+      undoable: true,
+      redoable: true,
+    });
+    const tree = await until(reader, (frame) => frame.event === "session.tree");
+    expect(payloadOf(tree)).toEqual({ reason: "leaf", entryId: report.leafId });
+    expect(await readFile(join(options.cwd, "a.txt"), "utf8")).toBe("one\n");
+    expect(existsSync(join(options.cwd, "b.txt"))).toBe(false);
+    expect(await messagesOf()).toHaveLength(4);
+    const store = await findSession(options.sessionDir ?? "", id);
+    expect(store?.entry(report.leafId)).toMatchObject({
+      type: "custom",
+      customType: "restore",
+      data: { turn: 2, from: leaf, files: expect.stringMatching(/^[0-9a-f]{40,64}$/) },
+    });
+
+    expect(await (await post(call, `/sessions/${id}/redo`)).json()).toMatchObject({
+      restored: true,
+    });
+    expect(await readFile(join(options.cwd, "b.txt"), "utf8")).toBe("two\n");
+    expect(await messagesOf()).toHaveLength(12);
+    expect((await post(call, `/sessions/${id}/restore`, { turn: 4 })).status).toBe(404);
+    await reader.close();
+    await server.close();
+
+    const reopen = () =>
+      serverOver({ ...options, log: new EventLog(), provider: new MockProvider([]) });
+    const messagesAfterReopen = async (served: ReturnType<typeof serverOver>) =>
+      ((await (await served.call(`/sessions/${id}`)).json()) as { messages: Message[] }).messages;
+    const redone = reopen();
+    expect(await messagesAfterReopen(redone)).toHaveLength(12);
+    expect((await post(redone.call, `/sessions/${id}/restore`, { turn: 2 })).status).toBe(200);
+    await redone.server.close();
+    const restoredAgain = reopen();
+    expect(await messagesAfterReopen(restoredAgain)).toHaveLength(4);
+    await restoredAgain.server.close();
+  });
+
+  it("splits the context window into the parts the composed request carries", async () => {
+    const options = await hostOptions(
+      new MockProvider([textTurn("hi", { inputTokens: 9_000, outputTokens: 100 })]),
+    );
+    options.projectTrusted = true;
+    await writeFile(join(options.cwd, "AGENTS.md"), "Prefer small functions.\n".repeat(40));
+    const { server, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+    await post(call, `/sessions/${id}/prompt`, { text: "hello" });
+    await settledState(reader, (state) => state.leafId !== null);
+    await reader.close();
+    const context = (await (await call(`/sessions/${id}/context`)).json()) as {
+      used: number;
+      window: number;
+      parts: Record<string, { tokens: number; basis: string }>;
+      thresholds: { flushAt: number; compactAt: number };
+      compactAt: number;
+    };
+    expect(context.parts.system?.tokens).toBeGreaterThan(0);
+    expect(context.parts.tools?.tokens).toBeGreaterThan(0);
+    expect(context.parts.injected?.tokens).toBeGreaterThanOrEqual(240);
+    expect(context.parts.conversation?.basis).toBe("reported");
+    const filled = ["system", "tools", "injected", "conversation"].reduce(
+      (total, part) => total + (context.parts[part]?.tokens ?? 0),
+      0,
+    );
+    expect(filled).toBe(9_100);
+    expect(context.parts.free).toEqual({ tokens: context.window - 9_100, basis: "reported" });
+    expect(context.thresholds.compactAt).toBe(context.compactAt + 9_100 - context.used);
     await server.close();
   });
 

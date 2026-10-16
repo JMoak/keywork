@@ -1,5 +1,7 @@
 import type { AskScope, PermissionRule } from "@keywork/shared";
 import type { EngineEvents, EventBus } from "../bus.ts";
+import type { MemoryDecision } from "../memory/decider.ts";
+import type { ToolPreview } from "../tools.ts";
 import type { CustomEntry, SessionEntry } from "./entries.ts";
 import type { SessionStore } from "./store.ts";
 
@@ -22,6 +24,7 @@ export interface PermissionAsk {
   arguments: unknown;
   rule: AskRule;
   rules: PermissionRule[];
+  preview?: ToolPreview;
 }
 
 export type InjectionSource =
@@ -44,6 +47,7 @@ export type JournalEvent =
   | { type: "preset_change"; from: string; to: string }
   | { type: "mode_change"; mode: string }
   | { type: "context_injection"; injection: ContextInjection }
+  | { type: "memory_decision"; decision: MemoryDecision }
   | { type: "shell_reset" };
 
 export interface ExtensionState {
@@ -125,6 +129,9 @@ export function tapJournal(
     bus.on("context.injected", ({ injection, replay }) => {
       if (replay !== true) record({ type: "context_injection", injection });
     }),
+    bus.on("memory.decided", ({ decision, replay }) => {
+      if (replay !== true) record({ type: "memory_decision", decision });
+    }),
     bus.on("shell.reset", ({ replay }) => {
       if (replay !== true) record({ type: "shell_reset" });
     }),
@@ -155,6 +162,9 @@ export function replayJournalEntry(bus: EventBus<EngineEvents>, entry: SessionEn
     case "context_injection":
       bus.emit("context.injected", { injection: event.injection, replay: true });
       return;
+    case "memory_decision":
+      bus.emit("memory.decided", { decision: event.decision, replay: true });
+      return;
     case "shell_reset":
       bus.emit("shell.reset", { replay: true });
       return;
@@ -172,6 +182,8 @@ function journalEventOf(entry: CustomEntry): JournalEvent | undefined {
       return { type: "mode_change", mode: data.mode as string };
     case "context_injection":
       return { type: "context_injection", injection: data.injection as ContextInjection };
+    case "memory_decision":
+      return { type: "memory_decision", decision: data.decision as MemoryDecision };
     case "shell_reset":
       return { type: "shell_reset" };
     default:

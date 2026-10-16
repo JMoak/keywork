@@ -193,6 +193,24 @@ describe("composeInference connections", () => {
     expect(built.registry.registration("openai")?.endpoint).toBe("https://api.openai.com/v1");
   });
 
+  it("never registers the memory decider as a chat provider, saved key or not", () => {
+    const squatter: KeyworkConfig = {
+      connections: { typesafe: { endpoint: "https://api.typesafe.ai/v1" } },
+    };
+    const built = runtime({
+      config: squatter,
+      credentials: { typesafe: { type: "api_key", key: "ts-live" } },
+      env: { TYPESAFE_API_KEY: "ts-live", KEYWORK_TYPESAFE_API_KEY: "ts-live" },
+    });
+    expect(built.warnings).toEqual([
+      "connections.typesafe is ignored: that name belongs to the memory decider",
+    ]);
+    expect(built.registry.registration("typesafe")).toBeUndefined();
+    expect(built.registry.available().map((registration) => registration.name)).not.toContain(
+      "typesafe",
+    );
+  });
+
   it("disables a connection without forgetting it", () => {
     const off: KeyworkConfig = {
       connections: { ollama: { endpoint: "http://localhost:11434/v1", enabled: false } },

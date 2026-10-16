@@ -11,7 +11,7 @@ import {
 import { type Message, messageText, type ToolCallPart, type Usage } from "./messages.ts";
 import { knownCostNanos } from "./pricing.ts";
 import { childDepthOf, childSessionFile } from "./session/children.ts";
-import { tapJournal } from "./session/journal.ts";
+import { type PermissionAsk, tapJournal } from "./session/journal.ts";
 import { SessionStore } from "./session/store.ts";
 import { defineTool } from "./tools/define.ts";
 import type { Tool } from "./tools.ts";
@@ -68,7 +68,9 @@ export function delegateTool(seams: DelegationSeams): Tool {
 export function childGuardOf(parent: ToolGuard): ToolGuard {
   const { confirm, beforeMutation } = parent;
   return {
-    ...(confirm !== undefined && { confirm: (call: ToolCallPart) => confirm.call(parent, call) }),
+    ...(confirm !== undefined && {
+      confirm: (call: ToolCallPart, ask?: PermissionAsk) => confirm.call(parent, call, ask),
+    }),
     ...(parent.gate !== undefined && { gate: parent.gate }),
     ...(parent.declineEndsRun !== undefined && { declineEndsRun: parent.declineEndsRun }),
     ...(beforeMutation !== undefined && { beforeMutation: () => beforeMutation.call(parent) }),

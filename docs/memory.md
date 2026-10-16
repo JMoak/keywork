@@ -106,6 +106,31 @@ clock, so every timestamp is deterministic under test.
     file, the merge driver resolves the shared files deterministically, a dual rewrite
     of one note lands as a `conflict-of` sibling plus one inbox card, and Gardeners on
     different hosts take turns through a lease. Details in "Multi-host vaults" below.
+11. **Every judgment goes through one decider and leaves a record** (121 K10,
+    2026-10-15). What to add before an edit or a command, whether a daily entry goes to
+    the distiller, how two similar notes relate, whether a note survived a diff and
+    whether an unlinked mention becomes a link card are asked of a `MemoryDecider`
+    (`engine/src/memory/decider.ts`); code still picks the candidates, and the decider
+    only chooses among outcomes policy already allows: it never writes the vault, never
+    grants and never widens scope. The builtin (`builtin-decider.ts`) is the rules and
+    chat-model judgments that existed before the port, unchanged in outcome. Each decision
+    is a `MemoryDecision` naming the question, the candidates (never bodies), the choice
+    and, for the builtin, the rule in words; inside a turn it rides the bus as
+    `memory.decided` and the session journal as `memory_decision`, so a recorded session
+    says why a note arrived. `memory.decider` (user layer only) names the decider;
+    `"builtin"` is the default. `"jev"` (121 K13, 2026-10-16) composes TypeSafe's Jev
+    behind the builtin (`jev.ts`, `jev-questions.ts`, `jev-decider.ts`): Jev is asked only
+    the questions an eval has proven for the pinned `jev-1.13.0` (none yet, so the builtin
+    answers everything unless `KEYWORK_DECIDER_TRIAL=1` is set on that machine), and every
+    failure, refusal or answer inside the undecided band yields the builtin's answer with
+    the reason recorded, never an error in the memory path. What Jev sees is bounded and
+    redacted on the way out: a recall question gets the action and each note's title,
+    layer and first paragraph (480 characters at most); curation and drift get bodies of
+    2,000 characters at most and drift evidence bounded as the builtin's judgment bounds
+    it; every string passes `redactForPersistence` with the machine's secret environment
+    values and saved keys. Jev's odds never move the Gardener past policy: a pair
+    relation acts alone only at 0.95 with TypeSafe's confidence at 0.90 and only inside
+    the blast radius, and is a card below that.
 
 ## Multi-host vaults
 

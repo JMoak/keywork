@@ -39,6 +39,7 @@ import type {
   MemoryQueryOutcome,
   PromptOutcome,
   RedoReport,
+  RestoreReport,
   SessionDetail,
   SessionEntries,
   SessionSummary,
@@ -62,6 +63,8 @@ export type ExportAnswer = { html: string } | { file: string };
 
 export type GrantRevocation = "revoked" | "missing" | "malformed";
 
+export type GrantAnswer = "granted" | "missing" | "malformed";
+
 export interface PresetAnswer {
   from: ActivePreset;
   to: PresetName;
@@ -84,6 +87,7 @@ export interface KeyworkClient {
   compact(id: string, focus?: string): Promise<CompactionReport | undefined>;
   undo(id: string): Promise<UndoReport | "missing" | "nothing">;
   redo(id: string): Promise<RedoReport | "missing" | "nothing">;
+  restoreTurn(id: string, turn: number): Promise<RestoreReport | "missing" | "unknown-turn">;
   context(id: string): Promise<ContextAnswer | undefined>;
   cost(id: string): Promise<CostAnswer | undefined>;
   exportSession(id: string, scope?: ExportScope, out?: string): Promise<ExportAnswer | undefined>;
@@ -92,6 +96,8 @@ export interface KeyworkClient {
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
   listPermissions(): Promise<PermissionsView>;
+  grantWorkspaceRule(rule: PermissionRule): Promise<GrantAnswer>;
+  grantSessionRule(sessionId: string, rule: PermissionRule): Promise<GrantAnswer>;
   revokeWorkspaceGrant(rule: PermissionRule): Promise<GrantRevocation>;
   revokeSessionGrant(sessionId: string, rule: PermissionRule): Promise<GrantRevocation>;
   events(options?: EventStreamOptions): AsyncIterable<BusEnvelope>;
@@ -280,6 +286,12 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       ),
     undo: (id) => timeTravel(request("POST", sessionPath(id, "undo"))),
     redo: (id) => timeTravel(request("POST", sessionPath(id, "redo"))),
+    restoreTurn: async (id, turn) => {
+      const response = await request("POST", sessionPath(id, "restore"), { turn });
+      if (response.status !== 404) return json<RestoreReport>(response);
+      const detail = await refusalDetail(response);
+      return detail.startsWith("no turn") ? "unknown-turn" : "missing";
+    },
     context: (id) => unlessMissing(request("GET", sessionPath(id, "context"))),
     cost: (id) => unlessMissing(request("GET", sessionPath(id, "cost"))),
     exportSession: async (id, scope = "path", out) => {
@@ -317,6 +329,12 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       return "settled";
     },
     listPermissions: () => request("GET", "/permissions").then(json<PermissionsView>),
+    grantWorkspaceRule: (rule) =>
+      granting(request("POST", "/permissions/workspace/grant", { rule })),
+    grantSessionRule: (sessionId, rule) =>
+      granting(
+        request("POST", `/permissions/session/${encodeURIComponent(sessionId)}/grant`, { rule }),
+      ),
     revokeWorkspaceGrant: (rule) =>
       revocation(request("POST", "/permissions/workspace/revoke", { rule })),
     revokeSessionGrant: (sessionId, rule) =>
@@ -601,6 +619,14 @@ async function timeTravel<T>(pending: Promise<Response>): Promise<T | "missing" 
   if (response.status !== 404) return json<T>(response);
   const detail = await refusalDetail(response);
   return detail.startsWith("nothing to") ? "nothing" : "missing";
+}
+
+async function granting(pending: Promise<Response>): Promise<GrantAnswer> {
+  const response = await pending;
+  if (response.status === 404) return "missing";
+  if (response.status === 400) return "malformed";
+  await json(response);
+  return "granted";
 }
 
 async function revocation(pending: Promise<Response>): Promise<GrantRevocation> {

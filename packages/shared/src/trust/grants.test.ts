@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { PermissionRule } from "../config/schema.ts";
 import { GrantStore, GrantStoreError } from "./grant-store.ts";
 import {
+  grantAheadRefusal,
   grantCandidates,
   grantFromLabel,
   grantRefusal,
@@ -156,6 +157,115 @@ describe("SessionGrants", () => {
     expect(grants.forget(allowBash("git push *"))).toBe(false);
     expect(grants.covers("bash", bash("git push origin dev"))).toBe(false);
     expect(grants.rules).toEqual([allowBash("npm run *")]);
+  });
+});
+
+describe("grantAheadRefusal", () => {
+  const allow = (action: string, resource: string): PermissionRule => ({
+    action,
+    resource,
+    effect: "allow",
+  });
+
+  it("accepts exactly the rules an answered ask would record", () => {
+    for (const resource of [
+      "npm run *",
+      "bun install *",
+      "cargo test *",
+      "git push *",
+      "git -C dir status *",
+      "ls *",
+      "rm -rf dist",
+      "git branch -D old",
+    ]) {
+      expect(grantAheadRefusal(allowBash(resource)), resource).toBeUndefined();
+    }
+    expect(grantAheadRefusal(allow("github__search", "*"))).toBeUndefined();
+  });
+
+  it("accepts a whole MCP server as one rule, and no other mcp pattern", () => {
+    for (const server of ["github", "playwright", "my-docs", "jira_cloud"]) {
+      expect(grantAheadRefusal(allow("mcp", `${server}__*`)), server).toBeUndefined();
+    }
+    for (const resource of ["*", "github__create_*", "git*__*", "__*", "a__b__*"]) {
+      expect(grantAheadRefusal(allow("mcp", resource)), resource).toEqual({
+        kind: "server-pattern",
+      });
+    }
+    expect(grantAheadRefusal(allow("mcp", "github__search"))).toEqual({
+      kind: "underivable",
+      derived: [allow("github__search", "*")],
+    });
+  });
+
+  it("matches a whole-server grant against that server's tools only, at either scope", () => {
+    for (const origin of ["session", "workspace"] as const) {
+      const policy = layeredPolicy([{ origin, rules: [allow("mcp", "github__*")] }]);
+      expect(policy("github__search", {}), origin).toEqual({ effect: "allow", origin });
+      expect(policy("github__merge_pull_request", {}), origin).toEqual({ effect: "allow", origin });
+      expect(policy("githubx__search", {}), origin).toBeUndefined();
+      expect(policy("jira__get_issue", {}), origin).toBeUndefined();
+      expect(policy("bash", bash("github__search")), origin).toBeUndefined();
+    }
+  });
+
+  it("refuses write, edit and every tool pattern", () => {
+    expect(grantAheadRefusal(allow("write", "src/**"))).toEqual({ kind: "write-once" });
+    expect(grantAheadRefusal(allow("edit", "*"))).toEqual({ kind: "write-once" });
+    expect(grantAheadRefusal(allow("*", "*"))).toEqual({ kind: "tool-pattern" });
+    expect(grantAheadRefusal(allow("playwright__*", "*"))).toEqual({ kind: "tool-pattern" });
+  });
+
+  it("refuses a wildcard over a delete and any grant of a command no answer remembers", () => {
+    expect(grantAheadRefusal(allowBash("rm -rf *"))).toEqual({
+      kind: "destructive",
+      command: "rm -rf",
+      remembered: "exact-command",
+    });
+    expect(grantAheadRefusal(allowBash("rm *.log"))).toMatchObject({ kind: "destructive" });
+    expect(grantAheadRefusal(allowBash("git branch -D *"))).toMatchObject({
+      kind: "destructive",
+      remembered: "exact-command",
+    });
+    for (const command of ["git push --force", "git reset --hard", "git clean -fd"]) {
+      expect(grantAheadRefusal(allowBash(`${command} *`)), command).toEqual({
+        kind: "destructive",
+        command,
+        remembered: "nothing",
+      });
+      expect(grantAheadRefusal(allowBash(command)), command).toMatchObject({
+        kind: "destructive",
+      });
+    }
+  });
+
+  it("refuses shapes an answer never derives, naming what it would derive instead", () => {
+    expect(grantAheadRefusal(allowBash("npm run build *"))).toEqual({
+      kind: "underivable",
+      derived: [allowBash("npm run *")],
+    });
+    expect(grantAheadRefusal(allowBash("npm test"))).toEqual({
+      kind: "underivable",
+      derived: [allowBash("npm test *")],
+    });
+    expect(grantAheadRefusal(allowBash("git *"))).toEqual({ kind: "underivable", derived: [] });
+    expect(grantAheadRefusal(allowBash("*"))).toEqual({ kind: "underivable", derived: [] });
+    expect(grantAheadRefusal(allowBash("npm test && npm run lint"))).toEqual({
+      kind: "underivable",
+      derived: [allowBash("npm test *"), allowBash("npm run *")],
+    });
+    expect(grantAheadRefusal(allow("github__search", "repo:*"))).toEqual({
+      kind: "underivable",
+      derived: [allow("github__search", "*")],
+    });
+    expect(grantAheadRefusal(allow("read", "src/**"))).toEqual({
+      kind: "underivable",
+      derived: [],
+    });
+    expect(grantAheadRefusal(allow("mcp", "playwright"))).toEqual({
+      kind: "underivable",
+      derived: [],
+    });
   });
 });
 

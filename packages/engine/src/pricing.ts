@@ -166,6 +166,8 @@ const rateTable = new Map<string, ModelRates>(
     "amazon.nova-micro-v1:0": listed({ input: 0.035, output: 0.14, cacheRead: 0.009 }),
     "amazon.nova-lite-v1:0": listed({ input: 0.06, output: 0.24, cacheRead: 0.015 }),
     "amazon.nova-pro-v1:0": listed({ input: 0.8, output: 3.2, cacheRead: 0.2 }),
+    "jev-1.13.0": listed({ input: 0.042, output: 0 }),
+    "jev-1.14.0": listed({ input: 0.042, output: 0 }),
   }),
 );
 

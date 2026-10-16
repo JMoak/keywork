@@ -1,11 +1,11 @@
 import type {
+  AgentContext,
   ArcStatus,
   AuditEntry,
   CacheMiss,
   CandidateTriage,
   ChangedPath,
   CompactionEntry,
-  ContextReading,
   CostRollup,
   DailyEntry,
   EffortLevel,
@@ -183,6 +183,17 @@ export interface RedoReport {
   redoable: boolean;
 }
 
+export interface RestoreReport {
+  turn: number;
+  prompt: UndonePrompt;
+  leafId: string | null;
+  undoneTurns: number;
+  files: readonly ChangedPath[];
+  filesNote: string;
+  undoable: boolean;
+  redoable: boolean;
+}
+
 export interface ModelSpend {
   reference: string;
   turns: number;
@@ -228,7 +239,8 @@ export interface SessionHost {
   compact(id: string, focus?: string): Promise<CompactionReport | Refusal>;
   undo(id: string): Promise<UndoReport | Refusal | "nothing">;
   redo(id: string): Promise<RedoReport | Refusal | "nothing">;
-  context(id: string): Promise<ContextReading | "missing">;
+  restore(id: string, turn: number): Promise<RestoreReport | Refusal | "unknown-turn">;
+  context(id: string): Promise<AgentContext | "missing">;
   cost(id: string): Promise<CostReport | "missing">;
   exportHtml(id: string, scope: ExportScope, out?: string): Promise<ExportOutcome>;
   rename(id: string, title: string): Promise<{ title: string } | "missing">;
@@ -238,6 +250,8 @@ export interface SessionHost {
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
   permissions(): Promise<PermissionsView>;
+  grantWorkspaceRule(rule: PermissionRule): Promise<void>;
+  grantSessionRule(sessionId: string, rule: PermissionRule): Promise<boolean>;
   revokeWorkspaceGrant(rule: PermissionRule): Promise<boolean>;
   revokeSessionGrant(sessionId: string, rule: PermissionRule): Promise<boolean>;
   close(): Promise<void>;

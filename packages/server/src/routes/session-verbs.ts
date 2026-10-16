@@ -1,5 +1,5 @@
 import {
-  type ContextReading,
+  type AgentContext,
   compactionDue,
   contextFullness,
   costBasis,
@@ -21,7 +21,7 @@ import {
   type RouteSpec,
 } from "./family.ts";
 
-export interface ContextAnswer extends ContextReading {
+export interface ContextAnswer extends AgentContext {
   fullness: number;
   flushDue: boolean;
   compactionDue: boolean;
@@ -62,6 +62,20 @@ const effortBody: JsonSchema = {
 const compactBody: JsonSchema = {
   type: "object",
   properties: { focus: { type: "string" } },
+  additionalProperties: false,
+};
+
+const restoreBody: JsonSchema = {
+  type: "object",
+  required: ["turn"],
+  properties: {
+    turn: {
+      type: "integer",
+      minimum: 1,
+      description:
+        "The turn to restore to just before: its prompt's 1-based place among the prompts on the session's active path.",
+    },
+  },
   additionalProperties: false,
 };
 
@@ -183,14 +197,31 @@ export const sessionVerbRoutes = [
     },
   },
   {
+    method: "POST",
+    path: "/sessions/{id}/restore",
+    operationId: "restoreSessionTurn",
+    summary:
+      "Restore the session to just before one of its turns in one step, where POST /undo takes back one turn per call: the conversation moves to before that turn's prompt, and the workspace files go back to the checkpoint taken before the first change any turn from there on made (untouched when none of them changed a file, or with checkpoints off). One `restore` entry records it in the session log, so a reopen finds the session where the restore left it. The answer says what changed: the turn's `prompt`, handed back so a client can offer it for editing; `undoneTurns`, how many turns left the active path; and `files`, every file the restore put back with the lines it `added` and `deleted`. Staged like an undo: the next POST /redo takes the whole restore back, files and conversation, and records a `restore-undone` entry so a reopen agrees. `session.state`, `session.tree` (reason `leaf`, naming the recorded entry) and, when files moved, `changes.updated` follow.",
+    authenticated: true,
+    requestBody: restoreBody,
+    responses: {
+      "200":
+        "`{ turn, prompt: { entryId, text }, leafId, undoneTurns, files: [{ path, added, deleted }], filesNote, undoable, redoable }`; `leafId` is the recorded entry.",
+      "400": "The body is not `{ turn }` with a positive integer.",
+      "404": `${missingResponse} Or \`{ error: "no turn N on this session's path" }\`.`,
+      "409": busyResponse,
+    },
+  },
+  {
     method: "GET",
     path: "/sessions/{id}/context",
     operationId: "readSessionContext",
     summary:
-      "How full the model's context window is: `used` tokens estimated from the conversation text against the `window`, with the thresholds at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen. `declared` says whether the window came from keywork.json or is assumed.",
+      "How full the model's context window is: `used` tokens estimated from the conversation text against the `window`, with the thresholds at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen. `used` and those two lines are what keywork's settler measures: the conversation alone. `declared` says whether the window came from keywork.json or is assumed. `parts` splits everything the next request carries, each as `{ tokens, basis }`: `system` (keywork's prompt and the configured prompts), `tools` (the tool schemas), `injected` (project instructions, the repo map, memory and extension context riding in the prompt), `conversation`, and `free` (the room left in the window). A part's `basis` is `reported` when it rests on what the provider reported for the last request, plus an estimate of what arrived since, and `estimated` when it comes from the text alone; the provider never splits its count, so `system`, `tools` and `injected` are always estimated. `thresholds` places the flush and the compaction on the parts' axis as absolute token counts, so a client can draw them across the parts; they pass `window` when the parts beyond the conversation outgrow the reserve.",
     authenticated: true,
     responses: {
-      "200": '`ContextReading & { fullness, flushDue, compactionDue, basis: "estimated" }`.',
+      "200":
+        '`ContextReading & { fullness, flushDue, compactionDue, basis: "estimated", parts: { system, tools, injected, conversation, free }, thresholds: { flushAt, compactAt } }`, each part `{ tokens, basis: "reported" | "estimated" }`.',
       "404": missingResponse,
     },
   },
@@ -256,7 +287,7 @@ export const sessionVerbRoutes = [
 
 export const sessionVerbFamily = {
   routes: sessionVerbRoutes,
-  handlers: ({ host }) => ({
+  handlers: ({ host, log }) => ({
     setSessionModel: async (request, { id }) => {
       const reference = nonBlank(
         fieldsOf<{ reference: unknown }>(await bodyOf(request))?.reference,
@@ -307,6 +338,19 @@ export const sessionVerbFamily = {
       if (outcome === "nothing") return json(404, { error: "nothing to redo" });
       return typeof outcome === "string" ? refused(outcome) : json(200, outcome);
     },
+    restoreSessionTurn: async (request, { id }) => {
+      const turn = turnOf(await bodyOf(request));
+      if (turn === undefined) {
+        return json(400, { error: "the body must be { turn: a positive integer }" });
+      }
+      const outcome = await host.restore(id ?? "", turn);
+      if (outcome === "unknown-turn") {
+        return json(404, { error: `no turn ${turn} on this session's path` });
+      }
+      if (typeof outcome === "string") return refused(outcome);
+      log.record(id ?? "", "session.tree", { reason: "leaf", entryId: outcome.leafId });
+      return json(200, outcome);
+    },
     readSessionContext: async (_request, { id }) => {
       const reading = await host.context(id ?? "");
       return reading === "missing" ? missingSession() : json(200, contextAnswerOf(reading));
@@ -352,7 +396,7 @@ export const sessionVerbFamily = {
   }),
 } satisfies RouteFamily<typeof sessionVerbRoutes>;
 
-export function contextAnswerOf(reading: ContextReading): ContextAnswer {
+export function contextAnswerOf(reading: AgentContext): ContextAnswer {
   return {
     ...reading,
     fullness: contextFullness(reading),
@@ -383,6 +427,11 @@ function effortOf(body: unknown): EffortLevel | null | undefined {
   const { level } = fields;
   if (level === null) return null;
   return typeof level === "string" && isEffortLevel(level) ? level : undefined;
+}
+
+function turnOf(body: unknown): number | undefined {
+  const turn = fieldsOf<{ turn: unknown }>(body)?.turn;
+  return typeof turn === "number" && Number.isInteger(turn) && turn >= 1 ? turn : undefined;
 }
 
 function exportRequestOf(body: unknown): { scope: ExportScope; out?: string } | undefined {

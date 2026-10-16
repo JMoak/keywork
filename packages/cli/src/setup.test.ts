@@ -9,6 +9,10 @@ import type {
   VerificationOutcome,
 } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
+import { typesafeDecider } from "./inference/builtins.ts";
+import { type DeciderConnection, typesafeTerms } from "./inference/typesafe-connection.ts";
+import type { VerificationReport } from "./inference/verify.ts";
+import { typesafeRefusal } from "./memory-decider.ts";
 import { type ConnectIo, connectCommand, saveApiKey, terminalConnectIo } from "./setup.ts";
 
 const tempDir = scratchDirs("keywork-setup-");
@@ -186,5 +190,128 @@ describe("connectCommand without a terminal", () => {
     ]);
     expect(written.join("")).toContain("Choice [1]: ");
     expect(written.join("")).not.toContain("sk-piped-key");
+  });
+});
+
+interface FakeDecider extends DeciderConnection {
+  saved: string[];
+  selections: number;
+}
+
+function fakeDecider(
+  verification: VerificationReport,
+  selected: "builtin" | "jev" = "builtin",
+): FakeDecider {
+  const saved: string[] = [];
+  const decider: FakeDecider = {
+    target: typesafeDecider,
+    configFile: "/home/me/.keywork/keywork.json",
+    saved,
+    selections: 0,
+    verify: async () => verification,
+    save: async (key) => {
+      saved.push(key);
+    },
+    selected: () => selected,
+    select: async () => {
+      decider.selections += 1;
+      return "/home/me/.keywork/keywork.json";
+    },
+  };
+  return decider;
+}
+
+const listed: VerificationReport = {
+  ok: true,
+  at: "2026-10-16T09:00:00.000Z",
+  models: ["jev-latest", "jev-preview"],
+};
+
+describe("keywork connect typesafe", () => {
+  it("states TypeSafe's terms, saves a verified key, and turns Jev on by default", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: [] });
+    const decider = fakeDecider(listed);
+    const io = scriptedIo([""], ["ts-live-key"]);
+
+    const code = await connectCommand(port, { io, argument: "typesafe", decider });
+
+    expect(code).toBe(0);
+    expect(saves).toEqual([]);
+    expect(decider.saved).toEqual(["ts-live-key"]);
+    expect(decider.selections).toBe(1);
+    expect(io.printed).toEqual([
+      "keywork connect typesafe: TypeSafe Jev (memory decisions)",
+      typesafeTerms,
+      "\nverifying https://api.typesafe.ai/v1/models …",
+      "\nSaved typesafe · models reported: jev-latest, jev-preview · verified 2026-10-16T09:00:00.000Z",
+      "TypeSafe's list does not name jev-1.13.0 · keywork asks for it by version and checks the model behind every answer",
+      'wrote "memory": { "decider": "jev" } to /home/me/.keywork/keywork.json',
+    ]);
+    expect(io.printed.join("\n")).not.toContain("ts-live-key");
+  });
+
+  it("leaves memory on the builtin when the answer is no, and says how to change that", async () => {
+    const { port } = fakePort({ ok: true, at: "t", models: [] });
+    const decider = fakeDecider({ ...listed, models: ["jev-1.13.0"] });
+    const io = scriptedIo(["n"], ["ts-live-key"]);
+
+    expect(await connectCommand(port, { io, argument: "typesafe", decider })).toBe(0);
+
+    expect(decider.selections).toBe(0);
+    expect(io.printed.at(-1)).toBe(
+      'memory decider stays builtin · "memory": { "decider": "jev" } in /home/me/.keywork/keywork.json turns Jev on',
+    );
+    expect(io.printed.join("\n")).not.toContain("does not name");
+  });
+
+  it("asks nothing more when jev is already selected", async () => {
+    const { port } = fakePort({ ok: true, at: "t", models: [] });
+    const decider = fakeDecider(listed, "jev");
+    const io = scriptedIo([], ["ts-live-key"]);
+
+    expect(await connectCommand(port, { io, argument: "typesafe", decider })).toBe(0);
+
+    expect(decider.selections).toBe(0);
+    expect(io.printed.at(-1)).toBe(
+      "memory decider: jev, already set in /home/me/.keywork/keywork.json",
+    );
+  });
+
+  it("saves nothing when TypeSafe refuses the key", async () => {
+    const { port } = fakePort({ ok: true, at: "t", models: [] });
+    const decider = fakeDecider({ ok: false, at: "t", reason: typesafeRefusal, status: 401 });
+    const io = scriptedIo([], ["ts-bad-key"]);
+
+    expect(await connectCommand(port, { io, argument: "typesafe", decider })).toBe(1);
+
+    expect(decider.saved).toEqual([]);
+    expect(io.printed.at(-1)).toBe("not saved: TypeSafe refused the key");
+  });
+
+  it("saves nothing without a key", async () => {
+    const { port } = fakePort({ ok: true, at: "t", models: [] });
+    const decider = fakeDecider(listed);
+    const io = scriptedIo([], [""]);
+
+    expect(await connectCommand(port, { io, argument: "typesafe", decider })).toBe(1);
+    expect(io.printed.at(-1)).toBe("not saved: typesafe needs an API key");
+  });
+
+  it("lists TypeSafe under its own heading, apart from the chat providers", async () => {
+    const { port } = fakePort({ ok: true, at: "t", models: [] });
+    const decider = fakeDecider(listed);
+    const io = scriptedIo(["4", ""], ["ts-live-key"]);
+
+    expect(await connectCommand(port, { io, decider })).toBe(0);
+
+    expect(io.printed.slice(0, 6)).toEqual([
+      "keywork connect: add an inference provider\n",
+      "  1. Ollama · http://localhost:11434/v1",
+      "  2. Custom OpenAI-compatible endpoint (URL)",
+      "  3. OpenAI via ChatGPT Plus/Pro (subscription sign-in)",
+      "\nmemory decisions:",
+      "  4. TypeSafe Jev (memory decisions)",
+    ]);
+    expect(decider.saved).toEqual(["ts-live-key"]);
   });
 });

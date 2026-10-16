@@ -3,6 +3,7 @@ import { type KeyworkConfig, loadConfig } from "@keywork/shared";
 import type { ConnectionsPort } from "@keywork/tui";
 import {
   type CredentialMap,
+  credentialPlacement,
   defaultAuthDir,
   legacyCredentials,
   readCredentials,
@@ -10,9 +11,16 @@ import {
   saveCredential,
   secretKeepingFor,
 } from "./auth-store.ts";
+import { typesafeDecider } from "./inference/builtins.ts";
 import { connectionsPort } from "./inference/connections.ts";
-import { type ObservationMap, readObservations } from "./inference/observations.ts";
+import {
+  type ObservationMap,
+  readObservations,
+  recordObservation,
+} from "./inference/observations.ts";
 import { composeInference, type InferenceRuntime } from "./inference/runtime.ts";
+import { type DeciderConnection, typesafeConnection } from "./inference/typesafe-connection.ts";
+import { type MemoryDeciderSetup, memoryDeciderSetup, typesafeRefusal } from "./memory-decider.ts";
 import { userConfigDir } from "./user-config.ts";
 
 export interface InferenceState {
@@ -21,12 +29,14 @@ export interface InferenceState {
   secrets?: SecretKeeping | undefined;
   observations: ObservationMap;
   runtime: InferenceRuntime;
+  memoryDecider: MemoryDeciderSetup;
 }
 
 export interface LiveInference {
   current(): InferenceState;
   reload(): Promise<void>;
   readonly connections: ConnectionsPort;
+  readonly decider: DeciderConnection;
 }
 
 export interface InferenceStateOptions {
@@ -38,9 +48,10 @@ export interface InferenceStateOptions {
 }
 
 export async function openInferenceState(options: InferenceStateOptions): Promise<LiveInference> {
-  let state = await loadInferenceState(options);
+  const noticeOnce = oncePerLine(options.warn);
+  let state = await loadInferenceState(options, noticeOnce);
   const reload = async (): Promise<void> => {
-    state = await loadInferenceState(options);
+    state = await loadInferenceState(options, noticeOnce);
   };
   return {
     current: () => state,
@@ -54,10 +65,19 @@ export async function openInferenceState(options: InferenceStateOptions): Promis
       observations: () => state.observations,
       changed: reload,
     }),
+    decider: typesafeConnection({
+      userDir: userConfigDir(),
+      config: () => state.config,
+      secrets: () => state.secrets,
+      changed: reload,
+    }),
   };
 }
 
-async function loadInferenceState(options: InferenceStateOptions): Promise<InferenceState> {
+async function loadInferenceState(
+  options: InferenceStateOptions,
+  noticeOnce: (line: string) => void,
+): Promise<InferenceState> {
   const config = await loadConfig({
     userDir: userConfigDir(),
     projectDir: join(options.cwd, ".keywork"),
@@ -78,5 +98,29 @@ async function loadInferenceState(options: InferenceStateOptions): Promise<Infer
       saveCredential(provider, credential, defaultAuthDir(), secrets).then(() => {}),
   });
   for (const warning of runtime.warnings) options.warn(`keywork: ${warning}`);
-  return { config, credentials, secrets, observations, runtime };
+  const memoryDecider = memoryDeciderSetup({
+    config,
+    credentials,
+    env: options.env,
+    observations,
+    placement: credentialPlacement(typesafeDecider.name),
+    notice: noticeOnce,
+    onRefused: rememberRefusal,
+  });
+  return { config, credentials, secrets, observations, runtime, memoryDecider };
+}
+
+function rememberRefusal(at: string): void {
+  recordObservation(typesafeDecider.name, { lastFailure: { at, reason: typesafeRefusal } }).catch(
+    () => undefined,
+  );
+}
+
+function oncePerLine(print: (line: string) => void): (line: string) => void {
+  const said = new Set<string>();
+  return (line) => {
+    if (said.has(line)) return;
+    said.add(line);
+    print(line);
+  };
 }

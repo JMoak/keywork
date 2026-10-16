@@ -60,6 +60,11 @@ describe("costNanosOf", () => {
   it("prices a zero-usage turn at zero for a known model", () => {
     expect(costNanosOf(tokens(0, 0), "gpt-5-nano")).toBe(0);
   });
+
+  it("prices Jev's input at TypeSafe's published rate and its output at nothing", () => {
+    expect(costNanosOf(tokens(1_000_000, 50_000), "jev-1.13.0")).toBe(42_000_000);
+    expect(costNanosOf(tokens(1_500, 30), "jev-1.13.0")).toBe(63_000);
+  });
 });
 
 describe("ratesFor", () => {

@@ -1,3 +1,4 @@
+import { utf8Prefix } from "@keywork/shared";
 import type { ChangesRefusal, FileSides } from "../host.ts";
 import { answering } from "./answers.ts";
 import { json, missingSession, type RouteFamily, type RouteSpec } from "./family.ts";
@@ -98,21 +99,8 @@ function isBinary(content: string | undefined): boolean {
   return content?.includes("\0") === true;
 }
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
 function capped(content: string | undefined): { text: string | null; truncated: boolean } {
-  if (content === undefined) return { text: null, truncated: false };
-  const bytes = encoder.encode(content);
-  if (bytes.length <= fileChangeCapBytes) return { text: content, truncated: false };
-  return {
-    text: decoder.decode(bytes.subarray(0, characterBoundaryAtOrBefore(bytes, fileChangeCapBytes))),
-    truncated: true,
-  };
-}
-
-function characterBoundaryAtOrBefore(bytes: Uint8Array, offset: number): number {
-  let end = offset;
-  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
-  return end;
+  return content === undefined
+    ? { text: null, truncated: false }
+    : utf8Prefix(content, fileChangeCapBytes);
 }

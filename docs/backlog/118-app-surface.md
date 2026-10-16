@@ -139,7 +139,8 @@ when its session matches. Q-AS5 asks whether a `&only=session` strictness flag i
 **118-5 · Nothing here loosens the gate.** No route accepts a permission rule, a preset other
 than by its name (and only after K1's confirmation contract, Q-AS2), a path outside the tool
 scope, or a trust decision for any root but the one being served. The ask queue stays the one
-door for tool approval.
+door for tool approval. (Wave 7's S23 takes a rule ahead of an ask, on a trusted workspace,
+but only one an answered ask could have recorded or one whole MCP server; see its ledger entry.)
 
 ## Tasks
 
@@ -1146,3 +1147,115 @@ job has published. keywork-app pins `protocolVersion = "0.2.0"`, so its sidecar 
 fixtures, not the release. Gate for both entries under bun 1.3.9: `bun run check` exits 0
 (types, pins, guardrails, prose, contract, lint) and `bun run test` is 364 files, 5025
 passed, 3 skipped.
+
+### Wave 7 server lane · 2026-10-15
+
+Four asks from keywork-app's field scan (its `docs/research/field-scan-2026-10.md`, ideas 2 to
+4) and its trust onboarding, numbered as the app's plan numbers them. `contractVersion` moves
+once, `1.1` → `1.2`: three routes are new, and `gate.ask`, `GET /sessions/{id}/context` and
+`surface.changed` gain fields or a value, all additive.
+
+**S18 · asks that show their consequence.** `gate.ask` and every `GET /asks` entry gain an
+optional `preview: { path, before, after }` for `write` and `edit`. `Tool` gains an optional
+`preview(args)` and `defineTool` takes one (arguments parsed with `safeParse`, so a malformed
+call previews nothing); `edit` previews by running its own `replaced` over the file's current
+content, so CRLF files and `replaceAll` come out exactly as the edit would leave them, and
+`write` by its content over the current file, `before: null` when there is none. Neither
+previews a vault note (the call only proposes it), and `writeTarget` still refuses protected
+paths. `tools/preview.ts` holds the bound, and it departs from "bounded like `/changes/file`"
+on purpose: a side over 256 KiB of UTF-8, binary content, or a dry run that would fail gives no
+preview at all rather than a cut one, because a truncated side would misstate the change (that
+route shows a state; an ask shows a consequence), and 256 KiB rather than 1 MiB because the ask
+rides an event every client receives and the log retains. The agent builds the ask once
+(`askAbout`, the preview best-effort so a failing one never blocks the ask) and hands the guard
+the same `PermissionAsk` the bus carried: `ToolGuard.confirm(call, ask?)`, optional so every
+existing guard is untouched, passed through `childGuardOf`, and the way `AskQueue` puts the
+preview on the pending ask. The UTF-8 cut moved into `@keywork/shared` as `utf8Prefix`, which
+`/changes/file` now uses. The TUI's ask card does not show the preview; nothing in the terminal
+needed it for parity.
+
+**S19 · the parts of the context window.** `GET /sessions/{id}/context` keeps every field
+(`used`, the lines, `fullness`, the dues and `basis: "estimated"` remain the settler's measure,
+the conversation alone) and gains `parts { system, tools, injected, conversation, free }`, each
+`{ tokens, basis: "reported" | "estimated" }`, and `thresholds { flushAt, compactAt }` as
+absolute counts on the parts' axis. In the engine, `Agent.anatomy()` names what the next request
+carries: the system prompt after hooks, the injected texts, the tool definitions, the history,
+and the provider's last report (input plus cache read plus cache creation plus output, anchored
+at the history length it covered, dropped whenever settling or a delegate rewrites the history);
+`session/context-map.ts` turns that into the parts, and `readAgentContext(agent, budget)` is
+what both hosts answer. `AgentOptions.promptInjections` carries the texts compose put in the
+prompt (`Composition.promptInjectionsWith`: AGENTS.md, the repo map rendered for that model, the
+memory bootstrap or a bot's learning), and extension `context` fragments count as injected (the
+hooked prompt minus the base). `system`, `tools` and `injected` are always estimated, since no
+provider splits its count; `conversation` is the reported total minus those, plus an estimate of
+what arrived since, `reported` while the anchor holds; `thresholds` are the lines plus whatever
+the parts carry beyond `used`. **Found, not built:** the settler compares the conversation alone
+against lines sized as reserves of the whole window, so once the system prompt, the tool schemas
+(MCP servers add many) and the injections outgrow the 16,384-token compaction reserve, the
+window fills before keywork compacts; the thresholds now show that honestly (they pass
+`window`). Moving the settler onto the whole request and onto reported usage changes when every
+surface compacts, so it stays the S14 engine item.
+
+**S20 · restore to a turn.** Not expressible through the existing routes as one verdict:
+`/undo` takes back one prompt per call and its staged redo covers only the last one, the
+file-only undo walks the checkpoint stack with no notion of turns, and `/leaf` moves the
+conversation without the files. So `POST /sessions/{id}/restore { turn }`
+(`restoreSessionTurn`, in the session verbs family) is built from undo's own pieces:
+`restorePointOf(path, turn)` in `entries.ts` (the turn's prompt among the user prompts on the
+active path, 1-based; the files at the first checkpoint tagged at or after that turn, since an
+untagged turn changed nothing; how many turns leave the path), `rewindBefore`, `stageFiles`
+(snapshot, then `restoreTo`), one `custom` entry `restore { turn, from, files }` under the new
+leaf, and a staged cancel. The answer is `{ turn, prompt: { entryId, text }, leafId,
+undoneTurns, files: [{ path, added, deleted }], filesNote, undoable, redoable }`, `files` from
+the new `Checkpoints.filesBetween` (numstat, no patch); the refusals are undo's (400 malformed,
+404 unknown session or `no turn N on this session's path`, 409 a turn is running, checked first
+as undo checks it). The host announces `session.state` and the files' `changes.updated`; the
+family records `session.tree` with reason `leaf` naming the recorded entry, as K2 does for
+`/leaf`. One decision beyond undo: the entry makes a restore durable (a reopen finds the session
+there, where an undo's leaf move is not), so `/redo` of a restore also appends a
+`restore-undone` entry under the old leaf, or a restart after a redo would reopen at the
+restore with the files put forward. The memory host restores by slicing its history and touches
+no files. The TUI has no restore to a turn; none was added.
+
+**S23 · grants ahead of an ask.** `POST /permissions/workspace/grant` (`grantWorkspaceRule`) and
+`POST /permissions/session/{sessionId}/grant` (`grantSessionRule`), body `{ rule }` as the
+revoke routes take it, record through `PermissionLedger.record`, the same call an answered ask
+with that scope makes (a workspace grant lands in the workspace's `permissions.json`), and
+answer `200 { granted: rule }`; `400` on a malformed body. `409` in keywork's words when the
+workspace is untrusted (read from the ledger, which is fixed at compose, so a server that
+trusted its root mid-run must reopen first, as the `reopens` of `POST /workspace/trust` already
+says) and for any rule an answered ask could never have recorded: `grantAheadRefusal` in
+`shared/trust/grants.ts` takes a rule only when `grantCandidates` derives exactly it from its
+own command, so `write` and `edit` refuse as an answer does, a pattern over tool names (`*`,
+`server__*` as the action) refuses, K9's deletes and `git branch -D` refuse under any wildcard but pass as the
+exact command, a force push, hard reset, `git clean` or discarding checkout refuses in every
+form, and any other shape refuses naming what an answer would record instead (`npm run build *`
+gets `npm run *`; `git *` and `bash *` get nothing). One reasoned departure from the lead's
+list: an unknown session is `404 { error: "no session has that id" }`, every session route's
+answer, not `409`. `surface.changed` gains `kind: "permissions"`, fired after a grant that added
+a rule, after either revoke, and after an ask answered `granted` beyond `once`, which also
+closes the "surface.changed on grants" item of the app's S14. 118-5 carries a note: this route
+takes a rule, but only one an answer could have recorded or one whole MCP server. The TUI keeps
+its `always` key; no terminal verb grants ahead of an ask.
+
+*A whole MCP server (Jordan, 2026-10-16: "we don't have to be ultra locked down").* Both routes
+also take every tool of one MCP server as one rule, `{ action: "mcp", resource: "<server>__*" }`,
+the form AB3 gave configured rules, so the same matcher covers it at session and workspace scope
+(`server__*` matches `server__search` and not `serverx__search`); it persists in
+`permissions.json`, revokes, and lists in `GET /permissions`, `keywork permissions` and the
+TUI's `/permissions` as the one grant `mcp <server>__*`. The server name is a literal (word
+characters and `-`, no `__`); any other `mcp` pattern (`mcp *`, `mcp github__create_*`, a
+glob over server names) refuses as `server-pattern`, "an mcp grant covers one whole server as
+<server>__*, never part of a server or several", and `mcp github__search` refuses naming the
+`github__search *` an answer records. Every other refusal stands; a pattern over tool names
+now reads "a grant names one tool, or one whole MCP server as mcp <server>__*, never a pattern
+over tool names". An answered ask still remembers one tool. Only summaries changed in the
+document (regenerated), so no `contractVersion` bump.
+
+Gate under bun 1.3.9: `bun run check` exits 0 (types, pins, guardrails, prose, contract, lint)
+and `bun run test` is 366 files, 5060 passed, 3 skipped (baseline 364 files, 5025); the
+contract fixtures were regenerated with `bun run contract:fixtures`. Across ten full runs on
+Windows, two failed: one named `compose.test.ts` "surfaces point-of-action recall inside a
+mutating tool's result" with `EPERM` renaming `curation.md` in `vault-files.ts`'s atomic
+write, a file this lane never touches; the other's names were not captured. The touched test
+files passed five repeated runs in a row.

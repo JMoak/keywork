@@ -1,4 +1,4 @@
-import { Agent, MockProvider, textTurn } from "@keywork/engine";
+import { Agent, type MemoryDecision, MockProvider, textTurn } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { SessionLedger } from "./session-ledger.ts";
 
@@ -99,6 +99,44 @@ describe("SessionLedger cost report", () => {
         "  mock/gpt-5 · 1 turn · 2000▸100 · $0.0035",
       ].join("\n"),
     );
+  });
+});
+
+describe("SessionLedger decider spend", () => {
+  function decision(overrides: Partial<MemoryDecision>): MemoryDecision {
+    return {
+      id: "d",
+      question: "action-relevance@1",
+      about: { kind: "call", callId: "c" },
+      candidates: [],
+      choice: { kept: [], dropped: [] },
+      decider: "jev",
+      latencyMs: 120,
+      ...overrides,
+    };
+  }
+
+  it("adds a decider line priced from the input tokens each decision reported", async () => {
+    const agent = await spent({ inputTokens: 10_000, outputTokens: 1_000 }, "gpt-5-mini");
+    const ledger = new SessionLedger();
+    ledger.recordDecision(decision({ model: "jev-1.13.0", inputTokens: 1_200_000 }));
+    ledger.recordDecision(decision({ model: "jev-1.13.0", inputTokens: 300_000 }));
+    ledger.recordDecision(decision({ decider: "builtin" }));
+
+    expect(ledger.costReport(agent)).toBe(
+      [
+        "tokens 10000▸1000",
+        "cost $0.0045 · estimated from gpt-5-mini rates",
+        "decider jev-1.13.0 · 2 decisions · 1500000 input tokens · $0.063",
+      ].join("\n"),
+    );
+  });
+
+  it("prints no decider line when no decision called out", async () => {
+    const agent = await spent({ inputTokens: 7, outputTokens: 3 });
+    const ledger = new SessionLedger();
+    ledger.recordDecision(decision({ decider: "builtin", fallback: { reason: "no-key" } }));
+    expect(ledger.costReport(agent)).not.toContain("decider");
   });
 });
 

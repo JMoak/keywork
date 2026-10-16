@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigError, loadConfig, mergeConfigs } from "./load.ts";
-import { defaultConfig, startupThemeName } from "./schema.ts";
+import { defaultConfig, memoryDeciderOf, startupThemeName } from "./schema.ts";
 
 const tempDirs: string[] = [];
 
@@ -126,6 +126,21 @@ describe("loadConfig", () => {
     const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
     expect(config.roles).toEqual({ closing: "openrouter/cheap-model" });
+  });
+
+  it("takes the memory decider from the user layer only, builtin when unset", async () => {
+    const quietUser = await dirWithConfig({});
+    const jevUser = await dirWithConfig({ memory: { decider: "jev" } });
+    const projectDir = await dirWithConfig({ memory: { decider: "jev" } });
+    const typo = await dirWithConfig({ memory: { decider: "typesafe" } });
+
+    const fromProject = await loadConfig({ userDir: quietUser, projectDir, projectTrusted: true });
+    const fromUser = await loadConfig({ userDir: jevUser });
+
+    expect(fromProject.memory).toBeUndefined();
+    expect(memoryDeciderOf(fromProject)).toBe("builtin");
+    expect(memoryDeciderOf(fromUser)).toBe("jev");
+    await expect(loadConfig({ userDir: typo })).rejects.toThrow(ConfigError);
   });
 
   it("ignores bedrockRegion from the project layer even when trusted", async () => {

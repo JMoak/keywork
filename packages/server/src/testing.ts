@@ -6,7 +6,6 @@ import {
   contextBudgetFor,
   declaredContextWindow,
   type EffortLevel,
-  estimateConversationTokens,
   McpServerNotFoundError,
   MemoryGraph,
   MemorySearch,
@@ -19,7 +18,7 @@ import {
   PermissionLedger,
   type Provider,
   parseReference,
-  readContext,
+  readAgentContext,
   type SessionBinding,
   type SessionEntry,
   type Tool,
@@ -49,6 +48,7 @@ import {
   type NoteRelation,
   type PresetHost,
   type RedoReport,
+  type RestoreReport,
   SessionBusyError,
   type SessionDetail,
   type SessionEntries,
@@ -353,12 +353,37 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         const { undoable, redoable } = stateOf(session);
         return { restored: true, undoable, redoable };
       }),
+    restore: (id, turn) =>
+      verb(id, (session): RestoreReport | "busy" | "unknown-turn" => {
+        if (session.agent.busy()) return "busy";
+        const history = session.agent.history();
+        const prompts = promptIndexes(history);
+        const index = prompts[turn - 1];
+        const prompt = index === undefined ? undefined : history[index];
+        if (index === undefined || prompt === undefined) return "unknown-turn";
+        const { provider } = session.agent;
+        swap(id, session, buildAgent(id, provider, history.slice(0, index)));
+        const staged = {
+          prompt: { entryId: `m${index}`, text: textOf(prompt) },
+          cancel: () => swap(id, session, buildAgent(id, provider, history)),
+        };
+        session.staged = staged;
+        announce(id, session);
+        const { leafId, undoable, redoable } = stateOf(session);
+        return {
+          turn,
+          prompt: staged.prompt,
+          leafId,
+          undoneTurns: prompts.length - turn + 1,
+          files: [],
+          filesNote: "files untouched",
+          undoable,
+          redoable,
+        };
+      }),
     context: (id) =>
       verb(id, ({ agent }) =>
-        readContext(
-          estimateConversationTokens(agent.history()),
-          contextBudgetFor(declaredContextWindow(agent.provider)),
-        ),
+        readAgentContext(agent, contextBudgetFor(declaredContextWindow(agent.provider))),
       ),
     cost: (id) =>
       verb(id, ({ agent }): CostReport => {
@@ -449,6 +474,12 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
     asks: async () => asks.list(),
     answerAsk: async (callId, verdict, scope) => asks.answer(callId, verdict, scope),
     permissions: async () => ledger.view(),
+    grantWorkspaceRule: async (rule) => ledger.record("", "workspace", [rule]),
+    grantSessionRule: async (sessionId, rule) => {
+      if (!sessions.has(sessionId)) return false;
+      ledger.record(sessionId, "session", [rule]);
+      return true;
+    },
     revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
     revokeSessionGrant: async (sessionId, rule) => ledger.revokeSession(sessionId, rule),
     close: async () => {
@@ -763,6 +794,10 @@ function entryIndexOf(session: MemorySession, entryId: string): number | undefin
 
 function lastPromptIndex(history: readonly Message[]): number {
   return history.findLastIndex((message) => message.role === "user");
+}
+
+function promptIndexes(history: readonly Message[]): number[] {
+  return history.flatMap((message, index) => (message.role === "user" ? [index] : []));
 }
 
 function textOf(message: Message): string {

@@ -136,6 +136,16 @@ const samples: Samples = {
         rules: [{ action: "bash", resource: "git push *", effect: "allow" }],
       },
     },
+    {
+      ask: {
+        tool: "edit",
+        callId: "c2",
+        arguments: { path: "src/a.ts", oldText: "one", newText: "two" },
+        rule: "default",
+        rules: [],
+        preview: { path: "src/a.ts", before: "one\n", after: "two\n" },
+      },
+    },
   ],
   "gate.permission": [
     {
@@ -145,6 +155,53 @@ const samples: Samples = {
   "gate.preset": [{ from: "ask", to: "trusted" }],
   "session.mode": [{ mode: "plan" }],
   "context.injected": [{ injection: { source: "skill", id: "deploy", scope: "workspace" } }],
+  "memory.decided": [
+    {
+      decision: {
+        id: "d1",
+        question: "action-relevance@1",
+        about: { kind: "call", callId: "c1" },
+        candidates: ["Auth Tokens", "Old Auth"],
+        choice: { kept: ["Auth Tokens"], dropped: ["Old Auth"] },
+        decider: "builtin",
+        rule: '[[Auth Tokens]] shares "auth" with the path; [[Old Auth]] is superseded',
+        latencyMs: 0,
+      },
+    },
+    {
+      decision: {
+        id: "d2",
+        question: "drift-verdict@1",
+        about: { kind: "note", note: "Auth Tokens" },
+        candidates: ["Auth Tokens"],
+        choice: "stale",
+        scores: { hold: 0.03, stale: 0.94, unsure: 0.03 },
+        confidence: 0.91,
+        decider: "jev",
+        model: "jev-1.13.0",
+        latencyMs: 271,
+        inputTokens: 1480,
+        stateHash: "9f2c",
+      },
+    },
+    {
+      decision: {
+        id: "d3",
+        question: "action-relevance@1",
+        about: { kind: "call", callId: "c1" },
+        candidates: ["Auth Tokens", "Deploy Notes"],
+        choice: { kept: ["Auth Tokens"], dropped: ["Deploy Notes"] },
+        scores: { "Auth Tokens": 0.5, "Deploy Notes": 0.04 },
+        decider: "builtin",
+        model: "jev-1.13.0",
+        rule: '[[Auth Tokens]] shares "auth" with the path',
+        fallback: { reason: "undecided", undecided: ["Auth Tokens"] },
+        latencyMs: 212,
+        waitedMs: 12,
+        inputTokens: 900,
+      },
+    },
+  ],
   "child.started": [{ callId: "c1", sessionId: "s2", title: "find the callers", bot: "scout" }],
   "child.finished": [
     {

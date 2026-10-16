@@ -245,6 +245,11 @@ const languageServerSpec = z
   })
   .strict();
 
+export const memoryDeciders = ["builtin", "jev"] as const;
+
+const deciderDescription =
+  "Who makes memory's small judgment calls: which recalled notes are worth adding before an edit or a command, whether a daily-log entry is durable, how two notes relate (duplicate, supersedes, contradicts, distinct), whether a note still holds after a diff. \"builtin\", the default, keeps keywork's own rules and, where a judgment needs one, your chat model; \"jev\" asks TypeSafe's Jev decision model on the key `keywork connect typesafe` saved, sending only the question and the candidate notes it is about (never the conversation), and uses the builtin answer whenever Jev is unreachable, late or unsure. Either way your chat model writes every note and nothing untrusted lands without you. Exists because these judgments run on every edit and every sweep, so a fast typed judge changes how much memory costs and how much of it reaches the context, and because sending note text to another vendor is the user's call. Honored from the user config layer only; a checked-in project file can never send a workspace's memory anywhere.";
+
 export const configSchema = z
   .object({
     model: z
@@ -371,6 +376,13 @@ export const configSchema = z
       .describe(
         'Where /connect and sign-ins keep saved keys: "os" (the default) puts them in the platform credential store (DPAPI on Windows, Secret Service on Linux, Keychain on macOS) and leaves only a name in ~/.keywork/auth.json; "plaintext" writes them into auth.json itself. Exists because some machines have no usable credential store (headless Linux without a keyring, containers) and a user there needs to say so once instead of reading a fallback notice on every save (103/E9). Honored from the user config layer only.',
       ),
+    memory: z
+      .object({ decider: z.enum(memoryDeciders).describe(deciderDescription) })
+      .partial()
+      .strict()
+      .describe(
+        "Memory behavior that is the user's call rather than the vault's; exists so the one memory choice that sends data off the machine lives in readable config. Honored from the user config layer only.",
+      ),
     mcpServers: z
       .record(z.string(), mcpServer)
       .describe(
@@ -406,6 +418,7 @@ export type ConnectionConfig = z.infer<typeof connection>;
 export type ConnectionsConfig = NonNullable<KeyworkConfig["connections"]>;
 export type ConnectionCredentialSource = z.infer<typeof connectionCredential>;
 export type ConnectionProtocol = NonNullable<ConnectionConfig["protocol"]>;
+export type MemoryDeciderName = (typeof memoryDeciders)[number];
 
 export const defaultConfig: KeyworkConfig = {
   keybindings: {},
@@ -413,6 +426,10 @@ export const defaultConfig: KeyworkConfig = {
 
 export function startupThemeName(config: KeyworkConfig): string | undefined {
   return typeof config.theme === "string" ? config.theme : config.flavor;
+}
+
+export function memoryDeciderOf(config: KeyworkConfig): MemoryDeciderName {
+  return config.memory?.decider ?? "builtin";
 }
 
 export function paletteOverridesOf(config: KeyworkConfig): ThemeTokenOverrides | undefined {

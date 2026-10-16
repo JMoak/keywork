@@ -29,6 +29,7 @@ import {
   tile,
 } from "@keywork/tui";
 import { declaredWindowOf } from "./inference/port.ts";
+import { type DeciderStatus, deciderDoctorLine } from "./memory-decider.ts";
 
 export interface DoctorRow {
   readonly label: string;
@@ -48,6 +49,7 @@ export interface DoctorFacts {
   languageServers?: LanguageFacts;
   crashLog?: CrashLogFacts;
   sandbox?: SandboxFacts;
+  memoryDecider?: DeciderStatus;
 }
 
 export interface SandboxFacts {
@@ -121,8 +123,15 @@ function workspaceRows(facts: DoctorFacts): DoctorRow[] {
     ...languageServerRows(facts),
     ...repoMapRows(facts),
     ...mcpServerRows(facts.mcpServers),
+    ...deciderRows(facts.memoryDecider),
     ...crashRows(facts.crashLog),
   ];
+}
+
+function deciderRows(status: DeciderStatus | undefined): DoctorRow[] {
+  return status === undefined
+    ? []
+    : [{ label: "memory decider", value: deciderDoctorLine(status) }];
 }
 
 function sandboxRows(sandbox: SandboxFacts | undefined): DoctorRow[] {

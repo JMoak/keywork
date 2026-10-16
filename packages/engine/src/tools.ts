@@ -3,6 +3,13 @@ import type { ToolDefinition } from "./provider.ts";
 export interface Tool extends ToolDefinition {
   mutates?: boolean;
   execute(args: unknown, signal?: AbortSignal): Promise<string>;
+  preview?(args: unknown): Promise<ToolPreview | undefined>;
+}
+
+export interface ToolPreview {
+  path: string;
+  before: string | null;
+  after: string;
 }
 
 export class ToolNotFoundError extends Error {

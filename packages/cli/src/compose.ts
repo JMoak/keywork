@@ -10,6 +10,7 @@ import {
   type BotChoice,
   type BotDefinition,
   buildSystemPrompt,
+  builtinDecider,
   Checkpoints,
   ChildSlots,
   type ContextInjection,
@@ -90,6 +91,7 @@ import {
   withMemoryPrompt,
   workspaceMemoryAccess,
 } from "./memory.ts";
+import type { DeciderFor, MemoryDeciderSetup } from "./memory-decider.ts";
 import { skillTelemetryFile, snapshotGitDir, workspaceIdentity } from "./paths.ts";
 import { newSessionFileName } from "./sessions/store.ts";
 
@@ -110,13 +112,16 @@ export interface CompositionOptions {
   reportCheckpointsUnavailable?: ((message: string) => void) | undefined;
   userRoot?: string | undefined;
   checkpointsGitDir?: string | undefined;
+  memoryDecider?: MemoryDeciderSetup | undefined;
 }
 
 export interface Composition {
   cwd: string;
   scope: ToolScope;
+  memoryDecider: DeciderFor;
   systemPromptFor(modelId: string | undefined): string;
   systemPromptWith(modelId: string | undefined, memoryInjection: string): string;
+  promptInjectionsWith(modelId: string | undefined, memoryInjection: string): string[];
   standingInjections: readonly ContextInjection[];
   memory: MemoryAccess;
   bootstrap: BootstrapInjection | undefined;
@@ -153,6 +158,10 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
   };
   const systemPromptFor = (modelId: string | undefined): string =>
     systemPromptWith(modelId, bootstrap?.text ?? "");
+  const promptInjectionsWith = (modelId: string | undefined, memoryInjection: string): string[] =>
+    [instructions, repoMapPrompt(repoMap, options.models, modelId), memoryInjection].filter(
+      (text): text is string => text !== undefined && text.trim() !== "",
+    );
   const checkpoints = options.checkpoints === "off" ? undefined : await openCheckpoints(options);
   const userRoot = options.userRoot ?? homedir();
   const extensions = await loadWorkspaceExtensions(cwd, projectTrusted, userRoot);
@@ -178,11 +187,15 @@ export async function composeWorkspace(options: CompositionOptions): Promise<Com
           options.diagnosticsLog?.()?.log("error", "afterSave.failed", { path, error }),
       },
     );
+  const decider = options.memoryDecider;
+  if (decider?.sessionNotice !== undefined) options.notice?.(decider.sessionNotice);
   return {
     cwd,
     scope,
+    memoryDecider: decider?.deciderFor ?? builtinDecider,
     systemPromptFor,
     systemPromptWith,
+    promptInjectionsWith,
     standingInjections: standingInjectionsFor(instructions, bootstrap?.text ?? "", repoMap),
     memory,
     bootstrap,
@@ -512,6 +525,7 @@ function buildAgent(
     tools: narrowing === undefined ? tools : () => narrowing(tools()),
     hooks: narrowing === undefined ? hooks : hooksNarrowedBy(hooks, narrowing),
     systemPrompt: prompt.systemPrompt,
+    promptInjections: prompt.promptInjections,
     standingInjections: prompt.standingInjections,
     guard: spec.guard,
     ...(options.thinking === true && { thinking: true }),
@@ -524,6 +538,8 @@ function buildAgent(
         search: recall.search,
         tokens: actionRecallBudget(contextBudgetFor(declaredContextWindow(spec.provider))),
         ...(tap !== undefined && { tap }),
+        decider: composition.memoryDecider(),
+        onDecision: (decision) => self?.bus.emit("memory.decided", { decision }),
         onRecall: (noteName) =>
           self?.bus.emit("context.injected", {
             injection: { source: "memory-action", id: noteName, scope: "workspace" },
@@ -617,6 +633,7 @@ function hooksNarrowedBy(hooks: AgentHooks, narrowing: ToolNarrowing): AgentHook
 
 interface ComposedPrompt {
   systemPrompt: string;
+  promptInjections: readonly string[];
   standingInjections: readonly ContextInjection[];
   bootstrap?: BootstrapInjection;
 }
@@ -632,20 +649,26 @@ function promptFor(
     return composed
       ? {
           systemPrompt: composition.systemPromptFor(modelId),
+          promptInjections: composition.promptInjectionsWith(
+            modelId,
+            composition.bootstrap?.text ?? "",
+          ),
           standingInjections: composition.standingInjections,
         }
-      : { systemPrompt: bot.prompt, standingInjections: [] };
+      : { systemPrompt: bot.prompt, promptInjections: [], standingInjections: [] };
   }
   const botInjection: ContextInjection = { source: "memory-bootstrap", scope: `bot:${bot.name}` };
   const announced = learning.own.text === "" ? [] : [botInjection];
   return composed
     ? {
         systemPrompt: composition.systemPromptWith(modelId, learning.composed.text),
+        promptInjections: composition.promptInjectionsWith(modelId, learning.composed.text),
         standingInjections: [...composition.standingInjections, ...announced],
         bootstrap: learning.composed,
       }
     : {
         systemPrompt: withMemoryPrompt(bot.prompt, learning.own.text),
+        promptInjections: [learning.own.text],
         standingInjections: announced,
         bootstrap: learning.own,
       };

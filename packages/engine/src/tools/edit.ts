@@ -4,6 +4,7 @@ import { z } from "zod";
 import { annotatedResult } from "./after-save.ts";
 import type { ToolScope } from "./confine.ts";
 import { defineTool } from "./define.ts";
+import { filePreview } from "./preview.ts";
 import { type FileToolOptions, proposeVaultNote, writeTarget } from "./protected-writes.ts";
 
 const schema = z.object({
@@ -39,6 +40,13 @@ export function editTool(scope: ToolScope, options: FileToolOptions = {}) {
         options.afterSave,
         target.path,
         signal,
+      );
+    },
+    preview: async (request) => {
+      const target = writeTarget(scope, request.path, options.vault);
+      if (target.kind === "vault-note") return undefined;
+      return filePreview(scope, target.path, (before) =>
+        before === null ? undefined : replaced(before, request).content,
       );
     },
   });

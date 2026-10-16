@@ -213,7 +213,7 @@ async function panesLaunch(
 
 async function runChat(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
   const { io, cwd, projectTrusted, workspaceSlug } = context;
-  const { config, runtime } = (await context.openInference()).current();
+  const { config, runtime, memoryDecider } = (await context.openInference()).current();
   const bound = runtime.resolve({ override: values.model, default: config.model });
   if (!bound.ok) {
     io.printError(
@@ -231,6 +231,7 @@ async function runChat(context: CommandContext, { values }: ParsedInvocation): P
     projectTrusted,
     permissions: presets.resolver,
     presets,
+    memoryDecider,
     ...(workspaceSlug !== undefined && { workspaceSlug }),
     ...(config.prompts !== undefined && { prompts: config.prompts }),
     ...(config.mcpServers !== undefined && { mcpServers: config.mcpServers }),
@@ -261,7 +262,7 @@ async function runHeadlessPrompt(
     const error = `keywork run: no preset named "${preset}" (options: ${presetOrder.join(" · ")})`;
     return conclude({ outcome: "usage", error }, headlessIo);
   }
-  const { config, runtime } = (await context.openInference()).current();
+  const { config, runtime, memoryDecider } = (await context.openInference()).current();
   const bound = runtime.resolve({ override: values.model, default: config.model });
   if (!bound.ok) return conclude({ outcome: "unresolved", failure: bound.failure }, headlessIo);
   return untilInterrupted(async (signal) => {
@@ -270,6 +271,7 @@ async function runHeadlessPrompt(
       cwd,
       json: values.json,
       projectTrusted,
+      memoryDecider,
       ...(values.bot !== undefined && { bot: values.bot }),
       permissions: headlessPermissions(preset, config.permissions),
       debug: values.debug || debugEnabled(io.env),
@@ -307,7 +309,7 @@ ${usage}`);
     );
     return exitCodes.usage;
   }
-  const { config, runtime } = (await context.openInference()).current();
+  const { config, runtime, memoryDecider } = (await context.openInference()).current();
   const bound = runtime.resolve({ override: values.model, default: config.model });
   if (!bound.ok) {
     io.printError(
@@ -327,6 +329,7 @@ ${connectHint}`,
       projectTrusted,
       workspaceSlug,
       port,
+      memoryDecider,
       provider: runtime.provider(bound.binding),
       closingProvider: roleProvider(runtime, config, closingRole),
       permissions: presets.resolver,
@@ -430,7 +433,10 @@ async function runConnect(
 ): Promise<number> {
   const inference = await context.openInference();
   const { connectCommand } = await import("./setup.ts");
-  return connectCommand(inference.connections, { argument: positionals[0] });
+  return connectCommand(inference.connections, {
+    argument: positionals[0],
+    decider: inference.decider,
+  });
 }
 
 async function runInit(context: CommandContext): Promise<number> {
@@ -603,9 +609,13 @@ async function runDoctor(context: CommandContext): Promise<number> {
     context.io.print,
     async () => (await context.openInference()).current().runtime.registry,
     async () => {
-      const { config } = (await context.openInference()).current();
+      const { config, memoryDecider } = (await context.openInference()).current();
       const facts = await workspaceDoctorFacts(context.cwd, context.projectTrusted, config);
-      return { ...facts, crashLog: crashLogFacts(crashLogFile) };
+      return {
+        ...facts,
+        crashLog: crashLogFacts(crashLogFile),
+        memoryDecider: memoryDecider.status,
+      };
     },
   );
 }

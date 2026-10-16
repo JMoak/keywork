@@ -21,6 +21,21 @@ export function grantRefusal(
   return candidates.length === 0 ? "nothing-to-remember" : undefined;
 }
 
+export type GrantAheadRefusal =
+  | { kind: "write-once" }
+  | { kind: "tool-pattern" }
+  | { kind: "server-pattern" }
+  | { kind: "destructive"; command: string; remembered: DestructiveRemembrance }
+  | { kind: "underivable"; derived: readonly PermissionRule[] };
+
+export function grantAheadRefusal(rule: PermissionRule): GrantAheadRefusal | undefined {
+  if (onceOnlyTools.has(rule.action)) return { kind: "write-once" };
+  if (rule.action.includes("*")) return { kind: "tool-pattern" };
+  if (rule.action === "bash") return commandGrantRefusal(rule);
+  if (rule.action === mcpServersAction) return serverGrantRefusal(rule);
+  return refusedUnlessDerived(rule, grantCandidates(rule.action, undefined));
+}
+
 export class SessionGrants {
   private held: PermissionRule[] = [];
 
@@ -77,6 +92,9 @@ export function withRules(
 }
 
 const mcpToolSeparator = "__";
+const mcpServersAction = "mcp";
+const wholeServerSuffix = `${mcpToolSeparator}*`;
+const serverName = /^[\w-]+$/;
 const onceOnlyTools = new Set(["write", "edit"]);
 const literalWord = /^-{0,2}[A-Za-z][\w-]*$/;
 
@@ -119,6 +137,40 @@ function commandHead(words: readonly string[]): readonly string[] {
 
 function exactCommand(part: string): string[] {
   return part.includes("*") ? [] : [part];
+}
+
+const wildcardTail = " *";
+
+function commandGrantRefusal(rule: PermissionRule): GrantAheadRefusal | undefined {
+  const command = rule.resource.endsWith(wildcardTail)
+    ? rule.resource.slice(0, -wildcardTail.length)
+    : rule.resource;
+  const remembered = destructiveRemembrance(command);
+  if (remembered === "nothing" || (remembered === "exact-command" && rule.resource.includes("*"))) {
+    return { kind: "destructive", command, remembered };
+  }
+  return refusedUnlessDerived(rule, grantCandidates("bash", { command }));
+}
+
+function serverGrantRefusal(rule: PermissionRule): GrantAheadRefusal | undefined {
+  if (namesWholeServer(rule.resource)) return undefined;
+  if (rule.resource.includes("*")) return { kind: "server-pattern" };
+  return refusedUnlessDerived(rule, grantCandidates(rule.resource, undefined));
+}
+
+function namesWholeServer(resource: string): boolean {
+  if (!resource.endsWith(wholeServerSuffix)) return false;
+  const server = resource.slice(0, -wholeServerSuffix.length);
+  return serverName.test(server) && !server.includes(mcpToolSeparator);
+}
+
+function refusedUnlessDerived(
+  rule: PermissionRule,
+  derived: readonly PermissionRule[],
+): GrantAheadRefusal | undefined {
+  const [only, ...others] = derived;
+  const derivable = only !== undefined && others.length === 0 && sameRule(only, rule);
+  return derivable ? undefined : { kind: "underivable", derived };
 }
 
 function allow(action: string, resource: string): PermissionRule {

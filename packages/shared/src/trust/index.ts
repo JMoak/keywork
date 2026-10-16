@@ -1,7 +1,10 @@
+export type { DestructiveRemembrance } from "./destructive-commands.ts";
 export { GrantStore, GrantStoreError, type GrantStoreOptions } from "./grant-store.ts";
 export {
   type AskScope,
+  type GrantAheadRefusal,
   type GrantRefusal,
+  grantAheadRefusal,
   grantCandidates,
   grantFromLabel,
   grantRefusal,

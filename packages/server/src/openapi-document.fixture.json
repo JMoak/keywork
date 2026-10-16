@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.1",
+    "x-keywork-contract": "1.2",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -237,7 +237,7 @@
     "/asks": {
       "get": {
         "operationId": "listAsks",
-        "summary": "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first. Each carries `rules`, what a `session` or `workspace` answer would record.",
+        "summary": "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first. Each carries `rules`, what a `session` or `workspace` answer would record, and for a `write` or `edit` the same `preview` its `gate.ask` carried: `{ path, before, after }`, the file as it is and as the call would leave it.",
         "responses": {
           "200": {
             "description": "The pending asks."
@@ -248,7 +248,7 @@
     "/asks/{callId}": {
       "post": {
         "operationId": "answerAsk",
-        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask's `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope`. Only `bash` and MCP calls can be granted beyond `once`.",
+        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask's `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: \"permissions\"`.",
         "parameters": [
           {
             "name": "callId",
@@ -966,10 +966,59 @@
         }
       }
     },
+    "/sessions/{id}/restore": {
+      "post": {
+        "operationId": "restoreSessionTurn",
+        "summary": "Restore the session to just before one of its turns in one step, where POST /undo takes back one turn per call: the conversation moves to before that turn's prompt, and the workspace files go back to the checkpoint taken before the first change any turn from there on made (untouched when none of them changed a file, or with checkpoints off). One `restore` entry records it in the session log, so a reopen finds the session where the restore left it. The answer says what changed: the turn's `prompt`, handed back so a client can offer it for editing; `undoneTurns`, how many turns left the active path; and `files`, every file the restore put back with the lines it `added` and `deleted`. Staged like an undo: the next POST /redo takes the whole restore back, files and conversation, and records a `restore-undone` entry so a reopen agrees. `session.state`, `session.tree` (reason `leaf`, naming the recorded entry) and, when files moved, `changes.updated` follow.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["turn"],
+                "properties": {
+                  "turn": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The turn to restore to just before: its prompt's 1-based place among the prompts on the session's active path."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ turn, prompt: { entryId, text }, leafId, undoneTurns, files: [{ path, added, deleted }], filesNote, undoable, redoable }`; `leafId` is the recorded entry."
+          },
+          "400": {
+            "description": "The body is not `{ turn }` with a positive integer."
+          },
+          "404": {
+            "description": "No session has that id. Or `{ error: \"no turn N on this session's path\" }`."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first."
+          }
+        }
+      }
+    },
     "/sessions/{id}/context": {
       "get": {
         "operationId": "readSessionContext",
-        "summary": "How full the model's context window is: `used` tokens estimated from the conversation text against the `window`, with the thresholds at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen. `declared` says whether the window came from keywork.json or is assumed.",
+        "summary": "How full the model's context window is: `used` tokens estimated from the conversation text against the `window`, with the thresholds at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen. `used` and those two lines are what keywork's settler measures: the conversation alone. `declared` says whether the window came from keywork.json or is assumed. `parts` splits everything the next request carries, each as `{ tokens, basis }`: `system` (keywork's prompt and the configured prompts), `tools` (the tool schemas), `injected` (project instructions, the repo map, memory and extension context riding in the prompt), `conversation`, and `free` (the room left in the window). A part's `basis` is `reported` when it rests on what the provider reported for the last request, plus an estimate of what arrived since, and `estimated` when it comes from the text alone; the provider never splits its count, so `system`, `tools` and `injected` are always estimated. `thresholds` places the flush and the compaction on the parts' axis as absolute token counts, so a client can draw them across the parts; they pass `window` when the parts beyond the conversation outgrow the reserve.",
         "parameters": [
           {
             "name": "id",
@@ -982,7 +1031,7 @@
         ],
         "responses": {
           "200": {
-            "description": "`ContextReading & { fullness, flushDue, compactionDue, basis: \"estimated\" }`."
+            "description": "`ContextReading & { fullness, flushDue, compactionDue, basis: \"estimated\", parts: { system, tools, injected, conversation, free }, thresholds: { flushAt, compactAt } }`, each part `{ tokens, basis: \"reported\" | \"estimated\" }`."
           },
           "404": {
             "description": "No session has that id."
@@ -2211,7 +2260,7 @@
     "/permissions": {
       "get": {
         "operationId": "listPermissions",
-        "summary": "What this server allows beyond the configured rules, so every grant is visible: `{ trusted, bundle, workspace, session }`. `bundle` is the fixed read-only posture a trusted workspace gets (empty when untrusted), `workspace` the grants recorded by `scope: \"workspace\"` answers, and `session` the grants from `scope: \"session\"` answers keyed by session id. Configured rules decide first; where they are silent, session grants, then workspace grants, then the bundle decide.",
+        "summary": "What this server allows beyond the configured rules, so every grant is visible: `{ trusted, bundle, workspace, session }`. `bundle` is the fixed read-only posture a trusted workspace gets (empty when untrusted), `workspace` the grants recorded by `scope: \"workspace\"` answers and workspace grants, and `session` the grants from `scope: \"session\"` answers and session grants, keyed by session id. Configured rules decide first; where they are silent, session grants, then workspace grants, then the bundle decide. `surface.changed` with `kind: \"permissions\"` fires whenever this answer would change.",
         "responses": {
           "200": {
             "description": "`{ trusted, bundle, workspace, session }`."
@@ -2219,10 +2268,123 @@
         }
       }
     },
+    "/permissions/workspace/grant": {
+      "post": {
+        "operationId": "grantWorkspaceRule",
+        "summary": "Record one rule for every session of this workspace before any call asks for it, exactly where a `scope: \"workspace\"` answer to an ask records it. Only a rule an answered ask could have recorded is taken, or a whole MCP server: a `bash` rule in the shape an ask derives (`npm run *`, `git push *`, a delete only as its exact command), an MCP tool with resource `*`, or every tool of one MCP server as one rule, action `mcp` with resource `<server>__*`. A trusted-workspace setup can accept its proposals this way, one rule at a time. Fires `surface.changed` with `kind: \"permissions\"`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["rule"],
+                "properties": {
+                  "rule": {
+                    "type": "object",
+                    "required": ["action", "resource", "effect"],
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "resource": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "effect": {
+                        "type": "string",
+                        "const": "allow"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ granted: rule }`."
+          },
+          "400": {
+            "description": "The body is not `{ rule: { action, resource, effect: \"allow\" } }`."
+          },
+          "409": {
+            "description": "The workspace is not trusted, or the rule is neither one an answered ask would record nor a whole MCP server: a `write` or `edit` rule, a pattern over tool names, an `mcp` rule over part of a server or over several, a wildcard over a delete or `git branch -D`, any force push, hard reset, `git clean` or discarding checkout, or any other shape (`error` names what an answer would record instead, when there is one)."
+          }
+        }
+      }
+    },
+    "/permissions/session/{sessionId}/grant": {
+      "post": {
+        "operationId": "grantSessionRule",
+        "summary": "Record one rule for that session before any call asks for it, exactly where a `scope: \"session\"` answer records it; it ends with the server process like every session grant. The same rules are taken as for POST /permissions/workspace/grant. Fires `surface.changed` with `kind: \"permissions\"`.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["rule"],
+                "properties": {
+                  "rule": {
+                    "type": "object",
+                    "required": ["action", "resource", "effect"],
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "resource": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "effect": {
+                        "type": "string",
+                        "const": "allow"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ granted: rule }`."
+          },
+          "400": {
+            "description": "The body is not `{ rule: { action, resource, effect: \"allow\" } }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "The workspace is not trusted, or the rule is neither one an answered ask would record nor a whole MCP server: a `write` or `edit` rule, a pattern over tool names, an `mcp` rule over part of a server or over several, a wildcard over a delete or `git branch -D`, any force push, hard reset, `git clean` or discarding checkout, or any other shape (`error` names what an answer would record instead, when there is one)."
+          }
+        }
+      }
+    },
     "/permissions/workspace/revoke": {
       "post": {
         "operationId": "revokeWorkspaceGrant",
-        "summary": "Remove one workspace grant, so the call it covered asks again in every session of this workspace.",
+        "summary": "Remove one workspace grant, so the call it covered asks again in every session of this workspace. Fires `surface.changed` with `kind: \"permissions\"`.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2272,7 +2434,7 @@
     "/permissions/session/{sessionId}/revoke": {
       "post": {
         "operationId": "revokeSessionGrant",
-        "summary": "Remove one grant a `scope: \"session\"` answer recorded for that session, so the call it covered asks again there. Other sessions and the workspace grants are untouched.",
+        "summary": "Remove one grant a `scope: \"session\"` answer recorded for that session, so the call it covered asks again there. Other sessions and the workspace grants are untouched. Fires `surface.changed` with `kind: \"permissions\"`.",
         "parameters": [
           {
             "name": "sessionId",
@@ -2363,6 +2525,7 @@
               "gate.preset",
               "session.mode",
               "context.injected",
+              "memory.decided",
               "child.started",
               "child.finished",
               "diagnostics.published",

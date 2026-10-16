@@ -31,5 +31,5 @@ export {
 } from "./json-file-store.ts";
 export { mixOklab } from "./oklab.ts";
 export * from "./secrets/index.ts";
-export { countOccurrences, toUnixEol } from "./text.ts";
+export { countOccurrences, toUnixEol, type Utf8Prefix, utf8Prefix } from "./text.ts";
 export * from "./trust/index.ts";

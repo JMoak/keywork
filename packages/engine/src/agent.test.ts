@@ -380,6 +380,63 @@ describe("Agent end-to-end with mock provider", () => {
     expect(asks).toBe(0);
   });
 
+  it("asks with the tool's own preview and hands the guard the same ask the bus carried", async () => {
+    const preview = { path: "a.txt", before: "old\n", after: "new\n" };
+    const previewing: Tool = {
+      ...echoTool,
+      name: "scribble",
+      mutates: true,
+      preview: async () => preview,
+    };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+      textTurn("Understood."),
+    ]);
+    const handed: unknown[] = [];
+    const agent = new Agent({
+      provider,
+      tools: [previewing],
+      guard: {
+        confirm: async (_call, ask) => {
+          handed.push(ask);
+          return true;
+        },
+      },
+    });
+    const announced: unknown[] = [];
+    agent.bus.on("gate.ask", ({ ask }) => announced.push(ask));
+
+    await agent.send("Change something");
+
+    expect(announced).toEqual([
+      { tool: "scribble", callId: "call-1", arguments: {}, rule: "default", rules: [], preview },
+    ]);
+    expect(handed).toEqual(announced);
+  });
+
+  it("still asks, without a preview, when the tool cannot compute one", async () => {
+    const failing: Tool = {
+      ...echoTool,
+      name: "scribble",
+      mutates: true,
+      preview: async () => {
+        throw new Error("unreadable");
+      },
+    };
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
+      textTurn("Understood."),
+    ]);
+    const agent = new Agent({ provider, tools: [failing], guard: { confirm: async () => true } });
+    const announced: unknown[] = [];
+    agent.bus.on("gate.ask", ({ ask }) => announced.push(ask));
+
+    await agent.send("Change something");
+
+    expect(announced).toEqual([expect.not.objectContaining({ preview: expect.anything() })]);
+    expect(agent.history().at(-2)?.parts[0]).toMatchObject({ isError: false });
+  });
+
   it("announces standing injections once, before the first turn, after subscribers attach", async () => {
     const provider = new MockProvider([textTurn("one"), textTurn("two")]);
     const agent = new Agent({

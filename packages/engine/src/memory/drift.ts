@@ -1,5 +1,7 @@
 import { textMessage } from "../messages.ts";
 import type { Provider } from "../provider.ts";
+import { type BuiltinSeams, builtinDecider } from "./builtin-decider.ts";
+import { type DecisionSink, type MemoryDecider, recorded } from "./decider.ts";
 import { canonicalEntityPath, titleKey } from "./naming.ts";
 import { type DriftVerdict, isDriftVerdict, isEntityPath, type Note, noteName } from "./notes.ts";
 import type { ReviewProposal, StagedReview } from "./staging.ts";
@@ -41,21 +43,27 @@ export interface DriftReport {
 
 export interface DriftCheckOptions {
   store: MemoryStore;
-  judgment: DriftJudgmentPort;
+  judgment?: DriftJudgmentPort;
+  decider?: MemoryDecider;
+  onDecision?: DecisionSink;
   changes: DiffChanges;
   inbox?: Pick<MemoryStore, "propose">;
   now?: () => Date;
 }
 
 export async function checkDrift(options: DriftCheckOptions): Promise<DriftReport> {
-  const { store, judgment, changes } = options;
+  const { store, changes } = options;
+  const decider = options.decider ?? builtinDecider(driftSeams(options.judgment));
   const now = options.now ?? (() => new Date());
   const notes = await store.listNotes();
   const touched = touchedNotes(notes, changes);
   const findings: DriftFinding[] = [];
   for (const evidence of touched) {
     const lines = [...evidence.reasons, ...evidence.lines];
-    const assessment = await judgment.assess(evidence.note, lines);
+    const assessment = recorded(
+      await decider.assessDrift({ note: evidence.note, evidence: lines }),
+      options.onDecision,
+    );
     const finding = { note: evidence.note.name, evidence: lines, ...assessment };
     await stampVerdict(store, finding, changes.against, now().toISOString());
     findings.push(finding);
@@ -103,6 +111,14 @@ export function driftJudgment(provider: Provider): DriftJudgmentPort {
 export function driftAuditEvent(finding: DriftFinding, against: string): string {
   const evidence = finding.evidence.map(oneLine).join(" | ");
   return `drift [[${finding.note}]]: ${finding.verdict} against ${against} · ${oneLine(finding.reason)} · ${evidence}`;
+}
+
+export function boundedDriftEvidence(evidence: readonly string[]): string {
+  return evidence.join("\n").slice(0, evidenceCharCap);
+}
+
+function driftSeams(judgment: DriftJudgmentPort | undefined): BuiltinSeams {
+  return judgment === undefined ? {} : { drift: judgment };
 }
 
 interface Hunk {
@@ -289,7 +305,7 @@ function escapeRegExp(text: string): string {
 }
 
 function describeCase(note: Note, evidence: readonly string[]): string {
-  const diff = evidence.join("\n").slice(0, evidenceCharCap);
+  const diff = boundedDriftEvidence(evidence);
   return [`note: ${note.title}`, note.body.trimEnd(), "", "diff evidence:", diff].join("\n");
 }
 

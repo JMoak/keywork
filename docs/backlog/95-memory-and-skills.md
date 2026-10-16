@@ -359,6 +359,10 @@ surfaces borderline items; usefulness prior measurably affects ranking on the J4
 corpus.
 **Strategy:** `ADAPT:rosavera` Gardener v2 + `LIFT:openclaw` dreaming/taint gates +
 Hermes Curator telemetry (`LIFT:hermes` contracts).
+**2026-10-15:** the Gardener's judgments (entry triage before the distiller, pair relation,
+unlinked mentions) go through the memory decider of [`121`](121-jev-memory.md) (121-2, K10);
+`CurationJudgmentPort` stays the chat model that writes, and the builtin decider asks it the
+same pair question it always did.
 
 ### J8 (2pt): Pre-compaction memory flush
 Before B7 compaction fires, one silent turn prompts the agent to persist anything worth
@@ -531,6 +535,9 @@ cheap/fast tier of the already-configured provider (embeddings per J4's
 provider-matched rule), so there is zero required config, full control for those who want it, and
 each role option carries its `.describe()` justification (recurring background cost must
 never silently run on the flagship model).
+**2026-10-15:** [`121`](121-jev-memory.md) adds a member that is not a chat model: the memory
+decider (`memory.decider`, 121-2 and 121-3), which never resolves through the role map or
+`/model`.
 
 **Tunables are adaptive where possible** (Jordan, 2026-08-10): bootstrap budget as a
 percentage of the active model's context window (working default 2%), Gardener sweep cap

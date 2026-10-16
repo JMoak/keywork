@@ -2,10 +2,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   type Agent,
+  type AgentContext,
   addUsage,
   type BotDefinition,
+  type ChangedPath,
   type Checkpoints,
-  type ContextReading,
   type CostRollup,
   compactionDue,
   type EffortLevel,
@@ -22,7 +23,9 @@ import {
   type PermissionResolver,
   type PromptOrigin,
   type Provider,
+  readAgentContext,
   readContext,
+  restorePointOf,
   type SendBehavior,
   type SendOptions,
   SessionStore,
@@ -52,6 +55,7 @@ import {
   type PresetHost,
   type PresetOutcome,
   type RedoReport,
+  type RestoreReport,
   readServerTicket,
   removeServerTicket,
   type ServerTicket,
@@ -76,7 +80,9 @@ import {
   requiresConfirmation,
   resolveAnchor,
 } from "@keywork/shared";
+import type { RewoundPrompt } from "@keywork/tui";
 import { persistNewMessages } from "./chat.ts";
+import type { MemoryDeciderSetup } from "./memory-decider.ts";
 import { defaultSessionDir, keyworkHome, workspaceIdentity } from "./paths.ts";
 import { checkpointChanges } from "./serve-changes.ts";
 import { servedLifecycle } from "./serve-lifecycle.ts";
@@ -136,6 +142,7 @@ export interface HostOptions {
   thinking?: KeyworkConfig["thinking"] | undefined;
   theme?: string | undefined;
   closingProvider?: Provider | undefined;
+  memoryDecider?: MemoryDeciderSetup | undefined;
   notice?: ((text: string) => void) | undefined;
 }
 
@@ -290,6 +297,7 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
     compact: (id, focus) => onLive(id, (live) => live.compact(focus)),
     undo: (id) => onLive(id, (live) => live.undo()),
     redo: (id) => onLive(id, (live) => live.redo()),
+    restore: (id, turn) => onLive(id, (live) => live.restore(turn)),
     context: (id) => onLive(id, (live) => live.context()),
     cost: (id) => onLive(id, (live) => live.cost()),
     exportHtml: (id, scope, out) => onLive(id, (live) => live.exportHtml(scope, out)),
@@ -312,6 +320,12 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
     asks: async () => asks.list(),
     answerAsk: async (callId, verdict, scope) => asks.answer(callId, verdict, scope),
     permissions: async () => ledger.view(),
+    grantWorkspaceRule: async (rule) => ledger.record("", "workspace", [rule]),
+    grantSessionRule: async (sessionId, rule) => {
+      if ((await sessions.bound(sessionId)) === undefined) return false;
+      ledger.record(sessionId, "session", [rule]);
+      return true;
+    },
     revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
     revokeSessionGrant: async (sessionId, rule) => ledger.revokeSession(sessionId, rule),
     close: async () => {
@@ -512,6 +526,7 @@ class LiveSessions {
       models: options.models,
       lsp: options.lsp,
       sandbox: options.sandbox,
+      memoryDecider: options.memoryDecider,
       checkpoints: options.checkpoints ?? "on",
       checkpointsGitDir: options.checkpointsGitDir,
       notice: (text) => options.notice?.(`keywork serve: ${text}`),
@@ -536,9 +551,14 @@ interface StagedUndo {
 interface StagedFiles {
   note: string;
   restore(): Promise<void>;
+  changed(): Promise<readonly ChangedPath[]>;
 }
 
-const untouchedFiles: StagedFiles = { note: "files untouched", restore: async () => {} };
+const untouchedFiles: StagedFiles = {
+  note: "files untouched",
+  restore: async () => {},
+  changed: async () => [],
+};
 
 class LiveSession {
   readonly id: string;
@@ -673,8 +693,38 @@ class LiveSession {
     return { restored: true, ...this.travel() };
   }
 
-  context(): ContextReading {
-    return readContext(estimateConversationTokens(this.agent.history()), budgetOf(this.agent));
+  async restore(turn: number): Promise<RestoreReport | "busy" | "unknown-turn"> {
+    if (!(await this.idle())) return "busy";
+    const point = restorePointOf(this.store.activePath(), turn);
+    const left = this.store.leafId();
+    const rewound = point === undefined ? undefined : rewindBefore(this.store, point.prompt.id);
+    if (point === undefined || rewound === undefined) return "unknown-turn";
+    this.staged = undefined;
+    const files = await this.stageFiles(point.files).catch((cause: unknown) => {
+      rewound.restore();
+      throw cause;
+    });
+    const recorded = await this.store.appendCustom(restoreEntryTypes.restore, {
+      turn,
+      from: left,
+      files: point.files ?? null,
+    });
+    await this.swap(this.runtime.forge(this.agent.provider, rewound.history));
+    this.staged = this.stagedRestore(recorded.id, files, rewound);
+    this.announce();
+    return {
+      turn,
+      prompt: { entryId: point.prompt.id, text: textOf(point.prompt.message) },
+      leafId: recorded.id,
+      undoneTurns: point.undoneTurns,
+      files: await files.changed(),
+      filesNote: files.note,
+      ...this.travel(),
+    };
+  }
+
+  context(): AgentContext {
+    return readAgentContext(this.agent, budgetOf(this.agent));
   }
 
   cost(): CostReport {
@@ -964,11 +1014,29 @@ class LiveSession {
       await this.runtime.changes.announce(this.id);
     };
     await travel(checkpoint);
-    return { note: "files put back", restore: () => travel(left) };
+    return {
+      note: "files put back",
+      restore: () => travel(left),
+      changed: () => checkpoints.filesBetween(left, checkpoint),
+    };
+  }
+
+  private stagedRestore(restoreId: string, files: StagedFiles, rewound: RewoundPrompt): StagedUndo {
+    const { provider } = this.agent;
+    return {
+      cancel: async () => {
+        await files.restore();
+        const history = rewound.restore();
+        await this.store.appendCustom(restoreEntryTypes.undone, { restore: restoreId });
+        await this.swap(this.runtime.forge(provider, history));
+      },
+    };
   }
 }
 
 const noRegistry = "this server was started without a model registry";
+
+const restoreEntryTypes = { restore: "restore", undone: "restore-undone" } as const;
 
 const providerDefaultEffort = "default";
 

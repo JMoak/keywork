@@ -515,6 +515,9 @@ export class ConversationModel {
         if (replay !== true) this.requestTitleOnce();
       }),
       agent.bus.on("queue.changed", () => this.touch()),
+      agent.bus.on("memory.decided", ({ decision, replay }) => {
+        if (replay !== true) this.ledger.recordDecision(decision);
+      }),
       this.away.follow(agent.bus),
       this.quietRuns.follow(agent.bus),
     ];

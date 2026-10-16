@@ -5,6 +5,7 @@ import type { ConnectionDraft, ConnectionsPort, ConnectionTarget } from "@keywor
 import { saveCredential } from "./auth-store.ts";
 import { loginWithBrowser, loginWithDeviceCode } from "./codex-login.ts";
 import { codexProviderName } from "./inference/builtins.ts";
+import { type DeciderConnection, typesafeTerms } from "./inference/typesafe-connection.ts";
 import { processStreams, type TerminalStreams, terminalInput } from "./terminal-input.ts";
 
 export interface ConnectIo {
@@ -18,9 +19,12 @@ export interface ConnectOptions {
   argument?: string | undefined;
   io?: ConnectIo | undefined;
   signIn?: ((method: "browser" | "device") => Promise<string>) | undefined;
+  decider?: DeciderConnection | undefined;
 }
 
 const codexChoiceId = "chatgpt";
+
+type Choice = ConnectionDraft | typeof codexChoiceId | DeciderConnection;
 
 export async function connectCommand(
   port: ConnectionsPort,
@@ -57,9 +61,10 @@ async function connect(
   options: ConnectOptions,
   io: ConnectIo,
 ): Promise<number> {
-  const chosen = await chooseTarget(port, options.argument, io);
+  const chosen = await chooseTarget(port, options, io);
   if (chosen === undefined) return 1;
   if (chosen === codexChoiceId) return signInToCodex(io, options.signIn);
+  if ("target" in chosen) return connectDecider(chosen, io);
   const draft = await completeDraft(port, chosen, io);
   if (draft === undefined) return 1;
   io.print(`\nverifying ${draft.endpoint}/models …`);
@@ -78,19 +83,25 @@ async function connect(
 
 async function chooseTarget(
   port: ConnectionsPort,
-  argument: string | undefined,
+  { argument, decider }: ConnectOptions,
   io: ConnectIo,
-): Promise<ConnectionDraft | typeof codexChoiceId | undefined> {
-  if (argument !== undefined && argument !== "") return draftFromArgument(port, argument, io);
+): Promise<Choice | undefined> {
+  if (argument !== undefined && argument !== "")
+    return choiceFromArgument(port, argument, decider, io);
   const targets = port.targets();
   io.print("keywork connect: add an inference provider\n");
   for (const [index, target] of targets.entries()) {
     io.print(`  ${index + 1}. ${describeTarget(target)}`);
   }
   io.print(`  ${targets.length + 1}. OpenAI via ChatGPT Plus/Pro (subscription sign-in)`);
+  if (decider !== undefined) {
+    io.print("\nmemory decisions:");
+    io.print(`  ${targets.length + 2}. ${decider.target.label}`);
+  }
   printSaved(port, io);
   const answer = (await io.ask("\nChoice [1]: ")).trim() || "1";
   if (Number(answer) === targets.length + 1) return codexChoiceId;
+  if (decider !== undefined && Number(answer) === targets.length + 2) return decider;
   const target = targets[Number(answer) - 1];
   if (target === undefined) {
     io.print(`"${answer}" is not an option`);
@@ -99,12 +110,14 @@ async function chooseTarget(
   return port.draftFor(target);
 }
 
-function draftFromArgument(
+function choiceFromArgument(
   port: ConnectionsPort,
   argument: string,
+  decider: DeciderConnection | undefined,
   io: ConnectIo,
-): ConnectionDraft | typeof codexChoiceId | undefined {
+): Choice | undefined {
   if (argument === codexChoiceId || argument === codexProviderName) return codexChoiceId;
+  if (decider !== undefined && argument === decider.target.name) return decider;
   const target = port.targets().find((candidate) => candidate.id === argument);
   if (target !== undefined) return port.draftFor(target);
   const saved = port.saved().find((row) => row.name === argument);
@@ -172,6 +185,51 @@ async function signInToCodex(
 async function defaultCodexSignIn(method: "browser" | "device"): Promise<string> {
   const credential = method === "device" ? await loginWithDeviceCode() : await loginWithBrowser();
   return saveCredential(codexProviderName, credential);
+}
+
+async function connectDecider(decider: DeciderConnection, io: ConnectIo): Promise<number> {
+  const { target } = decider;
+  io.print(`keywork connect ${target.name}: ${target.label}`);
+  io.print(typesafeTerms);
+  const key = (
+    await io.askSecret(`\n${target.name} API key (get one: ${target.auth.keyUrl}): `)
+  ).trim();
+  if (key === "") {
+    io.print(`not saved: ${target.name} needs an API key`);
+    return 1;
+  }
+  io.print(`\nverifying ${target.endpoint}/models …`);
+  const verification = await decider.verify(key);
+  if (!verification.ok) {
+    io.print(`not saved: ${verification.reason}`);
+    return 1;
+  }
+  await decider.save(key, verification);
+  io.print(
+    `\nSaved ${target.name} · ${describeModels(verification.models)} · verified ${verification.at}`,
+  );
+  if (!verification.models.includes(target.defaultModel)) {
+    io.print(
+      `TypeSafe's list does not name ${target.defaultModel} · keywork asks for it by version and checks the model behind every answer`,
+    );
+  }
+  return offerJev(decider, io);
+}
+
+async function offerJev(decider: DeciderConnection, io: ConnectIo): Promise<number> {
+  if (decider.selected() === "jev") {
+    io.print(`memory decider: jev, already set in ${decider.configFile}`);
+    return 0;
+  }
+  const answer = (await io.ask("use Jev for memory decisions now? [Y/n] ")).trim().toLowerCase();
+  if (answer !== "" && !answer.startsWith("y")) {
+    io.print(
+      `memory decider stays builtin · "memory": { "decider": "jev" } in ${decider.configFile} turns Jev on`,
+    );
+    return 0;
+  }
+  io.print(`wrote "memory": { "decider": "jev" } to ${await decider.select()}`);
+  return 0;
 }
 
 function printSaved(port: ConnectionsPort, io: ConnectIo): void {

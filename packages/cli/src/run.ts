@@ -41,11 +41,13 @@ import { type ExitClass, exitCodes } from "./dispatch.ts";
 import { headlessNoticeLine } from "./extensions-command.ts";
 import { nextActionFor, shellCommands } from "./inference/port.ts";
 import { connectHint } from "./inference/runtime.ts";
+import type { MemoryDeciderSetup } from "./memory-decider.ts";
 import { defaultSessionDir } from "./paths.ts";
 import { newSessionFileName } from "./sessions/store.ts";
 
 export interface RunOptions {
   prompt: string;
+  memoryDecider?: MemoryDeciderSetup;
   cwd: string;
   json: boolean;
   bot?: string;
@@ -179,6 +181,7 @@ async function openRun(
     sandbox: options.sandbox,
     notice: (text) => io.printError(`keywork run: ${text}`),
     diagnosticsLog: () => diagnosticsRef.current,
+    memoryDecider: options.memoryDecider,
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
   });
   reportExtensionFailures(composition.extensions, io);

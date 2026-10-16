@@ -87,6 +87,17 @@ export function legacyCredentials(apiKeys: Record<string, string> | undefined): 
   );
 }
 
+export type CredentialPlacement = "os-store" | "auth.json";
+
+export function credentialPlacement(
+  provider: string,
+  dir: string = defaultAuthDir(),
+): CredentialPlacement | undefined {
+  const entry = credentialStore(dir).read()?.[provider];
+  if (entry === undefined) return undefined;
+  return entry.type === "vault" ? "os-store" : "auth.json";
+}
+
 interface VaultEntry {
   type: "vault";
   secret: string;

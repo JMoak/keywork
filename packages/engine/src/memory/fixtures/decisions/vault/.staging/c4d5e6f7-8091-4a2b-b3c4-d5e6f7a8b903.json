@@ -1,0 +1,12 @@
+{
+  "kind": "drift-review",
+  "note": "Auth Store",
+  "against": "HEAD~1",
+  "reason": "auth-store.ts was renamed",
+  "evidence": [
+    "rename packages/cli/src/auth-store.ts -> packages/cli/src/credentials/store.ts",
+    "packages/cli/src/credentials/store.ts:1 +export async function saveCredential("
+  ],
+  "key": "drift:auth store",
+  "created": "2026-10-11T08:00:00.000Z"
+}

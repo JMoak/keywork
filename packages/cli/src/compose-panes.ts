@@ -190,6 +190,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     sandbox: config.sandbox,
     onFileSaved: materialize === undefined ? undefined : (path) => materialize.fileSaved(path),
     notice: notices.post,
+    memoryDecider: options.inference?.current().memoryDecider,
     userRoot: options.userRoot,
     checkpointsGitDir: options.checkpointsGitDir,
     reportCheckpointsUnavailable: options.reportCheckpointsUnavailable,

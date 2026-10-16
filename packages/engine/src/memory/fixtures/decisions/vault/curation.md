@@ -1,0 +1,5 @@
+- 2026-10-05T10:00:00.000Z approved supersession:old session format->session files
+- 2026-10-06T11:00:00.000Z discarded merge:release pipeline<->release tagging
+- 2026-10-07T12:00:00.000Z approved contradiction:command timeout<->shell timeout
+- 2026-10-09T09:30:00.000Z discarded link:biome lint->package manager
+- 2026-10-10T09:30:00.000Z discarded link:test gate->package manager

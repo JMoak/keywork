@@ -70,7 +70,23 @@ describe("verifyEndpoint", () => {
       ok: false,
       at: "2026-08-21T10:00:00.000Z",
       reason: "HTTP 401 from https://api.example/v1/models: invalid api key",
+      status: 401,
     });
+  });
+
+  it("reads a models list of names, the shape TypeSafe answers with", async () => {
+    const report = await verifyEndpoint({
+      endpoint: "https://api.typesafe.ai/v1",
+      headers: {},
+      fetchFn: answering(200, {
+        models: [
+          { name: "jev-preview", description: "Preview", release_date: "2026-10-14" },
+          { name: "jev-latest", description: "Flagship", release_date: "2026-09-15" },
+        ],
+      }).fetchFn,
+      now,
+    });
+    expect(report).toMatchObject({ ok: true, models: ["jev-latest", "jev-preview"] });
   });
 
   it("reports an unreachable endpoint without throwing", async () => {

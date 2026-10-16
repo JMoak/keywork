@@ -17,6 +17,7 @@ const documentedEvents = [
   "gate.preset",
   "session.mode",
   "context.injected",
+  "memory.decided",
   "child.started",
   "child.finished",
   "diagnostics.published",

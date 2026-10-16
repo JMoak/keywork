@@ -1,5 +1,6 @@
 import type { AskScope } from "@keywork/shared";
 import type { AnswerOutcome, AskVerdict } from "../asks.ts";
+import { surfaceChanged } from "./answers.ts";
 import {
   bodyOf,
   fieldsOf,
@@ -32,7 +33,7 @@ export const askRoutes = [
     path: "/asks",
     operationId: "listAsks",
     summary:
-      "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first. Each carries `rules`, what a `session` or `workspace` answer would record.",
+      "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first. Each carries `rules`, what a `session` or `workspace` answer would record, and for a `write` or `edit` the same `preview` its `gate.ask` carried: `{ path, before, after }`, the file as it is and as the call would leave it.",
     authenticated: true,
     responses: { "200": "The pending asks." },
   },
@@ -41,7 +42,7 @@ export const askRoutes = [
     path: "/asks/{callId}",
     operationId: "answerAsk",
     summary:
-      'Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: "user"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask\'s `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope`. Only `bash` and MCP calls can be granted beyond `once`.',
+      'Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: "user"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask\'s `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: "permissions"`.',
     authenticated: true,
     requestBody: askAnswerBody,
     responses: {
@@ -56,7 +57,7 @@ export const askRoutes = [
 
 export const askFamily = {
   routes: askRoutes,
-  handlers: ({ host }) => ({
+  handlers: ({ host, log }) => ({
     listAsks: async () => json(200, { asks: await host.asks() }),
     answerAsk: async (request, { callId }) => {
       const answer = askAnswerOf(await bodyOf(request));
@@ -67,7 +68,9 @@ export const askFamily = {
         });
       }
       const outcome = await host.answerAsk(callId ?? "", answer.verdict, answer.scope);
-      return outcome === "settled" ? json(200, { callId, settled: true }) : refusalOf(outcome);
+      if (outcome !== "settled") return refusalOf(outcome);
+      if (recordsGrant(answer)) surfaceChanged(log, "permissions");
+      return json(200, { callId, settled: true });
     },
   }),
 } satisfies RouteFamily<typeof askRoutes>;
@@ -83,6 +86,10 @@ function askAnswerOf(body: unknown): AskAnswer | undefined {
   const scope = fields?.scope ?? "once";
   if (verdict !== "granted" && verdict !== "denied") return undefined;
   return isAskScope(scope) ? { verdict, scope } : undefined;
+}
+
+function recordsGrant({ verdict, scope }: AskAnswer): boolean {
+  return verdict === "granted" && scope !== "once";
 }
 
 function isAskScope(scope: unknown): scope is AskScope {

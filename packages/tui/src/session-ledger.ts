@@ -7,6 +7,7 @@ import {
   carriesUsage,
   contextBudgetFor,
   costBasis,
+  costNanosOf,
   declaredContextWindow,
   type EffortLevel,
   emptyCostRollup,
@@ -14,6 +15,7 @@ import {
   formatCostNanos,
   formatTokenCount,
   knownCostNanos,
+  type MemoryDecision,
   mergeCostRollups,
   modelReferenceOf,
   readContext,
@@ -26,6 +28,7 @@ export class SessionLedger {
   arc: string | undefined;
   bot: string | undefined;
   private readonly retired = new Map<string, ModelTotals>();
+  private readonly deciderSpend = new Map<string, DeciderSpend>();
   private context: { agent: Agent; messages: number; reading: ContextReading } | undefined;
 
   retire(agent: Agent): void {
@@ -35,6 +38,16 @@ export class SessionLedger {
       key,
       carried === undefined ? liveTotals(agent) : add(carried, liveTotals(agent)),
     );
+  }
+
+  recordDecision(decision: MemoryDecision): void {
+    const { model, inputTokens } = decision;
+    if (model === undefined || inputTokens === undefined) return;
+    const spent = this.deciderSpend.get(model) ?? { decisions: 0, inputTokens: 0 };
+    this.deciderSpend.set(model, {
+      decisions: spent.decisions + 1,
+      inputTokens: spent.inputTokens + inputTokens,
+    });
   }
 
   usageSummary(agent: Agent | undefined): string {
@@ -60,6 +73,7 @@ export class SessionLedger {
       costLine(cost, agent.modelId(), agent.effort()),
       ...(miss === undefined ? [] : [cacheMissLine(miss)]),
       ...perModel,
+      ...[...this.deciderSpend].map(([model, spent]) => deciderLine(model, spent)),
     ].join("\n");
   }
 
@@ -107,6 +121,11 @@ export class SessionLedger {
       ([, totals]) => carriesUsage(totals.usage) || totals.cost.unpricedTurns > 0,
     );
   }
+}
+
+interface DeciderSpend {
+  decisions: number;
+  inputTokens: number;
 }
 
 interface ModelTotals {
@@ -165,6 +184,13 @@ function modelLine(reference: string, totals: ModelTotals): string {
         ? `${formatCostNanos(totals.cost.nanos)} + ${totals.cost.unpricedTurns} unpriced`
         : "no pricing";
   return `  ${reference} · ${turns} ${turns === 1 ? "turn" : "turns"} · ${totals.usage.inputTokens}▸${totals.usage.outputTokens} · ${spend}`;
+}
+
+function deciderLine(model: string, spent: DeciderSpend): string {
+  const nanos = costNanosOf({ inputTokens: spent.inputTokens, outputTokens: 0 }, model);
+  const decisions = spent.decisions === 1 ? "1 decision" : `${spent.decisions} decisions`;
+  const spend = nanos === undefined ? "no pricing" : formatCostNanos(nanos);
+  return `decider ${model} · ${decisions} · ${spent.inputTokens} input tokens · ${spend}`;
 }
 
 function cacheMissNote(miss: CacheMiss): string {

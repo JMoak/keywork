@@ -161,23 +161,43 @@
         "id": "string"
       }
     },
-    "gate.ask": {
-      "ask": {
-        "arguments": {
-          "command": "string"
-        },
-        "callId": "string",
-        "rule": "string",
-        "rules": [
-          {
-            "action": "string",
-            "effect": "string",
-            "resource": "string"
-          }
-        ],
-        "tool": "string"
+    "gate.ask": [
+      {
+        "ask": {
+          "arguments": {
+            "command": "string"
+          },
+          "callId": "string",
+          "rule": "string",
+          "rules": [
+            {
+              "action": "string",
+              "effect": "string",
+              "resource": "string"
+            }
+          ],
+          "tool": "string"
+        }
+      },
+      {
+        "ask": {
+          "arguments": {
+            "newText": "string",
+            "oldText": "string",
+            "path": "string"
+          },
+          "callId": "string",
+          "preview": {
+            "after": "string",
+            "before": "string",
+            "path": "string"
+          },
+          "rule": "string",
+          "rules": [],
+          "tool": "string"
+        }
       }
-    },
+    ],
     "gate.permission": {
       "decision": {
         "callId": "string",
@@ -201,6 +221,78 @@
         "source": "string"
       }
     },
+    "memory.decided": [
+      {
+        "decision": {
+          "about": {
+            "callId": "string",
+            "kind": "string"
+          },
+          "candidates": ["string"],
+          "choice": {
+            "dropped": ["string"],
+            "kept": ["string"]
+          },
+          "decider": "string",
+          "id": "string",
+          "latencyMs": "number",
+          "question": "string",
+          "rule": "string"
+        }
+      },
+      {
+        "decision": {
+          "about": {
+            "kind": "string",
+            "note": "string"
+          },
+          "candidates": ["string"],
+          "choice": "string",
+          "confidence": "number",
+          "decider": "string",
+          "id": "string",
+          "inputTokens": "number",
+          "latencyMs": "number",
+          "model": "string",
+          "question": "string",
+          "scores": {
+            "hold": "number",
+            "stale": "number",
+            "unsure": "number"
+          },
+          "stateHash": "string"
+        }
+      },
+      {
+        "decision": {
+          "about": {
+            "callId": "string",
+            "kind": "string"
+          },
+          "candidates": ["string"],
+          "choice": {
+            "dropped": ["string"],
+            "kept": ["string"]
+          },
+          "decider": "string",
+          "fallback": {
+            "reason": "string",
+            "undecided": ["string"]
+          },
+          "id": "string",
+          "inputTokens": "number",
+          "latencyMs": "number",
+          "model": "string",
+          "question": "string",
+          "rule": "string",
+          "scores": {
+            "Auth Tokens": "number",
+            "Deploy Notes": "number"
+          },
+          "waitedMs": "number"
+        }
+      }
+    ],
     "child.started": {
       "bot": "string",
       "callId": "string",

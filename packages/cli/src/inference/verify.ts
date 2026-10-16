@@ -10,7 +10,7 @@ export interface VerificationRequest {
 
 export type VerificationReport =
   | { ok: true; at: string; models: readonly string[] }
-  | { ok: false; at: string; reason: string };
+  | { ok: false; at: string; reason: string; status?: number };
 
 const defaultTimeoutMs = 10_000;
 
@@ -28,6 +28,7 @@ export async function verifyEndpoint(request: VerificationRequest): Promise<Veri
         ok: false,
         at,
         reason: `HTTP ${response.status} from ${request.endpoint}/models${await excerpt(response)}`,
+        status: response.status,
       };
     }
     return { ok: true, at, models: modelIds(await response.json().catch(() => undefined)) };
@@ -37,15 +38,24 @@ export async function verifyEndpoint(request: VerificationRequest): Promise<Veri
 }
 
 function modelIds(payload: unknown): string[] {
-  if (typeof payload !== "object" || payload === null) return [];
-  const data = (payload as { data?: unknown }).data;
-  const entries = Array.isArray(data) ? data : Array.isArray(payload) ? payload : [];
-  return entries
-    .map((entry) =>
-      typeof entry === "object" && entry !== null ? (entry as { id?: unknown }).id : entry,
-    )
+  return listedModels(payload)
+    .map(modelIdOf)
     .filter((id): id is string => typeof id === "string" && id !== "")
     .sort();
+}
+
+function listedModels(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (typeof payload !== "object" || payload === null) return [];
+  const { data, models } = payload as { data?: unknown; models?: unknown };
+  if (Array.isArray(data)) return data;
+  return Array.isArray(models) ? models : [];
+}
+
+function modelIdOf(entry: unknown): unknown {
+  if (typeof entry !== "object" || entry === null) return entry;
+  const { id, name } = entry as { id?: unknown; name?: unknown };
+  return id ?? name;
 }
 
 async function excerpt(response: Response): Promise<string> {

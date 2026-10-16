@@ -1,15 +1,20 @@
-import type { Protocol, RequestDecorations } from "@keywork/engine";
+import {
+  jevModel,
+  type Protocol,
+  type RequestDecorations,
+  typesafeEndpoint,
+} from "@keywork/engine";
 
 export type BuiltInAuth =
-  | {
-      kind: "api-key";
-      scopedVariable: string;
-      ambientVariable: string;
-      keyUrl: string;
-      keyPrefix: string;
-    }
+  | ({ kind: "api-key"; keyPrefix: string } & EnvironmentKeys)
   | { kind: "oauth"; signInHint: string }
   | { kind: "aws-sigv4" };
+
+export interface EnvironmentKeys {
+  scopedVariable: string;
+  ambientVariable: string;
+  keyUrl: string;
+}
 
 export interface BuiltInProvider {
   name: string;
@@ -21,7 +26,32 @@ export interface BuiltInProvider {
   decorations?: RequestDecorations;
 }
 
+export interface BuiltInDecider {
+  name: string;
+  label: string;
+  protocol: "systemone";
+  endpoint: string;
+  defaultModel: string;
+  auth: { kind: "api-key" } & EnvironmentKeys;
+}
+
 export const codexProviderName = "openai-codex";
+
+export const typesafeDecider: BuiltInDecider = {
+  name: "typesafe",
+  label: "TypeSafe Jev (memory decisions)",
+  protocol: "systemone",
+  endpoint: typesafeEndpoint,
+  defaultModel: jevModel,
+  auth: {
+    kind: "api-key",
+    scopedVariable: "KEYWORK_TYPESAFE_API_KEY",
+    ambientVariable: "TYPESAFE_API_KEY",
+    keyUrl: "https://console.typesafe.ai/keys",
+  },
+};
+
+export const builtInDeciders: readonly BuiltInDecider[] = [typesafeDecider];
 
 export const builtInProviders: readonly BuiltInProvider[] = [
   {
@@ -91,6 +121,12 @@ export const builtInNames: ReadonlySet<string> = new Set(
 
 export function builtInProvider(name: string): BuiltInProvider | undefined {
   return builtInProviders.find((provider) => provider.name === name);
+}
+
+export function reservedNameOwner(name: string): string | undefined {
+  if (builtInNames.has(name)) return "a built-in provider";
+  if (builtInDeciders.some((decider) => decider.name === name)) return "the memory decider";
+  return undefined;
 }
 
 export interface LocalTemplate {

@@ -21,6 +21,7 @@
     "contract:fixtures": "bun packages/server/src/contract-fixtures.ts && biome format --write packages/server/src/openapi-document.fixture.json packages/server/src/event-shapes.fixture.json",
     "e2e": "bun scripts/e2e-capture.ts",
     "soak": "bun scripts/soak.ts",
+    "memory:eval": "bun scripts/memory-eval.ts",
     "build:binary": "bun scripts/release/build.ts",
     "build:npm": "bun scripts/release/build-npm.ts"
   },

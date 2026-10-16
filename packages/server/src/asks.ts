@@ -1,4 +1,11 @@
-import type { Confirmation, GrantedScope, ToolCallPart, ToolGuard } from "@keywork/engine";
+import type {
+  Confirmation,
+  GrantedScope,
+  PermissionAsk,
+  ToolCallPart,
+  ToolGuard,
+  ToolPreview,
+} from "@keywork/engine";
 import {
   type AskScope,
   type GrantRefusal,
@@ -13,6 +20,7 @@ export interface PendingAsk {
   tool: string;
   arguments: unknown;
   rules: PermissionRule[];
+  preview?: ToolPreview;
   askedAt: string;
 }
 
@@ -46,17 +54,19 @@ export class AskQueue {
   }
 
   guardFor(sessionId: string): ToolGuard {
-    return { confirm: (call) => this.ask(sessionId, call), gate: "headless" };
+    return { confirm: (call, announced) => this.ask(sessionId, call, announced), gate: "headless" };
   }
 
-  ask(sessionId: string, call: ToolCallPart): Promise<Confirmation> {
+  ask(sessionId: string, call: ToolCallPart, announced?: PermissionAsk): Promise<Confirmation> {
     return new Promise((resolve) => {
+      const preview = announced?.preview;
       const ask: PendingAsk = {
         sessionId,
         callId: call.callId,
         tool: call.name,
         arguments: call.arguments,
         rules: grantCandidates(call.name, call.arguments),
+        ...(preview !== undefined && { preview }),
         askedAt: this.now().toISOString(),
       };
       const timer = setTimeout(() => this.settle(call.callId, "timed-out"), this.timeoutMs);

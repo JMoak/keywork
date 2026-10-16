@@ -20,6 +20,7 @@ import {
   sessionReasonFor,
 } from "./compose.ts";
 import { citationTrail } from "./memory.ts";
+import type { MemoryDeciderSetup } from "./memory-decider.ts";
 import { sweepFlushFor } from "./session-settle.ts";
 import { boundSessionCounts } from "./sessions/ports.ts";
 import {
@@ -45,6 +46,7 @@ export interface ServedWorkspaceOptions {
   models?: ModelCapabilitiesConfig | undefined;
   lsp?: LspConfig | undefined;
   sandbox?: KeyworkConfig["sandbox"] | undefined;
+  memoryDecider?: MemoryDeciderSetup | undefined;
   checkpoints: "on" | "off";
   checkpointsGitDir?: string | undefined;
   notice(text: string): void;
@@ -82,6 +84,7 @@ export async function composeServedWorkspace(
     reportCheckpointsUnavailable: (message) => notice(`can't undo files: ${message}`),
     lsp: options.lsp,
     sandbox: options.sandbox,
+    memoryDecider: options.memoryDecider,
     notice,
     userRoot,
   });

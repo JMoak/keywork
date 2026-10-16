@@ -1,0 +1,51 @@
+{
+  "judge": {
+    "ran": false,
+    "reason": "--no-judge was given"
+  },
+  "labels": {
+    "hand": 12,
+    "hindsight": 44,
+    "inbox": 5
+  },
+  "points": {
+    "action-relevance@1": 23,
+    "drift-verdict@1": 3,
+    "entry-durability@1": 6,
+    "mention-is-link@1": 6,
+    "pair-relation@1": 4
+  },
+  "reproduction": [
+    {
+      "detail": "the builtin reproduces all 6 journaled action injections",
+      "reproduced": true,
+      "session": "credentials"
+    },
+    {
+      "detail": "the builtin reproduces all 9 journaled action injections",
+      "reproduced": true,
+      "session": "decider"
+    },
+    {
+      "detail": "the builtin reproduces all 8 journaled action injections",
+      "reproduced": true,
+      "session": "events"
+    },
+    {
+      "detail": "the builtin reproduces all 7 journaled action injections",
+      "reproduced": true,
+      "session": "gate-and-lint"
+    },
+    {
+      "detail": "the builtin reproduces all 5 journaled action injections",
+      "reproduced": true,
+      "session": "release"
+    },
+    {
+      "detail": "the builtin reproduces all 9 journaled action injections",
+      "reproduced": true,
+      "session": "sessions-and-prose"
+    }
+  ],
+  "sessions": 6
+}

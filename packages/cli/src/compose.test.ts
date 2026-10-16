@@ -458,6 +458,21 @@ describe("repo map composition", () => {
     });
   });
 
+  it("names the injected texts the prompt carries, so the context map can weigh them", async () => {
+    const cwd = await trustedWorkspaceWith({
+      "AGENTS.md": "Use tabs.",
+      "core.ts": "export function widelyUsed() {}",
+    });
+    const composition = await composedIn(cwd, { projectTrusted: true });
+    const injected = composition.promptInjectionsWith(undefined, "remembered: prefers tabs");
+    expect(injected[0]).toBe("Use tabs.");
+    expect(injected[1]).toContain("core.ts: widelyUsed");
+    expect(injected[2]).toBe("remembered: prefers tabs");
+    const prompt = composition.systemPromptWith(undefined, "remembered: prefers tabs");
+    for (const text of injected) expect(prompt).toContain(text);
+    expect(composition.promptInjectionsWith(undefined, "")).toHaveLength(2);
+  });
+
   it("skips the map entirely when configured off", async () => {
     const cwd = await trustedWorkspaceWith({ "core.ts": "export const a = 1;" });
     const composition = await composedIn(cwd, { projectTrusted: true, repoMap: "off" });

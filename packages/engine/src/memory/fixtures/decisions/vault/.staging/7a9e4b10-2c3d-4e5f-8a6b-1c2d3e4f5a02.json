@@ -1,0 +1,12 @@
+{
+  "kind": "drift-review",
+  "note": "Biome Lint",
+  "against": "HEAD~1",
+  "reason": "biome.json changed",
+  "evidence": [
+    "biome.json:4 -  \"formatter\": { \"indentStyle\": \"space\", \"lineWidth\": 100 },",
+    "biome.json:4 +  \"formatter\": { \"indentStyle\": \"space\", \"lineEnding\": \"lf\", \"lineWidth\": 100 },"
+  ],
+  "key": "drift:biome lint",
+  "created": "2026-10-11T08:00:00.000Z"
+}

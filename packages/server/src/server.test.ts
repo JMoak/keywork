@@ -26,6 +26,7 @@ import type { ArcAirlockPort, McpPort, PresetHost } from "./host.ts";
 import { listen } from "./listen.ts";
 import { routes } from "./openapi.ts";
 import { fileChangeCapBytes } from "./routes/changes.ts";
+import type { ContextAnswer } from "./routes/session-verbs.ts";
 import { createKeyworkServer, type KeyworkServer } from "./server.ts";
 import {
   type MemorySurfaceOptions,
@@ -136,6 +137,18 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
   "gate.preset": { from: "standard", to: "open" },
   "session.mode": { mode: "plan" },
   "context.injected": { injection: { source: "memory-recall", id: "n1", scope: "workspace" } },
+  "memory.decided": {
+    decision: {
+      id: "d1",
+      question: "action-relevance@1",
+      about: { kind: "call", callId: "c2" },
+      candidates: ["n1"],
+      choice: { kept: ["n1"], dropped: [] },
+      decider: "builtin",
+      rule: '[[n1]] shares "rm" with the command',
+      latencyMs: 0,
+    },
+  },
   "child.started": { callId: "c3", sessionId: "s9", title: "find the callers", bot: "scout" },
   "child.finished": {
     callId: "c3",
@@ -508,6 +521,25 @@ describe("asks", () => {
     });
     await reader.close();
   });
+
+  it("carries the tool's preview on the announced ask and on the pending one", async () => {
+    const preview = { path: "a", before: null, after: "written\n" };
+    const h = harness({
+      provider: askingTurns(),
+      tools: [{ ...scribble, preview: async () => preview }],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, JSON.stringify({ text: "write it" }));
+    const asked = await collect(reader, (event) => event === "gate.ask");
+    expect(JSON.parse(asked.at(-1)?.data ?? "{}").payload.ask.preview).toEqual(preview);
+    const listed = (await (await h.call("/asks")).json()) as { asks: unknown[] };
+    expect(listed.asks).toEqual([expect.objectContaining({ callId: "c1", preview })]);
+    await post(h, "/asks/c1", JSON.stringify({ verdict: "denied" }));
+    await collect(reader, (event) => event === "turn.completed");
+    await reader.close();
+  });
 });
 
 describe("ask scopes and grants", () => {
@@ -527,7 +559,7 @@ describe("ask scopes and grants", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-  const pushRule = { action: "bash", resource: "git push *", effect: "allow" };
+  const pushRule = { action: "bash", resource: "git push *", effect: "allow" } as const;
   const decisions = (frames: readonly { event: string | undefined; data: string }[]) =>
     frames
       .filter((frame) => frame.event === "gate.permission")
@@ -776,6 +808,215 @@ describe("ask scopes and grants", () => {
     expect((await post(h, "/asks/c1", { verdict: "granted" })).status).toBe(200);
     await collect(reader, (event) => event === "turn.completed");
     await reader.close();
+  });
+
+  const npmRule = { action: "bash", resource: "npm run *", effect: "allow" } as const;
+  const surfaceKinds = (frames: readonly { event: string | undefined; data: string }[]) =>
+    frames
+      .filter((frame) => frame.event === "surface.changed")
+      .map((frame) => JSON.parse(frame.data).payload.kind);
+
+  it("records rules ahead of any ask, for the workspace and for one session, announcing each", async () => {
+    const h = harness({
+      provider: new MockProvider([
+        bashCall("c1", "npm run build"),
+        textTurn("done"),
+        bashCall("c2", "git push origin main"),
+        textTurn("done"),
+      ]),
+      tools: [shell],
+      asks: "queue",
+      trusted: true,
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    const granted = await post(h, "/permissions/workspace/grant", { rule: npmRule });
+    expect(granted.status).toBe(200);
+    expect(await granted.json()).toEqual({ granted: npmRule });
+    expect((await post(h, `/permissions/session/${id}/grant`, { rule: pushRule })).status).toBe(
+      200,
+    );
+    expect((await post(h, "/permissions/workspace/grant", { rule: npmRule })).status).toBe(200);
+    expect(await (await h.call("/permissions")).json()).toMatchObject({
+      workspace: [npmRule],
+      session: { [id]: [pushRule] },
+    });
+
+    await post(h, `/sessions/${id}/prompt`, { text: "build" });
+    const built = await collect(reader, (event) => event === "turn.completed");
+    expect(surfaceKinds(built)).toEqual(["permissions", "permissions"]);
+    expect(built.some((frame) => frame.event === "gate.ask")).toBe(false);
+    expect(decisions(built)).toEqual([
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "workspace" },
+    ]);
+    await post(h, `/sessions/${id}/prompt`, { text: "push" });
+    const pushed = await collect(reader, (event) => event === "turn.completed");
+    expect(decisions(pushed)).toEqual([
+      { tool: "bash", callId: "c2", verdict: "granted", gate: "user", scope: "session" },
+    ]);
+
+    expect((await post(h, "/permissions/workspace/revoke", { rule: npmRule })).status).toBe(200);
+    expect(surfaceKinds(await collect(reader, (event) => event === "surface.changed"))).toEqual([
+      "permissions",
+    ]);
+    await reader.close();
+  });
+
+  it("grants a whole MCP server as one rule, at workspace and session scope", async () => {
+    const mcpTool = (name: string): Tool => ({ ...shell, name, execute: async () => name });
+    const mcpCall = (callId: string, name: string) =>
+      toolCallTurn({ type: "tool-call", callId, name, arguments: {} });
+    const h = harness({
+      provider: new MockProvider([
+        mcpCall("c1", "github__search"),
+        textTurn("done"),
+        mcpCall("c2", "jira__get_issue"),
+        textTurn("done"),
+      ]),
+      tools: [mcpTool("github__search"), mcpTool("jira__get_issue")],
+      asks: "queue",
+      trusted: true,
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    const github = { action: "mcp", resource: "github__*", effect: "allow" } as const;
+    const jira = { action: "mcp", resource: "jira__*", effect: "allow" } as const;
+    expect(await (await post(h, "/permissions/workspace/grant", { rule: github })).json()).toEqual({
+      granted: github,
+    });
+    expect((await post(h, `/permissions/session/${id}/grant`, { rule: jira })).status).toBe(200);
+    expect(await (await h.call("/permissions")).json()).toMatchObject({
+      workspace: [github],
+      session: { [id]: [jira] },
+    });
+
+    await post(h, `/sessions/${id}/prompt`, { text: "search" });
+    expect(decisions(await collect(reader, (event) => event === "turn.completed"))).toEqual([
+      {
+        tool: "github__search",
+        callId: "c1",
+        verdict: "granted",
+        gate: "user",
+        scope: "workspace",
+      },
+    ]);
+    await post(h, `/sessions/${id}/prompt`, { text: "issue" });
+    expect(decisions(await collect(reader, (event) => event === "turn.completed"))).toEqual([
+      { tool: "jira__get_issue", callId: "c2", verdict: "granted", gate: "user", scope: "session" },
+    ]);
+    await reader.close();
+  });
+
+  it("refuses what no answered ask would record, in keywork's words, and an unknown session", async () => {
+    const h = harness({ trusted: true });
+    const id = await createSession(h);
+    const grant = (rule: unknown, path = "/permissions/workspace/grant") => post(h, path, { rule });
+    const refusal = async (rule: unknown) => {
+      const response = await grant(rule);
+      expect(response.status).toBe(409);
+      return ((await response.json()) as { error: string }).error;
+    };
+    const allow = (action: string, resource: string) => ({ action, resource, effect: "allow" });
+
+    expect(await refusal(allow("write", "src/**"))).toBe(
+      "write and edit are approved once at a time",
+    );
+    expect(await refusal(allow("*", "*"))).toBe(
+      "a grant names one tool, or one whole MCP server as mcp <server>__*, never a pattern over tool names",
+    );
+    expect(await refusal(allow("github__*", "*"))).toBe(
+      "a grant names one tool, or one whole MCP server as mcp <server>__*, never a pattern over tool names",
+    );
+    for (const resource of ["*", "github__create_*"]) {
+      expect(await refusal(allow("mcp", resource))).toBe(
+        "an mcp grant covers one whole server as <server>__*, never part of a server or several",
+      );
+    }
+    expect(await refusal(allow("bash", "rm -rf *"))).toBe(
+      "rm -rf is remembered only as the exact command, never under a wildcard",
+    );
+    expect(await refusal(allow("bash", "git push --force *"))).toBe(
+      "git push --force is approved once at a time; no grant remembers it",
+    );
+    expect(await refusal(allow("bash", "npm run build *"))).toBe(
+      "an answered ask never records bash npm run build *; it would record bash npm run *",
+    );
+    expect(await refusal(allow("read", "src/**"))).toBe(
+      "an answered ask never records read src/**; grants hold bash commands and MCP tools as an answer would remember them, or a whole MCP server as mcp <server>__*",
+    );
+    expect((await grant({ ...npmRule, effect: "deny" })).status).toBe(400);
+    expect((await post(h, "/permissions/workspace/grant", {})).status).toBe(400);
+    expect((await grant(npmRule, "/permissions/session/nope/grant")).status).toBe(404);
+    expect(
+      (await grant(allow("bash", "rm -rf dist"), `/permissions/session/${id}/grant`)).status,
+    ).toBe(200);
+    expect(await (await h.call("/permissions")).json()).toMatchObject({
+      workspace: [],
+      session: { [id]: [allow("bash", "rm -rf dist")] },
+    });
+  });
+
+  it("refuses every grant ahead of an ask on an untrusted workspace", async () => {
+    const h = harness({ trusted: false });
+    const id = await createSession(h);
+    for (const path of ["/permissions/workspace/grant", `/permissions/session/${id}/grant`]) {
+      const refused = await post(h, path, { rule: npmRule });
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({
+        error:
+          "this workspace is not trusted, so no grant is recorded ahead of an ask; trust it first",
+      });
+    }
+    expect(await (await h.call("/permissions")).json()).toMatchObject({
+      workspace: [],
+      session: {},
+    });
+  });
+
+  it("announces a grant an answered ask records, and not a once answer", async () => {
+    const h = harness({
+      provider: new MockProvider([
+        bashCall("c1", "git push origin main"),
+        textTurn("done"),
+        bashCall("c2", "npm run lint"),
+        textTurn("done"),
+      ]),
+      tools: [shell],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "push" });
+    await collect(reader, (event) => event === "gate.ask");
+    await post(h, "/asks/c1", { verdict: "granted", scope: "session" });
+    expect(surfaceKinds(await collect(reader, (event) => event === "turn.completed"))).toEqual([
+      "permissions",
+    ]);
+    await post(h, `/sessions/${id}/prompt`, { text: "lint" });
+    await collect(reader, (event) => event === "gate.ask");
+    await post(h, "/asks/c2", { verdict: "granted" });
+    expect(surfaceKinds(await collect(reader, (event) => event === "turn.completed"))).toEqual([]);
+    await reader.close();
+  });
+
+  it("grants ahead of an ask through the typed client", async () => {
+    const h = harness({ trusted: true });
+    const id = await createSession(h);
+    const client = keyworkClient(
+      { url: origin, token },
+      { fetch: (input, init) => h.server.fetch(new Request(input, init)) },
+    );
+    expect(await client.grantWorkspaceRule(npmRule)).toBe("granted");
+    expect(await client.grantSessionRule(id, pushRule)).toBe("granted");
+    expect(await client.grantSessionRule("nope", pushRule)).toBe("missing");
+    expect(await client.grantWorkspaceRule({ ...npmRule, resource: " " })).toBe("malformed");
+    await expect(
+      client.grantWorkspaceRule({ action: "bash", resource: "rm *", effect: "allow" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await client.listPermissions()).toMatchObject({
+      workspace: [npmRule],
+      session: { [id]: [pushRule] },
+    });
   });
 });
 
@@ -2125,12 +2366,101 @@ describe("session verbs (118 K1) over the memory host", () => {
     await reader.close();
   });
 
+  it("restores to before a turn in one step, records the leaf move, and redo takes it all back", async () => {
+    const h = verbHarness({
+      provider: new MockProvider([textTurn("one"), textTurn("two"), textTurn("three")]),
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    for (const text of ["first", "second", "third"]) {
+      await post(h, `/sessions/${id}/prompt`, { text });
+      await collect(reader, (event) => event === "turn.completed");
+      await stateAfter(reader);
+    }
+
+    const restored = await post(h, `/sessions/${id}/restore`, { turn: 2 });
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toEqual({
+      turn: 2,
+      prompt: { entryId: "m2", text: "second" },
+      leafId: "m1",
+      undoneTurns: 2,
+      files: [],
+      filesNote: "files untouched",
+      undoable: true,
+      redoable: true,
+    });
+    expect(await stateAfter(reader)).toMatchObject({ leafId: "m1", redoable: true });
+    const tree = await collect(reader, (event) => event === "session.tree");
+    expect(payloadOf(tree.at(-1) as SseFrame)).toEqual({ reason: "leaf", entryId: "m1" });
+    expect(await messagesOf(h, id)).toHaveLength(2);
+
+    expect(await (await post(h, `/sessions/${id}/redo`)).json()).toMatchObject({ restored: true });
+    expect(await messagesOf(h, id)).toHaveLength(6);
+
+    const refusedBody = await post(h, `/sessions/${id}/restore`, { turn: 0 });
+    expect(refusedBody.status).toBe(400);
+    expect(await refusedBody.json()).toEqual({
+      error: "the body must be { turn: a positive integer }",
+    });
+    for (const body of [{}, { turn: "2" }, { turn: 1.5 }]) {
+      expect((await post(h, `/sessions/${id}/restore`, body)).status).toBe(400);
+    }
+    const unknownTurn = await post(h, `/sessions/${id}/restore`, { turn: 9 });
+    expect(unknownTurn.status).toBe(404);
+    expect(await unknownTurn.json()).toEqual({ error: "no turn 9 on this session's path" });
+    expect((await post(h, "/sessions/nope/restore", { turn: 1 })).status).toBe(404);
+    await reader.close();
+  });
+
+  it("refuses to restore while a turn runs", async () => {
+    const h = verbHarness({ provider: hangingThenScripted([]) });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "first" });
+    await collect(reader, (event) => event === "turn.started");
+    const busy = await post(h, `/sessions/${id}/restore`, { turn: 1 });
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toEqual({ error: "a turn is running" });
+    await post(h, `/sessions/${id}/abort`);
+    await reader.close();
+  });
+
+  it("splits the window into the parts the next request carries, on the provider's reported usage once there is some", async () => {
+    const h = verbHarness({
+      provider: new MockProvider([textTurn("hi", { inputTokens: 1_000, outputTokens: 200 })]),
+    });
+    const id = await createSession(h);
+    const before = (await (await h.call(`/sessions/${id}/context`)).json()) as ContextAnswer;
+    expect(before.parts).toEqual({
+      system: { tokens: 0, basis: "estimated" },
+      tools: { tokens: 0, basis: "estimated" },
+      injected: { tokens: 0, basis: "estimated" },
+      conversation: { tokens: 0, basis: "estimated" },
+      free: { tokens: 200_000, basis: "estimated" },
+    });
+    expect(before.thresholds).toEqual({ flushAt: before.flushAt, compactAt: before.compactAt });
+
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "hello" });
+    await collect(reader, (event) => event === "turn.completed");
+    await reader.close();
+    const after = (await (await h.call(`/sessions/${id}/context`)).json()) as ContextAnswer;
+    expect(after.basis).toBe("estimated");
+    expect(after.parts.conversation).toEqual({ tokens: 1_200, basis: "reported" });
+    expect(after.parts.free).toEqual({ tokens: 200_000 - 1_200, basis: "reported" });
+    expect(after.thresholds).toEqual({
+      flushAt: after.flushAt + 1_200 - after.used,
+      compactAt: after.compactAt + 1_200 - after.used,
+    });
+  });
+
   it("reads the context gauge inputs and the cost rollup with its honesty basis", async () => {
     const h = verbHarness({ provider: new MockProvider([textTurn("hi")], "m1") });
     const id = await createSession(h);
     const context = await h.call(`/sessions/${id}/context`);
     expect(context.status).toBe(200);
-    expect(await context.json()).toEqual({
+    expect(await context.json()).toMatchObject({
       used: 0,
       window: 200_000,
       flushAt: 200_000 - 24_576,
@@ -2316,7 +2646,12 @@ describe("session verbs (118 K1) over the memory host", () => {
     expect(await client.redo(id)).toMatchObject({ restored: true });
     expect(await client.redo(id)).toBe("nothing");
     expect(await client.undo("nope")).toBe("missing");
+    expect(await client.restoreTurn(id, 1)).toMatchObject({ turn: 1, undoneTurns: 1 });
+    expect(await client.redo(id)).toMatchObject({ restored: true });
+    expect(await client.restoreTurn(id, 4)).toBe("unknown-turn");
+    expect(await client.restoreTurn("nope", 1)).toBe("missing");
     expect((await client.context(id))?.basis).toBe("estimated");
+    expect((await client.context(id))?.parts.conversation.basis).toBe("estimated");
     expect((await client.cost(id))?.models[0]?.reference).toBe("mock/m2");
     const exported = await client.exportSession(id);
     expect(exported !== undefined && "html" in exported && exported.html).toContain(

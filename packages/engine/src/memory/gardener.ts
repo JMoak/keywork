@@ -1,5 +1,18 @@
 import type { SkillDefinition } from "../extensions/skills.ts";
 import type { SkillActivity, SkillTelemetrySnapshot } from "../skills/telemetry.ts";
+import { builtinDecider } from "./builtin-decider.ts";
+import {
+  agesOf,
+  type DecisionSink,
+  type EntryDurability,
+  keptSideOf,
+  type MemoryDecider,
+  type MentionCandidate,
+  type NotePair,
+  type PairJudgment,
+  type PairSide,
+  recorded,
+} from "./decider.ts";
 import type { LeaseClaim, SweepLease } from "./lease.ts";
 import { InvalidTitleError, titleKey } from "./naming.ts";
 import { isEntityPath, type Note, noteWriteTarget } from "./notes.ts";
@@ -22,10 +35,10 @@ export interface PromotionProposal {
   confidence: number;
 }
 
-export type PairRelation = "duplicate" | "supersedes" | "contradiction" | "distinct";
+export type PairVerdictRelation = "duplicate" | "supersedes" | "contradiction" | "distinct";
 
 export interface PairVerdict {
-  relation: PairRelation;
+  relation: PairVerdictRelation;
   confidence: number;
   keep?: "a" | "b";
   mergedBody?: string;
@@ -96,6 +109,8 @@ export interface GardenerOptions {
   store: MemoryStore;
   inbox?: Pick<MemoryStore, "propose">;
   judgment?: CurationJudgmentPort;
+  decider?: MemoryDecider;
+  onDecision?: DecisionSink;
   thresholds?: Partial<CurationThresholds>;
   proposeOnly?: boolean;
   now?: () => Date;
@@ -115,7 +130,9 @@ export function entryTokens(entry: Pick<DailyEntryCandidate, "text">): number {
 export class Gardener {
   private readonly store: MemoryStore;
   private readonly inbox: Pick<MemoryStore, "propose">;
-  private readonly judgment: CurationJudgmentPort | undefined;
+  private readonly chatModel: CurationJudgmentPort | undefined;
+  private readonly decider: MemoryDecider;
+  private readonly onDecision: DecisionSink | undefined;
   private readonly thresholds: CurationThresholds;
   private readonly proposeOnly: boolean;
   private readonly now: () => Date;
@@ -125,7 +142,11 @@ export class Gardener {
   constructor(options: GardenerOptions) {
     this.store = options.store;
     this.inbox = options.inbox ?? options.store;
-    this.judgment = options.judgment;
+    this.chatModel = options.judgment;
+    this.decider =
+      options.decider ??
+      builtinDecider(options.judgment === undefined ? {} : { curation: options.judgment });
+    this.onDecision = options.onDecision;
     this.thresholds = { ...defaultCurationThresholds, ...options.thresholds };
     this.proposeOnly = options.proposeOnly ?? false;
     this.now = options.now ?? (() => new Date());
@@ -173,7 +194,7 @@ export class Gardener {
     await this.curateNotePairs(report, proposals);
     await this.foldUsefulness(report);
     this.reviewSkills(options.skills, proposals);
-    this.proposeUnlinkedMentions(await this.store.listNotes(), proposals);
+    await this.proposeUnlinkedMentions(await this.store.listNotes(), proposals);
     report.flagged = (await this.inbox.propose(proposals)).map((item) => item.key);
     await this.store.recordAudit(auditSummary(report));
     return report;
@@ -184,17 +205,30 @@ export class Gardener {
     report: SweepReport,
     proposals: ReviewProposal[],
   ): Promise<void> {
-    if (this.judgment === undefined) return;
+    if (this.chatModel === undefined) return;
     const entries = await this.dailyEntries(options.dates ?? (await this.store.listDailyDates()));
     const candidates = newestWithinBudget(
       entries.filter(isTrustedCandidate),
       options.entryTokenBudget,
     );
     if (candidates.length === 0) return;
+    const durable = await this.durableAmong(candidates);
+    if (durable.length === 0) return;
     const byId = new Map(entries.map((entry) => [entry.id, entry]));
-    for (const proposal of await this.judgment.proposePromotions(candidates)) {
+    for (const proposal of await this.chatModel.proposePromotions(durable)) {
       await this.applyPromotion(proposal, byId, report, proposals);
     }
+  }
+
+  private async durableAmong(candidates: DailyEntryCandidate[]): Promise<DailyEntryCandidate[]> {
+    const triaged = await this.decider.triageEntries({ entries: candidates });
+    const passed = new Set(
+      triaged
+        .map((decided) => recorded(decided, this.onDecision))
+        .filter((triage) => reachesDistiller(triage.durability))
+        .map((triage) => triage.entryId),
+    );
+    return candidates.filter((entry) => passed.has(entry.id));
   }
 
   private async applyPromotion(
@@ -253,60 +287,52 @@ export class Gardener {
   }
 
   private async curateNotePairs(report: SweepReport, proposals: ReviewProposal[]): Promise<void> {
-    if (this.judgment === undefined) return;
+    if (this.chatModel === undefined) return;
     const notes = await this.store.listNotes();
     const eligible = notes.filter(
       (note) => note.supersededBy === undefined && !isEntityPath(note.path),
     );
     const retired = new Set<string>();
-    for (const [a, b] of similarPairs(eligible, this.thresholds.pairSimilarityFloor)) {
-      if (retired.has(a.name) || retired.has(b.name)) continue;
-      const verdict = await this.judgment.classifyPair(a, b);
-      if (verdict.relation === "distinct") continue;
-      if (verdict.relation === "contradiction") {
-        proposals.push({
-          kind: "contradiction",
-          a: a.name,
-          b: b.name,
-          aProvenance: a.provenance,
-          bProvenance: b.provenance,
-          confidence: verdict.confidence,
-        });
+    for (const pair of similarPairs(eligible, this.thresholds.pairSimilarityFloor)) {
+      if (retired.has(pair.a.name) || retired.has(pair.b.name)) continue;
+      const judgment = recorded(await this.decider.relatePair(pair), this.onDecision);
+      if (judgment.relation === "contradiction") {
+        proposals.push(contradictionOf(pair, judgment));
         continue;
       }
-      await this.applyPairAction(a, b, verdict, report, proposals, retired);
+      const kept = keptSideOf(judgment);
+      if (kept === undefined) continue;
+      await this.applyPairAction(keptAndRetired(pair, kept), judgment, report, proposals, retired);
     }
   }
 
   private async applyPairAction(
-    a: Note,
-    b: Note,
-    verdict: PairVerdict,
+    { keep, retire }: KeptAndRetired,
+    judgment: PairJudgment,
     report: SweepReport,
     proposals: ReviewProposal[],
     retired: Set<string>,
   ): Promise<void> {
-    const { keep, retire } = resolveKeep(a, b, verdict);
     const withinBlastRadius = keep.provenance === "agent" && retire.provenance === "agent";
-    if (this.proposeOnly || !withinBlastRadius || verdict.confidence < this.thresholds.act) {
+    if (this.proposeOnly || !withinBlastRadius || !this.actsAlone(judgment)) {
       proposals.push(
-        verdict.relation === "duplicate"
+        judgment.relation === "duplicate"
           ? {
               kind: "merge-proposal",
               keep: keep.name,
               retire: retire.name,
-              confidence: verdict.confidence,
+              confidence: judgment.confidence,
             }
           : {
               kind: "supersession-proposal",
               winner: keep.name,
               loser: retire.name,
-              confidence: verdict.confidence,
+              confidence: judgment.confidence,
             },
       );
       return;
     }
-    const body = verdict.relation === "duplicate" ? (verdict.mergedBody ?? keep.body) : keep.body;
+    const body = judgment.relation === "duplicate" ? (judgment.mergedBody ?? keep.body) : keep.body;
     await this.store.writeNote({
       title: keep.title,
       body,
@@ -314,9 +340,14 @@ export class Gardener {
       supersedes: retire.name,
     });
     retired.add(retire.name);
-    if (verdict.relation === "duplicate")
+    if (judgment.relation === "duplicate")
       report.merged.push({ keep: keep.name, retired: retire.name });
     else report.superseded.push({ winner: keep.name, loser: retire.name });
+  }
+
+  private actsAlone(judgment: PairJudgment): boolean {
+    if (judgment.band !== undefined) return judgment.band === "act";
+    return judgment.confidence >= this.thresholds.act;
   }
 
   private async foldUsefulness(report: SweepReport): Promise<void> {
@@ -402,28 +433,16 @@ export class Gardener {
     return (this.now().getTime() - last) / dayMs;
   }
 
-  private proposeUnlinkedMentions(notes: Note[], proposals: ReviewProposal[]): void {
-    const targets = notes.map((note) => ({
-      note,
-      keys: new Set([note.name, note.title, ...note.aliases].map(titleKey)),
-      names: [note.title, ...note.aliases].filter((name) => name.length >= minimumMentionLength),
-    }));
-    for (const source of notes) {
-      const text = source.body.replace(/\[\[[^\]]*\]\]/g, " ").toLowerCase();
-      const linked = source.links.map(titleKey);
-      for (const target of targets) {
-        if (target.note.name === source.name) continue;
-        if (linked.some((link) => target.keys.has(link))) continue;
-        const mention = target.names.find((name) => mentionPattern(name).test(text));
-        if (mention !== undefined) {
-          proposals.push({
-            kind: "link-proposal",
-            note: source.name,
-            target: target.note.name,
-            mention,
-          });
-        }
-      }
+  private async proposeUnlinkedMentions(notes: Note[], proposals: ReviewProposal[]): Promise<void> {
+    for (const candidate of unlinkedMentions(notes)) {
+      const verdict = recorded(await this.decider.weighMention(candidate), this.onDecision);
+      if (verdict === "link")
+        proposals.push({
+          kind: "link-proposal",
+          note: candidate.source.name,
+          target: candidate.target.name,
+          mention: candidate.mention,
+        });
     }
   }
 }
@@ -479,16 +498,50 @@ function auditSummary(report: SweepReport): string {
   );
 }
 
-function resolveKeep(a: Note, b: Note, verdict: PairVerdict): { keep: Note; retire: Note } {
-  const keep = verdict.keep === "a" ? a : verdict.keep === "b" ? b : newerOf(a, b);
-  return keep === a ? { keep: a, retire: b } : { keep: b, retire: a };
+function reachesDistiller(durability: EntryDurability): boolean {
+  return durability !== "episodic" && durability !== "reinforces-a-note";
 }
 
-function newerOf(a: Note, b: Note): Note {
-  return (b.created ?? "") > (a.created ?? "") ? b : a;
+function contradictionOf(pair: NotePair, judgment: PairJudgment): ReviewProposal {
+  return {
+    kind: "contradiction",
+    a: pair.a.name,
+    b: pair.b.name,
+    aProvenance: pair.a.provenance,
+    bProvenance: pair.b.provenance,
+    confidence: judgment.confidence,
+  };
 }
 
-function* similarPairs(notes: Note[], floor: number): Generator<[Note, Note]> {
+interface KeptAndRetired {
+  keep: Note;
+  retire: Note;
+}
+
+function keptAndRetired(pair: NotePair, kept: PairSide): KeptAndRetired {
+  const { older, newer } = agesOf(pair);
+  return kept === "newer" ? { keep: newer, retire: older } : { keep: older, retire: newer };
+}
+
+function* unlinkedMentions(notes: readonly Note[]): Generator<MentionCandidate> {
+  const targets = notes.map((note) => ({
+    note,
+    keys: new Set([note.name, note.title, ...note.aliases].map(titleKey)),
+    names: [note.title, ...note.aliases].filter((name) => name.length >= minimumMentionLength),
+  }));
+  for (const source of notes) {
+    const text = source.body.replace(/\[\[[^\]]*\]\]/g, " ").toLowerCase();
+    const linked = source.links.map(titleKey);
+    for (const target of targets) {
+      if (target.note.name === source.name) continue;
+      if (linked.some((link) => target.keys.has(link))) continue;
+      const mention = target.names.find((name) => mentionPattern(name).test(text));
+      if (mention !== undefined) yield { source, target: target.note, mention };
+    }
+  }
+}
+
+function* similarPairs(notes: Note[], floor: number): Generator<NotePair> {
   const termSets = notes.map((note) => new Set(tokenize(`${note.title} ${note.body}`)));
   for (let i = 0; i < notes.length; i += 1) {
     for (let j = i + 1; j < notes.length; j += 1) {
@@ -498,7 +551,8 @@ function* similarPairs(notes: Note[], floor: number): Generator<[Note, Note]> {
       const bTerms = termSets[j];
       if (a === undefined || b === undefined || aTerms === undefined || bTerms === undefined)
         continue;
-      if (jaccard(aTerms, bTerms) >= floor) yield [a, b];
+      const similarity = jaccard(aTerms, bTerms);
+      if (similarity >= floor) yield { a, b, similarity };
     }
   }
 }

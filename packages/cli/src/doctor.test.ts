@@ -2,6 +2,7 @@ import { detectCapabilities } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
 import { doctorCommand, doctorReport, renderDoctorReport, workspaceDoctorFacts } from "./doctor.ts";
 import { composeInference } from "./inference/runtime.ts";
+import { deciderStatusOf } from "./memory-decider.ts";
 
 function report(env: Record<string, string | undefined>, platform = "linux"): string {
   return renderDoctorReport(doctorReport(detectCapabilities({ env, platform })));
@@ -242,6 +243,40 @@ describe("crash log section", () => {
       { crashLog: { path: "C:/logs/tui-crash.log", entries: 0 } },
     );
     expect(rows.at(-1)).toEqual({ label: "crash log", value: "none recorded" });
+  });
+});
+
+describe("memory decider row", () => {
+  it("reads the decider from config, the credential and connect's observations, before the crash log", () => {
+    const memoryDecider = deciderStatusOf({
+      config: { memory: { decider: "jev" } },
+      credentials: { typesafe: { type: "api_key", key: "ts-live" } },
+      env: {},
+      observations: { typesafe: { verifiedAt: "2026-10-15T08:00:00.000Z" } },
+      placement: "os-store",
+    });
+    const { rows } = doctorReport(
+      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
+      undefined,
+      { memoryDecider, crashLog: { path: "C:/logs/tui-crash.log", entries: 0 } },
+    );
+    expect(rows.slice(-2)).toEqual([
+      {
+        label: "memory decider",
+        value:
+          "jev · jev-1.13.0 · saved key (OS credential store) · verified 2026-10-15 · 0 of 5 questions proven",
+      },
+      { label: "crash log", value: "none recorded" },
+    ]);
+  });
+
+  it("stays out of the report when nobody asked about memory", () => {
+    const { rows } = doctorReport(
+      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
+      undefined,
+      {},
+    );
+    expect(rows.map((row) => row.label)).not.toContain("memory decider");
   });
 });
 

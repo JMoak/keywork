@@ -395,6 +395,21 @@ describe("Checkpoints reads", () => {
       files: [],
       patch: "",
     });
+    expect(await store.filesBetween(tree, tree)).toEqual([]);
+  });
+
+  it("lists the files between two trees with their line counts and no patch", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "a.txt": "one\n" });
+    const before = await store.snapshot();
+    await seed(worktree, { "a.txt": "uno\n", "b.txt": "new\n" });
+    const after = await store.snapshot();
+
+    expect(await store.filesBetween(after, before)).toEqual([
+      { path: "a.txt", added: 1, deleted: 1 },
+      { path: "b.txt", added: 0, deleted: 1 },
+    ]);
   });
 
   it("never snapshots its own shadow repo when it lives inside the worktree", async () => {

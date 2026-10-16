@@ -45,6 +45,7 @@ import {
 } from "./compose.ts";
 import { describeExtensionHost } from "./extensions-command.ts";
 import { citationTrail, sweepOnClose } from "./memory.ts";
+import type { MemoryDeciderSetup } from "./memory-decider.ts";
 import { defaultSessionDir } from "./paths.ts";
 import { type PresetPort, presetCommand } from "./presets.ts";
 import { compactSessionNow, type SettlingSession, settleSessionTurn } from "./session-settle.ts";
@@ -78,6 +79,7 @@ export interface ChatOptions {
   sandbox?: KeyworkConfig["sandbox"];
   models?: ModelCapabilitiesConfig;
   thinking?: KeyworkConfig["thinking"];
+  memoryDecider?: MemoryDeciderSetup;
   userRoot?: string;
   checkpointsGitDir?: string;
 }
@@ -307,6 +309,7 @@ async function openRepl(options: ChatOptions, io: ChatIo): Promise<Repl | undefi
     lsp: options.lsp,
     sandbox: options.sandbox,
     notice: (text) => io.print(text),
+    memoryDecider: options.memoryDecider,
     ...(options.userRoot !== undefined && { userRoot: options.userRoot }),
     ...(options.checkpointsGitDir !== undefined && {
       checkpointsGitDir: options.checkpointsGitDir,

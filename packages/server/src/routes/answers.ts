@@ -16,7 +16,7 @@ import {
 import { SessionBusyError, SurfaceUnavailableError, TrustRefusedError } from "../host.ts";
 import { json, type RouteHandler, type RouteParams } from "./family.ts";
 
-export type SurfaceKind = "mcp" | "arcs" | "bots" | "workspaces";
+export type SurfaceKind = "mcp" | "arcs" | "bots" | "workspaces" | "permissions";
 
 export type PortHandler<Port> = (
   port: Port,

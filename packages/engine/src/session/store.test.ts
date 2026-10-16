@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { messageText, textMessage } from "../messages.ts";
-import { checkpointForPrompt } from "./entries.ts";
+import { checkpointForPrompt, restorePointOf } from "./entries.ts";
 import { SessionStore } from "./store.ts";
 
 const tempDir = scratchDirs("keywork-session-");
@@ -429,5 +429,35 @@ describe("checkpointForPrompt", () => {
     await store.append(textMessage("user", "active"), undefined, "tree-active");
 
     expect(checkpointForPrompt(store.tree(), 1)).toEqual({ restorable: true, tree: "tree-active" });
+  });
+});
+
+describe("restorePointOf", () => {
+  it("names a turn's prompt, the first tree a mutation tagged from it on, and how many turns go", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    await store.append(textMessage("user", "first"), undefined, "tree-first");
+    await store.append(textMessage("assistant", "re: first"));
+    const second = await store.append(textMessage("user", "read only"));
+    await store.append(textMessage("assistant", "re: second"));
+    await store.append(textMessage("user", "third"), undefined, "tree-third");
+    const path = store.activePath();
+
+    expect(restorePointOf(path, 2)).toEqual({
+      prompt: second,
+      files: "tree-third",
+      undoneTurns: 2,
+    });
+    expect(restorePointOf(path, 1)?.files).toBe("tree-first");
+    expect(restorePointOf(path, 3)?.undoneTurns).toBe(1);
+  });
+
+  it("leaves the files alone when no turn from there on changed them, and knows no turn past the path", async () => {
+    const store = await SessionStore.create(await sessionFile(), ".");
+    await store.append(textMessage("user", "tagged"), undefined, "tree-tagged");
+    await store.append(textMessage("user", "untagged"));
+    const path = store.activePath();
+
+    expect(restorePointOf(path, 2)?.files).toBeUndefined();
+    for (const turn of [0, 3, 1.5, -1]) expect(restorePointOf(path, turn)).toBeUndefined();
   });
 });

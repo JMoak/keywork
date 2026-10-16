@@ -2,6 +2,7 @@ import {
   Agent,
   bashTool,
   EventBus,
+  type MemoryDecision,
   type Message,
   MockProvider,
   messageText,
@@ -848,6 +849,39 @@ describe("swapping agents", () => {
         "tokens 10000▸1000",
         "cost $0.0045 · estimated from gpt-5-mini rates",
         "bot ⚖ reviewer · $0.0123 across 3 sessions",
+      ].join("\n"),
+    );
+  });
+
+  it("prices the memory decisions this process paid for in /cost, never replayed ones", async () => {
+    const agent = new Agent({
+      provider: new MockProvider([textTurn("a", { inputTokens: 10_000, outputTokens: 1_000 })], {
+        modelId: "gpt-5-mini",
+      }),
+    });
+    const model = new ConversationModel(agent, () => {});
+    const decision: MemoryDecision = {
+      id: "d",
+      question: "action-relevance@1",
+      about: { kind: "call", callId: "c" },
+      candidates: ["Auth Tokens"],
+      choice: { kept: ["Auth Tokens"], dropped: [] },
+      decider: "jev",
+      model: "jev-1.13.0",
+      inputTokens: 1_500,
+      latencyMs: 210,
+    };
+    agent.bus.emit("memory.decided", { decision });
+    agent.bus.emit("memory.decided", { decision, replay: true });
+    type(model, "one");
+    await submit(model);
+    type(model, "/cost");
+    model.handleKey(parseChord("return"), undefined);
+    expect(model.entries.at(-1)?.text).toBe(
+      [
+        "tokens 10000▸1000",
+        "cost $0.0045 · estimated from gpt-5-mini rates",
+        "decider jev-1.13.0 · 1 decision · 1500 input tokens · $0.0001",
       ].join("\n"),
     );
   });

@@ -34,7 +34,11 @@ export function estimateContextTokens(store: SessionStore): number {
 }
 
 export function estimateConversationTokens(messages: readonly Message[]): number {
-  return Math.ceil(serializeConversation(messages).length / 4);
+  return estimateTextTokens(serializeConversation(messages));
+}
+
+export function estimateTextTokens(text: string): number {
+  return Math.ceil(text.length / 4);
 }
 
 export function planCompaction(

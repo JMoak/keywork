@@ -1,7 +1,15 @@
 import type { ToolCallPart } from "../messages.ts";
 import type { ContextBudget } from "../session/context-budget.ts";
 import { searchHitLayer } from "./arcs/recall.ts";
+import { builtinDecider } from "./builtin-decider.ts";
 import type { RecallTap } from "./citations.ts";
+import {
+  type ActionBudget,
+  type DecisionSink,
+  type MemoryDecider,
+  type PendingAction,
+  recorded,
+} from "./decider.ts";
 import { neutralizeRecalled } from "./neutralize.ts";
 import type { MemorySearcher, SearchHit, SearchOutcome } from "./search.ts";
 
@@ -14,6 +22,8 @@ export interface ActionRecallOptions {
   notes?: number;
   tap?: RecallTap;
   onRecall?: (noteName: string) => void;
+  decider?: MemoryDecider;
+  onDecision?: DecisionSink;
 }
 
 export const actionRecallDefaults = {
@@ -27,26 +37,43 @@ export function actionRecallBudget(budget: ContextBudget): number {
 }
 
 export function pointOfActionRecall(options: ActionRecallOptions): ActionRecall {
-  const tokens = options.tokens ?? actionRecallDefaults.tokens;
+  const budget: ActionBudget = {
+    tokens: options.tokens ?? actionRecallDefaults.tokens,
+    notes: options.notes ?? actionRecallDefaults.notes,
+  };
   const milliseconds = options.milliseconds ?? actionRecallDefaults.milliseconds;
-  const notes = options.notes ?? actionRecallDefaults.notes;
+  const decider = options.decider ?? builtinDecider();
   const surfacedSubjects = new Set<string>();
   const surfacedNotes = new Set<string>();
   return async (call) => {
     try {
-      const subject = actionSubject(call);
-      if (subject === undefined || tokens <= 0 || surfacedSubjects.has(subject)) return undefined;
-      surfacedSubjects.add(subject);
-      const outcome = await boundedSearch(options.search, subject, notes, milliseconds);
-      if (outcome === undefined) return undefined;
-      const chosen = selectRelevant(outcome.hits, surfacedNotes, tokens, notes);
+      const action = pendingAction(call);
+      if (action === undefined || budget.tokens <= 0 || surfacedSubjects.has(action.subject))
+        return undefined;
+      surfacedSubjects.add(action.subject);
+      const outcome = await boundedSearch(
+        options.search,
+        action.subject,
+        budget.notes,
+        milliseconds,
+      );
+      if (outcome === undefined || outcome.hits.length === 0) return undefined;
+      const chosen = recorded(
+        await decider.chooseForAction({
+          action,
+          hits: outcome.hits,
+          surfaced: surfacedNotes,
+          budget,
+        }),
+        options.onDecision,
+      );
       if (chosen.length === 0) return undefined;
       for (const hit of chosen) {
         surfacedNotes.add(hit.note.name);
         options.onRecall?.(hit.note.name);
         options.tap?.recordRecall(hit.note.name, "action", searchHitLayer(hit));
       }
-      return renderActionRecall(subject, chosen, outcome.source.kind);
+      return renderActionRecall(action.subject, chosen, outcome.source.kind);
     } catch {
       return undefined;
     }
@@ -54,17 +81,22 @@ export function pointOfActionRecall(options: ActionRecallOptions): ActionRecall 
 }
 
 export function actionSubject(call: ToolCallPart): string | undefined {
-  const key = subjectKeys[call.name];
-  if (key === undefined) return undefined;
-  const args = call.arguments;
-  if (typeof args !== "object" || args === null) return undefined;
-  const value = (args as Record<string, unknown>)[key];
-  if (typeof value !== "string") return undefined;
-  const line = value.split("\n", 1)[0]?.trim() ?? "";
-  return line === "" ? undefined : line.slice(0, subjectCap);
+  return pendingAction(call)?.subject;
 }
 
-const subjectKeys: Readonly<Record<string, string>> = {
+export function pendingAction(call: ToolCallPart): PendingAction | undefined {
+  const subjectKind = subjectKinds[call.name];
+  if (subjectKind === undefined) return undefined;
+  const args = call.arguments;
+  if (typeof args !== "object" || args === null) return undefined;
+  const value = (args as Record<string, unknown>)[subjectKind];
+  if (typeof value !== "string") return undefined;
+  const line = value.split("\n", 1)[0]?.trim() ?? "";
+  if (line === "") return undefined;
+  return { callId: call.callId, tool: call.name, subject: line.slice(0, subjectCap), subjectKind };
+}
+
+const subjectKinds: Readonly<Record<string, PendingAction["subjectKind"]>> = {
   write: "path",
   edit: "path",
   bash: "command",
@@ -91,25 +123,6 @@ async function boundedSearch(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-function selectRelevant(
-  hits: readonly SearchHit[],
-  alreadySurfaced: ReadonlySet<string>,
-  tokenBudget: number,
-  noteCap: number,
-): SearchHit[] {
-  const chosen: SearchHit[] = [];
-  let spent = 0;
-  for (const hit of hits) {
-    if (chosen.length >= noteCap) break;
-    if (hit.superseded || alreadySurfaced.has(hit.note.name)) continue;
-    if (hit.ranks.lexical === undefined && hit.ranks.semantic === undefined) continue;
-    if (spent + hit.note.tokens > tokenBudget) continue;
-    chosen.push(hit);
-    spent += hit.note.tokens;
-  }
-  return chosen;
 }
 
 function renderActionRecall(

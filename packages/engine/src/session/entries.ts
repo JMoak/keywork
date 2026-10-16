@@ -167,6 +167,27 @@ export function checkpointForPrompt(
     : { restorable: true, tree: prompt.checkpoint };
 }
 
+export interface TurnRestorePoint {
+  prompt: MessageEntry;
+  files: string | undefined;
+  undoneTurns: number;
+}
+
+export function restorePointOf(
+  path: readonly SessionEntry[],
+  turn: number,
+): TurnRestorePoint | undefined {
+  const prompts = userPrompts(path);
+  const prompt = prompts[turn - 1];
+  if (prompt === undefined) return undefined;
+  const undone = prompts.slice(turn - 1);
+  return {
+    prompt,
+    files: undone.find((entry) => entry.checkpoint !== undefined)?.checkpoint,
+    undoneTurns: undone.length,
+  };
+}
+
 export function pathToEntry(
   byId: ReadonlyMap<string, SessionEntry>,
   leafId: string | null,

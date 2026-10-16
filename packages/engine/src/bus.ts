@@ -1,3 +1,4 @@
+import type { MemoryDecision } from "./memory/decider.ts";
 import type { Message, SpillReference, ToolCallPart, Usage } from "./messages.ts";
 import type { TurnDelta } from "./provider.ts";
 import type { ContextInjection, PermissionAsk, PermissionDecision } from "./session/journal.ts";
@@ -53,6 +54,7 @@ interface LiveEvents {
   "gate.preset": { from: string; to: string };
   "session.mode": { mode: string };
   "context.injected": { injection: ContextInjection };
+  "memory.decided": { decision: MemoryDecision };
   "child.started": ChildStarted;
   "child.finished": ChildFinished;
   "diagnostics.published": { path: string; count: number };

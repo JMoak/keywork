@@ -453,6 +453,13 @@ export {
   sweepBotLayer,
 } from "./memory/bots/sweep.ts";
 export {
+  type BuiltinSeams,
+  builtinDecider,
+  builtinDeciderId,
+  type RuleRelevance,
+  relevanceByRule,
+} from "./memory/builtin-decider.ts";
+export {
   type CitationChain,
   type CitationChainHop,
   type CitationEvent,
@@ -471,6 +478,52 @@ export {
   type UsefulnessSink,
 } from "./memory/citations.ts";
 export {
+  type ActionBudget,
+  type ActionCandidates,
+  actionAsk,
+  actionBudgetFit,
+  agesOf,
+  type BudgetFit,
+  type CurationBand,
+  type Decided,
+  type DeciderName,
+  type DecisionAsk,
+  type DecisionChoice,
+  type DecisionFallback,
+  type DecisionSink,
+  type DecisionSubject,
+  type DriftCase,
+  driftAsk,
+  type EntryCandidates,
+  type EntryDurability,
+  type EntryTriage,
+  entryAsk,
+  entryDurabilities,
+  type FallbackReason,
+  keptSideOf,
+  type MemoryDecider,
+  type MemoryDecision,
+  type MemoryQuestion,
+  type MentionCandidate,
+  type MentionVerdict,
+  memoryQuestions,
+  mentionAsk,
+  mentionVerdicts,
+  type NoteKind,
+  type NotePair,
+  noteKinds,
+  type PairJudgment,
+  type PairRelation,
+  type PairSide,
+  type PendingAction,
+  pairAsk,
+  pairRelations,
+  recorded,
+  type Selection,
+  screenForAction,
+} from "./memory/decider.ts";
+export {
+  boundedDriftEvidence,
   checkDrift,
   type DiffChanges,
   type DriftAssessment,
@@ -522,8 +575,8 @@ export {
   entryTokens,
   Gardener,
   type GardenerOptions,
-  type PairRelation,
   type PairVerdict,
+  type PairVerdictRelation,
   type PromotionProposal,
   type ProposalRejection,
   type SkillEvidence,
@@ -562,6 +615,53 @@ export {
   markMultiHostVault,
   vaultHost,
 } from "./memory/hosts.ts";
+export {
+  type JevAnswer,
+  type JevAnswered,
+  type JevAsk,
+  type JevClient,
+  type JevClientOptions,
+  type JevDeadlines,
+  type JevFailure,
+  type JevFailureReason,
+  type JevJson,
+  type JevObject,
+  type JevPace,
+  type JevQuestion,
+  type JevReply,
+  jevBreaker,
+  jevClient,
+  jevDeadlines,
+  jevModel,
+  jevStateHash,
+  typesafeEndpoint,
+} from "./memory/jev.ts";
+export {
+  type JevDecider,
+  type JevDeciderOptions,
+  jevDecider,
+  jevDeciderId,
+  withFallback,
+} from "./memory/jev-decider.ts";
+export {
+  actionRelevancePlan,
+  type ChoicePlan,
+  driftVerdictPlan,
+  entryDurabilityPlan,
+  jevBands,
+  jevCaps,
+  jevQuestions,
+  mentionIsLinkPlan,
+  noulConfidence,
+  type PairReading,
+  pairRelationPlan,
+  type Reading,
+  type RecallReading,
+  type RelevancePlan,
+  readRecall,
+  type Scrub,
+  scrubberFor,
+} from "./memory/jev-questions.ts";
 export {
   defaultLeaseTtlMs,
   isFresh,
@@ -618,8 +718,16 @@ export {
   actionRecallBudget,
   actionRecallDefaults,
   actionSubject,
+  pendingAction,
   pointOfActionRecall,
 } from "./memory/point-of-action.ts";
+export {
+  deciderEdition,
+  isQuestionProven,
+  memoryEvalProofs,
+  provenQuestions,
+  type QuestionProof,
+} from "./memory/proven-questions.ts";
 export {
   compareAgainstMemoryOff,
   memoryOffControl,
@@ -697,6 +805,7 @@ export {
   type WriteResult,
 } from "./memory/store.ts";
 export {
+  auditFile,
   isMissingFileError,
   PathOutsideVaultError,
   ReservedPathError,
@@ -889,6 +998,17 @@ export {
   reserveCaps,
 } from "./session/context-budget.ts";
 export {
+  type AgentContext,
+  type ContextBasis,
+  type ContextMap,
+  type ContextPart,
+  type ContextParts,
+  type ContextThresholds,
+  type ReportedContext,
+  type RequestAnatomy,
+  readAgentContext,
+} from "./session/context-map.ts";
+export {
   type BindingEntry,
   type BranchSummaryEntry,
   type CompactionEntry,
@@ -908,6 +1028,7 @@ export {
   type MessageEntry,
   type ModelChangeEntry,
   type PromptCheckpoint,
+  restorePointOf,
   type SessionBinding,
   type SessionEntry,
   type SessionHeader,
@@ -916,6 +1037,7 @@ export {
   type SpawnLineage,
   sessionFormatVersion,
   type ThinkingLevelChangeEntry,
+  type TurnRestorePoint,
 } from "./session/entries.ts";
 export {
   type AskRule,
@@ -1084,6 +1206,6 @@ export {
   ShellSession,
 } from "./tools/shell-session.ts";
 export { writeTool } from "./tools/write.ts";
-export { findTool, type Tool, ToolNotFoundError } from "./tools.ts";
+export { findTool, type Tool, ToolNotFoundError, type ToolPreview } from "./tools.ts";
 
 export { engineVersion } from "./version.ts";

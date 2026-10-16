@@ -109,8 +109,7 @@ export class Checkpoints implements CheckpointReads {
     return this.serialized(async () => {
       const current = await this.snapshotWorktree();
       const touched = await this.turnsTouching(current);
-      const listing = await this.git("diff-tree", "-r", "--numstat", "-z", tree, current);
-      return parseNumstat(listing).map((change) => {
+      return (await this.numstat(tree, current)).map((change) => {
         const turn = touched.get(change.path);
         return turn === undefined ? change : { ...change, turn };
       });
@@ -127,10 +126,14 @@ export class Checkpoints implements CheckpointReads {
     return this.serialized(() => this.snapshotWorktree());
   }
 
+  filesBetween(from: string, to: string): Promise<ChangedPath[]> {
+    return this.serialized(() => (from === to ? Promise.resolve([]) : this.numstat(from, to)));
+  }
+
   changesBetween(from: string, to: string): Promise<TreeChanges> {
     return this.serialized(async () => {
       if (from === to) return { files: [], patch: "" };
-      const listing = await this.git("diff-tree", "-r", "--numstat", "-z", from, to);
+      const files = await this.numstat(from, to);
       const patch = await this.gitRaw(
         "diff-tree",
         "-r",
@@ -140,7 +143,7 @@ export class Checkpoints implements CheckpointReads {
         from,
         to,
       );
-      return { files: parseNumstat(listing), patch: patch.trimEnd() };
+      return { files, patch: patch.trimEnd() };
     });
   }
 
@@ -181,6 +184,10 @@ export class Checkpoints implements CheckpointReads {
       await this.git("read-tree", "--reset", "-u", target);
       return true;
     });
+  }
+
+  private async numstat(from: string, to: string): Promise<ChangedPath[]> {
+    return parseNumstat(await this.git("diff-tree", "-r", "--numstat", "-z", from, to));
   }
 
   private async turnsTouching(current: string): Promise<Map<string, number>> {
