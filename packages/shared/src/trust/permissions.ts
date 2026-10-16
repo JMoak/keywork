@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { PermissionEffect, PermissionRule, PermissionsConfig } from "../config/schema.ts";
 import { commandGlob, compileGlob, forwardSlashes, type Glob, pathGlob } from "../glob.ts";
+import { isDestructiveCommand } from "./destructive-commands.ts";
 import { permissionRules } from "./rules.ts";
 
 export type PermissionPolicy = (toolName: string, args: unknown) => PermissionEffect | undefined;
@@ -75,6 +76,7 @@ interface CompiledRule extends Ruling {
 }
 
 const pathTools = new Set(["read", "write", "edit"]);
+const grantOrigins: ReadonlySet<RuleOrigin> = new Set(["session", "workspace"]);
 const mcpToolSeparator = "__";
 const commandSeparators = /[;&|\r\n]+/;
 const opaqueShellCharacters = /[<>`$()]/;
@@ -102,8 +104,23 @@ function compiledRule(
     origin,
     coversEverything: rule.resource === "*",
     governs: (toolName) => actionGoverns(rule.action, toolName),
-    matches: (kind, resource) => globs[kind].test(resource),
+    matches: (kind, resource) =>
+      globs[kind].test(resource) &&
+      !(kind === "command" && widensGrantOverDestructive(rule, origin, resource)),
   };
+}
+
+function widensGrantOverDestructive(
+  rule: PermissionRule,
+  origin: RuleOrigin,
+  command: string,
+): boolean {
+  return (
+    rule.effect === "allow" &&
+    grantOrigins.has(origin) &&
+    rule.resource !== command &&
+    isDestructiveCommand(command)
+  );
 }
 
 function actionGoverns(action: string, toolName: string): boolean {

@@ -60,7 +60,10 @@ An ask now answers with a scope: `once`, `session` (the rest of this session) or
 (every session of this workspace, persisted to `~/.keywork/workspaces/<identity>/permissions.json`,
 a private atomic write parsed strictly into `{ rules: [{ action, resource, effect: "allow" }] }`).
 Grants derive from the call: a bash command's leading literal words per part, an MCP tool's
-full name. Layering: the user's configured rules decide first; where they say nothing, one
+full name. The destructive set is the exception (118 K9): a delete or `git branch -D` is
+remembered only as its exact command, a force push, `git reset --hard`, `git clean` or a
+discarding `git checkout` is never remembered, and a session or workspace grant covers a
+destructive command only when it is that exact command. Layering: the user's configured rules decide first; where they say nothing, one
 ordered list decides with last match winning: bundle, then workspace grants, then session
 grants. A compound command whose parts are allowed by different layers (one by a user rule,
 one by the bundle) asks; that is stricter than one merged list and never looser. The TUI's

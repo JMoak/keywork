@@ -619,6 +619,75 @@ describe("ask scopes and grants", () => {
     await reader.close();
   });
 
+  it("offers a destructive command only its exact form, so a session grant covers no other target", async () => {
+    const h = harness({
+      provider: new MockProvider([
+        bashCall("c1", "rm -rf dist"),
+        bashCall("c2", "rm -rf build"),
+        textTurn("done"),
+      ]),
+      tools: [shell],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "clean both" });
+    const first = await collect(reader, (event) => event === "gate.ask");
+    expect(askRules(first)).toEqual([{ action: "bash", resource: "rm -rf dist", effect: "allow" }]);
+    await post(h, "/asks/c1", { verdict: "granted", scope: "session" });
+    const second = await collect(reader, (event) => event === "gate.ask");
+    expect(askRules(second)).toEqual([
+      { action: "bash", resource: "rm -rf build", effect: "allow" },
+    ]);
+    await post(h, "/asks/c2", { verdict: "denied" });
+    await collect(reader, (event) => event === "turn.completed");
+    await reader.close();
+  });
+
+  it("asks again for a force push after a session grant of a plain push", async () => {
+    const h = harness({
+      provider: new MockProvider([
+        bashCall("c1", "git push origin main"),
+        bashCall("c2", "git push --force origin main"),
+        textTurn("done"),
+      ]),
+      tools: [shell],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "push, then force" });
+    const first = await collect(reader, (event) => event === "gate.ask");
+    expect(askRules(first)).toEqual([pushRule]);
+    await post(h, "/asks/c1", { verdict: "granted", scope: "session" });
+    const second = await collect(reader, (event) => event === "gate.ask");
+    expect(JSON.parse(second.at(-1)?.data ?? "{}").payload.ask.callId).toBe("c2");
+    expect(askRules(second)).toEqual([]);
+    await post(h, "/asks/c2", { verdict: "denied" });
+    await collect(reader, (event) => event === "turn.completed");
+    await reader.close();
+  });
+
+  it("offers nothing to remember for a force push, refusing a session answer", async () => {
+    const h = harness({
+      provider: new MockProvider([
+        bashCall("c1", "git push --force origin main"),
+        textTurn("done"),
+      ]),
+      tools: [shell],
+      asks: "queue",
+    });
+    const id = await createSession(h);
+    const reader = await h.stream();
+    await post(h, `/sessions/${id}/prompt`, { text: "force it" });
+    const asked = await collect(reader, (event) => event === "gate.ask");
+    expect(askRules(asked)).toEqual([]);
+    expect((await post(h, "/asks/c1", { verdict: "granted", scope: "session" })).status).toBe(400);
+    expect((await post(h, "/asks/c1", { verdict: "granted" })).status).toBe(200);
+    await collect(reader, (event) => event === "turn.completed");
+    await reader.close();
+  });
+
   it("records a workspace grant, lists it, and revokes it", async () => {
     const h = harness({
       provider: new MockProvider([bashCall("c1", "git push origin main"), textTurn("done")]),

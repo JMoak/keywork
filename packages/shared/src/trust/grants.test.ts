@@ -26,7 +26,7 @@ describe("grantCandidates", () => {
     ["git push", ["git push *"]],
     ["ls", ["ls *"]],
     ["cat README.md", ["cat *"]],
-    ["rm -rf build", ["rm -rf *"]],
+    ["npm test --silent", ["npm test *"]],
     ["npm run build", ["npm run *"]],
     ["./deploy.sh prod", ["./deploy.sh prod *"]],
     ["git add . && git commit -m wip", ["git add *", "git commit *"]],
@@ -36,6 +36,76 @@ describe("grantCandidates", () => {
     ["*.sh", []],
   ])("derives the leading literal words of %s", (command, resources) => {
     expect(grantCandidates("bash", bash(command))).toEqual(resources.map(allowBash));
+  });
+
+  it.each([
+    ["rm -rf dist", ["rm -rf dist"]],
+    ["rm -r x", ["rm -r x"]],
+    ["rmdir build", ["rmdir build"]],
+    ["/bin/rm -f a.txt", ["/bin/rm -f a.txt"]],
+    ["C:\\tools\\RM.EXE -rf out", ["C:\\tools\\RM.EXE -rf out"]],
+    ["Remove-Item -Recurse out", ["Remove-Item -Recurse out"]],
+    ["git branch -D topic", ["git branch -D topic"]],
+    ["rm -rf *.log", []],
+    ["npm run build && rm -rf dist", ["npm run *", "rm -rf dist"]],
+  ])("remembers destructive %s only as its exact command", (command, resources) => {
+    expect(grantCandidates("bash", bash(command))).toEqual(resources.map(allowBash));
+  });
+
+  it.each([
+    "git push --force origin main",
+    "git push -f origin main",
+    "git push --force-with-lease",
+    "git push origin +main",
+    "git reset --hard HEAD~1",
+    "git clean -fd",
+    "git checkout -- .",
+  ])("remembers nothing for %s", (command) => {
+    const candidates = grantCandidates("bash", bash(command));
+    expect(candidates).toEqual([]);
+    expect(grantRefusal("bash", candidates)).toBe("nothing-to-remember");
+  });
+
+  it.each([
+    ["git -C dir status", ["git -C dir status *"]],
+    ["git --no-pager log -5", ["git --no-pager log *"]],
+    ["git -c core.pager=cat log", ["git -c core.pager=cat log *"]],
+    ["git -C dir push --force origin main", []],
+    ["git -C dir reset --hard", []],
+    ["git -C", []],
+    ["git", []],
+  ])("reads past git's global options in %s", (command, resources) => {
+    expect(grantCandidates("bash", bash(command))).toEqual(resources.map(allowBash));
+  });
+
+  it.each([
+    "git push --force origin main",
+    "git push -f",
+    "git push origin +main",
+    "git -C dir push --force",
+  ])("never lets a remembered git push * cover %s", (command) => {
+    const policy = layeredPolicy([{ origin: "session", rules: [allowBash("git push *")] }]);
+    expect(policy("bash", bash("git push origin dev"))).toEqual({
+      effect: "allow",
+      origin: "session",
+    });
+    expect(policy("bash", bash(command))).toBeUndefined();
+  });
+
+  it("disarms a wildcard grant over a destructive command, but not a configured rule", () => {
+    const wildcard = [allowBash("rm -rf *")];
+    const granted = layeredPolicy([{ origin: "workspace", rules: wildcard }]);
+    expect(granted("bash", bash("rm -rf dist"))).toBeUndefined();
+    const configured = layeredPolicy([{ origin: "user", rules: wildcard }]);
+    expect(configured("bash", bash("rm -rf dist"))).toEqual({ effect: "allow", origin: "user" });
+  });
+
+  it("never lets a remembered rm cover a different target", () => {
+    const policy = layeredPolicy([
+      { origin: "session", rules: grantCandidates("bash", bash("rm -rf dist")) },
+    ]);
+    expect(policy("bash", bash("rm -rf dist"))).toEqual({ effect: "allow", origin: "session" });
+    expect(policy("bash", bash("rm -rf build"))).toBeUndefined();
   });
 
   it("grants an MCP tool by its full name and never a write or edit", () => {

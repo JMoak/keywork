@@ -1,1 +1,1 @@
-export const cliVersion = "0.0.1";
+export { keyworkVersion as cliVersion } from "./version.ts";

@@ -1,5 +1,7 @@
 import type { PermissionRule } from "../config/schema.ts";
-import { commandParts, isOpaqueCommandPart, permissionPolicy } from "./permissions.ts";
+import { commandWords, gitInvocation } from "./command-words.ts";
+import { type DestructiveRemembrance, destructiveRemembrance } from "./destructive-commands.ts";
+import { commandParts, isOpaqueCommandPart, layeredPolicy } from "./permissions.ts";
 
 export type AskScope = "once" | "session" | "workspace";
 
@@ -27,7 +29,9 @@ export class SessionGrants {
   }
 
   covers(toolName: string, args: unknown): boolean {
-    return this.held.length > 0 && permissionPolicy(this.held)(toolName, args) === "allow";
+    if (this.held.length === 0) return false;
+    const ruling = layeredPolicy([{ origin: "session", rules: this.held }])(toolName, args);
+    return ruling?.effect === "allow";
   }
 
   remember(toolName: string, args: unknown): readonly PermissionRule[] {
@@ -76,22 +80,45 @@ const mcpToolSeparator = "__";
 const onceOnlyTools = new Set(["write", "edit"]);
 const literalWord = /^-{0,2}[A-Za-z][\w-]*$/;
 
+type Remembrance = DestructiveRemembrance | "leading-words";
+
+const rememberedResources: Readonly<Record<Remembrance, (part: string) => string[]>> = {
+  "leading-words": leadingWordsGlob,
+  "exact-command": exactCommand,
+  nothing: () => [],
+};
+
 function commandGrants(command: string | undefined): PermissionRule[] {
   if (command === undefined) return [];
   const resources = commandParts(command)
     .filter((part) => !isOpaqueCommandPart(part))
-    .flatMap(leadingWordsGlob);
+    .flatMap((part) => rememberedResources[remembranceOf(part)](part));
   return withRules(
     [],
     resources.map((resource) => allow("bash", resource)),
   );
 }
 
+function remembranceOf(part: string): Remembrance {
+  return destructiveRemembrance(part) ?? "leading-words";
+}
+
 function leadingWordsGlob(part: string): string[] {
-  const [program = part, second] = part.split(/\s+/);
-  if (program.includes("*")) return [];
-  const subcommand = second !== undefined && literalWord.test(second) ? ` ${second}` : "";
-  return [`${program}${subcommand} *`];
+  const head = commandHead(commandWords(part));
+  if (head.length === 0 || head.some((word) => word.includes("*"))) return [];
+  return [`${head.join(" ")} *`];
+}
+
+function commandHead(words: readonly string[]): readonly string[] {
+  const git = gitInvocation(words);
+  if (git !== undefined) return git.head;
+  const [program, second] = words;
+  if (program === undefined) return [];
+  return second !== undefined && literalWord.test(second) ? [program, second] : [program];
+}
+
+function exactCommand(part: string): string[] {
+  return part.includes("*") ? [] : [part];
 }
 
 function allow(action: string, resource: string): PermissionRule {

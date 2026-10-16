@@ -1094,3 +1094,55 @@ summary-only change as 1.0; the paragraph now states the exception and names the
 Whether a diff needs the minor or the major stays a reviewer's call; the script only refuses
 a version that stood still or went back. Tests: `scripts/check-contract.test.ts` (8) over a
 file-reader seam, plus a read of this repo's `HEAD`.
+
+### K9 · derived rules that stay bounded · landed 2026-10-15
+
+A live round of the desktop app found that a remembered bash rule derived as
+`<program> <flag> *` (K7 above) turned `rm -rf dist` into `rm -rf *` for a session or a
+workspace with one key. K9 was drawn on `app-surface/next` on 2026-10-12 and sat unstaged in
+that worktree after PR #7 merged; it lands on `main` now, beside what `main` grew since
+(`SessionGrants.forget`, `ruleLabel`, `grantFromLabel`, all untouched; nothing equivalent
+existed). K8, drawn in the same lane, already reached `main` as "Theme parity with
+keywork-app" above, so only K9 is new here.
+
+**The rule.** A derived rule for the destructive set is exact or absent, and a wildcard grant
+never covers a destructive variant. `trust/destructive-commands.ts` names the set once. `rm`,
+`rmdir`, `rd`, `del`, `erase` and `Remove-Item` (by program name: any directory, any case,
+`.exe` dropped) and `git branch -D` derive the exact command only, and nothing when it carries
+`*`. `git push` with `--force*`, a short flag cluster holding `f`, or a `+refspec`,
+`git reset --hard`, `git clean` and a discarding `git checkout` (`--` or `.`) derive no rule,
+so a `session` or `workspace` answer gets the existing "nothing a grant could remember" `400`
+and the card offers once or deny. `trust/command-words.ts` reads git past its global options
+(`-C`, `-c`, `--git-dir`, `--work-tree`, `--namespace` and `--config-env` take a value), so
+`git -C dir status` derives `git -C dir status *` and `git -C dir push --force` is still a
+force push. In `layeredPolicy`, an allow from the `session` or `workspace` origin matches a
+destructive command only when its resource is that exact command: a stored `git push *` never
+covers `git push --force`, and `rm -rf *` in a workspace grant file covers no delete. Rules
+the user writes in config and the trusted bundle are untouched. `SessionGrants.covers` asks
+the same layered policy as a `session` layer. `docs/events.md` (`gate.ask`) and `50-trust.md`
+E1 describe the carve-out.
+
+**One fix on landing.** `programName` split on `/` only, so `C:\tools\RM.EXE -rf out` escaped
+the set and derived a wildcard; it splits on either separator now, with a test row.
+
+**Tests.** `grants.test.ts`: deletes and `git branch -D` remembered exactly, seven forms that
+remember nothing and refuse, git's global options, a remembered `git push *` that never covers
+four force forms, a wildcard workspace grant disarmed while the same rule from config still
+allows, a remembered `rm` that never covers another target; the K7 row that derived `rm -rf *`
+now derives `npm test *` from `npm test --silent`. `server.test.ts`: a delete offers only its
+exact form and its session grant covers no other target, a force push asks again after a
+session grant of a plain push, and a force push refuses a session answer and takes `once`.
+
+### v0.2.0 cut · 2026-10-15
+
+`packages/cli/package.json` is `0.2.0`, the first release version since `v0.1.1`
+(2026-09-09), which predates the themes route; the root and the other workspaces stay at their
+own numbers, as `docs/release.md` says. `cliVersion` in `cli/src/index.ts` had stood at a
+hand-written `0.0.1`; it re-exports `keyworkVersion` now, and `cli/src/index.test.ts` holds it
+to the manifest as the engine's test does. `contract.test.ts` serves and expects `0.2.0`, and
+agentbox's `KEYWORK_VERSION` default is `v0.2.0`, which installs only once the tag's release
+job has published. keywork-app pins `protocolVersion = "0.2.0"`, so its sidecar fetch and its
+`/doc` version check want the same release. `contractVersion` stays `1.1`: it moves with the
+fixtures, not the release. Gate for both entries under bun 1.3.9: `bun run check` exits 0
+(types, pins, guardrails, prose, contract, lint) and `bun run test` is 364 files, 5025
+passed, 3 skipped.

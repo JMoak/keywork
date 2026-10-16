@@ -242,8 +242,14 @@ tool mutates and no rule covers it).
 write-capable form (`find … -delete`, `rg --pre`, `git log --output=…`). `rules` is the list
 of `{ action, resource, effect: "allow" }` rules a `session` or `workspace` answer would
 record, so a client can show them before the person picks: for `bash`, one rule per part of
-the command built from its leading literal words (`git push *` from `git push origin main`),
-none for a part with redirection or substitution; for an MCP tool, its full name with
+the command built from its leading literal words (`git push *` from `git push origin main`,
+`git -C dir status *` past git's global options), none for a part with redirection or
+substitution; a destructive part never gets a wildcard: deletes (`rm`, `rmdir`, `rd`, `del`,
+`erase`, `Remove-Item`) and `git branch -D` are remembered only as the exact command, and
+`git push` with a force flag or `+` refspec, `git reset --hard`, `git clean` and a discarding
+`git checkout` (`--` or `.`) remember nothing, so their card offers once or deny; and a
+remembered `session` or `workspace` rule covers a destructive part only when it is that exact
+command, so `git push *` never covers `git push --force`; for an MCP tool, its full name with
 resource `*`; for `write`, `edit` and every other tool, empty, since those are approved once
 at a time.
 

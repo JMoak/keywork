@@ -13,7 +13,7 @@ const token = "contract-test-token";
 function servedFetch(): (input: string, init?: RequestInit) => Promise<Response> {
   const log = new EventLog();
   const host = memorySessionHost({ log, provider: new MockProvider([]) });
-  const server = createKeyworkServer({ token, host, log, version: "0.1.1" });
+  const server = createKeyworkServer({ token, host, log, version: "0.2.0" });
   return (input, init) => server.fetch(new Request(input, init));
 }
 
@@ -23,7 +23,7 @@ describe("the contract version", () => {
     const document = (await response.json()) as OpenApiDocument;
     expect(response.headers.get("x-keywork-contract")).toBe(contractVersion);
     expect(document.info["x-keywork-contract"]).toBe(contractVersion);
-    expect(document.info.version).toBe("0.1.1");
+    expect(document.info.version).toBe("0.2.0");
   });
 
   it("is major.minor, and the major is what a client compares", () => {

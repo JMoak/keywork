@@ -10,7 +10,7 @@ services:
     build:
       context: ./agent
       args:
-        KEYWORK_VERSION: ${KEYWORK_VERSION:-v0.1.1}
+        KEYWORK_VERSION: ${KEYWORK_VERSION:-v0.2.0}
         BASE_IMAGE: ${BASE_IMAGE:-debian:bookworm-slim}
         TOOLS: ${TOOLS:-}
         APT_PACKAGES: ${APT_PACKAGES:-}
