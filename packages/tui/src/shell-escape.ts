@@ -58,21 +58,21 @@ export function guardedShellEscape(seams: ShellEscapeSeams): ShellEscapePort {
       const gate = ruling?.gate ?? "default";
       const permission = ruling?.permission ?? defaultVerdict(tool);
       if (permission === "deny") {
-        report(decision(call, "denied", gate));
+        report(decision(call, "denied", gate, false));
         return failure("denied by permission policy");
       }
       if (permission === "ask") {
+        const asked = seams.guard.confirm !== undefined;
         const answer = answerOf(await (seams.guard.confirm?.(call) ?? Promise.resolve(true)));
-        const askedBy =
-          seams.guard.confirm === undefined ? gate : (answer.gate ?? seams.guard.gate ?? "user");
+        const askedBy = asked ? (answer.gate ?? seams.guard.gate ?? "user") : gate;
         report({
-          ...decision(call, answer.approved ? "granted" : "denied", askedBy),
+          ...decision(call, answer.approved ? "granted" : "denied", askedBy, asked),
           ...(answer.approved && answer.scope !== undefined && { scope: answer.scope }),
         });
         if (!answer.approved) return failure("declined by user");
       } else {
         report({
-          ...decision(call, "granted", gate),
+          ...decision(call, "granted", gate, false),
           ...(ruling?.gate === "user" && { scope: ruling.scope }),
         });
       }
@@ -100,8 +100,9 @@ function decision(
   call: ToolCallPart,
   verdict: PermissionDecision["verdict"],
   gate: PermissionDecision["gate"],
+  asked: boolean,
 ): PermissionDecision {
-  return { tool: call.name, callId: call.callId, verdict, gate };
+  return { tool: call.name, callId: call.callId, verdict, gate, asked };
 }
 
 function failure(output: string): ShellEscapeResult {

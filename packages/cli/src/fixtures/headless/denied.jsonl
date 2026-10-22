@@ -3,7 +3,7 @@
 {"type":"turn.delta","delta":{"type":"tool-call","call":{"type":"tool-call","callId":"call-1","name":"bash","arguments":{"command":"echo hi"}}}}
 {"type":"turn.delta","delta":{"type":"done","usage":{"inputTokens":0,"outputTokens":0}}}
 {"type":"tool.started","call":{"type":"tool-call","callId":"call-1","name":"bash","arguments":{"command":"echo hi"}}}
-{"type":"gate.permission","decision":{"tool":"bash","callId":"call-1","verdict":"denied","gate":"headless"}}
+{"type":"gate.permission","decision":{"tool":"bash","callId":"call-1","verdict":"denied","gate":"headless","asked":true}}
 {"type":"tool.finished","callId":"call-1","output":"not approved: this run has no one to ask, so the call was refused","isError":true}
 {"type":"turn.completed","message":{"role":"assistant","parts":[{"type":"tool-call","callId":"call-1","name":"bash","arguments":{"command":"echo hi"}}]},"usage":{"inputTokens":0,"outputTokens":0}}
 {"type":"run.finished","outcome":"denied","exitCode":4,"message":"","refused":[{"tool":"bash","callId":"call-1"}]}

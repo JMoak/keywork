@@ -627,7 +627,7 @@ export class Agent {
       const tool = findTool(this.tools(), call.name);
       const ruling = this.rulingFor(call, tool);
       if (ruling.permission === "deny") {
-        this.emitPermissionDecision(call, "denied", ruling.gate);
+        this.emitPermissionDecision(call, { verdict: "denied", gate: ruling.gate, asked: false });
         return { callId: call.callId, output: "denied by permission policy", isError: true };
       }
       if (ruling.permission === "ask") {
@@ -636,18 +636,23 @@ export class Agent {
         if (ask !== undefined) this.bus.emit("gate.ask", { ask });
         const answer = await this.confirmWithGuard(call, ask);
         const answeredBy = answer.gate ?? this.guard?.gate ?? "user";
-        this.emitPermissionDecision(
-          call,
-          answer.approved ? "granted" : "denied",
-          ask === undefined ? ruling.gate : answeredBy,
-          answer.scope,
-        );
+        this.emitPermissionDecision(call, {
+          verdict: answer.approved ? "granted" : "denied",
+          gate: ask === undefined ? ruling.gate : answeredBy,
+          asked: ask !== undefined,
+          scope: answer.scope,
+        });
         if (!answer.approved) {
           this.declineEndedRun = this.guard?.declineEndsRun === true;
           return { callId: call.callId, output: declinedOutput(answeredBy), isError: true };
         }
       } else {
-        this.emitPermissionDecision(call, "granted", ruling.gate, scopeOf(ruling));
+        this.emitPermissionDecision(call, {
+          verdict: "granted",
+          gate: ruling.gate,
+          asked: false,
+          scope: scopeOf(ruling),
+        });
       }
       if (tool.mutates === true) await this.checkpointOnce();
       const remembered = tool.mutates === true ? await this.actionRecall?.(call) : undefined;
@@ -672,19 +677,15 @@ export class Agent {
     );
   }
 
-  private emitPermissionDecision(
-    call: ToolCallPart,
-    verdict: PermissionDecision["verdict"],
-    gate: PermissionDecision["gate"],
-    scope?: AskScope,
-  ): void {
+  private emitPermissionDecision(call: ToolCallPart, ruled: RuledCall): void {
     this.bus.emit("gate.permission", {
       decision: {
         tool: call.name,
         callId: call.callId,
-        verdict,
-        gate,
-        ...(scope !== undefined && { scope }),
+        verdict: ruled.verdict,
+        gate: ruled.gate,
+        ...(ruled.scope !== undefined && { scope: ruled.scope }),
+        asked: ruled.asked,
       },
     });
   }
@@ -744,6 +745,13 @@ function spillSource(spills: SpillStore | SpillSource | undefined): SpillSource 
 }
 
 type GateRuling = PermissionRuling | { permission: ToolPermission; gate: "default" };
+
+interface RuledCall {
+  verdict: PermissionDecision["verdict"];
+  gate: PermissionDecision["gate"];
+  asked: boolean;
+  scope?: AskScope | undefined;
+}
 
 interface AnsweredConfirmation {
   approved: boolean;

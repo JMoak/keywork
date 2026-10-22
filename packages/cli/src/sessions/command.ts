@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   describeBinding,
   describeContextEdit,
@@ -15,7 +15,9 @@ import {
   resolveCommandIo,
 } from "../command-io.ts";
 import { exitCodes } from "../dispatch.ts";
+import { knownSecrets } from "../memory-decider.ts";
 import { excerpt } from "../text.ts";
+import { exportToolDecisions, writeToolDecisions } from "./decisions.ts";
 import { exportSession } from "./export.ts";
 import {
   listTrash,
@@ -40,6 +42,7 @@ export interface SessionsCommandIo extends CommandIo {
   tree?: boolean;
   out?: string | undefined;
   cwd?: string;
+  env?: Record<string, string | undefined>;
   confirm?: Confirm | undefined;
   yes?: boolean;
 }
@@ -49,6 +52,7 @@ export const sessionsSubcommands = [
   "tree",
   "fork",
   "export",
+  "decisions",
   "remove",
   "restore",
   "trash",
@@ -71,6 +75,8 @@ export async function sessionsCommand(
       return forkSession(dir, rest[0], rest[1], resolved);
     case "export":
       return exportToHtml(dir, rest[0], io, resolved);
+    case "decisions":
+      return exportDecisions(dir, io, resolved);
     case "remove":
       return removeToTrash(dir, rest[0], io, resolved);
     case "restore":
@@ -329,6 +335,31 @@ async function exportToHtml(
   });
   io.print(`exported → ${written}`);
   return 0;
+}
+
+async function exportDecisions(
+  dir: string,
+  options: SessionsCommandIo,
+  io: ResolvedCommandIo,
+): Promise<number> {
+  const exported = await exportToolDecisions(dir, {
+    secrets: knownSecrets({}, options.env ?? process.env),
+  });
+  reportUnreadable(exported.unreadable, io);
+  if (options.out === undefined) {
+    for (const record of exported.records) io.print(JSON.stringify(record));
+    return exitCodes.completed;
+  }
+  const target = resolve(options.cwd ?? process.cwd(), options.out);
+  await writeToolDecisions(target, exported.records);
+  io.print(
+    `exported ${counted(exported.records.length, "decision")} from ${counted(exported.sessions, "session")} → ${target}`,
+  );
+  return exitCodes.completed;
+}
+
+function counted(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 function resolveRef(store: SessionStore, ref: string): string | undefined {

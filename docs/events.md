@@ -229,7 +229,10 @@ reaches the parent.
 Fires when the active policy would ask about a tool call and a guard exists to answer. The
 turn waits on the answer; over `keywork serve` a client answers with `POST /asks/{callId}`
 and an unanswered ask times out as a headless denial. Never fired when no guard can answer,
-and never replayed.
+and never replayed. The session journal keeps each ask as a `permission_ask` entry holding
+`{ tool, callId, rule, rules, change? }`, where `change` is `{ creates, linesBefore,
+linesAfter }` from the preview; the arguments already ride the assistant message, and the
+preview's text is never journaled ([`backlog/122`](backlog/122-tool-decision-evidence.md)).
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -270,7 +273,7 @@ Fires when the trust gate decides on a tool call.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `decision` | `PermissionDecision` | `{ tool, callId, verdict, gate, scope? }`. |
+| `decision` | `PermissionDecision` | `{ tool, callId, verdict, gate, scope?, asked? }`. |
 
 `verdict` is `granted` or `denied`. `gate` says who decided: `policy` (a preset rule),
 `default` (the preset's fallback), `user` (an interactive answer) or `headless` (no one to
@@ -283,6 +286,13 @@ The decision carries an optional `scope` when a person's grant decided it: `once
 an answer recorded it or it was granted ahead of an ask (`POST /permissions/workspace/grant` and
 `POST /permissions/session/{sessionId}/grant`, which also take every tool of one MCP server as
 the one rule `{ action: "mcp", resource: "<server>__*" }`). A denial carries no `scope`.
+
+`asked` says whether this verdict answered an ask: `true` when a guard was asked (a person,
+or the headless guard saying no), `false` when a rule, the trusted posture, the preset's
+fallback or a standing grant decided without asking. It is what tells a person's fresh
+`session` answer apart from the later calls that answer covers, which otherwise carry the same
+`gate: "user"` and `scope`. keywork sets it on every decision since contract 1.3; a decision
+journaled before then has none.
 
 ### gate.preset
 

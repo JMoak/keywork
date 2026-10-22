@@ -8,6 +8,7 @@ Usage:
               [--session-dir <dir>]                         one-shot headless run
   keywork sessions [list|tree|fork] [id] [ref]              inspect and fork session trees
   keywork sessions export [id] [--tree] [--out <path>]      write a session to one HTML file
+  keywork sessions decisions [--out <path>]                 tool-call decisions as JSON Lines
   keywork sessions remove <id> [--yes]                      move a session to the trash
   keywork sessions restore <id> | trash | purge [--yes]     bring one back, list, empty the trash
   keywork connect [target|url]                              add or verify an inference provider

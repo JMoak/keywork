@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.2",
+    "x-keywork-contract": "1.3",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",

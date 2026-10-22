@@ -554,7 +554,7 @@ describe("session journal in headless runs", () => {
     const state = extensionState(store.activePath());
     expect(state.injections).toEqual([{ source: "project-instructions", id: "AGENTS.md" }]);
     expect(state.decisions).toEqual([
-      { tool: "bash", callId: "call-1", verdict: "granted", gate: "policy" },
+      { tool: "bash", callId: "call-1", verdict: "granted", gate: "policy", asked: false },
     ]);
   });
 });

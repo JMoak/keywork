@@ -67,7 +67,13 @@ export function askGateUnconfined(
     const call = unconfinedCall(refusal, nextCallId());
     const answer = await guard.confirm?.(call);
     const allowed = answer !== undefined && approvedBy(answer);
-    options.onDecision?.(decisionOn(call, allowed, answeringGate(answer, guard)));
+    options.onDecision?.(
+      decisionOn(call, {
+        allowed,
+        gate: answeringGate(answer, guard),
+        asked: answer !== undefined,
+      }),
+    );
     return allowed;
   };
 }
@@ -95,16 +101,19 @@ function answeringGate(answer: Confirmation | undefined, guard: ToolGuard): Perm
   return answer.gate;
 }
 
-function decisionOn(
-  call: ToolCallPart,
-  allowed: boolean,
-  gate: PermissionGate,
-): PermissionDecision {
+interface ConsentOutcome {
+  allowed: boolean;
+  gate: PermissionGate;
+  asked: boolean;
+}
+
+function decisionOn(call: ToolCallPart, outcome: ConsentOutcome): PermissionDecision {
   return {
     tool: call.name,
     callId: call.callId,
-    verdict: allowed ? "granted" : "denied",
-    gate,
-    ...(allowed && { scope: "session" as const }),
+    verdict: outcome.allowed ? "granted" : "denied",
+    gate: outcome.gate,
+    ...(outcome.allowed && { scope: "session" as const }),
+    asked: outcome.asked,
   };
 }

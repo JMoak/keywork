@@ -200,6 +200,7 @@
     ],
     "gate.permission": {
       "decision": {
+        "asked": "boolean",
         "callId": "string",
         "gate": "string",
         "scope": "string",

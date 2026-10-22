@@ -120,6 +120,7 @@ describe("askGateUnconfined", () => {
         verdict: "granted",
         gate: "user",
         scope: "session",
+        asked: true,
       },
     ]);
   });
@@ -138,7 +139,13 @@ describe("askGateUnconfined", () => {
     expect(allowed).toBe(false);
     expect(said).toEqual([]);
     expect(decisions).toEqual([
-      { tool: "unconfined", callId: "unconfined-2", verdict: "denied", gate: "headless" },
+      {
+        tool: "unconfined",
+        callId: "unconfined-2",
+        verdict: "denied",
+        gate: "headless",
+        asked: true,
+      },
     ]);
   });
 

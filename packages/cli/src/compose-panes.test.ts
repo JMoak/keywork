@@ -193,7 +193,7 @@ describe("composePanes", () => {
     });
     expect(asked).toEqual([]);
     expect(decisions).toEqual([
-      { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "trusted" },
+      { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "trusted", asked: false },
     ]);
     expect(result?.output.trim()).toBe("wired");
   });

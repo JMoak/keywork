@@ -495,6 +495,7 @@ describe("asks", () => {
       verdict: "granted",
       gate: "user",
       scope: "once",
+      asked: true,
     });
     await collect(reader, (event) => event === "turn.completed");
     expect((await post(h, "/asks/c1", JSON.stringify({ verdict: "denied" }))).status).toBe(409);
@@ -580,7 +581,7 @@ describe("ask scopes and grants", () => {
     const frames = await collect(reader, (event) => event === "turn.completed");
     expect(frames.some((frame) => frame.event === "gate.ask")).toBe(false);
     expect(decisions(frames)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted" },
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted", asked: false },
     ]);
     const permissions = (await (await h.call("/permissions")).json()) as {
       trusted: boolean;
@@ -641,8 +642,22 @@ describe("ask scopes and grants", () => {
     const frames = await collect(reader, (event) => event === "turn.completed");
     expect(frames.some((frame) => frame.event === "gate.ask")).toBe(false);
     expect(decisions(frames)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "session" },
-      { tool: "bash", callId: "c2", verdict: "granted", gate: "user", scope: "session" },
+      {
+        tool: "bash",
+        callId: "c1",
+        verdict: "granted",
+        gate: "user",
+        scope: "session",
+        asked: true,
+      },
+      {
+        tool: "bash",
+        callId: "c2",
+        verdict: "granted",
+        gate: "user",
+        scope: "session",
+        asked: false,
+      },
     ]);
     expect(await (await h.call("/permissions")).json()).toMatchObject({
       workspace: [],
@@ -733,7 +748,14 @@ describe("ask scopes and grants", () => {
     await post(h, "/asks/c1", { verdict: "granted", scope: "workspace" });
     const frames = await collect(reader, (event) => event === "turn.completed");
     expect(decisions(frames)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "workspace" },
+      {
+        tool: "bash",
+        callId: "c1",
+        verdict: "granted",
+        gate: "user",
+        scope: "workspace",
+        asked: true,
+      },
     ]);
     expect(await (await h.call("/permissions")).json()).toMatchObject({
       workspace: [pushRule],
@@ -847,12 +869,26 @@ describe("ask scopes and grants", () => {
     expect(surfaceKinds(built)).toEqual(["permissions", "permissions"]);
     expect(built.some((frame) => frame.event === "gate.ask")).toBe(false);
     expect(decisions(built)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "workspace" },
+      {
+        tool: "bash",
+        callId: "c1",
+        verdict: "granted",
+        gate: "user",
+        scope: "workspace",
+        asked: false,
+      },
     ]);
     await post(h, `/sessions/${id}/prompt`, { text: "push" });
     const pushed = await collect(reader, (event) => event === "turn.completed");
     expect(decisions(pushed)).toEqual([
-      { tool: "bash", callId: "c2", verdict: "granted", gate: "user", scope: "session" },
+      {
+        tool: "bash",
+        callId: "c2",
+        verdict: "granted",
+        gate: "user",
+        scope: "session",
+        asked: false,
+      },
     ]);
 
     expect((await post(h, "/permissions/workspace/revoke", { rule: npmRule })).status).toBe(200);
@@ -898,11 +934,19 @@ describe("ask scopes and grants", () => {
         verdict: "granted",
         gate: "user",
         scope: "workspace",
+        asked: false,
       },
     ]);
     await post(h, `/sessions/${id}/prompt`, { text: "issue" });
     expect(decisions(await collect(reader, (event) => event === "turn.completed"))).toEqual([
-      { tool: "jira__get_issue", callId: "c2", verdict: "granted", gate: "user", scope: "session" },
+      {
+        tool: "jira__get_issue",
+        callId: "c2",
+        verdict: "granted",
+        gate: "user",
+        scope: "session",
+        asked: false,
+      },
     ]);
     await reader.close();
   });

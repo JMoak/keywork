@@ -14,6 +14,7 @@ export interface PermissionDecision {
   verdict: PermissionVerdict;
   gate: PermissionGate;
   scope?: AskScope;
+  asked?: boolean;
 }
 
 export type AskRule = Extract<PermissionGate, "policy" | "default" | "trusted">;
@@ -25,6 +26,30 @@ export interface PermissionAsk {
   rule: AskRule;
   rules: PermissionRule[];
   preview?: ToolPreview;
+}
+
+export interface JournaledAsk {
+  tool: string;
+  callId: string;
+  rule: AskRule;
+  rules: PermissionRule[];
+  change?: AskedChange;
+}
+
+export interface AskedChange {
+  creates: boolean;
+  linesBefore: number;
+  linesAfter: number;
+}
+
+export function journaledAsk(ask: PermissionAsk): JournaledAsk {
+  return {
+    tool: ask.tool,
+    callId: ask.callId,
+    rule: ask.rule,
+    rules: ask.rules,
+    ...(ask.preview !== undefined && { change: changeOf(ask.preview) }),
+  };
 }
 
 export type InjectionSource =
@@ -43,6 +68,7 @@ export interface ContextInjection {
 }
 
 export type JournalEvent =
+  | { type: "permission_ask"; ask: JournaledAsk }
   | { type: "permission_decision"; decision: PermissionDecision }
   | { type: "preset_change"; from: string; to: string }
   | { type: "mode_change"; mode: string }
@@ -117,6 +143,9 @@ export function tapJournal(
     pending = pending.then(() => recordJournalEvent(target, event)).catch(() => undefined);
   };
   const subscriptions = [
+    bus.on("gate.ask", ({ ask }) => {
+      record({ type: "permission_ask", ask: journaledAsk(ask) });
+    }),
     bus.on("gate.permission", ({ decision, replay }) => {
       if (replay !== true) record({ type: "permission_decision", decision });
     }),
@@ -150,6 +179,8 @@ export function replayJournalEntry(bus: EventBus<EngineEvents>, entry: SessionEn
   const event = entry.type === "custom" ? journalEventOf(entry) : undefined;
   if (event === undefined) return;
   switch (event.type) {
+    case "permission_ask":
+      return;
     case "permission_decision":
       bus.emit("gate.permission", { decision: event.decision, replay: true });
       return;
@@ -171,9 +202,24 @@ export function replayJournalEntry(bus: EventBus<EngineEvents>, entry: SessionEn
   }
 }
 
+function changeOf(preview: ToolPreview): AskedChange {
+  return {
+    creates: preview.before === null,
+    linesBefore: lineCount(preview.before ?? ""),
+    linesAfter: lineCount(preview.after),
+  };
+}
+
+function lineCount(text: string): number {
+  if (text === "") return 0;
+  return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+}
+
 function journalEventOf(entry: CustomEntry): JournalEvent | undefined {
   const data = (entry.data ?? {}) as Record<string, unknown>;
   switch (entry.customType) {
+    case "permission_ask":
+      return { type: "permission_ask", ask: data.ask as JournaledAsk };
     case "permission_decision":
       return { type: "permission_decision", decision: data.decision as PermissionDecision };
     case "preset_change":

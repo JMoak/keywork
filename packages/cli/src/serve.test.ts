@@ -332,7 +332,7 @@ describe("fileSessionHost permission layers", () => {
     const beforeAsk = await turn.until("gate.ask");
     expect(beforeAsk.some((frame) => frame.event === "tool.output")).toBe(true);
     expect(decisionsIn(beforeAsk)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted" },
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted", asked: false },
     ]);
     await served.call("/asks/c2", json({ verdict: "denied" }));
     await turn.until("turn.completed");
@@ -382,8 +382,22 @@ describe("fileSessionHost permission layers", () => {
     const frames = await turn.until("turn.completed");
     expect(frames.some((frame) => frame.event === "gate.ask")).toBe(false);
     expect(decisionsIn(frames)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "session" },
-      { tool: "bash", callId: "c2", verdict: "granted", gate: "user", scope: "session" },
+      {
+        tool: "bash",
+        callId: "c1",
+        verdict: "granted",
+        gate: "user",
+        scope: "session",
+        asked: true,
+      },
+      {
+        tool: "bash",
+        callId: "c2",
+        verdict: "granted",
+        gate: "user",
+        scope: "session",
+        asked: false,
+      },
     ]);
     expect(await (await served.call("/permissions")).json()).toMatchObject({
       workspace: [],
@@ -425,7 +439,14 @@ describe("fileSessionHost permission layers", () => {
     const granted = await prompted(reopened, id, "print again");
     const frames = await granted.until("turn.completed");
     expect(decisionsIn(frames)).toEqual([
-      { tool: "bash", callId: "c2", verdict: "granted", gate: "user", scope: "workspace" },
+      {
+        tool: "bash",
+        callId: "c2",
+        verdict: "granted",
+        gate: "user",
+        scope: "workspace",
+        asked: false,
+      },
     ]);
     await granted.close();
 
@@ -518,7 +539,14 @@ describe("fileSessionHost permission layers", () => {
     const turn = await prompted(reopened, id, "print");
     const frames = await turn.until("turn.completed");
     expect(decisionsIn(frames)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "workspace" },
+      {
+        tool: "bash",
+        callId: "c1",
+        verdict: "granted",
+        gate: "user",
+        scope: "workspace",
+        asked: false,
+      },
     ]);
     await turn.close();
     await reopened.server.close();

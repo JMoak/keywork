@@ -75,7 +75,7 @@ describe("guardedShellEscape", () => {
     expect(runs).toEqual(["echo hi"]);
     expect(result).toEqual({ output: "ran echo hi", isError: false });
     expect(decisions).toEqual([
-      { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "user" },
+      { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "user", asked: true },
     ]);
   });
 
@@ -91,7 +91,10 @@ describe("guardedShellEscape", () => {
     await port.run(call);
 
     expect(reported).toEqual([
-      [{ tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "trusted" }, call],
+      [
+        { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "trusted", asked: false },
+        call,
+      ],
     ]);
   });
 
@@ -113,8 +116,15 @@ describe("guardedShellEscape", () => {
 
     expect(runs).toEqual(["echo hi"]);
     expect(decisions).toEqual([
-      { tool: "bash", callId: "user-shell-1", verdict: "denied", gate: "user" },
-      { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "user", scope: "session" },
+      { tool: "bash", callId: "user-shell-1", verdict: "denied", gate: "user", asked: true },
+      {
+        tool: "bash",
+        callId: "user-shell-1",
+        verdict: "granted",
+        gate: "user",
+        scope: "session",
+        asked: true,
+      },
     ]);
   });
 

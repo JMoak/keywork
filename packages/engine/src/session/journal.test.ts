@@ -12,6 +12,7 @@ import {
   type ExtensionState,
   extensionState,
   journalEvents,
+  journaledAsk,
   recordJournalEvent,
   tapJournal,
 } from "./journal.ts";
@@ -196,8 +197,142 @@ describe("agent gate decisions on the journal", () => {
     tap.stop();
 
     expect(extensionState(store.activePath()).decisions).toEqual([
-      { tool: "noop", callId: "c1", verdict: "granted", gate: "user" },
-      { tool: "blocked", callId: "c2", verdict: "denied", gate: "policy" },
+      { tool: "noop", callId: "c1", verdict: "granted", gate: "user", asked: true },
+      { tool: "blocked", callId: "c2", verdict: "denied", gate: "policy", asked: false },
+    ]);
+  });
+
+  it("tells an answered ask apart from a call a standing grant covered", async () => {
+    const provider = new MockProvider([
+      [
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "c1", name: "noop", arguments: {} },
+        },
+        { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
+      ],
+      textTurn("done"),
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [mutatingNoop()],
+      guard: { confirm: async () => true },
+      permissions: () => ({ permission: "allow", gate: "user", scope: "session" }),
+    });
+    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), "/work");
+    const tap = tapJournal(agent.bus, store);
+
+    await agent.send("go");
+    await tap.flush();
+    tap.stop();
+
+    expect(journalEvents(store.entries())).toEqual([
+      {
+        type: "permission_decision",
+        decision: {
+          tool: "noop",
+          callId: "c1",
+          verdict: "granted",
+          gate: "user",
+          scope: "session",
+          asked: false,
+        },
+      },
     ]);
   });
 });
+
+describe("asks on the journal", () => {
+  async function sessionWithAnAskedEdit(): Promise<{ file: string; store: SessionStore }> {
+    const edit = defineTool({
+      name: "edit",
+      description: "edits a file",
+      schema: z.object({ path: z.string() }),
+      mutates: true,
+      run: async () => "edited",
+      preview: async () => ({ path: "a.ts", before: "one\ntwo\n", after: "one\n" }),
+    });
+    const provider = new MockProvider([
+      [
+        {
+          type: "tool-call",
+          call: { type: "tool-call", callId: "c1", name: "edit", arguments: { path: "a.ts" } },
+        },
+        { type: "done", usage: { inputTokens: 0, outputTokens: 0 } },
+      ],
+      textTurn("done"),
+    ]);
+    const agent = new Agent({ provider, tools: [edit], guard: { confirm: async () => false } });
+    const file = join(await tempDir(), "session.jsonl");
+    const store = await SessionStore.create(file, "/work");
+    const tap = tapJournal(agent.bus, store);
+    await agent.send("go");
+    await tap.flush();
+    tap.stop();
+    return { file, store };
+  }
+
+  it("journals what was asked and the size of the change, never its arguments or text", async () => {
+    const { file, store } = await sessionWithAnAskedEdit();
+
+    const raw = await readFile(file, "utf8");
+
+    expect(journalEvents(store.entries())[0]).toEqual({
+      type: "permission_ask",
+      ask: {
+        tool: "edit",
+        callId: "c1",
+        rule: "default",
+        rules: [],
+        change: { creates: false, linesBefore: 2, linesAfter: 1 },
+      },
+    });
+    expect(raw).not.toContain('"before"');
+    expect(raw).toContain('"customType":"permission_ask"');
+  });
+
+  it("orders the ask before the answer it received", async () => {
+    const { store } = await sessionWithAnAskedEdit();
+
+    expect(journalEvents(store.entries()).map((event) => event.type)).toEqual([
+      "permission_ask",
+      "permission_decision",
+    ]);
+  });
+
+  it("never replays an ask, so a resumed session cannot ask again", async () => {
+    const { file } = await sessionWithAnAskedEdit();
+    const reopened = await SessionStore.open(file);
+    const bus = new EventBus<EngineEvents>();
+    const seen: string[] = [];
+    bus.on("gate.ask", () => seen.push("ask"));
+    bus.on("gate.permission", () => seen.push("decision"));
+
+    replaySession(reopened, bus);
+
+    expect(seen).toEqual(["decision"]);
+  });
+
+  it("marks a file the call would create", () => {
+    expect(
+      journaledAsk({
+        tool: "write",
+        callId: "c1",
+        arguments: { path: "new.ts", content: "x\n" },
+        rule: "default",
+        rules: [],
+        preview: { path: "new.ts", before: null, after: "x\n" },
+      }).change,
+    ).toEqual({ creates: true, linesBefore: 0, linesAfter: 1 });
+  });
+});
+
+function mutatingNoop() {
+  return defineTool({
+    name: "noop",
+    description: "does nothing",
+    schema: z.object({}),
+    mutates: true,
+    run: async () => "ok",
+  });
+}

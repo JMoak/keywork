@@ -1,4 +1,4 @@
-export type { DestructiveRemembrance } from "./destructive-commands.ts";
+export { type DestructiveRemembrance, isDestructiveCommand } from "./destructive-commands.ts";
 export { GrantStore, GrantStoreError, type GrantStoreOptions } from "./grant-store.ts";
 export {
   type AskScope,
@@ -14,6 +14,8 @@ export {
   withRules,
 } from "./grants.ts";
 export {
+  commandParts,
+  isOpaqueCommandPart,
   type LayeredPolicy,
   layeredPolicy,
   type PermissionPolicy,

@@ -1040,14 +1040,17 @@ export {
   type TurnRestorePoint,
 } from "./session/entries.ts";
 export {
+  type AskedChange,
   type AskRule,
   type ContextInjection,
   type ExtensionState,
   extensionState,
   type InjectionSource,
   type JournalEvent,
+  type JournaledAsk,
   type JournalTap,
   journalEvents,
+  journaledAsk,
   type PermissionAsk,
   type PermissionDecision,
   type PermissionGate,

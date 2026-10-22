@@ -420,6 +420,7 @@ async function runSessions(
       tree: values.tree,
       out: values.out,
       cwd: context.cwd,
+      env: context.io.env,
       yes: values.yes,
       ...commandIo(context),
       confirm: terminalConfirm(),

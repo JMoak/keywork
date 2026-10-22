@@ -149,7 +149,14 @@ const samples: Samples = {
   ],
   "gate.permission": [
     {
-      decision: { tool: "bash", callId: "c1", verdict: "granted", gate: "user", scope: "session" },
+      decision: {
+        tool: "bash",
+        callId: "c1",
+        verdict: "granted",
+        gate: "user",
+        scope: "session",
+        asked: true,
+      },
     },
   ],
   "gate.preset": [{ from: "ask", to: "trusted" }],

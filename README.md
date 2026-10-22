@@ -91,6 +91,7 @@ Then:
 keywork                       # tiled multi-session workspace
 keywork run "fix the tests"   # one-shot headless run (--json for scripts and CI)
 keywork sessions tree         # inspect and fork session trees
+keywork sessions decisions    # tool-call decisions as JSON Lines, scrubbed
 keywork trust                 # grant this workspace the next rung of trust
 ```
 
