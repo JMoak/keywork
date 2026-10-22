@@ -198,16 +198,28 @@
         }
       }
     ],
-    "gate.permission": {
-      "decision": {
-        "asked": "boolean",
-        "callId": "string",
-        "gate": "string",
-        "scope": "string",
-        "tool": "string",
-        "verdict": "string"
+    "gate.permission": [
+      {
+        "decision": {
+          "asked": "boolean",
+          "callId": "string",
+          "gate": "string",
+          "scope": "string",
+          "tool": "string",
+          "verdict": "string"
+        }
+      },
+      {
+        "decision": {
+          "asked": "boolean",
+          "callId": "string",
+          "gate": "string",
+          "reason": "string",
+          "tool": "string",
+          "verdict": "string"
+        }
       }
-    },
+    ],
     "gate.preset": {
       "from": "string",
       "to": "string"

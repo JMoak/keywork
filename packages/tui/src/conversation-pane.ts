@@ -748,6 +748,7 @@ export class ConversationPane implements Pane {
 
 const askControls = "  [y] allow  [a] always  [n] deny";
 const onceOnlyAskControls = "  [y] allow  [n] deny";
+const denyReasonControls = "  why?  [u] unsafe  [n] not now  [o] other";
 
 export const queueEditHint =
   "queue · ↑↓ pick · shift+↑↓ move · backspace cancels · enter sends now · esc done";
@@ -765,13 +766,20 @@ function queuedRow(
 }
 
 function askRow(ask: PendingAsk, paneWidth: number, theme: Palette) {
-  const controls = ask.remembers.length > 0 ? askControls : onceOnlyAskControls;
+  const controls = askControlsFor(ask);
   const room = Math.max(0, paneWidth - controls.length - 2);
   return Text({ content: `? ${clip(ask.summary, room)}${controls}`, fg: theme.accent });
 }
 
-export function askRememberHint(ask: Pick<PendingAsk, "remembers">): string | undefined {
-  if (ask.remembers.length === 0) return undefined;
+function askControlsFor(ask: Pick<PendingAsk, "remembers" | "stage">): string {
+  if (ask.stage === "reason") return denyReasonControls;
+  return ask.remembers.length > 0 ? askControls : onceOnlyAskControls;
+}
+
+export function askRememberHint(
+  ask: Pick<PendingAsk, "remembers"> & Partial<Pick<PendingAsk, "stage">>,
+): string | undefined {
+  if (ask.remembers.length === 0 || ask.stage === "reason") return undefined;
   const labels = ask.remembers.map((rule) => ruleLabel(rule)).join(" · ");
   return `  [a] remembers ${labels} for this session`;
 }

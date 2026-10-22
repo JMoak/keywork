@@ -49,7 +49,12 @@ export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
 
 export type Confirmation =
   | boolean
-  | { approved: boolean; gate: ConfirmingGate; scope?: AskScope | undefined };
+  | {
+      approved: boolean;
+      gate: ConfirmingGate;
+      scope?: AskScope | undefined;
+      reason?: PermissionDecision["reason"];
+    };
 
 export interface ToolGuard {
   confirm?(call: ToolCallPart, ask?: PermissionAsk): Promise<Confirmation>;
@@ -641,6 +646,7 @@ export class Agent {
           gate: ask === undefined ? ruling.gate : answeredBy,
           asked: ask !== undefined,
           scope: answer.scope,
+          ...(!answer.approved && answer.reason !== undefined && { reason: answer.reason }),
         });
         if (!answer.approved) {
           this.declineEndedRun = this.guard?.declineEndsRun === true;
@@ -685,6 +691,7 @@ export class Agent {
         verdict: ruled.verdict,
         gate: ruled.gate,
         ...(ruled.scope !== undefined && { scope: ruled.scope }),
+        ...(ruled.reason !== undefined && { reason: ruled.reason }),
         asked: ruled.asked,
       },
     });
@@ -751,12 +758,14 @@ interface RuledCall {
   gate: PermissionDecision["gate"];
   asked: boolean;
   scope?: AskScope | undefined;
+  reason?: PermissionDecision["reason"];
 }
 
 interface AnsweredConfirmation {
   approved: boolean;
   gate: ConfirmingGate | undefined;
   scope?: AskScope | undefined;
+  reason?: PermissionDecision["reason"];
 }
 
 function scopeOf(ruling: GateRuling): GrantedScope | undefined {

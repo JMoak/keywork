@@ -117,6 +117,38 @@ describe("tool decisions from a session journal", () => {
     expect(record.answer.afterMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("exports why a person denied, and nothing for a grant", async () => {
+    const { store } = await newSession();
+    await called(store, "c1", "bash", { command: "ls -la" });
+    await journaled(
+      store,
+      askFor("c1"),
+      decided({
+        tool: "bash",
+        callId: "c1",
+        verdict: "denied",
+        gate: "user",
+        asked: true,
+        reason: "not-now",
+      }),
+    );
+
+    expect(onlyRecord(store).answer).toMatchObject({
+      verdict: "denied",
+      by: "person",
+      reason: "not-now",
+    });
+
+    const granted = await newSession();
+    await called(granted.store, "c2", "bash", { command: "ls -la" });
+    await journaled(
+      granted.store,
+      askFor("c2"),
+      decided({ tool: "bash", callId: "c2", verdict: "granted", gate: "user", asked: true }),
+    );
+    expect(onlyRecord(granted.store).answer).not.toHaveProperty("reason");
+  });
+
   it("tells a standing grant apart from a person's answer", async () => {
     const { store } = await newSession();
     await called(store, "c1", "bash", { command: "git status" });

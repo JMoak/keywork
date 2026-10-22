@@ -7,6 +7,7 @@ import type { SessionStore } from "./store.ts";
 
 export type PermissionVerdict = "granted" | "denied";
 export type PermissionGate = "policy" | "default" | "trusted" | "user" | "headless";
+export type DenyReason = "unsafe" | "not-now" | "other";
 
 export interface PermissionDecision {
   tool: string;
@@ -15,6 +16,7 @@ export interface PermissionDecision {
   gate: PermissionGate;
   scope?: AskScope;
   asked?: boolean;
+  reason?: DenyReason;
 }
 
 export type AskRule = Extract<PermissionGate, "policy" | "default" | "trusted">;

@@ -147,6 +147,8 @@ describe("the lifecycle stamp", () => {
     expect(borderOf(pane, false)).not.toBe(restingBorder);
 
     pane.handleKey(parseChord("n"), undefined);
+    expect(pane.lifecycle()).toBe("needs-you");
+    pane.handleKey(parseChord("u"), undefined);
     expect(await decision).toBe(false);
     expect(titleOf(pane, true)).not.toContain("█");
     expect(pane.lifecycle()).toBe("idle");
@@ -195,6 +197,7 @@ describe("the lifecycle stamp", () => {
     expect(new Set(grounds).size).toBe(tempos.quick.steps);
 
     pane.handleKey(parseChord("n"), undefined);
+    pane.handleKey(parseChord("o"), undefined);
     expect(groundOf(pane, true)).not.toBe(hue);
   });
 
@@ -291,6 +294,7 @@ describe("the lifecycle stamp", () => {
     expect(seen).toEqual(new Set(["█", "▓"]));
 
     pane.handleKey(parseChord("n"), undefined);
+    pane.handleKey(parseChord("o"), undefined);
     expect(titleOf(pane, true)).toBe(" session-1 ");
   });
 });
@@ -342,6 +346,10 @@ describe("the masthead tile", () => {
     expect(askAt).toBeGreaterThanOrEqual(0);
     expect(rows[askAt + 1]).toBe("  [a] remembers bash git push * for this session");
     pane.handleKey(parseChord("n"), undefined);
+    const asking = frame(pane, true, 80).join("\n");
+    expect(asking).toContain("why?  [u] unsafe  [n] not now  [o] other");
+    expect(asking).not.toContain("remembers");
+    pane.handleKey(parseChord("o"), undefined);
 
     const write = pane.confirmMutation({
       type: "tool-call",
@@ -353,6 +361,7 @@ describe("the masthead tile", () => {
     expect(writeRows).toContain("[y] allow  [n] deny");
     expect(writeRows).not.toContain("remembers");
     pane.handleKey(parseChord("n"), undefined);
+    pane.handleKey(parseChord("o"), undefined);
     return Promise.all([shell, write]);
   });
 
@@ -367,6 +376,7 @@ describe("the masthead tile", () => {
     expect(frame(pane, false, 36).join("\n")).toContain("[y] allow");
     expect(frame(pane, true, 36).join("\n")).toContain("[y] allow");
     pane.handleKey(parseChord("n"), undefined);
+    pane.handleKey(parseChord("o"), undefined);
     return decision;
   });
 

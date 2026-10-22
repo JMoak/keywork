@@ -1043,6 +1043,7 @@ export {
   type AskedChange,
   type AskRule,
   type ContextInjection,
+  type DenyReason,
   type ExtensionState,
   extensionState,
   type InjectionSource,

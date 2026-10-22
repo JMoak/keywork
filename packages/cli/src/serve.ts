@@ -318,7 +318,8 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
       summaryOf: storedSummary,
     }),
     asks: async () => asks.list(),
-    answerAsk: async (callId, verdict, scope) => asks.answer(callId, verdict, scope),
+    answerAsk: async (callId, verdict, scope, reason) =>
+      asks.answer(callId, verdict, scope, reason),
     permissions: async () => ledger.view(),
     grantWorkspaceRule: async (rule) => ledger.record("", "workspace", [rule]),
     grantSessionRule: async (sessionId, rule) => {

@@ -51,6 +51,7 @@ describe("the unconfined ask", () => {
     expect(gate.pending?.diff).toBeUndefined();
     expect(gate.pending?.remembers).toEqual([]);
     gate.handleKey(parseChord("n"), askRows);
+    gate.handleKey(parseChord("o"), askRows);
     expect(await answer).toBe(false);
   });
 

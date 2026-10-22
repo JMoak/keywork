@@ -1137,6 +1137,7 @@ describe("! shell escape", () => {
     model.submitText("!echo again");
     await untilAsked(model);
     model.handleKey(parseChord("n"), "n");
+    model.handleKey(parseChord("o"), "o");
     await drained(model);
 
     expect(runs).toEqual(["echo hi"]);

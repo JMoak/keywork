@@ -1,3 +1,4 @@
+import type { DenyReason } from "@keywork/engine";
 import type { AskScope } from "@keywork/shared";
 import type { AnswerOutcome, AskVerdict } from "../asks.ts";
 import { surfaceChanged } from "./answers.ts";
@@ -16,6 +17,7 @@ export const askRefusals = {
 } as const;
 
 const askScopes = ["once", "session", "workspace"] as const satisfies readonly AskScope[];
+const denyReasons = ["unsafe", "not-now", "other"] as const satisfies readonly DenyReason[];
 
 const askAnswerBody: JsonSchema = {
   type: "object",
@@ -23,6 +25,7 @@ const askAnswerBody: JsonSchema = {
   properties: {
     verdict: { type: "string", enum: ["granted", "denied"] },
     scope: { type: "string", enum: [...askScopes], default: "once" },
+    reason: { type: "string", enum: [...denyReasons] },
   },
   additionalProperties: false,
 };
@@ -42,13 +45,13 @@ export const askRoutes = [
     path: "/asks/{callId}",
     operationId: "answerAsk",
     summary:
-      'Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: "user"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask\'s `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: "permissions"`.',
+      'Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: "user"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask\'s `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope` and may say why with `reason`: `unsafe` (the call should not run), `not-now` (the moment, not the call) or `other`; a grant ignores `reason`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: "permissions"`.',
     authenticated: true,
     requestBody: askAnswerBody,
     responses: {
       "200": "The ask was settled.",
       "400":
-        'The body is not `{ verdict: "granted" | "denied", scope?: "once" | "session" | "workspace" }`, or the call cannot be granted beyond `once` (`write` and `edit` never can, nor a command with no part to remember).',
+        'The body is not `{ verdict: "granted" | "denied", scope?: "once" | "session" | "workspace", reason?: "unsafe" | "not-now" | "other" }`, or the call cannot be granted beyond `once` (`write` and `edit` never can, nor a command with no part to remember).',
       "404": "No ask with that callId is pending.",
       "409": "That ask was already answered or timed out.",
     },
@@ -64,10 +67,15 @@ export const askFamily = {
       if (answer === undefined) {
         return json(400, {
           error:
-            'the body must be { verdict: "granted" | "denied", scope?: "once" | "session" | "workspace" }',
+            'the body must be { verdict: "granted" | "denied", scope?: "once" | "session" | "workspace", reason?: "unsafe" | "not-now" | "other" }',
         });
       }
-      const outcome = await host.answerAsk(callId ?? "", answer.verdict, answer.scope);
+      const outcome = await host.answerAsk(
+        callId ?? "",
+        answer.verdict,
+        answer.scope,
+        answer.reason,
+      );
       if (outcome !== "settled") return refusalOf(outcome);
       if (recordsGrant(answer)) surfaceChanged(log, "permissions");
       return json(200, { callId, settled: true });
@@ -78,14 +86,22 @@ export const askFamily = {
 interface AskAnswer {
   verdict: AskVerdict;
   scope: AskScope;
+  reason?: DenyReason;
 }
 
 function askAnswerOf(body: unknown): AskAnswer | undefined {
-  const fields = fieldsOf<{ verdict: unknown; scope: unknown }>(body);
+  const fields = fieldsOf<{ verdict: unknown; scope: unknown; reason: unknown }>(body);
   const verdict = fields?.verdict;
   const scope = fields?.scope ?? "once";
+  const reason = fields?.reason;
   if (verdict !== "granted" && verdict !== "denied") return undefined;
-  return isAskScope(scope) ? { verdict, scope } : undefined;
+  if (!isAskScope(scope)) return undefined;
+  if (reason === undefined) return { verdict, scope };
+  return isDenyReason(reason) ? { verdict, scope, reason } : undefined;
+}
+
+function isDenyReason(reason: unknown): reason is DenyReason {
+  return (denyReasons as readonly unknown[]).includes(reason);
 }
 
 function recordsGrant({ verdict, scope }: AskAnswer): boolean {

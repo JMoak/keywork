@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.3",
+    "x-keywork-contract": "1.4",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -248,7 +248,7 @@
     "/asks/{callId}": {
       "post": {
         "operationId": "answerAsk",
-        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask's `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: \"permissions\"`.",
+        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask's `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope` and may say why with `reason`: `unsafe` (the call should not run), `not-now` (the moment, not the call) or `other`; a grant ignores `reason`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: \"permissions\"`.",
         "parameters": [
           {
             "name": "callId",
@@ -275,6 +275,10 @@
                     "type": "string",
                     "enum": ["once", "session", "workspace"],
                     "default": "once"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": ["unsafe", "not-now", "other"]
                   }
                 },
                 "additionalProperties": false
@@ -287,7 +291,7 @@
             "description": "The ask was settled."
           },
           "400": {
-            "description": "The body is not `{ verdict: \"granted\" | \"denied\", scope?: \"once\" | \"session\" | \"workspace\" }`, or the call cannot be granted beyond `once` (`write` and `edit` never can, nor a command with no part to remember)."
+            "description": "The body is not `{ verdict: \"granted\" | \"denied\", scope?: \"once\" | \"session\" | \"workspace\", reason?: \"unsafe\" | \"not-now\" | \"other\" }`, or the call cannot be granted beyond `once` (`write` and `edit` never can, nor a command with no part to remember)."
           },
           "404": {
             "description": "No ask with that callId is pending."

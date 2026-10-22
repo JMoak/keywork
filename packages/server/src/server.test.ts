@@ -537,7 +537,15 @@ describe("asks", () => {
     expect(JSON.parse(asked.at(-1)?.data ?? "{}").payload.ask.preview).toEqual(preview);
     const listed = (await (await h.call("/asks")).json()) as { asks: unknown[] };
     expect(listed.asks).toEqual([expect.objectContaining({ callId: "c1", preview })]);
-    await post(h, "/asks/c1", JSON.stringify({ verdict: "denied" }));
+    const vague = await post(h, "/asks/c1", JSON.stringify({ verdict: "denied", reason: "meh" }));
+    expect(vague.status).toBe(400);
+    await post(h, "/asks/c1", JSON.stringify({ verdict: "denied", reason: "unsafe" }));
+    const decided = await collect(reader, (event) => event === "gate.permission");
+    expect(JSON.parse(decided.at(-1)?.data ?? "{}").payload.decision).toMatchObject({
+      callId: "c1",
+      verdict: "denied",
+      reason: "unsafe",
+    });
     await collect(reader, (event) => event === "turn.completed");
     await reader.close();
   });

@@ -86,7 +86,7 @@ sandbox's unconfined consent are not agent calls and are skipped).
 | `callId`, `at`, `tool` | The call, when the decision was journaled, and the tool's name. |
 | `subject` | `{ kind: "command", command, truncated, parts, destructive, opaque }` for `bash`; `{ kind: "path", path, insideWorkspace, change? }` for `read`, `write` and `edit`, where `change` is `{ kind: "write", lines }` or `{ kind: "edit", removedLines, addedLines, replaceAll }`; `{ kind: "call", arguments, truncated }` for anything else, its arguments scrubbed and capped at 1,000 characters. |
 | `ask` | Present when the ask was journaled: `{ at, rule, grantable, change? }`. |
-| `answer` | `{ at, verdict, gate, scope?, by, afterMs? }`. `by` is `person`, `headless`, `grant`, `rule` or `unknown`; `afterMs` is the time from the ask to the answer. |
+| `answer` | `{ at, verdict, gate, scope?, by, afterMs?, reason? }`. `by` is `person`, `headless`, `grant`, `rule` or `unknown`; `afterMs` is the time from the ask to the answer; `reason` is why a person denied (`unsafe`, `not-now` or `other`, contract 1.4), absent on a grant and on a denial answered without one. |
 | `result` | `{ isError }` for a granted call that ran. |
 
 `by` reads `asked` when the decision has it. An older decision is read conservatively: a denial,
@@ -100,9 +100,11 @@ with `session` or `workspace` scope is `unknown`, since it may be an answer or a
 | TD1 | `asked` on every `PermissionDecision`: the agent, the sandbox's unconfined consent, the shell escape; contract 1.3 | 1 | landed 2026-10-21 |
 | TD2 | `permission_ask` journal entry from `gate.ask`, never replayed | 1 | landed 2026-10-21 |
 | TD3 | `keywork sessions decisions [--out <path>]` and the record above | 2 | landed 2026-10-21 |
-| TD4 | keywork-app: refresh its contract fixtures (`client/src/fixtures/doc.json`, the protocol event fixtures) from 1.2 to 1.3 | 1 | open, in keywork-app |
+| TD4 | keywork-app: refresh its contract fixtures (`client/src/fixtures/doc.json`, the protocol event fixtures) from 1.2 to 1.4 | 1 | open, in keywork-app |
 | TD5 | Shared redaction: the long-token rule counts `/` as a token character, so a long path with mixed case and digits is redacted whole (`C:‹redacted:token›.ts`). The export keeps paths out of shape scrubbing; commands still lose such paths, which errs safe but costs the decider a fact | 1 | open, observed |
 | TD6 | A tool-call decider port in the trust gate that may answer an ask in enforce mode, never for a destructive part, only once Ratchet's evidence clears TD-D3 | 3 | not started; needs its own overlay |
+| TD7 | `reason` on a person's denial: one more key after `n` in the TUI (`[u] unsafe  [n] not now  [o] other`), `reason` on `POST /asks/{callId}`, carried on `PermissionDecision`, journaled and exported; contract 1.4 | 2 | landed 2026-10-22 |
+| TD8 | keywork-app: offer the reason on a denial and send it with `POST /asks/{callId}` | 1 | open, in keywork-app |
 
 ## What this does not decide
 
@@ -123,3 +125,17 @@ decider would be configured. Those wait for evidence, and for an overlay of thei
   scrubbing, the cap, paths and home, no file text, skipped non-agent decisions, results only
   for calls that ran, delegated children, the command), and the existing suites updated where
   they assert whole decisions.
+- **2026-10-22 · TD7.** Why: Ratchet's first smoke run over this machine's nine answers found
+  `ls -la` denied once beside four approvals of it. That denial judged the moment, not the
+  call, and a decider scored against it could never be right. `engine/src/session/journal.ts`
+  (`DenyReason`, `reason` on `PermissionDecision`), `engine/src/agent.ts` (`reason` on a
+  `Confirmation` and on the decision of a denied ask), `tui/src/mutation-ask.ts` (the `reason`
+  stage after `n`; a closed pane and an agent swap answer `not-now`),
+  `tui/src/conversation-pane.ts` (the stage's controls), `server/src/asks.ts`,
+  `server/src/routes/asks.ts` (`reason` in the body and the OpenAPI document),
+  `server/src/client.ts`, `server/src/host.ts`, `cli/src/serve.ts`,
+  `cli/src/sessions/decisions.ts` (`answer.reason`), `server/src/contract.ts` 1.4 with
+  regenerated fixtures, [`../events.md`](../events.md). Tests: `tui/src/mutation-ask.test.ts`
+  (the reason stage, each key, a closed pane), `server/src/server.test.ts` (a reason reaches
+  the decision), `cli/src/sessions/decisions.test.ts` (a reason is exported), and the pane and
+  model suites updated to answer the second key.

@@ -1,15 +1,23 @@
-import type { Confirmation, ToolCallPart } from "@keywork/engine";
+import type { Confirmation, DenyReason, ToolCallPart } from "@keywork/engine";
 import { grantCandidates, type PermissionRule, SessionGrants } from "@keywork/shared";
 import { type DiffLine, type FileReader, mutationDiff } from "./diff-render.ts";
 import type { Chord } from "./keys.ts";
 import { compactJson } from "./transcript-feed.ts";
+
+export type AskStage = "verdict" | "reason";
+
+export interface AskAnswer {
+  allowed: boolean;
+  reason?: DenyReason;
+}
 
 export interface PendingAsk {
   summary: string;
   diff?: DiffLine[];
   remembers: readonly PermissionRule[];
   call: ToolCallPart;
-  resolve(allowed: boolean): void;
+  stage: AskStage;
+  resolve(answer: AskAnswer): void;
 }
 
 export interface AskDiffWindow {
@@ -42,27 +50,18 @@ export class MutationAsk {
   }
 
   confirm(call: ToolCallPart): Promise<boolean> {
-    if (this.closed) return Promise.resolve(false);
-    if (this.grants.covers(call.name, call.arguments)) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      const diff =
-        this.readFile === undefined
-          ? undefined
-          : mutationDiff(call.name, call.arguments, this.readFile);
-      this.asks.push({
-        summary: `${call.name} ${compactJson(call.arguments)}`,
-        ...(diff !== undefined && { diff }),
-        remembers: grantCandidates(call.name, call.arguments),
-        call,
-        resolve,
-      });
-      this.notify();
-    });
+    return this.answered(call).then((answer) => answer.allowed);
   }
 
   confirmation(call: ToolCallPart): Promise<Confirmation> {
-    if (this.closed || !this.grants.covers(call.name, call.arguments)) return this.confirm(call);
-    return Promise.resolve(coveredBySessionGrant);
+    if (!this.closed && this.grants.covers(call.name, call.arguments)) {
+      return Promise.resolve(coveredBySessionGrant);
+    }
+    return this.answered(call).then(({ allowed, reason }) => ({
+      approved: allowed,
+      gate: "user",
+      ...(reason !== undefined && { reason }),
+    }));
   }
 
   diffWindow(rows: number): AskDiffWindow {
@@ -77,15 +76,25 @@ export class MutationAsk {
     const ask = this.pending;
     if (ask === undefined) return false;
     if (ask.diff !== undefined && this.scrollDiff(chord, pageRows)) return true;
+    if (ask.stage === "reason") {
+      const reason = denyReason(chord);
+      if (reason !== undefined) this.answer({ allowed: false, reason });
+      return true;
+    }
     const verdict = askVerdict(chord);
     if (verdict === undefined) return true;
+    if (verdict === "deny") {
+      ask.stage = "reason";
+      this.notify();
+      return true;
+    }
     if (verdict === "always") this.grants.remember(ask.call.name, ask.call.arguments);
-    this.answer(verdict !== "deny");
+    this.answer({ allowed: true });
     return true;
   }
 
   denyAll(): void {
-    while (this.asks.length > 0) this.answer(false);
+    while (this.asks.length > 0) this.answer({ allowed: false, reason: "not-now" });
   }
 
   close(): void {
@@ -93,10 +102,30 @@ export class MutationAsk {
     this.denyAll();
   }
 
-  private answer(allowed: boolean): void {
+  private answered(call: ToolCallPart): Promise<AskAnswer> {
+    if (this.closed) return Promise.resolve({ allowed: false, reason: "not-now" });
+    if (this.grants.covers(call.name, call.arguments)) return Promise.resolve({ allowed: true });
+    return new Promise((resolve) => {
+      const diff =
+        this.readFile === undefined
+          ? undefined
+          : mutationDiff(call.name, call.arguments, this.readFile);
+      this.asks.push({
+        summary: `${call.name} ${compactJson(call.arguments)}`,
+        ...(diff !== undefined && { diff }),
+        remembers: grantCandidates(call.name, call.arguments),
+        call,
+        stage: "verdict",
+        resolve,
+      });
+      this.notify();
+    });
+  }
+
+  private answer(answer: AskAnswer): void {
     const ask = this.asks.shift();
     this.scroll = 0;
-    ask?.resolve(allowed);
+    ask?.resolve(answer);
     this.notify();
   }
 
@@ -129,6 +158,23 @@ function askVerdict(chord: Chord): "allow" | "always" | "deny" | undefined {
     case "n":
     case "escape":
       return "deny";
+    default:
+      return undefined;
+  }
+}
+
+function denyReason(chord: Chord): DenyReason | undefined {
+  if (chord.ctrl || chord.meta) return undefined;
+  switch (chord.name) {
+    case "u":
+      return "unsafe";
+    case "n":
+      return "not-now";
+    case "o":
+    case "escape":
+    case "return":
+    case "enter":
+      return "other";
     default:
       return undefined;
   }

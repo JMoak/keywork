@@ -88,7 +88,7 @@ describe("palette-surfaced workspace commands", () => {
 
     expect(probe.command("ship")).toBe(true);
     await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
-    probe.keys("n");
+    probe.keys("n", "o");
     await waitFor(() =>
       expect(notices).toEqual(["/ship failed: you declined the shell interpolation: rm -rf /"]),
     );

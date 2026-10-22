@@ -50,6 +50,7 @@ describe("MutationAsk", () => {
       { action: "bash", resource: "git push *", effect: "allow" },
     ]);
     gate.handleKey(parseChord("n"), askRows);
+    gate.handleKey(parseChord("o"), askRows);
     expect(await again).toBe(false);
   });
 
@@ -57,11 +58,45 @@ describe("MutationAsk", () => {
     const gate = new MutationAsk(() => {});
     const first = gate.confirm(writeCall);
     gate.handleKey(parseChord("n"), askRows);
+    gate.handleKey(parseChord("o"), askRows);
     expect(await first).toBe(false);
 
     const second = gate.confirm(writeCall);
     gate.handleKey(parseChord("escape"), askRows);
+    gate.handleKey(parseChord("escape"), askRows);
     expect(await second).toBe(false);
+  });
+
+  it("asks why after a deny and tells the gate the reason", async () => {
+    const gate = new MutationAsk(() => {});
+    const unsafe = gate.confirmation(writeCall);
+    gate.handleKey(parseChord("n"), askRows);
+    expect(gate.pending?.stage).toBe("reason");
+    expect(gate.handleKey(parseChord("y"), askRows)).toBe(true);
+    expect(gate.pending?.stage).toBe("reason");
+    gate.handleKey(parseChord("u"), askRows);
+    expect(await unsafe).toEqual({ approved: false, gate: "user", reason: "unsafe" });
+
+    const notNow = gate.confirmation(writeCall);
+    gate.handleKey(parseChord("n"), askRows);
+    gate.handleKey(parseChord("n"), askRows);
+    expect(await notNow).toEqual({ approved: false, gate: "user", reason: "not-now" });
+
+    const other = gate.confirmation(writeCall);
+    gate.handleKey(parseChord("escape"), askRows);
+    gate.handleKey(parseChord("enter"), askRows);
+    expect(await other).toEqual({ approved: false, gate: "user", reason: "other" });
+
+    const allowed = gate.confirmation(writeCall);
+    gate.handleKey(parseChord("y"), askRows);
+    expect(await allowed).toEqual({ approved: true, gate: "user" });
+  });
+
+  it("answers not now for every ask a closing pane leaves behind", async () => {
+    const gate = new MutationAsk(() => {});
+    const pending = gate.confirmation(writeCall);
+    gate.close();
+    expect(await pending).toEqual({ approved: false, gate: "user", reason: "not-now" });
   });
 
   it("remembers a as the call's derived rule for the rest of the session", async () => {
@@ -81,6 +116,7 @@ describe("MutationAsk", () => {
     const other = gate.confirm(bashCall("rm -rf build"));
     expect(gate.pending?.summary).toContain("rm -rf build");
     gate.handleKey(parseChord("n"), askRows);
+    gate.handleKey(parseChord("o"), askRows);
     expect(await other).toBe(false);
   });
 
@@ -88,7 +124,7 @@ describe("MutationAsk", () => {
     const gate = new MutationAsk(() => {});
     const first = gate.confirmation(bashCall("git push origin main"));
     gate.handleKey(parseChord("a"), askRows);
-    expect(await first).toBe(true);
+    expect(await first).toEqual({ approved: true, gate: "user" });
 
     expect(await gate.confirmation(bashCall("git push origin dev"))).toEqual({
       approved: true,
@@ -98,7 +134,8 @@ describe("MutationAsk", () => {
     const other = gate.confirmation(bashCall("rm -rf build"));
     expect(gate.pending?.summary).toContain("rm -rf build");
     gate.handleKey(parseChord("n"), askRows);
-    expect(await other).toBe(false);
+    gate.handleKey(parseChord("u"), askRows);
+    expect(await other).toEqual({ approved: false, gate: "user", reason: "unsafe" });
   });
 
   it("approves write once on a and keeps asking, since writes never persist", async () => {
@@ -111,6 +148,7 @@ describe("MutationAsk", () => {
     const second = gate.confirm(writeCall);
     expect(gate.pending).toBeDefined();
     gate.handleKey(parseChord("n"), askRows);
+    gate.handleKey(parseChord("o"), askRows);
     expect(await second).toBe(false);
   });
 
@@ -125,6 +163,7 @@ describe("MutationAsk", () => {
     );
     expect(gate.pending).toBeDefined();
     gate.handleKey(parseChord("n"), askRows);
+    gate.handleKey(parseChord("o"), askRows);
     expect(await verdict).toBe(false);
 
     const next = gate.confirm(writeCall);
@@ -142,6 +181,7 @@ describe("MutationAsk", () => {
     expect(await first).toBe(true);
     expect(gate.pending?.summary).toContain("edit");
     gate.handleKey(parseChord("n"), askRows);
+    gate.handleKey(parseChord("o"), askRows);
     expect(await second).toBe(false);
     expect(gate.pending).toBeUndefined();
   });
@@ -176,6 +216,7 @@ describe("MutationAsk", () => {
     gate.handleKey(parseChord("up"), 4);
     expect(gate.diffWindow(4).above).toBe(before);
     gate.handleKey(parseChord("n"), 4);
+    gate.handleKey(parseChord("o"), 4);
     expect(await verdict).toBe(false);
   });
 });

@@ -41,7 +41,7 @@ import type {
   TrustDecision,
   WorkspaceAnchor,
 } from "@keywork/shared";
-import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
+import type { AnswerOutcome, AskVerdict, DenyReason, PendingAsk } from "./asks.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 
 export interface SessionSummary {
@@ -248,7 +248,12 @@ export interface SessionHost {
   tree: SessionTreePort;
   changes: ChangesPort;
   asks(): Promise<readonly PendingAsk[]>;
-  answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
+  answerAsk(
+    callId: string,
+    verdict: AskVerdict,
+    scope?: AskScope,
+    reason?: DenyReason,
+  ): Promise<AnswerOutcome>;
   permissions(): Promise<PermissionsView>;
   grantWorkspaceRule(rule: PermissionRule): Promise<void>;
   grantSessionRule(sessionId: string, rule: PermissionRule): Promise<boolean>;

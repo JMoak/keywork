@@ -1,5 +1,6 @@
 import type {
   Confirmation,
+  DenyReason,
   GrantedScope,
   PermissionAsk,
   ToolCallPart,
@@ -25,6 +26,7 @@ export interface PendingAsk {
 }
 
 export type AskVerdict = "granted" | "denied";
+export type { DenyReason } from "@keywork/engine";
 
 export type AnswerOutcome = "settled" | "missing" | "already-settled" | GrantRefusal;
 
@@ -79,7 +81,12 @@ export class AskQueue {
     return [...this.pending.values()].map(({ ask }) => ask);
   }
 
-  answer(callId: string, verdict: AskVerdict, scope: AskScope = "once"): AnswerOutcome {
+  answer(
+    callId: string,
+    verdict: AskVerdict,
+    scope: AskScope = "once",
+    reason?: DenyReason,
+  ): AnswerOutcome {
     const waiting = this.pending.get(callId);
     if (waiting === undefined) {
       return this.settled.includes(callId) ? "already-settled" : "missing";
@@ -90,7 +97,7 @@ export class AskQueue {
       if (refusal !== undefined) return refusal;
       this.grants?.record(waiting.ask.sessionId, granted, waiting.ask.rules);
     }
-    this.settle(callId, verdict, granted);
+    this.settle(callId, verdict, granted, reason);
     return "settled";
   }
 
@@ -98,7 +105,12 @@ export class AskQueue {
     for (const callId of [...this.pending.keys()]) this.settle(callId, "timed-out");
   }
 
-  private settle(callId: string, outcome: AskVerdict | "timed-out", scope?: AskScope): void {
+  private settle(
+    callId: string,
+    outcome: AskVerdict | "timed-out",
+    scope?: AskScope,
+    reason?: DenyReason,
+  ): void {
     const waiting = this.pending.get(callId);
     if (waiting === undefined) return;
     this.pending.delete(callId);
@@ -111,6 +123,7 @@ export class AskQueue {
             approved: outcome === "granted",
             gate: "user",
             ...(outcome === "granted" && scope !== undefined && { scope }),
+            ...(outcome === "denied" && reason !== undefined && { reason }),
           },
     );
   }

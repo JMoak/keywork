@@ -158,6 +158,16 @@ const samples: Samples = {
         asked: true,
       },
     },
+    {
+      decision: {
+        tool: "write",
+        callId: "c2",
+        verdict: "denied",
+        gate: "user",
+        asked: true,
+        reason: "not-now",
+      },
+    },
   ],
   "gate.preset": [{ from: "ask", to: "trusted" }],
   "session.mode": [{ mode: "plan" }],

@@ -5,6 +5,7 @@ import {
   type AskedChange,
   type AskRule,
   childDirFor,
+  type DenyReason,
   type JournaledAsk,
   journalEvents,
   type NamedSecret,
@@ -85,6 +86,7 @@ export interface AnswerFacts {
   scope?: AskScope;
   by: AnsweredBy;
   afterMs?: number;
+  reason?: DenyReason;
 }
 
 export interface DecisionExportOptions {
@@ -330,6 +332,7 @@ function answerFactsOf(
     ...(decision.scope !== undefined && { scope: decision.scope }),
     by: answeredBy(decision, ask !== undefined),
     ...(Number.isFinite(afterMs) && afterMs >= 0 && { afterMs }),
+    ...(decision.reason !== undefined && { reason: decision.reason }),
   };
 }
 

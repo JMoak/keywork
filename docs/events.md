@@ -273,7 +273,7 @@ Fires when the trust gate decides on a tool call.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `decision` | `PermissionDecision` | `{ tool, callId, verdict, gate, scope?, asked? }`. |
+| `decision` | `PermissionDecision` | `{ tool, callId, verdict, gate, scope?, asked?, reason? }`. |
 
 `verdict` is `granted` or `denied`. `gate` says who decided: `policy` (a preset rule),
 `default` (the preset's fallback), `user` (an interactive answer) or `headless` (no one to
@@ -293,6 +293,15 @@ fallback or a standing grant decided without asking. It is what tells a person's
 `session` answer apart from the later calls that answer covers, which otherwise carry the same
 `gate: "user"` and `scope`. keywork sets it on every decision since contract 1.3; a decision
 journaled before then has none.
+
+`reason` says why a person denied: `unsafe` (the call should not run), `not-now` (the moment,
+not the call: stop, not that, later) or `other`. The TUI asks for it with one more key after
+`n` (`[u] unsafe  [n] not now  [o] other`; escape and enter answer `other`), and a client sends
+it as `reason` on `POST /asks/{callId}`. A grant never carries one, nor does a denial by a rule
+or the headless guard; a pane closing or an agent swap answers its pending asks `not-now`. A
+denial without `reason` was answered by a client that does not send one. Since contract 1.4.
+The distinction exists for evidence: a decider scored against the person's answers must not
+count a `not-now` as a judgment of the call.
 
 ### gate.preset
 

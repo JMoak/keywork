@@ -125,7 +125,7 @@ describe("safety net", () => {
 
     probe.type("go").keys("enter");
     await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
-    probe.keys("n");
+    probe.keys("n", "u");
     await probe.settled();
 
     const declined = probe.model()?.entries.find((entry) => entry.kind === "tool");
@@ -296,7 +296,7 @@ describe("diff preview in the ask", () => {
     expect(probe.model()?.askDiffWindow(5).above).toBe(0);
     expect(probe.model()?.pendingAsk).toBeDefined();
 
-    probe.keys("n");
+    probe.keys("n", "o");
     await probe.settled();
   });
 

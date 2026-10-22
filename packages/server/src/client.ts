@@ -16,7 +16,7 @@ import type {
   WriteResult,
 } from "@keywork/engine";
 import type { ActivePreset, AskScope, PermissionRule, PresetName } from "@keywork/shared";
-import type { AnswerOutcome, AskVerdict, PendingAsk } from "./asks.ts";
+import type { AnswerOutcome, AskVerdict, DenyReason, PendingAsk } from "./asks.ts";
 import type { BusEnvelope } from "./events.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 import type {
@@ -94,7 +94,12 @@ export interface KeyworkClient {
   rename(id: string, title: string): Promise<{ title: string } | undefined>;
   applyPreset(name: PresetName, confirmed?: boolean): Promise<PresetAnswer>;
   asks(): Promise<readonly PendingAsk[]>;
-  answerAsk(callId: string, verdict: AskVerdict, scope?: AskScope): Promise<AnswerOutcome>;
+  answerAsk(
+    callId: string,
+    verdict: AskVerdict,
+    scope?: AskScope,
+    reason?: DenyReason,
+  ): Promise<AnswerOutcome>;
   listPermissions(): Promise<PermissionsView>;
   grantWorkspaceRule(rule: PermissionRule): Promise<GrantAnswer>;
   grantSessionRule(sessionId: string, rule: PermissionRule): Promise<GrantAnswer>;
@@ -313,10 +318,11 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       const listed = await json<{ asks: PendingAsk[] }>(await request("GET", "/asks"));
       return listed.asks;
     },
-    answerAsk: async (callId, verdict, scope) => {
+    answerAsk: async (callId, verdict, scope, reason) => {
       const response = await request("POST", `/asks/${encodeURIComponent(callId)}`, {
         verdict,
         ...(scope !== undefined && { scope }),
+        ...(reason !== undefined && { reason }),
       });
       if (response.status === 404) return "missing";
       if (response.status === 409) return "already-settled";
