@@ -13,11 +13,13 @@ import {
 import { AppCore, type AppCoreOptions } from "./app-core.ts";
 import { arcIndexOf, arcJumpCommands, firstArcIntroducer } from "./arc-index.ts";
 import { ArcPane } from "./arc-pane.ts";
-import type { ArcsPort } from "./arcs.ts";
+import { arcThemeCommand } from "./arc-theme.ts";
+import type { ArcAttire, ArcsPort } from "./arcs.ts";
 import { ArcsPane } from "./arcs-pane.ts";
 import { botJumpCommands } from "./bot-commands.ts";
-import type { BotEntry, BotSummary, BotsPort } from "./bots.ts";
-import { realBrowserDisk } from "./browser-model.ts";
+import { announcingCreations, type BotEntry, type BotSummary, type BotsPort } from "./bots.ts";
+import { BotsPane } from "./bots-pane.ts";
+import { type BrowserDisk, realBrowserDisk } from "./browser-model.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import {
   type BugBundleFacts,
@@ -29,6 +31,12 @@ import {
 import { detectCapabilities, type GlyphSupport } from "./capability.ts";
 import { commitDraftCommand, gitIn } from "./commit-draft.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
+import {
+  ContextPane,
+  type ContextPort,
+  type ContextReadings,
+  servedContext,
+} from "./context-pane.ts";
 import type { Titler } from "./conversation-model.ts";
 import type { TranscriptElevation } from "./conversation-pane.ts";
 import { copyCommands } from "./copy-commands.ts";
@@ -40,7 +48,12 @@ import {
   recoveredNotice,
 } from "./crash-log.ts";
 import { definedOnly } from "./defined.ts";
-import { announcingFileChanges, type DiffPort, FileChangeFeed } from "./diff-model.ts";
+import {
+  announcingFileChanges,
+  type DiffPort,
+  eitherChange,
+  FileChangeFeed,
+} from "./diff-model.ts";
 import { DiffPane } from "./diff-pane.ts";
 import {
   type ExtensionsPort,
@@ -56,6 +69,7 @@ import {
 } from "./extension-host.ts";
 import { externalEditorFor } from "./external-editor.ts";
 import { FileIndex, fileJumpSource, fileJumpsAllowed } from "./file-index.ts";
+import type { FileReader } from "./file-model.ts";
 import { FilePane } from "./file-pane.ts";
 import type { CheckpointsPort } from "./fork.ts";
 import { FrameCoalescer, type FrameScheduler } from "./frame-scheduler.ts";
@@ -67,6 +81,7 @@ import { applyKeybindings, type KeybindingSource, watchKeybindings } from "./key
 import { chordOf } from "./keys.ts";
 import { type Closer, closeOnce, defaultCloseTimeoutMs, runClosers } from "./lifecycle.ts";
 import { McpPane, type McpPanePort, mcpDropWatcher } from "./mcp-pane.ts";
+import type { DecisionsView } from "./memory-decisions.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { DigestTreatment, GardenHeat } from "./memory-rows.ts";
 import { Animator } from "./motion.ts";
@@ -87,7 +102,7 @@ import {
 } from "./osc.ts";
 import type { PresetsPort } from "./overlays/index.ts";
 import { type PageThresholdOverrides, resolvePageThresholds } from "./page.ts";
-import type { PaletteOverrides } from "./palette.ts";
+import type { Palette, PaletteOverrides } from "./palette.ts";
 import type { PaneIntents } from "./pane.ts";
 import { drawnRect } from "./pane-geometry.ts";
 import type { PaneFactories } from "./pane-kinds.ts";
@@ -187,11 +202,18 @@ export interface AppOptions {
   extensions?: ExtensionsPort;
   extensionHost?: ExtensionHostPort;
   permissions?: PermissionsPort;
+  contextReadings?: ContextReadings;
+  files?: WorkspaceFilesPort;
   terminal?: TerminalSeams;
   terminalPane?: TerminalPanePort;
   notifications?: NotificationPolicy;
   inbox?: InboxSource;
   bugReport?: BugReportPort;
+}
+
+export interface WorkspaceFilesPort {
+  disk: BrowserDisk;
+  read: FileReader;
 }
 
 export interface BugReportPort {
@@ -218,7 +240,7 @@ export type InputTap = (listener: (bytes: string) => void) => () => void;
 
 export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
   const fileChanges = new FileChangeFeed();
-  const options = announcingFileChanges(launchOptions, fileChanges);
+  const options = announcingBotCreations(announcingFileChanges(launchOptions, fileChanges));
   const themes = new ThemeSwitch(
     startupThemes(options.paletteOverrides, options.themes, options.theme),
   );
@@ -240,6 +262,14 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     sessions.resyncArcs();
     render();
   });
+  const arcAttire: ArcAttire = (slug) => {
+    const worn = arcIndex.listed().find((arc) => arc.slug === slug)?.theme;
+    return worn === undefined ? undefined : themes.paletteNamed(worn);
+  };
+  const paneAttire = (id: string): Palette | undefined => {
+    const arc = sessions.arcOf(id) ?? arcPaneSlug(core, id);
+    return arc === undefined ? undefined : arcAttire(arc);
+  };
   const paneSessions = paneSessionIndex(options.sessions);
   const trees =
     options.sessionTrees === undefined
@@ -282,18 +312,6 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
   });
   const armed = armedExpiryWatch(() => core, render);
   const fileIndex = new FileIndex(process.cwd(), realBrowserDisk, render);
-  const unsubscribeMcp = options.mcp?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
-  const unsubscribeNotices = options.notices?.subscribe((text) => core.postNotice(text));
-  const unsubscribeExtensionNotices =
-    options.extensionHost === undefined
-      ? undefined
-      : watchExtensionNotices(options.extensionHost, {
-          notice: (text) => {
-            core.postNotice(text);
-            render();
-          },
-          post: (text) => sessions.postNotice(text),
-        });
   let inboxWaiting = 0;
   const unsubscribeInbox = options.inbox?.subscribe((waiting) => {
     inboxWaiting = waiting;
@@ -311,7 +329,7 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
         chrome: themes.active.chromeWeight,
         gap: themes.active.gap,
       }),
-    ...paneFactories(options, sessions, trees, paneSessions, arcIndex, () => core),
+    ...paneFactories(options, sessions, trees, paneSessions, arcIndex, arcAttire, () => core),
     createTerminalPane: terminalPaneFactory({
       cwd: process.cwd(),
       trusted: () => options.terminalPane?.trusted === true,
@@ -322,7 +340,15 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     }),
     ...(options.diff !== undefined && {
       createDiffPane: (id: string, notify: () => void, intents: PaneIntents) =>
-        new DiffPane(id, notify, intents, { ...options.diff, changes: fileChanges }),
+        new DiffPane(id, notify, intents, {
+          ...options.diff,
+          changes: eitherChange(fileChanges, options.diff?.follow),
+          turns: () => sessions.focused()?.pane.model.turnRecords() ?? [],
+          verbs: {
+            undo: () => runOrSay(core, "undo", "nothing to undo here · undo needs checkpoints"),
+            redo: () => runOrSay(core, "redo", "nothing to redo here · redo needs checkpoints"),
+          },
+        }),
     }),
     ...hostPorts(options, sessions),
     externalEditor: externalEditorFor({
@@ -379,6 +405,18 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
       ).finally(() => exit(0));
     }),
   });
+  const unsubscribeMcp = options.mcp?.subscribe?.(mcpDropWatcher((text) => core.postNotice(text)));
+  const unsubscribeNotices = options.notices?.subscribe((text) => core.postNotice(text));
+  const unsubscribeExtensionNotices =
+    options.extensionHost === undefined
+      ? undefined
+      : watchExtensionNotices(options.extensionHost, {
+          notice: (text) => {
+            core.postNotice(text);
+            render();
+          },
+          post: (text) => sessions.postNotice(text),
+        });
   const paint = (): void => {
     armed.watch();
     try {
@@ -395,6 +433,8 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
           glyphs,
           ...(options.focusOutline !== undefined && { focusOutline: options.focusOutline }),
           arcOrdinal: arcIndex.ordinalOf,
+          arcAttire,
+          paneAttire,
           arcOf: (id) => sessions.arcOf(id),
           label:
             typeof options.statusLabel === "function" ? options.statusLabel() : options.statusLabel,
@@ -419,6 +459,17 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
     }
   };
   registerHostCommands(core, options, sessions, themes, render, terminal);
+  if (options.arcs !== undefined) {
+    core.registry.register(
+      arcThemeCommand({
+        arcs: options.arcs,
+        themeNames: () => themes.names(),
+        focusedArc: () => arcPaneSlug(core, core.layout.focused()) ?? sessions.focused()?.pane.arc,
+        notice: (text) => core.postNotice(text),
+        settle: (work) => core.settle(work),
+      }),
+    );
+  }
   core.registry.register(
     bugCommand({
       facts: () => bugFacts(options, sessions, terminal, glyphs, recorder.recent()),
@@ -479,6 +530,10 @@ export async function runApp(launchOptions: AppOptions = {}): Promise<void> {
       core.postNotice(text);
       render();
     },
+    aside: (text: string): void => {
+      if (!sessions.postNotice(text)) core.postNotice(text);
+      render();
+    },
   };
   if (options.keybindings !== undefined) await applyKeybindings(keybindingSeams);
   const unwatchKeybindings = watchKeybindings(keybindingSeams);
@@ -501,16 +556,33 @@ function paneFactories(
   trees: SessionTreePort | undefined,
   paneSessions: ReturnType<typeof paneSessionIndex>,
   arcIndex: ReturnType<typeof arcIndexOf>,
+  arcAttire: ArcAttire,
   core: () => AppCore,
 ): PaneFactories {
-  const { arcs, memory, mcp, workspaces } = options;
-  const botOf = botLookup(options.bots);
+  const { arcs, memory, mcp, workspaces, bots } = options;
+  const botOf = botLookup(bots);
   return {
     createPane: sessions.createPane,
+    createContextPane: (id, notify, intents) =>
+      new ContextPane(id, notify, intents, contextPortOf(options.contextReadings, sessions)),
+    ...(bots !== undefined && {
+      createBotsPane: (id: string, notify: () => void) =>
+        new BotsPane(id, notify, {
+          bots,
+          open: (name) => core().openBotPane(name),
+          create: () => core().botCommand({ verb: "new", name: undefined }),
+          release: () => core().botCommand({ verb: "switch", name: undefined }),
+          boundHere: () => sessions.focused()?.pane.bot,
+          subscribe: (changed) => bots.subscribe?.(changed) ?? (() => {}),
+          ...(options.clock !== undefined && { now: options.clock }),
+        }),
+    }),
     createFilePane: (id, path, notify, fileOptions) =>
-      new FilePane(id, process.cwd(), path, notify, fileOptions),
+      new FilePane(id, process.cwd(), path, notify, fileOptions, options.files?.read),
     createBrowserPane: (id, root, notify, intents) =>
-      new BrowserPane(id, resolve(process.cwd(), root), notify, intents),
+      options.files === undefined
+        ? new BrowserPane(id, resolve(process.cwd(), root), notify, intents)
+        : new BrowserPane(id, root, notify, intents, options.files.disk),
     ...(trees !== undefined && {
       createSessionTreePane: (id, notify, intents, targetSession, sessionId, groupBy) =>
         new SessionTreePane(id, notify, intents, trees, targetSession, {
@@ -519,6 +591,7 @@ function paneFactories(
           ...(botOf !== undefined && { botSigil: (name: string) => botOf(name)?.sigil }),
           presence: paneSessions,
           arcOrdinal: arcIndex.ordinalOf,
+          arcAttire,
         }),
     }),
     ...(trees !== undefined &&
@@ -530,6 +603,7 @@ function paneFactories(
             currentSession: targetSession,
             presence: paneSessions,
             arcOrdinal: arcIndex.ordinalOf,
+            arcAttire,
             ...(arc !== undefined && { drilled: { kind: "arc", slug: arc } }),
           }),
         createArcPane: (id, notify, intents, targetSession, slug) => {
@@ -540,6 +614,7 @@ function paneFactories(
             currentSession: targetSession,
             presence: paneSessions,
             arcOrdinal: arcIndex.ordinalOf,
+            arcAttire,
             ...(returnDelta !== undefined && { returnDelta: () => returnDelta(slug) }),
           });
         },
@@ -549,7 +624,9 @@ function paneFactories(
         new MemoryPane(id, notify, memory, {
           intents,
           focusedArc: () => sessions.focused()?.pane.arc,
+          decisions: () => focusedDecisions(sessions),
           arcOrdinal: arcIndex.ordinalOf,
+          arcAttire,
           ...(options.memoryDigest !== undefined && { digestTreatment: options.memoryDigest }),
           ...(options.gardenHeat !== undefined && { gardenHeat: options.gardenHeat }),
           ...(options.clock !== undefined && { now: options.clock }),
@@ -577,6 +654,57 @@ function paneFactories(
           ...(options.clock !== undefined && { now: options.clock }),
         }),
     }),
+  };
+}
+
+function arcPaneSlug(core: AppCore, id: string | undefined): string | undefined {
+  const descriptor = id === undefined ? undefined : core.panes.get(id)?.describe?.();
+  return descriptor?.kind === "arc" ? descriptor.arc : undefined;
+}
+
+function runOrSay(core: AppCore, command: string, otherwise: string): void {
+  if (!core.runCommand(command)) core.postNotice(otherwise);
+}
+
+function announcingBotCreations(options: AppOptions): AppOptions {
+  return options.bots === undefined
+    ? options
+    : { ...options, bots: announcingCreations(options.bots) };
+}
+
+function contextPortOf(readings: ContextReadings | undefined, sessions: SessionPanes): ContextPort {
+  if (readings === undefined) return focusedContext(sessions);
+  return servedContext(readings, () => {
+    const found = sessions.focused();
+    return found === undefined
+      ? readings.fallback?.()
+      : { name: found.pane.titled() ?? found.id, sessionId: found.pane.sessionId };
+  });
+}
+
+function focusedContext(sessions: SessionPanes): ContextPort {
+  return {
+    target: () => {
+      const found = sessions.focused();
+      if (found === undefined) return undefined;
+      const { model } = found.pane;
+      return {
+        name: found.pane.titled() ?? found.id,
+        map: model.contextMap(),
+        compact: () => model.compact(),
+      };
+    },
+  };
+}
+
+function focusedDecisions(sessions: SessionPanes): DecisionsView | undefined {
+  const found = sessions.focused();
+  if (found === undefined) return undefined;
+  const { model } = found.pane;
+  return {
+    session: found.pane.titled() ?? found.id,
+    decisions: model.ledger.memoryDecisions(),
+    actionOf: (callId) => model.toolWords(callId),
   };
 }
 

@@ -1,17 +1,17 @@
 ╭──────────────────────────────────────╮───────────────────────────────────────────────────────────────────────────────╮
-│ session tree                         │ session-1                                                                     │
+│ 1 session tree                       │ 2 session-1                                                                   │
 │ ░ no sessions yet                    │                                                                               │
+│ the first prompt you send starts one │                                                                               │
 │ ╭──────────────────────────────────╮ │                                                                               │
-│ │ ▸ open     open the select…enter │ │                                                                               │
-│ │   entries  browse the selected…l │ │                                                                               │
-│ │   group    group by none · arc…g │ │                                                                               │
-│ │   remove   move the selected s…x │ │                                                                               │
-│ │   trash    show trashed sessio…t │ │                                                                               │
-│ │   refresh  reload the sessions…r │ │                                                                               │
+│ │ ▸ open         open the s… enter │ │                                                                               │
+│ │   entries      browse the sel… l │ │                                                                               │
+│ │   group        group by none … g │ │                                                                               │
+│ │   remove       move the selec… x │ │                                                                               │
+│ │   trash        show trashed s… t │ │                                                                               │
+│ │   empty trash  delete every t… D │ │                                                                               │
+│ │   refresh      reload the ses… r │ │                                                                               │
 │ ╰──────────────────────────────────╯ │                                                                               │
 │ : ▌                                  │                                                                               │
-│                                      │                                                                               │
-│                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │

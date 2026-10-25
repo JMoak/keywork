@@ -29,7 +29,7 @@ export interface FocusedPermissionsPort {
   lastQuietRun(): QuietRun | undefined;
 }
 
-export type QuietReason = "trusted" | "session" | "workspace";
+export type QuietReason = "trusted" | "quiet" | "session" | "workspace";
 
 export interface QuietRun {
   summary: string;
@@ -50,7 +50,7 @@ export interface GrantEntry {
 
 export type PermissionsKeyOutcome = "stay" | "close";
 
-export const permissionsKeyHint = "↑↓ pick · r revokes · d drops · b shows the bundle · esc closes";
+export const permissionsKeyHint = "↑↓ pick · r revokes the grant · b shows the bundle";
 
 interface QuietBus {
   on<K extends "tool.started" | "gate.permission">(
@@ -113,8 +113,9 @@ export class QuietRunLog {
 }
 
 export function quietReasonOf(decision: PermissionDecision): QuietReason | undefined {
-  if (decision.verdict !== "granted") return undefined;
+  if (decision.verdict !== "granted" || decision.asked === true) return undefined;
   if (decision.gate === "trusted") return "trusted";
+  if (decision.gate === "quiet") return "quiet";
   if (decision.gate === "user" && decision.scope !== undefined && decision.scope !== "once") {
     return decision.scope;
   }
@@ -187,9 +188,6 @@ export class PermissionsModel {
       case "r":
         void this.revokeSelected();
         return "stay";
-      case "d":
-        void this.dropSelected();
-        return "stay";
       default:
         return "stay";
     }
@@ -214,29 +212,26 @@ export class PermissionsModel {
 
   private async revokeSelected(): Promise<void> {
     const entry = this.selected();
-    if (entry?.layer !== "workspace") {
-      this.hooks.notice("pick a workspace grant to revoke");
+    if (entry === undefined) {
+      this.hooks.notice("nothing to revoke · pick a grant first");
+      return;
+    }
+    const revoke = this.revocationOf(entry);
+    if (revoke === undefined) {
+      this.hooks.notice("open a conversation to revoke its session grants");
       return;
     }
     const label = ruleLabel(entry.rule);
-    await this.settleChange(this.port.revokeWorkspace(entry.rule), label, {
-      done: `revoked ${label} · it asks again from the next call on`,
+    await this.settleChange(revoke(), label, {
+      done: `revoked ${label} ${revokedReach[entry.layer]} · it asks again from the next call on`,
       failed: `couldn't revoke ${label}`,
     });
   }
 
-  private async dropSelected(): Promise<void> {
-    const entry = this.selected();
+  private revocationOf(entry: GrantEntry): (() => Promise<boolean>) | undefined {
+    if (entry.layer === "workspace") return () => this.port.revokeWorkspace(entry.rule);
     const session = this.hooks.focused?.session();
-    if (entry?.layer !== "session" || session === undefined) {
-      this.hooks.notice("pick a session grant to drop");
-      return;
-    }
-    const label = ruleLabel(entry.rule);
-    await this.settleChange(session.forget(entry.rule), label, {
-      done: `dropped ${label} for this session`,
-      failed: `couldn't drop ${label}`,
-    });
+    return session === undefined ? undefined : () => session.forget(entry.rule);
   }
 
   private async settleChange(
@@ -299,6 +294,8 @@ export function quietReasonLabel(reason: QuietReason): string {
   switch (reason) {
     case "trusted":
       return "trusted reads";
+    case "quiet":
+      return "quiet mode";
     case "session":
       return "session grant";
     case "workspace":
@@ -363,6 +360,11 @@ type GrantsState =
   | { kind: "reading" }
   | { kind: "read"; grants: Grants }
   | { kind: "failed"; reason: string };
+
+const revokedReach: Readonly<Record<GrantEntry["layer"], string>> = {
+  workspace: "for this workspace",
+  session: "for this session",
+};
 
 const howGrantsHappen: Readonly<Record<PermissionsSeat, string>> = {
   pane: "[a] on an ask grants this session, the app can grant the workspace",

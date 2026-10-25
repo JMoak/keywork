@@ -22,30 +22,24 @@ export const trayTour: Scenario = {
 
     await stage.press("ctrl+k", "t", "escape");
     await stage.press("/");
-    const tray = await stage.until("reload the sessions");
+    const tray = await stage.until("reload the ses");
     await stage.capture("entity-tray");
-    const refreshRow = rowOf(tray, "reload the sessions");
+    const refreshRow = rowOf(tray, "reload the ses");
     await stage.hover(6, refreshRow);
     const hovered = await stage.until("▸ refresh");
     assert.ok(hovered.includes("▸ refresh"), "hover moves the tray selection");
     await stage.click(6, refreshRow);
     await stage.settle();
     const clicked = await stage.capture("after-click");
-    assert.ok(
-      !clicked.includes("reload the sessions"),
-      "clicking a row runs it and closes the tray",
-    );
+    assert.ok(!clicked.includes("reload the ses"), "clicking a row runs it and closes the tray");
 
     await stage.press("/");
-    const reopened = await stage.until("reload the sessions");
+    const reopened = await stage.until("reload the ses");
     const bodyRow = rowOf(reopened, "no sessions yet");
     await stage.click(6, bodyRow);
     await stage.settle();
     const dismissed = await stage.capture("outside-dismissed");
-    assert.ok(
-      !dismissed.includes("reload the sessions"),
-      "a press outside the rows dismisses the tray",
-    );
+    assert.ok(!dismissed.includes("reload the ses"), "a press outside the rows dismisses the tray");
 
     await stage.quit();
   },

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { textTurn } from "../../../packages/engine/src/index.ts";
-import { occurrences, paneTitleCount } from "../frame-queries.ts";
+import { occurrences, paneHeader, paneTitleCount } from "../frame-queries.ts";
 import type { Scenario } from "../scenario.ts";
 import { listTool } from "./fixtures.ts";
 
@@ -9,7 +9,7 @@ const toolProse = "Counting the files now.";
 const toolVerdict = "There are 4 files here.";
 const settledToolMark = "· done";
 const replayToolLine = "░ list · done";
-const calmHeader = /│ session-1 +│/;
+const calmHeader = paneHeader("session-1");
 
 export const sessionLifecycle: Scenario = {
   name: "session-lifecycle",

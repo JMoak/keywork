@@ -1,6 +1,7 @@
 import type {
+  AskRule,
   Confirmation,
-  DenyReason,
+  Denial,
   GrantedScope,
   PermissionAsk,
   ToolCallPart,
@@ -26,12 +27,13 @@ export interface PendingAsk {
 }
 
 export type AskVerdict = "granted" | "denied";
-export type { DenyReason } from "@keywork/engine";
+export type { Denial, DenyReason } from "@keywork/engine";
 
 export type AnswerOutcome = "settled" | "missing" | "already-settled" | GrantRefusal;
 
 export interface GrantSink {
   record(sessionId: string, scope: GrantedScope, rules: readonly PermissionRule[]): void;
+  grantsQuietly?(sessionId: string, call: ToolCallPart, rule: AskRule): boolean;
 }
 
 export interface AskQueueOptions {
@@ -56,7 +58,11 @@ export class AskQueue {
   }
 
   guardFor(sessionId: string): ToolGuard {
-    return { confirm: (call, announced) => this.ask(sessionId, call, announced), gate: "headless" };
+    return {
+      confirm: (call, announced) => this.ask(sessionId, call, announced),
+      grantsQuietly: (call, rule) => this.grants?.grantsQuietly?.(sessionId, call, rule) === true,
+      gate: "headless",
+    };
   }
 
   ask(sessionId: string, call: ToolCallPart, announced?: PermissionAsk): Promise<Confirmation> {
@@ -85,7 +91,7 @@ export class AskQueue {
     callId: string,
     verdict: AskVerdict,
     scope: AskScope = "once",
-    reason?: DenyReason,
+    denial: Denial = {},
   ): AnswerOutcome {
     const waiting = this.pending.get(callId);
     if (waiting === undefined) {
@@ -97,19 +103,19 @@ export class AskQueue {
       if (refusal !== undefined) return refusal;
       this.grants?.record(waiting.ask.sessionId, granted, waiting.ask.rules);
     }
-    this.settle(callId, verdict, granted, reason);
+    this.settle(callId, verdict, granted, denial);
     return "settled";
   }
 
   close(): void {
-    for (const callId of [...this.pending.keys()]) this.settle(callId, "timed-out");
+    for (const callId of [...this.pending.keys()]) this.settle(callId, "closed");
   }
 
   private settle(
     callId: string,
-    outcome: AskVerdict | "timed-out",
+    outcome: AskVerdict | Unanswered,
     scope?: AskScope,
-    reason?: DenyReason,
+    denial: Denial = {},
   ): void {
     const waiting = this.pending.get(callId);
     if (waiting === undefined) return;
@@ -117,13 +123,13 @@ export class AskQueue {
     clearTimeout(waiting.timer);
     this.remember(callId);
     waiting.resolve(
-      outcome === "timed-out"
-        ? { approved: false, gate: "headless" }
+      isUnanswered(outcome)
+        ? unansweredConfirmations[outcome]
         : {
             approved: outcome === "granted",
             gate: "user",
             ...(outcome === "granted" && scope !== undefined && { scope }),
-            ...(outcome === "denied" && reason !== undefined && { reason }),
+            ...(outcome === "denied" && denial),
           },
     );
   }
@@ -135,6 +141,17 @@ export class AskQueue {
 }
 
 const rememberedSettlements = 200;
+
+type Unanswered = "timed-out" | "closed";
+
+const unansweredConfirmations: Readonly<Record<Unanswered, Confirmation>> = {
+  "timed-out": { approved: false, gate: "headless", timedOut: true },
+  closed: { approved: false, gate: "headless" },
+};
+
+function isUnanswered(outcome: AskVerdict | Unanswered): outcome is Unanswered {
+  return outcome in unansweredConfirmations;
+}
 
 interface Waiting {
   ask: PendingAsk;

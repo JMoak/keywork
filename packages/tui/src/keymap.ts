@@ -2,8 +2,10 @@ import { type Chord, chordsEqual, formatChord, parseChord } from "./keys.ts";
 
 export type Binding = { kind: "chord"; chord: Chord } | { kind: "leader"; key: string };
 
+export type BindingKind = Binding["kind"];
+
 export type KeymapResult =
-  | { type: "action"; action: string }
+  | { type: "action"; action: string; via: BindingKind }
   | { type: "leader-pending" }
   | { type: "cancelled" }
   | { type: "pass" };
@@ -50,7 +52,7 @@ export class Keymap {
       return { type: "leader-pending" };
     }
     const action = this.findByChord(chord);
-    return action === undefined ? { type: "pass" } : { type: "action", action };
+    return action === undefined ? { type: "pass" } : { type: "action", action, via: "chord" };
   }
 
   arm(nowMs: number, scope?: ReadonlySet<string>): void {
@@ -94,7 +96,7 @@ export class Keymap {
     }
     const action = this.findByLeaderKey(chord);
     if (action !== undefined && (scope === undefined || scope.has(action))) {
-      return { type: "action", action };
+      return { type: "action", action, via: "leader" };
     }
     return scope === undefined ? cancelled : this.press(chord, nowMs);
   }

@@ -40,10 +40,13 @@ describe("command palette", () => {
     expect(paneIds(probe)).toEqual(["session-1"]);
   });
 
-  it("hides arg-requiring commands from the palette but keeps them for slash input", () => {
+  it("lists arg-requiring commands and completes them on enter instead of running bare", () => {
     const probe = new AppProbe({ createFilePane: (id, path) => stubFilePane(id, path) });
     probe.keys("ctrl+shift+p").type("open");
-    expect(probe.core.paletteMatches().map((entry) => entry.name)).not.toContain("open");
+    expect(probe.core.paletteMatches()[0]?.name).toBe("open");
+    probe.keys("enter");
+    expect(probe.snapshot()).toMatchObject({ overlay: "palette", paletteQuery: "/open " });
+    expect(paneIds(probe)).toEqual(["session-1"]);
     probe.keys("escape");
     expect(probe.core.registry.search("open").map((entry) => entry.name)).toContain("open");
   });

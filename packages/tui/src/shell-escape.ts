@@ -45,8 +45,15 @@ export function shellEscapeCall(command: string, sequence: number): ToolCallPart
 
 export function shellEscapeTranscript(command: string, output: string): string {
   const body = output.trimEnd();
-  return body === "" ? `$ ${command}` : `$ ${command}\n${body}`;
+  const head = `${transcriptLead}${command}`;
+  return body === "" ? head : `${head}\n${body}`;
 }
+
+export function readsAsShellEscapeTranscript(text: string): boolean {
+  return text.startsWith(transcriptLead) && /\S/.test(text.charAt(transcriptLead.length));
+}
+
+const transcriptLead = "$ ";
 
 export function guardedShellEscape(seams: ShellEscapeSeams): ShellEscapePort {
   return {
@@ -66,7 +73,12 @@ export function guardedShellEscape(seams: ShellEscapeSeams): ShellEscapePort {
         const answer = answerOf(await (seams.guard.confirm?.(call) ?? Promise.resolve(true)));
         const askedBy = asked ? (answer.gate ?? seams.guard.gate ?? "user") : gate;
         report({
-          ...decision(call, answer.approved ? "granted" : "denied", askedBy, asked),
+          ...decision(
+            call,
+            answer.approved ? "granted" : "denied",
+            askedBy,
+            asked && answer.asked !== false,
+          ),
           ...(answer.approved && answer.scope !== undefined && { scope: answer.scope }),
         });
         if (!answer.approved) return failure("declined by user");

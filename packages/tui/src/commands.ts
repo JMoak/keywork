@@ -39,6 +39,10 @@ export class CommandRegistry {
     return [...this.commands, ...this.sources.flatMap((source) => source())];
   }
 
+  named(name: string): CommandSpec | undefined {
+    return findByName(this.all(), name);
+  }
+
   search(query: string): CommandSpec[] {
     const trimmed = query.trim().toLowerCase();
     const commands = this.all();

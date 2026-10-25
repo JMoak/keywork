@@ -20,10 +20,11 @@ export const workspaceRoutes = [
     path: "/workspace/trust",
     operationId: "trustWorkspace",
     summary:
-      "Trust the served workspace and set it up, exactly what `/init` in the terminal and `keywork trust` do: the decision is written for this root and no other (the body is ignored, so no path can be smuggled in) to the user's trust store, and `.keywork/workspace.json` plus the memory vault are created when missing. Trust is read when a server composes, so `reopens` says whether this server must be restarted before the decision takes effect; a client that owns the server process restarts it. Already trusted is not an error. This route never untrusts and never forgets a decision.",
+      'Trust the served workspace and set it up, exactly what `/init` in the terminal and `keywork trust` do: the decision is written for this root and no other (the body is ignored, so no path can be smuggled in) to the user\'s trust store, and `.keywork/workspace.json` plus the memory vault are created when missing. Trust is read when a server composes, so `keywork serve` composes itself again before it answers: the project\'s config, permissions, MCP servers, arcs and bots load, open sessions close (a running turn is interrupted and keeps what it had) and reopen on their next request, pending asks are refused, and the URL, the token, the ticket and the event stream stay as they were. `recomposed: true` says that happened, and `GET /permissions` reflects trust as soon as the answer arrives; `surface.changed` fires with `kind: "workspaces"` and, after a recompose, `kind: "permissions"`. `reopens: true` says this host cannot recompose itself (an embedded host) and must be restarted before the decision takes effect; a client that owns the process restarts it. Already trusted is not an error and answers both false. This route never untrusts and never forgets a decision.',
     authenticated: true,
     responses: {
-      "200": "Trusted; `root` names the directory the decision covers.",
+      "200":
+        "`{ trusted: true, root, vault, reopens, recomposed }`; `root` names the directory the decision covers.",
       "400":
         "The root is a home directory or a filesystem root, which would trust everything beneath it.",
       "409": "The root is marked untrusted; only `keywork trust` in a terminal reverses that.",
@@ -41,6 +42,7 @@ export const workspaceFamily = {
       trustWorkspace: workspace(async (port) => {
         const grant = await port.trust();
         surfaceChanged(log, "workspaces");
+        if (grant.recomposed) surfaceChanged(log, "permissions");
         return json(200, grant);
       }),
     };

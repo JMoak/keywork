@@ -1,5 +1,6 @@
 import {
   type Agent,
+  type AgentContext,
   compactionDue,
   type EffortLevel,
   type Message,
@@ -8,12 +9,17 @@ import {
   type ToolGuard,
   type TurnSettlement,
 } from "@keywork/engine";
+import { type PermissionRule, toError } from "@keywork/shared";
 import type { Titler } from "./conversation-model.ts";
 import type { ConversationPane } from "./conversation-pane.ts";
 import { forgetInSession } from "./forget.ts";
 import type { CheckpointsPort } from "./fork.ts";
-import { promptUndo } from "./prompt-undo.ts";
+import { promptUndo, reopenedUndo } from "./prompt-undo.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
+import { SessionWriter } from "./session-writer.ts";
+import type { ChangesFact, WaitingFact } from "./sessions-overview-model.ts";
+import type { SummaryKind } from "./transcript-feed.ts";
+import type { TurnRecord } from "./turn-ledger.ts";
 
 export interface AppendReceipt {
   entryId: string;
@@ -25,6 +31,29 @@ export interface RewoundPrompt {
   checkpoint: string | undefined;
   history: readonly Message[];
   restore(): readonly Message[];
+  journal?(files: RewindFiles): Promise<StagedRewind>;
+}
+
+export interface RewindFiles {
+  readonly restoredTo: string | undefined;
+  readonly redoTree: string | undefined;
+}
+
+export interface StagedRewind {
+  readonly redoFiles: string | undefined;
+  redo(): Promise<readonly Message[]>;
+  retell(bus: Agent["bus"]): void;
+}
+
+export interface ReplayedSummary {
+  readonly text: string;
+  readonly kind: SummaryKind;
+}
+
+export interface ServedRewind {
+  readonly history: readonly Message[];
+  readonly filesNote: string;
+  cancel(): Promise<readonly Message[]>;
 }
 
 export type ForgetTarget = { kind: "prompt"; promptId: string } | { kind: "tool"; callId: string };
@@ -37,16 +66,28 @@ export interface SessionAttachment {
   effort?: EffortLevel;
   arc?: string | undefined;
   bot?: string | undefined;
+  quiet?: boolean;
+  summaries?: readonly ReplayedSummary[];
   history: readonly Message[];
   replay(bus: Agent["bus"]): void;
   append(message: Message): Promise<AppendReceipt | undefined>;
   rename?(name: string): Promise<void>;
+  pinTitle?(title: string): Promise<void>;
+  recordQuiet?(on: boolean): Promise<void>;
+  context?(): Promise<AgentContext | undefined>;
+  turns?(): Promise<readonly TurnRecord[]>;
   recordModel?(reference: string): Promise<void>;
   recordThinking?(level: ThinkingSwitch): Promise<void>;
   recordEffort?(level: EffortLevel): Promise<void>;
   bindArc?(slug: string | undefined): Promise<void>;
   bindBot?(name: string | undefined): Promise<void>;
   rewindBefore?(promptId: string): RewoundPrompt | undefined;
+  rewindOnServer?(promptId: string): Promise<ServedRewind | undefined>;
+  openTurn?(prompt: Message): Promise<AppendReceipt | undefined>;
+  settleTurn?(promptId: string): Promise<void>;
+  stagedRewind?: StagedRewind;
+  grants?: readonly PermissionRule[];
+  recordGrants?(rules: readonly PermissionRule[]): Promise<void>;
   forget?(
     target: ForgetTarget,
     replacement: string | null,
@@ -134,6 +175,8 @@ export function attachOnFork(
 export interface PaneSessionActivity {
   busy?(): boolean;
   waiting?(): boolean;
+  waitingAsks?(): WaitingFact;
+  changes?(): ChangesFact | undefined;
 }
 
 export interface PaneSessionIndex {
@@ -144,6 +187,8 @@ export interface PaneSessionIndex {
   paneFor(sessionId: string): string | undefined;
   busy(sessionId: string): boolean;
   waiting(sessionId: string): boolean;
+  waitingAsks(sessionId: string): WaitingFact | undefined;
+  changes(sessionId: string): ChangesFact | undefined;
 }
 
 interface PaneSessionBinding {
@@ -183,6 +228,8 @@ export function paneSessionIndex(sessions: SessionPort | undefined): PaneSession
     paneFor,
     busy: (sessionId) => activityOf(sessionId).busy?.() ?? false,
     waiting: (sessionId) => activityOf(sessionId).waiting?.() ?? false,
+    waitingAsks: (sessionId) => activityOf(sessionId).waitingAsks?.(),
+    changes: (sessionId) => activityOf(sessionId).changes?.(),
   };
 }
 
@@ -215,6 +262,9 @@ export function adoptSession(
   pane.sessionId = attachment.id;
   pane.arc = attachment.arc;
   pane.bot = attachment.bot;
+  if (attachment.quiet === true) pane.model.adoptQuiet(true);
+  if (attachment.grants !== undefined) pane.model.adoptSessionRules(attachment.grants);
+  pane.model.expectSummaries(attachment.summaries ?? []);
   reconcileTitle(pane, attachment);
   if (agent === undefined) return;
   if (attachment.thinking !== undefined) agent.setThinking(attachment.thinking === "on");
@@ -249,8 +299,10 @@ export interface SessionLifecycleOptions {
 
 export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
   const { pane, attachment } = options;
-  let persisted = attachment.history.length;
-  let modelRecorded = attachment.modelReference !== undefined;
+  const writer = new SessionWriter(attachment, {
+    promptSaved: (entryId) => pane.adoptPromptId(entryId),
+    modelReference: (agent) => modelReferenceOf(agent.provider) ?? options.modelInForce?.(),
+  });
   const turnOf = (agent: Agent, phase: SettlePhase): SessionTurn => ({
     sessionId: attachment.id,
     history: agent.history(),
@@ -259,41 +311,29 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
   });
   const apply = (settlement: TurnSettlement | undefined, agent: Agent): void => {
     if (settlement === undefined || pane.disposed()) return;
-    for (const notice of settlement.notices) pane.postNotice(notice);
+    pane.model.reportSettlement(settlement);
     if (settlement.history !== undefined) adopt(settlement.history, agent);
   };
   const adopt = (history: readonly Message[], agent: Agent): boolean => {
     const next = options.rebuild?.(history, agent);
     if (next === undefined) return false;
-    persisted = next.history().length;
+    writer.rebase(next.history().length);
     pane.swapAgent(next);
     return true;
-  };
-  const recordModelOnce = async (agent: Agent): Promise<void> => {
-    if (modelRecorded) return;
-    modelRecorded = true;
-    const reference = modelReferenceOf(agent.provider) ?? options.modelInForce?.();
-    if (reference !== undefined) await attachment.recordModel?.(reference);
-  };
-  const persistNewMessages = async (agent: Agent): Promise<void> => {
-    const history = agent.history();
-    if (history.length > persisted) await recordModelOnce(agent);
-    while (persisted < history.length) {
-      const message = history[persisted];
-      if (message === undefined) break;
-      const receipt = await attachment.append(message);
-      persisted += 1;
-      if (message.role === "user" && receipt !== undefined) pane.adoptPromptId(receipt.entryId);
-    }
   };
   const adoptForLiveAgent = (history: readonly Message[]): boolean => {
     const agent = pane.currentAgent();
     return agent !== undefined && adopt(history, agent);
   };
+  pane.model.bindTurnOpened(() => {
+    const agent = pane.currentAgent();
+    if (agent === undefined) return;
+    writer.openTurn(agent).catch((cause: unknown) => pane.postNotice(toError(cause).message));
+  });
   pane.bindAfterTurn(async () => {
     const agent = pane.currentAgent();
     if (agent === undefined) return;
-    await persistNewMessages(agent);
+    await writer.settleTurn(agent);
     apply(await options.afterTurn?.(turnOf(agent, "after-turn")), agent);
   });
   pane.model.bindToolBatchSettler(async () => {
@@ -301,16 +341,18 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
     if (agent === undefined || options.afterTurn === undefined) return undefined;
     const reading = pane.model.ledger.contextReading(agent);
     if (reading === undefined || !compactionDue(reading)) return undefined;
-    await persistNewMessages(agent);
+    await writer.persist(agent);
     const settlement = await options.afterTurn(turnOf(agent, "between-tool-batches"));
-    if (settlement?.history !== undefined) persisted = settlement.history.length;
+    if (settlement?.history !== undefined) writer.rebase(settlement.history.length);
     return settlement;
   });
   pane.bindThinkingChange((level) => attachment.recordThinking?.(level) ?? Promise.resolve());
   pane.bindEffortChange((level) => attachment.recordEffort?.(level) ?? Promise.resolve());
-  pane.model.bindPromptUndo(
-    promptUndo({ attachment, checkpoints: options.checkpoints, adopt: adoptForLiveAgent }),
-  );
+  const undoSeams = { attachment, checkpoints: options.checkpoints, adopt: adoptForLiveAgent };
+  pane.model.bindPromptUndo(promptUndo(undoSeams));
+  const reopened = reopenedUndo(undoSeams);
+  if (reopened !== undefined) pane.model.adoptStagedUndo(reopened);
+  bindSessionJournal(pane, attachment);
   const forget = forgetInSession({ attachment, adopt: adoptForLiveAgent });
   if (forget !== undefined) pane.model.bindForget(forget);
   const compact = options.compact;
@@ -320,6 +362,16 @@ export function bindSessionLifecycle(options: SessionLifecycleOptions): void {
     if (agent === undefined) return;
     apply(await compact(turnOf(agent, "after-turn"), instructions), agent);
   });
+}
+
+function bindSessionJournal(pane: ConversationPane, attachment: SessionAttachment): void {
+  const { turns, pinTitle, recordQuiet, recordGrants, context } = attachment;
+  if (turns !== undefined) pane.model.bindTurnLedger(() => turns());
+  if (context !== undefined) pane.model.bindServedContext(() => context());
+  if (pinTitle !== undefined) pane.model.bindRename((title) => pinTitle(title));
+  if (recordQuiet !== undefined) pane.model.bindQuietChange((on) => recordQuiet(on));
+  if (recordGrants !== undefined)
+    pane.model.bindSessionRulesJournal((rules) => recordGrants(rules));
 }
 
 function reconcileTitle(pane: ConversationPane, attachment: SessionAttachment): void {

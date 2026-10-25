@@ -27,8 +27,8 @@ export async function loadRestorePlan(
   try {
     const state = parseWorkspaceState(await sources.workspace.load());
     if (state === undefined) return { kind: "fresh" };
-    const panes = await restorablePanes(state.panes, sources.sessions, escrow);
-    const held = await restorablePanes(state.held, sources.sessions, escrow);
+    const panes = await restorablePanes(state.panes, sources.sessions, escrow, "fresh");
+    const held = await restorablePanes(state.held, sources.sessions, escrow, "dropped");
     if (panes.length === 0) return { kind: "fresh" };
     return { kind: "restore", state: { ...state, panes, held } };
   } catch (cause) {
@@ -40,31 +40,40 @@ export function statKind(path: string) {
   return statSync(path, { throwIfNoEntry: false });
 }
 
+type UnsavedConversation = "fresh" | "dropped";
+
 async function restorablePanes(
   panes: readonly WorkspacePane[],
   sessions: SessionPort | undefined,
   escrow: SessionEscrow,
+  unsaved: UnsavedConversation,
 ): Promise<WorkspacePane[]> {
   const kept: WorkspacePane[] = [];
   for (const pane of panes) {
-    if (await restorable(pane, sessions, escrow)) kept.push(pane);
+    const restored = await restoredPane(pane, sessions, escrow, unsaved);
+    if (restored !== undefined) kept.push(restored);
   }
   return kept;
 }
 
-async function restorable(
+async function restoredPane(
   pane: WorkspacePane,
   sessions: SessionPort | undefined,
   escrow: SessionEscrow,
-): Promise<boolean> {
+  unsaved: UnsavedConversation,
+): Promise<WorkspacePane | undefined> {
+  if (pane.kind !== "conversation") return restorable(pane) ? pane : undefined;
+  if (pane.sessionId === undefined) return pane;
+  const attachment = await sessions?.open(pane.sessionId);
+  if (attachment !== undefined) {
+    escrow.hold(pane.sessionId, attachment);
+    return pane;
+  }
+  return unsaved === "fresh" ? { id: pane.id, kind: "conversation" } : undefined;
+}
+
+function restorable(pane: Exclude<WorkspacePane, { kind: "conversation" }>): boolean {
   switch (pane.kind) {
-    case "conversation": {
-      if (pane.sessionId === undefined) return true;
-      const attachment = await sessions?.open(pane.sessionId);
-      if (attachment === undefined) return false;
-      escrow.hold(pane.sessionId, attachment);
-      return true;
-    }
     case "file":
       return statKind(resolve(process.cwd(), pane.path))?.isFile() === true;
     case "browser":
@@ -77,6 +86,9 @@ async function restorable(
     case "workspaces":
     case "terminal":
     case "diff":
+    case "context":
+    case "permissions":
+    case "bots":
       return true;
   }
 }

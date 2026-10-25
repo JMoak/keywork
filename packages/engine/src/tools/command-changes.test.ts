@@ -4,8 +4,12 @@ import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { Checkpoints, type TreeChanges } from "../checkpoints.ts";
 import { bashTool, detectShell } from "./bash.ts";
-import { changeReport, reportingChanges, type WorktreeChanges } from "./command-changes.ts";
-import { maxOutputChars } from "./command-run.ts";
+import {
+  changeReport,
+  maxReportedDiffChars,
+  reportingChanges,
+  type WorktreeChanges,
+} from "./command-changes.ts";
 
 const scratch = scratchDirs("keywork-command-changes-");
 
@@ -87,7 +91,7 @@ describe("changeReport", () => {
         { path: "big.txt", added: 4000, deleted: 0 },
         { path: "small.txt", added: 1, deleted: 1 },
       ],
-      patch: "x".repeat(maxOutputChars + 1),
+      patch: "x".repeat(maxReportedDiffChars + 1),
     };
 
     const report = changeReport(changes) ?? "";

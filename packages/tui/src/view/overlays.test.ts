@@ -25,17 +25,20 @@ interface RenderedBox {
 }
 
 describe("the overlay scrim", () => {
-  it("stays out of the render unless asked for", () => {
+  it("stays out of the render unless asked for, leaving the moat and the panel", () => {
     const view = overlayView(paletteCore(), inputs) as RenderedBox;
-    expect(view).toBeDefined();
-    expect(view.props?.zIndex).toBe(20);
+    expect(view.props?.zIndex).toBe(15);
+    const [moat, panel] = view.children ?? [];
+    expect(moat?.props?.backgroundColor).toBe(keyworkNight.background);
+    expect(panel?.props?.zIndex).toBe(20);
   });
 
-  it("slides a translucent ground behind the panel when enabled", () => {
+  it("slides a translucent ground behind the moat and the panel when enabled", () => {
     const view = overlayView(paletteCore(), { ...inputs, scrim: true }) as RenderedBox;
     expect(view.props?.zIndex).toBe(15);
-    const [ground, panel] = view.children ?? [];
+    const [ground, moat, panel] = view.children ?? [];
     expect(ground?.props?.backgroundColor).toBe(scrimInk(keyworkNight));
+    expect(moat?.props?.backgroundColor).toBe(keyworkNight.background);
     expect(panel?.props?.zIndex).toBe(20);
   });
 

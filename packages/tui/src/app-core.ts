@@ -60,7 +60,6 @@ import {
   type OverlayKind,
   type PaletteMode,
   PaletteOverlay,
-  PermissionsOverlay,
   PickerOverlay,
   type PresetConfirmation,
   PresetOverlay,
@@ -84,11 +83,8 @@ import {
   type SummonableKind,
   summonRequests,
 } from "./pane-kinds.ts";
-import {
-  type FocusedPermissionsPort,
-  PermissionsModel,
-  type PermissionsPort,
-} from "./permissions-model.ts";
+import type { FocusedPermissionsPort, PermissionsPort } from "./permissions-model.ts";
+import { PermissionsPane } from "./permissions-pane.ts";
 import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import { PanePointer } from "./pointer-routing.ts";
@@ -210,7 +206,10 @@ export class AppCore implements ActionTarget {
   private lastSavedWorkspace = "";
   private editingExternally = false;
 
-  constructor(readonly options: AppCoreOptions) {
+  readonly options: AppCoreOptions;
+
+  constructor(options: AppCoreOptions) {
+    this.options = withPermissionsPane(options);
     registerCoreCommands(this);
     this.registry.register(imageCommand(this));
   }
@@ -256,9 +255,10 @@ export class AppCore implements ActionTarget {
   }
 
   panesFocusedFirst(): string[] {
+    const shown = this.layout.panes();
     const focused = this.layout.focused();
-    const ids = this.layout.panes();
-    return focused === undefined ? ids : [focused, ...ids.filter((id) => id !== focused)];
+    const recent = this.layout.recentlyFocused().filter((id) => shown.includes(id));
+    return [...new Set([...(focused === undefined ? [] : [focused]), ...recent, ...shown])];
   }
 
   handleKey(chord: Chord, sequence: string | undefined, nowMs: number, repeat = false): void {
@@ -486,6 +486,22 @@ export class AppCore implements ActionTarget {
   focusLast(): void {
     this.layout.focusPrevious();
     this.touch();
+  }
+
+  toggleQuiet(): void {
+    const pane = this.recentConversation();
+    if (pane === undefined) this.postNotice("quiet belongs to a conversation · focus one first");
+    else pane.model.toggleQuiet();
+  }
+
+  focusOrdinal(ordinal: number): void {
+    const shown = this.layout.panes();
+    const id = shown[ordinal - 1];
+    if (id === undefined) {
+      this.postNotice(`no pane ${ordinal} · ${pluralize(shown.length, "pane")} showing`);
+      return;
+    }
+    this.focusPane(id);
   }
 
   cycleVerbosity(): void {
@@ -718,18 +734,6 @@ export class AppCore implements ActionTarget {
     this.overlay = new ConnectOverlay(model, this.overlaySeams);
   }
 
-  openPermissions(): void {
-    const port = this.options.permissions;
-    if (port === undefined) return;
-    const model = new PermissionsModel(port, {
-      notify: () => this.notify(),
-      notice: (text) => this.postNotice(text),
-      focused: this.options.focusedPermissions,
-    });
-    this.overlay = new PermissionsOverlay(model, this.overlaySeams);
-    void model.refresh();
-  }
-
   overlayFrame(): OverlayFrame | undefined {
     return this.overlay?.frame(this.screen());
   }
@@ -798,10 +802,6 @@ export class AppCore implements ActionTarget {
     return this.overlay?.kind === "connect" ? this.overlay.model : undefined;
   }
 
-  permissionsModel(): PermissionsModel | undefined {
-    return this.overlay?.kind === "permissions" ? this.overlay.model : undefined;
-  }
-
   setupConfirmation(): WorkspaceReadiness | undefined {
     return this.overlay?.kind === "setup" ? this.overlay.readiness : undefined;
   }
@@ -860,6 +860,14 @@ export class AppCore implements ActionTarget {
       seed,
     );
     this.overlay = new BotCreateOverlay(model, this.overlaySeams);
+  }
+
+  private recentConversation(): ConversationPane | undefined {
+    for (const id of this.panesFocusedFirst()) {
+      const pane = this.panes.get(id);
+      if (pane instanceof ConversationPane) return pane;
+    }
+    return undefined;
   }
 
   private promptPane(what: string): ConversationPane | undefined {
@@ -927,7 +935,7 @@ export class AppCore implements ActionTarget {
     }
     if (result.type !== "action") return;
     appActions[result.action]?.invoke(this);
-    if (stickyActions.has(result.action)) {
+    if (result.via === "leader" && stickyActions.has(result.action)) {
       this.keymap.arm(nowMs, chainActions);
       this.leaderArmed = true;
     }
@@ -1149,6 +1157,17 @@ export class AppCore implements ActionTarget {
   private noticeNoRoom(where: string): void {
     this.postNotice(`no room in ${where} · close or resize a pane`);
   }
+}
+
+function withPermissionsPane(options: AppCoreOptions): AppCoreOptions {
+  const port = options.permissions;
+  if (port === undefined || options.createPermissionsPane !== undefined) return options;
+  const focused = options.focusedPermissions;
+  return {
+    ...options,
+    createPermissionsPane: (id, notify, intents) =>
+      new PermissionsPane(id, notify, intents, { port, focused }),
+  };
 }
 
 function describedAs(pane: Pane): string {

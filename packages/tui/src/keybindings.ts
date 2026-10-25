@@ -1,6 +1,6 @@
 import { appBindings } from "./app-actions.ts";
 import { Debounce, type DebounceTiming, realTiming } from "./debounce.ts";
-import { type BindingSpec, type Keymap, KeymapError } from "./keymap.ts";
+import type { BindingSpec, Keymap } from "./keymap.ts";
 
 export interface KeybindingSource {
   read(): Promise<Record<string, BindingSpec>>;
@@ -11,6 +11,7 @@ export interface KeybindingSeams {
   keymap: Keymap;
   source: KeybindingSource;
   notice(text: string): void;
+  aside?(text: string): void;
   defaults?: Record<string, BindingSpec>;
   timing?: DebounceTiming;
   quietMs?: number;
@@ -23,18 +24,27 @@ export function resolveBindings(
   defaults: Record<string, BindingSpec>,
   overrides: Record<string, BindingSpec>,
 ): Record<string, BindingSpec> {
-  for (const action of Object.keys(overrides)) {
-    if (!(action in defaults)) throw new KeymapError(`no action named "${action}"`);
-  }
-  return { ...defaults, ...overrides };
+  const known = Object.entries(overrides).filter(([action]) => action in defaults);
+  return { ...defaults, ...Object.fromEntries(known) };
+}
+
+export function unknownActions(
+  defaults: Record<string, BindingSpec>,
+  overrides: Record<string, BindingSpec>,
+): string[] {
+  return Object.keys(overrides).filter((action) => !(action in defaults));
+}
+
+export function skippedNotice(actions: readonly string[]): string {
+  return `keybindings skipped actions this terminal doesn't have · ${actions.join(" · ")}`;
 }
 
 export async function applyKeybindings(seams: KeybindingSeams): Promise<boolean> {
+  const defaults = seams.defaults ?? appBindings;
   try {
-    seams.keymap.rebind({
-      leader: leaderChord,
-      bindings: resolveBindings(seams.defaults ?? appBindings, await seams.source.read()),
-    });
+    const overrides = await seams.source.read();
+    seams.keymap.rebind({ leader: leaderChord, bindings: resolveBindings(defaults, overrides) });
+    announceSkipped(seams, unknownActions(defaults, overrides));
     return true;
   } catch (cause) {
     seams.notice(`keybindings kept · ${messageOf(cause)}`);
@@ -63,6 +73,15 @@ export function watchKeybindings(seams: KeybindingSeams): () => void {
 }
 
 const leaderChord = "ctrl+k";
+
+const announcedSkips = new WeakMap<KeybindingSeams, string>();
+
+function announceSkipped(seams: KeybindingSeams, actions: readonly string[]): void {
+  const heard = actions.join(",");
+  if (announcedSkips.get(seams) === heard) return;
+  announcedSkips.set(seams, heard);
+  if (actions.length > 0) (seams.aside ?? seams.notice)(skippedNotice(actions));
+}
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);

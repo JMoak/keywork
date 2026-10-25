@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { reviewKey, textTurn } from "../../../packages/engine/src/index.ts";
+import { titled } from "../frame-queries.ts";
 import type { Scenario } from "../scenario.ts";
 
 const vault = ".keywork/memory";
@@ -138,7 +139,7 @@ export const memoryBrowser: Scenario = {
 
     await stage.type("/memory");
     await stage.press("enter");
-    const garden = await stage.until("│ memory · 6 notes · ░1 ");
+    const garden = await stage.until(titled("memory · 6 notes · ░1 "));
     assert.ok(garden.includes("#dock-v2 · 2 notes"), "the focused arc's layer leads the garden");
     assert.ok(garden.includes("in prompt · "), "the workspace layer shows its prompt budget");
     assert.ok(garden.includes("by search only"), "notes beyond the prompt are labelled");
@@ -149,7 +150,7 @@ export const memoryBrowser: Scenario = {
     await stage.capture("garden");
 
     await stage.press("i", "a");
-    await stage.until("│ memory · 7 notes ");
+    await stage.until(titled("memory · 7 notes "));
 
     await stage.press("?");
     await stage.type("dock");
@@ -185,7 +186,7 @@ export const memoryBrowser: Scenario = {
     assert.ok(ledger.includes("gardener sweep"), "the persisted audit joins the feed");
     await stage.press("u");
     await stage.until("reverted · the previous text is back");
-    await stage.until("│ memory · 6 notes · ░1 ");
+    await stage.until(titled("memory · 6 notes · ░1 "));
     await stage.settle();
     await stage.capture("ledger-revert");
 
@@ -193,7 +194,7 @@ export const memoryBrowser: Scenario = {
     await stage.until("agent · cured · 3d · #dock-v2");
     await stage.relaunch();
     const revived = await stage.until("agent · cured · 3d · #dock-v2");
-    assert.ok(revived.includes("│ memory · 6 notes · ░1 "), "the pane revives in its note lens");
+    assert.ok(titled("memory · 6 notes · ░1 ").test(revived), "the pane revives in its note lens");
     await stage.settle();
     await stage.capture("relaunched-note-lens");
 
@@ -251,7 +252,7 @@ export const memoryAirlockTail: Scenario = {
     await stage.until("arc → dock-v2");
     await stage.type("/memory");
     await stage.press("enter");
-    await stage.until("│ memory · 6 notes · ░1 ");
+    await stage.until(titled("memory · 6 notes · ░1 "));
     await closeArcAtTheAirlock(stage);
     await stage.press("i", "a", "j", "c");
     const tailed = await stage.until("█ Tie order · question · 2d → carry to #next-arc");

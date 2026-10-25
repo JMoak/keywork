@@ -5,6 +5,17 @@ import type { Chord } from "./keys.ts";
 import type { FileOpenOptions } from "./pane.ts";
 import { failureMessage, PaneTasks } from "./pane-tasks.ts";
 
+export type FileReader = (path: string) => Promise<string>;
+
+export function localFileReader(cwd: string): FileReader {
+  return async (path) => {
+    const absolutePath = resolve(cwd, path);
+    const { size } = await stat(absolutePath);
+    if (size > maxFileBytes) throw new Error(`file too large (${megabytes(size)} MB)`);
+    return readFile(absolutePath, "utf8");
+  };
+}
+
 export type FileState =
   | { kind: "loading" }
   | { kind: "loaded"; lines: string[] }
@@ -21,10 +32,11 @@ export class FileModel {
     readonly path: string,
     notify: () => void,
     options: FileOpenOptions = {},
+    read: FileReader = localFileReader(cwd),
   ) {
     this.name = basename(path);
     this.tasks = new PaneTasks(notify);
-    this.tasks.track(() => this.load(resolve(cwd, path), options));
+    this.tasks.track(() => this.load(read, options));
   }
 
   handleKey(chord: Chord, pageRows: number): boolean {
@@ -78,14 +90,9 @@ export class FileModel {
     return true;
   }
 
-  private async load(absolutePath: string, options: FileOpenOptions): Promise<void> {
+  private async load(read: FileReader, options: FileOpenOptions): Promise<void> {
     try {
-      const { size } = await stat(absolutePath);
-      if (size > maxFileBytes) {
-        this.state = { kind: "failed", reason: `file too large (${megabytes(size)} MB)` };
-        return;
-      }
-      const content = await readFile(absolutePath, "utf8");
+      const content = await read(this.path);
       this.state = content.includes("\u0000")
         ? { kind: "failed", reason: "binary file" }
         : { kind: "loaded", lines: content.split(/\r?\n/) };

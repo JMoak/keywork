@@ -27,7 +27,7 @@ import { scanSessions, type UnreadableSession } from "./store.ts";
 
 export const toolDecisionSchema = "keywork.tool-decision/1";
 
-export const decisionExportCaps = { command: 2_000, arguments: 1_000 } as const;
+export const decisionExportCaps = { command: 2_000, arguments: 1_000, note: 1_000 } as const;
 
 export interface ToolDecisionRecord {
   schema: typeof toolDecisionSchema;
@@ -87,6 +87,7 @@ export interface AnswerFacts {
   by: AnsweredBy;
   afterMs?: number;
   reason?: DenyReason;
+  note?: string;
 }
 
 export interface DecisionExportOptions {
@@ -138,7 +139,7 @@ export function toolDecisionsOf(
       tool: call.name,
       subject: subjectOf(call, place, scrub),
       ...(ask !== undefined && { ask: askFactsOf(ask) }),
-      answer: answerFactsOf(decision, at, ask),
+      answer: answerFactsOf(decision, at, ask, scrub),
       ...(decision.verdict === "granted" && isError !== undefined && { result: { isError } }),
     };
     return [record];
@@ -323,8 +324,11 @@ function answerFactsOf(
   decision: PermissionDecision,
   at: string,
   ask: TimedAsk | undefined,
+  scrub: Scrubber,
 ): AnswerFacts {
   const afterMs = ask === undefined ? Number.NaN : Date.parse(at) - Date.parse(ask.at);
+  const note =
+    typeof decision.note === "string" ? scrub(decision.note, decisionExportCaps.note) : undefined;
   return {
     at,
     verdict: decision.verdict,
@@ -333,6 +337,7 @@ function answerFactsOf(
     by: answeredBy(decision, ask !== undefined),
     ...(Number.isFinite(afterMs) && afterMs >= 0 && { afterMs }),
     ...(decision.reason !== undefined && { reason: decision.reason }),
+    ...(note !== undefined && { note: note.text }),
   };
 }
 

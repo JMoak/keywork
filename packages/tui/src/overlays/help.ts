@@ -1,10 +1,11 @@
 import { bindingHelp } from "../app-actions.ts";
 import { clampScroll } from "../clamp.ts";
-import type { Screen } from "../geometry.ts";
+import { contains, type Screen } from "../geometry.ts";
 import type { Keymap } from "../keymap.ts";
 import type { Chord } from "../keys.ts";
 import type { PointerEvent } from "../pointer.ts";
-import { helpFrame, type OverlayFrame, panelRowRoom, RowOverlay, routeRows } from "./overlay.ts";
+import { width } from "../width.ts";
+import { type OverlayFrame, panelFrame, panelRowRoom, RowOverlay } from "./overlay.ts";
 
 export interface HelpSeams {
   dismiss(): void;
@@ -20,6 +21,8 @@ export interface HelpPage {
   rows: readonly HelpRow[];
   above: number;
   below: number;
+  filter: string;
+  keysColumn: number;
 }
 
 export const promptKeys: readonly HelpRow[] = [
@@ -40,9 +43,12 @@ export const promptKeys: readonly HelpRow[] = [
   { keys: "ctrl+c", help: "clear the prompt · up on an empty prompt brings it back" },
 ];
 
+export const keysColumnLimit = 18;
+
 export class HelpOverlay extends RowOverlay {
   readonly kind = "help" as const;
   private top = 0;
+  private filter = "";
 
   constructor(
     private readonly keymap: Keymap,
@@ -52,7 +58,8 @@ export class HelpOverlay extends RowOverlay {
   }
 
   frame(screen: Screen): OverlayFrame {
-    return helpFrame(screen, this.rowCount());
+    const frame = panelFrame(screen, this.allRows().length + filterRows, keysPanelWidth);
+    return { ...frame, firstRowY: frame.firstRowY + filterRows };
   }
 
   rowCount(): number {
@@ -60,31 +67,47 @@ export class HelpOverlay extends RowOverlay {
   }
 
   rows(): HelpRow[] {
-    const bound = this.keymap.actions().map((action) => ({
-      keys: this.keymap.describe(action) ?? "",
-      help: bindingHelp[action] ?? action,
-    }));
-    return [...bound, ...promptKeys];
+    const rows = this.allRows();
+    const needle = this.filter.toLowerCase();
+    return needle === "" ? rows : rows.filter((row) => rowMatches(row, needle));
   }
 
   page(screen: Screen): HelpPage {
     const rows = this.rows();
-    const room = panelRowRoom(this.frame(screen));
+    const room = this.roomIn(this.frame(screen));
     const top = clampScroll(this.top, rows.length, room);
     return {
       rows: rows.slice(top, top + room),
       above: top,
       below: Math.max(0, rows.length - top - room),
+      filter: this.filter,
+      keysColumn: keysColumnOf(this.allRows()),
     };
   }
 
-  handleKey(chord: Chord): void {
+  handleKey(chord: Chord, sequence?: string): void {
+    if (chord.name === "escape" && this.filter !== "") {
+      this.refilter("");
+      return;
+    }
     if (chord.name === "escape" || chord.name === "f1") {
       this.seams.dismiss();
       return;
     }
+    if (chord.name === "backspace") {
+      this.refilter(this.filter.slice(0, -1));
+      return;
+    }
     const step = scrollStep(chord, this.pageRows());
-    if (step !== undefined) this.scrollBy(step);
+    if (step !== undefined) {
+      this.scrollBy(step);
+      return;
+    }
+    if (isTyped(chord, sequence)) this.refilter(this.filter + sequence);
+  }
+
+  override handlePaste(line: string): void {
+    this.refilter(this.filter + line);
   }
 
   override handleMouse(event: PointerEvent, screen: Screen): void {
@@ -93,7 +116,8 @@ export class HelpOverlay extends RowOverlay {
       this.scrollBy(direction === "down" ? delta : -delta);
       return;
     }
-    routeRows(event, this.frame(screen), this.page(screen).rows.length, this);
+    const frame = this.frame(screen);
+    if (event.type === "down" && !contains(frame, event.x, event.y)) this.outside();
   }
 
   click(): void {}
@@ -102,13 +126,69 @@ export class HelpOverlay extends RowOverlay {
     this.seams.dismiss();
   }
 
+  private allRows(): HelpRow[] {
+    const bound = this.keymap.actions().map((action) => ({
+      action,
+      keys: this.keymap.describe(action) ?? "",
+      help: bindingHelp[action] ?? action,
+    }));
+    return [...withOrdinalsFolded(bound), ...promptKeys];
+  }
+
+  private refilter(filter: string): void {
+    this.filter = filter;
+    this.top = 0;
+  }
+
   private scrollBy(rows: number): void {
     this.top = clampScroll(this.top + rows, this.rowCount(), this.pageRows());
   }
 
   private pageRows(): number {
-    return panelRowRoom(this.frame(this.seams.screen()));
+    return this.roomIn(this.frame(this.seams.screen()));
   }
+
+  private roomIn(frame: OverlayFrame): number {
+    return Math.max(1, panelRowRoom(frame) - filterRows);
+  }
+}
+
+interface BoundRow extends HelpRow {
+  readonly action: string;
+}
+
+const filterRows = 1;
+const keysPanelWidth = 72;
+const ordinalAction = /^focus\.pane([1-9])$/;
+const ordinalFocusRow: HelpRow = {
+  keys: "alt+1..9",
+  help: "focus a pane by its place · left dock, then main, then right dock",
+};
+
+function withOrdinalsFolded(rows: readonly BoundRow[]): HelpRow[] {
+  const ordinals = rows.filter((row) => ordinalAction.test(row.action));
+  const folds = ordinals.length === 9 && ordinals.every(boundToItsDigit);
+  if (!folds) return [...rows];
+  const first = rows.indexOf(ordinals[0] as BoundRow);
+  const rest = rows.filter((row) => !ordinals.includes(row));
+  return [...rest.slice(0, first), ordinalFocusRow, ...rest.slice(first)];
+}
+
+function boundToItsDigit(row: BoundRow): boolean {
+  const digit = ordinalAction.exec(row.action)?.[1];
+  return row.keys === `alt+${digit}`;
+}
+
+function keysColumnOf(rows: readonly HelpRow[]): number {
+  return Math.min(keysColumnLimit, Math.max(0, ...rows.map((row) => width(row.keys))));
+}
+
+function rowMatches(row: HelpRow, needle: string): boolean {
+  return row.keys.toLowerCase().includes(needle) || row.help.toLowerCase().includes(needle);
+}
+
+function isTyped(chord: Chord, sequence: string | undefined): sequence is string {
+  return sequence !== undefined && sequence.length === 1 && !chord.ctrl && !chord.meta;
 }
 
 function scrollStep(chord: Chord, pageRows: number): number | undefined {

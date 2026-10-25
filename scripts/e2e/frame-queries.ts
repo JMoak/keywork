@@ -21,5 +21,21 @@ export function occurrences(frame: string, marker: string): number {
 }
 
 export function paneTitleCount(frame: string): number {
-  return [...frame.matchAll(/(?:╭─|│) (?:▪ )?(?:[░▒▓█] )?session-\d+\b/g)].length;
+  return [...frame.matchAll(/(?:╭─|│) (?:\d )?(?:▪ )?(?:[░▒▓█] )?session-\d+\b/g)].length;
+}
+
+export function titled(title: string): RegExp {
+  return new RegExp(`│ (?:\\d )?${escaped(title)}`);
+}
+
+export function titledCount(frame: string, title: string): number {
+  return [...frame.matchAll(new RegExp(`│ (?:\\d )?${escaped(title)}`, "g"))].length;
+}
+
+export function paneHeader(name: string): RegExp {
+  return new RegExp(`│ (?:\\d )?${escaped(name)} +│`);
+}
+
+function escaped(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

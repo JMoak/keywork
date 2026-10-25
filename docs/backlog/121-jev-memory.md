@@ -716,7 +716,7 @@ restating others).
 
 ## Ledger
 
-### K10 · the port and the builtin · landed 2026-10-15 (uncommitted)
+### K10 · the port and the builtin · landed 2026-10-15
 
 **The port.** New `engine/src/memory/decider.ts`: `MemoryDecider` (`id`, `chooseForAction`,
 `triageEntries`, `relatePair`, `assessDrift`, `weighMention`), each returning
@@ -799,7 +799,7 @@ the journal round trip and replay order; `cli/src/memory-decider.test.ts` the co
 existing memory, Gardener, drift, agent and CLI test passes unchanged: 368 files, 5057 tests
 (364 and 5025 before), `bun run check` green.
 
-### K13 · the Jev adapter · landed 2026-10-16 (uncommitted)
+### K13 · the Jev adapter · landed 2026-10-16
 
 Built over the wave 7 server lane and K10. By the lane's brief it carries the parts of K11 and
 K12 that make `"jev"` real: the composition's choice, the `no-key` notice in place of K10's
@@ -945,7 +945,7 @@ startup with no key, the refusal, the key's precedence, secrets kept out of the 
 connect flow, the connection's storage, the doctor rows, the registry's refusal of `typesafe`,
 and the ledger's decider line through `/cost`.
 
-### K15 · the eval · landed 2026-10-16 (uncommitted)
+### K15 · the eval · landed 2026-10-16
 
 **The script.** `scripts/memory-eval.ts` (`bun run memory:eval`) with `harvest`, `run` and
 `report`, its modules under `scripts/memory-eval/`: `corpus` (the line shapes, halves, hashes),
@@ -1064,7 +1064,7 @@ injection, the checked-in report matches a fresh run, live record then byte-stab
 stale cassette refused, the CLI's clean skip) and `proven-questions.test.ts`: 9 files and 82
 tests; 379 files and 5,177 tests in all (3 skipped), `bun run check` green.
 
-### K13 with K15 · wired together · 2026-10-16 (uncommitted)
+### K13 with K15 · wired together · 2026-10-16
 
 The two lanes met on main as the contract above says. K13's own proven list
 (`jevProvenQuestions`, `provenQuestionsFor`, `ProvenQuestion`) is gone: `jevDecider` takes

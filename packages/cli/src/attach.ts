@@ -7,6 +7,8 @@ import {
   type ServerTicket,
 } from "@keywork/server";
 import { type AppOptions, runApp, type WorkspacePort, type WorkspaceState } from "@keywork/tui";
+import { workspaceIdentity } from "./paths.ts";
+import { type ServedPanes, servedPanes, servedSpillPath } from "./remote-panes.ts";
 import {
   remoteAgentFactory,
   remotePermissionsPort,
@@ -17,47 +19,47 @@ import {
 } from "./remote-ports.ts";
 import { serverTicketFile, ticketFilesFor } from "./serve.ts";
 
-export type AttachablePaneKind = "conversation" | "session-tree";
+export type AttachablePaneKind =
+  | "conversation"
+  | "session-tree"
+  | "browser"
+  | "diff"
+  | "memory"
+  | "mcp"
+  | "arcs"
+  | "bots"
+  | "workspaces"
+  | "permissions"
+  | "context";
 
 export type PaneChoice =
   | { kind: "mount"; pane: AttachablePaneKind }
   | { kind: "refused"; reason: string; usage: boolean };
 
-export const attachablePaneKinds: readonly AttachablePaneKind[] = ["conversation", "session-tree"];
-
-const localFilePanes: ReadonlySet<string> = new Set(["browser", "file", "diff", "terminal"]);
-const localWorkspacePanes: ReadonlySet<string> = new Set([
+export const attachablePaneKinds: readonly AttachablePaneKind[] = [
+  "conversation",
+  "session-tree",
+  "browser",
+  "diff",
   "memory",
   "mcp",
   "arcs",
-  "arc",
-  "workstreams",
-  "workstream",
-  "ws",
+  "bots",
   "workspaces",
-]);
+  "permissions",
+  "context",
+];
 
 export function choosePane(name: string | undefined): PaneChoice {
   if (name === undefined) return { kind: "mount", pane: "conversation" };
-  if (isAttachable(name)) return { kind: "mount", pane: name };
-  if (localFilePanes.has(name)) {
-    return {
-      kind: "refused",
-      usage: false,
-      reason: `the ${name} pane reads local files, and an attached client has none`,
-    };
-  }
-  if (localWorkspacePanes.has(name)) {
-    return {
-      kind: "refused",
-      usage: false,
-      reason: `the ${name} pane needs the local workspace, which stays with keywork serve`,
-    };
-  }
+  const pane = paneAliases[name] ?? name;
+  if (isAttachable(pane)) return { kind: "mount", pane };
+  const refusal = refusals[pane];
+  if (refusal !== undefined) return { kind: "refused", usage: false, reason: refusal };
   return {
     kind: "refused",
     usage: true,
-    reason: `no pane kind named "${name}" · attach mounts ${attachablePaneKinds.join(" or ")}`,
+    reason: `no pane kind named "${name}" · attach mounts ${attachablePaneKinds.join(", ")}`,
   };
 }
 
@@ -80,17 +82,22 @@ export interface AttachSeams {
 
 export async function attach(options: AttachOptions, seams: AttachSeams = {}): Promise<number> {
   const ticketFiles = ticketCandidates(options);
-  const ticket = ticketFiles
-    .map((file) => resolveServerTicket({ file, url: options.url, token: options.token }))
-    .find((candidate) => candidate !== undefined);
-  if (ticket === undefined) {
+  const found = ticketFiles
+    .map((file) => ({
+      file,
+      ticket: resolveServerTicket({ file, url: options.url, token: options.token }),
+    }))
+    .find((candidate) => candidate.ticket !== undefined);
+  if (found?.ticket === undefined) {
     options.printError(
       `keywork attach: no server ticket at ${ticketFiles.join(" or ")} · run keywork serve first, or pass --url and --token`,
     );
     return 1;
   }
-  const client = keyworkClient(ticket, seams.client);
-  const problem = await reachabilityProblem(client, options.session);
+  const client = keyworkClient(found.ticket, seams.client);
+  const problem =
+    (await reachabilityProblem(client, options.session)) ??
+    (await foreignWorkspaceProblem(client, found.file, options));
   if (problem !== undefined) {
     options.printError(`keywork attach: ${problem}`);
     return 1;
@@ -116,14 +123,49 @@ export function mountedWorkspace(
   pane: AttachablePaneKind,
   sessionId: string | undefined,
 ): WorkspacePort {
-  const id = pane === "conversation" ? "session-1" : "tree-1";
+  const mounted = mountedPane(pane, sessionId);
   const state: WorkspaceState = {
     version: 2,
-    layout: { tree: { kind: "leaf", id }, focused: id },
-    panes: [{ id, kind: pane, ...(sessionId !== undefined && { sessionId }) }],
+    layout: { tree: { kind: "leaf", id: mounted.id }, focused: mounted.id },
+    panes: [mounted],
     held: [],
   };
   return { load: async () => state, save: () => {}, seal: () => {} };
+}
+
+const paneAliases: Readonly<Record<string, AttachablePaneKind>> = {
+  tree: "session-tree",
+  sessions: "session-tree",
+  files: "browser",
+  changes: "diff",
+  workstreams: "arcs",
+  ws: "arcs",
+  grants: "permissions",
+  "context-map": "context",
+};
+
+const refusals: Readonly<Record<string, string>> = {
+  file: "the file pane opens on a path · attach --pane browser and enter opens a file",
+  arc: "the arc pane opens on a slug · attach --pane arcs and enter opens an arc",
+  workstream: "the arc pane opens on a slug · attach --pane arcs and enter opens an arc",
+  terminal:
+    "the terminal pane runs a shell on this machine, and the server's shell stays with keywork serve",
+};
+
+type MountedPane = WorkspaceState["panes"][number];
+
+function mountedPane(pane: AttachablePaneKind, sessionId: string | undefined): MountedPane {
+  const session = sessionId === undefined ? {} : { sessionId };
+  switch (pane) {
+    case "conversation":
+      return { id: "session-1", kind: "conversation", ...session };
+    case "session-tree":
+      return { id: "tree-1", kind: "session-tree", ...session };
+    case "browser":
+      return { id: "browser-1", kind: "browser", root: "." };
+    default:
+      return { id: `${pane}-1`, kind: pane };
+  }
 }
 
 async function reachabilityProblem(
@@ -143,12 +185,27 @@ async function reachabilityProblem(
   }
 }
 
+async function foreignWorkspaceProblem(
+  client: KeyworkClient,
+  ticketFile: string,
+  options: Pick<AttachOptions, "cwd" | "workspaceSlug" | "url">,
+): Promise<string | undefined> {
+  if (options.cwd === undefined || options.url !== undefined) return undefined;
+  if (ticketFile !== serverTicketFile()) return undefined;
+  const served = (await client.document().catch(() => undefined))?.info.workspace;
+  if (served === undefined) return undefined;
+  if (served.identity === workspaceIdentity(options.cwd, options.workspaceSlug)) return undefined;
+  return `the server at ${client.url} serves ${served.anchor}, not this workspace · run keywork serve here, or pass --url and --token to attach to it anyway`;
+}
+
 function mount(
   client: KeyworkClient,
   feed: ServerFeed,
   options: AttachOptions,
   seams: AttachSeams,
 ): Promise<number> {
+  const anchor = anchorSession(client, options.session);
+  const served = servedPanes(client, feed, () => anchor);
   return new Promise<number>((settle, fail) => {
     const exit = (code: number): void => {
       feed.close();
@@ -160,6 +217,7 @@ function mount(
       sessionTrees: remoteSessionTreePort(client, feed),
       agentFactory: remoteAgentFactory(client, feed),
       permissions: remotePermissionsPort(client),
+      ...servedOptions(served),
       workspace: mountedWorkspace(options.pane, options.session),
       statusLabel: attachedLabel(client),
       notices: {
@@ -172,6 +230,32 @@ function mount(
       ...(seams.createRenderer !== undefined && { createRenderer: seams.createRenderer }),
     }).catch(fail);
   });
+}
+
+function servedOptions(served: ServedPanes): AppOptions {
+  return {
+    files: served.files,
+    diff: served.diff,
+    memory: served.memory,
+    mcp: served.mcp,
+    arcs: served.arcs,
+    bots: served.bots,
+    workspaces: served.workspaces,
+    contextReadings: served.contextReadings,
+    spillFile: servedSpillPath,
+  };
+}
+
+async function anchorSession(
+  client: KeyworkClient,
+  sessionId: string | undefined,
+): Promise<string | undefined> {
+  if (sessionId !== undefined) return sessionId;
+  const rows = await client.sessions().catch(() => []);
+  const newest = [...rows].sort((left, right) =>
+    right.lastActivityAt.localeCompare(left.lastActivityAt),
+  )[0];
+  return newest?.id;
 }
 
 function isAttachable(name: string): name is AttachablePaneKind {

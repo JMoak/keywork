@@ -1,9 +1,12 @@
 import {
   describeBinding,
   describeContextEdit,
+  isJournalOnly,
+  type Message,
   messageText,
   type SessionEntry,
   type SessionTreeNode,
+  toolCalls,
 } from "@keywork/engine";
 import type { Chord } from "./keys.ts";
 import { isPrintable } from "./picker-keys.ts";
@@ -107,7 +110,7 @@ export class SessionTreeModel extends RowCursor<SessionTreeRow> {
 
   protected buildRows(): SessionTreeRow[] {
     const rows: SessionTreeRow[] = [];
-    this.collect(this.view?.roots ?? [], 0, rows);
+    this.collect(visibleNodes(this.view?.roots ?? []), 0, null, rows);
     return rows;
   }
 
@@ -183,30 +186,42 @@ export class SessionTreeModel extends RowCursor<SessionTreeRow> {
     });
   }
 
-  private collect(nodes: readonly SessionTreeNode[], depth: number, out: SessionTreeRow[]): void {
+  private collect(
+    nodes: readonly SessionTreeNode[],
+    depth: number,
+    parentId: string | null,
+    out: SessionTreeRow[],
+  ): void {
     for (const node of nodes) {
-      const collapsed = node.children.length > 0 && this.collapsedIds.has(node.entry.id);
+      const children = visibleNodes(node.children);
+      const collapsed = children.length > 0 && this.collapsedIds.has(node.entry.id);
       out.push({
         id: node.entry.id,
-        parentId: node.entry.parentId,
+        parentId,
         depth,
         text: entryText(node.entry),
         label: node.label,
         onActivePath: node.onActivePath,
-        hasChildren: node.children.length > 0,
-        branchPoint: node.children.length > 1,
+        hasChildren: children.length > 0,
+        branchPoint: children.length > 1,
         collapsed,
       });
       if (collapsed) continue;
-      this.collect(node.children, depth + (node.children.length > 1 ? 1 : 0), out);
+      this.collect(children, depth + (children.length > 1 ? 1 : 0), node.entry.id, out);
     }
   }
+}
+
+function visibleNodes(nodes: readonly SessionTreeNode[]): SessionTreeNode[] {
+  return nodes.flatMap((node) =>
+    isJournalOnly(node.entry) ? visibleNodes(node.children) : [node],
+  );
 }
 
 function entryText(entry: SessionEntry): string {
   switch (entry.type) {
     case "message":
-      return `${entry.message.role}: ${excerpt(messageText(entry.message))}`;
+      return `${entry.message.role}: ${excerpt(messageGist(entry.message))}`;
     case "compaction":
       return `compacted · ${entry.tokensBefore} tokens summarized`;
     case "branch_summary":
@@ -228,9 +243,23 @@ function entryText(entry: SessionEntry): string {
     case "context_edit":
       return describeContextEdit(entry);
     case "custom":
-      return entry.customType;
+      return customGists[entry.customType] ?? entry.customType;
   }
 }
+
+function messageGist(message: Message): string {
+  const text = messageText(message).trim();
+  if (text !== "") return text;
+  const calls = toolCalls(message).map((call) => call.name);
+  if (calls.length > 0) return `calls ${calls.join(", ")}`;
+  const results = message.parts.filter((part) => part.type === "tool-result").length;
+  return results === 1 ? "1 tool result" : `${results} tool results`;
+}
+
+const customGists: Readonly<Record<string, string>> = {
+  restore: "restored to an earlier turn",
+  "restore-undone": "restore undone",
+};
 
 function excerpt(text: string, limit = 48): string {
   const flat = text.replaceAll("\n", " ").trim();

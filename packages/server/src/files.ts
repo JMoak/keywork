@@ -92,15 +92,20 @@ export function workspaceFiles(root: string, scope: ToolScope): WorkspaceFiles {
     },
     file: async (path, range) => {
       const target = confine(path);
-      return readSlice(target, shownPath(base, target), range);
+      return fileSlice(target, shownPath(base, target), range);
     },
   };
 }
 
-async function readSlice(target: string, shown: string, range: ByteRange): Promise<FileSlice> {
+export async function fileSlice(
+  target: string,
+  shown: string,
+  range: ByteRange,
+  wholeFileCap = maxFileBytes,
+): Promise<FileSlice> {
   const info = await stat(target).catch(() => undefined);
   if (info === undefined || !info.isFile()) throw new MissingPathError(shown, "file");
-  if (info.size > maxFileBytes) throw new FileTooLargeError(shown, info.size);
+  if (info.size > wholeFileCap) throw new FileTooLargeError(shown, info.size);
   const from = clamp(range.from ?? 0, 0, info.size);
   const wanted = clamp(range.to ?? info.size, from, info.size);
   const to = Math.min(wanted, from + fileSliceCapBytes);

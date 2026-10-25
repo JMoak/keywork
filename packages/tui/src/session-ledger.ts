@@ -1,5 +1,6 @@
 import {
   type Agent,
+  type AgentContext,
   addUsage,
   type CacheMiss,
   type ContextReading,
@@ -11,17 +12,16 @@ import {
   declaredContextWindow,
   type EffortLevel,
   emptyCostRollup,
-  estimateConversationTokens,
   formatCostNanos,
   formatTokenCount,
   knownCostNanos,
   type MemoryDecision,
   mergeCostRollups,
   modelReferenceOf,
-  readContext,
+  readAgentContext,
   type Usage,
 } from "@keywork/engine";
-import { contextReadout } from "./context-gauge.ts";
+import { contextReadout } from "./context-map.ts";
 
 export class SessionLedger {
   sessionId: string | undefined;
@@ -29,7 +29,8 @@ export class SessionLedger {
   bot: string | undefined;
   private readonly retired = new Map<string, ModelTotals>();
   private readonly deciderSpend = new Map<string, DeciderSpend>();
-  private context: { agent: Agent; messages: number; reading: ContextReading } | undefined;
+  private map: { agent: Agent; messages: number; map: AgentContext } | undefined;
+  private readonly decisions: MemoryDecision[] = [];
 
   retire(agent: Agent): void {
     const key = ledgerKey(agent);
@@ -40,7 +41,9 @@ export class SessionLedger {
     );
   }
 
-  recordDecision(decision: MemoryDecision): void {
+  recordDecision(decision: MemoryDecision, replayed = false): void {
+    this.decisions.push(decision);
+    if (replayed) return;
     const { model, inputTokens } = decision;
     if (model === undefined || inputTokens === undefined) return;
     const spent = this.deciderSpend.get(model) ?? { decisions: 0, inputTokens: 0 };
@@ -78,23 +81,26 @@ export class SessionLedger {
   }
 
   contextReading(agent: Agent | undefined): ContextReading | undefined {
+    return this.contextMap(agent);
+  }
+
+  memoryDecisions(): readonly MemoryDecision[] {
+    return this.decisions;
+  }
+
+  contextMap(agent: Agent | undefined): AgentContext | undefined {
     if (agent === undefined) return undefined;
     const messages = agent.history().length;
-    if (this.context?.agent === agent && this.context.messages === messages) {
-      return this.context.reading;
-    }
-    const reading = readContext(
-      estimateConversationTokens(agent.history()),
-      contextBudgetFor(declaredContextWindow(agent.provider)),
-    );
-    this.context = { agent, messages, reading };
-    return reading;
+    if (this.map?.agent === agent && this.map.messages === messages) return this.map.map;
+    const map = readAgentContext(agent, contextBudgetFor(declaredContextWindow(agent.provider)));
+    this.map = { agent, messages, map };
+    return map;
   }
 
   contextReport(agent: Agent | undefined): string {
-    const reading = this.contextReading(agent);
-    if (reading === undefined) return "no provider · nothing to measure";
-    return contextReadout(reading).join("\n");
+    const map = this.contextMap(agent);
+    if (map === undefined) return "no provider · nothing to measure";
+    return contextReadout(map).join("\n");
   }
 
   spendSummary(agent: Agent): string {
@@ -103,7 +109,7 @@ export class SessionLedger {
     if (known !== undefined) return formatCostNanos(known);
     return usage.inputTokens + usage.outputTokens === 0
       ? ""
-      : `${usage.inputTokens}▸${usage.outputTokens}`;
+      : `${formatTokenCount(usage.inputTokens)} in ${formatTokenCount(usage.outputTokens)} out`;
   }
 
   private sessionTotals(agent: Agent): ModelTotals {

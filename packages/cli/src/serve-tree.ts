@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { SessionStore } from "@keywork/engine";
+import { isJournalOnly, type SessionStore } from "@keywork/engine";
 import type {
   EntryRefusal,
   LabelOutcome,
@@ -52,5 +52,9 @@ export function sessionEntriesOf(store: SessionStore): SessionEntries {
     entries: store.entries(),
     labels: Object.fromEntries(store.labels()),
     activePath: store.activePath().map((entry) => entry.id),
+    journal: store
+      .entries()
+      .filter(isJournalOnly)
+      .map((entry) => entry.id),
   };
 }

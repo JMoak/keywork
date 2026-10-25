@@ -56,7 +56,7 @@ describe("BrowserPane disposal", () => {
     disk.release([{ name: "here.ts", kind: "file" }]);
     await pane.settled();
     expect(notified).toBe(1);
-    expect(pane.title()).toBe(" workspace · 1 entries ");
+    expect(pane.title()).toBe(" workspace · 1 entry ");
   });
 });
 
@@ -75,7 +75,7 @@ describe("BrowserPane typed filter", () => {
     pane.handleKey(parseChord("y"), "y");
     pane.handleKey(parseChord("space"), " ");
     expect(pane.handleKey(parseChord("ctrl+n"), "")).toBe(false);
-    expect(pane.title()).toBe(" workspace · 1 entries ");
+    expect(pane.title()).toBe(" workspace · 1 entry ");
     pane.handleKey(parseChord("x"), "x");
     expect(pane.title()).toBe(" workspace ");
     expect(pane.describe()).toEqual({ kind: "browser", root: "/workspace" });

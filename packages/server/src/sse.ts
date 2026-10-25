@@ -8,6 +8,10 @@ export function sseFrame(envelope: BusEnvelope): string {
   return `id: ${envelope.id}\nevent: ${envelope.type}\ndata: ${serializeEnvelope(envelope)}\n\n`;
 }
 
+export const keepaliveIntervalMs = 15_000;
+
+export const keepaliveComment = ": keepalive\n\n";
+
 export function lastEventIdOf(request: Request): number | undefined {
   const header = request.headers.get("last-event-id");
   if (header === null || !/^\d+$/.test(header)) return undefined;
@@ -74,6 +78,7 @@ class SseConnection {
       }),
     );
     this.teardown.push(this.streams.add(() => this.close()));
+    this.teardown.push(this.keepAlive());
     const onAbort = (): void => this.close();
     this.request.signal.addEventListener("abort", onAbort, { once: true });
     this.teardown.push(() => this.request.signal.removeEventListener("abort", onAbort));
@@ -86,6 +91,12 @@ class SseConnection {
     try {
       this.controller.close();
     } catch {}
+  }
+
+  private keepAlive(): () => void {
+    const beat = setInterval(() => this.write(keepaliveComment), keepaliveIntervalMs);
+    beat.unref?.();
+    return () => clearInterval(beat);
   }
 
   private replay(resumeFrom: number): void {

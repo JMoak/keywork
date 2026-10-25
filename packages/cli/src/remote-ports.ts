@@ -2,10 +2,13 @@ import {
   Agent,
   type EngineEvents,
   type EventBus,
+  type FlushMark,
+  isPromptEntry,
   type Message,
   type MessageEntry,
   messageText,
   type Provider,
+  type SessionEntry,
   type SessionTreeNode,
   type ToolCallPart,
   type TurnDelegate,
@@ -18,12 +21,16 @@ import {
   engineEventTypes,
   type KeyworkClient,
   type SessionDetail,
+  type SessionEntries,
+  type SessionRow,
   type SessionSummary,
   type WireEventType,
 } from "@keywork/server";
 import type {
   AgentFactory,
   PermissionsPort,
+  ReplayedSummary,
+  ServedRewind,
   SessionAttachment,
   SessionOverviewItem,
   SessionPort,
@@ -31,6 +38,7 @@ import type {
   SessionTreePort,
   SessionTreeView,
 } from "@keywork/tui";
+import { turnRecordsOf } from "./sessions/turns.ts";
 
 export interface ServerFeed {
   open(): Promise<void>;
@@ -114,10 +122,25 @@ export function remoteTurns(
 export function remoteSessionPort(client: KeyworkClient): SessionPort {
   return {
     open: async (id) => {
-      const detail = await client.session(id);
-      return detail === undefined ? undefined : attachmentOf(detail, detail.messages);
+      const [detail, listed, permissions] = await Promise.all([
+        client.session(id),
+        client.entries(id),
+        client.listPermissions().catch(() => undefined),
+      ]);
+      if (detail === undefined) return undefined;
+      const quiet = permissions?.quiet.includes(id) === true;
+      const replayed = {
+        messages: detail.messages,
+        prompts: promptsOf(listed),
+        flushes: detail.flushes,
+      };
+      return {
+        ...attachmentOf(client, detail, replayed),
+        quiet,
+        summaries: summariesOf(detail),
+      };
     },
-    create: async () => attachmentOf(await client.createSession(), []),
+    create: async () => attachmentOf(client, await client.createSession(), nothingReplayed),
   };
 }
 
@@ -137,45 +160,65 @@ export function remoteSessionTreePort(client: KeyworkClient, feed: ServerFeed): 
   return {
     overview: async () => (await client.sessions()).map(overviewItemOf),
     load: async (sessionId) => {
-      const detail = await client.session(sessionId);
-      return detail === undefined ? undefined : treeViewOf(detail);
+      const listed = await client.entries(sessionId);
+      return listed === undefined ? undefined : treeViewOf(listed);
     },
-    setLabel: async () => {
-      throw new Error("labels stay on the server · not available while attached");
+    setLabel: async (sessionId, entryId, label) => {
+      await client.labelEntry(sessionId, entryId, label ?? null);
     },
-    fork: async () => {
-      throw new Error("forking stays on the server · not available while attached");
-    },
+    fork: async (sessionId, entryId) => (await client.fork(sessionId, entryId))?.sessionId,
     remove: (sessionId) => client.removeSession(sessionId).then(removalOf),
     trash: async () => (await client.trash()).map(overviewItemOf),
     restore: async (sessionId) => {
       const restored = await client.restoreSession(sessionId);
       return restored === undefined ? undefined : overviewItemOf(restored);
     },
+    discard: (sessionId) => client.discardTrashedSession(sessionId),
+    purgeTrash: async () => (await client.purgeTrash()).purged,
     subscribe: (listener) =>
       feed.subscribe((envelope) => {
-        if (envelope.type === "turn.completed" || envelope.type === "turn.interrupted") {
-          listener(envelope.sessionId);
-        }
+        if (treeMoves.has(envelope.type)) listener(envelope.sessionId);
       }),
   };
 }
+
+const treeMoves: ReadonlySet<WireEventType> = new Set([
+  "turn.completed",
+  "turn.interrupted",
+  "session.tree",
+  "session.removed",
+  "session.restored",
+  "session.state",
+]);
 
 function removalOf(answer: SessionSummary | "missing" | "busy"): SessionRemoval {
   return typeof answer === "string" ? answer : "removed";
 }
 
-export function replayMessages(messages: readonly Message[], bus: EventBus<EngineEvents>): void {
+export function replayMessages(
+  messages: readonly Message[],
+  bus: EventBus<EngineEvents>,
+  prompts: readonly MessageEntry[] = [],
+  flushes: readonly FlushMark[] = [],
+): void {
   const pendingCalls = new Map<string, ToolCallPart>();
-  for (const message of messages) {
+  const promptIds = promptIdsAlong(messages, prompts);
+  const flushed = flushedIndices(messages, flushes);
+  messages.forEach((message, at) => {
+    if (flushed.has(at)) return;
     if (message.role === "user") {
-      bus.emit("turn.started", { userText: messageText(message), replay: true });
+      const entryId = promptIds.get(at);
+      bus.emit("turn.started", {
+        userText: messageText(message),
+        replay: true,
+        ...(entryId !== undefined && { entryId }),
+      });
     } else if (message.role === "assistant") {
       replayAssistant(message, bus, pendingCalls);
     } else if (message.role === "tool") {
       replayToolResults(message, bus, pendingCalls);
     }
-  }
+  });
 }
 
 interface SettledTurn {
@@ -277,20 +320,125 @@ function attachedProvider(url: string): Provider {
 
 const untitledPlaceholder = "(untitled session)";
 
-function attachmentOf(summary: SessionSummary, history: readonly Message[]): SessionAttachment {
+interface ReplayedHistory {
+  messages: readonly Message[];
+  prompts: readonly MessageEntry[];
+  flushes: readonly FlushMark[];
+}
+
+const nothingReplayed: ReplayedHistory = { messages: [], prompts: [], flushes: [] };
+
+function attachmentOf(
+  client: KeyworkClient,
+  summary: SessionSummary,
+  replayed: ReplayedHistory,
+): SessionAttachment {
+  const id = summary.id;
+  const path = async (): Promise<SessionEntry[]> => activePathOf(await client.entries(id));
   return {
-    id: summary.id,
+    id,
     ...(summary.title !== untitledPlaceholder && { name: summary.title }),
     arc: summary.arc,
     bot: summary.bot,
-    history,
-    replay: (bus) => replayMessages(history, bus),
-    append: async () => undefined,
+    history: replayed.messages,
+    replay: (bus) => replayMessages(replayed.messages, bus, replayed.prompts, replayed.flushes),
+    append: async (message) => (message.role === "user" ? latestPrompt(await path()) : undefined),
+    pinTitle: async (title) => {
+      await client.rename(id, title);
+    },
+    recordQuiet: async (on) => {
+      await client.setQuiet(id, on);
+    },
+    context: () => client.context(id),
+    bindArc: async (slug) => {
+      await client.bindSessionArc(id, slug ?? null);
+    },
+    bindBot: async (name) => {
+      await client.bindSessionBot(id, name ?? null);
+    },
+    turns: async () => turnRecordsOf(await path()),
+    rewindOnServer: async (promptId) => rewindOnServer(client, id, promptId, await path()),
   };
 }
 
-function overviewItemOf(summary: SessionSummary): SessionOverviewItem {
+async function rewindOnServer(
+  client: KeyworkClient,
+  sessionId: string,
+  promptId: string,
+  path: readonly SessionEntry[],
+): Promise<ServedRewind | undefined> {
+  const turn = turnRecordsOf(path).find((record) => record.promptId === promptId)?.turn;
+  if (turn === undefined) return undefined;
+  const restored = await client.restoreTurn(sessionId, turn);
+  if (typeof restored === "string") return undefined;
   return {
+    history: await historyOf(client, sessionId),
+    filesNote: restored.filesNote,
+    cancel: async () => {
+      await client.redo(sessionId);
+      return historyOf(client, sessionId);
+    },
+  };
+}
+
+function summariesOf(detail: SessionDetail): ReplayedSummary[] {
+  return detail.summaries.flatMap((mark) => {
+    const message = detail.messages[mark.index];
+    return message === undefined ? [] : [{ text: messageText(message), kind: mark.kind }];
+  });
+}
+
+async function historyOf(client: KeyworkClient, sessionId: string): Promise<readonly Message[]> {
+  return (await client.session(sessionId))?.messages ?? [];
+}
+
+function activePathOf(listed: SessionEntries | undefined): SessionEntry[] {
+  if (listed === undefined) return [];
+  const byId = new Map(listed.entries.map((entry) => [entry.id, entry]));
+  return listed.activePath.flatMap((id) => byId.get(id) ?? []);
+}
+
+function promptsOf(listed: SessionEntries | undefined): MessageEntry[] {
+  return activePathOf(listed).filter(isPromptEntry);
+}
+
+function latestPrompt(path: readonly SessionEntry[]): { entryId: string } | undefined {
+  const prompt = path.findLast(isPromptEntry);
+  return prompt === undefined ? undefined : { entryId: prompt.id };
+}
+
+function flushedIndices(
+  messages: readonly Message[],
+  flushes: readonly FlushMark[],
+): ReadonlySet<number> {
+  return new Set(
+    flushes.flatMap(({ index }) =>
+      messages[index + 1]?.role === "assistant" ? [index, index + 1] : [index],
+    ),
+  );
+}
+
+function promptIdsAlong(
+  messages: readonly Message[],
+  prompts: readonly MessageEntry[],
+): Map<number, string> {
+  const ids = new Map<number, string>();
+  let next = prompts.length - 1;
+  for (let at = messages.length - 1; at >= 0 && next >= 0; at -= 1) {
+    const message = messages[at];
+    const prompt = prompts[next];
+    if (message?.role !== "user" || prompt === undefined) continue;
+    if (messageText(message) !== messageText(prompt.message)) continue;
+    ids.set(at, prompt.id);
+    next -= 1;
+  }
+  return ids;
+}
+
+function overviewItemOf(summary: SessionSummary | SessionRow): SessionOverviewItem {
+  const desk = "working" in summary ? deskFactsOf(summary) : {};
+  return {
+    ...desk,
     id: summary.id,
     title: summary.title,
     createdAt: Date.parse(summary.createdAt),
@@ -304,26 +452,42 @@ function overviewItemOf(summary: SessionSummary): SessionOverviewItem {
   };
 }
 
-function treeViewOf(detail: SessionDetail): SessionTreeView {
+function deskFactsOf(
+  row: SessionRow,
+): Pick<SessionOverviewItem, "working" | "waiting" | "changes"> {
+  return {
+    working: row.working,
+    waiting: row.waiting,
+    ...(row.changes !== undefined && { changes: row.changes }),
+  };
+}
+
+function treeViewOf(listed: SessionEntries): SessionTreeView {
+  const active = new Set(listed.activePath);
+  const nodes = new Map<string, SessionTreeNode>(
+    listed.entries.map((entry) => {
+      const label = listed.labels[entry.id];
+      const node: SessionTreeNode = {
+        entry,
+        children: [],
+        onActivePath: active.has(entry.id),
+        ...(label !== undefined && { label }),
+      };
+      return [entry.id, node];
+    }),
+  );
   const roots: SessionTreeNode[] = [];
-  let parent: SessionTreeNode | undefined;
-  detail.messages.forEach((message, index) => {
-    const entry: MessageEntry = {
-      type: "message",
-      id: `${detail.id}#${index + 1}`,
-      parentId: parent?.entry.id ?? null,
-      timestamp: detail.lastActivityAt,
-      message,
-    };
-    const node: SessionTreeNode = { entry, children: [], onActivePath: true };
+  for (const entry of listed.entries) {
+    const node = nodes.get(entry.id);
+    const parent = entry.parentId === null ? undefined : nodes.get(entry.parentId);
+    if (node === undefined) continue;
     if (parent === undefined) roots.push(node);
     else parent.children.push(node);
-    parent = node;
-  });
+  }
   return {
-    sessionId: detail.id,
+    sessionId: listed.sessionId,
     roots,
-    ...(detail.title !== untitledPlaceholder && { name: detail.title }),
+    ...(listed.name !== undefined && { name: listed.name }),
   };
 }
 

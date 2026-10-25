@@ -1,6 +1,7 @@
 import type { ChangedPath, TreeChanges } from "../checkpoints.ts";
 import type { Tool } from "../tools.ts";
-import { maxOutputChars } from "./command-run.ts";
+
+export const maxReportedDiffChars = 30_000;
 
 export interface WorktreeChanges {
   snapshot(): Promise<string>;
@@ -26,8 +27,8 @@ export function changeReport(changes: TreeChanges): string | undefined {
   const heading = `changed ${plural(changes.files.length, "file")} on disk:`;
   const listing = changes.files.map(listedPath).join("\n");
   const body =
-    changes.patch.length > maxOutputChars
-      ? `(diff is ${changes.patch.length} chars, over the ${maxOutputChars} cap; read the files for detail)`
+    changes.patch.length > maxReportedDiffChars
+      ? `(diff is ${changes.patch.length} chars, over the ${maxReportedDiffChars} cap; read the files for detail)`
       : changes.patch;
   return `${heading}\n${listing}\n\n${body}`;
 }

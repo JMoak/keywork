@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.4",
+    "x-keywork-contract": "1.7",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -31,7 +31,7 @@
     "/events": {
       "get": {
         "operationId": "streamEvents",
-        "summary": "Server-sent events: every bus envelope as `event: <type>` plus `data: <envelope json>`. Send `Last-Event-ID` to resume from a retained id (0 replays everything still retained); without it the stream starts live. `?session=<id>` keeps that session's envelopes plus every process-level envelope (an empty `sessionId`), on replay and live alike.",
+        "summary": "Server-sent events: every bus envelope as `event: <type>` plus `data: <envelope json>`. Send `Last-Event-ID` to resume from a retained id (0 replays everything still retained); without it the stream starts live. `?session=<id>` keeps that session's envelopes plus every process-level envelope (an empty `sessionId`), on replay and live alike. Every 15 seconds the server writes a `: keepalive` comment, so a client that hears nothing for longer knows the server is gone rather than quiet.",
         "responses": {
           "200": {
             "description": "An open text/event-stream."
@@ -42,7 +42,7 @@
     "/sessions": {
       "get": {
         "operationId": "listSessions",
-        "summary": "Session summaries, newest first.",
+        "summary": "Session summaries, newest first, each carrying what a desk needs to say working, needs-you or back for a session no client has opened, from what this server already holds: `live` is true when the session is open in this server process (its agent loaded), as on `GET /sessions/{id}`; `working` is true while a turn runs, settles or has a prompt waiting in its queue here; `waiting` counts the asks pending on the session (`asks`) and names the tools they are for (`tools`); `changes`, present once a mutating call of the session has been announced on `changes.updated`, sums that listing as `{ files, added, deleted }` against the session-start baseline.",
         "responses": {
           "200": {
             "description": "The summaries."
@@ -62,7 +62,7 @@
     "/sessions/{id}": {
       "get": {
         "operationId": "readSession",
-        "summary": "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`.",
+        "summary": "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `live` is true when the session is open in this server process.",
         "parameters": [
           {
             "name": "id",
@@ -114,7 +114,7 @@
     "/sessions/{id}/prompt": {
       "post": {
         "operationId": "promptSession",
-        "summary": "Append a user prompt and run a turn. `behavior` defaults to `queue`: when a turn is already running the prompt waits behind it, which is what Enter does in the terminal composer. `steer` interrupts the running turn and runs this prompt before anything queued. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events and a `session.state` envelope follows acceptance.",
+        "summary": "Append a user prompt and run a turn. `behavior` defaults to `queue`: when a turn is already running the prompt waits behind it, which is what Enter does in the terminal composer. `steer` interrupts the running turn and runs this prompt before anything queued. `now` is the terminal's ctrl+enter: every prompt waiting in the queue is set aside (dropped from the queue and handed back in `setAside`, so a client can offer them again) and this one steers. When the policy would ask, a `gate.ask` event names the call and the turn waits on POST /asks/{callId}; an unanswered ask times out as a headless denial. Progress arrives on /events and a `session.state` envelope follows acceptance.",
         "parameters": [
           {
             "name": "id",
@@ -139,7 +139,7 @@
                   },
                   "behavior": {
                     "type": "string",
-                    "enum": ["steer", "queue"],
+                    "enum": ["steer", "queue", "now"],
                     "default": "queue"
                   }
                 },
@@ -150,10 +150,10 @@
         },
         "responses": {
           "202": {
-            "description": "The prompt was accepted; `queued` says whether it waits behind a running turn. Watch /events for the turn."
+            "description": "The prompt was accepted; `queued` says whether it waits behind a running turn, and with `behavior: \"now\"`, `setAside` lists the prompts taken off the queue as `queue.changed` carried them. Watch /events for the turn."
           },
           "400": {
-            "description": "The body is not `{ text, behavior?: \"steer\" | \"queue\" }`."
+            "description": "The body is not `{ text, behavior?: \"steer\" | \"queue\" | \"now\" }`."
           },
           "404": {
             "description": "No session has that id."
@@ -248,7 +248,7 @@
     "/asks/{callId}": {
       "post": {
         "operationId": "answerAsk",
-        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask's `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope` and may say why with `reason`: `unsafe` (the call should not run), `not-now` (the moment, not the call) or `other`; a grant ignores `reason`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: \"permissions\"`.",
+        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask's `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope` and may say why with `reason`: `unsafe` (the call should not run), `not-now` (the moment, not the call) or `other`, and in the person's own words with `note` (at most 1000 characters, the free text an `other` answer asks for). Both reach the model in the refused call's result, with a line telling it not to retry the call and not to report it as done, and ride on the `gate.permission` decision and in the journal. A grant ignores `reason` and `note`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: \"permissions\"`.",
         "parameters": [
           {
             "name": "callId",
@@ -279,6 +279,11 @@
                   "reason": {
                     "type": "string",
                     "enum": ["unsafe", "not-now", "other"]
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
                   }
                 },
                 "additionalProperties": false
@@ -291,7 +296,7 @@
             "description": "The ask was settled."
           },
           "400": {
-            "description": "The body is not `{ verdict: \"granted\" | \"denied\", scope?: \"once\" | \"session\" | \"workspace\", reason?: \"unsafe\" | \"not-now\" | \"other\" }`, or the call cannot be granted beyond `once` (`write` and `edit` never can, nor a command with no part to remember)."
+            "description": "The body is not `{ verdict: \"granted\" | \"denied\", scope?: \"once\" | \"session\" | \"workspace\", reason?: \"unsafe\" | \"not-now\" | \"other\", note?: string }`, or the call cannot be granted beyond `once` (`write` and `edit` never can, nor a command with no part to remember)."
           },
           "404": {
             "description": "No ask with that callId is pending."
@@ -392,7 +397,7 @@
     "/memory/notes/{name}": {
       "get": {
         "operationId": "readMemoryNote",
-        "summary": "One note by name (URL-encode it; entity notes are named by path, such as `entities/src/app.ts`), with its graph relations: each `{ name, predicate, direction }` edge the note takes part in.",
+        "summary": "One note by name (URL-encode it; entity notes are named by path, such as `entities/src/app.ts`), with its graph relations: each `{ name, predicate, direction }` edge the note takes part in. `?layer=<id>` reads it from that layer only, for a name an arc layer shares with the workspace; without it the first layer that holds the name answers, workspace first.",
         "parameters": [
           {
             "name": "name",
@@ -919,7 +924,7 @@
     "/sessions/{id}/undo": {
       "post": {
         "operationId": "undoSession",
-        "summary": "Take back the last prompt: the conversation moves to just before it, its text comes back in `prompt` so a client can offer it for editing, and the files the turn changed are put back to the checkpoint taken before it. One undo is staged at a time; the next POST /redo cancels it. With no prompt on the path, undoes the last file checkpoint alone. A `session.state` envelope follows.",
+        "summary": "Take back the last prompt: the conversation moves to just before it, its text comes back in `prompt` so a client can offer it for editing, and the files the turn changed are put back to the checkpoint taken before it. One undo is staged at a time; the next POST /redo cancels it. The undo is written to the session log as a `restore` entry, as POST /restore writes one, so a reopen finds the session rewound and POST /redo still takes it back after a server restart. With no prompt on the path, undoes the last file checkpoint alone. A `session.state` envelope follows.",
         "parameters": [
           {
             "name": "id",
@@ -973,7 +978,7 @@
     "/sessions/{id}/restore": {
       "post": {
         "operationId": "restoreSessionTurn",
-        "summary": "Restore the session to just before one of its turns in one step, where POST /undo takes back one turn per call: the conversation moves to before that turn's prompt, and the workspace files go back to the checkpoint taken before the first change any turn from there on made (untouched when none of them changed a file, or with checkpoints off). One `restore` entry records it in the session log, so a reopen finds the session where the restore left it. The answer says what changed: the turn's `prompt`, handed back so a client can offer it for editing; `undoneTurns`, how many turns left the active path; and `files`, every file the restore put back with the lines it `added` and `deleted`. Staged like an undo: the next POST /redo takes the whole restore back, files and conversation, and records a `restore-undone` entry so a reopen agrees. `session.state`, `session.tree` (reason `leaf`, naming the recorded entry) and, when files moved, `changes.updated` follow.",
+        "summary": "Restore the session to just before one of its turns in one step, where POST /undo takes back one turn per call: the conversation moves to before that turn's prompt, and the workspace files go back to the checkpoint taken before the first change any turn from there on made (untouched when none of them changed a file, or with checkpoints off). One `restore` entry records it in the session log, `{ turn, from, files, redo }` with `redo` the snapshot of the files from before they went back, so a reopen finds the session where the restore left it and, even after a server restart, POST /redo can still put the files back. The answer says what changed: the turn's `prompt`, handed back so a client can offer it for editing; `undoneTurns`, how many turns left the active path; and `files`, every file the restore put back with the lines it `added` and `deleted`. Staged like an undo: the next POST /redo takes the whole restore back, files and conversation, and records a `restore-undone` entry so a reopen agrees. `session.state`, `session.tree` (reason `leaf`, naming the recorded entry) and, when files moved, `changes.updated` follow.",
         "parameters": [
           {
             "name": "id",
@@ -1017,12 +1022,10 @@
             "description": "A turn is running; wait for it or abort it first."
           }
         }
-      }
-    },
-    "/sessions/{id}/context": {
+      },
       "get": {
-        "operationId": "readSessionContext",
-        "summary": "How full the model's context window is: `used` tokens estimated from the conversation text against the `window`, with the thresholds at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen. `used` and those two lines are what keywork's settler measures: the conversation alone. `declared` says whether the window came from keywork.json or is assumed. `parts` splits everything the next request carries, each as `{ tokens, basis }`: `system` (keywork's prompt and the configured prompts), `tools` (the tool schemas), `injected` (project instructions, the repo map, memory and extension context riding in the prompt), `conversation`, and `free` (the room left in the window). A part's `basis` is `reported` when it rests on what the provider reported for the last request, plus an estimate of what arrived since, and `estimated` when it comes from the text alone; the provider never splits its count, so `system`, `tools` and `injected` are always estimated. `thresholds` places the flush and the compaction on the parts' axis as absolute token counts, so a client can draw them across the parts; they pass `window` when the parts beyond the conversation outgrow the reserve.",
+        "operationId": "previewSessionRestore",
+        "summary": "What `POST /sessions/{id}/restore` would do for `?turn=N`, without doing it, so a client can ask before it acts: the turn's `prompt`, how many turns would leave the active path (`undoneTurns`), every file the restore would put back with the lines it would `add` and `delete` (`files`, empty when no turn from there on changed a file or checkpoints are off), and `others`: the sessions of this workspace other than this one whose turns touched any of those files after that turn began, each as `{ sessionId, title, paths }`, so the question can name the work a restore would take from them. A restore resets the whole workspace to the checkpoint, theirs included. `others` comes from the turns those sessions settled (their `turn_facts`) plus the turn a live one is running now; edits made outside keywork are in `files` but never in `others`.",
         "parameters": [
           {
             "name": "id",
@@ -1035,7 +1038,34 @@
         ],
         "responses": {
           "200": {
-            "description": "`ContextReading & { fullness, flushDue, compactionDue, basis: \"estimated\", parts: { system, tools, injected, conversation, free }, thresholds: { flushAt, compactAt } }`, each part `{ tokens, basis: \"reported\" | \"estimated\" }`."
+            "description": "`{ turn, prompt: { entryId, text }, undoneTurns, files: [{ path, added, deleted }], others: [{ sessionId, title, paths }] }`."
+          },
+          "400": {
+            "description": "`turn` is not a positive integer."
+          },
+          "404": {
+            "description": "No session has that id. Or `{ error: \"no turn N on this session's path\" }`."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/context": {
+      "get": {
+        "operationId": "readSessionContext",
+        "summary": "How full the model's context window is, as one reading every surface shows: `used` tokens of everything the next request carries (the sum of `parts` less `free`) against the `window`, with the points at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen on the same axis. keywork's settler holds its reserves against the conversation, so the two lines sit at the window less the reserve plus what the system prompt and tool schemas take, and pass `window` when those outgrow the reserve. `basis` says where `used` comes from: `reported` once the provider has reported usage for the conversation so far (its count, plus an estimate of what arrived since), `estimated` from the text alone before that or after the history was rewritten, as a compaction, a flush, an undo or a forget does, so the reading right after any of them is a fresh measure of the shorter history and never the provider's older count. `declared` says whether the window came from keywork.json or is assumed. `parts` splits the same total, each as `{ tokens, basis }`: `system` (keywork's prompt and the configured prompts), `tools` (the tool schemas), `injected` (project instructions, the repo map, memory and extension context riding in the prompt), `conversation`, and `free` (the room left in the window). A part's `basis` is `reported` when it rests on what the provider reported for the last request, plus an estimate of what arrived since, and `estimated` when it comes from the text alone; the provider never splits its count, so `system`, `tools` and `injected` are always estimated. `thresholds` repeats `flushAt` and `compactAt` for clients that draw them across the parts.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`ContextReading & { fullness, flushDue, compactionDue, basis: \"reported\" | \"estimated\", parts: { system, tools, injected, conversation, free }, thresholds: { flushAt, compactAt } }`, each part `{ tokens, basis: \"reported\" | \"estimated\" }`."
           },
           "404": {
             "description": "No session has that id."
@@ -1046,7 +1076,7 @@
     "/sessions/{id}/cost": {
       "get": {
         "operationId": "readSessionCost",
-        "summary": "What this server process has spent on the session: token `usage`, the cost `rollup` in nanodollars with how many turns were priced, metered or unpriced, a `basis` line saying how honest the number is, the last `cacheMiss` if the provider reported one, and the same split per model under `models`.",
+        "summary": "What the session has spent under `keywork serve`, this process and the ones before it: each turn's usage is written on its assistant message in the session log, so a restart picks the totals back up. Token `usage`, the cost `rollup` in nanodollars with how many turns were priced, metered or unpriced, a `basis` line saying how honest the number is, the last `cacheMiss` if the provider reported one in this process, and the same split per model under `models`, which lists only models that ran at least one turn.",
         "parameters": [
           {
             "name": "id",
@@ -1226,10 +1256,10 @@
     "/workspace/trust": {
       "post": {
         "operationId": "trustWorkspace",
-        "summary": "Trust the served workspace and set it up, exactly what `/init` in the terminal and `keywork trust` do: the decision is written for this root and no other (the body is ignored, so no path can be smuggled in) to the user's trust store, and `.keywork/workspace.json` plus the memory vault are created when missing. Trust is read when a server composes, so `reopens` says whether this server must be restarted before the decision takes effect; a client that owns the server process restarts it. Already trusted is not an error. This route never untrusts and never forgets a decision.",
+        "summary": "Trust the served workspace and set it up, exactly what `/init` in the terminal and `keywork trust` do: the decision is written for this root and no other (the body is ignored, so no path can be smuggled in) to the user's trust store, and `.keywork/workspace.json` plus the memory vault are created when missing. Trust is read when a server composes, so `keywork serve` composes itself again before it answers: the project's config, permissions, MCP servers, arcs and bots load, open sessions close (a running turn is interrupted and keeps what it had) and reopen on their next request, pending asks are refused, and the URL, the token, the ticket and the event stream stay as they were. `recomposed: true` says that happened, and `GET /permissions` reflects trust as soon as the answer arrives; `surface.changed` fires with `kind: \"workspaces\"` and, after a recompose, `kind: \"permissions\"`. `reopens: true` says this host cannot recompose itself (an embedded host) and must be restarted before the decision takes effect; a client that owns the process restarts it. Already trusted is not an error and answers both false. This route never untrusts and never forgets a decision.",
         "responses": {
           "200": {
-            "description": "Trusted; `root` names the directory the decision covers."
+            "description": "`{ trusted: true, root, vault, reopens, recomposed }`; `root` names the directory the decision covers."
           },
           "400": {
             "description": "The root is a home directory or a filesystem root, which would trust everything beneath it."
@@ -1955,7 +1985,7 @@
     "/sessions/{id}/entries": {
       "get": {
         "operationId": "readSessionEntries",
-        "summary": "The session's whole entry log as the engine stores it, for a client that draws the conversation tree itself. `entries` is every entry in file order, each with its `id` and `parentId`; `message` entries carry their message whole, and the rest (`compaction`, `branch_summary`, `label`, `session_info`, `model_change`, `thinking_level_change`, `effort_change`, `context_edit`, `binding`, `custom`, `custom_message`) carry their own fields. `labels` maps entry ids to the label in force, `leafId` is the entry the next message will follow, and `activePath` lists the ids from the root to that leaf. Folding the flat log into a tree is the client's job (parent links suffice).",
+        "summary": "The session's whole entry log as the engine stores it, for a client that draws the conversation tree itself. `entries` is every entry in file order, each with its `id` and `parentId`; `message` entries carry their message whole, and the rest (`compaction`, `branch_summary`, `label`, `session_info`, `model_change`, `thinking_level_change`, `effort_change`, `context_edit`, `binding`, `custom`, `custom_message`) carry their own fields. A memory flush is a `custom_message` with `customType: \"memory_flush\"` whose `content` is the prompt keywork sent, followed by the reply as an `assistant` message entry; it is not a prompt and starts no turn. `labels` maps entry ids to the label in force, `leafId` is the entry the next message will follow, and `activePath` lists the ids from the root to that leaf. `journal` lists the ids of the entries kept only as evidence, which never reach the model and are not part of the conversation: the `custom` entries recording permission asks and decisions, context injections, memory decisions, shell resets, session grants and each settled turn's facts (`turn_facts`). A tree, a transcript or an export leaves them out, or folds them into the row they explain. Folding the flat log into a tree is the client's job (parent links suffice).",
         "parameters": [
           {
             "name": "id",
@@ -1968,7 +1998,7 @@
         ],
         "responses": {
           "200": {
-            "description": "`{ sessionId, name?, leafId, entries, labels, activePath }`."
+            "description": "`{ sessionId, name?, leafId, entries, labels, activePath, journal }`."
           },
           "404": {
             "description": "No session has that id."
@@ -2121,7 +2151,7 @@
     "/sessions/{id}/changes": {
       "get": {
         "operationId": "readSessionChanges",
-        "summary": "Every file in the workspace that differs from the checkpoint taken when this server first captured it (`baseline` names it: `session start`). Each entry carries the path relative to the workspace root, the lines `added` and `deleted`, and `turn`, the 1-based ordinal of the turn that last touched it, where a turn in this process did. The list is recomputed on every call; `changes.updated` says when to call again.",
+        "summary": "Every file this session's turns touched that differs now from the checkpoint taken before the session's first change (`baseline` names it: `session start`). Files only another session or a person outside keywork changed are not listed, so two sessions on one workspace each see their own work. A file both touched shows its net change, theirs included. Each entry carries the path relative to the workspace root, the lines `added` and `deleted`, and `turn`, the 1-based ordinal of the session's turn that last touched it. A settled turn's files are the ones its `turn_facts` journal entry froze when it settled, so the list reads the same after a restart; the turn still running is measured from its own checkpoint. The list is recomputed on every call; `changes.updated` says when to call again.",
         "parameters": [
           {
             "name": "id",
@@ -2264,7 +2294,7 @@
     "/permissions": {
       "get": {
         "operationId": "listPermissions",
-        "summary": "What this server allows beyond the configured rules, so every grant is visible: `{ trusted, bundle, workspace, session }`. `bundle` is the fixed read-only posture a trusted workspace gets (empty when untrusted), `workspace` the grants recorded by `scope: \"workspace\"` answers and workspace grants, and `session` the grants from `scope: \"session\"` answers and session grants, keyed by session id. Configured rules decide first; where they are silent, session grants, then workspace grants, then the bundle decide. `surface.changed` with `kind: \"permissions\"` fires whenever this answer would change.",
+        "summary": "What this server allows beyond the configured rules, so every grant is visible: `{ trusted, bundle, workspace, session }`. `bundle` is the fixed read-only posture a trusted workspace gets (empty when untrusted), `workspace` the grants recorded by `scope: \"workspace\"` answers and workspace grants, and `session` the grants from `scope: \"session\"` answers and session grants, keyed by session id, for the sessions open in this server process (a session's journaled grants come back when it reopens). Configured rules decide first; where they are silent, session grants, then workspace grants, then the bundle decide. `surface.changed` with `kind: \"permissions\"` fires whenever this answer would change.",
         "responses": {
           "200": {
             "description": "`{ trusted, bundle, workspace, session }`."
@@ -2325,7 +2355,7 @@
     "/permissions/session/{sessionId}/grant": {
       "post": {
         "operationId": "grantSessionRule",
-        "summary": "Record one rule for that session before any call asks for it, exactly where a `scope: \"session\"` answer records it; it ends with the server process like every session grant. The same rules are taken as for POST /permissions/workspace/grant. Fires `surface.changed` with `kind: \"permissions\"`.",
+        "summary": "Record one rule for that session before any call asks for it, exactly where a `scope: \"session\"` answer records it; the session is opened if it was not. Under `keywork serve` every change to the grants of a session is written to its log as a `session_grants` snapshot and a reopen adopts the latest one, so the grant outlives the server process. The same rules are taken as for POST /permissions/workspace/grant. Fires `surface.changed` with `kind: \"permissions\"`.",
         "parameters": [
           {
             "name": "sessionId",
@@ -2438,7 +2468,7 @@
     "/permissions/session/{sessionId}/revoke": {
       "post": {
         "operationId": "revokeSessionGrant",
-        "summary": "Remove one grant a `scope: \"session\"` answer recorded for that session, so the call it covered asks again there. Other sessions and the workspace grants are untouched. Fires `surface.changed` with `kind: \"permissions\"`.",
+        "summary": "Remove one grant a `scope: \"session\"` answer recorded for that session, so the call it covered asks again there, after a server restart too (the revoke is journaled like a grant). Other sessions and the workspace grants are untouched. Fires `surface.changed` with `kind: \"permissions\"`.",
         "parameters": [
           {
             "name": "sessionId",
@@ -2491,6 +2521,257 @@
           },
           "404": {
             "description": "That session holds no grant matching the rule."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/quiet": {
+      "post": {
+        "operationId": "setSessionQuiet",
+        "summary": "Let a session run without a person at the keyboard for what a `session` answer already covers. While quiet is on, the gate grants a call itself when a `session` answer to its ask would record rules, none of them a blanket `<program> *` and no part of the command destructive (a delete, `git branch -D`, a force push, `git reset --hard`, `git clean`, a discarding checkout). Those rules join the session's grants and the decision reads `gate.permission` with `gate: \"quiet\"` and `scope: \"session\"`, so no client mistakes it for a person's answer; no `gate.ask` fires for it. Everything else still asks: `write` and `edit`, a call a grant could not remember, blanket and destructive commands, and the write-capable forms the trusted reads hold back. Turning quiet off revokes nothing it granted. The posture is written to the session log as a `quiet` entry, so a reopened session keeps it; `session.state` carries it as `quiet`, `GET /permissions` lists quiet sessions under `quiet`, and `surface.changed` with `kind: \"permissions\"` fires when it moves. `keywork run` and every other headless gate never go quiet.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["on"],
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ quiet }`."
+          },
+          "400": {
+            "description": "The body is not `{ on: boolean }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/flush": {
+      "post": {
+        "operationId": "flushSessionMemory",
+        "summary": "Run the memory flush now instead of waiting for the context to reach the flush line: the session's model is asked what in this conversation is worth keeping across sessions, and what it names goes to the daily log (the bound arc's, when there is one; lines about a bot's own craft go to that bot). The flush prompt and its reply join the conversation, exactly as with the flush the settler runs after a turn. `flushed` is how many messages that added, 0 when nothing ran, and `notices` says what happened in keywork's words. A workspace that is not trusted has inert memory, so nothing is flushed there. `session.settled` with `phase: \"requested\"` follows with the same `flushed` and `notices`, then a `session.state` envelope.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ flushed, notices }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/forget": {
+      "post": {
+        "operationId": "forgetSessionEntry",
+        "summary": "Take one prompt or one tool result out of what the model sees, or rewrite it, while the transcript keeps the original: what the terminal's /forget does. `entryId` names a user prompt or a tool result message on the session's active path, with the ids `GET /sessions/{id}/entries` lists. Without `replacement` the model stops seeing it; with one, the model sees that text in its place. The edit is written to the session log as a `context_edit` entry, which becomes the leaf, and the session continues over the edited context. Needs an idle session. `session.state` and `session.tree` (`reason: \"leaf\"`, naming the edit) follow.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entryId"],
+                "properties": {
+                  "entryId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "replacement": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "What the model sees instead. Absent, the entry leaves the model's context."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ edit }`: the `context_edit` entry written, with its `targetId` and `replacement`."
+          },
+          "400": {
+            "description": "The body is not `{ entryId, replacement?: string }`."
+          },
+          "404": {
+            "description": "No session has that id, or `{ error: \"no prompt or tool result on this session's path has that id\" }`."
+          },
+          "409": {
+            "description": "A turn is running; wait for it or abort it first."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/queue/{itemId}/move": {
+      "post": {
+        "operationId": "moveQueuedPrompt",
+        "summary": "Move one prompt waiting behind the running turn to another place in the queue, as the terminal does with alt+arrow while it edits the queue. `itemId` is the prompt's `id` from `queue.changed`. Steered prompts always run before queued ones, so a move that would put a queued prompt ahead of a steered one, or a steered one behind a queued one, is refused. `queue.changed` follows with the new order.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["to"],
+                "properties": {
+                  "to": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The prompt's new 0-based place in the queue, as `queue.changed` lists it."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ queued }`: the whole queue after the move, as `queue.changed` carries it."
+          },
+          "400": {
+            "description": "The body is not `{ to }` with a non-negative integer."
+          },
+          "404": {
+            "description": "No session has that id, or `{ error: \"no queued prompt has that id\" }`."
+          },
+          "409": {
+            "description": "`to` is past the end of the queue, or the move would cross a steered prompt."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/queue/{itemId}": {
+      "delete": {
+        "operationId": "cancelQueuedPrompt",
+        "summary": "Drop one prompt waiting behind the running turn before it runs. `itemId` is the prompt's `id` from `queue.changed`, which follows without it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ queued }`: the whole queue after the prompt left it."
+          },
+          "404": {
+            "description": "No session has that id, or `{ error: \"no queued prompt has that id\" }`."
+          }
+        }
+      }
+    },
+    "/sessions/{id}/spills/{spillId}": {
+      "get": {
+        "operationId": "readSessionSpill",
+        "summary": "A slice of the full output a tool result clipped, read from the session's own spill directory beside its log and never from the workspace, so the tool jail does not apply and a spill stays readable wherever the workspace scope ends. `spillId` is `spill.id` from the tool result (on `tool.finished` and in the stored message); only a spill this session's log references is served. Without `from` and `to` the slice is exactly the clipped range the reference carries, `[elidedFrom, elidedTo)`; with either, it is the bytes `[from, to)` of the whole output. At most 1 MiB comes back per request: when the slice was cut short, `truncated` is true and `to` says where it stopped. `bytes` is the whole output's size and `spill` the reference itself. A slice holding a NUL byte is refused as binary.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "spillId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ spill, bytes, from, to, text, truncated, encoding }`."
+          },
+          "400": {
+            "description": "`from` or `to` is not a non-negative integer."
+          },
+          "404": {
+            "description": "No session has that id, or `{ error: \"no spill has that id in this session\" }`, or the spill file is gone."
+          },
+          "415": {
+            "description": "The slice holds a NUL byte."
           }
         }
       }

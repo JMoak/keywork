@@ -9,6 +9,7 @@ import {
   type EngineEvents,
   formatCostNanos,
   frameTick,
+  type PermissionDecision,
   type SpillReference,
   type TickScheduler,
   type ToolCallPart,
@@ -17,6 +18,7 @@ import type { SpanLinker } from "./file-references.ts";
 import { isForgettable } from "./forget.ts";
 import type { MarkdownSpan } from "./markdown.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
+import { readsAsShellEscapeTranscript } from "./shell-escape.ts";
 import { TailFollow } from "./tail-follow.ts";
 import {
   defaultVerbosity,
@@ -25,8 +27,16 @@ import {
   toolGroups,
   type Verbosity,
 } from "./transcript-verbosity.ts";
+import type { TurnRecord } from "./turn-ledger.ts";
 
-export type TranscriptEntry = UserEntry | AssistantEntry | ThinkingEntry | ToolEntry | NoticeEntry;
+export type TranscriptEntry =
+  | UserEntry
+  | AssistantEntry
+  | ThinkingEntry
+  | ToolEntry
+  | LedgerEntry
+  | SummaryEntry
+  | NoticeEntry;
 
 export interface UserEntry {
   kind: "user";
@@ -53,12 +63,31 @@ export interface ToolEntry {
   run?: ToolRun;
 }
 
+export type SummaryKind = "compaction" | "branch_summary";
+
+export interface SummaryEntry {
+  kind: "summary";
+  text: string;
+  of: SummaryKind;
+  folded: boolean;
+}
+
+export interface LedgerEntry {
+  kind: "ledger";
+  text: string;
+  prompt: UserEntry;
+  folded: boolean;
+  record?: TurnRecord;
+}
+
 export interface NoticeEntry {
   kind: "info" | "error";
   text: string;
 }
 
 export type ToolProvenance = "agent" | "user" | "external";
+
+export type ToolGate = "waiting" | "refused";
 
 export interface ToolRun {
   name: string;
@@ -68,7 +97,9 @@ export interface ToolRun {
   fullArgs?: string;
   replay: boolean;
   provenance?: ToolProvenance;
+  transcriptId?: string;
   startedAtMs: number;
+  gate?: ToolGate | undefined;
   folded: boolean;
   live?: string | undefined;
   outcome?: "done" | "failed";
@@ -95,6 +126,9 @@ export class TranscriptFeed {
   activity = 0;
   verbosity: Verbosity = defaultVerbosity;
   link: SpanLinker | undefined;
+  onLedgerRow: (() => void) | undefined;
+  private readonly ledgered = new WeakSet<UserEntry>();
+  private expectedSummaries: { text: string; kind: SummaryKind }[] = [];
   private readonly running = new Map<string, RunningTool>();
   private stream: { entry: AssistantEntry; steps: number } | undefined;
   private turnStartedAtMs: number | undefined;
@@ -140,8 +174,35 @@ export class TranscriptFeed {
     this.settleTool({ callId, output, isError });
   }
 
+  adoptShellTranscript(callId: string, entryId: string): void {
+    const shell = this.entries.find(
+      (entry): entry is ToolEntry => entry.kind === "tool" && entry.run?.callId === callId,
+    );
+    if (shell?.run !== undefined) shell.run.transcriptId = entryId;
+  }
+
+  shellTranscriptIds(): ReadonlySet<string> {
+    return new Set(this.entries.flatMap((entry) => this.shellTranscriptIdOf(entry) ?? []));
+  }
+
+  ruleOn(decision: PermissionDecision): void {
+    const running = this.running.get(decision.callId);
+    if (running === undefined) return;
+    const { entry, run } = running;
+    const granted = decision.verdict === "granted";
+    run.gate = granted ? undefined : "refused";
+    if (granted) run.startedAtMs = this.now();
+    entry.text = toolRowText(run);
+    this.notify();
+  }
+
   post(kind: NoticeEntry["kind"], text: string): void {
     this.entries.push({ kind, text });
+    this.notify();
+  }
+
+  postSummary(of: SummaryKind, text: string): void {
+    this.entries.push({ kind: "summary", text, of, folded: true });
     this.notify();
   }
 
@@ -171,7 +232,8 @@ export class TranscriptFeed {
 
   toggleFold(entry: TranscriptEntry): boolean {
     if (this.toolGrouping().has(this.entries.indexOf(entry))) return false;
-    if (entry.kind === "thinking") {
+    if (entry.kind === "ledger") return this.toggleLedgerFiles(entry);
+    if (entry.kind === "thinking" || entry.kind === "summary") {
       entry.folded = !entry.folded;
       this.notify();
       return true;
@@ -195,12 +257,26 @@ export class TranscriptFeed {
     );
   }
 
+  expectSummaries(summaries: readonly { text: string; kind: SummaryKind }[]): void {
+    this.expectedSummaries = [...summaries];
+  }
+
+  ledgerRows(): LedgerEntry[] {
+    return this.entries.filter((entry): entry is LedgerEntry => entry.kind === "ledger");
+  }
+
   promptIndices(): number[] {
     return this.entries.flatMap((entry, index) => (entry.kind === "user" ? [index] : []));
   }
 
   forgettableIndices(): number[] {
     return this.entries.flatMap((entry, index) => (isForgettable(entry) ? [index] : []));
+  }
+
+  private shellTranscriptIdOf(entry: TranscriptEntry): string | undefined {
+    if (entry.kind === "tool") return entry.run?.transcriptId;
+    if (entry.kind !== "user" || this.ledgered.has(entry)) return undefined;
+    return readsAsShellEscapeTranscript(entry.text) ? entry.entryId : undefined;
   }
 
   private countsAsActivity(event: BusEvent): boolean {
@@ -239,6 +315,12 @@ export class TranscriptFeed {
       case "tool.finished":
         this.settleTool(event.payload);
         break;
+      case "gate.ask":
+        this.awaitAnswer(event.payload.ask.callId);
+        break;
+      case "gate.permission":
+        this.ruleOn(event.payload.decision);
+        break;
       case "child.started":
         this.markChild(event.payload.callId, event.payload);
         break;
@@ -247,10 +329,12 @@ export class TranscriptFeed {
         break;
       case "turn.completed":
         this.endTurn();
+        this.ledgerLatestPrompt();
         break;
       case "turn.interrupted":
         this.endTurn();
         this.post("info", "· interrupted");
+        this.ledgerLatestPrompt();
         break;
       default:
         break;
@@ -264,6 +348,11 @@ export class TranscriptFeed {
   }
 
   private startTurn(text: string, replay: boolean, entryId: string | undefined): void {
+    const summary = replay && entryId === undefined ? this.takeSummary(text) : undefined;
+    if (summary !== undefined) {
+      this.postSummary(summary, text);
+      return;
+    }
     const prompt: UserEntry = { kind: "user", text, ...(entryId !== undefined && { entryId }) };
     this.entries.push(prompt);
     if (!replay) {
@@ -276,6 +365,28 @@ export class TranscriptFeed {
   private endTurn(): void {
     this.endStream();
     this.turnStartedAtMs = undefined;
+  }
+
+  private takeSummary(text: string): SummaryKind | undefined {
+    const at = this.expectedSummaries.findIndex((summary) => summary.text === text);
+    if (at === -1) return undefined;
+    return this.expectedSummaries.splice(at, 1)[0]?.kind;
+  }
+
+  private ledgerLatestPrompt(): void {
+    const prompt = this.entries.findLast((entry): entry is UserEntry => entry.kind === "user");
+    if (prompt === undefined || this.ledgered.has(prompt)) return;
+    this.ledgered.add(prompt);
+    this.entries.push({ kind: "ledger", text: "", prompt, folded: true });
+    this.onLedgerRow?.();
+    this.notify();
+  }
+
+  private toggleLedgerFiles(entry: LedgerEntry): boolean {
+    if ((entry.record?.files ?? []).length === 0) return false;
+    entry.folded = !entry.folded;
+    this.notify();
+    return true;
   }
 
   private streamText(text: string): void {
@@ -324,6 +435,14 @@ export class TranscriptFeed {
     this.notify();
   }
 
+  private awaitAnswer(callId: string): void {
+    const running = this.running.get(callId);
+    if (running === undefined) return;
+    running.run.gate = "waiting";
+    running.entry.text = toolRowText(running.run);
+    this.notify();
+  }
+
   private markChild(
     callId: string,
     news: Pick<ChildMark, "sessionId" | "bot" | "costNanos">,
@@ -359,7 +478,7 @@ export class TranscriptFeed {
     if (running === undefined) return;
     this.running.delete(callId);
     const { entry, run } = running;
-    run.durationMs = Math.max(0, this.now() - run.startedAtMs);
+    if (run.gate !== "refused") run.durationMs = Math.max(0, this.now() - run.startedAtMs);
     run.outcome = isError ? "failed" : "done";
     if (isError && run.child === undefined) run.reason = firstLine(output);
     run.outputChars = spill?.bytes ?? output.length;
@@ -380,7 +499,7 @@ export function toolRowSpans(run: ToolRun, marks: PageMarks = defaultPageMarks):
   if (run.outcome === undefined) {
     return [
       { text: head, tone: "body" },
-      { text: ` · ${run.live ?? "running"}`, tone: "meta" },
+      { text: ` · ${run.live ?? liveWord(run)}`, tone: "meta" },
     ];
   }
   const meta = [durationText(run), sizeText(run), elisionText(run)]
@@ -422,6 +541,15 @@ export function thinkingRowSpans(entry: ThinkingEntry): MarkdownSpan[] {
   return [{ text: `thinking · ${wordCount(entry.text)}`, tone: "meta" }];
 }
 
+export function summaryRowSpans(entry: SummaryEntry): MarkdownSpan[] {
+  return [{ text: `${summaryWords[entry.of]} · ${wordCount(entry.text)}`, tone: "meta" }];
+}
+
+const summaryWords: Record<SummaryKind, string> = {
+  compaction: "compacted history",
+  branch_summary: "branch summary",
+};
+
 export function compactJson(value: unknown): string {
   const text = JSON.stringify(value) ?? "";
   return text.length > 60 ? `${text.slice(0, 60)}…` : text;
@@ -439,6 +567,8 @@ const followedEvents = [
   "tool.started",
   "tool.output",
   "tool.finished",
+  "gate.ask",
+  "gate.permission",
   "child.started",
   "child.finished",
   "turn.completed",
@@ -452,7 +582,8 @@ const liveLineLimit = 120;
 const detailLineLimit = 12;
 
 function disclosable(entry: TranscriptEntry): boolean {
-  if (entry.kind === "thinking") return true;
+  if (entry.kind === "thinking" || entry.kind === "summary") return true;
+  if (entry.kind === "ledger") return entry.record !== undefined;
   if (entry.kind !== "tool") return false;
   return entry.run?.detail !== undefined || entry.run?.child !== undefined;
 }
@@ -512,7 +643,7 @@ function toolRowText(run: ToolRun): string {
     .join("");
 }
 
-function toolSubject(args: unknown): string {
+export function toolSubject(args: unknown): string {
   if (typeof args !== "object" || args === null) return "";
   const record = args as Record<string, unknown>;
   const favored = ["path", "file", "filename", "command", "cmd", "url", "query", "name", "pattern"];
@@ -523,6 +654,10 @@ function toolSubject(args: unknown): string {
   const value = record[key] as string;
   const flat = value.replace(/\s+/g, " ").trim();
   return flat.length > 40 ? `${flat.slice(0, 39)}…` : flat;
+}
+
+function liveWord(run: ToolRun): string {
+  return run.gate === "waiting" ? "waiting for you" : "running";
 }
 
 function durationText(run: ToolRun): string | undefined {

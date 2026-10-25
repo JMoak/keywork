@@ -38,6 +38,7 @@ export type MemoryRowKind =
   | "ledger"
   | "hit"
   | "why"
+  | "decision"
   | "empty";
 
 export type SpanInk = "text" | "mid" | "dim" | "heading" | "accent" | "arc";

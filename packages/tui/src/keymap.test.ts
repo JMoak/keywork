@@ -19,7 +19,11 @@ describe("Keymap.rebind", () => {
   it("swaps the whole table in one step", () => {
     const map = keymap();
     map.rebind({ leader: "ctrl+k", timeoutMs: 500, bindings: { "pane.split": "ctrl+t" } });
-    expect(map.press(parseChord("ctrl+t"), 0)).toEqual({ type: "action", action: "pane.split" });
+    expect(map.press(parseChord("ctrl+t"), 0)).toEqual({
+      type: "action",
+      action: "pane.split",
+      via: "chord",
+    });
     expect(map.press(parseChord("ctrl+q"), 0)).toEqual({ type: "pass" });
     expect(map.timeoutMs).toBe(500);
     expect(map.describe("pane.split")).toBe("ctrl+t");
@@ -30,7 +34,11 @@ describe("Keymap.rebind", () => {
     expect(() =>
       map.rebind({ bindings: { "pane.split": "ctrl+q", "app.quit": "ctrl+q" } }),
     ).toThrow(KeymapError);
-    expect(map.press(parseChord("ctrl+q"), 0)).toEqual({ type: "action", action: "app.quit" });
+    expect(map.press(parseChord("ctrl+q"), 0)).toEqual({
+      type: "action",
+      action: "app.quit",
+      via: "chord",
+    });
   });
 
   it("disarms a pending leader so stale scopes never fire", () => {
@@ -64,7 +72,11 @@ describe("parseChord", () => {
 
 describe("Keymap", () => {
   it("resolves direct chords to actions", () => {
-    expect(keymap().press(parseChord("ctrl+q"), 0)).toEqual({ type: "action", action: "app.quit" });
+    expect(keymap().press(parseChord("ctrl+q"), 0)).toEqual({
+      type: "action",
+      action: "app.quit",
+      via: "chord",
+    });
   });
 
   it("passes through unbound keys", () => {
@@ -74,7 +86,11 @@ describe("Keymap", () => {
   it("resolves leader sequences", () => {
     const map = keymap();
     expect(map.press(parseChord("ctrl+k"), 0)).toEqual({ type: "leader-pending" });
-    expect(map.press(parseChord("s"), 100)).toEqual({ type: "action", action: "pane.split" });
+    expect(map.press(parseChord("s"), 100)).toEqual({
+      type: "action",
+      action: "pane.split",
+      via: "leader",
+    });
   });
 
   it("expires the leader after the timeout", () => {
@@ -117,7 +133,11 @@ describe("Keymap", () => {
     map.arm(0, new Set(["pane.close"]));
     expect(map.press(parseChord("ctrl+x"), 10)).toEqual({ type: "pass" });
     map.arm(20, new Set(["pane.close"]));
-    expect(map.press(parseChord("ctrl+q"), 30)).toEqual({ type: "action", action: "app.quit" });
+    expect(map.press(parseChord("ctrl+q"), 30)).toEqual({
+      type: "action",
+      action: "app.quit",
+      via: "chord",
+    });
   });
 
   it("keeps the leader armed through key-repeat of the leader chord", () => {
@@ -125,7 +145,11 @@ describe("Keymap", () => {
     map.press(parseChord("ctrl+k"), 0);
     expect(map.press(parseChord("ctrl+k"), 10, true)).toEqual({ type: "leader-pending" });
     expect(map.press(parseChord("ctrl+k"), 20, true)).toEqual({ type: "leader-pending" });
-    expect(map.press(parseChord("s"), 30)).toEqual({ type: "action", action: "pane.split" });
+    expect(map.press(parseChord("s"), 30)).toEqual({
+      type: "action",
+      action: "pane.split",
+      via: "leader",
+    });
   });
 
   it("arms on a repeated leader press even without the initial press", () => {
@@ -136,13 +160,21 @@ describe("Keymap", () => {
   it("limits a scoped arm to the allowed actions and re-presses the rest", () => {
     const map = keymap();
     map.arm(0, new Set(["pane.split"]));
-    expect(map.press(parseChord("s"), 10)).toEqual({ type: "action", action: "pane.split" });
+    expect(map.press(parseChord("s"), 10)).toEqual({
+      type: "action",
+      action: "pane.split",
+      via: "leader",
+    });
 
     map.arm(20, new Set(["pane.split"]));
     expect(map.press(parseChord("z"), 30)).toEqual({ type: "pass" });
 
     map.arm(40, new Set(["pane.split"]));
-    expect(map.press(parseChord("ctrl+q"), 50)).toEqual({ type: "action", action: "app.quit" });
+    expect(map.press(parseChord("ctrl+q"), 50)).toEqual({
+      type: "action",
+      action: "app.quit",
+      via: "chord",
+    });
   });
 
   it("reports armed state and lets it lapse after the timeout", () => {
@@ -157,7 +189,11 @@ describe("Keymap", () => {
     map.arm(0, new Set(["pane.split"]));
     map.press(parseChord("ctrl+k"), 10);
     map.press(parseChord("ctrl+k"), 20);
-    expect(map.press(parseChord("z"), 30)).toEqual({ type: "action", action: "pane.zoom" });
+    expect(map.press(parseChord("z"), 30)).toEqual({
+      type: "action",
+      action: "pane.zoom",
+      via: "leader",
+    });
   });
 
   it("describes bindings for palette display", () => {
@@ -173,17 +209,33 @@ describe("Keymap", () => {
       bindings: { "focus.left": ["leader h", "leader left"] },
     });
     map.press(parseChord("ctrl+k"), 0);
-    expect(map.press(parseChord("h"), 1)).toEqual({ type: "action", action: "focus.left" });
+    expect(map.press(parseChord("h"), 1)).toEqual({
+      type: "action",
+      action: "focus.left",
+      via: "leader",
+    });
     map.press(parseChord("ctrl+k"), 2);
-    expect(map.press(parseChord("left"), 3)).toEqual({ type: "action", action: "focus.left" });
+    expect(map.press(parseChord("left"), 3)).toEqual({
+      type: "action",
+      action: "focus.left",
+      via: "leader",
+    });
   });
 
   it("supports re-arming for sticky nav mode", () => {
     const map = keymap();
     map.press(parseChord("ctrl+k"), 0);
-    expect(map.press(parseChord("s"), 10)).toEqual({ type: "action", action: "pane.split" });
+    expect(map.press(parseChord("s"), 10)).toEqual({
+      type: "action",
+      action: "pane.split",
+      via: "leader",
+    });
     map.arm(10);
-    expect(map.press(parseChord("x"), 20)).toEqual({ type: "action", action: "pane.close" });
+    expect(map.press(parseChord("x"), 20)).toEqual({
+      type: "action",
+      action: "pane.close",
+      via: "leader",
+    });
     expect(map.press(parseChord("x"), 30)).toEqual({ type: "pass" });
   });
 
@@ -193,9 +245,17 @@ describe("Keymap", () => {
       bindings: { "focus.left": "leader h", "swap.left": "leader shift+h" },
     });
     map.press(parseChord("ctrl+k"), 0);
-    expect(map.press(parseChord("shift+h"), 1)).toEqual({ type: "action", action: "swap.left" });
+    expect(map.press(parseChord("shift+h"), 1)).toEqual({
+      type: "action",
+      action: "swap.left",
+      via: "leader",
+    });
     map.press(parseChord("ctrl+k"), 2);
-    expect(map.press(parseChord("h"), 3)).toEqual({ type: "action", action: "focus.left" });
+    expect(map.press(parseChord("h"), 3)).toEqual({
+      type: "action",
+      action: "focus.left",
+      via: "leader",
+    });
   });
 });
 

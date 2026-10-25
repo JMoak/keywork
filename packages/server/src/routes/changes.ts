@@ -25,7 +25,7 @@ export const changesRoutes = [
     path: "/sessions/{id}/changes",
     operationId: "readSessionChanges",
     summary:
-      "Every file in the workspace that differs from the checkpoint taken when this server first captured it (`baseline` names it: `session start`). Each entry carries the path relative to the workspace root, the lines `added` and `deleted`, and `turn`, the 1-based ordinal of the turn that last touched it, where a turn in this process did. The list is recomputed on every call; `changes.updated` says when to call again.",
+      "Every file this session's turns touched that differs now from the checkpoint taken before the session's first change (`baseline` names it: `session start`). Files only another session or a person outside keywork changed are not listed, so two sessions on one workspace each see their own work. A file both touched shows its net change, theirs included. Each entry carries the path relative to the workspace root, the lines `added` and `deleted`, and `turn`, the 1-based ordinal of the session's turn that last touched it. A settled turn's files are the ones its `turn_facts` journal entry froze when it settled, so the list reads the same after a restart; the turn still running is measured from its own checkpoint. The list is recomputed on every call; `changes.updated` says when to call again.",
     authenticated: true,
     responses: {
       "200": "`{ baseline, files: [{ path, added, deleted, turn? }] }`.",

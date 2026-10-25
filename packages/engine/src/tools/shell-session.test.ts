@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
+import { retainedOutputChars } from "./command-run.ts";
 import { persistentBashTool, ShellSession } from "./shell-session.ts";
 
 const tempDir = scratchDirs("keywork-shell-");
@@ -133,13 +134,24 @@ describe("ShellSession", () => {
     expect((await session.run("echo fresh")).trim()).toBe("fresh");
   }, 10_000);
 
-  it("caps a newline-free flood without buffering it whole", async () => {
+  it("lets a 100k newline-free line through whole", async () => {
     const session = await openSession();
 
     const output = await session.run("head -c 100000 /dev/zero | tr '\\0' x; echo; echo tail");
 
-    expect(output.length).toBeLessThan(31_000);
-    expect(output).toContain("truncated");
+    expect(output.length).toBe(100_000 + "\ntail".length);
+    expect(output.endsWith("tail")).toBe(true);
+  }, 10_000);
+
+  it("keeps the head and the tail of a flood past the retained ceiling without buffering it whole", async () => {
+    const session = await openSession();
+    const flood = retainedOutputChars + 200_000;
+
+    const output = await session.run(`head -c ${flood} /dev/zero | tr '\\0' x; echo; echo tail`);
+
+    expect(output.length).toBeLessThan(retainedOutputChars + 100);
+    expect(output).toContain("characters elided from the middle");
+    expect(output.endsWith("tail")).toBe(true);
     expect((await session.run("echo still-alive")).trim()).toBe("still-alive");
   }, 10_000);
 

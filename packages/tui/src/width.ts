@@ -16,6 +16,13 @@ export function clip(text: string, cells: number): string {
   return `${take(text, cells - 1)}${ellipsis}`;
 }
 
+export function clipStart(text: string, cells: number): string {
+  if (width(text) <= cells) return text;
+  if (cells <= 0) return "";
+  if (cells === 1) return ellipsis;
+  return `${ellipsis}${takeEnd(text, cells - 1)}`;
+}
+
 export function take(text: string, cells: number): string {
   let used = 0;
   let taken = "";
@@ -27,9 +34,50 @@ export function take(text: string, cells: number): string {
   return taken;
 }
 
+export function takeEnd(text: string, cells: number): string {
+  let used = 0;
+  let taken = "";
+  for (const segment of segments(text).reverse()) {
+    if (used + segment.width > cells) break;
+    taken = segment.text + taken;
+    used += segment.width;
+  }
+  return taken;
+}
+
 export function padEnd(text: string, cells: number, fill = " "): string {
   const gap = cells - width(text);
   return gap > 0 ? text + fill.repeat(gap) : text;
+}
+
+const phraseSeparator = " · ";
+
+export function wrapPhrases(text: string, cells: number): string[] {
+  if (cells < 1) return [text];
+  const lines: string[] = [];
+  let open = "";
+  for (const phrase of text.split(phraseSeparator)) {
+    const joined = open === "" ? phrase : `${open}${phraseSeparator}${phrase}`;
+    if (width(joined) <= cells) {
+      open = joined;
+      continue;
+    }
+    const flows =
+      open !== "" &&
+      width(phrase) > cells &&
+      width(`${open}${phraseSeparator}${firstWord(phrase)}`) <= cells;
+    if (!flows && open !== "") lines.push(open);
+    const pieces = wrap(flows ? joined : phrase, cells);
+    open = pieces.pop() ?? "";
+    lines.push(...pieces);
+  }
+  lines.push(open);
+  return lines;
+}
+
+function firstWord(phrase: string): string {
+  const space = phrase.indexOf(" ");
+  return space === -1 ? phrase : phrase.slice(0, space);
 }
 
 export function wrap(text: string, cells: number): string[] {

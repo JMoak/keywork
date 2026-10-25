@@ -1,9 +1,11 @@
 import {
   type Agent,
   type ContextBudget,
+  type ContextMeasure,
   compactNow,
   contextBudgetFor,
   declaredContextWindow,
+  estimatedMeasureOf,
   type MemoryFlush,
   type Message,
   type SessionStore,
@@ -17,6 +19,7 @@ export interface SettlingSession {
   sessionId: string;
   store: SessionStore;
   agent: Agent;
+  measure?: ContextMeasure | undefined;
 }
 
 export type SessionFlushes = Pick<AgentComposition, "flushFor">;
@@ -37,6 +40,7 @@ export function settleSessionTurn(
     budget: budgetOf(agent),
     flush: flushes.flushFor(sessionId, agent.provider),
     phase,
+    measure: measureOf(session),
   });
 }
 
@@ -52,6 +56,7 @@ export function compactSessionNow(
     budget: budgetOf(agent),
     instructions,
     flush: flushes.flushFor(sessionId, agent.provider),
+    measure: measureOf(session),
   });
 }
 
@@ -66,4 +71,8 @@ export function sweepFlushFor(
   if (store === undefined) return undefined;
   if (flush === undefined) return async () => undefined;
   return () => flush.flushNow(store.messages());
+}
+
+function measureOf({ measure, agent }: SettlingSession): ContextMeasure {
+  return measure ?? estimatedMeasureOf(agent);
 }

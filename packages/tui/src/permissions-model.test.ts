@@ -199,25 +199,27 @@ describe("PermissionsModel keys", () => {
     const { grants, notices, texts, press } = await harness([allowBash("git push *")]);
     await press("r");
     expect(grants.held).toEqual([]);
-    expect(notices).toEqual(["revoked bash git push * · it asks again from the next call on"]);
+    expect(notices).toEqual([
+      "revoked bash git push * for this workspace · it asks again from the next call on",
+    ]);
     expect(texts()).toContain("workspace grants · none yet");
   });
 
-  it("drops the selected session grant on d and refuses the wrong layer", async () => {
+  it("revokes the selected session grant on the same r and leaves d unbound", async () => {
     const session = new SessionGrants();
     session.remember("bash", { command: "npm run build" });
     const { model, grants, notices, press } = await harness([allowBash("git push *")], {
       session,
     });
-    await press("d");
-    expect(notices).toEqual(["pick a session grant to drop"]);
     await press("down");
-    await press("r");
-    expect(notices.at(-1)).toBe("pick a workspace grant to revoke");
     await press("d");
+    expect(notices).toEqual([]);
+    await press("r");
     expect(session.rules).toEqual([]);
     expect(grants.held).toEqual([allowBash("git push *")]);
-    expect(notices.at(-1)).toBe("dropped bash npm run * for this session");
+    expect(notices).toEqual([
+      "revoked bash npm run * for this session · it asks again from the next call on",
+    ]);
     expect(model.selected()?.layer).toBe("workspace");
   });
 

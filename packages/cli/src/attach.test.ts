@@ -5,7 +5,14 @@ import { MockProvider } from "@keywork/engine";
 import { createKeyworkServer, EventLog, type Fetch, writeServerTicket } from "@keywork/server";
 import { memorySessionHost } from "@keywork/server/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { attach, attachedLabel, choosePane, mountedWorkspace, ticketCandidates } from "./attach.ts";
+import {
+  attach,
+  attachablePaneKinds,
+  attachedLabel,
+  choosePane,
+  mountedWorkspace,
+  ticketCandidates,
+} from "./attach.ts";
 
 const token = "attach-test-token";
 const url = "http://127.0.0.1:4770";
@@ -19,35 +26,45 @@ function inMemoryServer() {
 }
 
 describe("choosePane", () => {
-  it("mounts conversation by default and either attachable kind by name", () => {
+  it("mounts conversation by default and every attachable kind by name", () => {
     expect(choosePane(undefined)).toEqual({ kind: "mount", pane: "conversation" });
-    expect(choosePane("conversation")).toEqual({ kind: "mount", pane: "conversation" });
-    expect(choosePane("session-tree")).toEqual({ kind: "mount", pane: "session-tree" });
+    for (const pane of attachablePaneKinds) {
+      expect(choosePane(pane)).toEqual({ kind: "mount", pane });
+    }
   });
 
-  it.each(["browser", "file", "diff", "terminal"])("refuses %s for wanting local files", (name) => {
+  it.each([
+    ["tree", "session-tree"],
+    ["sessions", "session-tree"],
+    ["files", "browser"],
+    ["changes", "diff"],
+    ["workstreams", "arcs"],
+    ["ws", "arcs"],
+    ["grants", "permissions"],
+    ["context-map", "context"],
+  ])("mounts %s as its %s pane", (alias, pane) => {
+    expect(choosePane(alias)).toEqual({ kind: "mount", pane });
+  });
+
+  it.each([
+    ["file", "attach --pane browser"],
+    ["arc", "attach --pane arcs"],
+    ["workstream", "attach --pane arcs"],
+    ["terminal", "runs a shell on this machine"],
+  ])("refuses %s and points at the pane that serves it", (name, hint) => {
     const choice = choosePane(name);
     expect(choice.kind).toBe("refused");
     if (choice.kind === "refused") {
       expect(choice.usage).toBe(false);
-      expect(choice.reason).toContain("reads local files");
+      expect(choice.reason).toContain(hint);
     }
   });
 
-  it.each(["memory", "mcp", "arcs", "workstreams", "ws", "workspaces"])(
-    "refuses %s for wanting the workspace",
-    (name) => {
-      const choice = choosePane(name);
-      if (choice.kind === "refused") expect(choice.reason).toContain("local workspace");
-      else throw new Error("expected a refusal");
-    },
-  );
-
-  it("treats an unknown kind as a usage error", () => {
+  it("treats an unknown kind as a usage error naming every attachable kind", () => {
     expect(choosePane("bogus")).toEqual({
       kind: "refused",
       usage: true,
-      reason: 'no pane kind named "bogus" · attach mounts conversation or session-tree',
+      reason: `no pane kind named "bogus" · attach mounts ${attachablePaneKinds.join(", ")}`,
     });
   });
 });

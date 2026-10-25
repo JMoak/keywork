@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative } from "node:path";
 
 export interface CheckpointsOptions {
   worktree: string;
@@ -36,6 +36,8 @@ export class UnknownCheckpointError extends Error {
 
 const defaultLimit = 64;
 const treeHashShape = /^[0-9a-f]{40,64}$/;
+const neverCheckpointedDirs = ["node_modules", ".git"];
+const neverCheckpointedSpecs = neverCheckpointedDirs.map((dir) => `:(glob)**/${dir}/**`);
 
 const repoStateVars = new Set([
   "GIT_DIR",
@@ -160,11 +162,12 @@ export class Checkpoints implements CheckpointReads {
   restoreTo(tree: string): Promise<void> {
     return this.serialized(async () => {
       await this.assertKnownTree(tree);
+      const target = await this.withoutNeverCheckpointed(tree);
       const current = await this.snapshotWorktree();
-      if (current === tree) return;
+      if (current === target) return;
       this.redoTrees.length = 0;
       this.pushBounded(this.undoTrees, current);
-      await this.git("read-tree", "--reset", "-u", tree);
+      await this.git("read-tree", "--reset", "-u", target);
     });
   }
 
@@ -231,21 +234,45 @@ export class Checkpoints implements CheckpointReads {
     return this.git("write-tree");
   }
 
+  private async withoutNeverCheckpointed(tree: string): Promise<string> {
+    const paths = await this.gitRaw("ls-tree", "-r", "-z", "--name-only", tree);
+    if (!paths.split("\0").some(isNeverCheckpointed)) return tree;
+    const index = join(this.gitDir, "restore-index");
+    const staged = (...args: string[]) => this.gitIn(index, args).then((out) => out.trim());
+    try {
+      await staged("read-tree", tree);
+      await staged(
+        "rm",
+        "-r",
+        "-f",
+        "-q",
+        "--cached",
+        "--ignore-unmatch",
+        "--",
+        ...neverCheckpointedSpecs,
+      );
+      return await staged("write-tree");
+    } finally {
+      await rm(index, { force: true });
+    }
+  }
+
   private async initShadowRepo(): Promise<void> {
     await mkdir(this.gitDir, { recursive: true });
     if (!existsSync(join(this.gitDir, "HEAD"))) {
       await this.git("init", "--quiet");
       await this.git("config", "core.autocrlf", "false");
     }
-    await this.excludeShadowRepoFromItself();
+    await this.writeExcludes();
   }
 
-  private async excludeShadowRepoFromItself(): Promise<void> {
-    const inside = relative(this.worktree, this.gitDir);
-    if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) return;
-    await mkdir(join(this.gitDir, "info"), { recursive: true });
-    const pattern = `/${inside.replaceAll("\\", "/")}/\n`;
-    await writeFile(join(this.gitDir, "info", "exclude"), pattern, "utf8");
+  private async writeExcludes(): Promise<void> {
+    const file = join(this.gitDir, "info", "exclude");
+    const wanted = excludePatterns(this.worktree, this.gitDir);
+    if ((await readFile(file, "utf8").catch(() => undefined)) === wanted) return;
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, wanted, "utf8");
+    await this.git("read-tree", "--empty");
   }
 
   private serialized<T>(task: () => Promise<T>): Promise<T> {
@@ -259,6 +286,10 @@ export class Checkpoints implements CheckpointReads {
   }
 
   private gitRaw(...args: string[]): Promise<string> {
+    return this.gitIn(join(this.gitDir, "index"), args);
+  }
+
+  private gitIn(index: string, args: readonly string[]): Promise<string> {
     return new Promise((resolvePromise, rejectPromise) => {
       const child = spawn("git", args, {
         cwd: this.worktree,
@@ -267,7 +298,7 @@ export class Checkpoints implements CheckpointReads {
           ...withoutRepoStateEnv(process.env),
           GIT_DIR: this.gitDir,
           GIT_WORK_TREE: this.worktree,
-          GIT_INDEX_FILE: join(this.gitDir, "index"),
+          GIT_INDEX_FILE: index,
         },
       });
       let stdout = "";
@@ -285,6 +316,21 @@ export class Checkpoints implements CheckpointReads {
       });
     });
   }
+}
+
+function excludePatterns(worktree: string, gitDir: string): string {
+  const inside = relative(worktree, gitDir);
+  const outside = inside === "" || inside.startsWith("..") || isAbsolute(inside);
+  const shadow = outside ? [] : [`/${inside.replaceAll("\\", "/")}/`];
+  const dependencies = neverCheckpointedDirs.map((dir) => `${dir}/`);
+  return [...shadow, ...dependencies].map((pattern) => `${pattern}\n`).join("");
+}
+
+function isNeverCheckpointed(path: string): boolean {
+  return path
+    .split("/")
+    .slice(0, -1)
+    .some((dir) => neverCheckpointedDirs.includes(dir));
 }
 
 function parseNumstat(listing: string): ChangedPath[] {

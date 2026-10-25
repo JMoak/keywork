@@ -1,4 +1,9 @@
-export { type AppOptions, type NoticeSource, runApp } from "./app.ts";
+export {
+  type AppOptions,
+  type NoticeSource,
+  runApp,
+  type WorkspaceFilesPort,
+} from "./app.ts";
 export type { FocusedArcPort } from "./arc-commands.ts";
 export {
   type ArcPicker,
@@ -55,6 +60,7 @@ export {
   describeBots,
   isBotSlug,
 } from "./bots.ts";
+export type { BrowserDisk, Entry as BrowserEntry } from "./browser-model.ts";
 export {
   border,
   type CapabilityProfile,
@@ -75,12 +81,13 @@ export {
 export {
   barCells,
   contextGauge,
-  contextReadout,
   type GaugeOptions,
   type GaugeStyle,
   gaugeStyleFor,
   type InstrumentTier,
 } from "./context-gauge.ts";
+export { contextReadout } from "./context-map.ts";
+export type { ContextReadings, ContextSubject } from "./context-pane.ts";
 export type { CompactionHook, ForkOutcome, Titler } from "./conversation-model.ts";
 export type { TranscriptElevation } from "./conversation-pane.ts";
 export { type CrashLogFacts, crashLogFacts, crashLogFile } from "./crash-log.ts";
@@ -89,6 +96,7 @@ export {
   checkpointBaseline,
   type DiffBaseline,
   type DiffPort,
+  type FileChangeSource,
   type GitRunner,
   gitHeadBaseline,
   noBaselineNotice,
@@ -111,6 +119,7 @@ export {
   routeExtensionNotice,
   watchExtensionNotices,
 } from "./extension-host.ts";
+export type { FileReader } from "./file-model.ts";
 export type { CheckpointsPort } from "./fork.ts";
 export {
   type Highlighter,
@@ -235,10 +244,14 @@ export type {
   AgentSeams,
   Compactor,
   ForgetTarget,
+  ReplayedSummary,
+  RewindFiles,
   RewoundPrompt,
+  ServedRewind,
   SessionAttachment,
   SessionPort,
   SessionTurn,
+  StagedRewind,
   ThinkingSwitch,
 } from "./session-attachment.ts";
 export type { ForkOrigin, SessionTreeView } from "./session-tree-model.ts";
@@ -291,6 +304,7 @@ export {
 } from "./theme.ts";
 export { curatedTips, rotatingTip, type Tip, type TipSignals, tipRotationMs } from "./tips.ts";
 export { type TitleBarState, type TitleSpan, titleBar, titleSpans } from "./title-bar.ts";
+export type { TurnLedgerReader, TurnRecord } from "./turn-ledger.ts";
 export type { FocusOutline } from "./view/frame.ts";
 export {
   describeWorkspaceRow,

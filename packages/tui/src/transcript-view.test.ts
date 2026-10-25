@@ -351,7 +351,7 @@ describe("the voice rail and tool rows", () => {
     expect(stamp()).toBe("▓ ");
   });
 
-  it("clips an overlong tool row with an ellipsis instead of wrapping", () => {
+  it("clips an overlong tool row from the subject so the time and outcome survive", () => {
     const lines = new TranscriptView().frame(
       sourceOf([
         {
@@ -376,7 +376,7 @@ describe("the voice rail and tool rows", () => {
     ).lines;
     expect(lines).toHaveLength(1);
     expect(width(lines[0]?.text ?? "")).toBeLessThanOrEqual(38);
-    expect(lines[0]?.text.endsWith("…")).toBe(true);
+    expect(lines[0]?.text).toMatch(/^echo x+… · 3ms · done$/);
   });
 
   it("discloses detail under a rule when a run is unfolded", () => {

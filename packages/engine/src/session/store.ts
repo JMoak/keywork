@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { Message, Usage } from "../messages.ts";
+import { type Message, messageText, type Usage } from "../messages.ts";
 import { type CostRollup, sessionCost } from "../pricing.ts";
 import {
   type BindingEntry,
@@ -10,6 +10,7 @@ import {
   type ContextEditEntry,
   type ContextReplacement,
   type CustomEntry,
+  type CustomMessageEntry,
   contextEntriesFor,
   contextMessages,
   type EffortChangeEntry,
@@ -18,19 +19,27 @@ import {
   isContextEditable,
   type LabelEntry,
   type MessageEntry,
+  type MessageMarks,
   type ModelChangeEntry,
+  memoryFlushType,
+  messageMarksOf,
   parseFileEntries,
   pathToEntry,
+  quietPostureOf,
+  quietPostureType,
   type SessionBinding,
   type SessionEntry,
   type SessionHeader,
   type SessionInfoEntry,
   type SessionTreeNode,
   type SpawnLineage,
+  type SummaryMark,
   sessionFormatVersion,
+  summaryMarksOf,
   type ThinkingLevelChangeEntry,
 } from "./entries.ts";
 import { SpillStore } from "./spill.ts";
+import { turnFactsOf } from "./turn-facts.ts";
 
 export interface SessionStats {
   entries: number;
@@ -131,6 +140,17 @@ export class SessionStore {
     return this.appendEntry({ type: "custom", customType, ...(data !== undefined && { data }) });
   }
 
+  async appendMemoryFlush([prompt, ...replies]: readonly Message[]): Promise<void> {
+    if (prompt === undefined) return;
+    await this.appendEntry<CustomMessageEntry>({
+      type: "custom_message",
+      customType: memoryFlushType,
+      content: messageText(prompt),
+      display: false,
+    });
+    for (const reply of replies) await this.append(reply);
+  }
+
   async setLabel(targetId: string, label: string | undefined): Promise<LabelEntry> {
     this.requireEntry(targetId);
     return this.appendEntry({ type: "label", targetId, label });
@@ -198,6 +218,14 @@ export class SessionStore {
     )?.effort;
   }
 
+  appendQuietChange(on: boolean): Promise<CustomEntry> {
+    return this.appendCustom(quietPostureType, { on });
+  }
+
+  quiet(): boolean {
+    return quietPostureOf(this.log);
+  }
+
   appendArcBinding(arc: string | undefined): Promise<BindingEntry> {
     return this.appendEntry({ type: "binding", arc: arc ?? null });
   }
@@ -249,6 +277,14 @@ export class SessionStore {
 
   contextEntries(): SessionEntry[] {
     return contextEntriesFor(this.activePath());
+  }
+
+  summaryMarks(): SummaryMark[] {
+    return summaryMarksOf(this.contextEntries());
+  }
+
+  messageMarks(): MessageMarks {
+    return messageMarksOf(this.activePath());
   }
 
   messages(): Message[] {
@@ -345,9 +381,18 @@ export class SessionStore {
   private index(entry: SessionEntry): void {
     this.log.push(entry);
     this.byId.set(entry.id, entry);
+    this.pinTurnCheckpoint(entry);
     if (entry.type !== "label") return;
     if (entry.label === undefined || entry.label === "") this.labelByTarget.delete(entry.targetId);
     else this.labelByTarget.set(entry.targetId, entry.label);
+  }
+
+  private pinTurnCheckpoint(entry: SessionEntry): void {
+    const facts = turnFactsOf(entry);
+    if (facts?.checkpoint === undefined) return;
+    const prompt = this.byId.get(facts.prompt);
+    if (prompt?.type !== "message" || prompt.checkpoint !== undefined) return;
+    prompt.checkpoint = facts.checkpoint;
   }
 
   private requireEntry(id: string): SessionEntry {

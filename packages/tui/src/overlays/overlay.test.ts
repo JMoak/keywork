@@ -208,6 +208,8 @@ describe("PresetOverlay", () => {
 
 describe("HelpOverlay", () => {
   const short: Screen = { width: 120, height: 30 };
+  const roomy: Screen = { width: 120, height: 64 };
+  const filterLine = 1;
 
   function help(closed: string[] = [], at: Screen = short): HelpOverlay {
     const keymap = new Keymap({ leader: "ctrl+k", bindings: appBindings });
@@ -225,22 +227,23 @@ describe("HelpOverlay", () => {
   });
 
   it("shows every action with nothing hidden when the screen has room", () => {
-    const overlay = help([], screen);
-    const page = overlay.page(screen);
+    const overlay = help([], roomy);
+    const page = overlay.page(roomy);
     expect(page.rows.length).toBe(overlay.rowCount());
     expect(page.rows.map((row) => row.keys)).toEqual(
-      expect.arrayContaining(["ctrl+k s", "enter", "alt+enter"]),
+      expect.arrayContaining(["ctrl+k s", "alt+1..9", "enter", "alt+enter"]),
     );
+    expect(page.rows.map((row) => row.keys)).not.toContain("alt+1");
     expect(page.rows.find((row) => row.keys === "alt+enter")?.help).toContain("steer");
     expect(page).toMatchObject({ above: 0, below: 0 });
     overlay.handleKey(parseChord("down"));
-    expect(overlay.page(screen).above).toBe(0);
+    expect(overlay.page(roomy).above).toBe(0);
   });
 
   it("pages a long list on a short screen and clamps at both ends", () => {
     const overlay = help();
     const total = overlay.rowCount();
-    const room = panelRowRoom(overlay.frame(short));
+    const room = panelRowRoom(overlay.frame(short)) - filterLine;
     expect(room).toBeLessThan(total);
     expect(overlay.page(short)).toMatchObject({ above: 0, below: total - room });
     expect(overlay.page(short).rows).toEqual(overlay.page(short).rows.slice(0, room));

@@ -28,6 +28,7 @@ export interface ServedSession {
   store: SessionStore;
   busy(): boolean;
   adoptBinding?(): Promise<void>;
+  openCheckpoint?(): string | undefined;
 }
 
 export interface SurfacePortsOptions {
@@ -40,6 +41,7 @@ export interface SurfacePortsOptions {
   composition(): Promise<Composition>;
   session(id: string): Promise<ServedSession | undefined>;
   arcs?: ArcService | undefined;
+  recompose?: (() => Promise<void>) | undefined;
 }
 
 export interface SurfacePorts {
@@ -110,7 +112,12 @@ export function surfacePorts(options: SurfacePortsOptions): SurfacePorts {
           requestReopen: () => undefined,
         });
         const { root, vault } = await setup.setUp();
-        return { trusted: true, root, vault, reopens: !projectTrusted };
+        const { recompose } = options;
+        if (projectTrusted || recompose === undefined) {
+          return { trusted: true, root, vault, reopens: !projectTrusted, recomposed: false };
+        }
+        await recompose();
+        return { trusted: true, root, vault, reopens: false, recomposed: true };
       },
       tree: async (path, hidden) => (await composed()).files.tree(path, hidden),
       file: async (path, range) => (await composed()).files.file(path, range),

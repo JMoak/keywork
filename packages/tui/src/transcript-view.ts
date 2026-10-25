@@ -13,6 +13,9 @@ import { inkAt } from "./motion.ts";
 import { columnPage, type PageGrammar, proseWidth } from "./page.ts";
 import {
   type AssistantEntry,
+  type LedgerEntry,
+  type SummaryEntry,
+  summaryRowSpans,
   type ThinkingEntry,
   type ToolProvenance,
   type ToolRun,
@@ -29,7 +32,8 @@ import {
   toolGroups,
   type Verbosity,
 } from "./transcript-verbosity.ts";
-import { clipSpans, wrap } from "./width.ts";
+import { ledgerFileLines } from "./turn-ledger.ts";
+import { clipSpans, take, width, wrap } from "./width.ts";
 
 export interface TranscriptLine {
   kind: TranscriptEntry["kind"];
@@ -330,6 +334,8 @@ function foldedOf(entry: TranscriptEntry): boolean {
     case "tool":
       return entry.run?.folded !== false;
     case "thinking":
+    case "ledger":
+    case "summary":
       return entry.folded;
     default:
       return true;
@@ -395,7 +401,10 @@ function stampFor(entry: TranscriptEntry, marks: PageMarks, streaming: number | 
     case "error":
       return `${marks.voice.machine} `;
     case "info":
+    case "ledger":
       return railBlank;
+    case "summary":
+      return `${marks.summary} `;
   }
 }
 
@@ -454,8 +463,12 @@ function entryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {
         : toolEntryLines(entry.run, entry.failed, layout);
     case "thinking":
       return thinkingEntryLines(entry, layout);
+    case "ledger":
+      return ledgerEntryLines(entry, layout);
     case "error":
       return transcriptLines([entry], layout.body);
+    case "summary":
+      return summaryEntryLines(entry, layout);
     case "user":
     case "info":
       return proseEntryLines(entry, layout);
@@ -463,17 +476,45 @@ function entryLines(entry: BlockEntry, layout: Layout): TranscriptLine[] {
 }
 
 function thinkingEntryLines(entry: ThinkingEntry, layout: Layout): TranscriptLine[] {
-  const spans = clipSpans(thinkingRowSpans(entry), layout.body, { text: "…", tone: "meta" });
-  const row: TranscriptLine = { kind: "thinking", failed: false, text: spanText(spans), spans };
+  return foldableLines(entry, thinkingRowSpans(entry), layout);
+}
+
+function summaryEntryLines(entry: SummaryEntry, layout: Layout): TranscriptLine[] {
+  return foldableLines(entry, summaryRowSpans(entry), layout);
+}
+
+function foldableLines(
+  entry: ThinkingEntry | SummaryEntry,
+  rowSpans: readonly MarkdownSpan[],
+  layout: Layout,
+): TranscriptLine[] {
+  const spans = clipSpans(rowSpans, layout.body, rowEllipsis);
+  const row: TranscriptLine = { kind: entry.kind, failed: false, text: spanText(spans), spans };
   if (entry.folded) return [row];
   const gutter = " ".repeat(layout.page.proseGutter);
   const body = entry.text
     .split("\n")
     .flatMap((line) => wrapLinked(line, layout.prose, layout.link))
     .map((pieces) =>
-      metaLine("thinking", pieces.length === 0 ? [] : [{ text: gutter }, ...pieces]),
+      metaLine(entry.kind, pieces.length === 0 ? [] : [{ text: gutter }, ...pieces]),
     );
-  return [row, ruleLine("thinking", layout), ...body];
+  return [row, ruleLine(entry.kind, layout), ...body];
+}
+
+function ledgerEntryLines(entry: LedgerEntry, layout: Layout): TranscriptLine[] {
+  const record = entry.record;
+  if (record === undefined) return [];
+  const row = ledgerLine(entry.text, layout.body);
+  if (entry.folded) return [row];
+  const gutter = " ".repeat(layout.page.proseGutter);
+  return [
+    row,
+    ...ledgerFileLines(record).map((line) => ledgerLine(`${gutter}${line}`, layout.body)),
+  ];
+}
+
+function ledgerLine(text: string, room: number): TranscriptLine {
+  return { kind: "ledger", failed: false, text: take(text, room) };
 }
 
 function ruleLine(kind: TranscriptLine["kind"], layout: Layout): TranscriptLine {
@@ -490,10 +531,7 @@ function metaLine(kind: TranscriptLine["kind"], pieces: readonly LinkableSpan[])
 }
 
 function toolEntryLines(run: ToolRun, failed: boolean, layout: Layout): TranscriptLine[] {
-  const spans = clipSpans(layout.link(toolRowSpans(run, layout.marks)), layout.body, {
-    text: "…",
-    tone: "meta",
-  });
+  const spans = headYielding(layout.link(toolRowSpans(run, layout.marks)), layout.body);
   const row: TranscriptLine = { kind: "tool", failed, text: spanText(spans), spans };
   if (!run.folded && run.detail !== undefined) {
     const args = argumentsOf(run, layout.verbosity);
@@ -502,6 +540,22 @@ function toolEntryLines(run: ToolRun, failed: boolean, layout: Layout): Transcri
   if (layout.verbosity !== "high") return [row];
   const glimpse = [...argumentRows(run, layout), ...detailLines(resultGlimpse(run), layout)];
   return [row, ...glimpse];
+}
+
+const rowEllipsis: MarkdownSpan = { text: "…", tone: "meta" };
+const headFloor = 20;
+
+function headYielding(spans: readonly MarkdownSpan[], cells: number): MarkdownSpan[] {
+  const tailAt = spans.findIndex((span) => span.tone !== "body");
+  if (tailAt <= 0) return clipSpans(spans, cells, rowEllipsis);
+  const head = spans.slice(0, tailAt);
+  const tail = spans.slice(tailAt);
+  const headRoom = Math.max(Math.min(spansWidth(head), headFloor), cells - spansWidth(tail));
+  return clipSpans([...clipSpans(head, headRoom, rowEllipsis), ...tail], cells, rowEllipsis);
+}
+
+function spansWidth(spans: readonly MarkdownSpan[]): number {
+  return spans.reduce((total, span) => total + width(span.text), 0);
 }
 
 const highArgumentRows = 8;

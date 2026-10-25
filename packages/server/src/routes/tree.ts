@@ -57,10 +57,10 @@ export const treeRoutes = [
     path: "/sessions/{id}/entries",
     operationId: "readSessionEntries",
     summary:
-      "The session's whole entry log as the engine stores it, for a client that draws the conversation tree itself. `entries` is every entry in file order, each with its `id` and `parentId`; `message` entries carry their message whole, and the rest (`compaction`, `branch_summary`, `label`, `session_info`, `model_change`, `thinking_level_change`, `effort_change`, `context_edit`, `binding`, `custom`, `custom_message`) carry their own fields. `labels` maps entry ids to the label in force, `leafId` is the entry the next message will follow, and `activePath` lists the ids from the root to that leaf. Folding the flat log into a tree is the client's job (parent links suffice).",
+      "The session's whole entry log as the engine stores it, for a client that draws the conversation tree itself. `entries` is every entry in file order, each with its `id` and `parentId`; `message` entries carry their message whole, and the rest (`compaction`, `branch_summary`, `label`, `session_info`, `model_change`, `thinking_level_change`, `effort_change`, `context_edit`, `binding`, `custom`, `custom_message`) carry their own fields. A memory flush is a `custom_message` with `customType: \"memory_flush\"` whose `content` is the prompt keywork sent, followed by the reply as an `assistant` message entry; it is not a prompt and starts no turn. `labels` maps entry ids to the label in force, `leafId` is the entry the next message will follow, and `activePath` lists the ids from the root to that leaf. `journal` lists the ids of the entries kept only as evidence, which never reach the model and are not part of the conversation: the `custom` entries recording permission asks and decisions, context injections, memory decisions, shell resets, session grants and each settled turn's facts (`turn_facts`). A tree, a transcript or an export leaves them out, or folds them into the row they explain. Folding the flat log into a tree is the client's job (parent links suffice).",
     authenticated: true,
     responses: {
-      "200": "`{ sessionId, name?, leafId, entries, labels, activePath }`.",
+      "200": "`{ sessionId, name?, leafId, entries, labels, activePath, journal }`.",
       "404": missingResponse,
     },
   },

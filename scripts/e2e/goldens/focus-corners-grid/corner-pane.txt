@@ -1,8 +1,8 @@
 ╭─────────────────────────┬────────────────────────────────────────────────────╮
-│ session tree            │ session-1                                          │
-│ ░ no sessions yet       │                                                    │
-│                         │                                                    │
-│                         │                                                    │
+│ 1 session tree          │ 2 session-1                                        │
+│ ░ no sessions yet ·     │                                                    │
+│ the first prompt you    │                                                    │
+│ send starts one         │                                                    │
 │                         │                                                    │
 │                         │                                                    │
 │                         │                                                    │

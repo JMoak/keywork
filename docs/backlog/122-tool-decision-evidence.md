@@ -86,7 +86,7 @@ sandbox's unconfined consent are not agent calls and are skipped).
 | `callId`, `at`, `tool` | The call, when the decision was journaled, and the tool's name. |
 | `subject` | `{ kind: "command", command, truncated, parts, destructive, opaque }` for `bash`; `{ kind: "path", path, insideWorkspace, change? }` for `read`, `write` and `edit`, where `change` is `{ kind: "write", lines }` or `{ kind: "edit", removedLines, addedLines, replaceAll }`; `{ kind: "call", arguments, truncated }` for anything else, its arguments scrubbed and capped at 1,000 characters. |
 | `ask` | Present when the ask was journaled: `{ at, rule, grantable, change? }`. |
-| `answer` | `{ at, verdict, gate, scope?, by, afterMs?, reason? }`. `by` is `person`, `headless`, `grant`, `rule` or `unknown`; `afterMs` is the time from the ask to the answer; `reason` is why a person denied (`unsafe`, `not-now` or `other`, contract 1.4), absent on a grant and on a denial answered without one. |
+| `answer` | `{ at, verdict, gate, scope?, by, afterMs?, reason?, note? }`. `by` is `person`, `headless`, `grant`, `rule` or `unknown`; `afterMs` is the time from the ask to the answer; `reason` is why a person denied (`unsafe`, `not-now` or `other`, contract 1.4), absent on a grant and on a denial answered without one; `note` is the person's own words on a denial (contract 1.6), with secrets scrubbed and clipped at 1000 characters. |
 | `result` | `{ isError }` for a granted call that ran. |
 
 `by` reads `asked` when the decision has it. An older decision is read conservatively: a denial,

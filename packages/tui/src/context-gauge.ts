@@ -21,29 +21,19 @@ export function gaugeStyleFor(instruments: InstrumentTier, focused: boolean): Ga
 export function contextGauge(reading: ContextReading, options: GaugeOptions): string {
   if (reading.used === 0) return "";
   const ramp = resolveRamp(density, options.glyphs);
+  const used = `context ${formatTokenCount(reading.used)}`;
   switch (options.style) {
     case "bar":
-      return barGauge(reading, ramp);
+      return `${barGauge(reading, ramp)} ${used} of ${formatTokenCount(reading.window)}`;
     case "bare":
       return stopGlyph(reading, ramp);
     case "steps":
-      return `${stepsGauge(reading, ramp, options.glyphs)} ${formatTokenCount(reading.used)}`;
+      return `${stepsGauge(reading, ramp, options.glyphs)} ${used}`;
     case "tile":
-      return `${twinTile(reading, options.glyphs)} ${formatTokenCount(reading.used)}`;
+      return `${twinTile(reading, options.glyphs)} ${used}`;
     case "ramp":
-      return `${stopGlyph(reading, ramp)} ${formatTokenCount(reading.used)}`;
+      return `${stopGlyph(reading, ramp)} ${used}`;
   }
-}
-
-export function contextReadout(reading: ContextReading): string[] {
-  const basis = reading.declared
-    ? "window declared in keywork.json"
-    : `window assumed at ${reading.window} · declare models[…].contextWindow in keywork.json for an honest limit`;
-  return [
-    `context ${reading.used} of ${reading.window} tokens · estimated from the conversation text`,
-    `memory flush at ${reading.flushAt} · compaction at ${reading.compactAt}`,
-    basis,
-  ];
 }
 
 function stopGlyph(reading: ContextReading, ramp: readonly string[]): string {
@@ -88,5 +78,5 @@ function barGauge(reading: ContextReading, ramp: readonly string[]): string {
     if (reading.flushAt < end) return flush;
     return room;
   });
-  return `${cells.join("")} ${formatTokenCount(reading.used)}/${formatTokenCount(reading.window)}`;
+  return cells.join("");
 }

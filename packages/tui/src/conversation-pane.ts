@@ -23,6 +23,7 @@ import {
   ConversationModel,
   type ConversationPorts,
   type EffortChangeHook,
+  type QueuedSend,
   type SettledOutcome,
   type ThinkingChangeHook,
   type Titler,
@@ -54,14 +55,17 @@ import {
   paneContentWidth,
   paneInks,
   paneTitle,
+  wrappedLines,
 } from "./pane-chrome.ts";
 import { type PointerEvent, wheelSteps } from "./pointer.ts";
 import { type TitleBot, titleSpans } from "./title-bar.ts";
 import type { TranscriptLine } from "./transcript-view.ts";
 import { trayBox, trayRows } from "./tray.ts";
-import { clip, padEnd, width } from "./width.ts";
+import { ledgerHint } from "./turn-ledger.ts";
+import { clip, clipStart, padEnd, width } from "./width.ts";
 
 const askDiffRows = 10;
+const quietMark = { tier1: "»", tier0: ">" };
 const mastheadStatusRows = 1;
 const clockTickMs = 1000;
 const undoStagedMark = "undo staged";
@@ -201,7 +205,6 @@ export class ConversationPane implements Pane {
   }
 
   handlePaste(text: string, facts?: PasteFacts): boolean {
-    if (this.model.pendingAsk !== undefined) return true;
     const image = imageFromPaste(text, facts, this.readImage);
     if (image === undefined) return this.model.paste(text);
     this.attachImage(image);
@@ -409,6 +412,7 @@ export class ConversationPane implements Pane {
   }
 
   view(context: PaneContext): PaneView {
+    if (context.focused && !this.lastFocused) this.model.askRegainedFocus();
     this.lastFocused = context.focused;
     this.model.attend(context.focused);
     this.syncStamp(context.focused);
@@ -424,6 +428,8 @@ export class ConversationPane implements Pane {
       {
         name: this.model.title ?? this.id,
         stamp: this.stampGlyph(),
+        quietMark: this.model.quiet() ? resolveMark(quietMark, this.glyphs) : undefined,
+        modeWord: this.model.quiet() ? "quiet" : undefined,
         arc: this.arc,
         bot: this.titleBot(),
         telemetry: this.titleTelemetry(context),
@@ -598,13 +604,15 @@ export class ConversationPane implements Pane {
   private transcriptView(context: PaneContext, page: PageGrammar): PaneView {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
-    const suggestions = focused ? this.model.suggestions() : [];
-    const prompt = promptLines(this.model.editor.buffer, focused);
-    const queued = this.model.queued();
     const ask = this.model.pendingAsk;
-    const rememberHint = ask === undefined ? undefined : askRememberHint(ask);
-    const diffRows = ask?.diff === undefined ? [] : this.askDiffRows(theme);
-    const keyHint = this.keyHint(theme);
+    if (ask !== undefined && focused) this.model.askSeen();
+    const typing = focused && !this.model.askHoldsKeys();
+    const suggestions = typing ? this.model.suggestions() : [];
+    const prompt = promptLines(this.model.editor.buffer, typing);
+    const queued = this.model.queuedSends();
+    const detail = ask === undefined ? [] : askDetailLines(ask, innerWidth, theme);
+    const diffRows = ask?.diff === undefined ? [] : this.askDiffRows(theme, innerWidth);
+    const keyHint = this.keyHint(theme, innerWidth);
     const trayChromeRows = 2;
     const reservedRows =
       (suggestions.length === 0 ? 0 : suggestions.length + trayChromeRows) +
@@ -613,7 +621,7 @@ export class ConversationPane implements Pane {
       diffRows.length +
       keyHint.length +
       (ask === undefined ? 0 : 1) +
-      (rememberHint === undefined ? 0 : 1) +
+      detail.length +
       (this.model.scrollBack > 0 ? 1 : 0);
     const maxRows = Math.max(0, paneContentHeight(context) - reservedRows);
     const lines = this.model.visibleTranscript(innerWidth, maxRows, page, this.marks);
@@ -640,8 +648,8 @@ export class ConversationPane implements Pane {
             }),
           ]
         : []),
-      ...queued.map((text, at) =>
-        queuedRow(text, at, this.model.queueSelection(), innerWidth, theme),
+      ...queued.map((send, at) =>
+        queuedRow(send, at, this.model.queueSelection(), innerWidth, theme, this.marks),
       ),
       ...(suggestions.length === 0
         ? []
@@ -655,30 +663,37 @@ export class ConversationPane implements Pane {
             ),
           ]),
       ...diffRows,
-      ...(ask === undefined ? [] : [askRow(ask, innerWidth, theme)]),
-      ...(rememberHint === undefined ? [] : [Text({ content: rememberHint, fg: theme.textDim })]),
+      ...(ask === undefined
+        ? []
+        : [askRow(ask, this.askControlsInk(focused, theme), innerWidth, theme)]),
+      ...detail,
       ...keyHint,
-      ...prompt.map((line) => Text({ content: line, fg: focused ? theme.text : theme.textDim })),
+      ...prompt.map((line) => Text({ content: line, fg: typing ? theme.text : theme.textDim })),
     );
   }
 
-  private keyHint(theme: Palette) {
-    if (this.model.backtracking()) {
-      return [Text({ content: this.model.pickerHint(), fg: theme.accent })];
-    }
-    if (this.model.disclosing()) {
-      return [
-        Text({
-          content: `disclose · tab toggles · shift+tab older${this.openHint()} · esc done`,
-          fg: theme.accent,
-        }),
-      ];
-    }
-    if (this.model.editingQueue()) return [Text({ content: queueEditHint, fg: theme.accent })];
+  private askControlsInk(focused: boolean, theme: Palette): string | undefined {
+    if (!focused) return theme.textDim;
+    return this.model.askHoldsKeys() ? theme.accent : undefined;
+  }
+
+  private keyHint(theme: Palette, room: number) {
+    const restore = this.model.restoreAsk();
+    if (restore !== undefined) return wrappedLines(restore, theme.accent, room);
+    if (this.model.backtracking()) return wrappedLines(this.model.pickerHint(), theme.accent, room);
+    if (this.model.disclosing()) return wrappedLines(this.disclosureHint(), theme.accent, room);
+    if (this.model.editingQueue()) return wrappedLines(queueEditHint, theme.accent, room);
+    if (this.model.askHoldsKeys()) return [];
     if (this.model.busy && !this.model.editor.isEmpty()) {
-      return [Text({ content: busyPromptHint, fg: theme.textDim })];
+      return wrappedLines(busyPromptHint(this.marks), theme.textDim, room);
     }
     return [];
+  }
+
+  private disclosureHint(): string {
+    const record = this.model.cursoredLedger()?.record;
+    if (record !== undefined) return ledgerHint(record);
+    return `disclose · tab toggles · shift+tab older${this.openHint()} · esc done`;
   }
 
   private openHint(): string {
@@ -736,11 +751,11 @@ export class ConversationPane implements Pane {
     };
   }
 
-  private askDiffRows(theme: Palette) {
+  private askDiffRows(theme: Palette, paneWidth: number) {
     const window = this.model.askDiffWindow(askDiffRows);
     return [
       ...(window.above > 0 ? [Text({ content: `↑ ${window.above} more`, fg: theme.textDim })] : []),
-      ...window.lines.map((line) => diffRow(line, theme)),
+      ...window.lines.map((line) => diffRow(line, theme, paneWidth)),
       ...(window.below > 0 ? [Text({ content: `↓ ${window.below} more`, fg: theme.textDim })] : []),
     ];
   }
@@ -748,38 +763,61 @@ export class ConversationPane implements Pane {
 
 const askControls = "  [y] allow  [a] always  [n] deny";
 const onceOnlyAskControls = "  [y] allow  [n] deny";
-const denyReasonControls = "  why?  [u] unsafe  [n] not now  [o] other";
+const denyReasonControls = "  why?  [u] unsafe  [n] not now  [o] other, say why";
+const noteControls = "  say why · enter sends · esc skips";
 
 export const queueEditHint =
   "queue · ↑↓ pick · shift+↑↓ move · backspace cancels · enter sends now · esc done";
 
 function queuedRow(
-  text: string,
+  send: QueuedSend,
   at: number,
   selected: number | undefined,
   paneWidth: number,
   theme: Palette,
+  marks: PageMarks,
 ) {
-  const content = `⋯ ${text}`;
+  const mark = send.behavior === "steer" ? marks.steered : marks.queued;
+  const content = clip(`${mark} ${send.text}`, paneWidth);
   if (at !== selected) return Text({ content, fg: theme.textDim });
   return Text({ content: padEnd(content, paneWidth), fg: theme.background, bg: theme.accent });
 }
 
-function askRow(ask: PendingAsk, paneWidth: number, theme: Palette) {
-  const controls = askControlsFor(ask);
+function askRow(
+  ask: PendingAsk,
+  controlsInk: string | undefined,
+  paneWidth: number,
+  theme: Palette,
+) {
+  const controls = controlsInk === undefined ? "" : askControlsFor(ask);
   const room = Math.max(0, paneWidth - controls.length - 2);
-  return Text({ content: `? ${clip(ask.summary, room)}${controls}`, fg: theme.accent });
+  const summary = fg(theme.accent)(`? ${clip(ask.summary, room)}`);
+  if (controlsInk === undefined) return Text({ content: new StyledText([summary]) });
+  return Text({ content: new StyledText([summary, fg(controlsInk)(controls)]) });
 }
 
 function askControlsFor(ask: Pick<PendingAsk, "remembers" | "stage">): string {
   if (ask.stage === "reason") return denyReasonControls;
+  if (ask.stage === "note") return noteControls;
   return ask.remembers.length > 0 ? askControls : onceOnlyAskControls;
+}
+
+function askDetailLines(ask: PendingAsk, paneWidth: number, theme: Palette) {
+  if (ask.stage === "note") {
+    const lead = "  › ";
+    const typed = clipStart(`${ask.note}▌`, Math.max(1, paneWidth - width(lead)));
+    return [Text({ content: `${lead}${typed}`, fg: theme.text })];
+  }
+  const hint = askRememberHint(ask);
+  return hint === undefined ? [] : wrappedLines(hint, theme.textDim, paneWidth);
 }
 
 export function askRememberHint(
   ask: Pick<PendingAsk, "remembers"> & Partial<Pick<PendingAsk, "stage">>,
 ): string | undefined {
-  if (ask.remembers.length === 0 || ask.stage === "reason") return undefined;
+  if (ask.remembers.length === 0 || (ask.stage !== undefined && ask.stage !== "verdict")) {
+    return undefined;
+  }
   const labels = ask.remembers.map((rule) => ruleLabel(rule)).join(" · ");
   return `  [a] remembers ${labels} for this session`;
 }
@@ -838,6 +876,8 @@ function stampColor(line: TranscriptLine, theme: Palette): string {
       return theme.textMid;
     case "thinking":
     case "info":
+    case "ledger":
+    case "summary":
       return theme.textDim;
     case "tool":
       return line.failed ? theme.error : theme.textDim;
@@ -873,18 +913,20 @@ function lifecycleGlyphs(glyphs: GlyphSupport): LifecycleGlyphs {
   };
 }
 
-function diffRow(line: DiffLine, theme: Palette) {
+function diffRow(line: DiffLine, theme: Palette, paneWidth: number) {
+  const row = (content: string, ink: string) =>
+    Text({ content: clip(content, paneWidth), fg: ink });
   switch (line.kind) {
     case "add":
-      return Text({ content: `+ ${line.text}`, fg: theme.success });
+      return row(`+ ${line.text}`, theme.success);
     case "del":
-      return Text({ content: `- ${line.text}`, fg: theme.error });
+      return row(`- ${line.text}`, theme.error);
     case "context":
-      return Text({ content: `  ${line.text}`, fg: theme.text });
+      return row(`  ${line.text}`, theme.text);
     case "hunk":
-      return Text({ content: line.text, fg: theme.textDim });
+      return row(line.text, theme.textDim);
     case "note":
-      return Text({ content: `· ${line.text}`, fg: theme.textDim });
+      return row(`· ${line.text}`, theme.textDim);
   }
 }
 
@@ -905,12 +947,14 @@ function lineColor(line: TranscriptLine, theme: Palette): string {
     case "assistant":
       return theme.text;
     case "thinking":
+    case "summary":
       return theme.textMid;
     case "tool":
       return line.failed ? theme.error : theme.success;
     case "error":
       return theme.error;
     case "info":
+    case "ledger":
       return theme.textDim;
   }
 }
@@ -948,8 +992,9 @@ function alternatedLetters(
   return new StyledText(chunks.length === 0 ? [fg(ink)(" ")] : chunks);
 }
 
-const busyPromptHint =
-  "enter queues · alt+enter steers · ctrl+enter sends now · alt+↑ edits the queue · esc interrupts";
+function busyPromptHint(marks: PageMarks): string {
+  return `enter queues ${marks.queued} · alt+enter steers ${marks.steered} · ctrl+enter sends now · alt+↑ edits the queue · esc interrupts`;
+}
 
 function queuedSegment(count: number): string {
   return count === 0 ? "" : `${count} queued`;

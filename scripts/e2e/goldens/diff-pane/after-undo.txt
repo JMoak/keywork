@@ -1,8 +1,8 @@
 ╭────────────────────────────────────────────────────╭───────────────────────────────────────────────────╮─────────────────────────────────────────────────────╮
-│ session tree · 1 session                           │ session-1                                         │ diff                                                │
+│ 1 session tree · 1 session                         │ 2 session-1                                       │ 3 diff                                              │
 │ ▓ please shout the middle line of notes.txt · now  │                                                   │ no changes since session start                      │
-│                                                    │                                                   │ ─────────────────────────────────────────────────── │
-│                                                    │                                                   │                                                     │
+│                                                    │                                                   │ ── n p hunks · u undoes the last change ─────────── │
+│                                                    │                                                   │    shift+u redoes · enter opens                     │
 │                                                    │                                                   │                                                     │
 │                                                    │                                                   │                                                     │
 │                                                    │                                                   │                                                     │

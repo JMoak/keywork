@@ -1,5 +1,6 @@
 import type { AirlockDigestView, CandidateChoice, QuestionChoice } from "./arcs.ts";
 import type { Chord } from "./keys.ts";
+import { type DecisionsView, decisionRows } from "./memory-decisions.ts";
 import {
   type AirlockRowRef,
   type DigestTreatment,
@@ -17,7 +18,7 @@ import { RowCursor } from "./row-cursor.ts";
 
 export type MemoryProvenance = "user" | "agent" | "untrusted";
 export type CuringStage = 0 | 1 | 2 | 3;
-export type MemoryLens = "garden" | "note" | "ledger";
+export type MemoryLens = "garden" | "note" | "ledger" | "decisions";
 export type MemoryLayerKind = "workspace" | "arc" | "user";
 
 export interface PromptBudgetView {
@@ -147,6 +148,7 @@ export interface MemoryPaneEffects {
 
 export interface MemoryPaneSeams {
   focusedArc?: () => string | undefined;
+  decisions?: () => DecisionsView | undefined;
   now?: () => number;
   digestTreatment?: DigestTreatment;
   gardenHeat?: GardenHeat;
@@ -166,6 +168,8 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
   private ledgerNote: string | undefined;
   private query: MemoryQueryState | undefined;
   private readonly unfoldedArcs = new Set<string>();
+  private readonly unfoldedDecisions = new Set<string>();
+  private decisionsSeen = "";
   private bodyWidth = 40;
 
   constructor(
@@ -223,6 +227,15 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
     return this.lens;
   }
 
+  followDecisions(): void {
+    if (this.lens !== "decisions") return;
+    const view = this.seams.decisions?.();
+    const seen = `${view?.session ?? ""}:${view?.decisions.length ?? -1}`;
+    if (seen === this.decisionsSeen) return;
+    this.decisionsSeen = seen;
+    this.rebuild(() => {});
+  }
+
   focused(): string | undefined {
     return this.focusedNote;
   }
@@ -251,6 +264,8 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
         return this.handleNoteKey(chord);
       case "ledger":
         return this.handleLedgerKey(chord);
+      case "decisions":
+        return this.handleDecisionsKey(chord);
     }
   }
 
@@ -265,6 +280,8 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
         return this.noteLensRows(now);
       case "ledger":
         return ledgerRows(this.inputs, { note: this.ledgerNote, now });
+      case "decisions":
+        return decisionRows(this.seams.decisions?.(), (id) => this.unfoldedDecisions.has(id));
     }
   }
 
@@ -308,6 +325,8 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
         return this.jumpTo("inbox");
       case "g":
         return this.jumpTo("note");
+      case "w":
+        return this.showDecisions();
       case "a":
         return this.actOnInbox((id) => this.effects.approve(id));
       case "d":
@@ -336,6 +355,8 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
       case "tab":
       case "l":
         return this.showLedger(this.focusedNote);
+      case "w":
+        return this.showDecisions();
       case "a":
         return this.actOnInbox((id) => this.effects.approve(id));
       case "d":
@@ -359,6 +380,8 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
         return this.leaveLedger();
       case "tab":
         return this.showGarden();
+      case "w":
+        return this.showDecisions();
       case "enter":
       case "return":
         return this.drillAtCursor();
@@ -372,6 +395,40 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
       default:
         return false;
     }
+  }
+
+  private handleDecisionsKey(chord: Chord): boolean {
+    switch (chord.name) {
+      case "escape":
+      case "backspace":
+      case "tab":
+      case "w":
+        return this.showGarden();
+      case "enter":
+      case "return":
+      case "space":
+        return this.toggleDecision();
+      case "r":
+        this.effects.refresh();
+        return this.mutate(() => {});
+      default:
+        return false;
+    }
+  }
+
+  private showDecisions(): boolean {
+    return this.mutate(() => {
+      this.lens = "decisions";
+    });
+  }
+
+  private toggleDecision(): boolean {
+    const id = this.cursorRow()?.id;
+    if (id === undefined || !id.startsWith("decision:")) return true;
+    const decision = id.slice("decision:".length);
+    return this.mutate(() => {
+      if (!this.unfoldedDecisions.delete(decision)) this.unfoldedDecisions.add(decision);
+    });
   }
 
   private handleQueryKey(chord: Chord, pageRows: number, sequence: string | undefined): boolean {
@@ -425,6 +482,8 @@ export class MemoryPaneModel extends RowCursor<MemoryRow> {
         return this.focusedNote;
       case "ledger":
         return this.ledgerNote;
+      case "decisions":
+        return undefined;
     }
   }
 

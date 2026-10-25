@@ -3,7 +3,10 @@ import {
   Agent,
   ArcExistsError,
   ArcNotActiveError,
+  type ContextEditEntry,
   contextBudgetFor,
+  contextEntriesFor,
+  contextMessages,
   declaredContextWindow,
   type EffortLevel,
   McpServerNotFoundError,
@@ -29,8 +32,10 @@ import {
 import { type CompleteTheme, requiresConfirmation, type TrustDecision } from "@keywork/shared";
 import { AskQueue } from "./asks.ts";
 import { ChangesFeed, type ChangesSource, changesPortOver } from "./changes.ts";
+import { deskRowOf } from "./desk.ts";
 import type { EventLog } from "./events.ts";
 import { workspaceFiles } from "./files.ts";
+import { servedGrants } from "./grants.ts";
 import {
   type ArcAirlockPort,
   type ArcSummary,
@@ -39,6 +44,8 @@ import {
   type CompactionReport,
   type CostReport,
   type ExportOutcome,
+  type FlushReport,
+  type ForgetReport,
   type LabelOutcome,
   type LeafOutcome,
   type McpPort,
@@ -47,13 +54,17 @@ import {
   type ModelSwitch,
   type NoteRelation,
   type PresetHost,
+  type QueueRefusal,
+  type QueueReport,
   type RedoReport,
+  type RestorePreview,
   type RestoreReport,
   SessionBusyError,
   type SessionDetail,
   type SessionEntries,
   type SessionHost,
   type SessionLifecyclePort,
+  type SessionQueuePort,
   type SessionState,
   type SessionSummary,
   SurfaceUnavailableError,
@@ -141,6 +152,7 @@ export interface MemorySurfaceOptions {
 }
 
 interface MemorySession {
+  id: string;
   agent: Agent;
   title: string;
   detach: () => void;
@@ -160,7 +172,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
   });
   const asks = new AskQueue({
     now,
-    grants: ledger,
+    grants: servedGrants(ledger, options.log),
     ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
   });
   const buildAgent = (id: string, provider: Provider, history?: readonly Message[]): Agent =>
@@ -203,6 +215,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
       ...(effort !== undefined && { effort }),
       title: session.title,
       leafId: history.length === 0 ? null : `m${history.length - 1}`,
+      quiet: ledger.isQuiet(session.id),
       undoable: lastPromptIndex(history) !== -1,
       redoable: session.staged !== undefined,
     };
@@ -230,8 +243,29 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
     const session = sessions.get(id);
     return session === undefined ? "missing" : act(session);
   };
+  const busy = (id: string): boolean => sessions.get(id)?.agent.busy() ?? false;
+  const queue: SessionQueuePort = {
+    setAside: (id) => verb(id, ({ agent }) => agent.clearQueue()),
+    move: (id, itemId, to) =>
+      verb(id, ({ agent }): QueueReport | QueueRefusal => {
+        const moved = agent.moveQueued(itemId, to);
+        return moved === "moved" ? { queued: agent.queued() } : moved;
+      }),
+    cancel: (id, itemId) =>
+      verb(id, ({ agent }): QueueReport | "unknown" =>
+        agent.cancelQueued(itemId) ? { queued: agent.queued() } : "unknown",
+      ),
+  };
   return {
-    list: async () => [...sessions].map(([id, session]) => summaryOf(id, session)),
+    list: async () =>
+      [...sessions].map(([id, session]) =>
+        deskRowOf(summaryOf(id, session), {
+          asks: asks.list(),
+          live: (sessionId) => sessions.has(sessionId),
+          working: busy,
+          changes: (sessionId) => changes.lastAnnounced(sessionId),
+        }),
+      ),
     read: async (id) => {
       const session = sessions.get(id);
       if (session === undefined) return undefined;
@@ -240,6 +274,9 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         cwd: "/memory",
         live: true,
         messages: session.agent.history(),
+        summaries: [],
+        flushes: [],
+        edits: [],
         asOf: options.log.latestId(),
         ...(session.parent !== undefined && { parentSession: session.parent }),
       };
@@ -249,6 +286,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
       const id = `s${sessions.size + 1}`;
       const agent = buildAgent(id, options.provider);
       const session: MemorySession = {
+        id,
         agent,
         title: `session ${id}`,
         detach: attach(id, agent),
@@ -381,6 +419,21 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
           redoable,
         };
       }),
+    previewRestore: (id, turn) =>
+      verb(id, (session): RestorePreview | "unknown-turn" => {
+        const history = session.agent.history();
+        const prompts = promptIndexes(history);
+        const index = prompts[turn - 1];
+        const prompt = index === undefined ? undefined : history[index];
+        if (index === undefined || prompt === undefined) return "unknown-turn";
+        return {
+          turn,
+          prompt: { entryId: `m${index}`, text: textOf(prompt) },
+          undoneTurns: prompts.length - turn + 1,
+          files: [],
+          others: [],
+        };
+      }),
     context: (id) =>
       verb(id, ({ agent }) =>
         readAgentContext(agent, contextBudgetFor(declaredContextWindow(agent.provider))),
@@ -396,14 +449,17 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
           usage,
           ...(modelId !== undefined && { modelId }),
           ...(cacheMiss !== undefined && { cacheMiss }),
-          models: [
-            {
-              reference: modelReferenceOf(agent.provider) ?? agent.provider.name,
-              turns: rollup.pricedTurns + rollup.unpricedTurns,
-              usage,
-              rollup,
-            },
-          ],
+          models:
+            spentTurns(rollup) === 0
+              ? []
+              : [
+                  {
+                    reference: modelReferenceOf(agent.provider) ?? agent.provider.name,
+                    turns: spentTurns(rollup),
+                    usage,
+                    rollup,
+                  },
+                ],
         };
       }),
     exportHtml: (id, _scope, out) =>
@@ -418,6 +474,36 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         announce(id, session);
         return { title };
       }),
+    setQuiet: (id, on) =>
+      verb(id, (session) => {
+        ledger.setQuiet(id, on);
+        announce(id, session);
+        return { quiet: on };
+      }),
+    flush: (id) =>
+      verb(id, (session): FlushReport | "busy" =>
+        session.agent.busy() ? "busy" : { flushed: 0, notices: [noMemoryToFlush] },
+      ),
+    forget: (id, entryId, replacement) =>
+      verb(id, (session): ForgetReport | "busy" | "unknown-entry" => {
+        if (session.agent.busy()) return "busy";
+        const { entries } = entriesOf(id, session);
+        const target = entries.find((entry) => entry.id === entryId);
+        if (target === undefined || !isForgettable(target)) return "unknown-entry";
+        const edit: ContextEditEntry = {
+          type: "context_edit",
+          id: `edit-${entries.length}`,
+          parentId: entries.at(-1)?.id ?? null,
+          timestamp: now().toISOString(),
+          targetId: entryId,
+          replacement: replacement ?? null,
+        };
+        const history = contextMessages(contextEntriesFor([...entries, edit]));
+        swap(id, session, buildAgent(id, session.agent.provider, history));
+        announce(id, session);
+        return { edit };
+      }),
+    spill: (id) => verb(id, (): "unknown-spill" => "unknown-spill"),
     applyPreset: async (name, confirmed) => {
       const presets = options.presets;
       if (presets === undefined) return "unavailable";
@@ -441,6 +527,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
             session.agent.history().slice(0, index + 1),
           );
           sessions.set(forkedId, {
+            id: forkedId,
             agent,
             title: `session ${forkedId}`,
             detach: attach(forkedId, agent),
@@ -470,11 +557,12 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         }),
     },
     changes: changesPortOver({ has: async (id) => sessions.has(id) }, async () => options.changes),
+    queue,
     lifecycle: memoryTrash(sessions, trashed, summaryOf),
     asks: async () => asks.list(),
-    answerAsk: async (callId, verdict, scope, reason) =>
-      asks.answer(callId, verdict, scope, reason),
-    permissions: async () => ledger.view(),
+    answerAsk: async (callId, verdict, scope, denial) =>
+      asks.answer(callId, verdict, scope, denial),
+    permissions: async () => ({ ...ledger.view(), quiet: ledger.quietSessions() }),
     grantWorkspaceRule: async (rule) => ledger.record("", "workspace", [rule]),
     grantSessionRule: async (sessionId, rule) => {
       if (!sessions.has(sessionId)) return false;
@@ -493,11 +581,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
     },
     ...(options.memory !== undefined && { memory: options.memory }),
     ...(options.surfaces !== undefined &&
-      memorySurfacePorts(options.surfaces, {
-        has: (id) => sessions.has(id),
-        busy: (id) => sessions.get(id)?.agent.busy() ?? false,
-        now,
-      })),
+      memorySurfacePorts(options.surfaces, { has: (id) => sessions.has(id), busy, now })),
   };
 }
 
@@ -635,6 +719,7 @@ export function memorySurfacePorts(
           root,
           vault: join(root, ".keywork", "memory"),
           reopens: !composedTrusted,
+          recomposed: false,
         };
       },
       tree: files.tree,
@@ -767,6 +852,17 @@ function readinessOf(trust: TrustDecision): WorkspaceReadiness {
 
 const nothingToCompact = "nothing to compact yet · the recent turns are all that's here";
 
+const noMemoryToFlush = "nothing flushed · the memory host keeps no memory";
+
+function spentTurns(rollup: CostReport["rollup"]): number {
+  return rollup.pricedTurns + rollup.unpricedTurns;
+}
+
+function isForgettable(entry: SessionEntry): boolean {
+  if (entry.type !== "message") return false;
+  return entry.message.role === "user" || entry.message.role === "tool";
+}
+
 function entriesOf(id: string, session: MemorySession): SessionEntries {
   const entries = session.agent.history().map(
     (message, index): SessionEntry => ({
@@ -784,6 +880,7 @@ function entriesOf(id: string, session: MemorySession): SessionEntries {
     entries,
     labels: Object.fromEntries(session.labels),
     activePath: entries.map((entry) => entry.id),
+    journal: [],
   };
 }
 
@@ -874,7 +971,8 @@ export function vaultMemoryPort(options: VaultMemoryOptions): VaultMemoryPort {
     approve: (id) => store.approve(id),
     discard: (id) => store.discard(id),
     notes: recordsOf,
-    note: async (name) => {
+    note: async (name, layer) => {
+      if (layer !== undefined && layer !== "workspace") return undefined;
       const records = await recordsOf();
       const found = records.find((note) => titleKey(note.name) === titleKey(name));
       if (found === undefined) return undefined;

@@ -1,5 +1,5 @@
 import { fg, StyledText, Text, type TextChunk } from "@opentui/core";
-import { type ArcOrdinals, arcInk } from "./arcs.ts";
+import { type ArcAttire, type ArcOrdinals, arcInk } from "./arcs.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
 import type { Palette } from "./palette.ts";
@@ -15,10 +15,11 @@ import {
   paneTitle,
   rowsView,
   trayCommandsPressing,
+  wrappedLines,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
-import { pluralize } from "./pluralize.ts";
+import { pluralize, sessionsFact } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import {
   SessionTreeModel,
@@ -52,6 +53,8 @@ export interface SessionTreePort {
   remove?(sessionId: string): Promise<SessionRemoval>;
   trash?(): Promise<SessionOverviewItem[]>;
   restore?(sessionId: string): Promise<SessionOverviewItem | undefined>;
+  discard?(sessionId: string): Promise<boolean>;
+  purgeTrash?(): Promise<number>;
 }
 
 export interface SessionTreePaneSeams {
@@ -61,6 +64,7 @@ export interface SessionTreePaneSeams {
   presence?: SessionPresence;
   now?: () => number;
   arcOrdinal?: ArcOrdinals;
+  arcAttire?: ArcAttire;
   scheduleFrame?: FrameScheduler;
 }
 
@@ -75,6 +79,7 @@ export class SessionTreePane implements Pane {
   private sessionId: string | undefined;
   private readonly presence: SessionPresence | undefined;
   private readonly arcOrdinal: ArcOrdinals | undefined;
+  private readonly arcAttire: ArcAttire | undefined;
   private readonly tasks: PaneTasks;
   private readonly unsubscribe: (() => void) | undefined;
   private readonly pendingRefresh: FrameCoalescer;
@@ -92,6 +97,7 @@ export class SessionTreePane implements Pane {
     this.sessionId = seams.sessionId;
     this.presence = seams.presence;
     this.arcOrdinal = seams.arcOrdinal;
+    this.arcAttire = seams.arcAttire;
     this.tasks = new PaneTasks(notify);
     this.pendingRefresh = new FrameCoalescer(seams.scheduleFrame ?? nextFrame, () =>
       this.refresh(),
@@ -126,6 +132,13 @@ export class SessionTreePane implements Pane {
         refresh: () => this.refresh(),
         activate: (sessionId) => this.tasks.track(() => this.restore(sessionId)),
         drill: () => {},
+        ...(port.discard !== undefined && {
+          discard: (sessionId: string, title: string) =>
+            this.tasks.track(() => this.discard(sessionId, title)),
+        }),
+        ...(port.purgeTrash !== undefined && {
+          purge: () => this.tasks.track(() => this.purge()),
+        }),
       },
       { ...(seams.now !== undefined && { now: seams.now }) },
     );
@@ -160,7 +173,7 @@ export class SessionTreePane implements Pane {
       case "entries": {
         const count = this.model.entryCount();
         const facts = [
-          count === 0 ? undefined : `${count} entries`,
+          count === 0 ? undefined : pluralize(count, "entry", "entries"),
           this.model.forkOriginFact(),
         ].filter((fact) => fact !== undefined);
         const name = this.model.sessionName() ?? "session tree";
@@ -189,9 +202,12 @@ export class SessionTreePane implements Pane {
         if (chord.name === "t" && !this.confirming() && this.port.trash !== undefined) {
           return this.showTrash();
         }
+        if (isEmptyTrashKey(chord) && !this.confirming()) return this.emptyTrashFromOverview();
         return this.overview.handleKey(chord, this.lastPageRows);
       case "trash":
-        if (chord.name === "escape" || chord.name === "backspace") return this.returnToOverview();
+        if (!this.trashed.awaiting() && (chord.name === "escape" || chord.name === "backspace")) {
+          return this.returnToOverview();
+        }
         return this.trashed.handleKey(chord, this.lastPageRows);
       case "entries":
         if (!this.model.labeling && (chord.name === "escape" || chord.name === "backspace")) {
@@ -231,12 +247,14 @@ export class SessionTreePane implements Pane {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
     const labelLine = this.labelLine(theme, focused);
-    const confirmLine = this.confirmLine(theme, innerWidth);
-    const hintLine = this.groupingHint(theme, innerWidth);
     const tray = this.tray.open
       ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
       : undefined;
-    const trailing = [labelLine, confirmLine, hintLine].filter((line) => line !== undefined);
+    const trailing = [
+      ...(labelLine === undefined ? [] : [labelLine]),
+      ...this.confirmLines(theme, innerWidth),
+      ...this.groupingHint(theme, innerWidth),
+    ];
     this.lastPageRows = Math.max(
       0,
       paneContentHeight(context) - trailing.length - (tray?.rows ?? 0),
@@ -247,7 +265,7 @@ export class SessionTreePane implements Pane {
   }
 
   private confirming(): boolean {
-    return this.overview.removal() !== undefined;
+    return this.overview.awaiting() || this.trashed.awaiting();
   }
 
   private refreshOverview(): void {
@@ -308,12 +326,44 @@ export class SessionTreePane implements Pane {
     });
   }
 
+  private emptyTrashFromOverview(): boolean {
+    const trash = this.port.trash;
+    if (trash === undefined || this.port.purgeTrash === undefined) return false;
+    this.tasks.track(async () => {
+      const items = await trash();
+      if (!this.tasks.live()) return;
+      this.trashed.setItems(items);
+      this.paneLevel = "trash";
+      if (items.length === 0) this.intents.notice?.(alreadyEmptyNotice);
+      else this.trashed.beginPurge();
+    });
+    return true;
+  }
+
+  private async discard(sessionId: string, title: string): Promise<void> {
+    const discarded = (await this.port.discard?.(sessionId)) === true;
+    if (!this.tasks.live()) return;
+    this.intents.notice?.(discarded ? `deleted "${title}" for good` : noLongerTrashedNotice);
+    this.refreshTrash();
+  }
+
+  private async purge(): Promise<void> {
+    const purged = (await this.port.purgeTrash?.()) ?? 0;
+    if (!this.tasks.live()) return;
+    this.intents.notice?.(
+      purged === 0
+        ? alreadyEmptyNotice
+        : `deleted ${sessionsFact(purged)} for good · the trash is empty`,
+    );
+    this.refreshTrash();
+  }
+
   private async restore(sessionId: string): Promise<void> {
     const restored = await this.port.restore?.(sessionId);
     if (!this.tasks.live()) return;
     this.intents.notice?.(
       restored === undefined
-        ? "that session is no longer in the trash"
+        ? noLongerTrashedNotice
         : `restored "${restored.title}" · it's back in the session tree`,
     );
     this.refreshTrash();
@@ -338,7 +388,7 @@ export class SessionTreePane implements Pane {
     switch (this.paneLevel) {
       case "overview":
         return rowsView(this.overview, rows, theme, width, {
-          empty: "░ no sessions yet",
+          empty: "░ no sessions yet · the first prompt you send starts one",
           text: (row) => overviewRowLine(row, true),
           line: (row) => overviewRowView(row, theme, width, this.arcInkOf(theme)),
         });
@@ -362,21 +412,28 @@ export class SessionTreePane implements Pane {
   }
 
   private arcInkOf(theme: Palette): (slug: string) => string {
-    return (slug) => arcInk(theme, this.arcOrdinal?.(slug));
+    return (slug) => arcInk(theme, this.arcOrdinal?.(slug), this.arcAttire?.(slug));
   }
 
   private trayCommands(): TrayCommand[] {
     return trayCommandsPressing((chord) => this.handleKey(chord), trayTables[this.paneLevel]);
   }
 
-  private groupingHint(theme: Palette, width: number): PaneChild | undefined {
+  private groupingHint(theme: Palette, width: number): PaneChild[] {
+    if (this.paneLevel === "trash") return this.trashHint(theme, width);
     const grouping = this.paneLevel === "overview" && this.tasks.failure() === undefined;
-    if (!grouping || this.overview.sessionCount() < 2) return undefined;
-    return paneLine(groupByHint(this.overview.groupBy()), theme.textDim, width);
+    if (!grouping || this.overview.sessionCount() < 2) return [];
+    return wrappedLines(groupByHint(this.overview.groupBy()), theme.textDim, width);
   }
 
-  private confirmLine(theme: Palette, width: number): PaneChild | undefined {
-    return removalConfirmLine(this.overview, theme, width);
+  private trashHint(theme: Palette, width: number): PaneChild[] {
+    if (this.trashed.sessionCount() === 0 || this.trashed.awaiting()) return [];
+    return wrappedLines(trashKeyHint, theme.textDim, width);
+  }
+
+  private confirmLines(theme: Palette, width: number): PaneChild[] {
+    const asking = this.paneLevel === "trash" ? this.trashed : this.overview;
+    return removalConfirmLines(asking, theme, width);
   }
 
   private labelLine(theme: Palette, focused: boolean) {
@@ -413,6 +470,16 @@ export interface SessionRemover {
 
 export const busyRemovalNotice = "a turn is running · wait for it to finish before removing";
 
+export const noLongerTrashedNotice = "that session is no longer in the trash";
+
+export const trashKeyHint = "enter restores · d deletes for good · shift+d empties the trash";
+
+export const alreadyEmptyNotice = "the trash is already empty";
+
+function isEmptyTrashKey(chord: Chord): boolean {
+  return chord.shift && chord.name === "d" && !chord.ctrl && !chord.meta;
+}
+
 export async function removeSessionThrough(
   sessionId: string,
   title: string,
@@ -447,13 +514,13 @@ export function removalNotice(outcome: SessionRemoval, title: string): string {
   }
 }
 
-export function removalConfirmLine(
+export function removalConfirmLines(
   overview: SessionsOverviewModel,
   theme: Palette,
   width: number,
-): PaneChild | undefined {
+): PaneChild[] {
   const prompt = overview.removalPrompt();
-  return prompt === undefined ? undefined : paneLine(prompt, theme.accent, width);
+  return prompt === undefined ? [] : wrappedLines(prompt, theme.accent, width);
 }
 
 export function overviewRowView(
@@ -492,11 +559,14 @@ export const overviewTray: readonly KeyedTrayCommand[] = [
   { name: "group", description: "group by none · arc · bot", key: "g" },
   { name: "remove", description: "move the selected session to the trash", key: "x" },
   { name: "trash", description: "show trashed sessions, where enter restores", key: "t" },
+  { name: "empty trash", description: "delete every trashed session for good", key: "shift+d" },
   { name: "refresh", description: "reload the sessions list", key: "r" },
 ];
 
 export const trashTray: readonly KeyedTrayCommand[] = [
   { name: "restore", description: "bring the selected session back", key: "enter" },
+  { name: "delete", description: "delete the selected trashed session for good", key: "d" },
+  { name: "empty", description: "delete every trashed session for good", key: "shift+d" },
   { name: "back", description: "return to the sessions overview", key: "escape" },
   { name: "refresh", description: "reload the trash", key: "r" },
 ];

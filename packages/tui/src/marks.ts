@@ -22,6 +22,9 @@ export interface PageMarks {
   readonly rule: string;
   readonly fenceRail: string;
   readonly lineage: string;
+  readonly summary: string;
+  readonly queued: string;
+  readonly steered: string;
 }
 
 export const pageMarkFamilies = {
@@ -30,6 +33,9 @@ export const pageMarkFamilies = {
   rule: { tier1: "─", tier0: "-" },
   fenceRail: { tier1: "▎", tier0: "|" },
   lineage: { tier1: "↳", tier0: ">" },
+  summary: { tier1: "≡", tier0: "=" },
+  queued: { tier1: "⋯", tier0: "~" },
+  steered: { tier1: "↪", tier0: ">" },
   streamCursor: { tier1: "▌", tier0: "_" },
 } satisfies Record<string, TieredMark | TieredRamp>;
 
@@ -44,6 +50,9 @@ export function pageMarks(support: GlyphSupport): PageMarks {
     rule: resolveMark(pageMarkFamilies.rule, support),
     fenceRail: resolveMark(pageMarkFamilies.fenceRail, support),
     lineage: resolveMark(pageMarkFamilies.lineage, support),
+    summary: resolveMark(pageMarkFamilies.summary, support),
+    queued: resolveMark(pageMarkFamilies.queued, support),
+    steered: resolveMark(pageMarkFamilies.steered, support),
   };
 }
 

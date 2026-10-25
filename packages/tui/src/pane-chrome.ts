@@ -23,7 +23,7 @@ import type { TrayCommand } from "./pane-tray.ts";
 import type { RowCursor } from "./row-cursor.ts";
 import { slugInk, slugParts } from "./slug-ink.ts";
 import { isLabelZone, type TitleSpan } from "./title-bar.ts";
-import { clipSpans, padEnd, take, width } from "./width.ts";
+import { clipSpans, padEnd, take, width, wrapPhrases } from "./width.ts";
 
 export type PaneChild = Parameters<typeof Box>[1];
 
@@ -134,7 +134,8 @@ export function rowsView<Row>(
 ): PaneChild[] {
   const visible = list.visibleRows(rowCount);
   if (visible.length === 0) {
-    return paint.empty === undefined ? [] : [paneLine(paint.empty, theme.textDim, width)];
+    if (paint.empty === undefined) return [];
+    return wrappedLines(paint.empty, theme.textDim, width).slice(0, Math.max(1, rowCount));
   }
   return visible.map(({ row, selected }) => {
     if (!selected) return paint.line(row);
@@ -152,6 +153,10 @@ export function selectedLine(content: string, theme: Palette, width: number): Pa
 
 export function paneLine(content: string, ink: string, width: number): PaneChild {
   return Text({ content: take(content, width), fg: ink });
+}
+
+export function wrappedLines(content: string, ink: string, width: number): PaneChild[] {
+  return wrapPhrases(content, width).map((line) => Text({ content: line, fg: ink }));
 }
 
 export function paneFailureLine(failure: string, theme: Palette, width: number): PaneChild {
@@ -306,6 +311,7 @@ function titleRow(
   const tail = title.spans.slice(label.length);
   const head: RowSpan[] = [
     { text: leadCell(context), fg: inks.labelInk },
+    ...(context.ordinal === undefined ? [] : [{ text: `${context.ordinal} `, fg: theme.textMid }]),
     ...(context.pinMark === undefined ? [] : [{ text: `${context.pinMark} `, fg: theme.textDim }]),
   ];
   const row: RowSpan[] = [

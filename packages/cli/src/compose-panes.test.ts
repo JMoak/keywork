@@ -8,7 +8,7 @@ import {
 } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import type { AppOptions, ConnectionsPort, WorkspacePort } from "@keywork/tui";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { composePanes, type PanesOptions } from "./compose-panes.ts";
 import { composeInference } from "./inference/runtime.ts";
 import type { DeciderConnection } from "./inference/typesafe-connection.ts";
@@ -20,6 +20,12 @@ import { findSession } from "./sessions/store.ts";
 const tempDir = scratchDirs("keywork-panes-");
 
 const stateStore: WorkspacePort = { load: async () => undefined, save: () => {}, seal: () => {} };
+
+const composed: AppOptions[] = [];
+
+afterEach(async () => {
+  for (const app of composed.splice(0)) for (const close of app.closers ?? []) await close();
+});
 
 async function composedIn(
   root: string,
@@ -39,6 +45,7 @@ async function composedIn(
     checkpointsGitDir: join(root, "snapshots-git"),
     ...overrides,
   });
+  composed.push(app);
   return { app, sessionDir };
 }
 

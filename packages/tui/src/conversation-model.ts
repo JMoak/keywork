@@ -1,12 +1,16 @@
 import {
   type Agent,
+  type AgentContext,
+  type AskRule,
   type Confirmation,
-  type ContextReading,
+  clipToolOutput,
   type EffortLevel,
+  EventBus,
   effortLevels,
   type ImagePart,
   isEffortLevel,
   type Message,
+  type PermissionDecision,
   type QueuedPrompt,
   QueuedPromptCancelledError,
   type SendBehavior,
@@ -15,12 +19,13 @@ import {
   type ToolCallPart,
   type TurnSettlement,
 } from "@keywork/engine";
-import { toError } from "@keywork/shared";
+import { type PermissionRule, toError } from "@keywork/shared";
 import { type AwayStretch, AwayWatch, awayDigest } from "./away-summary.ts";
 import { type BotEntry, type BotSummary, describeBotSpend, learningPolicyReadout } from "./bots.ts";
 import { CompactionOffer, compactionOfferNotice } from "./compaction-offer.ts";
+import { contextReadout } from "./context-map.ts";
 import type { FileReader } from "./diff-render.ts";
-import { type ForgetHook, type ForgetOutcome, forgetPickerHint, forgetTargetOf } from "./forget.ts";
+import { type ForgetHook, type ForgetOutcome, forgetPickerHint, forgetPickOf } from "./forget.ts";
 import type { Chord } from "./keys.ts";
 import { defaultPageMarks, type PageMarks } from "./marks.ts";
 import { attachMentionedFiles, promptAsTyped } from "./mention-attachments.ts";
@@ -36,7 +41,8 @@ import {
   PromptEditor,
   type SendMode,
 } from "./prompt-editor.ts";
-import type { PromptUndoHook, StagedUndo } from "./prompt-undo.ts";
+import type { PromptUndoHook, ReopenedUndo, StagedUndo } from "./prompt-undo.ts";
+import type { ReplayedSummary } from "./session-attachment.ts";
 import { SessionLedger } from "./session-ledger.ts";
 import {
   type ShellEscapePort,
@@ -47,12 +53,25 @@ import {
 import { answerAside } from "./side-question.ts";
 import {
   type ChildMark,
+  type LedgerEntry,
   type ToolRun,
   type TranscriptEntry,
   TranscriptFeed,
+  type UserEntry,
 } from "./transcript-feed.ts";
 import { TranscriptNavigation } from "./transcript-navigation.ts";
 import { type TranscriptLine, TranscriptView } from "./transcript-view.ts";
+import {
+  forkedNotice,
+  ledgerFacts,
+  modelTurns,
+  restoredNotice,
+  restoreKeptNotice,
+  restoreQuestion,
+  restoreReach,
+  type TurnLedgerReader,
+  type TurnRecord,
+} from "./turn-ledger.ts";
 
 export type { CommandSuggestion, CommandsPort } from "./prompt-editor.ts";
 
@@ -66,12 +85,13 @@ export type ForkOutcome = { forked: false } | { forked: true; note?: string };
 export interface ConversationPorts {
   readFile?: FileReader;
   forkAtPrompt?: (promptId: string, draft: string) => Promise<ForkOutcome>;
+  forkAfterPrompt?: (promptId: string) => Promise<ForkOutcome>;
   idleNotice?: string;
   now?: () => number;
   botSpend?: (bot: string) => Promise<BotSummary | undefined>;
   botOf?: (bot: string) => BotEntry | undefined;
   shellEscape?: ShellEscapePort;
-  recordShellEscape?: (transcript: string) => Promise<void>;
+  recordShellEscape?: (transcript: string) => Promise<string | undefined>;
   frameTick?: TickScheduler;
   spillFile?: (spillId: string) => string | undefined;
   openFile?: (path: string, options: FileOpenOptions) => void;
@@ -81,6 +101,11 @@ export interface ConversationPorts {
 
 export type QueueMove = -1 | 1;
 
+export interface QueuedSend {
+  readonly text: string;
+  readonly behavior: SendBehavior;
+}
+
 export type CompactionHook = (instructions: string) => Promise<void>;
 
 export type ToolBatchHook = () => Promise<TurnSettlement | undefined>;
@@ -88,6 +113,12 @@ export type ToolBatchHook = () => Promise<TurnSettlement | undefined>;
 export type ThinkingChangeHook = (level: "on" | "off") => Promise<void>;
 
 export type EffortChangeHook = (level: EffortLevel) => Promise<void>;
+
+export type RenameHook = (title: string) => Promise<void>;
+
+export type QuietChangeHook = (on: boolean) => Promise<void>;
+
+export type SessionRulesHook = (rules: readonly PermissionRule[]) => Promise<void>;
 
 export type SettledOutcome = "finished" | "failed";
 
@@ -112,6 +143,7 @@ export class ConversationModel {
   lastUndo: Promise<unknown> = Promise.resolve();
   lastForget: Promise<unknown> = Promise.resolve();
   lastAside: Promise<unknown> = Promise.resolve();
+  lastLedgerRead: Promise<unknown> = Promise.resolve();
   private readonly ask: MutationAsk;
   private readonly away = new AwayWatch();
   private readonly navigation: TranscriptNavigation;
@@ -119,6 +151,7 @@ export class ConversationModel {
   private agent: Agent | undefined;
   private unfollow: () => void = () => {};
   private afterTurn: (() => Promise<void>) | undefined;
+  private turnOpened: (() => void) | undefined;
   private compaction: CompactionHook | undefined;
   private toolBatchSettle: ToolBatchHook | undefined;
   private forget: ForgetHook | undefined;
@@ -128,6 +161,15 @@ export class ConversationModel {
   private promptUndo: PromptUndoHook | undefined;
   private stagedUndo: StagedPromptUndo | undefined;
   private settledListener: ((outcome: SettledOutcome) => void) | undefined;
+  private renaming: RenameHook | undefined;
+  private quietChange: QuietChangeHook | undefined;
+  private servedContextRead: (() => Promise<AgentContext | undefined>) | undefined;
+  private servedContext: AgentContext | undefined;
+  private turnLedger: TurnLedgerReader | undefined;
+  private ledgerRecords: readonly TurnRecord[] = [];
+  private ledgerStale = false;
+  private ledgerReading = false;
+  private pendingRestore: PendingRestore | undefined;
   private titleRequested = false;
   private retrievalDisclosed = false;
   private disposed = false;
@@ -146,7 +188,7 @@ export class ConversationModel {
     const touch = () => this.touch();
     this.feed = new TranscriptFeed(touch, ports?.now, ports?.frameTick);
     this.editor = new PromptEditor(touch, conversationCommands, commands, ports?.workspaceFiles);
-    this.ask = new MutationAsk(touch, ports?.readFile);
+    this.ask = new MutationAsk(touch, ports?.readFile, ports?.now);
     this.navigation = new TranscriptNavigation(this.feed, touch);
     if (agent === undefined) {
       this.feed.entries.push({ kind: "info", text: ports?.idleNotice ?? defaultIdleNotice });
@@ -176,6 +218,18 @@ export class ConversationModel {
     return this.ask.pending;
   }
 
+  askHoldsKeys(): boolean {
+    return this.ask.armed();
+  }
+
+  askSeen(): void {
+    this.ask.seen();
+  }
+
+  askRegainedFocus(): void {
+    this.ask.holdArming();
+  }
+
   get scrollBack(): number {
     return this.navigation.scrollBack;
   }
@@ -189,7 +243,14 @@ export class ConversationModel {
   }
 
   queued(): readonly string[] {
-    return this.queuedPrompts().map((prompt) => promptAsTyped(prompt.text));
+    return this.queuedSends().map((send) => send.text);
+  }
+
+  queuedSends(): readonly QueuedSend[] {
+    return this.queuedPrompts().map((prompt) => ({
+      text: promptAsTyped(prompt.text),
+      behavior: prompt.behavior,
+    }));
   }
 
   queuedPrompts(): readonly QueuedPrompt[] {
@@ -229,12 +290,44 @@ export class ConversationModel {
     return this.agent === undefined ? "" : this.ledger.spendSummary(this.agent);
   }
 
-  contextReading(): ContextReading | undefined {
-    return this.ledger.contextReading(this.agent);
+  contextReading(): AgentContext | undefined {
+    return this.contextMap();
+  }
+
+  contextMap(): AgentContext | undefined {
+    return this.servedContext ?? this.ledger.contextMap(this.agent);
+  }
+
+  bindServedContext(read: () => Promise<AgentContext | undefined>): void {
+    this.servedContextRead = read;
+    this.readServedContext();
+  }
+
+  expectSummaries(summaries: readonly ReplayedSummary[]): void {
+    this.feed.expectSummaries(summaries);
+  }
+
+  compact(focus = ""): void {
+    this.compactNow(focus);
   }
 
   activeTool(): ToolRun | undefined {
     return this.feed.activeTool();
+  }
+
+  noteShellDecision(call: ToolCallPart, decision: PermissionDecision): void {
+    this.quietRuns.noteShellEscape(call, decision);
+    this.feed.ruleOn(decision);
+  }
+
+  turnRecords(): readonly TurnRecord[] {
+    return this.ledgerRecords;
+  }
+
+  toolWords(callId: string): string | undefined {
+    const run = this.entries.find((entry) => entry.kind === "tool" && entry.run?.callId === callId);
+    if (run?.kind !== "tool" || run.run === undefined) return undefined;
+    return run.run.subject === "" ? run.run.name : `${run.run.name} ${run.run.subject}`;
   }
 
   turnElapsedMs(): number | undefined {
@@ -257,6 +350,16 @@ export class ConversationModel {
     return this.cursoredRun()?.child;
   }
 
+  cursoredLedger(): LedgerEntry | undefined {
+    const at = this.navigation.viewport().foldCursor;
+    const entry = at === undefined ? undefined : this.entries[at];
+    return entry?.kind === "ledger" && entry.record !== undefined ? entry : undefined;
+  }
+
+  restoreAsk(): string | undefined {
+    return this.pendingRestore?.question;
+  }
+
   visibleTranscript(
     width: number,
     rows: number,
@@ -274,11 +377,14 @@ export class ConversationModel {
   }
 
   handleKey(chord: Chord, sequence: string | undefined, viewport = defaultKeyViewport): boolean {
-    if (this.ask.pending !== undefined) return this.ask.handleKey(chord, viewport.askRows);
+    if (this.ask.pending !== undefined) return this.handleAskKey(chord, sequence, viewport.askRows);
+    if (this.pendingRestore !== undefined) return this.answerRestore(chord);
     if (this.navigation.backtracking()) return this.handleBacktrackKey(chord, sequence, viewport);
     if (this.editingQueue()) return this.handleQueueKey(chord, sequence, viewport);
     if (isOpenKey(chord) && this.cursoredSpill() !== undefined) return this.openCursoredSpill();
     if (isOpenKey(chord) && this.cursoredChild() !== undefined) return this.openCursoredChild();
+    const ledger = this.cursoredLedger();
+    if (ledger !== undefined && this.handleLedgerKey(ledger, chord)) return true;
     if (this.navigation.disclosing() && chord.name !== "tab") {
       this.navigation.exitDisclosure();
       if (chord.name === "escape") return true;
@@ -306,7 +412,9 @@ export class ConversationModel {
   }
 
   paste(text: string): boolean {
-    if (this.ask.pending === undefined) this.editor.paste(text);
+    if (this.ask.takesPaste(text)) return true;
+    this.ask.holdArming();
+    this.editor.paste(text);
     return true;
   }
 
@@ -338,11 +446,51 @@ export class ConversationModel {
     return this.ask.confirmation(call);
   }
 
+  grantsQuietly(call: ToolCallPart, rule: AskRule): boolean {
+    return this.ask.grantQuietly(call, rule);
+  }
+
+  waitingAsks(): { asks: number; tools: string[] } {
+    return this.ask.waiting();
+  }
+
+  quiet(): boolean {
+    return this.ask.quiet;
+  }
+
+  adoptQuiet(on: boolean): void {
+    this.ask.quiet = on;
+    this.touch();
+  }
+
+  bindQuietChange(hook: QuietChangeHook): void {
+    this.quietChange = hook;
+  }
+
+  toggleQuiet(): void {
+    const on = !this.ask.quiet;
+    this.ask.quiet = on;
+    this.feed.post("info", on ? quietOnNotice : quietOffNotice);
+    this.lastSend = (this.quietChange?.(on) ?? Promise.resolve()).catch((cause: unknown) =>
+      this.reportUndoFailure(cause),
+    );
+  }
+
   sessionGrants(): SessionGrantsPort {
     return {
       rules: async () => this.ask.sessionRules,
       forget: async (rule) => this.ask.forgetSessionRule(rule),
     };
+  }
+
+  adoptSessionRules(rules: readonly PermissionRule[]): void {
+    this.ask.adoptSessionRules(rules);
+  }
+
+  bindSessionRulesJournal(record: SessionRulesHook): void {
+    this.ask.onSessionRulesChanged((rules) => {
+      void record(rules).catch((cause: unknown) => this.reportUndoFailure(cause));
+    });
   }
 
   askDiffWindow(rows: number): AskDiffWindow {
@@ -369,6 +517,10 @@ export class ConversationModel {
 
   bindAfterTurn(hook: () => Promise<void>): void {
     this.afterTurn = hook;
+  }
+
+  bindTurnOpened(hook: () => void): void {
+    this.turnOpened = hook;
   }
 
   bindCompaction(hook: CompactionHook): void {
@@ -416,20 +568,75 @@ export class ConversationModel {
     return this.stagedUndo !== undefined;
   }
 
+  adoptStagedUndo(reopened: ReopenedUndo): void {
+    const entries = this.retoldTurns(reopened);
+    const prompt = entries[0];
+    if (prompt?.kind !== "user") return;
+    this.stagedUndo = { undo: reopened.undo, at: "end", entries };
+    if (this.editor.isEmpty()) this.editor.load(promptAsTyped(prompt.text));
+    this.feed.post("info", reopenedUndoNotice(reopened.undo.filesNote));
+  }
+
   undoLastPrompt(): boolean {
-    const hook = this.promptUndo;
     const at = this.feed.promptIndices().at(-1);
     const prompt = at === undefined ? undefined : this.feed.entries[at];
-    if (hook === undefined || at === undefined || prompt?.kind !== "user") return false;
+    if (this.promptUndo === undefined || prompt?.kind !== "user") return false;
     if (prompt.entryId === undefined) return false;
-    if (this.stagedUndo !== undefined) this.feed.post("info", alreadyStagedNotice);
-    else if (this.busy) this.feed.post("info", turnRunningNotice);
-    else
-      this.lastUndo = hook(prompt.entryId).then(
-        (staged) => this.stageUndo(staged, at, promptAsTyped(prompt.text)),
-        (cause: unknown) => this.reportUndoFailure(cause),
-      );
-    return true;
+    return this.rewindFrom(prompt, undoneNotice);
+  }
+
+  restoreTurn(turn: number): void {
+    const record = this.ledgerRecords.find((candidate) => candidate.turn === turn);
+    const prompt = record === undefined ? undefined : this.promptOf(record);
+    if (this.promptUndo === undefined) this.feed.post("info", noRestoreNotice);
+    else if (record === undefined)
+      this.feed.post("info", unknownTurnNotice(turn, this.ledgerRecords));
+    else if (prompt === undefined) this.feed.post("info", foldedTurnNotice(turn));
+    else this.rewindFrom(prompt, (filesNote) => this.restoredNotice(turn, filesNote));
+  }
+
+  bindRename(hook: RenameHook): void {
+    this.renaming = hook;
+  }
+
+  rename(title: string): void {
+    const trimmed = title.trim();
+    const hook = this.renaming;
+    if (trimmed === "") {
+      this.feed.post("info", renameUsage);
+      return;
+    }
+    if (hook === undefined) {
+      this.feed.post("info", "can't rename · no session store");
+      return;
+    }
+    this.adoptTitle(trimmed);
+    this.lastTitle = hook(trimmed).then(
+      () => this.postNotice(`renamed ${trimmed} · the titler leaves it alone now`),
+      (cause: unknown) => this.reportUndoFailure(cause),
+    );
+  }
+
+  bindTurnLedger(read: TurnLedgerReader): void {
+    this.turnLedger = read;
+    this.feed.onLedgerRow = () => this.refreshLedger();
+    this.refreshLedger();
+  }
+
+  refreshLedger(): void {
+    const read = this.turnLedger;
+    if (read === undefined || this.disposed) return;
+    if (this.ledgerReading) {
+      this.ledgerStale = true;
+      return;
+    }
+    this.ledgerReading = true;
+    this.lastLedgerRead = this.readLedger(read).finally(() => {
+      this.ledgerReading = false;
+      if (!this.ledgerStale) return;
+      this.ledgerStale = false;
+      this.refreshLedger();
+    });
   }
 
   redoPrompt(): boolean {
@@ -472,6 +679,13 @@ export class ConversationModel {
     if (!this.disposed) this.feed.post("info", text);
   }
 
+  reportSettlement(settlement: Pick<TurnSettlement, "notices" | "compacted">): void {
+    if (this.disposed) return;
+    const compacted = settlement.compacted;
+    if (compacted !== undefined) this.feed.postSummary("compaction", compacted.summary);
+    for (const notice of settlement.notices) this.feed.post("info", notice);
+  }
+
   postAside(text: string): void {
     if (this.disposed) return;
     this.feed.entries.push({ kind: "assistant", text, progress: true });
@@ -503,6 +717,122 @@ export class ConversationModel {
     if (!this.disposed) this.notify();
   }
 
+  private readServedContext(): void {
+    const read = this.servedContextRead;
+    if (read === undefined) return;
+    void read()
+      .then((reading) => {
+        if (reading === undefined || this.disposed) return;
+        this.servedContext = reading;
+        this.touch();
+      })
+      .catch(() => {});
+  }
+
+  private async readLedger(read: TurnLedgerReader): Promise<void> {
+    const stored = await read().catch(() => this.ledgerRecords);
+    if (this.disposed) return;
+    const records = modelTurns(stored, this.feed.shellTranscriptIds());
+    this.ledgerRecords = records;
+    const byPrompt = new Map(records.map((record) => [record.promptId, record]));
+    for (const row of this.feed.ledgerRows()) {
+      const promptId = row.prompt.entryId;
+      const record = promptId === undefined ? undefined : byPrompt.get(promptId);
+      if (record === undefined) continue;
+      row.record = record;
+      row.text = ledgerFacts(record);
+    }
+    this.touch();
+  }
+
+  private handleLedgerKey(row: LedgerEntry, chord: Chord): boolean {
+    if (chord.ctrl || chord.meta || chord.shift) return false;
+    switch (chord.name) {
+      case "u":
+        return this.askRestore(row);
+      case "f":
+        return this.forkAfter(row);
+      case "enter":
+      case "return":
+        this.feed.toggleFold(row);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private askRestore(row: LedgerEntry): true {
+    const record = row.record;
+    if (record === undefined) return true;
+    if (this.promptUndo === undefined) this.feed.post("info", noRestoreNotice);
+    else if (this.stagedUndo !== undefined) this.feed.post("info", alreadyStagedNotice);
+    else if (this.busy) this.feed.post("info", turnRunningNotice);
+    else {
+      const reach = restoreReach(this.ledgerRecords, record.turn);
+      const question = restoreQuestion(record.turn, promptAsTyped(row.prompt.text), reach);
+      this.pendingRestore = { row, question };
+      this.touch();
+    }
+    return true;
+  }
+
+  private answerRestore(chord: Chord): true {
+    const pending = this.pendingRestore;
+    this.pendingRestore = undefined;
+    const record = pending?.row.record;
+    if (pending === undefined || record === undefined) return true;
+    if (chord.name !== "y" || chord.ctrl || chord.meta) {
+      this.feed.post("info", restoreKeptNotice);
+      return true;
+    }
+    this.navigation.exitDisclosure();
+    this.rewindFrom(pending.row.prompt, (filesNote) => this.restoredNotice(record.turn, filesNote));
+    return true;
+  }
+
+  private restoredNotice(turn: number, filesNote: string): string {
+    const undone = this.ledgerRecords.filter((record) => record.turn >= turn).length;
+    return restoredNotice(turn, Math.max(1, undone), filesNote);
+  }
+
+  private forkAfter(row: LedgerEntry): true {
+    const record = row.record;
+    const fork = this.ports?.forkAfterPrompt;
+    if (record === undefined) return true;
+    if (this.busy) this.feed.post("info", turnRunningNotice);
+    else if (fork === undefined) this.feed.post("info", "can't fork · no session store");
+    else {
+      this.navigation.exitDisclosure();
+      this.lastFork = fork(record.promptId).then(
+        (outcome) =>
+          this.postNotice(outcome.forked ? forkedNotice(record.turn) : noForkPointNotice),
+        (cause: unknown) => this.reportUndoFailure(cause),
+      );
+    }
+    return true;
+  }
+
+  private promptOf(record: TurnRecord): UserEntry | undefined {
+    return this.feed.entries.find(
+      (entry): entry is UserEntry => entry.kind === "user" && entry.entryId === record.promptId,
+    );
+  }
+
+  private rewindFrom(prompt: UserEntry, notice: (filesNote: string) => string): boolean {
+    const hook = this.promptUndo;
+    const at = this.feed.entries.indexOf(prompt);
+    const entryId = prompt.entryId;
+    if (hook === undefined || at === -1 || entryId === undefined) return false;
+    if (this.stagedUndo !== undefined) this.feed.post("info", alreadyStagedNotice);
+    else if (this.busy) this.feed.post("info", turnRunningNotice);
+    else
+      this.lastUndo = hook(entryId).then(
+        (staged) => this.stageUndo(staged, at, promptAsTyped(prompt.text), notice),
+        (cause: unknown) => this.reportUndoFailure(cause),
+      );
+    return true;
+  }
+
   private follow(agent: Agent): void {
     this.unfollow();
     this.agent?.settleTurnsWith(undefined);
@@ -511,12 +841,16 @@ export class ConversationModel {
     agent.settleToolBatchesWith(() => this.settleToolBatch());
     const stops = [
       this.feed.follow(agent.bus),
+      agent.bus.on("turn.started", ({ replay }) => {
+        if (replay !== true) this.turnOpened?.();
+      }),
       agent.bus.on("turn.completed", ({ replay }) => {
         if (replay !== true) this.requestTitleOnce();
       }),
       agent.bus.on("queue.changed", () => this.touch()),
       agent.bus.on("memory.decided", ({ decision, replay }) => {
-        if (replay !== true) this.ledger.recordDecision(decision);
+        this.ledger.recordDecision(decision, replay === true);
+        this.touch();
       }),
       this.away.follow(agent.bus),
       this.quietRuns.follow(agent.bus),
@@ -546,34 +880,42 @@ export class ConversationModel {
 
   private settleAfterTurn(): Promise<void> {
     this.touch();
-    return this.drainQueuedShellEscapes()
-      .then((transcripts) => this.settleThenRecord(transcripts))
+    return this.settleThenRecordShells()
       .catch((cause: unknown) => {
         if (!this.disposed) this.feed.post("error", toError(cause).message);
-      });
+      })
+      .finally(() => this.refreshLedger());
   }
 
   private async settleToolBatch(): Promise<readonly Message[] | undefined> {
     const settlement = await this.toolBatchSettle?.();
     if (settlement === undefined || this.disposed) return undefined;
-    for (const notice of settlement.notices) this.feed.post("info", notice);
+    this.reportSettlement(settlement);
     return settlement.history;
   }
 
-  private async settleThenRecord(transcripts: readonly string[]): Promise<void> {
+  private async settleThenRecordShells(): Promise<void> {
+    const beforeSettling = await this.drainQueuedShellEscapes();
     await this.afterTurn?.();
-    for (const transcript of transcripts) await this.ports?.recordShellEscape?.(transcript);
+    const whileSettling = await this.drainQueuedShellEscapes();
+    for (const run of [...beforeSettling, ...whileSettling]) await this.recordShell(run);
   }
 
-  private async drainQueuedShellEscapes(): Promise<string[]> {
-    const transcripts: string[] = [];
+  private async recordShell(run: ShellRun | undefined): Promise<void> {
+    if (run === undefined) return;
+    const entryId = await this.ports?.recordShellEscape?.(run.transcript);
+    if (entryId !== undefined) this.feed.adoptShellTranscript(run.callId, entryId);
+  }
+
+  private async drainQueuedShellEscapes(): Promise<ShellRun[]> {
+    const runs: ShellRun[] = [];
     for (;;) {
       const agent = this.agent;
       const next = agent?.queued()[0];
       const command = next === undefined ? undefined : shellEscapeCommand(next.text);
-      if (agent === undefined || next === undefined || command === undefined) return transcripts;
+      if (agent === undefined || next === undefined || command === undefined) return runs;
       agent.cancelQueued(next.id);
-      transcripts.push(await this.runShell(command));
+      runs.push(await this.runShell(command));
     }
   }
 
@@ -591,23 +933,26 @@ export class ConversationModel {
     }
     this.lastSend = this.runShellNow(agent, command)
       .then(
-        (transcript) => this.ports?.recordShellEscape?.(transcript),
+        (run) => this.recordShell(run),
         (cause: unknown) => this.reportTurnFailure(cause),
       )
       .then(() => this.reportRest());
     this.touch();
   }
 
-  private async runShellNow(agent: Agent | undefined, command: string): Promise<string> {
+  private async runShellNow(
+    agent: Agent | undefined,
+    command: string,
+  ): Promise<ShellRun | undefined> {
     if (agent === undefined) return this.runShell(command);
-    let transcript = "";
+    let run: ShellRun | undefined;
     await agent.hold(async () => {
-      transcript = await this.runShell(command);
+      run = await this.runShell(command);
     });
-    return transcript;
+    return run;
   }
 
-  private async runShell(command: string): Promise<string> {
+  private async runShell(command: string): Promise<ShellRun> {
     const port = this.ports?.shellEscape;
     this.shellSequence += 1;
     const call = shellEscapeCall(command, this.shellSequence);
@@ -619,8 +964,9 @@ export class ConversationModel {
       port?.run(call, controller.signal) ?? Promise.resolve(noShellResult)
     ).catch((cause: unknown) => ({ output: toError(cause).message, isError: true }));
     if (this.shellAbort === controller) this.shellAbort = undefined;
-    this.feed.finishUserTool(call.callId, result.output, result.isError);
-    return shellEscapeTranscript(command, result.output);
+    const output = clipToolOutput(result.output);
+    this.feed.finishUserTool(call.callId, output, result.isError);
+    return { callId: call.callId, transcript: shellEscapeTranscript(command, output) };
   }
 
   private reportRest(): void {
@@ -629,6 +975,8 @@ export class ConversationModel {
       this.away.turnSettled();
       this.settledListener?.(this.outcome());
       this.offerCompaction();
+      this.refreshLedger();
+      this.readServedContext();
     }
     this.touch();
   }
@@ -641,10 +989,7 @@ export class ConversationModel {
   }
 
   private setQueueAside(): SendBehavior {
-    const agent = this.agent;
-    if (agent === undefined) return "steer";
-    const aside = agent.queued();
-    for (const { id } of aside) agent.cancelQueued(id);
+    const aside = this.agent?.clearQueue() ?? [];
     if (aside.length === 0) return "steer";
     this.editor.holdAside(aside.map((prompt) => promptAsTyped(prompt.text)));
     this.feed.post("info", queueAsideNotice(aside.length));
@@ -739,7 +1084,7 @@ export class ConversationModel {
         this.reportCost();
         return true;
       case "context":
-        this.feed.post("info", this.ledger.contextReport(this.agent));
+        this.feed.post("info", this.contextReport());
         return true;
       case "compact":
         this.compactNow(argument);
@@ -758,6 +1103,11 @@ export class ConversationModel {
       default:
         return this.commands?.run(typed) ?? false;
     }
+  }
+
+  private contextReport(): string {
+    const map = this.contextMap();
+    return map === undefined ? "no provider · nothing to measure" : contextReadout(map).join("\n");
   }
 
   private reportBotPolicy(): boolean {
@@ -851,6 +1201,14 @@ export class ConversationModel {
     else if (open === undefined) this.feed.post("info", noFilePaneNotice);
     else open(path, { byteRange: { from: spill.elidedFrom, to: spill.elidedTo } });
     return true;
+  }
+
+  private handleAskKey(chord: Chord, sequence: string | undefined, askRows: number): boolean {
+    if (this.ask.handleKey(chord, askRows, sequence)) return true;
+    const edited = this.editor.handleKey(chord, sequence);
+    if (edited === "pass") return true;
+    this.ask.holdArming();
+    return this.applyEdit(edited);
   }
 
   private handleEscape(primed: boolean): boolean {
@@ -952,16 +1310,10 @@ export class ConversationModel {
   private moveSelectedQueued(direction: QueueMove): boolean {
     const agent = this.agent;
     const from = this.queueSelection();
-    if (agent === undefined || from === undefined) return true;
-    const prompts = [...agent.queued()];
-    const to = from + direction;
-    if (to < 0 || to >= prompts.length) return true;
-    const first = Math.min(from, to);
-    const reordered = swapped(prompts, from, to).slice(first);
-    if (reordered.some((prompt) => prompt.behavior === "steer")) return true;
-    for (const prompt of prompts.slice(first)) agent.cancelQueued(prompt.id);
-    for (const prompt of reordered) this.send(prompt.text, "queue");
-    this.queueCursor = to;
+    const prompt = this.selectedQueued();
+    if (agent === undefined || from === undefined || prompt === undefined) return true;
+    if (agent.moveQueued(prompt.id, from + direction) === "moved")
+      this.queueCursor = from + direction;
     this.touch();
     return true;
   }
@@ -1005,14 +1357,14 @@ export class ConversationModel {
     const entry = this.navigation.selectedEntry();
     const replacement = this.forgetReplacement;
     this.navigation.exitBacktrack();
-    const target = entry === undefined ? undefined : forgetTargetOf(entry);
+    const pick = entry === undefined ? undefined : forgetPickOf(entry);
     const forget = this.forget;
-    if (target === undefined || forget === undefined) return;
+    if (pick === undefined || forget === undefined) return;
     if (this.busy) {
       this.feed.post("info", turnRunningNotice);
       return;
     }
-    this.lastForget = forget(target, replacement).then(
+    this.lastForget = forget(pick.target, replacement, pick.subject).then(
       (outcome) => this.reportForget(outcome),
       (cause: unknown) => {
         if (!this.disposed) this.feed.post("error", toError(cause).message);
@@ -1030,7 +1382,12 @@ export class ConversationModel {
     else if (outcome.note !== undefined) this.feed.post("info", outcome.note);
   }
 
-  private stageUndo(undo: StagedUndo | undefined, at: number, text: string): void {
+  private stageUndo(
+    undo: StagedUndo | undefined,
+    at: number,
+    text: string,
+    notice: (filesNote: string) => string,
+  ): void {
     if (this.disposed) return;
     if (undo === undefined) {
       this.feed.post("info", nothingToUndoNotice);
@@ -1040,17 +1397,29 @@ export class ConversationModel {
     this.editor.clearKeepingDraft();
     this.editor.load(text);
     this.navigation.snapToLive();
-    this.feed.post(
-      "info",
-      `undone · ${undo.filesNote} · your prompt is back in the composer · /redo brings it all back`,
-    );
+    this.feed.post("info", notice(undo.filesNote));
+    this.refreshLedger();
+  }
+
+  private retoldTurns(reopened: ReopenedUndo): TranscriptEntry[] {
+    const retold = new TranscriptFeed(() => {}, this.ports?.now);
+    retold.expectSummaries(reopened.summaries);
+    const bus: Agent["bus"] = new EventBus();
+    const stop = retold.follow(bus);
+    reopened.retell(bus);
+    stop();
+    const kept = this.feed.promptIndices().length;
+    const from = retold.promptIndices()[kept];
+    return from === undefined ? [] : retold.entries.slice(from);
   }
 
   private unstage(staged: StagedPromptUndo): void {
     if (this.disposed) return;
-    this.feed.entries.splice(staged.at, 0, ...staged.entries);
+    const at = staged.at === "end" ? this.feed.entries.length : staged.at;
+    this.feed.entries.splice(at, 0, ...staged.entries);
     this.editor.clearKeepingDraft();
     this.feed.post("info", "redone · the turn and its files are back");
+    this.refreshLedger();
   }
 
   private reportUndoFailure(cause: unknown): void {
@@ -1072,6 +1441,41 @@ export class ConversationModel {
 
 const noForkPointNotice = "no fork point there";
 
+const noRestoreNotice = "can't restore · no session store";
+
+const quietOnNotice =
+  "quiet · asks this session would grant run without asking, never destructive ones · /quiet ends it";
+
+const quietOffNotice =
+  "quiet ends · it revoked nothing, its grants stay · /permissions then r revokes one";
+
+const renameUsage = "/rename <title> · names this session for good, the titler stops";
+
+function undoneNotice(filesNote: string): string {
+  return `undone · ${filesNote} · your prompt is back in the composer · /redo brings it all back`;
+}
+
+function unknownTurnNotice(turn: number, records: readonly TurnRecord[]): string {
+  const last = records.at(-1)?.turn;
+  return last === undefined
+    ? "no turn has settled here yet"
+    : `no turn ${turn} here · turns run 1 to ${last}`;
+}
+
+function foldedTurnNotice(turn: number): string {
+  return `turn ${turn} is folded into a compaction summary · /tree forks from its entry instead`;
+}
+
+interface ShellRun {
+  readonly callId: string;
+  readonly transcript: string;
+}
+
+interface PendingRestore {
+  readonly row: LedgerEntry;
+  readonly question: string;
+}
+
 function queueAsideNotice(count: number): string {
   return `${count === 1 ? "1 queued prompt" : `${count} queued prompts`} set aside · up on an empty prompt brings them back`;
 }
@@ -1085,8 +1489,12 @@ const nothingToUndoNotice = "nothing to undo here";
 
 interface StagedPromptUndo {
   readonly undo: StagedUndo;
-  readonly at: number;
+  readonly at: number | "end";
   readonly entries: readonly TranscriptEntry[];
+}
+
+function reopenedUndoNotice(filesNote: string): string {
+  return `an undo is still staged from last time · ${filesNote} · send to keep it or /redo to bring it all back`;
 }
 const noShellNotice = "no shell here · ! needs a workspace runtime";
 const noFilePaneNotice = "can't open the spill · no file panes here";
@@ -1105,14 +1513,6 @@ function queueEntryDirection(chord: Chord): QueueMove | undefined {
   if (chord.name === "up") return -1;
   if (chord.name === "down") return 1;
   return undefined;
-}
-
-function swapped<T>(items: readonly T[], from: number, to: number): T[] {
-  const copy = [...items];
-  const moved = copy[from] as T;
-  copy[from] = copy[to] as T;
-  copy[to] = moved;
-  return copy;
 }
 
 const thinkingNotices = {

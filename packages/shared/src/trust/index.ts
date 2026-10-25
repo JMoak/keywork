@@ -34,6 +34,7 @@ export {
   presetOrder,
   requiresConfirmation,
 } from "./presets.ts";
+export { quietGrant } from "./quiet.ts";
 export { permissionRules } from "./rules.ts";
 export {
   BlanketTrustError,

@@ -6,9 +6,12 @@ import type {
   CandidateTriage,
   ChangedPath,
   CompactionEntry,
+  ContextEditEntry,
+  ContextEditMark,
   CostRollup,
   DailyEntry,
   EffortLevel,
+  FlushMark,
   InferenceBinding,
   LearningLevel,
   LedgerEntry,
@@ -21,6 +24,8 @@ import type {
   Provenance,
   Provider,
   QuestionTriage,
+  QueuedPrompt,
+  QueueMove,
   Resolution,
   ResolutionFailure,
   RevertOutcome,
@@ -28,7 +33,9 @@ import type {
   SessionBinding,
   SessionEntry,
   SettlePhase,
+  SpillReference,
   StagedItem,
+  SummaryMark,
   Usage,
   WriteResult,
 } from "@keywork/engine";
@@ -41,7 +48,7 @@ import type {
   TrustDecision,
   WorkspaceAnchor,
 } from "@keywork/shared";
-import type { AnswerOutcome, AskVerdict, DenyReason, PendingAsk } from "./asks.ts";
+import type { AnswerOutcome, AskVerdict, Denial, PendingAsk } from "./asks.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 
 export interface SessionSummary {
@@ -58,10 +65,31 @@ export interface SessionSummary {
   effort?: EffortLevel;
 }
 
+export interface SessionRow extends SessionSummary {
+  live: boolean;
+  working: boolean;
+  waiting: WaitingAsks;
+  changes?: ChangesSummary;
+}
+
+export interface WaitingAsks {
+  asks: number;
+  tools: string[];
+}
+
+export interface ChangesSummary {
+  files: number;
+  added: number;
+  deleted: number;
+}
+
 export interface SessionDetail extends SessionSummary {
   cwd: string;
   live: boolean;
   messages: readonly Message[];
+  summaries: readonly SummaryMark[];
+  flushes: readonly FlushMark[];
+  edits: readonly ContextEditMark[];
   asOf: number;
   parentSession?: string;
   forkedFrom?: ForkOrigin;
@@ -97,6 +125,7 @@ export interface SessionEntries {
   entries: readonly SessionEntry[];
   labels: Record<string, string>;
   activePath: readonly string[];
+  journal: readonly string[];
 }
 
 export interface LabelOutcome {
@@ -140,6 +169,7 @@ export interface SessionState {
   leafId: string | null;
   arc?: string;
   bot?: string;
+  quiet: boolean;
   undoable: boolean;
   redoable: boolean;
 }
@@ -194,6 +224,20 @@ export interface RestoreReport {
   redoable: boolean;
 }
 
+export interface RestorePreview {
+  turn: number;
+  prompt: UndonePrompt;
+  undoneTurns: number;
+  files: readonly ChangedPath[];
+  others: readonly OtherSessionFiles[];
+}
+
+export interface OtherSessionFiles {
+  sessionId: string;
+  title: string;
+  paths: readonly string[];
+}
+
 export interface ModelSpend {
   reference: string;
   turns: number;
@@ -213,6 +257,35 @@ export type ExportScope = "path" | "tree";
 
 export type ExportOutcome = { html: string } | { file: string } | "missing" | "outside-scope";
 
+export interface FlushReport {
+  flushed: number;
+  notices: readonly string[];
+}
+
+export interface ForgetReport {
+  edit: ContextEditEntry;
+}
+
+export interface QueueReport {
+  queued: readonly QueuedPrompt[];
+}
+
+export type QueueRefusal = "missing" | Exclude<QueueMove, "moved">;
+
+export interface SessionQueuePort {
+  setAside(id: string): Promise<readonly QueuedPrompt[] | "missing">;
+  move(id: string, itemId: string, to: number): Promise<QueueReport | QueueRefusal>;
+  cancel(id: string, itemId: string): Promise<QueueReport | "missing" | "unknown">;
+}
+
+export interface SpillSlice extends Omit<FileSlice, "path"> {
+  spill: SpillReference;
+}
+
+export type SpillRefusal = "missing" | "unknown-spill";
+
+export type PermissionsAnswer = PermissionsView & { quiet: string[] };
+
 export interface PresetHost {
   active(): ActivePreset;
   apply(name: PresetName): Promise<void>;
@@ -224,7 +297,7 @@ export type PresetOutcome =
   | "unavailable";
 
 export interface SessionHost {
-  list(): Promise<readonly SessionSummary[]>;
+  list(): Promise<readonly SessionRow[]>;
   read(id: string): Promise<SessionDetail | undefined>;
   create(): Promise<SessionSummary>;
   prompt(id: string, text: string, behavior?: SendBehavior): Promise<InjectOutcome>;
@@ -240,21 +313,31 @@ export interface SessionHost {
   undo(id: string): Promise<UndoReport | Refusal | "nothing">;
   redo(id: string): Promise<RedoReport | Refusal | "nothing">;
   restore(id: string, turn: number): Promise<RestoreReport | Refusal | "unknown-turn">;
+  previewRestore(id: string, turn: number): Promise<RestorePreview | "missing" | "unknown-turn">;
   context(id: string): Promise<AgentContext | "missing">;
   cost(id: string): Promise<CostReport | "missing">;
   exportHtml(id: string, scope: ExportScope, out?: string): Promise<ExportOutcome>;
   rename(id: string, title: string): Promise<{ title: string } | "missing">;
+  setQuiet(id: string, on: boolean): Promise<{ quiet: boolean } | "missing">;
+  flush(id: string): Promise<FlushReport | Refusal>;
+  forget(
+    id: string,
+    entryId: string,
+    replacement?: string,
+  ): Promise<ForgetReport | Refusal | "unknown-entry">;
+  spill(id: string, spillId: string, range: ByteRange): Promise<SpillSlice | SpillRefusal>;
   applyPreset(name: PresetName, confirmed: boolean): Promise<PresetOutcome>;
   tree: SessionTreePort;
   changes: ChangesPort;
+  queue: SessionQueuePort;
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(
     callId: string,
     verdict: AskVerdict,
     scope?: AskScope,
-    reason?: DenyReason,
+    denial?: Denial,
   ): Promise<AnswerOutcome>;
-  permissions(): Promise<PermissionsView>;
+  permissions(): Promise<PermissionsAnswer>;
   grantWorkspaceRule(rule: PermissionRule): Promise<void>;
   grantSessionRule(sessionId: string, rule: PermissionRule): Promise<boolean>;
   revokeWorkspaceGrant(rule: PermissionRule): Promise<boolean>;
@@ -277,7 +360,7 @@ export interface MemoryPort {
   approve(id: string): Promise<WriteResult | undefined>;
   discard(id: string): Promise<void>;
   notes(): Promise<readonly MemoryNoteRecord[]>;
-  note(name: string): Promise<MemoryNoteDetail | undefined>;
+  note(name: string, layer?: string): Promise<MemoryNoteDetail | undefined>;
   dailyDates(): Promise<readonly string[]>;
   daily(date: string): Promise<readonly DailyEntry[]>;
   ledger(): readonly LedgerEntry[];
@@ -400,6 +483,7 @@ export interface TrustGrant {
   root: string;
   vault: string;
   reopens: boolean;
+  recomposed: boolean;
 }
 
 export interface WorkspacePort {

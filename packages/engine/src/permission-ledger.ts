@@ -2,14 +2,18 @@ import {
   type LayeredPolicy,
   layeredPolicy,
   type PermissionRule,
+  quietGrant,
   type RuleLayer,
   type RuleOrigin,
   type Ruling,
+  SessionGrants,
   sameRule,
   trustedReadRules,
   withRules,
 } from "@keywork/shared";
 import type { GrantedScope, PermissionResolver, PermissionRuling } from "./agent.ts";
+import type { ToolCallPart } from "./messages.ts";
+import type { AskRule } from "./session/journal.ts";
 
 export interface WorkspaceGrants {
   rules(): readonly PermissionRule[];
@@ -31,17 +35,50 @@ export interface PermissionLedgerOptions {
   user?: PermissionResolver | undefined;
 }
 
+export type SessionRulesListener = (sessionId: string, rules: readonly PermissionRule[]) => void;
+
 export class PermissionLedger {
-  private readonly sessions = new Map<string, PermissionRule[]>();
+  private readonly sessions = new Map<string, SessionGrants>();
+  private readonly quiet = new Set<string>();
+  private readonly sessionRulesListeners = new Set<SessionRulesListener>();
 
   constructor(private readonly options: PermissionLedgerOptions) {}
 
+  adoptSession(sessionId: string, rules: readonly PermissionRule[]): void {
+    this.grantsOf(sessionId).adopt(rules);
+  }
+
+  onSessionRules(listener: SessionRulesListener): () => void {
+    this.sessionRulesListeners.add(listener);
+    return () => this.sessionRulesListeners.delete(listener);
+  }
+
+  setQuiet(sessionId: string, on: boolean): void {
+    if (on) this.quiet.add(sessionId);
+    else this.quiet.delete(sessionId);
+  }
+
+  isQuiet(sessionId: string): boolean {
+    return this.quiet.has(sessionId);
+  }
+
+  quietSessions(): string[] {
+    return [...this.quiet];
+  }
+
+  grantQuietly(
+    sessionId: string,
+    call: ToolCallPart,
+    rule: AskRule,
+  ): readonly PermissionRule[] | undefined {
+    if (rule === "trusted" || !this.quiet.has(sessionId)) return undefined;
+    const rules = quietGrant(call.name, call.arguments);
+    return rules === undefined ? undefined : this.grantSession(sessionId, rules);
+  }
+
   record(sessionId: string, scope: GrantedScope, rules: readonly PermissionRule[]): void {
-    if (scope === "workspace") {
-      this.options.workspace.grant(rules);
-      return;
-    }
-    this.sessions.set(sessionId, withRules(this.sessions.get(sessionId) ?? [], rules));
+    if (scope === "workspace") this.options.workspace.grant(rules);
+    else this.grantSession(sessionId, rules);
   }
 
   resolverFor(sessionId?: string): PermissionResolver {
@@ -55,7 +92,11 @@ export class PermissionLedger {
       trusted: this.options.trusted,
       bundle: [...this.bundle()],
       workspace: [...this.options.workspace.rules()],
-      session: Object.fromEntries(this.sessions),
+      session: Object.fromEntries(
+        [...this.sessions].flatMap(([sessionId, grants]) =>
+          grants.rules.length === 0 ? [] : [[sessionId, [...grants.rules]]],
+        ),
+      ),
     };
   }
 
@@ -64,12 +105,31 @@ export class PermissionLedger {
   }
 
   revokeSession(sessionId: string, rule: PermissionRule): boolean {
-    const held = this.sessions.get(sessionId) ?? [];
-    const kept = held.filter((candidate) => !sameRule(candidate, rule));
-    if (kept.length === held.length) return false;
-    if (kept.length === 0) this.sessions.delete(sessionId);
-    else this.sessions.set(sessionId, kept);
-    return true;
+    const revoked = this.sessions.get(sessionId)?.forget(rule) === true;
+    if (revoked) this.sessionRulesChanged(sessionId);
+    return revoked;
+  }
+
+  private grantSession(
+    sessionId: string,
+    rules: readonly PermissionRule[],
+  ): readonly PermissionRule[] {
+    const joined = this.grantsOf(sessionId).grant(rules);
+    if (joined.length > 0) this.sessionRulesChanged(sessionId);
+    return joined;
+  }
+
+  private grantsOf(sessionId: string): SessionGrants {
+    const known = this.sessions.get(sessionId);
+    if (known !== undefined) return known;
+    const fresh = new SessionGrants();
+    this.sessions.set(sessionId, fresh);
+    return fresh;
+  }
+
+  private sessionRulesChanged(sessionId: string): void {
+    const rules = this.sessionRules(sessionId);
+    for (const listener of [...this.sessionRulesListeners]) listener(sessionId, rules);
   }
 
   private policyFor(sessionId: string | undefined): LayeredPolicy {
@@ -82,7 +142,7 @@ export class PermissionLedger {
   }
 
   private sessionRules(sessionId: string | undefined): readonly PermissionRule[] {
-    return sessionId === undefined ? [] : (this.sessions.get(sessionId) ?? []);
+    return sessionId === undefined ? [] : (this.sessions.get(sessionId)?.rules ?? []);
   }
 
   private bundle(): readonly PermissionRule[] {

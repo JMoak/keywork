@@ -13,11 +13,16 @@ import type {
   WorkspaceInfo,
 } from "./routes/family.ts";
 import { fileFamily } from "./routes/files.ts";
+import { flushFamily } from "./routes/flush.ts";
+import { forgetFamily } from "./routes/forget.ts";
 import { lifecycleFamily } from "./routes/lifecycle.ts";
 import { memoryFamily } from "./routes/memory.ts";
 import { permissionFamily } from "./routes/permissions.ts";
+import { queueFamily } from "./routes/queue.ts";
+import { quietFamily } from "./routes/quiet.ts";
 import { sessionVerbFamily } from "./routes/session-verbs.ts";
 import { sessionFamily } from "./routes/sessions.ts";
+import { spillFamily } from "./routes/spills.ts";
 import { surfaceFamily } from "./routes/surfaces.ts";
 import { themeFamily } from "./routes/themes.ts";
 import { treeFamily } from "./routes/tree.ts";
@@ -42,6 +47,11 @@ export const routeFamilies = [
   changesFamily,
   lifecycleFamily,
   permissionFamily,
+  quietFamily,
+  flushFamily,
+  forgetFamily,
+  queueFamily,
+  spillFamily,
 ] as const;
 
 export type Route = (typeof routeFamilies)[number]["routes"][number];

@@ -58,6 +58,10 @@ export class PaletteOverlay extends RowOverlay {
       this.run(this.index);
       return;
     }
+    if (chord.name === "tab") {
+      this.complete(this.index);
+      return;
+    }
     if (chord.name === "backspace") {
       this.retype(this.query.slice(0, -1));
       return;
@@ -85,18 +89,61 @@ export class PaletteOverlay extends RowOverlay {
 
   private run(row: number): void {
     const chosen = this.entries[row];
+    if (chosen?.needsArgs === true) {
+      this.complete(row);
+      return;
+    }
     this.seams.dismiss();
     chosen?.run();
   }
 
+  private complete(row: number): void {
+    const chosen = this.entries[row];
+    if (chosen === undefined || this.mode !== "commands" || this.argued()) return;
+    this.retype(`${this.query.charAt(0)}${chosen.name}${chosen.needsArgs === true ? " " : ""}`);
+  }
+
+  private argued(): boolean {
+    return invocationOf(this.query.slice(1))[1] !== undefined;
+  }
+
   private retype(query: string): void {
-    const commandMode = paletteModeOf(query) === "commands";
     this.query = query;
     this.index = 0;
-    this.entries = this.registry
-      .search(commandMode ? query.slice(1) : query)
-      .filter((command) => command.needsArgs !== true)
-      .filter((command) => (command.jump === true) !== commandMode)
+    this.entries = paletteMatches(this.registry, query);
+  }
+}
+
+function paletteMatches(registry: CommandRegistry, query: string): CommandSpec[] {
+  if (paletteModeOf(query) === "go") {
+    return registry
+      .search(query)
+      .filter((command) => command.jump === true)
       .slice(0, paletteRowLimit);
   }
+  const [verb, argument] = invocationOf(query.slice(1));
+  if (argument === undefined) {
+    return registry
+      .search(verb)
+      .filter((command) => command.jump !== true)
+      .slice(0, paletteRowLimit);
+  }
+  const named = registry.named(verb);
+  return named === undefined || named.jump === true ? [] : [withArgument(named, argument)];
+}
+
+function invocationOf(typed: string): [string, string | undefined] {
+  const trimmed = typed.trimStart();
+  const space = trimmed.search(/\s/);
+  return space === -1
+    ? [trimmed, undefined]
+    : [trimmed.slice(0, space), trimmed.slice(space + 1).trim()];
+}
+
+function withArgument({ needsArgs: _, ...command }: CommandSpec, argument: string): CommandSpec {
+  return {
+    ...command,
+    label: argument === "" ? `${command.name} …` : `${command.name} ${argument}`,
+    run: () => command.run(argument === "" ? undefined : argument),
+  };
 }

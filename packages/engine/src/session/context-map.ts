@@ -28,7 +28,14 @@ export interface ContextMap {
   readonly thresholds: ContextThresholds;
 }
 
-export interface AgentContext extends ContextReading, ContextMap {}
+export interface AgentContext extends ContextReading, ContextMap {
+  readonly basis: ContextBasis;
+}
+
+export interface ContextMeasure {
+  readonly overhead: number;
+  conversation(history: readonly Message[]): number;
+}
 
 export interface ReportedContext {
   readonly tokens: number;
@@ -49,14 +56,40 @@ export interface AnatomySource {
 
 export function readAgentContext(agent: AnatomySource, budget: ContextBudget): AgentContext {
   const anatomy = agent.anatomy();
-  const reading = readContext(estimateConversationTokens(anatomy.history), budget);
-  return { ...reading, ...contextMapOf(anatomy, reading) };
+  const overhead = overheadOf(anatomy);
+  const conversation = conversationPart(anatomy, overhead);
+  const reading = readContext(conversation.tokens, budget, overhead);
+  return { ...reading, basis: conversation.basis, ...contextMapOf(anatomy, reading) };
+}
+
+export function contextMeasureOf(agent: AnatomySource): ContextMeasure {
+  const overhead = overheadOf(agent.anatomy());
+  return {
+    overhead,
+    conversation: (history) => conversationPart({ ...agent.anatomy(), history }, overhead).tokens,
+  };
+}
+
+export function estimatedMeasureOf(agent: AnatomySource): ContextMeasure {
+  return { overhead: overheadOf(agent.anatomy()), conversation: estimateConversationTokens };
+}
+
+export function readMeasured(
+  measure: ContextMeasure,
+  history: readonly Message[],
+  budget: ContextBudget,
+): ContextReading {
+  return readContext(measure.conversation(history), budget, measure.overhead);
+}
+
+export function measuredConversation(anatomy: RequestAnatomy): ContextPart {
+  return conversationPart(anatomy, overheadOf(anatomy));
 }
 
 export function contextMapOf(anatomy: RequestAnatomy, reading: ContextReading): ContextMap {
   const prompt = estimateTextTokens(anatomy.systemPrompt);
   const injected = Math.min(prompt, sum(anatomy.injected.map(estimateTextTokens)));
-  const tools = sum(anatomy.tools.map(definitionTokens));
+  const tools = toolTokensOf(anatomy);
   const conversation = conversationPart(anatomy, prompt + tools);
   const filled = prompt + tools + conversation.tokens;
   const uncountedBySettler = filled - reading.used;
@@ -88,6 +121,14 @@ function conversationPart(anatomy: RequestAnatomy, fixed: number): ContextPart {
   }
   const since = estimateConversationTokens(history.slice(reported.messages));
   return { tokens: Math.max(0, reported.tokens - fixed) + since, basis: "reported" };
+}
+
+function overheadOf(anatomy: RequestAnatomy): number {
+  return estimateTextTokens(anatomy.systemPrompt) + toolTokensOf(anatomy);
+}
+
+function toolTokensOf(anatomy: RequestAnatomy): number {
+  return sum(anatomy.tools.map(definitionTokens));
 }
 
 function definitionTokens({ name, description, parameters }: ToolDefinition): number {

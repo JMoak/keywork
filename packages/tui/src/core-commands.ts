@@ -34,6 +34,16 @@ function builtinCommands(core: AppCore): CommandSpec[] {
   return [
     ...dockCommands(core),
     {
+      name: "focus",
+      description: "focus a pane by its place, counting from the left dock: /focus <n>",
+      needsArgs: true,
+      run: (args) => {
+        const ordinal = Number(operandOf(args));
+        if (Number.isInteger(ordinal) && ordinal >= 1) core.focusOrdinal(ordinal);
+        else core.postNotice("/focus <n> · panes count from the left dock, then main, then right");
+      },
+    },
+    {
       name: "undock",
       description: "return this pane to the main area",
       run: () => core.undockPane(),
@@ -64,6 +74,20 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       aliases: ["changes"],
       description: "open the diff pane over this session's file changes: /diff",
       run: () => core.summon("diff"),
+    }),
+    {
+      name: "context-map",
+      aliases: ["map"],
+      description: "map what fills the focused session's context window, cell by percent",
+      run: () =>
+        available("context")
+          ? core.summon("context")
+          : core.postNotice("no context map here · /context still prints the reading"),
+    },
+    ...when(available("bots"), {
+      name: "bots",
+      description: "open the bots roster: enter opens a session, n creates, u unbinds",
+      run: () => core.summon("bots"),
     }),
     ...when(available("session-tree"), {
       name: "tree",
@@ -128,11 +152,11 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       description: "pick the model for this session: /model [provider/model]",
       run: (args) => core.openModelPicker(args),
     }),
-    ...when(options.permissions !== undefined, {
+    ...when(available("permissions"), {
       name: "permissions",
       aliases: ["grants"],
       description: "see what runs here without asking, take a grant back: /permissions",
-      run: () => core.openPermissions(),
+      run: () => core.summon("permissions"),
     }),
     ...when(options.connections !== undefined, {
       name: "connect",
@@ -141,6 +165,7 @@ function builtinCommands(core: AppCore): CommandSpec[] {
       run: (args) => core.openConnect(args),
     }),
     ...undoCommands(core),
+    ...conversationCommands(core),
     {
       name: "forget",
       description:
@@ -293,9 +318,10 @@ function dockCommands(core: AppCore): CommandSpec[] {
 
 function undoCommands(core: AppCore): CommandSpec[] {
   const files = core.options.undo;
-  if (files === undefined) return [];
-  const announce = (outcome: Promise<boolean>, done: string, empty: string) =>
-    core.settle(outcome.then((changed) => core.postNotice(changed ? done : empty)));
+  const announce = (outcome: Promise<boolean> | undefined, done: string, empty: string) => {
+    if (outcome === undefined) core.postNotice(empty);
+    else core.settle(outcome.then((changed) => core.postNotice(changed ? done : empty)));
+  };
   const conversation = () => focusedConversation(core);
   return [
     {
@@ -303,7 +329,7 @@ function undoCommands(core: AppCore): CommandSpec[] {
       description: "take back your last prompt, its turn and its file changes",
       run: () => {
         if (conversation()?.undoLastPrompt() !== true)
-          announce(files.undo(), "files put back", "nothing to undo");
+          announce(files?.undo(), "files put back", "nothing to undo");
       },
     },
     {
@@ -311,8 +337,39 @@ function undoCommands(core: AppCore): CommandSpec[] {
       description: "bring back what /undo took",
       run: () => {
         if (conversation()?.redoPrompt() !== true)
-          announce(files.redo(), "files redone", "nothing to redo");
+          announce(files?.redo(), "files redone", "nothing to redo");
       },
+    },
+  ];
+}
+
+function conversationCommands(core: AppCore): CommandSpec[] {
+  const onConversation = (verb: (conversation: ConversationModel) => void, what: string) => {
+    const conversation = focusedConversation(core);
+    if (conversation === undefined) core.postNotice(`nothing to ${what} · no conversation here`);
+    else verb(conversation);
+  };
+  return [
+    {
+      name: "restore",
+      aliases: ["restore-turn"],
+      description: "restore this session to just before turn n, files included: /restore <n>",
+      needsArgs: true,
+      run: (args) => {
+        const turn = Number(operandOf(args));
+        if (!Number.isInteger(turn) || turn < 1) {
+          core.postNotice("/restore <n> · the ledger row under each turn names its number");
+          return;
+        }
+        onConversation((conversation) => conversation.restoreTurn(turn), "restore");
+      },
+    },
+    {
+      name: "rename",
+      aliases: ["title"],
+      description: "name this session for good, the titler stops: /rename <title>",
+      needsArgs: true,
+      run: (args) => onConversation((conversation) => conversation.rename(args ?? ""), "rename"),
     },
   ];
 }

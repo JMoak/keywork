@@ -37,7 +37,7 @@ export function grantAheadRefusal(rule: PermissionRule): GrantAheadRefusal | und
 }
 
 export class SessionGrants {
-  private held: PermissionRule[] = [];
+  private held: readonly PermissionRule[] = [];
 
   get rules(): readonly PermissionRule[] {
     return this.held;
@@ -51,9 +51,14 @@ export class SessionGrants {
 
   remember(toolName: string, args: unknown): readonly PermissionRule[] {
     const candidates = grantCandidates(toolName, args);
-    if (grantRefusal(toolName, candidates) !== undefined) return [];
-    this.held = withRules(this.held, candidates);
-    return candidates;
+    return grantRefusal(toolName, candidates) === undefined ? this.grant(candidates) : [];
+  }
+
+  grant(rules: readonly PermissionRule[]): readonly PermissionRule[] {
+    const held = withRules(this.held, rules);
+    const joined = held.slice(this.held.length);
+    this.held = held;
+    return joined;
   }
 
   forget(rule: PermissionRule): boolean {
@@ -61,6 +66,10 @@ export class SessionGrants {
     const dropped = kept.length !== this.held.length;
     this.held = kept;
     return dropped;
+  }
+
+  adopt(rules: readonly PermissionRule[]): void {
+    this.held = withRules([], rules);
   }
 }
 

@@ -66,19 +66,22 @@ export function boundToolOutput(
   spillId: string,
   budget = defaultToolOutputBudget,
 ): BoundedToolOutput {
-  const total = Buffer.byteLength(output);
-  if (total <= budget) return { output };
-  const kept = Math.max(0, budget - markerReserveBytes);
-  const headBytes = Math.floor(kept * headShare);
-  const head = leadingBytes(output, headBytes);
-  const tail = trailingBytes(output, kept - headBytes);
+  const ends = endsWithin(output, budget);
+  if (ends === undefined) return { output };
   const spill: SpillReference = {
     id: spillId,
-    bytes: total,
-    elidedFrom: Buffer.byteLength(head),
-    elidedTo: total - Buffer.byteLength(tail),
+    bytes: ends.total,
+    elidedFrom: Buffer.byteLength(ends.head),
+    elidedTo: ends.total - Buffer.byteLength(ends.tail),
   };
-  return { output: `${head}\n${elisionMarker(spill)}\n${tail}`, spill };
+  return { output: `${ends.head}\n${elisionMarker(spill)}\n${ends.tail}`, spill };
+}
+
+export function clipToolOutput(output: string, budget = defaultToolOutputBudget): string {
+  const ends = endsWithin(output, budget);
+  if (ends === undefined) return output;
+  const elided = ends.total - Buffer.byteLength(ends.head) - Buffer.byteLength(ends.tail);
+  return `${ends.head}\n[… ${elided} of ${ends.total} bytes elided; no session kept the full output …]\n${ends.tail}`;
 }
 
 export function elisionMarker(spill: SpillReference): string {
@@ -88,6 +91,24 @@ export function elisionMarker(spill: SpillReference): string {
 
 const markerReserveBytes = 192;
 const headShare = 3 / 4;
+
+interface OutputEnds {
+  head: string;
+  tail: string;
+  total: number;
+}
+
+function endsWithin(output: string, budget: number): OutputEnds | undefined {
+  const total = Buffer.byteLength(output);
+  if (total <= budget) return undefined;
+  const kept = Math.max(0, budget - markerReserveBytes);
+  const headBytes = Math.floor(kept * headShare);
+  return {
+    head: leadingBytes(output, headBytes),
+    tail: trailingBytes(output, kept - headBytes),
+    total,
+  };
+}
 
 function leadingBytes(text: string, limit: number): string {
   let bytes = 0;

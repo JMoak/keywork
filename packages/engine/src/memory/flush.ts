@@ -43,6 +43,15 @@ export function isMemoryFlushPrompt(text: string): boolean {
   return text === memoryFlushPrompt || text.startsWith(`${memoryFlushPrompt}\n`);
 }
 
+export function keptFacts(reply: string): string[] {
+  const text = reply.trim();
+  if (text === "" || text === noReplyToken) return [];
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
 export interface BotLearnings {
   craft: string;
   work: string;

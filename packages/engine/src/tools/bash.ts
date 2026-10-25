@@ -6,6 +6,7 @@ import { killTree } from "../proc.ts";
 import { type Launch, sandboxedToolNote, unconfined } from "../sandbox/sandbox.ts";
 import { fixedSandbox, type ToolSandbox } from "../sandbox/session.ts";
 import {
+  agentShellEnv,
   BoundedOutput,
   CommandRun,
   childClosed,
@@ -13,13 +14,11 @@ import {
   commandResult,
   commandTimedOut,
   defaultTimeoutMs,
-  scrubbedEnv,
   shellSpawnOptions,
 } from "./command-run.ts";
 import { defineTool } from "./define.ts";
 
 const settleAfterExitMs = 100;
-const harnessMarker = { KEYWORK: "1" } as const;
 
 const schema = z.object({
   command: z.string().min(1).describe("Shell command to execute."),
@@ -68,8 +67,7 @@ export function bashTool(
 }
 
 function shellLaunch(shell: Shell, command: string, cwd: string): Launch {
-  const env = { ...scrubbedEnv(process.env), ...harnessMarker };
-  return { file: shell.file, args: shell.args(command), cwd, env };
+  return { file: shell.file, args: shell.args(command), cwd, env: agentShellEnv() };
 }
 
 function findGitBash(): string | undefined {

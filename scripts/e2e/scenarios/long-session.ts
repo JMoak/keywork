@@ -11,7 +11,7 @@ import {
 } from "../../../packages/engine/src/index.ts";
 import { parseTheme } from "../../../packages/shared/src/index.ts";
 import { keyworkNightTheme } from "../../../packages/tui/src/index.ts";
-import { occurrences } from "../frame-queries.ts";
+import { occurrences, paneHeader } from "../frame-queries.ts";
 import type { Scenario } from "../scenario.ts";
 
 const longSessionWindow = 2_000;
@@ -25,7 +25,7 @@ interface LongSessionScript {
 
 const script = longSessionScript();
 const cockpit = parseTheme({ ...keyworkNightTheme, name: "cockpit", instruments: "cockpit" });
-const calmHeader = /│ session-1 +│/;
+const calmHeader = paneHeader("session-1");
 
 export const longSession: Scenario = {
   name: "long-session",
@@ -52,7 +52,7 @@ export const longSession: Scenario = {
     for (let turn = 2; turn < script.compactingTurn; turn += 1) frame = await step(turn);
     assert.match(
       frame,
-      / session-1 · ░▒[▓·][█·] [\d.]+k? /,
+      / session-1 · ░▒[▓·][█·] context [\d.]+k? /,
       "the steps light zone by zone as the marks pass",
     );
 
@@ -64,7 +64,10 @@ export const longSession: Scenario = {
     await stage.type("/context");
     await stage.press("enter");
     const readout = await stage.until("memory flush at");
-    assert.ok(readout.includes("window declared"), "the readout names the declared window");
+    assert.ok(
+      readout.includes("declared in keywork.json"),
+      "the readout names the declared window",
+    );
     await stage.capture("context-readout");
 
     await step(script.compactingTurn + 1);
@@ -82,7 +85,7 @@ export const longSession: Scenario = {
       "/compact folds again on request and the notice reports a smaller context",
     );
     assert.equal(
-      occurrences(folded, "compacted "),
+      occurrences(folded, "tokens into a summary"),
       2,
       "the manual fold posts its own notice in the transcript",
     );
@@ -94,7 +97,7 @@ export const longSession: Scenario = {
     const cockpitFrame = await stage.capture("gauge-cockpit-bar");
     assert.match(
       cockpitFrame,
-      /[█░]+▒▓ [\d.]+k?\/2k/,
+      /[█░]+▒▓ context [\d.]+k? of 2k/,
       "cockpit draws the bar with both marks as cells",
     );
 
@@ -121,10 +124,15 @@ function longSessionScript(): LongSessionScript {
 }
 
 function usedFromReadout(frame: string): number {
-  const readings = [...frame.matchAll(/context (\d+) of \d+ tokens/g)];
+  const readings = [...frame.matchAll(/context ([\d.]+k?) of [\d.]+k? · /g)];
   const last = readings.at(-1);
   assert.ok(last !== undefined, "the readout states the context in use");
-  return Number(last[1]);
+  return tokensOf(last[1] ?? "");
+}
+
+function tokensOf(formatted: string): number {
+  const scale = formatted.endsWith("k") ? 1000 : 1;
+  return Number.parseFloat(formatted) * scale;
 }
 
 function usedFromNotice(frame: string): number {

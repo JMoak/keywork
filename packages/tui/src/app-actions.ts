@@ -7,6 +7,8 @@ export interface ActionTarget {
   zoomPane(): void;
   focusToward(direction: Direction): void;
   focusLast(): void;
+  focusOrdinal(ordinal: number): void;
+  toggleQuiet(): void;
   movePane(direction: Direction): void;
   cyclePane(): void;
   pinPane(): void;
@@ -44,7 +46,7 @@ export const appActions: Record<string, AppAction> = {
     command: { name: "split", description: "open a new session pane in this arc" },
   },
   "pane.splitArc": {
-    chords: "leader shift+s",
+    chords: "leader shift+a",
     help: "new session in a new arc",
     sticky: true,
     invoke: (target) => target.splitPane("new"),
@@ -52,6 +54,16 @@ export const appActions: Record<string, AppAction> = {
       name: "split-arc",
       description: "new session pane in a fresh arc",
       aliases: ["split-new-arc"],
+    },
+  },
+  "session.quiet": {
+    chords: "leader shift+s",
+    help: "quiet · this session grants its own asks (toggle)",
+    invoke: (target) => target.toggleQuiet(),
+    command: {
+      name: "quiet",
+      description:
+        "let this session grant its own non-destructive asks as session rules, toggle: /quiet",
     },
   },
   "pane.close": {
@@ -62,7 +74,7 @@ export const appActions: Record<string, AppAction> = {
     coveredBy: "exit",
   },
   "pane.zoom": {
-    chords: "leader z",
+    chords: ["leader z", "alt+z"],
     help: "zoom pane (toggle)",
     sticky: true,
     invoke: (target) => target.zoomPane(),
@@ -111,6 +123,7 @@ export const appActions: Record<string, AppAction> = {
     invoke: (target) => target.focusLast(),
     command: { name: "focus-last", description: "bounce focus to the pane you were just in" },
   },
+  ...ordinalFocusActions(),
   "move.left": {
     chords: "leader shift+h",
     help: "move pane left",
@@ -226,6 +239,13 @@ export const appActions: Record<string, AppAction> = {
     invoke: (target) => target.summon("diff"),
     coveredBy: "diff",
   },
+  "context.summon": {
+    chords: "leader shift+g",
+    help: "context map · what fills the window",
+    chainable: true,
+    invoke: (target) => target.summon("context"),
+    coveredBy: "context-map",
+  },
   "arcs.summon": {
     chords: "leader a",
     help: "arcs node · workstreams",
@@ -313,6 +333,20 @@ export function actionCovering(commandName: string): string | undefined {
   return Object.entries(appActions).find(
     ([, action]) => "coveredBy" in action && action.coveredBy === commandName,
   )?.[0];
+}
+
+function ordinalFocusActions(): Record<string, AppAction> {
+  return Object.fromEntries(
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((ordinal) => [
+      `focus.pane${ordinal}`,
+      {
+        chords: `alt+${ordinal}`,
+        help: `focus pane ${ordinal} · left dock, then main, then right dock`,
+        invoke: (target: ActionTarget) => target.focusOrdinal(ordinal),
+        coveredBy: "focus",
+      },
+    ]),
+  );
 }
 
 function commandNameOf(action: AppAction): string {

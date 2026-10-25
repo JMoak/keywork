@@ -86,7 +86,7 @@ export const memoryRoutes = [
     path: "/memory/notes/{name}",
     operationId: "readMemoryNote",
     summary:
-      "One note by name (URL-encode it; entity notes are named by path, such as `entities/src/app.ts`), with its graph relations: each `{ name, predicate, direction }` edge the note takes part in.",
+      "One note by name (URL-encode it; entity notes are named by path, such as `entities/src/app.ts`), with its graph relations: each `{ name, predicate, direction }` edge the note takes part in. `?layer=<id>` reads it from that layer only, for a name an arc layer shares with the workspace; without it the first layer that holds the name answers, workspace first.",
     authenticated: true,
     responses: { "200": "The note.", "404": "No note has that name." },
   },
@@ -178,8 +178,9 @@ export const memoryFamily = {
         },
         { notes: [] },
       ),
-      readMemoryNote: memory.read(async (port, _request, { name }) => {
-        const note = await port.note(decodeURIComponent(name ?? ""));
+      readMemoryNote: memory.read(async (port, request, { name }) => {
+        const layer = new URL(request.url).searchParams.get("layer") ?? undefined;
+        const note = await port.note(decodeURIComponent(name ?? ""), layer);
         return note === undefined
           ? json(404, { error: `no note named ${JSON.stringify(name)}` })
           : withCuring(note);

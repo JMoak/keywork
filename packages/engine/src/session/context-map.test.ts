@@ -86,7 +86,7 @@ describe("contextMapOf", () => {
 });
 
 describe("readAgentContext", () => {
-  it("anchors on the usage of the agent's last request and counts extension context as injected", async () => {
+  it("reads the whole request as the provider reported it and counts extension context as injected", async () => {
     const provider = new MockProvider([
       textTurn("hi", { inputTokens: 300, outputTokens: 20, cacheReadInputTokens: 100 }),
     ]);
@@ -103,7 +103,8 @@ describe("readAgentContext", () => {
 
     expect(agent.anatomy().reported).toEqual({ tokens: 420, messages: 2 });
     const context = readAgentContext(agent, budget);
-    expect(context.used).toBe(estimateConversationTokens(agent.history()));
+    expect(context.used).toBe(420);
+    expect(context.basis).toBe("reported");
     expect(context.parts.conversation.basis).toBe("reported");
     expect(context.parts.injected.tokens).toBe(
       estimateTextTokens("AGENTS.md text") + estimateTextTokens("\n\nextension context"),

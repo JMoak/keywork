@@ -1,6 +1,5 @@
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ session-1 · ⣦· 483                                                                                         │
-│    budget honest across every turn. keep the budget honest across every turn. keep the                     │
+│ session-1 · ⣦· context 483                                                                                 │
 │    budget honest across every turn. keep the budget honest across every turn. keep the                     │
 │    budget honest across every turn. keep the budget honest across every turn. keep the                     │
 │    budget honest across every turn. keep the budget honest across every turn. keep the                     │
@@ -19,6 +18,7 @@
 │    budget honest across every turn. keep the budget honest across every turn. keep the                     │
 │    budget honest across every turn. keep the budget honest across every turn. keep the                     │
 │    budget honest across every turn. reply 1 done.                                                          │
+│   turn 1                                                                                                   │
 │ › ▌                                                                                                        │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- keywork e2e · 1 panes · ctrl+k nav · ctrl+p go · / commands                                           return 
+ keywork e2e · 1 pane · ctrl+k nav · ctrl+p go · / commands                                            return 

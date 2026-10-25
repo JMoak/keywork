@@ -3,6 +3,8 @@ import {
   describeBinding,
   describeContextEdit,
   formatCostNanos,
+  isJournalOnly,
+  isMemoryFlushEntry,
   knownCostNanos,
   type Message,
   type Part,
@@ -50,6 +52,8 @@ interface Rendering {
 }
 
 const glyphs = { user: "█", agent: "▓", external: "░" } as const;
+
+const memoryFlushMarker = "memory flush · keywork asked the model what was worth keeping";
 
 function page(title: string, header: string, body: string): string {
   return [
@@ -140,6 +144,7 @@ function blocks(rendered: readonly string[]): string {
 }
 
 function entryHtml(entry: SessionEntry, rendering: Rendering): string {
+  if (isJournalOnly(entry)) return "";
   const label = labelPill(rendering.labels.get(entry.id));
   switch (entry.type) {
     case "message":
@@ -153,6 +158,7 @@ function entryHtml(entry: SessionEntry, rendering: Rendering): string {
     case "branch_summary":
       return foldHtml(`branch summary · from ${entry.fromId.slice(0, 8)}`, entry.summary, label);
     case "custom_message":
+      if (isMemoryFlushEntry(entry)) return markerHtml(memoryFlushMarker, label);
       return entry.display
         ? foldHtml(entry.customType, entry.content, label)
         : markerHtml(entry.customType, label);

@@ -30,6 +30,7 @@ import { type LiveInference, openInferenceState } from "./inference-state.ts";
 import { defaultSessionDir, ensureStateLayout } from "./paths.ts";
 import { isPresetName, permissionsResolver, presetResolver, userPresetSwitch } from "./presets.ts";
 import { conclude, exitCodeOf, runHeadless } from "./run.ts";
+import type { HostOptions } from "./serve.ts";
 import { terminalConfirm } from "./terminal-input.ts";
 import { versionLine } from "./version.ts";
 import {
@@ -294,7 +295,7 @@ async function runHeadlessPrompt(
 }
 
 async function runServe(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
-  const { io, cwd, projectTrusted, workspaceSlug } = context;
+  const { io } = context;
   const port = parsePort(values.port);
   if (port === "invalid") {
     io.printError(`keywork serve: --port wants a whole number from 0 to 65535 (0 picks a free port)
@@ -309,26 +310,60 @@ ${usage}`);
     );
     return exitCodes.usage;
   }
+  const hosting = await servedHostOptions(context, values, preset);
+  if (!hosting.ok) {
+    io.printError(hosting.problem);
+    return exitCodes.unresolved;
+  }
+  const { serve } = await import("./serve.ts");
+  return untilInterrupted((signal) =>
+    serve({
+      ...hosting.options,
+      port,
+      tokenOnStdout: !io.interactive,
+      reopen: async () => {
+        const reopened = await servedHostOptions(
+          await openCommandContext(io, context.workspaceSlug),
+          values,
+          preset,
+        );
+        if (!reopened.ok) throw new Error(reopened.problem);
+        return reopened.options;
+      },
+      signal,
+      print: io.print,
+      printError: io.printError,
+    }),
+  );
+}
+
+type ServedHostOptions = { ok: true; options: HostOptions } | { ok: false; problem: string };
+
+async function servedHostOptions(
+  context: CommandContext,
+  values: ParsedInvocation["values"],
+  preset: PresetName | undefined,
+): Promise<ServedHostOptions> {
+  const { cwd, projectTrusted, workspaceSlug } = context;
   const { config, runtime, memoryDecider } = (await context.openInference()).current();
   const bound = runtime.resolve({ override: values.model, default: config.model });
   if (!bound.ok) {
-    io.printError(
-      `${bound.failure.message} · ${nextActionFor(bound.failure, shellCommands)}
+    return {
+      ok: false,
+      problem: `${bound.failure.message} · ${nextActionFor(bound.failure, shellCommands)}
 
 ${connectHint}`,
-    );
-    return exitCodes.unresolved;
+    };
   }
   const presets = userPresetSwitch(
     preset === undefined ? config.permissions : permissionPresets[preset],
   );
-  const { serve } = await import("./serve.ts");
-  return untilInterrupted((signal) =>
-    serve({
+  return {
+    ok: true,
+    options: {
       cwd,
       projectTrusted,
       workspaceSlug,
-      port,
       memoryDecider,
       provider: runtime.provider(bound.binding),
       closingProvider: roleProvider(runtime, config, closingRole),
@@ -348,11 +383,8 @@ ${connectHint}`,
       models: config.models,
       thinking: config.thinking,
       theme: startupThemeName(config),
-      signal,
-      print: io.print,
-      printError: io.printError,
-    }),
-  );
+    },
+  };
 }
 
 async function runAttach(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
@@ -603,8 +635,8 @@ async function runningWorkspaceServer(context: CommandContext): Promise<KeyworkC
 }
 
 async function runDoctor(context: CommandContext): Promise<number> {
-  const { doctorCommand, workspaceDoctorFacts } = await import("./doctor.ts");
-  const { crashLogFacts, crashLogFile } = await import("@keywork/tui");
+  const { crashLogFactsAt, doctorCommand, workspaceDoctorFacts } = await import("./doctor.ts");
+  const { crashLogFile } = await import("@keywork/tui");
   return doctorCommand(
     { env: context.io.env, platform: process.platform },
     context.io.print,
@@ -614,7 +646,7 @@ async function runDoctor(context: CommandContext): Promise<number> {
       const facts = await workspaceDoctorFacts(context.cwd, context.projectTrusted, config);
       return {
         ...facts,
-        crashLog: crashLogFacts(crashLogFile),
+        crashLog: crashLogFactsAt(crashLogFile),
         memoryDecider: memoryDecider.status,
       };
     },

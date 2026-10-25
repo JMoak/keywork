@@ -1,6 +1,6 @@
 import { Box, fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import { type ArcPicker, type ArcPickerRow, arcRowParts, describeArcRow } from "../arc-picker.ts";
-import { type ArcOrdinals, arcInk } from "../arcs.ts";
+import { type ArcAttire, type ArcOrdinals, arcInk } from "../arcs.ts";
 import { type BotPicker, type BotPickerRow, botRowParts, describeBotRow } from "../bot-picker.ts";
 import type { FilterPicker } from "../filter-picker.ts";
 import { describeModelRow, type ModelPicker, type ModelPickerRow } from "../model-picker.ts";
@@ -76,6 +76,7 @@ export function modelPickerSpec(picker: ModelPicker): FilterOverlaySpec<ModelPic
 export function arcPickerSpec(
   picker: ArcPicker,
   arcOrdinal: ArcOrdinals,
+  arcAttire?: ArcAttire,
 ): FilterOverlaySpec<ArcPickerRow> {
   return {
     picker,
@@ -84,7 +85,9 @@ export function arcPickerSpec(
     rowInk: (row, selected, theme) => {
       if (row.kind === "arc" && row.arc.status === "active") {
         const { slug, facts } = arcRowParts(row);
-        const slugInk = selected ? theme.accent : arcInk(theme, arcOrdinal(slug));
+        const slugInk = selected
+          ? theme.accent
+          : arcInk(theme, arcOrdinal(slug), arcAttire?.(slug));
         return [fg(slugInk)(slug), fg(selected ? theme.accent : theme.text)(facts)];
       }
       const archived = row.kind === "arc";

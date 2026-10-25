@@ -5,7 +5,7 @@ import {
   followMutations,
 } from "@keywork/engine";
 import type { EventLog } from "./events.ts";
-import type { ChangesPort, FileSides } from "./host.ts";
+import type { ChangesPort, ChangesSummary, FileSides } from "./host.ts";
 
 export interface ChangesSource {
   label: string;
@@ -23,14 +23,14 @@ export interface KnownSessions {
   has(id: string): Promise<boolean>;
 }
 
-export type ChangesSourceOf = () => Promise<ChangesSource | undefined>;
+export type ChangesSourceOf = (sessionId: string) => Promise<ChangesSource | undefined>;
 
 export const changesQuietMs = 16;
 
 export function changesPortOver(sessions: KnownSessions, source: ChangesSourceOf): ChangesPort {
   const baselineFor = async (id: string): Promise<ChangesSource | "missing" | "no-baseline"> => {
     if (!(await sessions.has(id))) return "missing";
-    return (await source()) ?? "no-baseline";
+    return (await source(id)) ?? "no-baseline";
   };
   return {
     list: async (id) => {
@@ -52,11 +52,16 @@ export class ChangesFeed {
   private queue: Promise<void> = Promise.resolve();
   private readonly quiet = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly scheduled = new Set<string>();
+  private readonly announced = new Map<string, ChangesSummary>();
 
   constructor(
     private readonly log: EventLog,
     private readonly source: ChangesSourceOf,
   ) {}
+
+  lastAnnounced(sessionId: string): ChangesSummary | undefined {
+    return this.announced.get(sessionId);
+  }
 
   follow(bus: EventBus<EngineEvents>, sessionId: string): () => void {
     return followMutations(bus, () => this.announceAfterQuiet(sessionId));
@@ -93,10 +98,20 @@ export class ChangesFeed {
 
   private async recordScheduled(sessionId: string): Promise<void> {
     this.scheduled.delete(sessionId);
-    const baseline = await this.source();
+    const baseline = await this.source(sessionId);
     if (baseline === undefined) return;
-    this.log.record(sessionId, "changes.updated", changesUpdateOf(await baseline.changes()));
+    const files = await baseline.changes();
+    this.announced.set(sessionId, changesSummaryOf(files));
+    this.log.record(sessionId, "changes.updated", changesUpdateOf(files));
   }
+}
+
+export function changesSummaryOf(files: readonly ChangedPath[]): ChangesSummary {
+  return {
+    files: files.length,
+    added: files.reduce((total, file) => total + file.added, 0),
+    deleted: files.reduce((total, file) => total + file.deleted, 0),
+  };
 }
 
 export function changesUpdateOf(files: readonly ChangedPath[]): ChangesUpdate {

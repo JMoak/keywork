@@ -23,6 +23,7 @@ export interface PaneContext {
   glyphs?: GlyphSupport;
   instruments?: Theme["instruments"];
   pinMark?: string;
+  ordinal?: number;
 }
 
 export interface FileOpenOptions {
@@ -58,11 +59,14 @@ export type PaneDescriptor =
   | { kind: "mcp" }
   | { kind: "workspaces" }
   | { kind: "diff" }
+  | { kind: "context" }
+  | { kind: "permissions" }
+  | { kind: "bots" }
   | { kind: "terminal"; mode: TerminalMode; sessionId?: string };
 
 export type TerminalMode = "mirror" | "shell";
 
-export type MemoryLens = "garden" | "note" | "ledger";
+export type MemoryLens = "garden" | "note" | "ledger" | "decisions";
 
 export interface Pane {
   readonly id: string;

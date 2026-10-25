@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   type Agent,
@@ -20,8 +20,9 @@ import type { CommandRegistry } from "./commands.ts";
 import type { GaugeStyle } from "./context-gauge.ts";
 import type { ConversationPorts, Titler } from "./conversation-model.ts";
 import { ConversationPane, type TranscriptElevation } from "./conversation-pane.ts";
+import type { ChangedFile } from "./diff-model.ts";
 import type { ConversationTarget } from "./extension-commands.ts";
-import { type CheckpointsPort, forkAtPrompt } from "./fork.ts";
+import { type CheckpointsPort, forkAfterPrompt, forkAtPrompt } from "./fork.ts";
 import type { Animator } from "./motion.ts";
 import type { PageThresholds } from "./page.ts";
 import type { PaneFactory, PaneOrigin } from "./pane-kinds.ts";
@@ -45,7 +46,9 @@ import {
   startFreshSession,
 } from "./session-attachment.ts";
 import { focusOrOpenSession, type SessionTreePort } from "./session-tree-pane.ts";
+import type { ChangesFact } from "./sessions-overview-model.ts";
 import type { ShellDecisionSink, ShellEscapePort } from "./shell-escape.ts";
+import type { TurnRecord } from "./turn-ledger.ts";
 
 export interface SessionPaneDeps {
   core(): AppCore;
@@ -244,6 +247,7 @@ class PaneSession implements SessionControls {
     const checkpoints = deps.checkpoints;
     this.guard = {
       confirm: (call) => this.pane.mutationConfirmation(call),
+      grantsQuietly: (call, rule) => this.pane.model.grantsQuietly(call, rule),
       ...(checkpoints !== undefined && {
         beforeMutation: () => checkpoints.capture(),
         beforeTurn: () => checkpoints.beginTurn?.(),
@@ -268,17 +272,25 @@ class PaneSession implements SessionControls {
           promptId,
           promptDraft,
         ),
+      forkAfterPrompt: (promptId) =>
+        forkAfterPrompt(
+          deps.trees,
+          (sessionId) =>
+            deps.core().openPane(sessionId, undefined, { sourcePaneId: id, arc: "inherit" }),
+          this.pane.sessionId,
+          promptId,
+        ),
       ...(initial.failure !== undefined && { idleNotice: initial.failure }),
       ...(deps.botSpend !== undefined && { botSpend: deps.botSpend }),
       ...(deps.botOf !== undefined && { botOf: deps.botOf }),
       ...(deps.now !== undefined && { now: deps.now }),
       ...(deps.shellEscape !== undefined && {
         shellEscape: deps.shellEscape(this.guard, (decision, call) =>
-          this.pane.model.quietRuns.noteShellEscape(call, decision),
+          this.pane.model.noteShellDecision(call, decision),
         ),
         recordShellEscape: (transcript: string) => this.recordShellEscape(transcript),
       }),
-      spillFile: (spillId) => this.spillOnDisk(spillId),
+      spillFile: (spillId) => this.spillPath(spillId),
       openFile: (path, options) => deps.core().intents.openFile(path, options),
       ...(deps.trees !== undefined && {
         openSession: (sessionId: string) => this.openSession(sessionId),
@@ -308,6 +320,8 @@ class PaneSession implements SessionControls {
     deps.paneSessions.bind(id, () => this.pane.sessionId, {
       busy: () => this.pane.currentAgent()?.busy() ?? false,
       waiting: () => this.pane.awaitingYou(),
+      waitingAsks: () => this.pane.model.waitingAsks(),
+      changes: () => changesFactOf(this.pane.model.turnRecords()),
     });
     if (attachment !== undefined) {
       this.wire(attachment, initial.agent);
@@ -382,14 +396,14 @@ class PaneSession implements SessionControls {
     });
   }
 
-  private spillOnDisk(spillId: string): string | undefined {
+  private spillPath(spillId: string): string | undefined {
     const sessionId = this.pane.sessionId;
-    const path = sessionId === undefined ? undefined : this.deps.spillFile?.(sessionId, spillId);
-    return path !== undefined && existsSync(path) ? path : undefined;
+    return sessionId === undefined ? undefined : this.deps.spillFile?.(sessionId, spillId);
   }
 
-  private async recordShellEscape(transcript: string): Promise<void> {
-    await this.live?.append(textMessage("user", transcript));
+  private async recordShellEscape(transcript: string): Promise<string | undefined> {
+    const receipt = await this.live?.append(textMessage("user", transcript));
+    return receipt?.entryId;
   }
 
   private wire(attachment: SessionAttachment, agent: Agent | undefined): void {
@@ -457,6 +471,18 @@ class PaneSession implements SessionControls {
       ...(modelReference !== undefined && { modelReference }),
     };
   }
+}
+
+function changesFactOf(records: readonly TurnRecord[]): ChangesFact | undefined {
+  const touched = new Map<string, ChangedFile>();
+  for (const record of records) for (const file of record.files ?? []) touched.set(file.path, file);
+  if (touched.size === 0) return undefined;
+  const files = [...touched.values()];
+  return {
+    files: files.length,
+    added: files.reduce((sum, file) => sum + file.added, 0),
+    deleted: files.reduce((sum, file) => sum + file.deleted, 0),
+  };
 }
 
 function inheritedBot(origin: PaneOrigin | undefined, core: AppCore): string | undefined {

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { textTurn } from "../../../packages/engine/src/index.ts";
-import { columnOf, occurrences } from "../frame-queries.ts";
+import { columnOf, occurrences, titled, titledCount } from "../frame-queries.ts";
 import type { Scenario } from "../scenario.ts";
 
 export const arcsOnScreen: Scenario = {
@@ -16,9 +16,9 @@ export const arcsOnScreen: Scenario = {
     await stage.press("enter");
     const bound = await stage.until("arc → dock-v2 · new");
     assert.ok(bound.includes("#dock-v2"), "the arc tag shows as soon as the arc binds");
-    const introduced = await stage.until("│ #dock-v2 · 1 session ");
+    const introduced = await stage.until(titled("#dock-v2 · 1 session "));
     assert.ok(
-      columnOf(introduced, "│ #dock-v2 · 1 session ") < columnOf(introduced, "│ session-1"),
+      columnOf(introduced, "#dock-v2 · 1 session ") < columnOf(introduced, " session-1 "),
       "the first arc introduces its arc pane into the dock that already holds the tree",
     );
     assert.ok(introduced.includes(" · idle · "), "the member row carries its state word");
@@ -27,7 +27,7 @@ export const arcsOnScreen: Scenario = {
 
     await stage.press("ctrl+k", "s", "escape");
     await stage.until("session tree · 2 sessions");
-    await stage.until("│ #dock-v2 · 2 sessions ");
+    await stage.until(titled("#dock-v2 · 2 sessions "));
     await stage.settle();
     const inherited = await stage.capture("split-inherits-arc");
     assert.ok(
@@ -44,23 +44,23 @@ export const arcsOnScreen: Scenario = {
     await stage.capture("arcs-node");
 
     await stage.press("ctrl+k", "l", "escape");
-    await stage.press("ctrl+k", "shift+s", "escape");
+    await stage.press("ctrl+k", "shift+a", "escape");
     await stage.until("arc → arc-2 · new");
     const minted = await stage.until("arc-2 · 1 session");
     assert.ok(minted.includes("dock-v2 · 2 sessions"), "split-arc leaves the source arc alone");
     await stage.settle();
     const afterSecondArc = await stage.capture("split-new-arc");
     assert.equal(
-      occurrences(afterSecondArc, "│ #arc-2"),
+      titledCount(afterSecondArc, "#arc-2"),
       0,
       "only the first arc of a workspace introduces its pane",
     );
 
     await stage.type("/arc open arc-2");
     await stage.press("enter");
-    const opened = await stage.until("│ #arc-2 · 1 session ");
+    const opened = await stage.until(titled("#arc-2 · 1 session "));
     assert.ok(
-      columnOf(opened, "│ #arc-2 · 1 session ") < columnOf(opened, "│ session-1"),
+      columnOf(opened, "#arc-2 · 1 session ") < columnOf(opened, " session-1 "),
       "/arc open lands the pane in the dock that holds the arcs node",
     );
     await stage.settle();

@@ -1,14 +1,15 @@
 import { Box, fg, StyledText, Text } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
-import type { ArcOrdinals } from "../arcs.ts";
+import type { ArcAttire, ArcOrdinals } from "../arcs.ts";
 import type { BotCreateModel } from "../bot-create-model.ts";
 import type { GlyphSupport } from "../capability.ts";
-import type { ConnectModel, ConnectRow, ConnectTone } from "../connect-model.ts";
-import { type HelpPage, type OverlayFrame, panelRowRoom } from "../overlays/index.ts";
+import type { ConnectModel } from "../connect-model.ts";
+import { connectRowView } from "../connect-row-view.ts";
+import type { HelpPage, HelpRow, OverlayFrame } from "../overlays/index.ts";
 import type { Palette } from "../palette.ts";
 import type { ChromeWeight } from "../pane.ts";
 import { type TrayChild, trayRows } from "../tray.ts";
-import { clip, clipSpans, padEnd, width } from "../width.ts";
+import { clip, padEnd } from "../width.ts";
 import { setupPrompt, type WorkspaceReadiness } from "../workspace-setup.ts";
 import {
   arcPickerSpec,
@@ -24,23 +25,21 @@ export interface OverlayInputs {
   theme: Palette;
   chrome: ChromeWeight;
   arcOrdinal: ArcOrdinals;
+  arcAttire?: ArcAttire;
   glyphs?: GlyphSupport;
   scrim?: boolean;
 }
 
 export function overlayView(core: AppCore, inputs: OverlayInputs) {
-  const panel = composedOverlay(core, inputs);
-  if (panel === undefined || inputs.scrim !== true) return panel;
+  const frame = core.overlayFrame();
+  if (frame === undefined) return undefined;
+  const placement = overlayPosition(frame, frameInset(inputs.chrome));
+  const panel = composedOverlay(core, inputs, placement);
+  if (panel === undefined) return undefined;
   return Box(
     { position: "absolute", left: 0, top: 0, width: "100%", height: "100%", zIndex: 15 },
-    Box({
-      position: "absolute",
-      left: 0,
-      top: 0,
-      width: "100%",
-      height: "100%",
-      backgroundColor: scrimInk(inputs.theme),
-    }),
+    ...(inputs.scrim === true ? [scrimLayer(inputs.theme)] : []),
+    moat(placement, inputs.theme),
     panel,
   );
 }
@@ -49,11 +48,34 @@ export function scrimInk(theme: Palette): string {
   return `${theme.background}99`;
 }
 
-function composedOverlay(core: AppCore, inputs: OverlayInputs) {
-  const frame = core.overlayFrame();
-  if (frame === undefined) return undefined;
+function scrimLayer(theme: Palette) {
+  return Box({
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: "100%",
+    height: "100%",
+    backgroundColor: scrimInk(theme),
+  });
+}
+
+function moat(placement: OverlayPlacement, theme: Palette) {
+  const left = Math.max(0, placement.left - moatCells);
+  const top = Math.max(0, placement.top - moatCells);
+  return Box({
+    position: "absolute",
+    left,
+    top,
+    width: placement.width + (placement.left - left) + moatCells,
+    height: placement.height + (placement.top - top) + moatCells,
+    backgroundColor: theme.background,
+  });
+}
+
+const moatCells = 1;
+
+function composedOverlay(core: AppCore, inputs: OverlayInputs, placement: OverlayPlacement) {
   const { theme } = inputs;
-  const placement = overlayPosition(frame, frameInset(inputs.chrome));
   const help = core.helpOverlay();
   if (help !== undefined) {
     return helpOverlay(help.page(core.screen()), theme, placement);
@@ -65,7 +87,7 @@ function composedOverlay(core: AppCore, inputs: OverlayInputs) {
   if (model !== undefined) return filterOverlay(modelPickerSpec(model), theme, placement);
   const arc = core.arcPicker();
   if (arc !== undefined) {
-    return filterOverlay(arcPickerSpec(arc, inputs.arcOrdinal), theme, placement);
+    return filterOverlay(arcPickerSpec(arc, inputs.arcOrdinal, inputs.arcAttire), theme, placement);
   }
   const workspace = core.workspacePicker();
   if (workspace !== undefined) {
@@ -86,16 +108,6 @@ function composedOverlay(core: AppCore, inputs: OverlayInputs) {
   if (connect !== undefined) {
     const title = connect.stage.kind === "connections" ? " connections " : " connect ";
     return panel(title, theme, placement, connectRows(connect, theme, innerWidth(placement)));
-  }
-  const permissions = core.permissionsModel();
-  if (permissions !== undefined) {
-    const rows = permissions.rows(panelRowRoom(frame));
-    return panel(
-      " permissions ",
-      theme,
-      placement,
-      rows.map((row) => connectRowView(row, theme, innerWidth(placement))),
-    );
   }
   const setup = core.setupConfirmation();
   if (setup !== undefined) return panel(" workspace ", theme, placement, setupRows(setup, theme));
@@ -174,19 +186,16 @@ function paletteOverlay(
 
 function helpOverlay(page: HelpPage, theme: Palette, placement: OverlayPlacement) {
   const room = innerWidth(placement);
-  const rows = page.rows.map((row) =>
-    splitRow(
-      { content: ` ${row.keys}`, fg: theme.accent },
-      { content: `${row.help} `, fg: theme.text },
-      room,
-    ),
-  );
+  const rows = page.rows.map((row) => helpRow(row, page.keysColumn, theme, room));
   return panel(
     " keywork keys ",
     theme,
     placement,
     [
-      ...rows,
+      helpFilterLine(page.filter, theme, room),
+      ...(rows.length > 0
+        ? rows
+        : [Text({ content: noKeysMatch(page.filter), fg: theme.textDim })]),
       Box(
         { flexDirection: "row", justifyContent: "center" },
         Text({ content: helpFooter(page), fg: theme.textDim }),
@@ -196,26 +205,31 @@ function helpOverlay(page: HelpPage, theme: Palette, placement: OverlayPlacement
   );
 }
 
+function helpRow(row: HelpRow, keysColumn: number, theme: Palette, room: number) {
+  const keys = padEnd(clip(row.keys, keysColumn), keysColumn);
+  const help = clip(row.help, Math.max(0, room - keysColumn - helpGutter));
+  return Text({ content: new StyledText([fg(theme.accent)(` ${keys}  `), fg(theme.text)(help)]) });
+}
+
+function helpFilterLine(filter: string, theme: Palette, room: number) {
+  if (filter === "") return Text({ content: clip(" › type to filter", room), fg: theme.textDim });
+  return Text({ content: clip(` › ${filter}▌`, room), fg: theme.text });
+}
+
+function noKeysMatch(filter: string): string {
+  return ` no keys match "${filter}"`;
+}
+
+const helpGutter = 3;
+
 function helpFooter(page: HelpPage): string {
   const hidden = [
     ...(page.above > 0 ? [`${page.above} above`] : []),
     ...(page.below > 0 ? [`${page.below} below`] : []),
   ];
   const scrolling = hidden.length > 0 ? ["↑↓ scroll", ...hidden] : [];
-  return [...scrolling, "esc closes"].join(" · ");
-}
-
-function splitRow(
-  left: { content: string; fg: string },
-  right: { content: string; fg: string },
-  cells: number,
-) {
-  const room = Math.max(0, cells - width(right.content));
-  return Box(
-    { flexDirection: "row", height: 1, overflow: "hidden" },
-    Text({ content: padEnd(clip(left.content, Math.max(0, room - 1)), room), fg: left.fg }),
-    Text({ content: right.content, fg: right.fg }),
-  );
+  const leaving = page.filter === "" ? "esc closes" : "esc clears the filter";
+  return [...scrolling, leaving].join(" · ");
 }
 
 function presetRows(core: AppCore, theme: Palette) {
@@ -249,24 +263,4 @@ function botCreateRows(model: BotCreateModel, theme: Palette, room: number) {
 
 function connectRows(model: ConnectModel, theme: Palette, room: number) {
   return model.rows().map((row) => connectRowView(row, theme, room));
-}
-
-function connectRowView(row: ConnectRow, theme: Palette, room: number) {
-  const chunks = row.spans.map((part) =>
-    fg(row.selected ? theme.accent : connectToneInk(part.tone, theme))(part.text),
-  );
-  return Text({ content: new StyledText(clipSpans(chunks, room)) });
-}
-
-function connectToneInk(tone: ConnectTone, theme: Palette): string {
-  switch (tone) {
-    case "text":
-      return theme.text;
-    case "dim":
-      return theme.textDim;
-    case "accent":
-      return theme.accent;
-    case "danger":
-      return theme.error;
-  }
 }

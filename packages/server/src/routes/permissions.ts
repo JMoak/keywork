@@ -50,7 +50,7 @@ export const permissionRoutes = [
     method: "GET",
     path: "/permissions",
     operationId: "listPermissions",
-    summary: `What this server allows beyond the configured rules, so every grant is visible: \`{ trusted, bundle, workspace, session }\`. \`bundle\` is the fixed read-only posture a trusted workspace gets (empty when untrusted), \`workspace\` the grants recorded by \`scope: "workspace"\` answers and workspace grants, and \`session\` the grants from \`scope: "session"\` answers and session grants, keyed by session id. Configured rules decide first; where they are silent, session grants, then workspace grants, then the bundle decide. ${permissionsChanged}`,
+    summary: `What this server allows beyond the configured rules, so every grant is visible: \`{ trusted, bundle, workspace, session }\`. \`bundle\` is the fixed read-only posture a trusted workspace gets (empty when untrusted), \`workspace\` the grants recorded by \`scope: "workspace"\` answers and workspace grants, and \`session\` the grants from \`scope: "session"\` answers and session grants, keyed by session id, for the sessions open in this server process (a session's journaled grants come back when it reopens). Configured rules decide first; where they are silent, session grants, then workspace grants, then the bundle decide. ${permissionsChanged}`,
     authenticated: true,
     responses: { "200": "`{ trusted, bundle, workspace, session }`." },
   },
@@ -73,7 +73,7 @@ export const permissionRoutes = [
     path: "/permissions/session/{sessionId}/grant",
     operationId: "grantSessionRule",
     summary:
-      'Record one rule for that session before any call asks for it, exactly where a `scope: "session"` answer records it; it ends with the server process like every session grant. The same rules are taken as for POST /permissions/workspace/grant. Fires `surface.changed` with `kind: "permissions"`.',
+      'Record one rule for that session before any call asks for it, exactly where a `scope: "session"` answer records it; the session is opened if it was not. Under `keywork serve` every change to the grants of a session is written to its log as a `session_grants` snapshot and a reopen adopts the latest one, so the grant outlives the server process. The same rules are taken as for POST /permissions/workspace/grant. Fires `surface.changed` with `kind: "permissions"`.',
     authenticated: true,
     requestBody: ruleBody,
     responses: {
@@ -102,7 +102,7 @@ export const permissionRoutes = [
     path: "/permissions/session/{sessionId}/revoke",
     operationId: "revokeSessionGrant",
     summary:
-      'Remove one grant a `scope: "session"` answer recorded for that session, so the call it covered asks again there. Other sessions and the workspace grants are untouched. Fires `surface.changed` with `kind: "permissions"`.',
+      'Remove one grant a `scope: "session"` answer recorded for that session, so the call it covered asks again there, after a server restart too (the revoke is journaled like a grant). Other sessions and the workspace grants are untouched. Fires `surface.changed` with `kind: "permissions"`.',
     authenticated: true,
     requestBody: ruleBody,
     responses: {

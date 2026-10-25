@@ -7,7 +7,7 @@ import type { EngineEvents } from "./bus.ts";
 import type { Message } from "./messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "./provider.ts";
-import { defaultToolOutputBudget, SpillStore } from "./session/spill.ts";
+import { clipToolOutput, defaultToolOutputBudget, SpillStore } from "./session/spill.ts";
 import type { Tool } from "./tools.ts";
 
 const tempDir = scratchDirs("keywork-agent-bounds-");
@@ -78,7 +78,7 @@ describe("Agent bounded tool output", () => {
     expect(requestBytes).toBeLessThan(firehoseBytes / 40);
   });
 
-  it("leaves results whole when no spill store is wired", async () => {
+  it("clips a result to the budget and says no session kept it when no spill store is wired", async () => {
     const script = new MockProvider([
       toolCallTurn({ type: "tool-call", callId: "c1", name: "firehose", arguments: {} }),
       textTurn("read it"),
@@ -88,8 +88,14 @@ describe("Agent bounded tool output", () => {
     await agent.send("go");
 
     const part = agent.history()[2]?.parts[0];
-    expect(part?.type === "tool-result" && part.output.length).toBe(firehoseBytes);
-    expect(part?.type === "tool-result" && part.spill).toBeUndefined();
+    expect(part?.type).toBe("tool-result");
+    if (part?.type !== "tool-result") return;
+    expect(Buffer.byteLength(part.output)).toBeLessThanOrEqual(defaultToolOutputBudget);
+    expect(part.output).toBe(clipToolOutput("0123456789\n".repeat(firehoseLines)));
+    expect(part.output).toContain("bytes elided; no session kept the full output");
+    expect(part.output.startsWith("0123456789\n")).toBe(true);
+    expect(part.output.endsWith("0123456789\n")).toBe(true);
+    expect(part.spill).toBeUndefined();
   });
 
   it("stamps live tool output with the running call", async () => {

@@ -13,14 +13,14 @@ import {
   toolScope,
 } from "../../../packages/engine/src/index.ts";
 import { installLanguageServerShim } from "../../../packages/engine/src/testing/index.ts";
-import { occurrences } from "../frame-queries.ts";
+import { armedAsk, steppingClock } from "../asks.ts";
+import { occurrences, paneHeader } from "../frame-queries.ts";
 import type { Scenario, Stage } from "../scenario.ts";
 
-const askRowMarker = "[y] allow  [n] deny";
 const blockHeader = "diagnostics (typescript) · 1 error · 1 warning";
 const blockRow = "cache.ts:1:22 · Cannot find name 'BROKEN'.";
-const calmHeader = /│ session-1 +│/;
-const frozenClock = (): number => Date.parse("2026-09-06T12:00:00.000Z");
+const calmHeader = paneHeader("session-1");
+const clock = steppingClock("2026-09-06T12:00:00.000Z");
 
 let port: LanguagePort | undefined;
 
@@ -45,7 +45,7 @@ export const lspLoop: Scenario = {
   description:
     "114/F4b: an edit that introduces BROKEN carries the diagnostics block inside its tool result; the fix that removes it carries none",
   files: { "cache.ts": "export const total = 1;\n" },
-  app: { clock: frozenClock },
+  app: { clock: clock.now },
   tools: (workspaceDir) => {
     const shimDir = mkdtempSync(join(tmpdir(), "keywork-lsp-shim-"));
     installLanguageServerShim(shimDir, "typescript-language-server", "basic");
@@ -65,7 +65,7 @@ export const lspLoop: Scenario = {
 
     await stage.type("set total to BROKEN in cache.ts");
     await stage.press("enter");
-    await stage.until(askRowMarker);
+    await armedAsk(stage, clock);
     await stage.press("y");
     const settled = await stage.until("I will put a real value back.");
     assert.ok(settled.includes("edit cache.ts"), "the tool row names its verb and subject");
@@ -83,7 +83,7 @@ export const lspLoop: Scenario = {
 
     await stage.type("now fix it");
     await stage.press("enter");
-    await stage.until(askRowMarker);
+    await armedAsk(stage, clock);
     await stage.press("y");
     await stage.until("Clean now, no diagnostics on cache.ts.");
     await stage.until(calmHeader);
@@ -102,12 +102,12 @@ export const lspLoop: Scenario = {
 };
 
 async function discloseLatestToolRow(stage: Stage): Promise<void> {
-  await stage.press("shift+tab");
+  await stage.press("shift+tab", "shift+tab");
   await stage.until("disclose · tab toggles");
   await stage.press("tab");
 }
 
 async function foldToolRow(stage: Stage): Promise<void> {
-  await stage.press("escape", "tab");
+  await stage.press("tab", "escape");
   await stage.settle();
 }
