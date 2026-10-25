@@ -1,7 +1,7 @@
 ╭──────────────────────────────────────╭───────────────────────────────────────╮───────────────────────────────────────╮
-│ session tree                         │ ░ session-1                           │ terminal · mirroring                  │
+│ 1 session tree                       │ 2 ░ session-1                         │ 3 terminal · mirroring                │
 │ ░ no sessions yet                    │                                       │ $ bun test                            │
-│                                      │                                       │ 3 files scanned                       │
+│ the first prompt you send starts one │                                       │ 3 files scanned                       │
 │                                      │                                       │ 12 tests passed                       │
 │                                      │                                       │ no failures                           │
 │                                      │                                       │ · done                                │

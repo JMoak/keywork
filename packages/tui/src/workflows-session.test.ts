@@ -211,7 +211,10 @@ describe("session after-turn lifecycle", () => {
 
     probe.type("again").keys("enter");
     await probe.settled();
-    expect(probe.model()?.entries.at(-1)).toEqual({ kind: "assistant", text: "second reply" });
+    expect(probe.model()?.entries.findLast((entry) => entry.kind !== "ledger")).toEqual({
+      kind: "assistant",
+      text: "second reply",
+    });
     expect(attachment.appended.map((message) => messageText(message)).slice(4)).toEqual([
       "again",
       "second reply",
@@ -233,7 +236,10 @@ describe("session after-turn lifecycle", () => {
     });
     probe.type("hi").keys("enter");
     await waitFor(() =>
-      expect(probe.model()?.entries.at(-1)).toEqual({ kind: "assistant", text: "reply" }),
+      expect(probe.model()?.entries.findLast((entry) => entry.kind !== "ledger")).toEqual({
+        kind: "assistant",
+        text: "reply",
+      }),
     );
     expect(probe.model()?.busy).toBe(true);
     release();

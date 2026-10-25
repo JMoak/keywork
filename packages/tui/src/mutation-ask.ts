@@ -272,7 +272,12 @@ export function callHeadline(call: ToolCallPart): string {
 
 const unseen = Number.POSITIVE_INFINITY;
 
-const coveredBySessionGrant: Confirmation = { approved: true, gate: "user", scope: "session" };
+const coveredBySessionGrant: Confirmation = {
+  approved: true,
+  gate: "user",
+  scope: "session",
+  asked: false,
+};
 
 function confirmationOf({ allowed, remembered, reason, note }: AskAnswer): Confirmation {
   return {

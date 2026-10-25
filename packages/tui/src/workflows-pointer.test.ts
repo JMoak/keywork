@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FileModel } from "./file-model.ts";
+import type { Rect } from "./geometry.ts";
 import { paletteFrame, paletteRowLimit } from "./overlays/index.ts";
 import { resolvePalette } from "./palette.ts";
 import { AppProbe } from "./probe.ts";
@@ -161,6 +162,14 @@ describe("entity tray pointer", () => {
     return { probe, pane };
   }
 
+  function trayFirstRow(probe: AppProbe, pane: SessionTreePane, rect: Rect): number {
+    for (let y = rect.y + 1; y < rect.y + rect.height; y++) {
+      probe.hover(rect.x + 2, y);
+      if (pane.tray.selected() === 1) return y - 1;
+    }
+    throw new Error("no tray row under the pointer");
+  }
+
   function renderTree(probe: AppProbe, pane: SessionTreePane) {
     const rect = probe.rect("tree-1");
     pane.view({ theme: resolvePalette(), focused: true, width: rect.width, height: rect.height });
@@ -173,7 +182,7 @@ describe("entity tray pointer", () => {
     probe.keys("/");
     expect(pane.tray.open).toBe(true);
     const rect = renderTree(probe, pane);
-    const firstRow = rect.y + 3;
+    const firstRow = trayFirstRow(probe, pane, rect);
     probe.hover(rect.x + 2, firstRow + 2);
     expect(pane.tray.selected()).toBe(2);
     probe.click(rect.x + 2, firstRow + 2);

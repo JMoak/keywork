@@ -1,7 +1,7 @@
 ╭──────────────────────────────────────╭───────────────────────────────────────────────────────────────────────────────╮
-│ session tree                         │ session-1                                                                     │
+│ 1 session tree                       │ 2 session-1                                                                   │
 │ ░ no sessions yet                    │                                                                               │
-│                                      │                                                                               │
+│ the first prompt you send starts one │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
@@ -21,11 +21,11 @@
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │ ╭───────────────────────────────────────────────────────────────────────────╮ │
-│                                      │ │ ▸ /exit                close this pane · quits keywork if it's t…ctrl+k x │ │
-│                                      │ │   /export              write this session to a self-contained HTML file:… │ │
-│                                      │ │   /exit-all            close every pane and quit keywork           ctrl+q │ │
-│                                      │ │   /extensions          list loaded extensions, their standing and what e… │ │
-│                                      │ │   /theme-gruvbox-dark  repaint every surface in the gruvbox-dark theme    │ │
+│                                      │ │ ▸ /exit         close this pane · quits keywork if it's the last ctrl+k x │ │
+│                                      │ │   /export       write this session to a self-contained HTML file: /expor… │ │
+│                                      │ │   /exit-all     close every pane and quit keywork                  ctrl+q │ │
+│                                      │ │   /extensions   list loaded extensions, their standing and what each reg… │ │
+│                                      │ │   /context-map  map what fills the focused session's cont… ctrl+k shift+g │ │
 │                                      │ ╰───────────────────────────────────────────────────────────────────────────╯ │
 │                                      │ › /ex▌                                                                        │
 ╰──────────────────────────────────────╰───────────────────────────────────────────────────────────────────────────────╯

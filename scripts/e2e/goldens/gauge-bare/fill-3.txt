@@ -17,8 +17,8 @@
 │    budget honest across every turn. keep the budget honest across every turn. keep the                     │
 │    budget honest across every turn. keep the budget honest across every turn. keep the                     │
 │    budget honest across every turn. keep the budget honest across every turn. keep the                     │
-│    budget honest across every turn. keep the budget honest across every turn. keep the                     │
 │    budget honest across every turn. reply 3 done.                                                          │
+│   turn 3                                                                                                   │
 │ › ▌                                                                                                        │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- keywork e2e · 1 panes · ctrl+k nav · ctrl+p go · / commands                                           return 
+ keywork e2e · 1 pane · ctrl+k nav · ctrl+p go · / commands                                            return 

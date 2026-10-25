@@ -5,6 +5,7 @@ import type { ConversationModel } from "./conversation-model.ts";
 import { ConversationPane, queueEditHint } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
 import { Animator, type Scheduler, tempos } from "./motion.ts";
+import { askArmingMs } from "./mutation-ask.ts";
 import { keyworkNight } from "./palette.ts";
 import type { PaneContext } from "./pane.ts";
 
@@ -24,6 +25,21 @@ function borderOf(pane: ConversationPane, focused: boolean): string | undefined 
 
 function context(focused: boolean, width = 132): PaneContext {
   return { theme: keyworkNight, focused, width, height: 20 };
+}
+
+function clock(): { now: () => number; pass: (ms: number) => void } {
+  let ms = 0;
+  return {
+    now: () => ms,
+    pass: (by) => {
+      ms += by;
+    },
+  };
+}
+
+function armAsk(pane: ConversationPane, time: ReturnType<typeof clock>): void {
+  pane.view(context(true));
+  time.pass(askArmingMs);
 }
 
 function titleOf(
@@ -131,7 +147,10 @@ describe("the lifecycle stamp", () => {
   });
 
   it("matches the needs-you stamp to the ask-gate state exactly", async () => {
-    const pane = new ConversationPane("session-1", undefined, () => {});
+    const time = clock();
+    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
+      ports: { now: time.now },
+    });
     expect(titleOf(pane, true)).not.toContain("█");
 
     const decision = pane.confirmMutation({
@@ -146,6 +165,7 @@ describe("the lifecycle stamp", () => {
     expect(groundOf(pane, false)).toBe(hue);
     expect(borderOf(pane, false)).not.toBe(restingBorder);
 
+    armAsk(pane, time);
     pane.handleKey(parseChord("n"), undefined);
     expect(pane.lifecycle()).toBe("needs-you");
     pane.handleKey(parseChord("u"), undefined);
@@ -183,8 +203,10 @@ describe("the lifecycle stamp", () => {
   it("fades the inverted ground up at quick tempo and drops it on the answering keystroke", () => {
     const { schedule, runOne } = manualScheduler();
     const animator = new Animator({ schedule });
+    const time = clock();
     const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
       animator,
+      ports: { now: time.now },
     });
     void pane.confirmMutation({ type: "tool-call", callId: "c1", name: "write", arguments: {} });
     const grounds: string[] = [];
@@ -196,8 +218,9 @@ describe("the lifecycle stamp", () => {
     expect(grounds.at(-1)).toBe(hue);
     expect(new Set(grounds).size).toBe(tempos.quick.steps);
 
+    time.pass(askArmingMs);
     pane.handleKey(parseChord("n"), undefined);
-    pane.handleKey(parseChord("o"), undefined);
+    pane.handleKey(parseChord("n"), undefined);
     expect(groundOf(pane, true)).not.toBe(hue);
   });
 
@@ -281,8 +304,10 @@ describe("the lifecycle stamp", () => {
   it("pulses the needs-you stamp between ▓ and █ through the animator", () => {
     const { schedule, runAll } = manualScheduler();
     const animator = new Animator({ schedule });
+    const time = clock();
     const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
       animator,
+      ports: { now: time.now },
     });
 
     void pane.confirmMutation({ type: "tool-call", callId: "c1", name: "write", arguments: {} });
@@ -293,8 +318,9 @@ describe("the lifecycle stamp", () => {
     }
     expect(seen).toEqual(new Set(["█", "▓"]));
 
+    time.pass(askArmingMs);
     pane.handleKey(parseChord("n"), undefined);
-    pane.handleKey(parseChord("o"), undefined);
+    pane.handleKey(parseChord("n"), undefined);
     expect(titleOf(pane, true)).toBe(" session-1 ");
   });
 });
@@ -334,22 +360,31 @@ describe("the masthead tile", () => {
   });
 
   it("spells out what [a] will remember under a bash ask, and nothing under a write ask", () => {
-    const pane = new ConversationPane("session-1", undefined, () => {});
+    const time = clock();
+    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
+      ports: { now: time.now },
+    });
     const shell = pane.confirmMutation({
       type: "tool-call",
       callId: "c1",
       name: "bash",
       arguments: { command: "git push origin main" },
     });
+    armAsk(pane, time);
     const rows = frame(pane, true, 80);
     const askAt = rows.findIndex((row) => row.includes("[a] always"));
     expect(askAt).toBeGreaterThanOrEqual(0);
+    expect(rows[askAt]).toContain("? bash git push origin main");
     expect(rows[askAt + 1]).toBe("  [a] remembers bash git push * for this session");
     pane.handleKey(parseChord("n"), undefined);
     const asking = frame(pane, true, 80).join("\n");
-    expect(asking).toContain("why?  [u] unsafe  [n] not now  [o] other");
+    expect(asking).toContain("why?  [u] unsafe  [n] not now  [o] other, say why");
     expect(asking).not.toContain("remembers");
     pane.handleKey(parseChord("o"), undefined);
+    const noting = frame(pane, true, 80);
+    expect(noting.join("\n")).toContain("say why · enter sends · esc skips");
+    expect(noting).toContain("  › ▌");
+    pane.handleKey(parseChord("enter"), undefined);
 
     const write = pane.confirmMutation({
       type: "tool-call",
@@ -357,16 +392,20 @@ describe("the masthead tile", () => {
       name: "write",
       arguments: { path: "a.txt" },
     });
+    armAsk(pane, time);
     const writeRows = frame(pane, true, 80).join("\n");
     expect(writeRows).toContain("[y] allow  [n] deny");
     expect(writeRows).not.toContain("remembers");
     pane.handleKey(parseChord("n"), undefined);
-    pane.handleKey(parseChord("o"), undefined);
+    pane.handleKey(parseChord("n"), undefined);
     return Promise.all([shell, write]);
   });
 
-  it("never wears the masthead while an ask is pending", () => {
-    const pane = new ConversationPane("session-1", undefined, () => {});
+  it("never wears the masthead while an ask is pending, and shows the controls once armed", () => {
+    const time = clock();
+    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
+      ports: { now: time.now },
+    });
     const decision = pane.confirmMutation({
       type: "tool-call",
       callId: "c1",
@@ -374,9 +413,13 @@ describe("the masthead tile", () => {
       arguments: { path: "a.txt" },
     });
     expect(frame(pane, false, 36).join("\n")).toContain("[y] allow");
+    const unarmed = frame(pane, true, 36).join("\n");
+    expect(unarmed).toContain("? write a.txt");
+    expect(unarmed).not.toContain("[y] allow");
+    time.pass(askArmingMs);
     expect(frame(pane, true, 36).join("\n")).toContain("[y] allow");
     pane.handleKey(parseChord("n"), undefined);
-    pane.handleKey(parseChord("o"), undefined);
+    pane.handleKey(parseChord("n"), undefined);
     return decision;
   });
 
@@ -537,7 +580,7 @@ describe("the live header", () => {
     modelOf(pane).submitText("go");
     await modelOf(pane).lastSend;
     expect(titleOf(pane, true)).toBe(" session-1 ");
-    expect(titleOf(pane, true, { costs: true })).toMatch(/^ session-1 · \d+▸\d+ $/);
+    expect(titleOf(pane, true, { costs: true })).toMatch(/^ session-1 · \d+ in \d+ out $/);
   });
 
   it("shows the context gauge only once it is significant, or always in the cockpit", async () => {
@@ -546,7 +589,7 @@ describe("the live header", () => {
     modelOf(pane).submitText("go");
     await modelOf(pane).lastSend;
     expect(pane.liveStatus({ instruments: "calm" })).toBe("");
-    expect(pane.liveStatus({ instruments: "cockpit" })).toMatch(/^[░▒▓█]+ \d+\/\d+k$/);
+    expect(pane.liveStatus({ instruments: "cockpit" })).toMatch(/^[░▒▓█]+ context \d+ of \d+k$/);
   });
 
   it("names the running tool with its elapsed time and counts queued prompts", async () => {
@@ -659,7 +702,7 @@ describe("the gauge override", () => {
     });
     modelOf(pane).submitText("go");
     await modelOf(pane).lastSend;
-    expect(pane.liveStatus({ instruments: "calm" })).toMatch(/^[⡀-⣿█][⡀-⣿█·] \d/);
+    expect(pane.liveStatus({ instruments: "calm" })).toMatch(/^[⡀-⣿█][⡀-⣿█·] context \d/);
   });
 });
 

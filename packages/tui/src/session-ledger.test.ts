@@ -22,9 +22,9 @@ describe("SessionLedger usage", () => {
     expect(new SessionLedger().usageSummary(agent)).toBe("$0.0045");
   });
 
-  it("keeps showing raw token counts when the model has no pricing", async () => {
+  it("spells out in and out token counts when the model has no pricing", async () => {
     const agent = await spent({ inputTokens: 3, outputTokens: 2 });
-    expect(new SessionLedger().usageSummary(agent)).toBe("3▸2");
+    expect(new SessionLedger().usageSummary(agent)).toBe("3 in 2 out");
   });
 
   it("prefers the provider-metered cost over table estimates", async () => {
@@ -160,9 +160,9 @@ describe("SessionLedger context", () => {
     const agent = new Agent({ provider: new MockProvider([textTurn("hi")]) });
     await agent.send("go");
     const text = new SessionLedger().contextReport(agent);
-    expect(text).toMatch(/^context \d+ of 200000 tokens · estimated from the conversation text\n/);
-    expect(text).toContain("memory flush at 175424 · compaction at 183616");
-    expect(text).toContain("window assumed at 200000");
+    expect(text).toMatch(/^context \d+ of 200k · <1% · conversation \d+ estimated from its text\n/);
+    expect(text).toContain("memory flush at 175k · compaction at 184k");
+    expect(text).toContain("window assumed at 200k");
     expect(new SessionLedger().contextReport(undefined)).toBe("no provider · nothing to measure");
   });
 

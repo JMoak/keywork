@@ -2,11 +2,12 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { textTurn, toolScope, writeTool } from "../../../packages/engine/src/index.ts";
+import { paneHeader } from "../frame-queries.ts";
 import type { Scenario, Stage } from "../scenario.ts";
 import { notesAfter, notesBefore } from "./fixtures.ts";
 
 const askRowMarker = "[y] allow  [n] deny";
-const calmHeader = /│ session-1 +│/;
+const calmHeader = paneHeader("session-1");
 const shoutPrompt = "please shout the middle line of notes.txt";
 
 export const firstConversation: Scenario = {

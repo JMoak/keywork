@@ -615,6 +615,7 @@ describe("ask scopes and grants", () => {
       bundle: [],
       workspace: [],
       session: {},
+      quiet: [],
     });
     const id = await createSession(h);
     const reader = await h.stream();
@@ -1859,6 +1860,7 @@ describe("workspace, files, trust and status (K3)", () => {
       root,
       vault: join(root, ".keywork", "memory"),
       reopens: true,
+      recomposed: false,
     });
     expect(await bodyOf(await h.call("/workspace"))).toMatchObject({
       trust: "trusted",
@@ -2498,7 +2500,8 @@ describe("session verbs (118 K1) over the memory host", () => {
     await collect(reader, (event) => event === "turn.completed");
     await reader.close();
     const after = (await (await h.call(`/sessions/${id}/context`)).json()) as ContextAnswer;
-    expect(after.basis).toBe("estimated");
+    expect(after.basis).toBe("reported");
+    expect(after.used).toBe(1_200);
     expect(after.parts.conversation).toEqual({ tokens: 1_200, basis: "reported" });
     expect(after.parts.free).toEqual({ tokens: 200_000 - 1_200, basis: "reported" });
     expect(after.thresholds).toEqual({
@@ -2530,14 +2533,7 @@ describe("session verbs (118 K1) over the memory host", () => {
       usage: { inputTokens: 0, outputTokens: 0 },
       modelId: "m1",
       basis: "no pricing for m1",
-      models: [
-        {
-          reference: "mock/m1",
-          turns: 0,
-          usage: { inputTokens: 0, outputTokens: 0 },
-          rollup: { nanos: 0, pricedTurns: 0, meteredTurns: 0, unpricedTurns: 0 },
-        },
-      ],
+      models: [],
     });
     expect((await h.call("/sessions/nope/context")).status).toBe(404);
     expect((await h.call("/sessions/nope/cost")).status).toBe(404);
@@ -2704,7 +2700,7 @@ describe("session verbs (118 K1) over the memory host", () => {
     expect(await client.restoreTurn("nope", 1)).toBe("missing");
     expect((await client.context(id))?.basis).toBe("estimated");
     expect((await client.context(id))?.parts.conversation.basis).toBe("estimated");
-    expect((await client.cost(id))?.models[0]?.reference).toBe("mock/m2");
+    expect((await client.cost(id))?.models).toEqual([]);
     const exported = await client.exportSession(id);
     expect(exported !== undefined && "html" in exported && exported.html).toContain(
       "<!doctype html>",

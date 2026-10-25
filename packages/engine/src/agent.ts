@@ -54,6 +54,7 @@ export type Confirmation =
       approved: boolean;
       gate: ConfirmingGate;
       scope?: AskScope | undefined;
+      asked?: boolean | undefined;
       reason?: PermissionDecision["reason"];
       note?: string | undefined;
       timedOut?: true;
@@ -718,7 +719,7 @@ export class Agent {
     this.emitPermissionDecision(call, {
       verdict: answer.approved ? "granted" : "denied",
       gate: ask === undefined ? rule : answeredBy,
-      asked: ask !== undefined,
+      asked: ask !== undefined && answer.asked !== false,
       scope: answer.scope,
       ...(!answer.approved && denialOf(answer)),
     });
@@ -817,6 +818,7 @@ interface AnsweredConfirmation {
   approved: boolean;
   gate: ConfirmingGate | undefined;
   scope?: AskScope | undefined;
+  asked?: boolean | undefined;
   reason?: PermissionDecision["reason"];
   note?: string | undefined;
   timedOut?: true;

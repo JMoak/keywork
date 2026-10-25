@@ -5,6 +5,10 @@ import { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
 import type { Tool } from "./tools.ts";
 
+const declinedWithoutRetry = expect.stringMatching(
+  /^declined by user\nThe call did not run, .*never report it as done\.$/s,
+);
+
 async function* streamOf(deltas: TurnDelta[]): AsyncIterable<TurnDelta> {
   yield* deltas;
 }
@@ -258,7 +262,7 @@ describe("Agent end-to-end with mock provider", () => {
 
     expect(executed).toEqual([]);
     const toolResult = agent.history()[2]?.parts[0];
-    expect(toolResult).toMatchObject({ isError: true, output: "declined by user" });
+    expect(toolResult).toMatchObject({ isError: true, output: declinedWithoutRetry });
   });
 
   it("labels a guard-answered ask with the guard's gate", async () => {
@@ -648,7 +652,7 @@ describe("Agent end-to-end with mock provider", () => {
     expect(guardCalls).toEqual(["echo"]);
     expect(agent.history()[2]?.parts[0]).toMatchObject({
       isError: true,
-      output: "declined by user",
+      output: declinedWithoutRetry,
     });
   });
 

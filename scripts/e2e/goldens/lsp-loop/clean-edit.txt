@@ -1,8 +1,6 @@
 ╭──────────────────────────────────────╭───────────────────────────────────────────────────────────────────────────────╮
-│ session tree · 1 session             │ session-1                                                                     │
+│ 1 session tree · 1 session           │ 2 session-1                                                                   │
 │ ▓ set total to BROKEN in cache.ts ·  │                                                                               │
-│                                      │                                                                               │
-│                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
@@ -19,6 +17,7 @@
 │                                      │ ▓ Renaming the constant's initializer to BROKEN.                              │
 │                                      │ ░ edit cache.ts · ~·· · done                                                  │
 │                                      │ ▓ The server flagged BROKEN; I will put a real value back.                    │
+│                                      │   turn 1 · 1 file · +1 -1                                                     │
 │                                      │ █ now fix it                                                                  │
 │                                      │ ▓ Restoring a real value.                                                     │
 │                                      │ ░ edit cache.ts · ~·· · done                                                  │
@@ -26,6 +25,7 @@
 │                                      │   {"path":"cache.ts","oldText":"BROKEN","newText":"2"}                        │
 │                                      │   Replaced 1 occurrence in cache.ts                                           │
 │                                      │ ▓ Clean now, no diagnostics on cache.ts.                                      │
+│                                      │   turn 2 · 1 file · +1 -1                                                     │
 │                                      │ disclose · tab toggles · shift+tab older · esc done                           │
 │                                      │ › ▌                                                                           │
 ╰──────────────────────────────────────╰───────────────────────────────────────────────────────────────────────────────╯

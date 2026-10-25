@@ -1266,8 +1266,8 @@ class LiveSession {
   private stagedRestore(restore: JournaledRestore, putFilesBack: () => Promise<void>): StagedUndo {
     return {
       cancel: async () => {
-        await putFilesBack();
         await undoRestore(this.store, restore);
+        await putFilesBack();
         await this.swap(this.runtime.forge(this.agent.provider, this.store.messages()));
       },
     };

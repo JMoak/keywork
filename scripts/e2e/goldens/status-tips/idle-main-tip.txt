@@ -1,7 +1,7 @@
 ╭───────────────────────────────────╮────────────────────────────────────────────────────────────────────────╮
 │ session tree                      │                                                                        │
-│ ░ no sessions yet                 │                                                                        │
-│                                   │                                · main ·                                │
+│ ░ no sessions yet · the first     │                                                                        │
+│ prompt you send starts one        │                                · main ·                                │
 │                                   │                     ctrl+k s starts a session here                     │
 │                                   │                ctrl+k shift+l/h pushes a docked pane in                │
 │                                   │                  ctrl+k s splits a second session in                   │
@@ -9,4 +9,4 @@
 │                                   │                                                                        │
 │                                   │                                                                        │
 ╰───────────────────────────────────╯────────────────────────────────────────────────────────────────────────╯
- keywork e2e · 1 panes · ctrl+k s splits a second session in                                           return 
+ keywork e2e · 1 pane · ctrl+k s splits a second session in                                            return 

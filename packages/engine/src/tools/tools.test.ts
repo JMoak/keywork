@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bashTool, detectShell } from "./bash.ts";
+import { retainedOutputChars } from "./command-run.ts";
 import { toolScope } from "./confine.ts";
 import { editTool } from "./edit.ts";
 import { readTool } from "./read.ts";
@@ -310,17 +311,21 @@ describe("bash", () => {
     }
   });
 
-  it("caps runaway output during capture", async () => {
+  it("keeps the head and the tail of runaway output past the retained ceiling", async () => {
     const cwd = await workspace();
     const shell = detectShell();
+    const chars = retainedOutputChars + 200_000;
     const flood =
-      shell.name === "powershell" ? "'x' * 100000" : "head -c 100000 /dev/zero | tr '\\0' x";
+      shell.name === "powershell"
+        ? `'x' * ${chars}; 'tail'`
+        : `head -c ${chars} /dev/zero | tr '\\0' x; echo; echo tail`;
 
     const output = await bashTool(cwd).execute({ command: flood });
 
-    expect(output.length).toBeLessThan(31_000);
-    expect(output).toContain("truncated");
-  }, 10_000);
+    expect(output.length).toBeLessThan(retainedOutputChars + 100);
+    expect(output).toContain("characters elided from the middle");
+    expect(output.endsWith("tail")).toBe(true);
+  }, 20_000);
 });
 
 describe("after-save annotations", () => {

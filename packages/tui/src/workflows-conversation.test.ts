@@ -17,10 +17,32 @@ import {
 import { describe, expect, it } from "vitest";
 import { ConversationPane } from "./conversation-pane.ts";
 import { type CheckpointsPort, forkAtPrompt } from "./fork.ts";
+import { askArmingMs } from "./mutation-ask.ts";
 import { AppProbe } from "./probe.ts";
 import { bindSessionLifecycle, type SessionAttachment } from "./session-attachment.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
 import { waitFor } from "./testing/index.ts";
+import type { TranscriptEntry } from "./transcript-feed.ts";
+
+function clock(): { now: () => number; pass: (ms: number) => void } {
+  let ms = 0;
+  return {
+    now: () => ms,
+    pass: (by) => {
+      ms += by;
+    },
+  };
+}
+
+async function armedAsk(probe: AppProbe, time: ReturnType<typeof clock>): Promise<void> {
+  await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+  probe.model()?.askSeen();
+  time.pass(askArmingMs);
+}
+
+function spoken(probe: AppProbe): TranscriptEntry[] | undefined {
+  return probe.model()?.entries.filter((entry) => entry.kind !== "ledger");
+}
 
 describe("conversation round-trip", () => {
   it("sends a prompt and streams the scripted reply into the pane", async () => {
@@ -30,11 +52,11 @@ describe("conversation round-trip", () => {
     probe.type("hi").keys("enter");
     await probe.settled();
 
-    expect(probe.model()?.entries).toEqual([
+    expect(spoken(probe)).toEqual([
       { kind: "user", text: "hi" },
       { kind: "assistant", text: "hey there" },
     ]);
-    expect(probe.snapshot().panes[0]?.title).toBe("session-1 · 3▸5");
+    expect(probe.snapshot().panes[0]?.title).toBe("session-1 · 3 in 5 out");
   });
 });
 
@@ -54,9 +76,10 @@ describe("safety net", () => {
     expect(probe.snapshot().notice).toBe("");
   });
 
-  it("hides undo commands when no checkpoint store is wired", () => {
+  it("offers undo without a checkpoint store and says when there is nothing to take back", async () => {
     const probe = new AppProbe();
-    expect(probe.command("undo")).toBe(false);
+    expect(probe.command("undo")).toBe(true);
+    await waitFor(() => expect(probe.snapshot().notice).toBe("nothing to undo"));
   });
 
   it("pauses a mutating tool on the ask and runs it after y", async () => {
@@ -71,6 +94,7 @@ describe("safety net", () => {
         return "wrote";
       },
     };
+    const time = clock();
     const probe = new AppProbe({
       createPane: (id, notify, commands) => {
         let pane: ConversationPane | undefined;
@@ -82,23 +106,26 @@ describe("safety net", () => {
           tools: [scribble],
           guard: { confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true) },
         });
-        pane = new ConversationPane(id, agent, notify, undefined, commands);
+        pane = new ConversationPane(id, agent, notify, undefined, commands, {
+          ports: { now: time.now },
+        });
         return pane;
       },
     });
 
     probe.type("go").keys("enter");
-    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    await armedAsk(probe, time);
     expect(executed).toEqual([]);
 
     probe.keys("y");
     await probe.settled();
 
     expect(executed).toEqual(["scribble"]);
-    expect(probe.model()?.entries.at(-1)).toEqual({ kind: "assistant", text: "done" });
+    expect(spoken(probe)?.at(-1)).toEqual({ kind: "assistant", text: "done" });
   });
 
   it("feeds a decline back to the agent as an errored tool result", async () => {
+    const time = clock();
     const probe = new AppProbe({
       createPane: (id, notify, commands) => {
         let pane: ConversationPane | undefined;
@@ -118,13 +145,15 @@ describe("safety net", () => {
           ],
           guard: { confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true) },
         });
-        pane = new ConversationPane(id, agent, notify, undefined, commands);
+        pane = new ConversationPane(id, agent, notify, undefined, commands, {
+          ports: { now: time.now },
+        });
         return pane;
       },
     });
 
     probe.type("go").keys("enter");
-    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    await armedAsk(probe, time);
     probe.keys("n", "u");
     await probe.settled();
 
@@ -216,6 +245,7 @@ describe("diff preview in the ask", () => {
     files: Record<string, string>,
     executed: string[],
     call: { name: string; arguments: unknown },
+    time: ReturnType<typeof clock>,
   ) {
     return new AppProbe({
       createPane: (id, notify, commands) => {
@@ -247,7 +277,7 @@ describe("diff preview in the ask", () => {
           },
         });
         pane = new ConversationPane(id, agent, notify, undefined, commands, {
-          ports: { readFile: (path) => files[path] },
+          ports: { readFile: (path) => files[path], now: time.now },
         });
         return pane;
       },
@@ -256,10 +286,13 @@ describe("diff preview in the ask", () => {
 
   it("renders the pending write as a unified diff and only runs it after y", async () => {
     const executed: string[] = [];
-    const probe = writeAskProbe({ "notes.txt": "alpha\nbeta\ngamma\n" }, executed, {
-      name: "write",
-      arguments: { path: "notes.txt", content: "alpha\nBETA\ngamma\n" },
-    });
+    const time = clock();
+    const probe = writeAskProbe(
+      { "notes.txt": "alpha\nbeta\ngamma\n" },
+      executed,
+      { name: "write", arguments: { path: "notes.txt", content: "alpha\nBETA\ngamma\n" } },
+      time,
+    );
     probe.type("go").keys("enter");
     await waitFor(() => expect(probe.model()?.pendingAsk?.diff).toBeDefined());
     expect(executed).toEqual([]);
@@ -271,6 +304,7 @@ describe("diff preview in the ask", () => {
     probe.keys("down");
     expect(probe.model()?.pendingAsk).toBeDefined();
 
+    await armedAsk(probe, time);
     probe.keys("y");
     await probe.settled();
     expect(executed).toEqual(["write"]);
@@ -279,10 +313,13 @@ describe("diff preview in the ask", () => {
   it("scrolls a long diff inside a bounded window without answering the ask", async () => {
     const before = Array.from({ length: 40 }, (_, at) => `old ${at}`).join("\n");
     const after = Array.from({ length: 40 }, (_, at) => `new ${at}`).join("\n");
-    const probe = writeAskProbe({ "big.txt": before }, [], {
-      name: "write",
-      arguments: { path: "big.txt", content: after },
-    });
+    const time = clock();
+    const probe = writeAskProbe(
+      { "big.txt": before },
+      [],
+      { name: "write", arguments: { path: "big.txt", content: after } },
+      time,
+    );
     probe.type("go").keys("enter");
     await waitFor(() => expect(probe.model()?.pendingAsk?.diff).toBeDefined());
 
@@ -296,18 +333,22 @@ describe("diff preview in the ask", () => {
     expect(probe.model()?.askDiffWindow(5).above).toBe(0);
     expect(probe.model()?.pendingAsk).toBeDefined();
 
-    probe.keys("n", "o");
+    await armedAsk(probe, time);
+    probe.keys("n", "n");
     await probe.settled();
   });
 
   it("keeps the plain ask for non-write tools", async () => {
     const executed: string[] = [];
-    const probe = writeAskProbe({}, executed, {
-      name: "bash",
-      arguments: { command: "echo hi" },
-    });
+    const time = clock();
+    const probe = writeAskProbe(
+      {},
+      executed,
+      { name: "bash", arguments: { command: "echo hi" } },
+      time,
+    );
     probe.type("go").keys("enter");
-    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    await armedAsk(probe, time);
     expect(probe.model()?.pendingAsk?.diff).toBeUndefined();
     probe.keys("y");
     await probe.settled();
@@ -543,7 +584,7 @@ describe("conversation pane completion", () => {
     probe.type("follow-up").keys("enter");
     await probe.settled();
 
-    expect(probe.model()?.entries).toEqual([
+    expect(spoken(probe)).toEqual([
       { kind: "user", text: "hello\nworld" },
       { kind: "assistant", text: "first reply" },
       { kind: "user", text: "follow-up" },

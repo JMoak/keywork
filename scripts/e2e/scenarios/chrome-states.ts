@@ -12,6 +12,7 @@ import {
   keyworkNight,
   keyworkNightTheme,
 } from "../../../packages/tui/src/index.ts";
+import { rearmedAsk } from "../asks.ts";
 import type { CapturedFrame } from "../frame.ts";
 import { occurrences, rowOf } from "../frame-queries.ts";
 import type { Scenario, Stage } from "../scenario.ts";
@@ -60,7 +61,7 @@ function chromeStates(name: string, description: string, tier: 0 | 2, goldens: s
       await stage.press("enter");
       await stage.settle();
       const boxedIdle = await stage.capture("boxed-idle");
-      assert.ok(boxedIdle.includes("╭─ session-1 "), "the boxed weight draws its own title row");
+      assert.match(boxedIdle, /╭─ (?:\d )?session-1 /, "the boxed weight draws its own title row");
       await askAndCapture(stage, "boxed", tier);
 
       await stage.type("/theme-bare");
@@ -94,7 +95,8 @@ async function askAndCapture(stage: Stage, weight: string, tier: 0 | 2): Promise
   await stage.capture(`${weight}-needs-you-unfocused`);
 
   await stage.press("ctrl+k", "l", "escape");
-  await stage.press("n");
+  await rearmedAsk(stage);
+  await stage.press("n", "n");
   await stage.until("Left it alone.");
   await stage.settle();
   const answered = await stage.capture(`${weight}-answered`);

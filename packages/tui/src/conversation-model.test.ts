@@ -22,10 +22,11 @@ import { compactionOfferNotice } from "./compaction-offer.ts";
 import { ConversationModel, type ConversationPorts } from "./conversation-model.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
+import { askArmingMs } from "./mutation-ask.ts";
 import type { FileOpenOptions } from "./pane.ts";
 import { bindSessionLifecycle, type ForgetTarget } from "./session-attachment.ts";
 import { guardedShellEscape } from "./shell-escape.ts";
-import type { ToolEntry } from "./transcript-feed.ts";
+import type { ToolEntry, TranscriptEntry } from "./transcript-feed.ts";
 
 const echoTool: Tool = {
   name: "echo",
@@ -43,6 +44,25 @@ function type(model: ConversationModel, text: string): void {
 function submit(model: ConversationModel): Promise<unknown> {
   model.handleKey(parseChord("return"), undefined);
   return model.lastSend;
+}
+
+function withoutLedger(model: ConversationModel): TranscriptEntry[] {
+  return model.entries.filter((entry) => entry.kind !== "ledger");
+}
+
+function clock(): { now: () => number; pass: (ms: number) => void } {
+  let ms = 0;
+  return {
+    now: () => ms,
+    pass: (by) => {
+      ms += by;
+    },
+  };
+}
+
+function armAsk(model: ConversationModel, time: ReturnType<typeof clock>): void {
+  model.askSeen();
+  time.pass(askArmingMs);
 }
 
 async function drained(model: ConversationModel): Promise<void> {
@@ -106,6 +126,7 @@ describe("ConversationModel", () => {
     expect(model.entries).toEqual([
       { kind: "user", text: "hi there" },
       { kind: "assistant", text: "hey" },
+      { kind: "ledger", text: "", prompt: { kind: "user", text: "hi there" }, folded: true },
     ]);
     expect(model.busy).toBe(false);
   });
@@ -158,12 +179,17 @@ describe("ConversationModel", () => {
     expect(model.input).toBe("");
   });
 
-  it("ignores pastes while an ask is pending", () => {
-    const model = new ConversationModel(undefined, () => {});
+  it("sends a paste during an ask to the composer and holds the ask unarmed", () => {
+    const time = clock();
+    const model = new ConversationModel(undefined, () => {}, undefined, undefined, {
+      now: time.now,
+    });
     void model.confirmMutation({ type: "tool-call", callId: "c", name: "write", arguments: {} });
+    armAsk(model, time);
     expect(model.paste("sneaky")).toBe(true);
-    expect(model.input).toBe("");
+    expect(model.input).toBe("sneaky");
     expect(model.pendingAsk).toBeDefined();
+    expect(model.askHoldsKeys()).toBe(false);
   });
 });
 
@@ -420,7 +446,7 @@ describe("the engine-owned turn queue", () => {
     open();
     await drained(model);
 
-    expect(model.entries).toEqual([
+    expect(withoutLedger(model)).toEqual([
       { kind: "user", text: "first" },
       { kind: "assistant", text: "first reply" },
       { kind: "user", text: "second" },
@@ -444,7 +470,7 @@ describe("the engine-owned turn queue", () => {
     open();
     await drained(model);
 
-    expect(model.entries.map((entry) => entry.text)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
       "a",
       "re: a",
       "b",
@@ -463,7 +489,7 @@ describe("the engine-owned turn queue", () => {
     model.submitText("actually this", "steer");
     await drained(model);
 
-    expect(model.entries.map((entry) => entry.text)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
       "slow one",
       "· interrupted",
       "actually this",
@@ -509,7 +535,7 @@ describe("the engine-owned turn queue", () => {
 
     open();
     await drained(model);
-    expect(model.entries.map((entry) => entry.text)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
       "one",
       "re: one",
       "held",
@@ -531,7 +557,7 @@ describe("the engine-owned turn queue", () => {
     model.submitText("one");
     model.submitText("two");
     await drained(model);
-    expect(model.entries.map((entry) => `${entry.kind}:${entry.text}`)).toEqual([
+    expect(withoutLedger(model).map((entry) => `${entry.kind}:${entry.text}`)).toEqual([
       "user:one",
       "assistant:re: one",
       "error:journal write failed",
@@ -556,7 +582,12 @@ describe("the engine-owned turn queue", () => {
     expect(model.currentAgent()).toBe(fresh);
     expect(stale.history().map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(fresh.history().map((message) => message.role)).toEqual(["user", "assistant"]);
-    expect(model.entries.map((entry) => entry.text)).toEqual(["one", "re: one", "two", "re: two"]);
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
+      "one",
+      "re: one",
+      "two",
+      "re: two",
+    ]);
   });
 
   it("alt+enter steers and plain enter queues", async () => {
@@ -574,7 +605,7 @@ describe("the engine-owned turn queue", () => {
       "queue:queued",
     ]);
     await drained(model);
-    expect(model.entries.map((entry) => entry.text)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
       "slow one",
       "· interrupted",
       "now",
@@ -767,9 +798,9 @@ describe("swapping agents", () => {
     model.submitText("two");
     await model.lastSend;
 
-    expect(model.entries.map((entry) => entry.text)).toEqual(["one", "a", "two", "b"]);
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual(["one", "a", "two", "b"]);
     first.bus.emit("turn.delta", { delta: { type: "text", text: "ghost" } });
-    expect(model.entries.at(-1)).toEqual({ kind: "assistant", text: "b" });
+    expect(withoutLedger(model).at(-1)).toEqual({ kind: "assistant", text: "b" });
   });
 
   it("denies an ask left pending by the agent being swapped out", async () => {
@@ -947,7 +978,7 @@ describe("tool rows through the model", () => {
     type(model, "use echo");
     await submit(model);
 
-    const kinds = model.entries.map((entry) => entry.kind);
+    const kinds = withoutLedger(model).map((entry) => entry.kind);
     expect(kinds).toEqual(["user", "tool", "assistant"]);
     expect(model.entries[1]).toMatchObject({ failed: false });
     expect(model.entries[1]?.text).toMatch(/^echo hi · \d+(\.\d+)?(ms|s|m) · done$/);
@@ -1114,20 +1145,22 @@ describe("! shell escape", () => {
     const guard: ToolGuard = {
       confirm: (call) => model?.confirmMutation(call) ?? Promise.resolve(false),
     };
+    const time = clock();
     model = new ConversationModel(
       new Agent({ provider: new MockProvider([]) }),
       () => {},
       undefined,
       undefined,
-      shellPorts(bashStub(runs), guard, undefined),
+      shellPorts(bashStub(runs), guard, undefined, { now: time.now }),
     );
 
     model.submitText("!echo hi");
     await untilAsked(model);
-    expect(model.pendingAsk?.summary).toBe('bash {"command":"echo hi"}');
+    expect(model.pendingAsk?.summary).toBe("bash echo hi");
     expect(runs).toEqual([]);
     expect(model.busy).toBe(true);
 
+    armAsk(model, time);
     model.handleKey(parseChord("y"), "y");
     await drained(model);
 
@@ -1136,8 +1169,9 @@ describe("! shell escape", () => {
 
     model.submitText("!echo again");
     await untilAsked(model);
+    armAsk(model, time);
     model.handleKey(parseChord("n"), "n");
-    model.handleKey(parseChord("o"), "o");
+    model.handleKey(parseChord("n"), "n");
     await drained(model);
 
     expect(runs).toEqual(["echo hi"]);
@@ -1205,7 +1239,12 @@ describe("! shell escape", () => {
     await drained(model);
 
     expect(runs).toEqual([]);
-    expect(model.entries.map((entry) => entry.text)).toEqual(["!", "a", "! not a command", "b"]);
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
+      "!",
+      "a",
+      "! not a command",
+      "b",
+    ]);
   });
 
   it("busy panes queue the command like a prompt, run it before the next prompt, and record it after the turn", async () => {
@@ -1238,7 +1277,9 @@ describe("! shell escape", () => {
     open();
     await drained(model);
 
-    expect(model.entries.map((entry) => `${entry.kind}:${entry.text.split(" ·")[0]}`)).toEqual([
+    expect(
+      withoutLedger(model).map((entry) => `${entry.kind}:${entry.text.split(" ·")[0]}`),
+    ).toEqual([
       "user:slow",
       "assistant:re: slow",
       "tool:bash echo one",
@@ -1275,7 +1316,7 @@ describe("! shell escape", () => {
     await drained(model);
 
     expect(runs).toEqual(["echo now"]);
-    expect(model.entries.map((entry) => entry.kind)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.kind)).toEqual([
       "user",
       "info",
       "tool",
@@ -1415,7 +1456,7 @@ describe("queue editing", () => {
     open();
     await drained(model);
 
-    expect(model.entries.map((entry) => entry.text)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
       "first",
       "re: first",
       "a",
@@ -1467,7 +1508,7 @@ describe("queue editing", () => {
     open();
     await pane.settled();
 
-    expect(model.entries.map((entry) => entry.text)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
       "first",
       "re: first",
       "b",
@@ -1499,7 +1540,7 @@ describe("queue editing", () => {
 
     await drained(model);
 
-    expect(model.entries.map((entry) => entry.text)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
       "first",
       "· interrupted",
       "c",
@@ -2007,7 +2048,7 @@ describe("send now", () => {
 
     open();
     await drained(model);
-    const texts = model.entries.map((entry) => entry.text);
+    const texts = withoutLedger(model).map((entry) => entry.text);
     expect(texts).toEqual([
       "first",
       "2 queued prompts set aside · up on an empty prompt brings them back",
@@ -2042,7 +2083,7 @@ describe("send now", () => {
     expect(model.entries.some((entry) => entry.kind === "info")).toBe(false);
     open();
     await drained(model);
-    expect(model.entries.map((entry) => entry.text)).toEqual([
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
       "first",
       "· interrupted",
       "now",
@@ -2102,7 +2143,7 @@ describe("image chips at send time", () => {
     });
     type(model, "what is this");
     await submit(model);
-    expect(model.entries.map((entry) => entry.text)).toEqual(["what is this", "seen"]);
+    expect(withoutLedger(model).map((entry) => entry.text)).toEqual(["what is this", "seen"]);
     expect(agent.history()[0]?.parts).toEqual([
       { type: "text", text: "what is this" },
       { type: "image", mediaType: "image/png", data: "AAAA" },

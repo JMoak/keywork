@@ -155,7 +155,8 @@ describe("fileSessionHost", () => {
     expect(accepted.status).toBe(202);
     const types: string[] = [];
     while (types.at(-1) !== "turn.completed") types.push((await reader.next()).event ?? "");
-    expect(types[0]).toBe("turn.started");
+    expect(types[0]).toBe("session.state");
+    expect(types).toContain("turn.started");
     expect(types).toContain("tool.started");
     expect(types).toContain("tool.output");
     expect(types).toContain("tool.finished");
@@ -628,8 +629,10 @@ describe("memorySessionHost parity", () => {
       body: JSON.stringify({ text: "dictated prompt", client: "wispr-flow" }),
     });
     expect(await accepted.json()).toEqual({ sessionId: id, accepted: true, queued: false });
-    const started = await reader.next();
+    let started = await reader.next();
+    while (started.event !== "turn.started") started = await reader.next();
     expect(JSON.parse(started.data).payload).toEqual({
+      entryId: expect.any(String),
       userText: "dictated prompt",
       origin: { kind: "external", client: "wispr-flow" },
     });
@@ -668,16 +671,19 @@ describe("serve discovery", () => {
     return { out, errors, interrupts, finished };
   }
 
-  it("writes the workspace ticket and the user-level fallback, refuses a second serve beside a live one, and clears a stale ticket", async () => {
+  it("writes the workspace ticket alone, refuses a second serve beside a live one, and clears a stale ticket", async () => {
     const cwd = await tempDir();
     const userRoot = await tempDir();
     const first = await startServe(cwd, userRoot);
-    while (first.out.length < 4) await new Promise((resolve) => setTimeout(resolve, 5));
+    while (first.out.length < 3) await new Promise((resolve) => setTimeout(resolve, 5));
     const url = first.out[0]?.replace("listening on ", "") ?? "";
-    const files = ticketFilesFor(cwd, undefined, userRoot);
+    const files = [workspaceTicketFile(cwd, undefined, userRoot)];
     expect(first.out.slice(2)).toEqual(files.map((file) => `ticket ${file}`));
-    expect(files[0]).toBe(workspaceTicketFile(cwd, undefined, userRoot));
-    expect(files[1]).toBe(serverTicketFile(userRoot));
+    expect(ticketFilesFor(cwd, undefined, userRoot)).toEqual([
+      ...files,
+      serverTicketFile(userRoot),
+    ]);
+    expect(readServerTicket(serverTicketFile(userRoot))).toBeUndefined();
     for (const file of files) expect(readServerTicket(file)?.url).toBe(url);
     const doc = (await (await fetch(`${url}/doc`)).json()) as {
       info: { workspace: { anchor: string; identity: string } };
@@ -694,7 +700,7 @@ describe("serve discovery", () => {
 
     writeServerTicket(files[0] ?? "", { url, token: "stale" });
     const third = await startServe(cwd, userRoot);
-    while (third.out.length < 4) await new Promise((resolve) => setTimeout(resolve, 5));
+    while (third.out.length < 3) await new Promise((resolve) => setTimeout(resolve, 5));
     expect(readServerTicket(files[0] ?? "")?.token).not.toBe("stale");
     third.interrupts.abort();
     expect(await third.finished).toBe(0);
@@ -1592,6 +1598,7 @@ describe("the surface ports over a served workspace (K3)", () => {
         root: world.cwd,
         vault: join(world.cwd, ".keywork", "memory"),
         reopens: true,
+        recomposed: false,
       });
       const trustFile = join(world.userRoot, ".keywork", "trust.json");
       const recorded = JSON.parse(await readFile(trustFile, "utf8")) as Record<string, boolean>;
@@ -2090,7 +2097,7 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
     const before = await read<{ leafId: string; activePath: string[] }>(
       await call(`/sessions/${id}/entries`),
     );
-    expect(before.activePath).toHaveLength(4);
+    expect(before.activePath).toHaveLength(6);
     const firstAnswer = before.activePath[1] ?? "";
 
     const moved = await post(call, `/sessions/${id}/leaf`, { entryId: firstAnswer });
@@ -2112,7 +2119,7 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
     );
     expect(after.entries.filter((entry) => entry.parentId === firstAnswer)).toHaveLength(2);
     expect(after.activePath.slice(0, 2)).toEqual(before.activePath.slice(0, 2));
-    expect(after.activePath).toHaveLength(4);
+    expect(after.activePath).toHaveLength(5);
     expect((await post(call, `/sessions/${id}/leaf`, { entryId: "nope" })).status).toBe(404);
     await reader.close();
     await server.close();
@@ -2176,12 +2183,12 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
     expect(existsSync(join(options.cwd, "note.txt"))).toBe(false);
     await post(call, `/sessions/${id}/redo`);
     const redone = envelopeIn(await until(reader, (frame) => frame.event === "changes.updated"));
-    expect((redone.payload as { paths: string[] }).paths).toEqual(["blob.bin", "note.txt"]);
+    expect((redone.payload as { paths: string[] }).paths).toEqual(["note.txt"]);
     await reader.close();
     await server.close();
   });
 
-  it("stats the working file first: exactly 20 MiB is served capped, one byte more is refused with 413", async () => {
+  it("stats the working file first: exactly 20 MiB is served capped with no note before a baseline, one byte more is refused with 413", async () => {
     const options = await checkpointed(new MockProvider([]));
     const { server, call } = serverOver(options);
     const { id } = await read<{ id: string }>(await call("/sessions", { method: "POST" }));
@@ -2189,10 +2196,9 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
     await writeFile(join(options.cwd, "at-cap.txt"), Buffer.alloc(maxFileBytes, "a"));
     const atCap = await call(`/sessions/${id}/changes/file?path=at-cap.txt`);
     expect(atCap.status).toBe(200);
-    expect(await read<{ note: string; truncated: boolean }>(atCap)).toMatchObject({
-      note: "new",
-      truncated: true,
-    });
+    const capped = await read<{ note?: string; truncated: boolean }>(atCap);
+    expect(capped.truncated).toBe(true);
+    expect(capped.note).toBeUndefined();
     await writeFile(join(options.cwd, "over-cap.txt"), Buffer.alloc(maxFileBytes + 1, "a"));
     const overCap = await call(`/sessions/${id}/changes/file?path=over-cap.txt`);
     expect(overCap.status).toBe(413);

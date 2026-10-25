@@ -626,6 +626,7 @@ describe("SessionTreePane command tray", () => {
       "group",
       "remove",
       "trash",
+      "empty trash",
       "refresh",
     ]);
     press(pane, "enter");
@@ -844,6 +845,8 @@ describe("SessionTreePane removal and the trash", () => {
     press(pane, "/");
     expect(pane.tray.matches().map((command) => command.name)).toEqual([
       "restore",
+      "delete",
+      "empty",
       "back",
       "refresh",
     ]);

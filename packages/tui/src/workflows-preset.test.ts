@@ -2,6 +2,7 @@ import { Agent, MockProvider, textTurn, toolCallTurn } from "@keywork/engine";
 import type { ActivePreset } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
 import { ConversationPane } from "./conversation-pane.ts";
+import { askArmingMs } from "./mutation-ask.ts";
 import { helpFrame, type PresetsPort } from "./overlays/index.ts";
 import { AppProbe } from "./probe.ts";
 import { waitFor } from "./testing/index.ts";
@@ -129,6 +130,7 @@ describe("preset overlay", () => {
         applied.push(name);
       },
     };
+    let nowMs = 0;
     const probe = new AppProbe({
       presets: port,
       createPane: (id, notify, commands) => {
@@ -152,7 +154,9 @@ describe("preset overlay", () => {
           ],
           guard: { confirm: (call) => pane?.confirmMutation(call) ?? Promise.resolve(true) },
         });
-        pane = new ConversationPane(id, agent, notify, undefined, commands);
+        pane = new ConversationPane(id, agent, notify, undefined, commands, {
+          ports: { now: () => nowMs },
+        });
         return pane;
       },
     });
@@ -166,6 +170,8 @@ describe("preset overlay", () => {
     expect(probe.model()?.pendingAsk).toBeDefined();
     expect(executed).toEqual([]);
 
+    probe.model()?.askSeen();
+    nowMs += askArmingMs;
     probe.keys("y");
     await probe.settled();
     expect(executed).toEqual(["scribble"]);

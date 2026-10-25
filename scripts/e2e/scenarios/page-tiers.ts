@@ -67,22 +67,22 @@ export const pageTiers: Scenario = {
     const disclosed = await stage.until("drwxr-xr-x");
     await stage.capture("tool-row-open");
 
-    await stage.press("tab");
+    await stage.click(4, rowOf(disclosed, "░ list"));
     await stage.settle();
     const refolded = await stage.capture("tool-row-refolded");
-    assert.ok(!refolded.includes("drwxr-xr-x"), "tab folds the disclosed row back down");
+    assert.ok(!refolded.includes("drwxr-xr-x"), "a second click folds the disclosed row back down");
     assert.ok(disclosed.includes("░ list"), "the collapsed row survives disclosure");
 
-    await stage.press("shift+tab");
+    await stage.press("shift+tab", "shift+tab");
     const cursored = await stage.until("disclose · tab toggles");
     assert.ok(!cursored.includes("drwxr-xr-x"), "shift+tab only places the fold cursor");
     await stage.press("tab");
     await stage.until("drwxr-xr-x");
     await stage.capture("tool-row-keyboard-open");
-    await stage.press("escape", "tab");
+    await stage.press("tab", "escape");
     await stage.settle();
     const keyboardRefolded = await stage.capture("tool-row-keyboard-refolded");
-    assert.ok(!keyboardRefolded.includes("drwxr-xr-x"), "tab closes the row after esc");
+    assert.ok(!keyboardRefolded.includes("drwxr-xr-x"), "tab closes the cursored row");
     assert.ok(!keyboardRefolded.includes("disclose ·"), "esc leaves disclosure");
 
     await stage.resize(84, 36);

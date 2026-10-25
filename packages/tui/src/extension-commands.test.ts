@@ -12,6 +12,16 @@ import {
 import { AppProbe } from "./probe.ts";
 import { waitFor } from "./testing/index.ts";
 
+async function armedAsk(probe: AppProbe): Promise<void> {
+  await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+  probe.model()?.askSeen();
+  await waitFor(() => expect(probe.model()?.askHoldsKeys()).toBe(true));
+}
+
+function turnRows(probe: AppProbe) {
+  return probe.model()?.entries.filter((entry) => entry.kind !== "ledger");
+}
+
 function wire(
   probe: AppProbe,
   extensions: Partial<ExtensionsPort>,
@@ -70,10 +80,10 @@ describe("palette-surfaced workspace commands", () => {
     wire(probe, { commands: [shellCommand("ship", "ship notes: !`git log`", ran)] });
 
     expect(probe.command("ship")).toBe(true);
-    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
+    await armedAsk(probe);
     probe.keys("y");
     await waitFor(() =>
-      expect(probe.model()?.entries).toEqual([
+      expect(turnRows(probe)).toEqual([
         { kind: "user", text: "ship notes: shell-output" },
         { kind: "assistant", text: "done" },
       ]),
@@ -87,8 +97,8 @@ describe("palette-surfaced workspace commands", () => {
     const notices = wire(probe, { commands: [shellCommand("ship", "!`rm -rf /`", ran)] });
 
     expect(probe.command("ship")).toBe(true);
-    await waitFor(() => expect(probe.model()?.pendingAsk).toBeDefined());
-    probe.keys("n", "o");
+    await armedAsk(probe);
+    probe.keys("n", "o", "escape");
     await waitFor(() =>
       expect(notices).toEqual(["/ship failed: you declined the shell interpolation: rm -rf /"]),
     );
@@ -96,7 +106,7 @@ describe("palette-surfaced workspace commands", () => {
     expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([]);
   });
 
-  it("appears in pane slash suggestions and in the palette, except args-only commands", () => {
+  it("appears in pane slash suggestions and in the palette, where an args-only command completes", () => {
     const probe = new AppProbe();
     wire(probe, {
       commands: [
@@ -107,7 +117,9 @@ describe("palette-surfaced workspace commands", () => {
     probe.keys("ctrl+shift+p").type("plain");
     expect(probe.core.paletteMatches().map((entry) => entry.name)).toContain("plain");
     probe.keys("escape").keys("ctrl+shift+p").type("wants");
-    expect(probe.core.paletteMatches().map((entry) => entry.name)).not.toContain("wants-args");
+    expect(probe.core.paletteMatches().map((entry) => entry.name)).toEqual(["wants-args"]);
+    probe.keys("enter");
+    expect(probe.snapshot()).toMatchObject({ overlay: "palette", paletteQuery: "/wants-args " });
     probe.keys("escape");
     expect(probe.core.registry.search("wants-args")[0]?.name).toBe("wants-args");
   });
@@ -157,10 +169,7 @@ describe("pane agent swap keeps the transcript wired", () => {
     probe.type("two").keys("enter");
     await probe.settled();
     expect(pane.currentAgent()).toBe(next);
-    expect(probe.model()?.entries.at(-1)).toEqual({
-      kind: "assistant",
-      text: "second, as scout",
-    });
+    expect(turnRows(probe)?.at(-1)).toEqual({ kind: "assistant", text: "second, as scout" });
   });
 });
 

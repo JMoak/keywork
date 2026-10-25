@@ -7,7 +7,7 @@ import {
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
-import { MutationAsk } from "./mutation-ask.ts";
+import { askArmingMs, MutationAsk } from "./mutation-ask.ts";
 import { compactJson } from "./transcript-feed.ts";
 
 const askRows = 8;
@@ -41,17 +41,22 @@ describe("the unconfined ask", () => {
   it("reads as one honest yes or no and remembers nothing beyond it", async () => {
     const [refusal] = await everyRefusal();
     if (refusal === undefined) throw new Error("expected a refusal from a windows host");
-    const gate = new MutationAsk(() => {});
+    let nowMs = 0;
+    const gate = new MutationAsk(
+      () => {},
+      undefined,
+      () => nowMs,
+    );
 
     const answer = gate.confirm(unconfinedCall(refusal, "unconfined-1"));
 
-    expect(gate.pending?.summary).toBe(
-      'unconfined {"why":"windows has no sandbox keywork can use"}',
-    );
+    expect(gate.pending?.summary).toBe("unconfined windows has no sandbox keywork can use");
     expect(gate.pending?.diff).toBeUndefined();
     expect(gate.pending?.remembers).toEqual([]);
+    gate.seen();
+    nowMs += askArmingMs;
     gate.handleKey(parseChord("n"), askRows);
-    gate.handleKey(parseChord("o"), askRows);
+    gate.handleKey(parseChord("n"), askRows);
     expect(await answer).toBe(false);
   });
 

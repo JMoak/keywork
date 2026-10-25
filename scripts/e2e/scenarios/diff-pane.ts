@@ -1,17 +1,18 @@
 import { strict as assert } from "node:assert";
 import { textTurn, toolScope, writeTool } from "../../../packages/engine/src/index.ts";
+import { armedAsk, steppingClock } from "../asks.ts";
+import { paneHeader, titled } from "../frame-queries.ts";
 import type { Scenario } from "../scenario.ts";
 import { notesAfter, notesBefore } from "./fixtures.ts";
 
-const askRowMarker = "[y] allow  [n] deny";
-const calmHeader = /│ session-1 +│/;
+const calmHeader = paneHeader("session-1");
 const emptyRow = "no changes since session start";
-const changedRow = "notes.txt  +1 -1 · turn 1";
+const changedRow = "turn 1  notes.txt  +1 -1";
 const shoutPrompt = "please shout the middle line of notes.txt";
 const reply = "All set, beta is BETA now.";
 const treeTitle = "session tree · 1 session";
 const treeRow = `▓ ${shoutPrompt} · now`;
-const frozenClock = (): number => Date.parse("2026-09-07T12:00:00.000Z");
+const clock = steppingClock("2026-09-07T12:00:00.000Z");
 
 const afterWrite = frameShowing(
   treeTitle,
@@ -56,21 +57,21 @@ export const diffPane: Scenario = {
     ],
     textTurn(reply),
   ],
-  app: { clock: frozenClock },
+  app: { clock: clock.now },
   goldens: ["after-write", "after-undo"],
   run: async (stage) => {
     await stage.settle();
     await stage.type("/diff");
     await stage.press("enter");
     const opened = await stage.until(emptyRow);
-    assert.ok(opened.includes("│ diff "), "the pane titles itself diff before anything changes");
+    assert.ok(titled("diff ").test(opened), "the pane titles itself diff before anything changes");
 
     await stage.press("ctrl+p");
     await stage.type("session-1");
     await stage.press("enter");
     await stage.type(shoutPrompt);
     await stage.press("enter");
-    await stage.until(askRowMarker);
+    await armedAsk(stage, clock);
     await stage.press("y");
     await stage.until(afterWrite);
     await stage.capture("after-write");
@@ -88,7 +89,7 @@ export const diffPane: Scenario = {
 
     await stage.press("ctrl+k", "g", "escape");
     await stage.press("enter");
-    const viewer = await stage.until("│ notes.txt · 4 lines");
+    const viewer = await stage.until(titled("notes.txt · 4 lines"));
     assert.ok(viewer.includes("2 BETA"), "enter opens the changed file in a viewer pane");
     await stage.quit();
   },

@@ -14,6 +14,7 @@ import { detectCapabilities } from "./capability.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
 import { Animator } from "./motion.ts";
+import { askArmingMs } from "./mutation-ask.ts";
 import { resolvePageThresholds } from "./page.ts";
 import { type PermissionsPort, quietRunLine } from "./permissions-model.ts";
 import { AppProbe } from "./probe.ts";
@@ -59,6 +60,16 @@ function fakeAttachment(id: string, seed: Partial<SessionAttachment> = {}): Fake
     bound,
     models,
     ...seed,
+  };
+}
+
+function clock(): { now: () => number; pass: (ms: number) => void } {
+  let ms = 0;
+  return {
+    now: () => ms,
+    pass: (by) => {
+      ms += by;
+    },
   };
 }
 
@@ -239,12 +250,15 @@ describe("SessionPanes permissions", () => {
   });
 
   it("reports a later escape an [a] grant covered as a session grant", async () => {
-    const { panes, created, pane } = world(escapes());
+    const time = clock();
+    const { panes, created, pane } = world({ ...escapes(), now: time.now });
     await waitFor(() => expect(created).toHaveLength(1));
     const model = pane("session-1").model;
 
     model.submitText("!npm run build");
     await waitFor(() => expect(model.pendingAsk).toBeDefined());
+    model.askSeen();
+    time.pass(askArmingMs);
     model.handleKey(parseChord("a"), "a");
     await waitFor(() => expect(model.busy).toBe(false));
     expect(panes.focusedPermissionsPort(paneSeat).lastQuietRun()).toBeUndefined();
@@ -260,11 +274,14 @@ describe("SessionPanes permissions", () => {
   });
 
   it("reads session grants from the seat when it keeps them, and from the pane otherwise", async () => {
-    const { panes, created, pane } = world(escapes());
+    const time = clock();
+    const { panes, created, pane } = world({ ...escapes(), now: time.now });
     await waitFor(() => expect(created).toHaveLength(1));
     const model = pane("session-1").model;
     model.submitText("!npm run build");
     await waitFor(() => expect(model.pendingAsk).toBeDefined());
+    model.askSeen();
+    time.pass(askArmingMs);
     model.handleKey(parseChord("a"), "a");
     await waitFor(() => expect(model.busy).toBe(false));
 

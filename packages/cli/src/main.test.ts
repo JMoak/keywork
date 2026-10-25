@@ -58,7 +58,8 @@ describe("main(argv) usage contract", () => {
     [["frobnicate"], 2, "err", 'unknown command "frobnicate"'],
     [[], 2, "err", "no command given and no terminal attached"],
     [["run"], 2, "err", "keywork run needs a prompt"],
-    [["serve", "--help"], 2, "err", "keywork: Unknown option '--help'"],
+    [["serve", "--help"], 0, "out", "Usage:"],
+    [["attach", "--help"], 0, "out", "Usage:"],
     [["serve", "--port", "http"], 2, "err", "keywork serve: --port wants a whole number"],
     [["attach"], 2, "err", "attach needs a terminal"],
     [["run", "hi"], 3, "err", "keywork connect"],
@@ -73,9 +74,8 @@ describe("main(argv) usage contract", () => {
   });
 
   const attachTable: [argv: string[], code: number, needle: string][] = [
-    [["attach", "--help"], 2, "keywork: Unknown option '--help'"],
     [["attach", "--pane", "bogus"], 2, 'keywork attach: no pane kind named "bogus"'],
-    [["attach", "--pane", "diff"], 2, "keywork attach: the diff pane reads local files"],
+    [["attach", "--pane", "terminal"], 2, "keywork attach: the terminal pane runs a shell"],
     [["attach", "--pane", "session-tree"], 1, "keywork attach: no server ticket at"],
   ];
 

@@ -171,7 +171,9 @@ describe("/undo stages the last prompt", () => {
     expect(model.undoStaged()).toBe(false);
     expect(titleRow()).not.toContain("undo staged");
     expect(model.input).toBe("");
-    expect(model.entries.filter((entry) => entry.kind !== "info")).toEqual([
+    expect(
+      model.entries.filter((entry) => entry.kind !== "info" && entry.kind !== "ledger"),
+    ).toEqual([
       expect.objectContaining({ kind: "user", text: "make it v2" }),
       { kind: "assistant", text: "made it v2" },
     ]);

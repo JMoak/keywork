@@ -117,7 +117,7 @@ describe("loadRestorePlan", () => {
     expect(escrow.claim("s2")?.id).toBe("s2");
   });
 
-  it("drops a conversation whose session cannot be opened and a file that is gone", async () => {
+  it("brings a conversation whose session cannot be opened back fresh and drops a file that is gone", async () => {
     const plan = await loadRestorePlan(
       {
         workspace: workspaceLoading(
@@ -130,6 +130,9 @@ describe("loadRestorePlan", () => {
       },
       sessionEscrow(undefined),
     );
-    expect(plan).toEqual({ kind: "fresh" });
+    expect(plan.kind).toBe("restore");
+    if (plan.kind !== "restore") return;
+    expect(plan.state.panes).toEqual([{ id: "session-1", kind: "conversation" }]);
+    expect(plan.state.held).toEqual([]);
   });
 });

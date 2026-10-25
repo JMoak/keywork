@@ -90,7 +90,7 @@ export const delegation: Scenario = {
     assert.ok(!settled.includes("↳ child unsaved"), "the provenance line stays off the row");
     await stage.capture("child-row");
 
-    await stage.press("shift+tab");
+    await stage.press("shift+tab", "shift+tab");
     await stage.until("o opens the child");
     await stage.capture("child-cursored");
 

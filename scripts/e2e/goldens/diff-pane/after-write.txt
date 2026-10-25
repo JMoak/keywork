@@ -1,7 +1,8 @@
 ╭────────────────────────────────────────────────────╭───────────────────────────────────────────────────╮─────────────────────────────────────────────────────╮
-│ session tree · 1 session                           │ session-1                                         │ diff · 1 file · +1 -1                               │
-│ ▓ please shout the middle line of notes.txt · now  │                                                   │ notes.txt  +1 -1 · turn 1                           │
-│                                                    │                                                   │ ─────────────────────────────────────────────────── │
+│ 1 session tree · 1 session                         │ 2 session-1                                       │ 3 diff · 1 file · +1 -1                             │
+│ ▓ please shout the middle line of notes.txt · now  │                                                   │ turn 1  notes.txt  +1 -1                            │
+│                                                    │                                                   │ ── 1 hunk · n p hunks · u undoes turn 1 ─────────── │
+│                                                    │                                                   │    shift+u redoes · enter opens                     │
 │                                                    │                                                   │ @@ -1,3 +1,3 @@                                     │
 │                                                    │                                                   │   alpha                                             │
 │                                                    │                                                   │ - beta                                              │
@@ -29,12 +30,11 @@
 │                                                    │                                                   │                                                     │
 │                                                    │                                                   │                                                     │
 │                                                    │                                                   │                                                     │
-│                                                    │                                                   │                                                     │
-│                                                    │                                                   │                                                     │
 │                                                    │ █ please shout the middle line of notes.txt       │                                                     │
 │                                                    │ ▓ Shouting the middle line of notes.txt now.      │                                                     │
 │                                                    │ ░ write notes.txt · ~·· · done                    │                                                     │
 │                                                    │ ▓ All set, beta is BETA now.                      │                                                     │
+│                                                    │   turn 1 · 1 file · +1 -1                         │                                                     │
 │                                                    │ › ▌                                               │                                                     │
 ╰────────────────────────────────────────────────────╰───────────────────────────────────────────────────╯─────────────────────────────────────────────────────╯
  keywork e2e · 3 panes · ctrl+k nav · ctrl+p go · / commands                                                                                                  y 

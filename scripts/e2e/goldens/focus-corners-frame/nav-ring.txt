@@ -1,14 +1,14 @@
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ session tree            │ session-1               │ session-2                ┃
-┃ ░ no sessions yet       │                         │ ▞▀▖                      ┃
-┃                         │                         │  ▞                       ┃
-┃                         │                         │ ▟▄▖                      ┃
+┃ 1 session tree          │ 2 session-1             │ 3 session-2              ┃
+┃ ░ no sessions yet ·     │                         │ ▞▀▖                      ┃
+┃ the first prompt you    │                         │  ▞                       ┃
+┃ send starts one         │                         │ ▟▄▖                      ┃
 ┃                         │                         │ idle                     ┃
 ┃                         │                         │                          ┃
 ┃                         │                         │                          ┃
 ┃                         │                         │ ›                        ┃
 ┃                         │                         │──────────────────────────┨
-┃                         │                         │ session-3                ┃
+┃                         │                         │ 4 session-3              ┃
 ┃                         │                         │ ▀▀▖                      ┃
 ┃                         │                         │ ▝▀▖                      ┃
 ┃                         │                         │ ▄▄▘                      ┃

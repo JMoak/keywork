@@ -6,9 +6,11 @@ import {
   keybindingQuietMs,
   reloadedNotice,
   resolveBindings,
+  skippedNotice,
+  unknownActions,
   watchKeybindings,
 } from "./keybindings.ts";
-import { type BindingSpec, Keymap, KeymapError } from "./keymap.ts";
+import { type BindingSpec, Keymap } from "./keymap.ts";
 import { parseChord } from "./keys.ts";
 
 const defaults: Record<string, BindingSpec> = {
@@ -81,9 +83,12 @@ describe("resolveBindings", () => {
     });
   });
 
-  it("names an action that does not exist instead of binding it silently", () => {
-    expect(() => resolveBindings(defaults, { "app.qiut": "ctrl+t" })).toThrow(
-      new KeymapError('no action named "app.qiut"'),
+  it("skips an action that does not exist and names it instead of binding it", () => {
+    const overrides = { "app.qiut": "ctrl+t" };
+    expect(resolveBindings(defaults, overrides)).toEqual(defaults);
+    expect(unknownActions(defaults, overrides)).toEqual(["app.qiut"]);
+    expect(skippedNotice(unknownActions(defaults, overrides))).toBe(
+      "keybindings skipped actions this terminal doesn't have · app.qiut",
     );
   });
 });

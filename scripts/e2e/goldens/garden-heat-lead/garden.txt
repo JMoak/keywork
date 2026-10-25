@@ -1,7 +1,7 @@
 ╭──────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╮
-│ session tree                         │ session-1                                                                     │
+│ 1 session tree                       │ 3 session-1                                                                   │
 │ ░ no sessions yet                    │                                                                               │
-│                                      │                                                                               │
+│ the first prompt you send starts one │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
 │                                      │                                                                               │
@@ -13,7 +13,7 @@
 │                                      │                                                                               │
 │                                      │                                                                               │
 ╭──────────────────────────────────────╮                                                                               │
-│ memory · 3 notes                     │                                                                               │
+│ 2 memory · 3 notes                   │                                                                               │
 │ 3 notes · 1 curing             ? ask │                                                                               │
 │ workspace · 3 notes                  │                                                                               │
 │ in prompt · 91 of 4.1k tokens        │                                                                               │

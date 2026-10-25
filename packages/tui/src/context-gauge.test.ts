@@ -21,14 +21,14 @@ describe("contextGauge steps", () => {
 
   it("lights each zone brighter than the one before", () => {
     expect(steps(0)).toBe("");
-    expect(steps(1_000)).toBe("░··· 1k");
-    expect(steps(3_600)).toBe("░▒·· 3.6k");
-    expect(steps(7_100)).toBe("░▒▓· 7.1k");
-    expect(steps(7_700)).toBe("░▒▓█ 7.7k");
+    expect(steps(1_000)).toBe("░··· context 1k");
+    expect(steps(3_600)).toBe("░▒·· context 3.6k");
+    expect(steps(7_100)).toBe("░▒▓· context 7.1k");
+    expect(steps(7_700)).toBe("░▒▓█ context 7.7k");
   });
 
   it("keeps the rise legible in plain ascii at tier 0", () => {
-    expect(steps(7_700, tier0)).toBe(".:+# 7.7k");
+    expect(steps(7_700, tier0)).toBe(".:+# context 7.7k");
   });
 });
 
@@ -38,16 +38,16 @@ describe("contextGauge tile", () => {
 
   it("climbs braille dots then fills each cell solid before the next begins", () => {
     expect(tile(0)).toBe("");
-    expect(tile(500)).toBe("⣀· 500");
-    expect(tile(1_000)).toBe("⣄· 1k");
-    expect(tile(4_000)).toBe("█· 4k");
-    expect(tile(6_000)).toBe("█⣦ 6k");
-    expect(tile(8_000)).toBe("██ 8k");
+    expect(tile(500)).toBe("⣀· context 500");
+    expect(tile(1_000)).toBe("⣄· context 1k");
+    expect(tile(4_000)).toBe("█· context 4k");
+    expect(tile(6_000)).toBe("█⣦ context 6k");
+    expect(tile(8_000)).toBe("██ context 8k");
   });
 
   it("falls back to the single tile-fill glyph below glyph tier 2", () => {
-    expect(tile(4_000, tier1)).toBe("▒ 4k");
-    expect(tile(4_000, tier0)).toBe(": 4k");
+    expect(tile(4_000, tier1)).toBe("▒ context 4k");
+    expect(tile(4_000, tier0)).toBe(": context 4k");
   });
 });
 
@@ -69,32 +69,32 @@ describe("contextGauge ramp", () => {
   });
 
   it("steps through the density ramp at the real marks", () => {
-    expect(ramp(1_000)).toBe("░ 1k");
-    expect(ramp(3_600)).toBe("▒ 3.6k");
-    expect(ramp(7_000)).toBe("▒ 7k");
-    expect(ramp(7_200)).toBe("▓ 7.2k");
-    expect(ramp(7_600)).toBe("█ 7.6k");
+    expect(ramp(1_000)).toBe("░ context 1k");
+    expect(ramp(3_600)).toBe("▒ context 3.6k");
+    expect(ramp(7_000)).toBe("▒ context 7k");
+    expect(ramp(7_200)).toBe("▓ context 7.2k");
+    expect(ramp(7_600)).toBe("█ context 7.6k");
   });
 
   it("falls to ASCII at tier 0", () => {
-    expect(ramp(7_600, tier0)).toBe("# 7.6k");
+    expect(ramp(7_600, tier0)).toBe("# context 7.6k");
   });
 });
 
 describe("contextGauge bar", () => {
   it("draws the used ink, the free track, and the two marks as cells", () => {
-    expect(bar(400)).toBe("█░░░░░░░▒▓ 400/8k");
-    expect(bar(4_000)).toBe("█████░░░▒▓ 4k/8k");
-    expect(bar(7_000)).toBe("█████████▓ 7k/8k");
-    expect(bar(8_000)).toBe("██████████ 8k/8k");
+    expect(bar(400)).toBe("█░░░░░░░▒▓ context 400 of 8k");
+    expect(bar(4_000)).toBe("█████░░░▒▓ context 4k of 8k");
+    expect(bar(7_000)).toBe("█████████▓ context 7k of 8k");
+    expect(bar(8_000)).toBe("██████████ context 8k of 8k");
   });
 
   it("stays honest past the window", () => {
-    expect(bar(9_500)).toBe("██████████ 9.5k/8k");
+    expect(bar(9_500)).toBe("██████████ context 9.5k of 8k");
   });
 
   it("renders the same structure in ASCII", () => {
-    expect(bar(4_000, tier0)).toBe("#####...:+ 4k/8k");
+    expect(bar(4_000, tier0)).toBe("#####...:+ context 4k of 8k");
   });
 });
 

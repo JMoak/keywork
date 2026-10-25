@@ -1,14 +1,14 @@
 +-------------------------+-------------------------+--------------------------+
-| session tree            | session-1               | session-2                |
-| ░ no sessions yet       |                         | SESSION 2                |
-|                         |                         | idle                     |
-|                         |                         |                          |
+| 1 session tree          | 2 session-1             | 3 session-2              |
+| ░ no sessions yet ·     |                         | SESSION 2                |
+| the first prompt you    |                         | idle                     |
+| send starts one         |                         |                          |
 |                         |                         |                          |
 |                         |                         |                          |
 |                         |                         |                          |
 |                         |                         | ›                        |
 |                         |                         +--------------------------+
-|                         |                         | session-3                |
+|                         |                         | 4 session-3              |
 |                         |                         | SESSION 3                |
 |                         |                         | idle                     |
 |                         |                         |                          |

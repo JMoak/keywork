@@ -73,7 +73,12 @@ export function guardedShellEscape(seams: ShellEscapeSeams): ShellEscapePort {
         const answer = answerOf(await (seams.guard.confirm?.(call) ?? Promise.resolve(true)));
         const askedBy = asked ? (answer.gate ?? seams.guard.gate ?? "user") : gate;
         report({
-          ...decision(call, answer.approved ? "granted" : "denied", askedBy, asked),
+          ...decision(
+            call,
+            answer.approved ? "granted" : "denied",
+            askedBy,
+            asked && answer.asked !== false,
+          ),
           ...(answer.approved && answer.scope !== undefined && { scope: answer.scope }),
         });
         if (!answer.approved) return failure("declined by user");

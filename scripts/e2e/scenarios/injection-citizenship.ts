@@ -1,10 +1,11 @@
 import { strict as assert } from "node:assert";
 import { textTurn } from "../../../packages/engine/src/index.ts";
+import { paneHeader } from "../frame-queries.ts";
 import type { Scenario, Stage } from "../scenario.ts";
 
 const burstWords = ["dictated", "words", "arrive", "as", "one", "long", "keystroke", "burst"];
 const graphemeHeavy = "héllo 日本語のテキスト über façade 한국어";
-const promptMarker = /│ session-1 +│/;
+const promptMarker = paneHeader("session-1");
 
 function burst(events: number): string {
   let text = "";
@@ -35,7 +36,7 @@ export const injectionCitizenship: Scenario = {
     const afterLeader = await stage.until("uick brown fox jumps over the lazy dog");
     assert.ok(!afterLeader.includes("landed"), "a burst on an armed leader never submits");
     assert.equal(
-      afterLeader.match(/│ session-\d+ +│/g)?.length ?? 0,
+      afterLeader.match(/│ (?:\d )?session-\d+ +│/g)?.length ?? 0,
       1,
       "the burst opened no pane and fired no leader verb beyond the cancel key",
     );

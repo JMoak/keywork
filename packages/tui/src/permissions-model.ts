@@ -113,7 +113,7 @@ export class QuietRunLog {
 }
 
 export function quietReasonOf(decision: PermissionDecision): QuietReason | undefined {
-  if (decision.verdict !== "granted") return undefined;
+  if (decision.verdict !== "granted" || decision.asked === true) return undefined;
   if (decision.gate === "trusted") return "trusted";
   if (decision.gate === "quiet") return "quiet";
   if (decision.gate === "user" && decision.scope !== undefined && decision.scope !== "once") {

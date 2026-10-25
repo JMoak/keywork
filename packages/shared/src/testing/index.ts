@@ -9,7 +9,7 @@ export function scratchDirs(prefix: string): () => Promise<string> {
   afterEach(async () => {
     while (made.length > 0) {
       const dir = made.pop();
-      if (dir !== undefined) await rm(dir, { recursive: true, force: true });
+      if (dir !== undefined) await rm(dir, { ...removeWhole, ...retryWhileHeld });
     }
   });
   return async () => {
@@ -25,7 +25,7 @@ export function useTempDir(prefix: string): () => string {
     current = mkdtempSync(join(tmpdir(), prefix));
   });
   afterEach(() => {
-    if (current !== undefined) rmSync(current, { recursive: true, force: true });
+    if (current !== undefined) rmSync(current, { ...removeWhole, ...retryWhileHeld });
     current = undefined;
   });
   return () => {
@@ -37,3 +37,7 @@ export function useTempDir(prefix: string): () => string {
 export function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+const removeWhole = { recursive: true, force: true } as const;
+
+const retryWhileHeld = { maxRetries: 10, retryDelay: 50 } as const;

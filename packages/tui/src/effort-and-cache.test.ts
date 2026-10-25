@@ -135,7 +135,7 @@ describe("progress notes", () => {
     const model = new ConversationModel(agent, () => {});
     await run(model, "fix login");
 
-    expect(model.entries.slice(1)).toEqual([
+    expect(model.entries.filter((entry) => entry.kind === "assistant")).toEqual([
       { kind: "assistant", text: "Found the stale token. Editing auth.py next.", progress: true },
       { kind: "assistant", text: "Fixed." },
     ]);

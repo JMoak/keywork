@@ -22,6 +22,10 @@ function followed(agent: Agent, now?: () => number, tick?: TickScheduler): Trans
   return feed;
 }
 
+function ledgerOf(text: string): TranscriptEntry {
+  return { kind: "ledger", text: "", prompt: { kind: "user", text }, folded: true };
+}
+
 function steppingTick(): { tick: TickScheduler; step: () => void; armed: () => number } {
   const pending: (() => void)[] = [];
   return {
@@ -36,7 +40,7 @@ function steppingTick(): { tick: TickScheduler; step: () => void; armed: () => n
 }
 
 describe("TranscriptFeed", () => {
-  it("streams assistant text into one growing entry and counts activity", async () => {
+  it("streams assistant text into one growing entry, closes the turn with a ledger row and counts activity", async () => {
     const agent = new Agent({
       provider: new MockProvider([
         [
@@ -51,6 +55,7 @@ describe("TranscriptFeed", () => {
     expect(feed.entries).toEqual([
       { kind: "user", text: "go" },
       { kind: "assistant", text: "one two" },
+      ledgerOf("go"),
     ]);
     expect(feed.activity).toBe(2);
   });
@@ -93,7 +98,12 @@ describe("TranscriptFeed", () => {
       return clock;
     });
     await agent.send("use echo");
-    expect(feed.entries.map((entry) => entry.kind)).toEqual(["user", "tool", "assistant"]);
+    expect(feed.entries.map((entry) => entry.kind)).toEqual([
+      "user",
+      "tool",
+      "assistant",
+      "ledger",
+    ]);
     expect(feed.entries[1]).toMatchObject({
       failed: false,
       text: "echo hi · 250ms · done",
@@ -172,6 +182,7 @@ describe("TranscriptFeed", () => {
       { kind: "user", text: "which way" },
       { kind: "thinking", text: "Weigh the options.", folded: true },
       { kind: "assistant", text: "Go left." },
+      ledgerOf("which way"),
     ]);
     expect(feed.disclosableIndices()).toEqual([1]);
     expect(feed.toggleLatestFold()).toBe(true);
@@ -306,6 +317,7 @@ describe("session replay rendering", () => {
       "assistant",
       "tool",
       "assistant",
+      "ledger",
     ]);
     expect(revived.entries[1]).toEqual({ kind: "assistant", text: "Counting the files now." });
     expect(revived.entries[2]).toMatchObject({ kind: "tool", text: "list · done" });

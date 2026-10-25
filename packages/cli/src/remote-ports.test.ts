@@ -243,7 +243,7 @@ describe("remoteSessionPort", () => {
 });
 
 describe("remoteSessionTreePort", () => {
-  it("lists served sessions, renders one as a linear tree, and refuses edits", async () => {
+  it("lists served sessions, renders one as a linear tree, and labels and forks through the server", async () => {
     const h = harness(new MockProvider([textTurn("reply")]));
     const trees = remoteSessionTreePort(h.client, h.feed);
     const changed: string[] = [];
@@ -261,9 +261,13 @@ describe("remoteSessionTreePort", () => {
     expect(view?.roots[0]?.children[0]?.entry.parentId).toBe(view?.roots[0]?.entry.id);
     expect(view?.roots[0]?.children[0]?.children).toEqual([]);
     expect(await trees.load("nope")).toBeUndefined();
-    await expect(trees.setLabel(created.id, "x", "label")).rejects.toThrow("while attached");
-    await expect(trees.fork(created.id, "x")).rejects.toThrow("while attached");
-    expect(changed).toEqual([created.id]);
+    const promptId = view?.roots[0]?.entry.id ?? "";
+    await trees.setLabel(created.id, promptId, "label");
+    expect((await trees.load(created.id))?.roots[0]?.label).toBe("label");
+    const forked = await trees.fork(created.id, promptId);
+    expect(forked).toBeDefined();
+    expect(forked).not.toBe(created.id);
+    expect(new Set(changed)).toEqual(new Set([created.id]));
     await h.close();
   });
 
@@ -376,11 +380,15 @@ describe("remotePermissionsPort", () => {
     ]);
 
     await press("r");
-    expect(notices).toEqual(["revoked bash git push * · it asks again from the next call on"]);
+    expect(notices).toEqual([
+      "revoked bash git push * for this workspace · it asks again from the next call on",
+    ]);
     expect((await client.listPermissions()).workspace).toEqual([]);
 
-    await press("d");
-    expect(notices.at(-1)).toBe("dropped bash npm run * for this session");
+    await press("r");
+    expect(notices.at(-1)).toBe(
+      "revoked bash npm run * for this session · it asks again from the next call on",
+    );
     expect((await client.listPermissions()).session).toEqual({});
     expect(texts()[0]).toBe(
       firstEncounterLine({ trusted: true, bundle: [], workspace: [], session: {} }, "attached"),
