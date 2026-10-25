@@ -2,12 +2,13 @@ import { Box, Text } from "@opentui/core";
 import { type GlyphSupport, resolveMark, type TieredMark } from "./capability.ts";
 import { assumedGlyphs } from "./marks.ts";
 import type { Palette } from "./palette.ts";
-import { clip, padEnd, width } from "./width.ts";
+import { clip, clipStart, padEnd, width } from "./width.ts";
 
 export interface TrayItem {
   name: string;
   description: string;
   shortcut?: string;
+  jump?: true;
 }
 
 export interface TrayStyle {
@@ -26,7 +27,7 @@ export function trayRows(
 ): TrayChild[] {
   const prefix = style.namePrefix ?? "";
   const mark = resolveMark(selectionMark, style.glyphs ?? assumedGlyphs);
-  const column = nameColumnWidth(items, prefix);
+  const column = nameColumnWidth(items, prefix, width);
   return items.map((item, index) =>
     trayRow(item, index === selected ? mark : " ", column, width, theme, prefix),
   );
@@ -53,9 +54,15 @@ const selectionMark = { tier1: "▸", tier0: ">" } satisfies TieredMark;
 const nameColumnCap = 24;
 const markerCells = 5;
 
-function nameColumnWidth(items: readonly TrayItem[], prefix: string): number {
+function nameColumnWidth(items: readonly TrayItem[], prefix: string, rowWidth: number): number {
   const longest = items.reduce((widest, item) => Math.max(widest, width(item.name)), 0);
-  return Math.min(nameColumnCap, longest + width(prefix));
+  const described = items.some((item) => item.description !== "");
+  const cap = described ? nameColumnCap : Math.max(0, rowWidth - markerCells);
+  return Math.min(cap, longest + width(prefix));
+}
+
+function fittedName(item: TrayItem, cells: number): string {
+  return item.jump === true ? clipStart(item.name, cells) : clip(item.name, cells);
 }
 
 function trayRow(
@@ -67,9 +74,10 @@ function trayRow(
   prefix: string,
 ): TrayChild {
   const selected = marker !== " ";
-  const shortcut = clip(item.shortcut === undefined ? " " : `${item.shortcut} `, rowWidth);
+  const shortcut = clip(item.shortcut === undefined ? " " : ` ${item.shortcut} `, rowWidth);
   const nameRoom = Math.max(0, rowWidth - width(shortcut));
-  const name = clip(padEnd(` ${marker} ${prefix}${item.name}`, column + markerCells), nameRoom);
+  const named = `${prefix}${fittedName(item, Math.max(1, column - width(prefix)))}`;
+  const name = clip(padEnd(` ${marker} ${named}`, column + markerCells), nameRoom);
   const room = Math.max(0, rowWidth - width(name) - width(shortcut));
   return Box(
     { flexDirection: "row", height: 1, overflow: "hidden" },

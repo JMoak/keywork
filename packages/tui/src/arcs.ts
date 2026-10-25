@@ -68,10 +68,13 @@ export interface ArcsPort {
   abandon(slug: string): Promise<void>;
   subscribe?(listener: () => void): () => void;
   returnDelta?(slug: string): Promise<string[]>;
+  wear?(slug: string, theme: string | undefined): Promise<ArcSummary>;
   airlock?: ArcAirlockPort;
 }
 
 export type ArcOrdinals = (slug: string) => number | undefined;
+
+export type ArcAttire = (slug: string) => Palette | undefined;
 
 export function arcOrdinalsOf(arcs: readonly ArcSummary[]): ArcOrdinals {
   const ordered = [...arcs].sort(byCreation);
@@ -79,7 +82,8 @@ export function arcOrdinalsOf(arcs: readonly ArcSummary[]): ArcOrdinals {
   return (slug) => ordinals.get(slug);
 }
 
-export function arcInk(theme: Palette, ordinal: number | undefined): string {
+export function arcInk(theme: Palette, ordinal: number | undefined, worn?: Palette): string {
+  if (worn !== undefined) return arcAnchor(worn.ramp, ordinal ?? 0);
   return ordinal === undefined ? theme.textDim : arcAnchor(theme.ramp, ordinal);
 }
 

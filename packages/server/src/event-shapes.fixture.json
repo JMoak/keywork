@@ -218,6 +218,17 @@
           "tool": "string",
           "verdict": "string"
         }
+      },
+      {
+        "decision": {
+          "asked": "boolean",
+          "callId": "string",
+          "gate": "string",
+          "note": "string",
+          "reason": "string",
+          "tool": "string",
+          "verdict": "string"
+        }
       }
     ],
     "gate.preset": {
@@ -365,6 +376,7 @@
       "effort": "string",
       "leafId": "string",
       "model": "string",
+      "quiet": "boolean",
       "redoable": "boolean",
       "thinking": "boolean",
       "title": "string",

@@ -30,6 +30,30 @@ export interface BotsPort {
   list(): Promise<BotSummary[]>;
   create(draft: BotDraft): Promise<BotEntry>;
   suggestSlug?(purpose: string): Promise<string | undefined>;
+  subscribe?(changed: () => void): () => void;
+}
+
+export function announcingCreations(port: BotsPort): BotsPort {
+  const listeners = new Set<() => void>();
+  const { suggestSlug } = port;
+  return {
+    defined: () => port.defined(),
+    list: () => port.list(),
+    create: async (draft) => {
+      const bot = await port.create(draft);
+      for (const listener of [...listeners]) listener();
+      return bot;
+    },
+    ...(suggestSlug !== undefined && { suggestSlug: (purpose) => suggestSlug.call(port, purpose) }),
+    subscribe: (changed) => {
+      listeners.add(changed);
+      const stop = port.subscribe?.(changed);
+      return () => {
+        listeners.delete(changed);
+        stop?.();
+      };
+    },
+  };
 }
 
 export const botsHint = "define one at .keywork/bots/<slug>/bot.md";

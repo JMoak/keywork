@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { SessionHost } from "./host.ts";
 import { createKeyworkServer, defaultPort, type ServerOptions } from "./server.ts";
 
 export const loopback = "127.0.0.1";
@@ -11,6 +12,7 @@ export interface ListenOptions extends Omit<ServerOptions, "url"> {
 export interface ListeningServer {
   url: string;
   port: number;
+  rehost(host: SessionHost): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -26,6 +28,7 @@ export async function listen(options: ListenOptions): Promise<ListeningServer> {
   return {
     url,
     port,
+    rehost: (host) => server.rehost(host),
     close: async () => {
       await server.close();
       bound.closeAllConnections();

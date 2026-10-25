@@ -24,7 +24,6 @@ import {
   type AppOptions,
   type Compactor,
   checkpointBaseline,
-  crashLogFacts,
   crashLogFile,
   type DiffPort,
   detectCapabilities,
@@ -294,6 +293,7 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     workspace: options.workspace,
     sessions: sessionPort(options.sessionDir, cwd, {
       checkpointTag: () => checkpoints?.takeTurnTag(),
+      turnTrees: checkpoints,
       onAttach: attachSession,
       onRelease: releaseSession,
       onChange: (sessionId) => changes.emit(sessionId),
@@ -305,7 +305,10 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
     bots,
     afterTurn: settleAfterTurn(stores, agents, changes.emit),
     compact: compactOnRequest(stores, agents, changes.emit),
-    spillFile: (sessionId, spillId) => stores.get(sessionId)?.spills().path(spillId),
+    spillFile: (sessionId, spillId) => {
+      const path = stores.get(sessionId)?.spills().path(spillId);
+      return path !== undefined && existsSync(path) ? path : undefined;
+    },
     shellEscape: (guard, onDecision) =>
       guardedShellEscape({
         tools: () => coreTools(composition.scope),
@@ -352,14 +355,13 @@ export async function composePanes(options: PanesOptions): Promise<AppOptions> {
       dir: join(options.userRoot ?? homedir(), ".keywork", "bug-reports"),
     },
     doctorReport: async () => {
-      const { doctorReport, renderDoctorReport, workspaceDoctorFacts } = await import(
-        "./doctor.ts"
-      );
+      const { crashLogFactsAt, doctorReport, renderDoctorReport, workspaceDoctorFacts } =
+        await import("./doctor.ts");
       const facts = await workspaceDoctorFacts(cwd, projectTrusted, config);
       return renderDoctorReport(
         doctorReport(detectCapabilities(), options.inference?.current().runtime.registry, {
           ...facts,
-          crashLog: crashLogFacts(crashLogFile),
+          crashLog: crashLogFactsAt(crashLogFile),
           ...(composition.languagePort !== undefined && {
             languageServers: composition.languagePort.facts(),
           }),

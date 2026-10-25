@@ -16,6 +16,7 @@ export interface TitleSpan {
 export interface TitleBarState {
   readonly name: string;
   readonly stamp?: string | undefined;
+  readonly quietMark?: string | undefined;
   readonly arc?: string | undefined;
   readonly bot?: TitleBot | undefined;
   readonly telemetry?: string | undefined;
@@ -62,6 +63,7 @@ interface BotZone {
 
 interface Zones {
   stamp: string | undefined;
+  quietMark: string | undefined;
   name: string;
   arc: string | undefined;
   bot: BotZone | undefined;
@@ -75,6 +77,7 @@ function zonesAt(tier: PageTier, focused: boolean, state: TitleBarState): Zones 
     tier === "broadsheet" || (tier === "column" && focused) ? state.telemetry : undefined;
   return {
     stamp: emptyToUndefined(state.stamp),
+    quietMark: emptyToUndefined(state.quietMark),
     name: state.name,
     arc: tier === "broadsheet" ? emptyToUndefined(state.arc) : undefined,
     bot: botZoneAt(compact, state.bot),
@@ -89,7 +92,8 @@ function botZoneAt(compact: boolean, bot: TitleBot | undefined): BotZone | undef
 }
 
 function fitZones(zones: Zones, room: number, siblings: readonly string[]): TitleSpan[] {
-  const stampCells = zones.stamp === undefined ? 0 : width(zones.stamp) + 1;
+  const lead = leadSpans(zones);
+  const stampCells = cells(lead);
   for (const attempt of trims(zones)) {
     const tail = tailSpans(attempt);
     const arc =
@@ -98,21 +102,20 @@ function fitZones(zones: Zones, room: number, siblings: readonly string[]): Titl
     if (nameRoom < 1) continue;
     if (arc.length > 0 && width(attempt.name) > nameRoom) continue;
     const composed = [
-      ...stampSpans(zones.stamp),
+      ...lead,
       span(fitTitle(attempt.name, nameRoom, siblings), "slug"),
       ...arc,
       ...tail,
     ];
     if (cells(composed) <= room) return composed;
   }
-  return [
-    ...stampSpans(zones.stamp),
-    span(fitTitle(zones.name, Math.max(1, room - stampCells), siblings), "slug"),
-  ];
+  return [...lead, span(fitTitle(zones.name, Math.max(1, room - stampCells), siblings), "slug")];
 }
 
-function stampSpans(stamp: string | undefined): TitleSpan[] {
-  return stamp === undefined ? [] : [span(stamp, "stamp"), span(" ", "joint")];
+function leadSpans(zones: Pick<Zones, "stamp" | "quietMark">): TitleSpan[] {
+  return [zones.stamp, zones.quietMark].flatMap((mark) =>
+    mark === undefined ? [] : [span(mark, "stamp"), span(" ", "joint")],
+  );
 }
 
 function tailSpans(zones: Zones): TitleSpan[] {

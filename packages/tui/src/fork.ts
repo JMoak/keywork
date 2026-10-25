@@ -1,5 +1,5 @@
 import { toError } from "@keywork/shared";
-import { type PromptAnchor, promptAnchor } from "./backtrack.ts";
+import { type PromptAnchor, promptAnchor, turnEndOf } from "./backtrack.ts";
 import type { ForkOutcome } from "./conversation-model.ts";
 import type { SessionTreePort } from "./session-tree-pane.ts";
 
@@ -33,6 +33,21 @@ export async function forkAtPrompt(
   if (forked === undefined) return { forked: false };
   open(forked, draft);
   return { forked: true, note: await restoreForkedFiles(checkpoints, anchor) };
+}
+
+export async function forkAfterPrompt(
+  trees: SessionTreePort | undefined,
+  open: (sessionId: string) => void,
+  sessionId: string | undefined,
+  promptId: string,
+): Promise<ForkOutcome> {
+  if (trees === undefined || sessionId === undefined) return { forked: false };
+  const view = await trees.load(sessionId);
+  const end = view === undefined ? undefined : turnEndOf(view.roots, promptId);
+  const forked = end === undefined ? undefined : await trees.fork(sessionId, end);
+  if (forked === undefined) return { forked: false };
+  open(forked);
+  return { forked: true };
 }
 
 const unchangedFilesNote = "forked · files untouched";

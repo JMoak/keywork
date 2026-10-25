@@ -14,16 +14,16 @@ export interface CrashLogFacts {
 }
 
 export function crashLogFacts(path: string): CrashLogFacts {
-  const lines = crashLogLines(path);
-  const lastAt = lines.at(-1)?.split(" ")[0];
-  return { path, entries: lines.length, ...(lastAt !== undefined && { lastAt }) };
+  const crashes = crashLogLines(path).filter((line) => crashHead.test(line));
+  const lastAt = crashes.at(-1)?.split(" ")[0];
+  return { path, entries: crashes.length, ...(lastAt !== undefined && { lastAt }) };
 }
+
+const crashHead = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z \[[^\]]+\] /;
 
 function crashLogLines(path: string): string[] {
   try {
-    return readFileSync(path, "utf8")
-      .split("\n")
-      .filter((line) => line !== "");
+    return readFileSync(path, "utf8").split("\n");
   } catch {
     return [];
   }

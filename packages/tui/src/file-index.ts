@@ -129,7 +129,7 @@ export class FileIndex {
       await this.absorbIgnoreFile(rules, frame.path, entries);
       for (const entry of entries) {
         if (files.length >= this.limits.maxEntries) break;
-        if (entry.name === gitDirectoryName) continue;
+        if (neverIndexed.has(entry.name)) continue;
         const path = join(frame.path, entry.name);
         const relative = relativeTo(this.rootPath, path);
         if (rules.ignores(relative, entry.kind)) continue;
@@ -189,7 +189,7 @@ interface Walk {
   readonly directories: ReadonlySet<string>;
 }
 
-const gitDirectoryName = ".git";
+const neverIndexed: ReadonlySet<string> = new Set([".git", "node_modules"]);
 
 function fileJumpCommand(file: IndexedFile, seams: FileJumpSeams): CommandSpec {
   return {

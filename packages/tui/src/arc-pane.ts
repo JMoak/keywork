@@ -1,5 +1,5 @@
 import { fg, StyledText, Text } from "@opentui/core";
-import { type ArcOrdinals, arcInk, arcTag } from "./arcs.ts";
+import { type ArcAttire, type ArcOrdinals, arcInk, arcTag } from "./arcs.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
 import type { Palette } from "./palette.ts";
@@ -21,7 +21,7 @@ import { pluralize } from "./pluralize.ts";
 import type { PointerEvent } from "./pointer.ts";
 import {
   focusOrOpenSession,
-  removalConfirmLine,
+  removalConfirmLines,
   removeSessionThrough,
   type SessionTreePort,
 } from "./session-tree-pane.ts";
@@ -42,6 +42,7 @@ export interface ArcPaneOptions {
   currentSession: () => string | undefined;
   presence?: SessionPresence;
   arcOrdinal?: ArcOrdinals;
+  arcAttire?: ArcAttire;
   returnDelta?: () => Promise<string[]>;
   now?: () => number;
   scheduleFrame?: FrameScheduler;
@@ -163,8 +164,7 @@ export class ArcPane implements Pane {
       ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
       : undefined;
     const delta = this.deltaLines.map((line) => deltaRowView(line, theme, innerWidth));
-    const confirm = removalConfirmLine(this.members, theme, innerWidth);
-    const trailing = confirm === undefined ? [] : [confirm];
+    const trailing = removalConfirmLines(this.members, theme, innerWidth);
     this.lastPageRows = Math.max(
       0,
       paneContentHeight(context) - (tray?.rows ?? 0) - delta.length - trailing.length,
@@ -281,7 +281,8 @@ export class ArcPane implements Pane {
   private bodyLines(theme: Palette, rows: number, width: number): PaneChild[] {
     const failure = this.tasks.failure();
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
-    const ink = arcInk(theme, this.options.arcOrdinal?.(this.options.slug));
+    const { slug } = this.options;
+    const ink = arcInk(theme, this.options.arcOrdinal?.(slug), this.options.arcAttire?.(slug));
     return rowsView(this.members, rows, theme, width, {
       empty: "░ no sessions in this arc yet · ctrl+k s inside a member adds one",
       text: (row) => (isSessionRow(row) ? memberRowLine(row, this.placementOf(row.id)) : ""),

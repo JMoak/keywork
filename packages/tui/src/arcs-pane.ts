@@ -1,5 +1,12 @@
 import { fg, StyledText, Text } from "@opentui/core";
-import { type ArcOrdinals, type ArcsPort, arcInk, arcTag, describeCloseOutcome } from "./arcs.ts";
+import {
+  type ArcAttire,
+  type ArcOrdinals,
+  type ArcsPort,
+  arcInk,
+  arcTag,
+  describeCloseOutcome,
+} from "./arcs.ts";
 import {
   type ArcGroupKey,
   type ArcGroupRow,
@@ -29,7 +36,7 @@ import type { PointerEvent } from "./pointer.ts";
 import {
   focusOrOpenSession,
   overviewRowView,
-  removalConfirmLine,
+  removalConfirmLines,
   removeSessionThrough,
   type SessionTreePort,
 } from "./session-tree-pane.ts";
@@ -43,6 +50,7 @@ export interface ArcsPaneOptions {
   currentSession: () => string | undefined;
   presence?: SessionPresence;
   arcOrdinal?: ArcOrdinals;
+  arcAttire?: ArcAttire;
   now?: () => number;
   drilled?: ArcGroupKey;
   scheduleFrame?: FrameScheduler;
@@ -160,10 +168,11 @@ export class ArcsPane implements Pane {
   view(context: PaneContext): PaneView {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
+    const nameLine = this.nameLine(theme, focused);
     const trailing = [
-      this.nameLine(theme, focused),
-      removalConfirmLine(this.model.sessions, theme, innerWidth),
-    ].filter((line) => line !== undefined);
+      ...(nameLine === undefined ? [] : [nameLine]),
+      ...removalConfirmLines(this.model.sessions, theme, innerWidth),
+    ];
     const tray = this.tray.open
       ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
       : undefined;
@@ -240,7 +249,8 @@ export class ArcsPane implements Pane {
   }
 
   private arcInkFor(key: ArcGroupKey, theme: Palette): string {
-    return arcInk(theme, key.kind === "arc" ? this.options.arcOrdinal?.(key.slug) : undefined);
+    if (key.kind !== "arc") return arcInk(theme, undefined);
+    return arcInk(theme, this.options.arcOrdinal?.(key.slug), this.options.arcAttire?.(key.slug));
   }
 
   private trayCommands(): TrayCommand[] {

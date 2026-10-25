@@ -20,7 +20,10 @@ export type SummonableKind =
   | "memory"
   | "mcp"
   | "terminal"
-  | "diff";
+  | "diff"
+  | "context"
+  | "permissions"
+  | "bots";
 
 export type ArcOrigin = "inherit" | "new";
 
@@ -87,6 +90,7 @@ export type MemoryPaneFactory = (
 export type McpPaneFactory = (id: string, notify: () => void) => Pane;
 export type WorkspacesPaneFactory = (id: string, notify: () => void, intents: PaneIntents) => Pane;
 export type DiffPaneFactory = (id: string, notify: () => void, intents: PaneIntents) => Pane;
+export type IntentPaneFactory = (id: string, notify: () => void, intents: PaneIntents) => Pane;
 export interface TerminalTarget {
   paneId?: string;
   sessionId?: string;
@@ -111,6 +115,9 @@ export interface PaneFactories {
   createWorkspacesPane?: WorkspacesPaneFactory;
   createTerminalPane?: TerminalPaneFactory;
   createDiffPane?: DiffPaneFactory;
+  createContextPane?: IntentPaneFactory;
+  createPermissionsPane?: IntentPaneFactory;
+  createBotsPane?: IntentPaneFactory;
 }
 
 export type PaneRequest =
@@ -124,7 +131,10 @@ export type PaneRequest =
   | { kind: "mcp" }
   | { kind: "workspaces" }
   | { kind: "terminal"; mode?: TerminalMode; sessionId?: string }
-  | { kind: "diff" };
+  | { kind: "diff" }
+  | { kind: "context" }
+  | { kind: "permissions" }
+  | { kind: "bots" };
 
 export interface PaneKindSpec {
   readonly idPrefix: string;
@@ -145,6 +155,9 @@ export const paneKinds: Readonly<Record<PaneKind, PaneKindSpec>> = {
   workspaces: { idPrefix: "workspaces", home: "left", factory: "createWorkspacesPane" },
   terminal: { idPrefix: "terminal", home: "right", factory: "createTerminalPane" },
   diff: { idPrefix: "diff", home: "right", factory: "createDiffPane" },
+  context: { idPrefix: "context", home: "right", factory: "createContextPane" },
+  permissions: { idPrefix: "permissions", home: "right", factory: "createPermissionsPane" },
+  bots: { idPrefix: "bots", home: "left", factory: "createBotsPane" },
 };
 
 export function dockWeightOf(id: string): number {
@@ -161,6 +174,9 @@ export const summonRequests: Readonly<Record<SummonableKind, PaneRequest>> = {
   mcp: { kind: "mcp" },
   terminal: { kind: "terminal" },
   diff: { kind: "diff" },
+  context: { kind: "context" },
+  permissions: { kind: "permissions" },
+  bots: { kind: "bots" },
 };
 
 export interface PaneBuildSeams {
@@ -246,6 +262,12 @@ export function buildPane(
       );
     case "diff":
       return factories.createDiffPane?.(id, notify, seams.intents);
+    case "context":
+      return factories.createContextPane?.(id, notify, seams.intents);
+    case "permissions":
+      return factories.createPermissionsPane?.(id, notify, seams.intents);
+    case "bots":
+      return factories.createBotsPane?.(id, notify, seams.intents);
   }
 }
 

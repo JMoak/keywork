@@ -38,11 +38,12 @@ import {
 import type {
   AskRule,
   ContextInjection,
+  DenyReason,
   PermissionAsk,
   PermissionDecision,
   PermissionGate,
 } from "./session/journal.ts";
-import type { SpillStore } from "./session/spill.ts";
+import { clipToolOutput, type SpillStore } from "./session/spill.ts";
 import { findTool, type Tool, type ToolPreview } from "./tools.ts";
 
 export type ConfirmingGate = Extract<PermissionGate, "user" | "headless">;
@@ -54,10 +55,13 @@ export type Confirmation =
       gate: ConfirmingGate;
       scope?: AskScope | undefined;
       reason?: PermissionDecision["reason"];
+      note?: string | undefined;
+      timedOut?: true;
     };
 
 export interface ToolGuard {
   confirm?(call: ToolCallPart, ask?: PermissionAsk): Promise<Confirmation>;
+  grantsQuietly?(call: ToolCallPart, rule: AskRule): boolean;
   gate?: ConfirmingGate;
   declineEndsRun?: boolean;
   beforeMutation?(): Promise<void>;
@@ -65,6 +69,7 @@ export interface ToolGuard {
 }
 
 export type ToolPermission = "allow" | "ask" | "deny";
+export type QueueMove = "moved" | "unknown" | "out-of-range" | "crosses-steer";
 export type GrantedScope = Exclude<AskScope, "once">;
 export type PermissionRuling =
   | { permission: "allow"; gate: "user"; scope: GrantedScope }
@@ -130,6 +135,8 @@ export interface SendOptions {
   images?: readonly ImagePart[];
 }
 
+export type TurnOpener = (prompt: Message) => Promise<string | undefined>;
+
 export type TurnSettler = () => Promise<void>;
 
 export type ToolBatchSettler = (
@@ -188,6 +195,7 @@ export class Agent {
   private costTotals: CostRollup = emptyCostRollup();
   private active: AbortController | undefined;
   private holding = false;
+  private opener: TurnOpener | undefined;
   private settler: TurnSettler | undefined;
   private toolBatchSettler: ToolBatchSettler | undefined;
   private checkpointed = false;
@@ -306,6 +314,10 @@ export class Agent {
     return settled;
   }
 
+  openTurnsWith(opener: TurnOpener | undefined): void {
+    this.opener = opener;
+  }
+
   settleTurnsWith(settler: TurnSettler | undefined): void {
     this.settler = settler;
   }
@@ -337,6 +349,27 @@ export class Agent {
     }
     this.announceQueue();
     return true;
+  }
+
+  clearQueue(): readonly QueuedPrompt[] {
+    const cleared = this.queued();
+    for (const cancelled of this.pending.splice(0)) {
+      cancelled.reject(new QueuedPromptCancelledError(cancelled.id));
+    }
+    if (cleared.length > 0) this.announceQueue();
+    return cleared;
+  }
+
+  moveQueued(id: string, to: number): QueueMove {
+    const from = this.pending.findIndex((prompt) => prompt.id === id);
+    if (from === -1) return "unknown";
+    if (!Number.isInteger(to) || to < 0 || to >= this.pending.length) return "out-of-range";
+    const reordered = movedItem(this.pending, from, to);
+    if (!steersLead(reordered)) return "crosses-steer";
+    if (from === to) return "moved";
+    this.pending.splice(0, this.pending.length, ...reordered);
+    this.announceQueue();
+    return "moved";
   }
 
   private enqueue(
@@ -422,9 +455,15 @@ export class Agent {
       this.guard?.beforeTurn?.();
       this.turnCacheMiss = undefined;
       this.marks.restateEffort(this.effortRequested, this.messages.length);
-      this.remember(promptMessage(userText, images));
+      const prompt = promptMessage(userText, images);
+      this.remember(prompt);
+      const entryId = this.opener === undefined ? undefined : await this.opener(prompt);
       this.announceStandingInjections();
-      this.bus.emit("turn.started", { userText, ...(origin !== undefined && { origin }) });
+      this.bus.emit("turn.started", {
+        userText,
+        ...(entryId !== undefined && { entryId }),
+        ...(origin !== undefined && { origin }),
+      });
       return await (this.turns === undefined
         ? this.runUntilFinalMessage(controller.signal)
         : this.runDelegatedTurn(this.turns, userText, controller.signal));
@@ -622,7 +661,7 @@ export class Agent {
 
   private async bounded(outcome: ToolOutcome): Promise<ToolOutcome> {
     const spills = this.spills();
-    if (spills === undefined) return outcome;
+    if (spills === undefined) return { ...outcome, output: clipToolOutput(outcome.output) };
     const { output, spill } = await spills.keep(outcome.output);
     return { ...outcome, output, ...(spill !== undefined && { spill }) };
   }
@@ -636,22 +675,8 @@ export class Agent {
         return { callId: call.callId, output: "denied by permission policy", isError: true };
       }
       if (ruling.permission === "ask") {
-        const ask =
-          this.guard?.confirm === undefined ? undefined : await askAbout(call, tool, ruling.gate);
-        if (ask !== undefined) this.bus.emit("gate.ask", { ask });
-        const answer = await this.confirmWithGuard(call, ask);
-        const answeredBy = answer.gate ?? this.guard?.gate ?? "user";
-        this.emitPermissionDecision(call, {
-          verdict: answer.approved ? "granted" : "denied",
-          gate: ask === undefined ? ruling.gate : answeredBy,
-          asked: ask !== undefined,
-          scope: answer.scope,
-          ...(!answer.approved && answer.reason !== undefined && { reason: answer.reason }),
-        });
-        if (!answer.approved) {
-          this.declineEndedRun = this.guard?.declineEndsRun === true;
-          return { callId: call.callId, output: declinedOutput(answeredBy), isError: true };
-        }
+        const refusal = await this.refusalAfterAsking(call, tool, ruling.gate);
+        if (refusal !== undefined) return refusal;
       } else {
         this.emitPermissionDecision(call, {
           verdict: "granted",
@@ -677,6 +702,31 @@ export class Agent {
     }
   }
 
+  private async refusalAfterAsking(
+    call: ToolCallPart,
+    tool: Tool,
+    rule: AskRule,
+  ): Promise<ToolOutcome | undefined> {
+    if (this.guard?.grantsQuietly?.(call, rule) === true) {
+      this.emitPermissionDecision(call, quietlyGranted);
+      return undefined;
+    }
+    const ask = this.guard?.confirm === undefined ? undefined : await askAbout(call, tool, rule);
+    if (ask !== undefined) this.bus.emit("gate.ask", { ask });
+    const answer = await this.confirmWithGuard(call, ask);
+    const answeredBy = answer.gate ?? this.guard?.gate ?? "user";
+    this.emitPermissionDecision(call, {
+      verdict: answer.approved ? "granted" : "denied",
+      gate: ask === undefined ? rule : answeredBy,
+      asked: ask !== undefined,
+      scope: answer.scope,
+      ...(!answer.approved && denialOf(answer)),
+    });
+    if (answer.approved) return undefined;
+    this.declineEndedRun = this.guard?.declineEndsRun === true;
+    return { callId: call.callId, output: declinedOutput(answer, answeredBy), isError: true };
+  }
+
   private rulingFor(call: ToolCallPart, tool: Tool): GateRuling {
     return (
       rulingOf(this.permissions?.(call)) ?? { permission: defaultPermission(tool), gate: "default" }
@@ -692,6 +742,7 @@ export class Agent {
         gate: ruled.gate,
         ...(ruled.scope !== undefined && { scope: ruled.scope }),
         ...(ruled.reason !== undefined && { reason: ruled.reason }),
+        ...(ruled.note !== undefined && { note: ruled.note }),
         asked: ruled.asked,
       },
     });
@@ -759,6 +810,7 @@ interface RuledCall {
   asked: boolean;
   scope?: AskScope | undefined;
   reason?: PermissionDecision["reason"];
+  note?: string | undefined;
 }
 
 interface AnsweredConfirmation {
@@ -766,6 +818,29 @@ interface AnsweredConfirmation {
   gate: ConfirmingGate | undefined;
   scope?: AskScope | undefined;
   reason?: PermissionDecision["reason"];
+  note?: string | undefined;
+  timedOut?: true;
+}
+
+const quietlyGranted: RuledCall = {
+  verdict: "granted",
+  gate: "quiet",
+  asked: false,
+  scope: "session",
+};
+
+function movedItem<Item>(items: readonly Item[], from: number, to: number): Item[] {
+  const reordered = [...items];
+  const [item] = reordered.splice(from, 1);
+  if (item !== undefined) reordered.splice(to, 0, item);
+  return reordered;
+}
+
+function steersLead(prompts: readonly QueuedPrompt[]): boolean {
+  const firstQueued = prompts.findIndex((prompt) => prompt.behavior === "queue");
+  return (
+    firstQueued === -1 || prompts.slice(firstQueued).every(({ behavior }) => behavior === "queue")
+  );
 }
 
 function scopeOf(ruling: GateRuling): GrantedScope | undefined {
@@ -780,11 +855,40 @@ function refusedByExtension(call: ToolCallPart, reason: string): ToolOutcome {
   return { callId: call.callId, output: `refused by extension ${reason}`, isError: true };
 }
 
-function declinedOutput(gate: ConfirmingGate | undefined): string {
-  return gate === "headless"
-    ? "not approved: this run has no one to ask, so the call was refused"
-    : "declined by user";
+function denialOf({ reason, note }: AnsweredConfirmation): Pick<RuledCall, "reason" | "note"> {
+  return {
+    ...(reason !== undefined && { reason }),
+    ...(note !== undefined && { note }),
+  };
 }
+
+function declinedOutput(answer: AnsweredConfirmation, gate: ConfirmingGate): string {
+  const said = answer.note === undefined ? [] : [`The user said: "${answer.note}"`];
+  return [refusalOf(answer, gate), ...said, declineIsFinal].join("\n");
+}
+
+function refusalOf(answer: AnsweredConfirmation, gate: ConfirmingGate): string {
+  if (answer.timedOut === true) return unansweredRefusal;
+  return gate === "headless" ? unattendedRefusal : declinedBecause(answer.reason);
+}
+
+function declinedBecause(reason: DenyReason | undefined): string {
+  return reason === undefined ? "declined by user" : declineReasons[reason];
+}
+
+const unattendedRefusal = "not approved: this run has no one to ask, so the call was refused";
+
+const unansweredRefusal =
+  "not approved: nobody answered the ask in time, so the person probably stepped away and the call was refused";
+
+const declineReasons: Readonly<Record<DenyReason, string>> = {
+  unsafe: "declined by user · they judged this call unsafe",
+  "not-now": "declined by user · not now, though the call itself may be fine later",
+  other: "declined by user",
+};
+
+const declineIsFinal =
+  "The call did not run, so nothing it would have changed was changed. Do not retry it or a variant of it unless the user asks you to, and never report it as done.";
 
 export function addUsage(left: Usage, right: Usage): Usage {
   const cacheCreation =

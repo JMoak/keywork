@@ -14,6 +14,7 @@ import {
   paneTitle,
   rowsView,
   trayCommandsPressing,
+  wrappedLines,
 } from "./pane-chrome.ts";
 import { failureMessage, PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
@@ -128,23 +129,14 @@ export class WorkspacesPane implements Pane {
   view(context: PaneContext): PaneView {
     const { theme, focused } = context;
     const innerWidth = paneContentWidth(context);
-    const promptLine = this.promptLine(theme, focused);
+    const prompt = this.promptLines(theme, focused, innerWidth);
     const tray = this.tray.open
       ? paneTrayView(this.tray, innerWidth, theme, context.glyphs)
       : undefined;
-    this.lastPageRows = Math.max(
-      0,
-      paneContentHeight(context) - (promptLine === undefined ? 0 : 1) - (tray?.rows ?? 0),
-    );
+    this.lastPageRows = Math.max(0, paneContentHeight(context) - prompt.length - (tray?.rows ?? 0));
     const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
-    this.trayFirstRow = 2 + body.length + (promptLine === undefined ? 0 : 1);
-    return paneChrome(
-      context,
-      this.title(),
-      ...body,
-      ...(promptLine === undefined ? [] : [promptLine]),
-      ...(tray?.children ?? []),
-    );
+    this.trayFirstRow = 2 + body.length + prompt.length;
+    return paneChrome(context, this.title(), ...body, ...prompt, ...(tray?.children ?? []));
   }
 
   private async create(slug: string): Promise<void> {
@@ -199,16 +191,14 @@ export class WorkspacesPane implements Pane {
     return Text({ content: new StyledText(clipSpans(chunks, width)) });
   }
 
-  private promptLine(theme: Palette, focused: boolean) {
+  private promptLines(theme: Palette, focused: boolean, width: number): PaneChild[] {
     const pending = this.model.pendingSwitch;
-    if (pending !== undefined) {
-      return Text({ content: describeSwitch(pending), fg: theme.accent });
-    }
+    if (pending !== undefined) return wrappedLines(describeSwitch(pending), theme.accent, width);
     const draft = this.model.draft;
-    if (draft === undefined) return undefined;
+    if (draft === undefined) return [];
     const caret = focused ? "▌" : "";
     const lead = draft.kind === "name" ? "new workspace" : "focus dir";
-    return Text({ content: `${lead}: ${draft.text}${caret}`, fg: theme.accent });
+    return [Text({ content: `${lead}: ${draft.text}${caret}`, fg: theme.accent })];
   }
 
   private trayCommands(): TrayCommand[] {

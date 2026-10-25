@@ -155,6 +155,6 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function serverView(status: McpServerStatus): McpServerView {
+export function serverView(status: McpServerStatus): McpServerView {
   return { ...status };
 }

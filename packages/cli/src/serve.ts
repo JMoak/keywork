@@ -3,31 +3,34 @@ import { join } from "node:path";
 import {
   type Agent,
   type AgentContext,
-  addUsage,
   type BotDefinition,
   type ChangedPath,
   type Checkpoints,
-  type CostRollup,
   compactionDue,
+  contextMeasureOf,
   type EffortLevel,
-  estimateConversationTokens,
+  flushMemoryNow,
   formatReference,
   isEffortLevel,
+  isPromptEntry,
   type JournalTap,
+  knownCostNanos,
+  latestSessionTotals,
   type Message,
   type MessageEntry,
   type ModelChangeEntry,
-  mergeCostRollups,
   modelReferenceOf,
   type PermissionLedger,
   type PermissionResolver,
   type PromptOrigin,
   type Provider,
+  type QueuedPrompt,
   readAgentContext,
-  readContext,
+  readMeasured,
   restorePointOf,
   type SendBehavior,
   type SendOptions,
+  type SessionEntry,
   SessionStore,
   ShellSession,
   scopeContains,
@@ -39,22 +42,30 @@ import {
 } from "@keywork/engine";
 import {
   AskQueue,
+  type ByteRange,
   ChangesFeed,
   type ChangesSource,
+  type ChangesSummary,
   type CompactionReport,
   type CostReport,
   changesPortOver,
+  deskRowOf,
   EventLog,
   type ExportOutcome,
   type ExportScope,
+  type FlushReport,
+  type ForgetReport,
   issueToken,
   type LeafOutcome,
   listen,
-  type ModelSpend,
+  loggedMessages,
   type ModelSwitch,
   type PresetHost,
   type PresetOutcome,
+  type QueueRefusal,
+  type QueueReport,
   type RedoReport,
+  type RestorePreview,
   type RestoreReport,
   readServerTicket,
   removeServerTicket,
@@ -66,6 +77,11 @@ import {
   type SessionSettlement,
   type SessionState,
   type SessionSummary,
+  type SpillRefusal,
+  type SpillSlice,
+  servedGrants,
+  spillReferenceAmong,
+  spillSlice,
   type UndoReport,
   type WorkspaceInfo,
   writeServerTicket,
@@ -75,18 +91,20 @@ import {
   type LspConfig,
   type McpServerConfig,
   type ModelCapabilitiesConfig,
+  type PermissionRule,
   type PresetName,
   type PromptsConfig,
   requiresConfirmation,
   resolveAnchor,
+  toError,
 } from "@keywork/shared";
-import type { RewoundPrompt } from "@keywork/tui";
-import { persistNewMessages } from "./chat.ts";
 import type { MemoryDeciderSetup } from "./memory-decider.ts";
 import { defaultSessionDir, keyworkHome, workspaceIdentity } from "./paths.ts";
-import { checkpointChanges } from "./serve-changes.ts";
+import { sessionChanges } from "./serve-changes.ts";
 import { servedLifecycle } from "./serve-lifecycle.ts";
 import { servedMemory } from "./serve-memory.ts";
+import { type NeighbourSession, restorePreviewOf } from "./serve-restore.ts";
+import { loggedCostNanos, SpendLedger } from "./serve-spend.ts";
 import { type ServedSession, surfacePorts } from "./serve-surfaces.ts";
 import { servedTree } from "./serve-tree.ts";
 import { composeServedWorkspace, type ServedWorkspace } from "./serve-workspace.ts";
@@ -99,8 +117,15 @@ import {
 } from "./session-settle.ts";
 import { exportSession } from "./sessions/export.ts";
 import { sessionHtml } from "./sessions/export-html.ts";
+import { heldGrantsOf, recordHeldGrants } from "./sessions/grants-journal.ts";
 import { forkOrigin } from "./sessions/lifecycle.ts";
 import { moveLeaf, rewindBefore } from "./sessions/ports.ts";
+import {
+  type JournaledRestore,
+  journalRestore,
+  undoRestore,
+  unsettledRestoreOf,
+} from "./sessions/rewind-journal.ts";
 import {
   findSession,
   newSessionFileName,
@@ -108,6 +133,7 @@ import {
   scanSessions,
   summarize,
 } from "./sessions/store.ts";
+import { freezeTurn } from "./sessions/turn-journal.ts";
 import { keyworkVersion } from "./version.ts";
 import { workspacePermissions } from "./workspace-permissions.ts";
 
@@ -115,6 +141,8 @@ export interface ServeOptions extends HostOptions {
   port?: number | undefined;
   ticketFile?: string | undefined;
   fetch?: typeof fetch | undefined;
+  tokenOnStdout?: boolean | undefined;
+  reopen?: (() => Promise<HostOptions>) | undefined;
   signal: AbortSignal;
   print: (line: string) => void;
   printError: (line: string) => void;
@@ -144,6 +172,7 @@ export interface HostOptions {
   closingProvider?: Provider | undefined;
   memoryDecider?: MemoryDeciderSetup | undefined;
   notice?: ((text: string) => void) | undefined;
+  recompose?: (() => Promise<void>) | undefined;
 }
 
 export function serverTicketFile(userRoot?: string): string {
@@ -161,11 +190,9 @@ export function ticketFilesFor(cwd: string, slug?: string, userRoot?: string): s
 export const alreadyServingExit = 2;
 
 export async function serve(options: ServeOptions): Promise<number> {
-  const ticketFiles =
-    options.ticketFile === undefined
-      ? ticketFilesFor(options.cwd, options.workspaceSlug, options.userRoot)
-      : [options.ticketFile];
-  const running = await runningServerAmong(ticketFiles, options.fetch ?? fetch);
+  const ticketFile =
+    options.ticketFile ?? workspaceTicketFile(options.cwd, options.workspaceSlug, options.userRoot);
+  const running = await runningServerAmong([ticketFile], options.fetch ?? fetch);
   if (running !== undefined) {
     options.printError(
       `keywork serve: a keywork server for this workspace is already listening at ${running.url} · attach to it, or stop it first`,
@@ -173,9 +200,14 @@ export async function serve(options: ServeOptions): Promise<number> {
     return alreadyServingExit;
   }
   const log = new EventLog();
-  const host = await servedHost({ ...options, log, notice: options.printError });
-  const token = issueToken();
   let server: Awaited<ReturnType<typeof listen>>;
+  const hostOf = (hosting: HostOptions, recompose?: () => Promise<void>) =>
+    servedHost({ ...hosting, log, notice: options.printError, recompose });
+  const host = await hostOf(options, async () => {
+    const trusted = { ...((await options.reopen?.()) ?? options), projectTrusted: true };
+    await server.rehost(await hostOf(trusted));
+  });
+  const token = issueToken();
   try {
     server = await listen({
       token,
@@ -190,13 +222,13 @@ export async function serve(options: ServeOptions): Promise<number> {
     await host.close();
     return 1;
   }
-  for (const file of ticketFiles) writeServerTicket(file, { url: server.url, token });
+  writeServerTicket(ticketFile, { url: server.url, token });
   options.print(`listening on ${server.url}`);
-  options.print(`token ${token}`);
-  for (const file of ticketFiles) options.print(`ticket ${file}`);
+  if (options.tokenOnStdout !== false) options.print(`token ${token}`);
+  options.print(`ticket ${ticketFile}`);
   await untilAborted(options.signal);
   await server.close();
-  for (const file of ticketFiles) removeServerTicket(file);
+  removeServerTicket(ticketFile);
   return 0;
 }
 
@@ -263,10 +295,10 @@ interface ServedGate {
   ledger: PermissionLedger;
 }
 
-function servedGate(options: HostOptions): ServedGate {
+function servedGate(options: HostOptions & { log: EventLog }): ServedGate {
   const ledger = workspacePermissions({ ...options, user: options.permissions });
   const asks = new AskQueue({
-    grants: ledger,
+    grants: servedGrants(ledger, options.log),
     ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
   });
   return { asks, ledger };
@@ -280,8 +312,20 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
     const live = await sessions.open(id);
     return live === undefined ? "missing" : act(live);
   };
+  const notQueuedIn = async (id: string): Promise<"missing" | "unknown"> =>
+    (await sessions.stored(id)) === undefined ? "missing" : "unknown";
   return {
-    list: () => sessions.list(),
+    list: async () => {
+      const pending = asks.list();
+      return (await sessions.list()).map((summary) =>
+        deskRowOf(summary, {
+          asks: pending,
+          live: (id) => sessions.liveOnly(id) !== undefined,
+          working: (id) => sessions.liveOnly(id)?.busy() === true,
+          changes: (id) => sessions.changesOf(id),
+        }),
+      );
+    },
     read: (id) => sessions.read(id),
     create: () => sessions.create(),
     prompt: (id, text, behavior) => onLive(id, (live) => live.run(text, { behavior })),
@@ -298,18 +342,30 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
     undo: (id) => onLive(id, (live) => live.undo()),
     redo: (id) => onLive(id, (live) => live.redo()),
     restore: (id, turn) => onLive(id, (live) => live.restore(turn)),
+    previewRestore: (id, turn) => sessions.previewRestore(id, turn),
     context: (id) => onLive(id, (live) => live.context()),
     cost: (id) => onLive(id, (live) => live.cost()),
     exportHtml: (id, scope, out) => onLive(id, (live) => live.exportHtml(scope, out)),
     rename: (id, title) => onLive(id, (live) => live.rename(title)),
+    setQuiet: (id, on) => onLive(id, (live) => live.setQuiet(on)),
+    flush: (id) => onLive(id, (live) => live.flush()),
+    forget: (id, entryId, replacement) => onLive(id, (live) => live.forget(entryId, replacement)),
+    spill: (id, spillId, range) => sessions.spill(id, spillId, range),
+    queue: {
+      setAside: (id) => onLive(id, (live) => live.setQueueAside()),
+      move: async (id, itemId, to) =>
+        sessions.liveOnly(id)?.moveQueued(itemId, to) ?? notQueuedIn(id),
+      cancel: async (id, itemId) => sessions.liveOnly(id)?.cancelQueued(itemId) ?? notQueuedIn(id),
+    },
     applyPreset: (name, confirmed) => sessions.applyPreset(name, confirmed),
     tree: servedTree({
       sessionDir: sessions.sessionDir,
       bound: (id) => sessions.bound(id),
       moveLeaf: (id, entryId) => onLive(id, (live) => live.moveLeaf(entryId)),
     }),
-    changes: changesPortOver({ has: async (id) => (await sessions.bound(id)) !== undefined }, () =>
-      sessions.changesSource(),
+    changes: changesPortOver(
+      { has: async (id) => (await sessions.bound(id)) !== undefined },
+      (id) => sessions.changesSource(id),
     ),
     lifecycle: servedLifecycle({
       sessionDir: sessions.sessionDir,
@@ -318,17 +374,18 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
       summaryOf: storedSummary,
     }),
     asks: async () => asks.list(),
-    answerAsk: async (callId, verdict, scope, reason) =>
-      asks.answer(callId, verdict, scope, reason),
-    permissions: async () => ledger.view(),
+    answerAsk: async (callId, verdict, scope, denial) =>
+      asks.answer(callId, verdict, scope, denial),
+    permissions: async () => ({ ...ledger.view(), quiet: ledger.quietSessions() }),
     grantWorkspaceRule: async (rule) => ledger.record("", "workspace", [rule]),
     grantSessionRule: async (sessionId, rule) => {
-      if ((await sessions.bound(sessionId)) === undefined) return false;
+      if ((await sessions.open(sessionId)) === undefined) return false;
       ledger.record(sessionId, "session", [rule]);
       return true;
     },
     revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
-    revokeSessionGrant: async (sessionId, rule) => ledger.revokeSession(sessionId, rule),
+    revokeSessionGrant: async (sessionId, rule) =>
+      (await sessions.open(sessionId)) !== undefined && ledger.revokeSession(sessionId, rule),
     close: async () => {
       asks.close();
       await sessions.close();
@@ -342,9 +399,11 @@ interface SessionRuntime {
   scope: ToolScope;
   checkpoints: Checkpoints | undefined;
   changes: ChangesFeed;
+  ledger: PermissionLedger;
   inference: SessionInference | undefined;
   fallback: Provider;
   flushes: SessionFlushes;
+  turn: TurnCheckpoint;
   notice(text: string): void;
   forge(provider: Provider, history: readonly Message[]): Agent;
   botNamed(name: string | undefined): BotDefinition | undefined;
@@ -354,6 +413,8 @@ class LiveSessions {
   readonly sessionDir: string;
   private readonly live = new Map<string, LiveSession>();
   private readonly changes: ChangesFeed;
+  private readonly frozenChanges = new Map<string, ChangesSummary>();
+  private readonly unjournalGrants: () => void;
   private workspace: Promise<ServedWorkspace> | undefined;
 
   constructor(
@@ -361,7 +422,10 @@ class LiveSessions {
     private readonly gate: ServedGate,
   ) {
     this.sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
-    this.changes = new ChangesFeed(options.log, () => this.changesSource());
+    this.changes = new ChangesFeed(options.log, (id) => this.changesSource(id));
+    this.unjournalGrants = gate.ledger.onSessionRules((id, rules) =>
+      this.live.get(id)?.journalGrants(rules),
+    );
   }
 
   async list(): Promise<SessionSummary[]> {
@@ -382,13 +446,38 @@ class LiveSessions {
     const store = await this.stored(id);
     if (store === undefined) return undefined;
     return this.withForkOrigin({
-      ...storedSummary(await summarize(store), store),
+      ...this.pricedSummary(await summarize(store), store),
       cwd: store.header.cwd,
       live: false,
       messages: store.messages(),
+      ...store.messageMarks(),
       asOf: this.options.log.latestId(),
       ...parentSessionOf(store),
     });
+  }
+
+  changesOf(id: string): ChangesSummary | undefined {
+    return this.changes.lastAnnounced(id) ?? this.frozenChanges.get(id);
+  }
+
+  async previewRestore(
+    id: string,
+    turn: number,
+  ): Promise<RestorePreview | "missing" | "unknown-turn"> {
+    const session = await this.bound(id);
+    if (session === undefined) return "missing";
+    const { checkpoints } = (await this.composed()).composition;
+    return restorePreviewOf(checkpoints, session, turn, () => this.neighboursOf(id));
+  }
+
+  async spill(id: string, spillId: string, range: ByteRange): Promise<SpillSlice | SpillRefusal> {
+    const bound = await this.bound(id);
+    if (bound === undefined) return "missing";
+    const unsaved = this.liveOnly(id)?.history() ?? [];
+    const logged = loggedMessages(bound.store.entries());
+    const reference = spillReferenceAmong([...logged, ...unsaved], spillId);
+    if (reference === undefined) return "unknown-spill";
+    return spillSlice(bound.store.spills(), reference, range);
   }
 
   async release(id: string): Promise<void> {
@@ -427,12 +516,11 @@ class LiveSessions {
     return findSession(this.sessionDir, id);
   }
 
-  async changesSource(): Promise<ChangesSource | undefined> {
+  async changesSource(id: string): Promise<ChangesSource | undefined> {
     const { composition } = await this.composed();
-    const { checkpoints } = composition;
-    return checkpoints === undefined
-      ? undefined
-      : checkpointChanges(checkpoints, composition.scope);
+    const session = await this.bound(id);
+    if (composition.checkpoints === undefined || session === undefined) return undefined;
+    return sessionChanges(composition.checkpoints, composition.scope, session);
   }
 
   async bound(id: string): Promise<ServedSession | undefined> {
@@ -454,6 +542,7 @@ class LiveSessions {
   }
 
   async close(): Promise<void> {
+    this.unjournalGrants();
     for (const live of this.live.values()) await live.close();
     await this.changes.settled();
     if (this.workspace !== undefined) await (await this.workspace).close();
@@ -464,8 +553,32 @@ class LiveSessions {
     store: SessionStore,
   ): Promise<{ stored: StoredSummary; summary: SessionSummary }> {
     const stored = await summarize(store);
-    const summary = this.liveOnly(store.header.id)?.summary() ?? storedSummary(stored, store);
+    const summary = this.liveOnly(store.header.id)?.summary() ?? this.pricedSummary(stored, store);
+    this.freezeChanges(store);
     return { stored, summary };
+  }
+
+  private freezeChanges(store: SessionStore): void {
+    const totals = latestSessionTotals(store.activePath());
+    if (totals === undefined) this.frozenChanges.delete(store.header.id);
+    else this.frozenChanges.set(store.header.id, totals);
+  }
+
+  private async neighboursOf(id: string): Promise<NeighbourSession[]> {
+    const { stores } = await scanSessions(this.sessionDir);
+    const others = stores.filter((store) => store.header.id !== id);
+    return Promise.all(
+      others.map(async (store) => ({
+        id: store.header.id,
+        title: (await summarize(store)).title,
+        ...(this.liveOnly(store.header.id)?.served() ?? { store }),
+      })),
+    );
+  }
+
+  private pricedSummary(stored: StoredSummary, store: SessionStore): SessionSummary {
+    const costNanos = loggedCostNanos(store.entries(), this.options.provider);
+    return { ...storedSummary(stored, store), ...(costNanos !== undefined && { costNanos }) };
   }
 
   private async adopt(store: SessionStore): Promise<LiveSession> {
@@ -474,16 +587,19 @@ class LiveSessions {
     const { options } = this;
     const id = store.header.id;
     const shell = new ShellSession(options.cwd);
-    const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints);
+    const turn = new TurnCheckpoint();
+    const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints, turn);
     const runtime: SessionRuntime = {
       log: options.log,
       cwd: composition.scope.cwd,
       scope: composition.scope,
       checkpoints: composition.checkpoints,
       changes: this.changes,
+      ledger: this.gate.ledger,
       inference: options.inference,
       fallback: options.provider,
       flushes: agents,
+      turn,
       notice: (text) => options.notice?.(`keywork serve: ${text}`),
       forge: (provider, history) =>
         agents.build({
@@ -551,12 +667,21 @@ interface StagedUndo {
 
 interface StagedFiles {
   note: string;
+  restoredTo: string | undefined;
+  redoTree: string | undefined;
   restore(): Promise<void>;
   changed(): Promise<readonly ChangedPath[]>;
 }
 
+interface Rewound {
+  files: StagedFiles;
+  leafId: string;
+}
+
 const untouchedFiles: StagedFiles = {
   note: "files untouched",
+  restoredTo: undefined,
+  redoTree: undefined,
   restore: async () => {},
   changed: async () => [],
 };
@@ -566,8 +691,11 @@ class LiveSession {
   private bound: BoundAgent;
   private persisted: number;
   private settled: Promise<void> = Promise.resolve();
+  private grantsJournaled: Promise<void> = Promise.resolve();
   private staged: StagedUndo | undefined;
-  private readonly spend = new SpendLedger();
+  private turnPrompt: MessageEntry | undefined;
+  private readonly spend: SpendLedger;
+  private readonly finishedUsage: Usage[] = [];
 
   constructor(
     private readonly store: SessionStore,
@@ -575,9 +703,11 @@ class LiveSession {
     private readonly runtime: SessionRuntime,
   ) {
     this.id = store.header.id;
+    this.spend = SpendLedger.fromLog(store.entries(), runtime.fallback);
     this.bound = this.bind(runtime.forge(this.storedProvider(), store.messages()));
     this.adoptStoredSettings();
     this.persisted = this.agent.history().length;
+    this.staged = this.reopenedRestore();
   }
 
   private get agent(): Agent {
@@ -603,6 +733,27 @@ class LiveSession {
     if (!this.agent.busy()) return "idle";
     this.agent.interrupt();
     return "aborted";
+  }
+
+  busy(): boolean {
+    return this.agent.busy();
+  }
+
+  history(): readonly Message[] {
+    return this.agent.history();
+  }
+
+  setQueueAside(): readonly QueuedPrompt[] {
+    return this.agent.clearQueue();
+  }
+
+  moveQueued(itemId: string, to: number): QueueReport | Exclude<QueueRefusal, "missing"> {
+    const moved = this.agent.moveQueued(itemId, to);
+    return moved === "moved" ? { queued: this.agent.queued() } : moved;
+  }
+
+  cancelQueued(itemId: string): QueueReport | "unknown" {
+    return this.agent.cancelQueued(itemId) ? { queued: this.agent.queued() } : "unknown";
   }
 
   async switchModel(reference: string): Promise<ModelSwitch | "busy"> {
@@ -662,21 +813,12 @@ class LiveSession {
     this.staged = undefined;
     const prompt = lastPromptOnPath(this.store);
     if (prompt === undefined) return this.undoFilesOnly();
-    const rewound = rewindBefore(this.store, prompt.id);
+    const rewound = await this.stageRewind(prompt);
     if (rewound === undefined) return "nothing";
-    const { provider } = this.agent;
-    await this.swap(this.runtime.forge(provider, rewound.history));
-    const files = await this.stageFiles(rewound.checkpoint);
-    this.staged = {
-      cancel: async () => {
-        await files.restore();
-        await this.swap(this.runtime.forge(provider, rewound.restore()));
-      },
-    };
     this.announce();
     return {
       prompt: { entryId: prompt.id, text: textOf(prompt.message) },
-      filesNote: files.note,
+      filesNote: rewound.files.note,
       ...this.travel(),
     };
   }
@@ -697,29 +839,18 @@ class LiveSession {
   async restore(turn: number): Promise<RestoreReport | "busy" | "unknown-turn"> {
     if (!(await this.idle())) return "busy";
     const point = restorePointOf(this.store.activePath(), turn);
-    const left = this.store.leafId();
-    const rewound = point === undefined ? undefined : rewindBefore(this.store, point.prompt.id);
-    if (point === undefined || rewound === undefined) return "unknown-turn";
+    if (point === undefined) return "unknown-turn";
     this.staged = undefined;
-    const files = await this.stageFiles(point.files).catch((cause: unknown) => {
-      rewound.restore();
-      throw cause;
-    });
-    const recorded = await this.store.appendCustom(restoreEntryTypes.restore, {
-      turn,
-      from: left,
-      files: point.files ?? null,
-    });
-    await this.swap(this.runtime.forge(this.agent.provider, rewound.history));
-    this.staged = this.stagedRestore(recorded.id, files, rewound);
+    const rewound = await this.stageRewind(point.prompt, turn);
+    if (rewound === undefined) return "unknown-turn";
     this.announce();
     return {
       turn,
       prompt: { entryId: point.prompt.id, text: textOf(point.prompt.message) },
-      leafId: recorded.id,
+      leafId: rewound.leafId,
       undoneTurns: point.undoneTurns,
-      files: await files.changed(),
-      filesNote: files.note,
+      files: await rewound.files.changed(),
+      filesNote: rewound.files.note,
       ...this.travel(),
     };
   }
@@ -755,6 +886,43 @@ class LiveSession {
     return { title };
   }
 
+  async setQuiet(on: boolean): Promise<{ quiet: boolean }> {
+    if (this.store.quiet() !== on) await this.store.appendQuietChange(on);
+    this.runtime.ledger.setQuiet(this.id, on);
+    this.announce();
+    return { quiet: on };
+  }
+
+  async flush(): Promise<FlushReport | "busy"> {
+    if (!(await this.idle())) return "busy";
+    const { agent } = this;
+    const settlement = await flushMemoryNow({
+      store: this.store,
+      history: agent.history(),
+      flush: this.runtime.flushes.flushFor(this.id, agent.provider),
+    });
+    this.reportSettlement("requested", settlement);
+    if (settlement.history !== undefined) {
+      await this.swap(this.runtime.forge(agent.provider, settlement.history));
+    }
+    this.announce();
+    return { flushed: settlement.flushed.length, notices: settlement.notices };
+  }
+
+  async forget(
+    entryId: string,
+    replacement: string | undefined,
+  ): Promise<ForgetReport | "busy" | "unknown-entry"> {
+    if (!(await this.idle())) return "busy";
+    const target = this.store.activePath().find((entry) => entry.id === entryId);
+    if (target === undefined || !isForgettable(target)) return "unknown-entry";
+    this.staged = undefined;
+    const edit = await this.store.appendContextEdit(entryId, replacement ?? null);
+    await this.swap(this.runtime.forge(this.agent.provider, this.store.messages()));
+    this.announce();
+    return { edit };
+  }
+
   announcePreset(from: string, to: string): void {
     this.agent.bus.emit("gate.preset", { from, to });
   }
@@ -762,12 +930,14 @@ class LiveSession {
   summary(): SessionSummary {
     const stats = this.store.stats();
     const { model, thinking, effort } = this.state();
+    const costNanos = knownCostNanos(this.cost().rollup);
     return {
       id: this.id,
       title: this.title(),
       createdAt: this.store.header.timestamp,
       lastActivityAt: stats.lastActivityAt,
       messageCount: this.agent.history().length,
+      ...(costNanos !== undefined && { costNanos }),
       ...this.store.binding(),
       ...(model !== undefined && { model }),
       thinking,
@@ -781,6 +951,7 @@ class LiveSession {
       cwd: this.store.header.cwd,
       live: true,
       messages: this.agent.history(),
+      ...this.store.messageMarks(),
       asOf,
       ...parentSessionOf(this.store),
     };
@@ -796,6 +967,7 @@ class LiveSession {
       title: this.title(),
       leafId: this.store.leafId(),
       ...this.store.binding(),
+      quiet: this.runtime.ledger.isQuiet(this.id),
       ...this.travel(),
     };
   }
@@ -803,8 +975,19 @@ class LiveSession {
   async close(): Promise<void> {
     this.agent.interrupt();
     await this.settled;
+    await this.grantsJournaled;
     await this.release(this.bound);
     await this.shell.close();
+  }
+
+  journalGrants(rules: readonly PermissionRule[]): void {
+    this.grantsJournaled = this.grantsJournaled
+      .then(() => recordHeldGrants(this.store, rules))
+      .catch((cause: unknown) =>
+        this.runtime.notice(
+          `session ${this.id.slice(0, 8)} grants not saved · ${toError(cause).message}`,
+        ),
+      );
   }
 
   served(): ServedSession {
@@ -812,6 +995,7 @@ class LiveSession {
       store: this.store,
       busy: () => this.agent.busy(),
       adoptBinding: () => this.adoptBinding(),
+      openCheckpoint: () => this.runtime.turn.current(),
     };
   }
 
@@ -851,11 +1035,19 @@ class LiveSession {
   private async idle(): Promise<boolean> {
     if (this.agent.busy()) return false;
     await this.settled;
+    await this.grantsJournaled;
     return true;
+  }
+
+  private async openTurn(agent: Agent): Promise<string | undefined> {
+    const written = await this.persistTurn(agent.history());
+    this.turnPrompt = written.findLast(isPromptEntry);
+    return this.turnPrompt?.id;
   }
 
   private async afterTurn(): Promise<void> {
     await this.persistTurn(this.agent.history());
+    await this.closeTurn();
     const settlement = await settleSessionTurn(
       this.settling(),
       this.agent.history(),
@@ -872,7 +1064,7 @@ class LiveSession {
   private async settleToolBatch(
     history: readonly Message[],
   ): Promise<readonly Message[] | undefined> {
-    const reading = readContext(estimateConversationTokens(history), budgetOf(this.agent));
+    const reading = readMeasured(contextMeasureOf(this.agent), history, budgetOf(this.agent));
     if (!compactionDue(reading)) return undefined;
     await this.persistTurn(history);
     const settlement = await settleSessionTurn(
@@ -886,17 +1078,31 @@ class LiveSession {
     return settlement.history;
   }
 
-  private async persistTurn(history: readonly Message[]): Promise<void> {
-    this.persisted = await persistNewMessages(
-      this.store,
-      history,
-      this.persisted,
-      this.runtime.checkpoints,
-    );
+  private persistTurn(history: readonly Message[]): Promise<MessageEntry[]> {
+    const unsaved = history.slice(this.persisted);
+    this.persisted = history.length;
+    return Promise.all(unsaved.map((message) => this.store.append(message, this.usageOf(message))));
+  }
+
+  private usageOf(message: Message): Usage | undefined {
+    return message.role === "assistant" ? this.finishedUsage.shift() : undefined;
+  }
+
+  private async closeTurn(): Promise<void> {
+    const prompt = this.turnPrompt;
+    this.turnPrompt = undefined;
+    const { checkpoints, turn } = this.runtime;
+    if (prompt !== undefined) await freezeTurn(this.store, prompt.id, turn.current(), checkpoints);
+    turn.close();
   }
 
   private settling(): SettlingSession {
-    return { sessionId: this.id, store: this.store, agent: this.agent };
+    return {
+      sessionId: this.id,
+      store: this.store,
+      agent: this.agent,
+      measure: contextMeasureOf(this.agent),
+    };
   }
 
   private reportSettlement(
@@ -951,13 +1157,20 @@ class LiveSession {
     if (thinking === "on" || thinking === "off") this.agent.setThinking(thinking === "on");
     const effort = this.store.effort();
     if (effort !== undefined && isEffortLevel(effort)) this.agent.setEffort(effort);
+    this.runtime.ledger.setQuiet(this.id, this.store.quiet());
+    const grants = heldGrantsOf(this.store);
+    if (grants !== undefined) this.runtime.ledger.adoptSession(this.id, grants);
   }
 
   private bind(agent: Agent): BoundAgent {
+    agent.openTurnsWith(() => this.openTurn(agent));
     agent.settleTurnsWith(() => this.afterTurn());
     agent.settleToolBatchesWith((history) => this.settleToolBatch(history));
     const detach = this.runtime.log.attach(agent.bus, this.id);
     const unfollow = this.runtime.changes.follow(agent.bus, this.id);
+    const unmeter = agent.bus.on("turn.delta", ({ delta, replay }) => {
+      if (replay !== true && delta.type === "done") this.finishedUsage.push(delta.usage);
+    });
     return {
       agent,
       bot: this.store.botBinding(),
@@ -965,6 +1178,7 @@ class LiveSession {
       detach: () => {
         detach();
         unfollow();
+        unmeter();
       },
     };
   }
@@ -984,6 +1198,7 @@ class LiveSession {
   }
 
   private async release(bound: BoundAgent): Promise<void> {
+    bound.agent.openTurnsWith(undefined);
     bound.agent.settleTurnsWith(undefined);
     bound.agent.settleToolBatchesWith(undefined);
     bound.journal.stop();
@@ -1006,99 +1221,100 @@ class LiveSession {
     return true;
   }
 
+  private async stageRewind(prompt: MessageEntry, turn?: number): Promise<Rewound | undefined> {
+    const from = this.store.leafId();
+    const rewound = rewindBefore(this.store, prompt.id);
+    if (rewound === undefined) return undefined;
+    const files = await this.stageFiles(rewound.checkpoint).catch((cause: unknown) => {
+      rewound.restore();
+      throw cause;
+    });
+    const facts = { from, files: files.restoredTo, redo: files.redoTree, turn };
+    const restore = await journalRestore(this.store, facts).catch(async (cause: unknown) => {
+      await files.restore();
+      rewound.restore();
+      throw cause;
+    });
+    await this.swap(this.runtime.forge(this.agent.provider, rewound.history));
+    this.staged = this.stagedRestore(restore, files.restore);
+    return { files, leafId: restore.id };
+  }
+
   private async stageFiles(checkpoint: string | undefined): Promise<StagedFiles> {
     const { checkpoints } = this.runtime;
     if (checkpoints === undefined || checkpoint === undefined) return untouchedFiles;
     const left = await checkpoints.snapshot();
-    const travel = async (tree: string): Promise<void> => {
-      await checkpoints.restoreTo(tree);
-      await this.runtime.changes.announce(this.id);
-    };
-    await travel(checkpoint);
+    await this.putFilesAt(checkpoint);
     return {
       note: "files put back",
-      restore: () => travel(left),
+      restoredTo: checkpoint,
+      redoTree: left,
+      restore: () => this.putFilesAt(left),
       changed: () => checkpoints.filesBetween(left, checkpoint),
     };
   }
 
-  private stagedRestore(restoreId: string, files: StagedFiles, rewound: RewoundPrompt): StagedUndo {
-    const { provider } = this.agent;
+  private reopenedRestore(): StagedUndo | undefined {
+    const restore = unsettledRestoreOf(this.store);
+    if (restore === undefined) return undefined;
+    const { redoFiles } = restore;
+    if (redoFiles === undefined) return this.stagedRestore(restore, untouchedFiles.restore);
+    if (this.runtime.checkpoints === undefined) return undefined;
+    return this.stagedRestore(restore, () => this.putFilesAt(redoFiles));
+  }
+
+  private stagedRestore(restore: JournaledRestore, putFilesBack: () => Promise<void>): StagedUndo {
     return {
       cancel: async () => {
-        await files.restore();
-        const history = rewound.restore();
-        await this.store.appendCustom(restoreEntryTypes.undone, { restore: restoreId });
-        await this.swap(this.runtime.forge(provider, history));
+        await putFilesBack();
+        await undoRestore(this.store, restore);
+        await this.swap(this.runtime.forge(this.agent.provider, this.store.messages()));
       },
     };
+  }
+
+  private async putFilesAt(tree: string): Promise<void> {
+    await this.runtime.checkpoints?.restoreTo(tree);
+    await this.runtime.changes.announce(this.id);
   }
 }
 
 const noRegistry = "this server was started without a model registry";
 
-const restoreEntryTypes = { restore: "restore", undone: "restore-undone" } as const;
-
 const providerDefaultEffort = "default";
 
-interface ModelTotals {
-  usage: Usage;
-  rollup: CostRollup;
+function isForgettable(entry: SessionEntry): boolean {
+  if (entry.type !== "message") return false;
+  return entry.message.role === "user" || entry.message.role === "tool";
 }
 
-class SpendLedger {
-  private readonly retired = new Map<string, ModelTotals>();
-
-  retire(agent: Agent): void {
-    const key = spendKeyOf(agent);
-    this.retired.set(key, addTotals(this.retired.get(key), totalsOf(agent)));
-  }
-
-  report(agent: Agent): CostReport {
-    const rows = new Map(this.retired);
-    const key = spendKeyOf(agent);
-    rows.set(key, addTotals(rows.get(key), totalsOf(agent)));
-    const models: ModelSpend[] = [...rows].map(([reference, totals]) => ({
-      reference,
-      turns: totals.rollup.pricedTurns + totals.rollup.unpricedTurns,
-      ...totals,
-    }));
-    const total = models.reduce<ModelTotals | undefined>(addTotals, undefined) ?? totalsOf(agent);
-    const modelId = agent.modelId();
-    const cacheMiss = agent.cacheMiss();
-    return {
-      rollup: total.rollup,
-      usage: total.usage,
-      ...(modelId !== undefined && { modelId }),
-      ...(cacheMiss !== undefined && { cacheMiss }),
-      models,
-    };
-  }
-}
-
-function totalsOf(agent: Agent): ModelTotals {
-  return { usage: agent.usage(), rollup: agent.cost() };
-}
-
-function addTotals(left: ModelTotals | undefined, right: ModelTotals): ModelTotals {
-  if (left === undefined) return right;
-  return {
-    usage: addUsage(left.usage, right.usage),
-    rollup: mergeCostRollups(left.rollup, right.rollup),
-  };
-}
-
-function spendKeyOf(agent: Agent): string {
-  return modelReferenceOf(agent.provider) ?? agent.provider.name;
-}
-
-function checkpointingGuard(asks: ToolGuard, checkpoints: Checkpoints | undefined): ToolGuard {
+function checkpointingGuard(
+  asks: ToolGuard,
+  checkpoints: Checkpoints | undefined,
+  turn: TurnCheckpoint,
+): ToolGuard {
   if (checkpoints === undefined) return asks;
   return {
     ...asks,
-    beforeMutation: () => checkpoints.capture(),
-    beforeTurn: () => checkpoints.beginTurn(),
+    beforeMutation: async () => turn.note(await checkpoints.captureTree()),
+    beforeTurn: () => turn.close(),
   };
+}
+
+class TurnCheckpoint {
+  private tree: string | undefined;
+
+  note(tree: string): void {
+    this.tree ??= tree;
+  }
+
+  current(): string | undefined {
+    return this.tree;
+  }
+
+  close(): void {
+    this.tree = undefined;
+  }
 }
 
 function sendOptionsOf(options: {
@@ -1112,11 +1328,7 @@ function sendOptionsOf(options: {
 }
 
 function lastPromptOnPath(store: SessionStore): MessageEntry | undefined {
-  return store
-    .activePath()
-    .findLast(
-      (entry): entry is MessageEntry => entry.type === "message" && entry.message.role === "user",
-    );
+  return store.activePath().findLast(isPromptEntry);
 }
 
 function textOf(message: Message): string {

@@ -40,12 +40,16 @@ export function contextBudgetFor(declaredWindow: number | undefined): ContextBud
   };
 }
 
-export function readContext(used: number, budget: ContextBudget): ContextReading {
+export function readContext(
+  conversation: number,
+  budget: ContextBudget,
+  overhead = 0,
+): ContextReading {
   return {
-    used: Math.max(0, Math.round(used)),
+    used: Math.max(0, Math.round(conversation + overhead)),
     window: budget.window,
-    flushAt: budget.window - budget.flushReserve,
-    compactAt: budget.window - budget.compactionReserve,
+    flushAt: budget.window - budget.flushReserve + overhead,
+    compactAt: budget.window - budget.compactionReserve + overhead,
     declared: budget.declared,
   };
 }

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  childDirFor,
   type EffortLevel,
   isEffortLevel,
   type MessageEntry,
@@ -7,10 +8,12 @@ import {
   replaySession,
   type SessionEntry,
   SessionStore,
+  type TurnTrees,
   type Usage,
 } from "@keywork/engine";
 import type {
   ForgetTarget,
+  ReplayedSummary,
   RewoundPrompt,
   SessionAttachment,
   SessionOverviewItem,
@@ -20,7 +23,16 @@ import type {
   SessionTreeView,
   ThinkingSwitch,
 } from "@keywork/tui";
-import { forkOrigin, listTrash, removeSession, restoreSession } from "./lifecycle.ts";
+import { heldGrantsOf, recordHeldGrants } from "./grants-journal.ts";
+import {
+  discardTrashed,
+  forkOrigin,
+  listTrash,
+  purgeTrash,
+  removeSession,
+  restoreSession,
+} from "./lifecycle.ts";
+import { journaledRewind, stagedRewindOf } from "./rewind-journal.ts";
 import {
   findSession,
   newSessionFileName,
@@ -28,6 +40,8 @@ import {
   scanSessions,
   summarize,
 } from "./store.ts";
+import { freezeTurn } from "./turn-journal.ts";
+import { firstCheckpointFrom, turnLedger } from "./turns.ts";
 
 export interface SessionPortSeams {
   checkpointTag?(): string | undefined;
@@ -36,6 +50,7 @@ export interface SessionPortSeams {
   onChange?(sessionId: string): void;
   onListen?(sessionId: string, stop: () => void): void;
   onArcBound?(sessionId: string, arc: string | undefined): void;
+  turnTrees?: TurnTrees | undefined;
 }
 
 export interface SessionChangeFeed {
@@ -81,12 +96,8 @@ export function sessionTreePort(dir: string, changes?: SessionChangeFeed): Sessi
   };
   return {
     async overview(): Promise<SessionOverviewItem[]> {
-      const { stores } = await scanSessions(dir);
-      const used = stores.filter((store) => store.stats().entries > 0);
-      const items = await Promise.all(
-        used.map(async (store) => overviewItem(await summarize(store))),
-      );
-      return items.sort((a, b) => b.modifiedAt - a.modifiedAt);
+      const families = await Promise.all((await usedStores(dir)).map(familyItems));
+      return families.flat().sort((a, b) => b.modifiedAt - a.modifiedAt);
     },
     async load(sessionId: string): Promise<SessionTreeView | undefined> {
       const store = await findSession(dir, sessionId);
@@ -128,6 +139,10 @@ export function sessionTreePort(dir: string, changes?: SessionChangeFeed): Sessi
       changes?.emit(store.header.id);
       return overviewItem(await summarize(store));
     },
+    async discard(sessionId: string): Promise<boolean> {
+      return (await discardTrashed(dir, sessionId)) !== undefined;
+    },
+    purgeTrash: () => purgeTrash(dir),
     ...(changes !== undefined && {
       subscribe: (listener: (sessionId: string) => void) => changes.subscribe(listener),
     }),
@@ -149,8 +164,12 @@ export function sessionChangeFeed(): SessionChangeFeed {
 
 function attachmentOf(
   store: SessionStore,
-  seams: Pick<SessionPortSeams, "checkpointTag" | "onChange" | "onListen" | "onArcBound"> = {},
+  seams: Pick<
+    SessionPortSeams,
+    "checkpointTag" | "onChange" | "onListen" | "onArcBound" | "turnTrees"
+  > = {},
 ): SessionAttachment {
+  const ledger = turnLedger(store, seams.turnTrees);
   const name = store.name();
   const selection = store.modelSelection();
   const thinking = thinkingSwitchOf(store.thinkingLevel());
@@ -182,8 +201,30 @@ function attachmentOf(
       const checkpoint = message.role === "user" ? seams.checkpointTag?.() : undefined;
       const usage = message.role === "assistant" ? finishedTurnUsage.shift() : undefined;
       const entry = await store.append(message, usage, checkpoint);
+      if (message.role === "user") ledger.settled(entry.id);
       seams.onChange?.(store.header.id);
       return { entryId: entry.id };
+    },
+    openTurn: async (prompt) => {
+      const entry = await store.append(prompt);
+      seams.onChange?.(store.header.id);
+      return { entryId: entry.id };
+    },
+    settleTurn: async (promptId) => {
+      await freezeTurn(store, promptId, seams.checkpointTag?.(), seams.turnTrees);
+      seams.onChange?.(store.header.id);
+    },
+    quiet: store.quiet(),
+    summaries: replayedSummaries(store),
+    recordQuiet: async (on) => {
+      if (store.quiet() === on) return;
+      await store.appendQuietChange(on);
+      seams.onChange?.(store.header.id);
+    },
+    turns: () => ledger.read(),
+    pinTitle: async (title) => {
+      await store.setName(title, true);
+      seams.onChange?.(store.header.id);
     },
     rename: async (title) => {
       if (store.titlePinned()) return;
@@ -219,7 +260,18 @@ function attachmentOf(
       await store.appendBotBinding(name);
       seams.onChange?.(store.header.id);
     },
-    rewindBefore: (promptId) => rewindBefore(store, promptId),
+    rewindBefore: (promptId) => {
+      const from = store.leafId();
+      const rewound = rewindBefore(store, promptId);
+      return (
+        rewound && journaledRewind(store, rewound, from, () => seams.onChange?.(store.header.id))
+      );
+    },
+    ...journaledState(store, () => seams.onChange?.(store.header.id)),
+    recordGrants: async (rules) => {
+      await recordHeldGrants(store, rules);
+      seams.onChange?.(store.header.id);
+    },
     forget: async (target, replacement) => {
       const entry = contextEditTarget(store, target);
       if (entry === undefined) return undefined;
@@ -252,9 +304,10 @@ export function rewindBefore(store: SessionStore, promptId: string): RewoundProm
   const prompt = store.entry(promptId);
   if (prompt?.type !== "message" || prompt.message.role !== "user") return undefined;
   const leaf = store.leafId();
+  const checkpoint = firstCheckpointFrom(store.activePath(), prompt);
   moveLeaf(store, prompt.parentId);
   return {
-    checkpoint: prompt.checkpoint,
+    checkpoint,
     history: store.messages(),
     restore: () => {
       moveLeaf(store, leaf);
@@ -266,6 +319,42 @@ export function rewindBefore(store: SessionStore, promptId: string): RewoundProm
 export function moveLeaf(store: SessionStore, entryId: string | null): void {
   if (entryId === null) store.resetLeaf();
   else store.branch(entryId);
+}
+
+function journaledState(
+  store: SessionStore,
+  changed: () => void,
+): Pick<SessionAttachment, "stagedRewind" | "grants"> {
+  const stagedRewind = stagedRewindOf(store, changed);
+  const grants = heldGrantsOf(store);
+  return {
+    ...(stagedRewind !== undefined && { stagedRewind }),
+    ...(grants !== undefined && { grants }),
+  };
+}
+
+function replayedSummaries(store: SessionStore): ReplayedSummary[] {
+  return store
+    .contextEntries()
+    .flatMap((entry) =>
+      entry.type === "compaction" || entry.type === "branch_summary"
+        ? [{ text: entry.summary, kind: entry.type }]
+        : [],
+    );
+}
+
+async function usedStores(dir: string): Promise<SessionStore[]> {
+  const { stores } = await scanSessions(dir);
+  return stores.filter((store) => store.stats().entries > 0);
+}
+
+async function familyItems(parent: SessionStore): Promise<SessionOverviewItem[]> {
+  const children = await usedStores(childDirFor(parent.file));
+  const parentId = parent.header.id;
+  return Promise.all([
+    summarize(parent).then(overviewItem),
+    ...children.map(async (child) => ({ ...overviewItem(await summarize(child)), parentId })),
+  ]);
 }
 
 export async function boundSessionCounts(dir: string): Promise<Map<string, number>> {

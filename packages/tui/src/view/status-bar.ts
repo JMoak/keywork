@@ -1,13 +1,15 @@
 import { Box, fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import type { AppCore } from "../app-core.ts";
-import { type ArcOrdinals, arcInk, arcTag } from "../arcs.ts";
+import { type ArcAttire, type ArcOrdinals, arcInk, arcTag } from "../arcs.ts";
 import type { Palette } from "../palette.ts";
+import { pluralize } from "../pluralize.ts";
 
 export interface StatusBarInputs {
   theme: Palette;
   label: string | undefined;
   focusedArc: string | undefined;
   arcOrdinal: ArcOrdinals;
+  arcAttire?: ArcAttire;
 }
 
 export const navHint =
@@ -36,11 +38,13 @@ function statusChunks(core: AppCore, inputs: StatusBarInputs): TextChunk[] {
   const { theme, focusedArc } = inputs;
   const lead = `${inputs.label ?? "keywork"} · `;
   const guidance = core.tip() ?? "ctrl+k nav · ctrl+p go · / commands";
-  const tail = `${core.layout.panes().length} panes · ${guidance}`;
+  const tail = `${pluralize(core.layout.panes().length, "pane")} · ${guidance}`;
   if (focusedArc === undefined) return [fg(theme.textDim)(`${lead}${tail}`)];
   return [
     fg(theme.textDim)(lead),
-    fg(arcInk(theme, inputs.arcOrdinal(focusedArc)))(arcTag(focusedArc)),
+    fg(arcInk(theme, inputs.arcOrdinal(focusedArc), inputs.arcAttire?.(focusedArc)))(
+      arcTag(focusedArc),
+    ),
     fg(theme.textDim)(` · ${tail}`),
   ];
 }

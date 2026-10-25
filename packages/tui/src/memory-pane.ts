@@ -1,8 +1,15 @@
 import { fg, StyledText, Text, type TextChunk } from "@opentui/core";
-import { type ArcAirlockPort, type ArcOrdinals, arcInk, describeFinishOutcome } from "./arcs.ts";
+import {
+  type ArcAirlockPort,
+  type ArcAttire,
+  type ArcOrdinals,
+  arcInk,
+  describeFinishOutcome,
+} from "./arcs.ts";
 import { FrameCoalescer, type FrameScheduler, nextFrame } from "./frame-scheduler.ts";
 import type { Chord } from "./keys.ts";
 import { markdownChunk } from "./markdown-ink.ts";
+import type { DecisionsView } from "./memory-decisions.ts";
 import {
   type MemoryLensState,
   type MemoryPaneInputs,
@@ -45,7 +52,9 @@ export interface MemoryPanePort {
 export interface MemoryPaneOptions {
   intents?: Pick<PaneIntents, "openFile" | "notice">;
   focusedArc?: () => string | undefined;
+  decisions?: () => DecisionsView | undefined;
   arcOrdinal?: ArcOrdinals;
+  arcAttire?: ArcAttire;
   digestTreatment?: DigestTreatment;
   gardenHeat?: GardenHeat;
   subscribe?: (listener: () => void) => () => void;
@@ -99,6 +108,7 @@ export class MemoryPane implements Pane {
       },
       {
         ...(options.focusedArc !== undefined && { focusedArc: options.focusedArc }),
+        ...(options.decisions !== undefined && { decisions: options.decisions }),
         ...(options.now !== undefined && { now: options.now }),
         ...(options.digestTreatment !== undefined && {
           digestTreatment: options.digestTreatment,
@@ -178,6 +188,7 @@ export class MemoryPane implements Pane {
       : undefined;
     this.lastPageRows = Math.max(0, paneContentHeight(context) - (tray?.rows ?? 0));
     this.model.setBodyWidth(Math.max(1, innerWidth - railWidth));
+    this.model.followDecisions();
     const body = this.bodyLines(theme, this.lastPageRows, innerWidth);
     this.trayFirstRow = 2 + body.length;
     return paneChrome(context, this.title(), ...body, ...(tray?.children ?? []));
@@ -329,10 +340,9 @@ export class MemoryPane implements Pane {
       case "accent":
         return theme.accent;
       case "arc":
-        return arcInk(
-          theme,
-          row.arc === undefined ? undefined : this.options.arcOrdinal?.(row.arc),
-        );
+        return row.arc === undefined
+          ? arcInk(theme, undefined)
+          : arcInk(theme, this.options.arcOrdinal?.(row.arc), this.options.arcAttire?.(row.arc));
     }
   }
 
@@ -356,6 +366,11 @@ export const memoryTray: readonly KeyedTrayCommand[] = [
     key: "?",
   },
   { name: "lens", description: "switch between the garden and the ledger", key: "tab" },
+  {
+    name: "decisions",
+    description: "why memory recalled what it did, newest first, for the focused session",
+    key: "w",
+  },
   { name: "ledger", description: "the event ledger, filtered to the open note", key: "l" },
   { name: "open file", description: "open the note's file in a file pane", key: "o" },
   { name: "revert", description: "revert the note's last write from this run", key: "u" },

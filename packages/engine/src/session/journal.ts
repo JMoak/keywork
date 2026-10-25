@@ -4,10 +4,16 @@ import type { MemoryDecision } from "../memory/decider.ts";
 import type { ToolPreview } from "../tools.ts";
 import type { CustomEntry, SessionEntry } from "./entries.ts";
 import type { SessionStore } from "./store.ts";
+import { turnFactsType } from "./turn-facts.ts";
 
 export type PermissionVerdict = "granted" | "denied";
-export type PermissionGate = "policy" | "default" | "trusted" | "user" | "headless";
+export type PermissionGate = "policy" | "default" | "trusted" | "user" | "headless" | "quiet";
 export type DenyReason = "unsafe" | "not-now" | "other";
+
+export interface Denial {
+  reason?: DenyReason;
+  note?: string;
+}
 
 export interface PermissionDecision {
   tool: string;
@@ -17,6 +23,7 @@ export interface PermissionDecision {
   scope?: AskScope;
   asked?: boolean;
   reason?: DenyReason;
+  note?: string;
 }
 
 export type AskRule = Extract<PermissionGate, "policy" | "default" | "trusted">;
@@ -84,6 +91,10 @@ export interface ExtensionState {
   injections: ContextInjection[];
   decisions: PermissionDecision[];
   shellResets: number;
+}
+
+export function isJournalOnly(entry: SessionEntry): boolean {
+  return entry.type === "custom" && journalOnlyTypes.has(entry.customType);
 }
 
 export function recordJournalEvent(store: SessionStore, event: JournalEvent): Promise<CustomEntry> {
@@ -203,6 +214,16 @@ export function replayJournalEntry(bus: EventBus<EngineEvents>, entry: SessionEn
       return;
   }
 }
+
+const journalOnlyTypes: ReadonlySet<string> = new Set([
+  "permission_ask",
+  "permission_decision",
+  "context_injection",
+  "memory_decision",
+  "shell_reset",
+  "session_grants",
+  turnFactsType,
+]);
 
 function changeOf(preview: ToolPreview): AskedChange {
   return {

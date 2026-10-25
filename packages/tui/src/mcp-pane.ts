@@ -1,6 +1,13 @@
 import { toError } from "@keywork/shared";
+import { Box } from "@opentui/core";
 import { type Chord, parseChord } from "./keys.ts";
-import { type McpAction, McpPaneModel, type McpServerView, stateGlyph } from "./mcp-pane-model.ts";
+import {
+  type McpAction,
+  McpPaneModel,
+  type McpRow,
+  type McpServerView,
+  stateGlyph,
+} from "./mcp-pane-model.ts";
 import type { Palette } from "./palette.ts";
 import type { Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import {
@@ -13,6 +20,7 @@ import {
   paneTitle,
   rowsView,
   toneInk,
+  wrappedLines,
 } from "./pane-chrome.ts";
 import { PaneTasks } from "./pane-tasks.ts";
 import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
@@ -174,7 +182,13 @@ export class McpPane implements Pane {
     if (failure !== undefined) return [paneFailureLine(failure, theme, width)];
     return rowsView(this.model, rows, theme, width, {
       text: (row) => row.text,
-      line: (row) => paneLine(row.text, toneInk(theme, row.tone), width),
+      line: (row) => mcpRowView(row, theme, width),
     });
   }
+}
+
+function mcpRowView(row: McpRow, theme: Palette, width: number): PaneChild {
+  const ink = toneInk(theme, row.tone);
+  if (row.kind !== "empty") return paneLine(row.text, ink, width);
+  return Box({ flexDirection: "column" }, ...wrappedLines(row.text, ink, width));
 }

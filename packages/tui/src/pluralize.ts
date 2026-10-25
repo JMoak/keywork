@@ -1,5 +1,5 @@
-export function pluralize(count: number, noun: string): string {
-  return `${count} ${count === 1 ? noun : `${noun}s`}`;
+export function pluralize(count: number, noun: string, plural = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : plural}`;
 }
 
 export function sessionsFact(count: number): string {

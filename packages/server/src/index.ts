@@ -3,6 +3,7 @@ export {
   AskQueue,
   type AskQueueOptions,
   type AskVerdict,
+  type Denial,
   defaultAskTimeoutMs,
   type GrantSink,
   type PendingAsk,
@@ -13,6 +14,7 @@ export {
   type ChangesSourceOf,
   type ChangesUpdate,
   changesPortOver,
+  changesSummaryOf,
   changesUpdateOf,
   type KnownSessions,
 } from "./changes.ts";
@@ -42,6 +44,7 @@ export {
   type TicketSources,
   type Trusted,
 } from "./client.ts";
+export { type DeskFacts, deskRowOf } from "./desk.ts";
 export {
   type BusEnvelope,
   type EngineEventType,
@@ -60,6 +63,7 @@ export {
   type ByteRange,
   type FileSlice,
   FileTooLargeError,
+  fileSlice,
   fileSliceCapBytes,
   MissingPathError,
   maxFileBytes,
@@ -69,6 +73,7 @@ export {
   WorkspaceScopeError,
   workspaceFiles,
 } from "./files.ts";
+export { servedGrants } from "./grants.ts";
 export type {
   AbortOutcome,
   AirlockCandidateRecord,
@@ -79,12 +84,15 @@ export type {
   ChangesPort,
   ChangesRefusal,
   ChangesReport,
+  ChangesSummary,
   CompactionReport,
   CostReport,
   EntryRefusal,
   ExportOutcome,
   ExportScope,
   FileSides,
+  FlushReport,
+  ForgetReport,
   ForkOrigin,
   GardenerActivity,
   InjectOutcome,
@@ -100,23 +108,33 @@ export type {
   ModelSpend,
   ModelSwitch,
   NoteRelation,
+  OtherSessionFiles,
+  PermissionsAnswer,
   PresetHost,
   PresetOutcome,
   PromptOutcome,
+  QueueRefusal,
+  QueueReport,
   RedoReport,
   Refusal,
+  RestorePreview,
   RestoreReport,
   SessionDetail,
   SessionEntries,
   SessionHost,
   SessionInference,
   SessionLifecyclePort,
+  SessionQueuePort,
+  SessionRow,
   SessionSettlement,
   SessionState,
   SessionSummary,
   SessionTreePort,
+  SpillRefusal,
+  SpillSlice,
   UndonePrompt,
   UndoReport,
+  WaitingAsks,
 } from "./host.ts";
 export {
   type ArcCloseOutcome,
@@ -170,6 +188,7 @@ export type {
 } from "./routes/family.ts";
 export { sessionRemoved, sessionRestored } from "./routes/lifecycle.ts";
 export type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
+export type { PromptBehavior } from "./routes/sessions.ts";
 export { arcOrdinals } from "./routes/surfaces.ts";
 export type { TreeChange, TreeChangeReason } from "./routes/tree.ts";
 export {
@@ -178,8 +197,11 @@ export {
   type KeyworkServer,
   type ServerOptions,
 } from "./server.ts";
+export { loggedMessages, spillReferenceAmong, spillSlice } from "./spills.ts";
 export {
   type EnvelopeFilter,
+  keepaliveComment,
+  keepaliveIntervalMs,
   lastEventIdOf,
   serializeEnvelope,
   sessionFilterOf,

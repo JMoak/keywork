@@ -6,6 +6,7 @@ import { fixedSandbox, type ToolSandbox } from "../sandbox/session.ts";
 import type { Tool } from "../tools.ts";
 import { detectShell, type Shell } from "./bash.ts";
 import {
+  agentShellEnv,
   BoundedOutput,
   CommandRun,
   childClosed,
@@ -13,7 +14,7 @@ import {
   commandResult,
   commandTimedOut,
   defaultTimeoutMs,
-  maxOutputChars,
+  scrubbedEnv,
   shellSpawnOptions,
 } from "./command-run.ts";
 import { defineTool } from "./define.ts";
@@ -94,7 +95,7 @@ export class ShellSession {
   }
 
   private spawnLive(sandbox: Sandbox): LiveShell {
-    const live = spawnShell(this.cwd, this.shell, sandbox);
+    const live = spawnShell(this.cwd, this.shell, sandbox, agentShellEnv());
     this.live = live;
     void live.closed.then(() => {
       if (this.live === live) this.live = undefined;
@@ -182,14 +183,14 @@ interface LiveShell {
   failureListeners: Set<(failure: Error) => void>;
 }
 
-function spawnShell(cwd: string, shell: Shell, sandbox: Sandbox): LiveShell {
+function spawnShell(
+  cwd: string,
+  shell: Shell,
+  sandbox: Sandbox,
+  env: NodeJS.ProcessEnv,
+): LiveShell {
   const options = shellSpawnOptions(cwd);
-  const launch = sandbox.confine({
-    file: shell.file,
-    args: persistentArgs(shell),
-    cwd,
-    env: options.env ?? {},
-  });
+  const launch = sandbox.confine({ file: shell.file, args: persistentArgs(shell), cwd, env });
   const child = spawn(launch.file, [...launch.args], { ...options, env: launch.env });
   const closed = childClosed(child);
   const failureListeners = new Set<(failure: Error) => void>();
@@ -265,12 +266,14 @@ class SentinelScanner {
   }
 
   private flushOverlongLine(): void {
-    if (this.sawSentinel || this.buffer.length <= maxOutputChars) return;
+    if (this.sawSentinel || this.buffer.length <= longestHeldLine) return;
     this.output.append(this.buffer);
     this.buffer = "";
     this.midLine = true;
   }
 }
+
+const longestHeldLine = 30_000;
 
 function exitCodeIn(line: string, sentinel: string): number | undefined {
   const code = Number.parseInt(line.slice(sentinel.length).trim(), 10);
@@ -290,7 +293,7 @@ export function openInteractiveShell(
   shell: Shell = detectShell(),
   sandbox: Sandbox = unconfined,
 ): InteractiveShell {
-  const live = spawnShell(cwd, shell, sandbox);
+  const live = spawnShell(cwd, shell, sandbox, scrubbedEnv(process.env));
   const { child } = live;
   const onExit = (listener: (code: number | null) => void): (() => void) => {
     const handler = (code: number | null) => listener(code);

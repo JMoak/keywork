@@ -6,17 +6,16 @@ import type {
   LedgerEntry,
   McpServerStatus,
   ModelReference,
-  PermissionsView,
   QuestionTriage,
+  QueuedPrompt,
   ResolutionFailure,
   RevertOutcome,
-  SendBehavior,
   SessionBinding,
   StagedItem,
   WriteResult,
 } from "@keywork/engine";
 import type { ActivePreset, AskScope, PermissionRule, PresetName } from "@keywork/shared";
-import type { AnswerOutcome, AskVerdict, DenyReason, PendingAsk } from "./asks.ts";
+import type { AnswerOutcome, AskVerdict, Denial, PendingAsk } from "./asks.ts";
 import type { BusEnvelope } from "./events.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 import type {
@@ -31,18 +30,25 @@ import type {
   ChangesReport,
   CompactionReport,
   ExportScope,
+  FlushReport,
+  ForgetReport,
   LabelOutcome,
   LeafOutcome,
   MemoryNoteDetail,
   MemoryNoteRecord,
   MemoryOverview,
   MemoryQueryOutcome,
+  PermissionsAnswer,
   PromptOutcome,
+  QueueReport,
   RedoReport,
+  RestorePreview,
   RestoreReport,
   SessionDetail,
   SessionEntries,
+  SessionRow,
   SessionSummary,
+  SpillSlice,
   ThemesReport,
   TrustGrant,
   UndoReport,
@@ -53,6 +59,7 @@ import type { OpenApiDocument } from "./openapi.ts";
 import { askRefusals } from "./routes/asks.ts";
 import type { FileChange } from "./routes/changes.ts";
 import type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
+import type { PromptBehavior } from "./routes/sessions.ts";
 import { readServerTicket, type ServerTicket } from "./token.ts";
 
 export type ModelAnswer =
@@ -73,10 +80,13 @@ export interface PresetAnswer {
 export interface KeyworkClient {
   readonly url: string;
   document(): Promise<OpenApiDocument>;
-  sessions(): Promise<readonly SessionSummary[]>;
+  sessions(): Promise<readonly SessionRow[]>;
   session(id: string): Promise<SessionDetail | undefined>;
   createSession(): Promise<SessionSummary>;
-  prompt(id: string, text: string, behavior?: SendBehavior): Promise<PromptOutcome>;
+  prompt(id: string, text: string, behavior?: PromptBehavior): Promise<PromptOutcome>;
+  sendNow(id: string, text: string): Promise<readonly QueuedPrompt[] | undefined>;
+  moveQueued(id: string, itemId: string, to: number): Promise<QueueReport | undefined>;
+  cancelQueued(id: string, itemId: string): Promise<QueueReport | undefined>;
   abort(id: string): Promise<AbortOutcome>;
   setModel(id: string, reference: string): Promise<ModelAnswer | undefined>;
   setThinking(id: string, on: boolean): Promise<{ thinking: boolean } | undefined>;
@@ -88,19 +98,24 @@ export interface KeyworkClient {
   undo(id: string): Promise<UndoReport | "missing" | "nothing">;
   redo(id: string): Promise<RedoReport | "missing" | "nothing">;
   restoreTurn(id: string, turn: number): Promise<RestoreReport | "missing" | "unknown-turn">;
+  previewRestore(id: string, turn: number): Promise<RestorePreview | "missing" | "unknown-turn">;
   context(id: string): Promise<ContextAnswer | undefined>;
   cost(id: string): Promise<CostAnswer | undefined>;
   exportSession(id: string, scope?: ExportScope, out?: string): Promise<ExportAnswer | undefined>;
   rename(id: string, title: string): Promise<{ title: string } | undefined>;
+  setQuiet(id: string, on: boolean): Promise<{ quiet: boolean } | undefined>;
+  flush(id: string): Promise<FlushReport | undefined>;
+  forget(id: string, entryId: string, replacement?: string): Promise<ForgetReport | undefined>;
+  spill(id: string, spillId: string, range?: ByteRange): Promise<SpillSlice | undefined>;
   applyPreset(name: PresetName, confirmed?: boolean): Promise<PresetAnswer>;
   asks(): Promise<readonly PendingAsk[]>;
   answerAsk(
     callId: string,
     verdict: AskVerdict,
     scope?: AskScope,
-    reason?: DenyReason,
+    denial?: Denial,
   ): Promise<AnswerOutcome>;
-  listPermissions(): Promise<PermissionsView>;
+  listPermissions(): Promise<PermissionsAnswer>;
   grantWorkspaceRule(rule: PermissionRule): Promise<GrantAnswer>;
   grantSessionRule(sessionId: string, rule: PermissionRule): Promise<GrantAnswer>;
   revokeWorkspaceGrant(rule: PermissionRule): Promise<GrantRevocation>;
@@ -111,7 +126,7 @@ export interface KeyworkClient {
   approveStagedItem(id: string): Promise<WriteResult | Record<string, never>>;
   discardStagedItem(id: string): Promise<void>;
   memoryNotes(layer?: string): Promise<Trusted<{ notes: CuredNote[] }>>;
-  memoryNote(name: string): Promise<CuredNoteDetail | undefined>;
+  memoryNote(name: string, layer?: string): Promise<CuredNoteDetail | undefined>;
   memoryDailyDates(): Promise<Trusted<{ dates: string[] }>>;
   memoryDaily(date: string): Promise<Trusted<{ date: string; entries: DailyEntry[] }>>;
   memoryLedger(): Promise<Trusted<{ entries: LedgerEntry[] }>>;
@@ -142,6 +157,7 @@ export interface KeyworkClient {
   createArc(slug: string): Promise<ArcSummary>;
   closeArc(slug: string, direction?: string): Promise<ArcCloseOutcome>;
   abandonArc(slug: string): Promise<void>;
+  setArcTheme(slug: string, theme: string | null): Promise<ArcSummary>;
   bindSessionArc(id: string, slug: string | null): Promise<SessionBinding | undefined>;
   bindSessionBot(id: string, name: string | null): Promise<SessionBinding | undefined>;
   bots(): Promise<BotSummary[]>;
@@ -250,7 +266,7 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
     url,
     document: () => request("GET", "/doc").then(json<OpenApiDocument>),
     sessions: async () => {
-      const listed = await json<{ sessions: SessionSummary[] }>(await request("GET", "/sessions"));
+      const listed = await json<{ sessions: SessionRow[] }>(await request("GET", "/sessions"));
       return listed.sessions;
     },
     session: async (id) => {
@@ -267,6 +283,15 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       await json(response);
       return "accepted";
     },
+    sendNow: async (id, text) => {
+      const accepted = await unlessMissing<{ setAside: QueuedPrompt[] }>(
+        request("POST", sessionPath(id, "prompt"), { text, behavior: "now" }),
+      );
+      return accepted?.setAside;
+    },
+    moveQueued: (id, itemId, to) =>
+      unlessMissing(request("POST", queuedPath(id, itemId, "/move"), { to })),
+    cancelQueued: (id, itemId) => unlessMissing(request("DELETE", queuedPath(id, itemId, ""))),
     abort: async (id) => {
       const response = await request("POST", `/sessions/${encodeURIComponent(id)}/abort`);
       if (response.status === 404) return "missing";
@@ -297,6 +322,12 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       const detail = await refusalDetail(response);
       return detail.startsWith("no turn") ? "unknown-turn" : "missing";
     },
+    previewRestore: async (id, turn) => {
+      const response = await request("GET", `${sessionPath(id, "restore")}?${queryOf({ turn })}`);
+      if (response.status !== 404) return json<RestorePreview>(response);
+      const detail = await refusalDetail(response);
+      return detail.startsWith("no turn") ? "unknown-turn" : "missing";
+    },
     context: (id) => unlessMissing(request("GET", sessionPath(id, "context"))),
     cost: (id) => unlessMissing(request("GET", sessionPath(id, "cost"))),
     exportSession: async (id, scope = "path", out) => {
@@ -310,6 +341,22 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       return { html: await response.text() };
     },
     rename: (id, title) => unlessMissing(request("POST", sessionPath(id, "rename"), { title })),
+    setQuiet: (id, on) => unlessMissing(request("POST", sessionPath(id, "quiet"), { on })),
+    flush: (id) => unlessMissing(request("POST", sessionPath(id, "flush"))),
+    forget: (id, entryId, replacement) =>
+      unlessMissing(
+        request("POST", sessionPath(id, "forget"), {
+          entryId,
+          ...(replacement !== undefined && { replacement }),
+        }),
+      ),
+    spill: (id, spillId, range = {}) =>
+      unlessMissing(
+        request(
+          "GET",
+          `${sessionPath(id, `spills/${encodeURIComponent(spillId)}`)}?${queryOf({ from: range.from, to: range.to })}`,
+        ),
+      ),
     applyPreset: (name, confirmed) =>
       request("POST", "/preset", { name, ...(confirmed === true && { confirmed }) }).then(
         json<PresetAnswer>,
@@ -318,11 +365,11 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       const listed = await json<{ asks: PendingAsk[] }>(await request("GET", "/asks"));
       return listed.asks;
     },
-    answerAsk: async (callId, verdict, scope, reason) => {
+    answerAsk: async (callId, verdict, scope, denial) => {
       const response = await request("POST", `/asks/${encodeURIComponent(callId)}`, {
         verdict,
         ...(scope !== undefined && { scope }),
-        ...(reason !== undefined && { reason }),
+        ...denial,
       });
       if (response.status === 404) return "missing";
       if (response.status === 409) return "already-settled";
@@ -334,7 +381,7 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       await json(response);
       return "settled";
     },
-    listPermissions: () => request("GET", "/permissions").then(json<PermissionsView>),
+    listPermissions: () => request("GET", "/permissions").then(json<PermissionsAnswer>),
     grantWorkspaceRule: (rule) =>
       granting(request("POST", "/permissions/workspace/grant", { rule })),
     grantSessionRule: (sessionId, rule) =>
@@ -362,8 +409,9 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
         "GET",
         layer === undefined ? "/memory/notes" : `/memory/notes?layer=${encodeURIComponent(layer)}`,
       ).then(json<Trusted<{ notes: CuredNote[] }>>),
-    memoryNote: async (name) => {
-      const response = await request("GET", `/memory/notes/${encodeURIComponent(name)}`);
+    memoryNote: async (name, layer) => {
+      const query = layer === undefined ? "" : `?${queryOf({ layer })}`;
+      const response = await request("GET", `/memory/notes/${encodeURIComponent(name)}${query}`);
       return response.status === 404 ? undefined : json<CuredNoteDetail>(response);
     },
     memoryDailyDates: () =>
@@ -440,6 +488,8 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
     abandonArc: async (slug) => {
       await json(await request("POST", `/arcs/${encodeURIComponent(slug)}/abandon`));
     },
+    setArcTheme: (slug, theme) =>
+      request("POST", `/arcs/${encodeURIComponent(slug)}/theme`, { theme }).then(json<ArcSummary>),
     bindSessionArc: (id, slug) => unlessMissing(request("POST", sessionPath(id, "arc"), { slug })),
     bindSessionBot: (id, name) => unlessMissing(request("POST", sessionPath(id, "bot"), { name })),
     bots: async () => (await json<{ bots: BotSummary[] }>(await request("GET", "/bots"))).bots,
@@ -593,6 +643,10 @@ async function json<T = unknown>(response: Response): Promise<T> {
 
 function sessionPath(id: string, verb: string): string {
   return `/sessions/${encodeURIComponent(id)}/${verb}`;
+}
+
+function queuedPath(id: string, itemId: string, verb: string): string {
+  return `${sessionPath(id, `queue/${encodeURIComponent(itemId)}`)}${verb}`;
 }
 
 function trashPath(id: string, verb: string): string {

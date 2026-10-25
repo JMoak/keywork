@@ -1,4 +1,12 @@
-import { type Message, type Part, textMessage, type Usage } from "../messages.ts";
+import { isMemoryFlushPrompt, keptFacts } from "../memory/flush.ts";
+import {
+  type Message,
+  messageText,
+  type Part,
+  type Role,
+  textMessage,
+  type Usage,
+} from "../messages.ts";
 
 export const sessionFormatVersion = 3;
 
@@ -207,6 +215,104 @@ export function contextEntriesFor(path: readonly SessionEntry[]): SessionEntry[]
   return applyContextEdits(selectedContextEntries(path), latestEditsOn(path));
 }
 
+export interface SummaryMark {
+  index: number;
+  entryId: string;
+  kind: "compaction" | "branch_summary";
+}
+
+export function summaryMarksOf(contextEntries: readonly SessionEntry[]): SummaryMark[] {
+  const marks: SummaryMark[] = [];
+  let index = 0;
+  for (const entry of contextEntries) {
+    if (entry.type === "compaction" || entry.type === "branch_summary") {
+      marks.push({ index, entryId: entry.id, kind: entry.type });
+    }
+    index += contextMessages([entry]).length;
+  }
+  return marks;
+}
+
+export interface FlushMark {
+  index: number;
+  entryId: string;
+  facts: string[];
+}
+
+export interface ContextEditMark {
+  index: number;
+  entryId: string;
+  role: Role;
+  kind: "forgotten" | "rewritten";
+  text: string;
+}
+
+export interface MessageMarks {
+  summaries: SummaryMark[];
+  flushes: FlushMark[];
+  edits: ContextEditMark[];
+}
+
+export function messageMarksOf(path: readonly SessionEntry[]): MessageMarks {
+  const context = contextEntriesFor(path);
+  return {
+    summaries: summaryMarksOf(context),
+    flushes: flushMarksOf(context),
+    edits: contextEditMarksOf(path),
+  };
+}
+
+export function flushMarksOf(contextEntries: readonly SessionEntry[]): FlushMark[] {
+  const marks: FlushMark[] = [];
+  let index = 0;
+  contextEntries.forEach((entry, at) => {
+    if (isMemoryFlushEntry(entry)) {
+      marks.push({ index, entryId: entry.id, facts: factsKeptIn(contextEntries[at + 1]) });
+    }
+    index += contextMessages([entry]).length;
+  });
+  return marks;
+}
+
+export function contextEditMarksOf(path: readonly SessionEntry[]): ContextEditMark[] {
+  const edits = latestEditsOn(path);
+  if (edits.size === 0) return [];
+  const selected = selectedContextEntries(path);
+  const kept = new Map(applyContextEdits(selected, edits).map((entry) => [entry.id, entry]));
+  const marks: ContextEditMark[] = [];
+  let index = 0;
+  for (const entry of selected) {
+    const replacement = edits.get(entry.id);
+    if (replacement !== undefined && entry.type === "message") {
+      marks.push(editMarkOf(entry, replacement, index));
+    }
+    const shown = kept.get(entry.id);
+    if (shown !== undefined) index += contextMessages([shown]).length;
+  }
+  return marks;
+}
+
+export const memoryFlushType = "memory_flush";
+
+export function isMemoryFlushEntry(entry: SessionEntry): boolean {
+  if (entry.type === "custom_message") return entry.customType === memoryFlushType;
+  return isUserMessage(entry) && isMemoryFlushPrompt(messageText(entry.message));
+}
+
+export function isPromptEntry(entry: SessionEntry): entry is MessageEntry {
+  return isUserMessage(entry) && !isMemoryFlushPrompt(messageText(entry.message));
+}
+
+export const quietPostureType = "quiet";
+
+export function quietPostureOf(entries: readonly SessionEntry[]): boolean {
+  const latest = entries.findLast(
+    (entry): entry is CustomEntry =>
+      entry.type === "custom" && entry.customType === quietPostureType,
+  );
+  return postureIsOn(latest?.data);
+}
+
 export function isContextEditable(entry: SessionEntry): boolean {
   return entry.type === "message" || entry.type === "custom_message";
 }
@@ -214,6 +320,10 @@ export function isContextEditable(entry: SessionEntry): boolean {
 export function describeContextEdit(entry: ContextEditEntry): string {
   const target = entry.targetId.slice(0, 8);
   return entry.replacement === null ? `forgot ${target}` : `rewrote ${target}`;
+}
+
+function postureIsOn(data: unknown): boolean {
+  return typeof data === "object" && data !== null && (data as { on?: unknown }).on === true;
 }
 
 function selectedContextEntries(path: readonly SessionEntry[]): SessionEntry[] {
@@ -394,9 +504,30 @@ function activePathEntries(roots: readonly SessionTreeNode[]): SessionEntry[] {
 }
 
 function userPrompts(path: readonly SessionEntry[]): MessageEntry[] {
-  return path.filter(
-    (entry): entry is MessageEntry => entry.type === "message" && entry.message.role === "user",
-  );
+  return path.filter(isPromptEntry);
+}
+
+function isUserMessage(entry: SessionEntry): entry is MessageEntry {
+  return entry.type === "message" && entry.message.role === "user";
+}
+
+function factsKeptIn(reply: SessionEntry | undefined): string[] {
+  if (reply?.type !== "message" || reply.message.role !== "assistant") return [];
+  return keptFacts(messageText(reply.message));
+}
+
+function editMarkOf(
+  entry: MessageEntry,
+  replacement: ContextReplacement | null,
+  index: number,
+): ContextEditMark {
+  return {
+    index,
+    entryId: entry.id,
+    role: entry.message.role,
+    kind: replacement === null ? "forgotten" : "rewritten",
+    text: messageText(entry.message),
+  };
 }
 
 function labelProperty(labels: ReadonlyMap<string, string>, id: string): { label?: string } {

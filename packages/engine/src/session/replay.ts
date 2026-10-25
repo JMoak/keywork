@@ -1,5 +1,4 @@
 import type { EngineEvents, EventBus } from "../bus.ts";
-import { isMemoryFlushPrompt } from "../memory/flush.ts";
 import {
   type Message,
   messageText,
@@ -7,6 +6,7 @@ import {
   toolCalls,
   type Usage,
 } from "../messages.ts";
+import { isMemoryFlushEntry } from "./entries.ts";
 import { replayJournalEntry } from "./journal.ts";
 import type { SessionStore } from "./store.ts";
 
@@ -22,12 +22,9 @@ export function replaySession(store: SessionStore, bus: EventBus<EngineEvents>):
   let insideFlushTurn = false;
   for (const entry of context) {
     if (entry.type === "custom") replayJournalEntry(bus, entry);
+    else if (isMemoryFlushEntry(entry)) insideFlushTurn = true;
     else if (entry.type === "message") {
       const message = entry.message;
-      if (message.role === "user" && isMemoryFlushPrompt(messageText(message))) {
-        insideFlushTurn = true;
-        continue;
-      }
       if (message.role === "assistant" && insideFlushTurn) {
         insideFlushTurn = false;
         continue;

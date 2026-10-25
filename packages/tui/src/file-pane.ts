@@ -1,9 +1,10 @@
 import { Text } from "@opentui/core";
-import { FileModel } from "./file-model.ts";
+import { FileModel, type FileReader } from "./file-model.ts";
 import type { Chord } from "./keys.ts";
 import type { Palette } from "./palette.ts";
 import type { FileOpenOptions, Pane, PaneContext, PaneDescriptor, PaneView } from "./pane.ts";
 import { paneChrome, paneContentHeight, paneContentWidth, paneTitle } from "./pane-chrome.ts";
+import { pluralize } from "./pluralize.ts";
 import { take } from "./width.ts";
 
 export class FilePane implements Pane {
@@ -16,13 +17,14 @@ export class FilePane implements Pane {
     path: string,
     notify: () => void,
     options: FileOpenOptions = {},
+    read?: FileReader,
   ) {
-    this.model = new FileModel(cwd, path, notify, options);
+    this.model = new FileModel(cwd, path, notify, options, read);
   }
 
   title(): string {
     const count = this.model.lineCount();
-    return paneTitle(this.model.name, count === 0 ? undefined : `${count} lines`);
+    return paneTitle(this.model.name, count === 0 ? undefined : pluralize(count, "line"));
   }
 
   describe(): PaneDescriptor {

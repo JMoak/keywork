@@ -1,6 +1,6 @@
 import { isRecord } from "./defined.ts";
 import { Layout, type LayoutState, layoutStateIds } from "./layout.ts";
-import type { Pane, PaneDescriptor } from "./pane.ts";
+import type { MemoryLens, Pane, PaneDescriptor } from "./pane.ts";
 import { type SessionGroupBy, sessionGroupings } from "./sessions-overview-model.ts";
 
 export const workspaceStateVersion = 2;
@@ -108,6 +108,12 @@ function parsePane(value: unknown): WorkspacePane | undefined {
       return { id: value.id, kind: "workspaces" };
     case "diff":
       return { id: value.id, kind: "diff" };
+    case "context":
+      return { id: value.id, kind: "context" };
+    case "permissions":
+      return { id: value.id, kind: "permissions" };
+    case "bots":
+      return { id: value.id, kind: "bots" };
     case "terminal":
       return parseTerminalPane(value);
     default:
@@ -115,12 +121,17 @@ function parsePane(value: unknown): WorkspacePane | undefined {
   }
 }
 
+const memoryLenses: readonly MemoryLens[] = ["garden", "note", "ledger", "decisions"];
+
+function isMemoryLens(value: unknown): value is MemoryLens {
+  return memoryLenses.some((lens) => lens === value);
+}
+
 function parseMemoryPane(value: Record<string, unknown>): WorkspacePane | undefined {
   const id = value.id;
   if (typeof id !== "string") return undefined;
   const lens = value.lens;
-  if (lens !== undefined && lens !== "garden" && lens !== "note" && lens !== "ledger")
-    return undefined;
+  if (lens !== undefined && !isMemoryLens(lens)) return undefined;
   if (value.note !== undefined && typeof value.note !== "string") return undefined;
   if (value.query !== undefined && typeof value.query !== "string") return undefined;
   return {

@@ -244,7 +244,13 @@ export function arcService(options: ArcServiceOptions): ArcService {
       }
     },
   };
+  const wearTheme = async (slug: string, theme: string | undefined): Promise<ArcSummary> => {
+    const worn = await requireRegistry().wearTheme(slug, theme);
+    changed();
+    return arcSummaryOf(worn, await options.boundSessionCounts());
+  };
   const port: ArcsPort = {
+    wear: wearTheme,
     list: async () => {
       const found = registry();
       if (found === undefined) return [];
@@ -337,11 +343,7 @@ export function arcService(options: ArcServiceOptions): ArcService {
       else bindings.bind(sessionId, arc);
       changed();
     },
-    wear: async (slug, theme) => {
-      const worn = await requireRegistry().wearTheme(slug, theme);
-      changed();
-      return arcSummaryOf(worn, await options.boundSessionCounts());
-    },
+    wear: wearTheme,
     layerStoreFor: (sessionId) => {
       const arc = bindings.bindingOf(sessionId);
       if (arc === undefined) return undefined;

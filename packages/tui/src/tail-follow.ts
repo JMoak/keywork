@@ -1,4 +1,4 @@
-import { ellipsis, segments, take, width } from "./width.ts";
+import { ellipsis, take, takeEnd, width } from "./width.ts";
 
 export const tailRowLimit = 3;
 
@@ -58,17 +58,6 @@ export function elideMiddle(line: string, cells: number): string {
   const kept = cells - 1;
   const headCells = Math.ceil(kept / 2);
   return `${take(line, headCells)}${ellipsis}${takeEnd(line, kept - headCells)}`;
-}
-
-function takeEnd(line: string, cells: number): string {
-  let used = 0;
-  let taken = "";
-  for (const segment of segments(line).reverse()) {
-    if (used + segment.width > cells) break;
-    taken = segment.text + taken;
-    used += segment.width;
-  }
-  return taken;
 }
 
 function isControl(character: string): boolean {

@@ -38,6 +38,7 @@ export interface FrameInputs extends StatusBarInputs {
   instruments: Theme["instruments"];
   glyphs: GlyphSupport;
   arcOf(paneId: string): string | undefined;
+  paneAttire?(paneId: string): Palette | undefined;
 }
 
 export function frameInset(chrome: ChromeWeight): number {
@@ -132,14 +133,24 @@ function body(core: AppCore, inputs: FrameInputs) {
   const inset = frameInset(inputs.chrome);
   const layoutField = fullRect(screen);
   const drawn = (rect: Rect): Rect => shifted(drawnRect(rect, layoutField, inputs), inset);
-  const hueOf = (id: string): string => rampColor(theme.ramp, sweep.get(id) ?? 0);
-  const unfocusedTheme = inputs.dim === true ? dimmedTheme(theme) : theme;
+  const hueOf = (id: string): string => {
+    const worn = inputs.paneAttire?.(id);
+    return worn === undefined
+      ? rampColor(theme.ramp, sweep.get(id) ?? 0)
+      : rampColor(worn.ramp, sweep.get(id) ?? 0);
+  };
+  const dressed = (id: string): Palette => {
+    const worn = inputs.paneAttire?.(id);
+    const base = worn ?? theme;
+    return id === focused || inputs.dim !== true ? base : dimmedTheme(base);
+  };
   return Box(
     { width: screen.width + 2 * inset, height: screen.height + 2 * inset },
     ...[...rects].map(([id, rect]) =>
       placedBox(
         drawn(rect),
-        paneViewFor(core, inputs, id, drawn(rect), id === focused, hueOf(id), unfocusedTheme),
+        paneViewFor(core, inputs, id, drawn(rect), id === focused, hueOf(id), dressed(id)),
+        inputs.paneAttire?.(id)?.background,
       ),
     ),
     ...(idleMain === undefined
@@ -208,13 +219,13 @@ function paneViewFor(
   rect: Rect,
   focused: boolean,
   hue: string,
-  unfocusedTheme: Palette,
+  theme: Palette,
 ): PaneView {
   const { chrome } = inputs;
-  const theme = focused ? inputs.theme : unfocusedTheme;
   if (paneContentWidth({ ...rect, chrome }) < 1 || paneContentHeight({ ...rect, chrome }) < 1) {
     return overflowedView(theme);
   }
+  const ordinal = focusOrdinalOf(core, id);
   const view = core.panes.get(id)?.view({
     theme,
     focused,
@@ -226,11 +237,20 @@ function paneViewFor(
     glyphs: inputs.glyphs,
     instruments: inputs.instruments,
     ...(core.layout.pinned(id) && { pinMark: resolveMark(pinMark, inputs.glyphs) }),
+    ...(ordinal !== undefined && { ordinal }),
   });
   return view ?? emptyView(theme);
 }
 
-function placedBox(rect: Rect, view: PaneView) {
+const ordinalKeys = 9;
+
+function focusOrdinalOf(core: AppCore, id: string): number | undefined {
+  const shown = core.layout.panes();
+  const ordinal = shown.indexOf(id) + 1;
+  return shown.length > 1 && ordinal >= 1 && ordinal <= ordinalKeys ? ordinal : undefined;
+}
+
+function placedBox(rect: Rect, view: PaneView, ground?: string) {
   return Box(
     {
       position: "absolute",
@@ -240,6 +260,7 @@ function placedBox(rect: Rect, view: PaneView) {
       height: rect.height,
       flexDirection: "column",
       overflow: "hidden",
+      ...(ground !== undefined && { backgroundColor: ground }),
     },
     view,
   );

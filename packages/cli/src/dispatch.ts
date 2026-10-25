@@ -31,8 +31,10 @@ Usage:
   keywork serve [--port <n>|0] [--model <model>]
                 [--preset careful|standard|open]
                 [--session-dir <dir>] [--no-checkpoints]    HTTP + SSE server on 127.0.0.1
-  keywork attach [--pane conversation|session-tree] [--session <id>]
+  keywork attach [--pane <kind>] [--session <id>]
                  [--url <url>] [--token <token>]            mount a pane over keywork serve
+                 kinds: conversation, session-tree, browser, diff, memory,
+                 mcp, arcs, bots, workspaces, permissions, context
   keywork --version                                         print the version and exit
   keywork --help                                            print this usage and exit
   keywork chat [--model <model>] [--continue] [--workspace <slug>]
@@ -117,11 +119,13 @@ export type Dispatch =
 
 const versionFlags = new Set(["--version", "-V"]);
 const helpWords = new Set(["help", "--help", "-h"]);
+const helpFlags = new Set(["--help", "-h"]);
 
 export function dispatchCommand(argv: readonly string[], interactive: boolean): Dispatch {
   const [first] = argv;
   if (first !== undefined && versionFlags.has(first)) return { kind: "version" };
   if (first !== undefined && helpWords.has(first)) return { kind: "help" };
+  if (argsBeforeTerminator(argv).some((arg) => helpFlags.has(arg))) return { kind: "help" };
   const word = first !== undefined && !first.startsWith("-") ? first : undefined;
   if (word === undefined) {
     if (interactive) return { kind: "command", command: "panes", rest: [...argv] };
@@ -141,4 +145,9 @@ export function isCommandName(word: string): word is CommandName {
 
 function usageRefusal(reason: string): Dispatch {
   return { kind: "usage", exitCode: exitCodes.usage, reason };
+}
+
+function argsBeforeTerminator(argv: readonly string[]): readonly string[] {
+  const terminator = argv.indexOf("--");
+  return terminator === -1 ? argv : argv.slice(0, terminator);
 }

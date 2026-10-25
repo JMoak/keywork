@@ -52,6 +52,11 @@ export class ThemeSwitch {
     return [...this.closet.keys()];
   }
 
+  paletteNamed(name: string): Palette | undefined {
+    const theme = this.closet.get(name);
+    return theme === undefined ? undefined : paletteOf(theme);
+  }
+
   swap(name: string): Theme {
     const next = this.closet.get(name);
     if (next === undefined) throw new Error(`no theme named "${name}"`);

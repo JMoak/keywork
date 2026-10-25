@@ -1,7 +1,7 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 
 export const defaultTimeoutMs = 120_000;
-export const maxOutputChars = 30_000;
+export const retainedOutputChars = 1_048_576;
 
 export function shellSpawnOptions(cwd: string): SpawnOptions {
   return {
@@ -16,28 +16,41 @@ export function scrubbedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([name]) => !holdsSecret(name)));
 }
 
+export function agentShellEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...scrubbedEnv(env), ...unattendedShellMarkers };
+}
+
 export function childClosed(child: ChildProcess): Promise<void> {
   return new Promise((resolvePromise) => child.once("close", () => resolvePromise()));
 }
 
 export class BoundedOutput {
-  private text = "";
-  private truncated = false;
+  private head = "";
+  private tail = "";
+  private dropped = 0;
 
   constructor(private readonly forward?: (chunk: string) => void) {}
 
   append(chunk: string): void {
     this.forward?.(chunk);
-    if (this.truncated) return;
-    this.text += chunk;
-    if (this.text.length > maxOutputChars) {
-      this.text = this.text.slice(0, maxOutputChars);
-      this.truncated = true;
-    }
+    const room = headChars - this.head.length;
+    this.head += chunk.slice(0, Math.max(0, room));
+    const rest = room > 0 ? chunk.slice(room) : chunk;
+    if (rest === "") return;
+    this.tail += rest;
+    if (this.tail.length > 2 * tailChars) this.dropOldestTail();
   }
 
   rendered(): string {
-    return this.truncated ? `${this.text}\n... (output truncated)` : this.text;
+    const tail = this.tail.slice(-tailChars);
+    const elided = this.dropped + this.tail.length - tail.length;
+    if (elided === 0) return this.head + tail;
+    return `${this.head}\n... (${elided} characters elided from the middle)\n${tail}`;
+  }
+
+  private dropOldestTail(): void {
+    this.dropped += this.tail.length - tailChars;
+    this.tail = this.tail.slice(-tailChars);
   }
 }
 
@@ -80,6 +93,11 @@ export function commandTimedOut(timeoutMs: number, rendered: string, cause?: unk
 export function commandAborted(cause?: unknown): Error {
   return new Error("Command aborted", { ...(cause !== undefined && { cause }) });
 }
+
+const headChars = retainedOutputChars / 2;
+const tailChars = retainedOutputChars / 2;
+
+const unattendedShellMarkers = { KEYWORK: "1", CI: "1" } as const;
 
 function holdsSecret(name: string): boolean {
   const upper = name.toUpperCase();

@@ -5,7 +5,7 @@ import {
   commandAborted,
   commandResult,
   commandTimedOut,
-  maxOutputChars,
+  retainedOutputChars as maxOutputChars,
   scrubbedEnv,
   shellSpawnOptions,
 } from "./command-run.ts";

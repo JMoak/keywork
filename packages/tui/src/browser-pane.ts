@@ -20,6 +20,7 @@ import {
   paneTitle,
   rowsView,
 } from "./pane-chrome.ts";
+import { pluralize } from "./pluralize.ts";
 
 export class BrowserPane implements Pane {
   private readonly model: BrowserModel;
@@ -44,7 +45,10 @@ export class BrowserPane implements Pane {
 
   title(): string {
     const count = this.model.entryCount();
-    return paneTitle(this.model.name, count === 0 ? undefined : `${count} entries`);
+    return paneTitle(
+      this.model.name,
+      count === 0 ? undefined : pluralize(count, "entry", "entries"),
+    );
   }
 
   describe(): PaneDescriptor {

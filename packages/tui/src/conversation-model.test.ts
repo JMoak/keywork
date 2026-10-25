@@ -1221,6 +1221,7 @@ describe("! shell escape", () => {
       shellPorts(bashStub(runs), {}, () => "allow", {
         recordShellEscape: async (transcript) => {
           recorded.push(transcript);
+          return undefined;
         },
       }),
     );
@@ -1294,6 +1295,7 @@ describe("! shell escape", () => {
       shellPorts(bashStub(runs), {}, () => "allow", {
         recordShellEscape: async (transcript) => {
           recorded.push(transcript);
+          return undefined;
         },
       }),
     );

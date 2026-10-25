@@ -24,18 +24,22 @@ export interface ServerOptions {
 
 export interface KeyworkServer {
   fetch(request: Request): Promise<Response>;
+  rehost(host: SessionHost): Promise<void>;
   close(): Promise<void>;
 }
 
 export function createKeyworkServer(options: ServerOptions): KeyworkServer {
   const streams = new OpenStreams();
   const url = options.url ?? `http://127.0.0.1:${defaultPort}`;
-  const handlers = handlersOf(routeFamilies, {
-    host: options.host,
-    log: options.log,
-    streams,
-    describe: () => openApiDocument(url, options.version, options.workspace),
-  });
+  const handlersFor = (host: SessionHost) =>
+    handlersOf(routeFamilies, {
+      host,
+      log: options.log,
+      streams,
+      describe: () => openApiDocument(url, options.version, options.workspace),
+    });
+  let host = options.host;
+  let handlers = handlersFor(host);
   return {
     fetch: async (request) => {
       const match = matchRoute(request);
@@ -44,9 +48,15 @@ export function createKeyworkServer(options: ServerOptions): KeyworkServer {
         return unauthorized();
       return handlers[match.route.operationId](request, match.params);
     },
+    rehost: async (next) => {
+      const previous = host;
+      host = next;
+      handlers = handlersFor(next);
+      await previous.close();
+    },
     close: async () => {
       streams.closeAll();
-      await options.host.close();
+      await host.close();
     },
   };
 }

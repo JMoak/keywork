@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   formatTokenCount,
   type InferenceRegistry,
@@ -92,6 +93,12 @@ export async function workspaceDoctorFacts(
   return { ...facts, repoMap: map.facts() };
 }
 
+export function crashLogFactsAt(path: string): CrashLogFacts {
+  const crashes = crashLogText(path).split("\n").filter(startsACrash);
+  const lastAt = crashes.at(-1)?.split(" ")[0];
+  return { path, entries: crashes.length, ...(lastAt !== undefined && { lastAt }) };
+}
+
 export function doctorReport(
   profile: CapabilityProfile,
   registry?: InferenceRegistry,
@@ -115,6 +122,20 @@ export function renderDoctorReport(report: DoctorReport): string {
   const width = Math.max(13, ...report.rows.map(({ label }) => label.length + 2));
   const body = report.rows.map(({ label, value }) => `${label.padEnd(width)}${value}`).join("\n");
   return `keywork doctor\n\n${body}`;
+}
+
+const crashHead = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z \[[^\]]+\] /;
+
+function startsACrash(line: string): boolean {
+  return crashHead.test(line);
+}
+
+function crashLogText(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 function workspaceRows(facts: DoctorFacts): DoctorRow[] {

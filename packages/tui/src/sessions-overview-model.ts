@@ -15,12 +15,29 @@ export interface SessionOverviewItem {
   costNanos?: number;
   arc?: string;
   bot?: string;
+  parentId?: string;
+  working?: boolean;
+  waiting?: WaitingFact;
+  changes?: ChangesFact;
+}
+
+export interface WaitingFact {
+  readonly asks: number;
+  readonly tools: readonly string[];
+}
+
+export interface ChangesFact {
+  readonly files: number;
+  readonly added: number;
+  readonly deleted: number;
 }
 
 export interface SessionPresence {
   paneFor(sessionId: string): string | undefined;
   busy(sessionId: string): boolean;
   waiting(sessionId: string): boolean;
+  waitingAsks?(sessionId: string): WaitingFact | undefined;
+  changes?(sessionId: string): ChangesFact | undefined;
 }
 
 export type SessionLiveness = "waiting" | "busy" | "attached" | "idle";
@@ -38,6 +55,8 @@ export interface SessionOverviewRow {
   branchCount: number;
   labelCount: number;
   cost: string | undefined;
+  child?: true;
+  desk?: string;
 }
 
 export type SessionGroupAxis = "arc" | "bot";
@@ -63,12 +82,18 @@ export interface SessionsOverviewEffects {
   activate(sessionId: string): void;
   drill(sessionId: string): void;
   remove?(sessionId: string, title: string): void;
+  discard?(sessionId: string, title: string): void;
+  purge?(count: number): void;
 }
 
 export interface PendingRemoval {
   sessionId: string;
   title: string;
 }
+
+export type PendingTrash =
+  | { kind: "discard"; sessionId: string; title: string }
+  | { kind: "purge"; count: number };
 
 export type SessionOrder = "recent" | "created";
 
@@ -87,6 +112,7 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
   private items: SessionOverviewItem[] = [];
   private grouping: SessionGroupBy;
   private pendingRemoval: PendingRemoval | undefined;
+  private pendingTrash: PendingTrash | undefined;
 
   constructor(
     notify: () => void,
@@ -142,14 +168,27 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
     return this.pendingRemoval;
   }
 
+  awaiting(): boolean {
+    return this.pendingRemoval !== undefined || this.pendingTrash !== undefined;
+  }
+
   removalPrompt(): string | undefined {
     const pending = this.pendingRemoval;
-    if (pending === undefined) return undefined;
+    if (pending === undefined) return trashPrompt(this.pendingTrash);
     return `remove "${pending.title}"? enter trashes it, memory notes stay · any other key cancels`;
+  }
+
+  beginPurge(): boolean {
+    if (this.effects.purge === undefined) return false;
+    this.pendingTrash = { kind: "purge", count: this.items.length };
+    this.notify();
+    return true;
   }
 
   handleKey(chord: Chord, pageRows: number): boolean {
     if (this.pendingRemoval !== undefined) return this.handleRemovalKey(chord);
+    if (this.pendingTrash !== undefined) return this.handleTrashKey(chord);
+    if (chord.shift && chord.name === "d" && !chord.ctrl && !chord.meta) return this.beginPurge();
     if (chord.shift || chord.ctrl || chord.meta) return false;
     if (this.navigate(chord, pageRows)) return true;
     switch (chord.name) {
@@ -163,6 +202,8 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
         return this.cycleGroupBy();
       case "x":
         return this.beginRemoval();
+      case "d":
+        return this.beginDiscard();
       case "r":
         this.effects.refresh();
         return true;
@@ -179,6 +220,26 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
     return true;
   }
 
+  private beginDiscard(): boolean {
+    if (this.effects.discard === undefined) return false;
+    const row = this.cursorRow();
+    if (row?.kind === "session") {
+      this.pendingTrash = { kind: "discard", sessionId: row.id, title: row.title };
+    }
+    this.notify();
+    return true;
+  }
+
+  private handleTrashKey(chord: Chord): boolean {
+    const pending = this.pendingTrash;
+    this.pendingTrash = undefined;
+    this.notify();
+    if (pending === undefined || (chord.name !== "enter" && chord.name !== "return")) return true;
+    if (pending.kind === "purge") this.effects.purge?.(pending.count);
+    else this.effects.discard?.(pending.sessionId, pending.title);
+    return true;
+  }
+
   private handleRemovalKey(chord: Chord): boolean {
     const pending = this.pendingRemoval;
     this.pendingRemoval = undefined;
@@ -191,15 +252,12 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
 
   protected buildRows(): OverviewRow[] {
     const now = (this.seams.now ?? Date.now)();
-    if (this.grouping === "none") return this.items.map((item) => this.sessionRow(item, now));
+    const rowsOf = (items: readonly SessionOverviewItem[]) =>
+      familyOrder(items).map((item) => this.sessionRow(item, now));
+    if (this.grouping === "none") return rowsOf(this.items);
     const groups = groupItems(this.items, this.grouping);
-    if (groups.every((group) => group.member === undefined)) {
-      return this.items.map((item) => this.sessionRow(item, now));
-    }
-    return groups.flatMap((group) => [
-      this.groupRow(group, now),
-      ...group.items.map((item) => this.sessionRow(item, now)),
-    ]);
+    if (groups.every((group) => group.member === undefined)) return rowsOf(this.items);
+    return groups.flatMap((group) => [this.groupRow(group, now), ...rowsOf(group.items)]);
   }
 
   protected keyOf(row: OverviewRow): string {
@@ -224,6 +282,20 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
       branchCount: item.branchCount,
       labelCount: item.labelCount,
       cost: item.costNanos === undefined ? undefined : formatCostNanos(item.costNanos),
+      ...(item.parentId !== undefined && { child: true as const }),
+      ...deskOf(this.deskFacts(item)),
+    };
+  }
+
+  private deskFacts(item: SessionOverviewItem): DeskFacts {
+    const presence = this.seams.presence;
+    const live = presence?.paneFor(item.id) !== undefined;
+    const waiting = live ? presence?.waitingAsks?.(item.id) : undefined;
+    const changes = live ? presence?.changes?.(item.id) : undefined;
+    return {
+      working: item.working ?? (live && presence?.busy(item.id) === true),
+      waiting: waiting ?? item.waiting,
+      changes: changes ?? item.changes,
     };
   }
 
@@ -253,6 +325,9 @@ export class SessionsOverviewModel extends RowCursor<OverviewRow> {
 
   private livenessOf(sessionId: string): SessionLiveness {
     const presence = this.seams.presence;
+    const served = this.items.find((item) => item.id === sessionId);
+    if ((served?.waiting?.asks ?? 0) > 0) return "waiting";
+    if (served?.working === true) return "busy";
     if (presence === undefined || presence.paneFor(sessionId) === undefined) return "idle";
     if (presence.waiting(sessionId)) return "waiting";
     return presence.busy(sessionId) ? "busy" : "attached";
@@ -264,6 +339,24 @@ interface ItemGroup {
   member: string | undefined;
   items: SessionOverviewItem[];
   newestAt: number;
+}
+
+export function trashPrompt(pending: PendingTrash | undefined): string | undefined {
+  if (pending === undefined) return undefined;
+  if (pending.kind === "discard") {
+    return `delete "${pending.title}" for good? there is no undo · enter deletes it · any other key cancels`;
+  }
+  const goes = `${sessionsFact(pending.count)} ${pending.count === 1 ? "goes" : "go"}`;
+  return `empty the trash? ${goes} for good, there is no undo · enter empties it · any other key cancels`;
+}
+
+export function familyOrder(items: readonly SessionOverviewItem[]): SessionOverviewItem[] {
+  const listed = new Set(items.map((item) => item.id));
+  const nested = (item: SessionOverviewItem) =>
+    item.parentId !== undefined && listed.has(item.parentId);
+  const childrenOf = (parent: SessionOverviewItem) =>
+    items.filter((item) => item.parentId === parent.id);
+  return items.filter((item) => !nested(item)).flatMap((item) => [item, ...childrenOf(item)]);
 }
 
 export function isSessionRow(row: OverviewRow): row is SessionOverviewRow {
@@ -324,9 +417,9 @@ export interface OverviewRowParts {
 
 export function overviewRowParts(row: SessionOverviewRow, cursored: boolean): OverviewRowParts {
   return {
-    lead: `${livenessMark[row.liveness]} `,
+    lead: `${livenessMark[row.liveness]} ${row.child === true ? childMark : ""}`,
     title: row.title,
-    age: ` · ${row.age}`,
+    age: row.desk === undefined ? ` · ${row.age}` : ` · ${row.age} · ${row.desk}`,
     arcTag: row.arc === undefined ? undefined : ` ${arcTag(row.arc)}`,
     counts: cursored ? ` · ${countSummary(row)}` : "",
   };
@@ -355,6 +448,35 @@ export function relativeAge(nowMs: number, thenMs: number): string {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
   return `${Math.floor(days / 7)}w`;
+}
+
+const childMark = "↳ ";
+
+interface DeskFacts {
+  readonly working: boolean;
+  readonly waiting: WaitingFact | undefined;
+  readonly changes: ChangesFact | undefined;
+}
+
+function deskOf(facts: DeskFacts): { desk?: string } {
+  const parts = [
+    ...waitingWords(facts.waiting),
+    ...(facts.working && (facts.waiting?.asks ?? 0) === 0 ? ["working"] : []),
+    ...changesWords(facts.changes),
+  ];
+  return parts.length === 0 ? {} : { desk: parts.join(" · ") };
+}
+
+function waitingWords(waiting: WaitingFact | undefined): string[] {
+  if (waiting === undefined || waiting.asks === 0) return [];
+  const asks = waiting.asks === 1 ? "1 ask" : `${waiting.asks} asks`;
+  return waiting.tools.length === 0 ? [asks] : [`${asks} · ${waiting.tools.join(", ")}`];
+}
+
+function changesWords(changes: ChangesFact | undefined): string[] {
+  if (changes === undefined || changes.files === 0) return [];
+  const files = changes.files === 1 ? "1 file" : `${changes.files} files`;
+  return [`${files} +${changes.added} -${changes.deleted}`];
 }
 
 function countSummary(row: SessionOverviewRow): string {

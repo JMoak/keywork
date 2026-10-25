@@ -84,11 +84,12 @@ export function servedMemory(options: ServedMemoryOptions): MemoryPort {
     },
     discard: (id) => pane.discard(id),
     notes: async () => (await layers()).flatMap((layer) => layer.notes),
-    note: async (name) => {
+    note: async (name, layer) => {
       const key = titleKey(name);
-      for (const layer of await layers()) {
-        const found = layer.notes.find((note) => titleKey(note.name) === key);
-        if (found !== undefined) return withRelations(found, layer.notes);
+      for (const loaded of await layers()) {
+        if (layer !== undefined && loaded.layer.id !== layer) continue;
+        const found = loaded.notes.find((note) => titleKey(note.name) === key);
+        if (found !== undefined) return withRelations(found, loaded.notes);
       }
       return undefined;
     },

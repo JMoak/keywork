@@ -16,6 +16,7 @@ export interface CommandSuggestion {
   name: string;
   description: string;
   shortcut?: string;
+  jump?: true;
 }
 
 export interface CommandsPort {
@@ -304,6 +305,7 @@ export class PromptEditor {
     return rankMentions(mention.query, files(), suggestionLimit).map((path) => ({
       name: path,
       description: "",
+      jump: true,
     }));
   }
 

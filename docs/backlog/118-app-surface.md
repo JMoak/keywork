@@ -1259,3 +1259,383 @@ Windows, two failed: one named `compose.test.ts` "surfaces point-of-action recal
 mutating tool's result" with `EPERM` renaming `curation.md` in `vault-files.ts`'s atomic
 write, a file this lane never touches; the other's names were not captured. The touched test
 files passed five repeated runs in a row.
+
+### Wave 8 server lane · landed 2026-10-25
+
+The keywork half of keywork-app's `docs/parity.md` sections 4 and 5 and its plan's server-lane
+rows S10, S12, S14, S16 and S17, plus the flush, forget, send-now and queue verbs the app's
+panes wait on. Engine-dictated shapes, five new route families (`routes/quiet.ts`,
+`flush.ts`, `forget.ts`, `queue.ts`, `spills.ts`, registered last in `routeFamilies`),
+`docs/events.md` in the same change, `contractVersion` `1.4` to `1.5`, both fixtures
+regenerated with `bun run contract:fixtures`. No tests were written or run this round (Jordan's
+rule); the gate below is types, guardrails, pins, contract, prose and lint.
+
+**S17 desk rows.** `GET /sessions` answers `SessionRow`s: the summary plus `live`, `working`,
+`waiting: { asks, tools }` and, once known, `changes: { files, added, deleted }`, all from what
+the host already holds. `waiting` counts the session's pending asks in the ask queue and names
+their tools; `changes` sums the listing `ChangesFeed` last announced for that session on
+`changes.updated` (`lastAnnounced`, so a list never runs git). One deviation from the field
+scan, which called the turn bit `live`: `live` already meant "open in this server" on
+`GET /sessions/{id}` (three tests pin it), and a 1.x field keeps its meaning, so the row's `live`
+means the same and the turn bit is `working` (`Agent.busy()`: a turn running, settling or
+queued). `server/src/desk.ts` (`deskRowOf`) builds the row for both hosts. A live row now
+carries `costNanos` too, and a stored row prices its logged usage with the server's own model
+for the turns before any `model_change` (`loggedCostNanos`), so a desk shows cost for a session
+it never opened.
+
+**S16 quiet sessions.** `POST /sessions/{id}/quiet { on }` (`setSessionQuiet`). The gate
+decides, in the engine: `ToolGuard` gains an optional `grantsQuietly(call, rule)`, which the
+agent consults when its ruling is `ask` and before it builds or emits the ask, and a `true`
+emits `gate.permission { verdict: "granted", gate: "quiet", scope: "session", asked: false }`
+with no `gate.ask`. `PermissionGate` gains `quiet`. `PermissionLedger` holds the quiet set
+(`setQuiet`, `isQuiet`, `quietSessions`, `grantQuietly`); `grantQuietly` refuses an ask whose
+rule is `trusted` (the trusted reads' write-capable forms) and otherwise takes what
+`quietGrant(tool, args)` in `shared/src/trust/quiet.ts` derives: the `grantCandidates` rules
+when `grantRefusal` takes them (so `write`, `edit` and anything with nothing to remember still
+ask), none of them blanket (`^\S+ \*$` on a bash rule), no command part destructive in K9's sense
+(`isDestructiveCommand`, which covers both the exact-only and the remember-nothing forms), and
+the session layer of those rules covering the whole call (so a part with a redirection or a
+substitution still asks). The rules join the session's grants. `AskQueue.guardFor` passes it to
+its `GrantSink`, and `servedGrants(ledger, log)` (`server/src/grants.ts`, used by both hosts)
+fires `surface.changed { kind: "permissions" }` when a quiet grant added a rule;
+`setSessionQuiet` fires it when the posture moved. `childGuardOf` passes `grantsQuietly`
+through, so a quiet session's `delegate` children are quiet too and their rules join the
+parent's session grants. The posture is a `custom` entry `quiet { on }`
+(`SessionStore.appendQuietChange`, `quiet()`), read from the latest such entry in the whole
+log rather than the active path, so an undo or a leaf move never flips it; a fork whose path
+carries the entry starts quiet. `LiveSession` applies it to the ledger when it opens, so a
+reopened session keeps it. `session.state` carries `quiet`; `GET /permissions` answers
+`PermissionsAnswer` (`PermissionsView` plus `quiet: string[]`, server-side, so the engine view
+and the TUI's fixtures are untouched). Turning quiet off revokes nothing. `keywork run` and
+the memory host's headless guard have no `grantsQuietly`, so no headless gate goes quiet.
+**Decisions (reversible):** a configured `policy` ask (the careful preset included) is
+quiet-grantable, since a `session` answer would record its rules; an MCP tool's
+`<server>__<tool> *` is not blanket and K9 names no MCP destructive set, so MCP calls are
+quiet-grantable, which Jordan may want narrowed; `keywork sessions decisions` attributes a quiet
+grant as `by: "rule"` (asked false, gate not `user`), never as a person. `GET /permissions` names
+only sessions opened in this server process; a stored quiet session that was never opened is
+quiet again the moment it is.
+
+**S10 one serve per workspace.** `serve` checks and writes only the workspace ticket
+(`~/.keywork/workspaces/<identity>/server.json`); the user-level `~/.keywork/server.json` is
+no longer written, removed or consulted by `serve`, so a second workspace's `serve` starts beside
+the first. **Legacy read path, one release:** `ticketFilesFor` (which `keywork attach` and the
+`keywork mcp login` reconnect read) still lists the user-level ticket after the workspace one,
+so a client finds a server an older `keywork serve` started. In the next release
+`ticketFilesFor` shrinks to the workspace ticket and `serverTicketFile`, attach's no-cwd branch
+and that fallback go. Until then a stale user-level ticket from an older serve in another
+workspace can still answer an attach that finds no workspace ticket; attach does not compare
+`/doc`'s `info.workspace.identity`, which would close that.
+
+**Flush.** `POST /sessions/{id}/flush` (`flushSessionMemory`) over the session's
+`MemoryFlush.flushNow`, through a new engine step beside `compactNow`: `flushMemoryNow` in
+`session/settle.ts`, which appends the flush exchange to the store as the after-turn flush does
+and answers a `TurnSettlement`; the host rebuilds the agent over the longer history. Answer
+`{ flushed, notices }`, `flushed` counting messages as `session.settled` does; 409 while busy.
+`session.settled { phase: "requested" }` follows (it always carries a notice), then
+`session.state`.
+
+**Forget.** `POST /sessions/{id}/forget { entryId, replacement? }` (`forgetSessionEntry`) is
+the TUI's `/forget` over HTTP: the same seam, `SessionStore.appendContextEdit` (reached in
+process through the `forget` of `cli/src/sessions/ports.ts`), on a user prompt or tool-result
+message on the active path, then the agent rebuilt over `store.messages()`. Answer `{ edit }`
+(the `ContextEditEntry`); 404 for an id that is not such an entry, 409 while busy;
+`session.state`, then `session.tree { reason: "leaf" }` naming the edit, as `/restore` does.
+
+**Send now and the queue verbs.** `behavior: "now"` on `POST /sessions/{id}/prompt` is the
+terminal's ctrl+enter: `Agent.clearQueue()` (new; cancels every waiting prompt with one
+`queue.changed`) and then a steer; the 202 carries `setAside`, the prompts taken off, because
+the terminal holds them in its editor and an HTTP client has to be handed them.
+`POST /sessions/{id}/queue/{itemId}/move { to }` (`moveQueuedPrompt`) and
+`DELETE /sessions/{id}/queue/{itemId}` (`cancelQueuedPrompt`) answer `{ queued }`; the move is a
+new engine seam, `Agent.moveQueued(id, to): QueueMove`, which reorders in place, keeping ids and
+the waiting promises (the TUI's alt+arrow cancels and resends, so its ids change), and refuses a
+move past the end (`out-of-range`, 409) or across a steered prompt (`crosses-steer`, 409).
+`queue.changed` announces each.
+
+**S12 spills.** `GET /sessions/{id}/spills/{spillId}?from=&to=` (`readSessionSpill`) reads from
+`store.spills()`, the session's own `<stem>.spills/` beside its log, never the tool jail.
+`server/src/spills.ts`: the reference must appear on a tool result in the session's logged
+messages or the live agent's unsaved history (`spillReferenceAmong`, with the id held to
+`[A-Za-z0-9-]{1,64}`), and without `from`/`to` the slice is the reference's own clipped range
+`[elidedFrom, elidedTo)`. The slicing is the one `/files` uses (`fileSlice`, now exported), with
+the 1 MiB per-request cap and NUL refused as 415, and no whole-file cap since only the slice is
+read. The memory host serves no spills.
+
+**S14 leftovers.** *Cost that survives a restart:* under `serve` each assistant message's usage
+is written on its `MessageEntry` (the provider's `done` deltas paired in order, as the TUI's
+attachment pairs them), and `SpendLedger` (moved to `cli/src/serve-spend.ts`) starts from the
+log, the model in force tracked by `model_change`, the server's provider before the first.
+"Beside the session" became "on the session's own entries": `MessageEntry.usage` is the field
+the engine keeps for it, the JSONL already moves with trash, restore and fork, and
+`summarize` then prices stored rows; a sidecar file would have grown `SessionFileSet`. Gap: a
+fork's log carries its parent's prefix with its usage, so a fork's cost includes the prefix, as
+`keywork sessions` already counts it for TUI sessions. *Zero-turn rows:* `models` lists only
+models with a turn, in both hosts. *`?layer`:* `MemoryPort.note(name, layer?)`, honored by
+`GET /memory/notes/{name}`. *Compaction summaries:* `SessionDetail.summaries` lists
+`{ index, entryId, kind }` for each message that is a `compaction` or `branch_summary`
+(`summaryMarksOf` in `entries.ts`, `SessionStore.summaryMarks()`). *`used.basis`:*
+`readAgentContext` now measures the conversation as the parts do (`measuredConversation`: the
+provider's report less the estimated prompt and tools, plus an estimate since, `reported` while
+the anchor holds) and `AgentContext` gains `basis`; the settler under `serve` measures the same
+reading after the turn and between tool batches (`SettleOptions.measure`,
+`SettlingSession.measure`, `conversationMeasureOf`), so the dues stay what the settler acts on.
+This moves when `serve` flushes and compacts onto reported usage; the panes TUI and `chat` pass
+no measure and keep the estimate.
+
+**Contract 1.5.** Six operations, `behavior: "now"`, `session.state.quiet`, the `quiet` gate,
+`live`, `working`, `waiting` and `changes` on rows, `summaries` on a session, `quiet` on
+`GET /permissions`, `setAside` on a now-prompt: additive. Three behavior changes inside 1.x the
+review should weigh, each asked for by S14 or S10: `GET /sessions/{id}/context` reports `used`
+from the provider's numbers once it has them (`basis` widens from `"estimated"` to
+`"reported" | "estimated"`; keywork-app's `ContextReport.basis` is typed as the literal), cost
+counts earlier processes and drops zero-turn rows, and `serve` writes one ticket.
+
+**Existing tests that pin the old behavior** (left as they are under this round's rule; each
+needs its expectation moved): `serve.test.ts` "writes the workspace ticket and the user-level
+fallback, refuses a second serve beside a live one, and clears a stale ticket" (waits for four
+output lines and two tickets, now three and one, so it would hang); `server.test.ts` "splits the
+window into the parts the next request carries" (`after.basis` is now `reported`, `after.used`
+1200), "reads the context gauge inputs and the cost rollup" (a fresh session's `models` is now
+`[]`), the typed-client verbs case (`models[0]` after a switch with no turn on `mock/m2` is now
+absent) and the first `GET /permissions` `toEqual` in the K7 trusted-reads case (now carries
+`quiet: []`).
+
+**Files.** Engine: `agent.ts` (`grantsQuietly`, `clearQueue`, `moveQueued`, `QueueMove`,
+`refusalAfterAsking`), `delegation.ts`, `permission-ledger.ts`, `session/journal.ts`,
+`session/entries.ts`, `session/store.ts`, `session/settle.ts`, `session/context-map.ts`,
+`index.ts`. Shared: `trust/quiet.ts`, `trust/index.ts`. Server: `host.ts`, `asks.ts`,
+`changes.ts`, `client.ts` (`sendNow`, `moveQueued`, `cancelQueued`, `setQuiet`, `flush`,
+`forget`, `spill`, `memoryNote(name, layer?)`, rows and `PermissionsAnswer`), `desk.ts`,
+`grants.ts`, `spills.ts`, `files.ts`, `testing.ts`, `openapi.ts`, `index.ts`, `contract.ts`,
+`contract-fixtures.ts`, both fixtures, `routes/{quiet,flush,forget,queue,spills}.ts` (new),
+`routes/{sessions,session-verbs,memory,files}.ts`. CLI: `serve.ts`, `serve-spend.ts` (new),
+`serve-memory.ts`, `session-settle.ts` (an optional `measure` on `SettlingSession`). Docs:
+`docs/events.md`, this entry, `docs/backlog/README.md`, the headings of `121-jev-memory.md`.
+
+**For the TUI lane.** Quiet in the terminal (`leader shift+s` in the app's words): the panes'
+guard can implement `grantsQuietly` over the same `PermissionLedger.grantQuietly` and write the
+posture with `appendQuietChange`; `quietReasonOf` in `tui/src/permissions-model.ts` should read
+`gate: "quiet"` as its own reason so "ran without asking" names it. The queue's alt+arrow and
+ctrl+enter can move onto `Agent.moveQueued` and `Agent.clearQueue` (ids then survive a
+reorder). Under `keywork attach`, the spill viewer can switch to
+`GET /sessions/{id}/spills/{id}` and the context gauge can read `basis`. The sessions overview
+can show `working`, `waiting` and `changes` from the rows.
+
+**Arc themes over attach.** The typed client gains `setArcTheme(slug, theme: string | null):
+Promise<ArcSummary>` over `POST /arcs/{slug}/theme`, refusing as the other arc verbs do (a
+`ServerRefusal` carrying the status and the server's words for 400, 403, 404, 409 and 503), and
+the served arcs port in `cli/src/remote-panes.ts` wears through it, so `/theme-arc` works under
+`keywork attach`. The route was already in `/doc`, so no fixture moved.
+
+Gate, bun 1.3.9: `check:types` (`tsc --build`, the whole tree), `check:guardrails`,
+`check:pins`, `check:contract` and `check:prose` exit 0; `biome check` is clean on every file
+this lane touched, and the repo-wide run reports one formatting error in `tui/src/diff-model.ts`
+and one info in `tui/src/bots-pane.ts`, the TUI lane's files mid-edit.
+
+### Round 2 engine and server lane · landed 2026-10-25
+
+The engine and server half of keywork-app's `docs/parity.md` "Taste pass 1" (W1 through W5,
+the server half of B3, two rough items), on top of the uncommitted wave 8 tree. Contract `1.5`
+to `1.6`, both fixtures regenerated with `bun run contract:fixtures`. No tests written or run
+(Jordan's rule); the gate is `bun run check`, green.
+
+**W1 denials the model believes.** `Confirmation` and `PermissionDecision` gain `note`, the
+person's own words; `POST /asks/{callId}` takes `note` (trimmed, 1 to 1000 characters) beside
+`reason`, and the denial travels as one `Denial { reason?, note? }` through `AskQueue.answer`,
+`SessionHost.answerAsk` and the typed client's `answerAsk(callId, verdict, scope?, denial?)`
+(the fourth argument was a bare reason). The refused call's result is no longer the bare
+`declined by user`: it opens with `declined by user` and the reason (`· they judged this call
+unsafe`, `· not now, though the call itself may be fine later`), quotes the note on its own line
+as `The user said: "…"`, and closes with `The call did not run, so nothing it would have changed
+was changed. Do not retry it or a variant of it unless the user asks you to, and never report it
+as done.` A headless refusal keeps its first line and gains the same close. The note rides
+`gate.permission` and the journal's `permission_decision`. **Decision:** the first line keeps
+the old words so every client that shows a result's first line reads as before.
+
+**W2 bash output.** `BoundedOutput` keeps the first and the last 512 Ki characters
+(`retainedOutputChars`, 1 Mi) and says how much it elided from the middle, where it used to keep
+the first 30,000 and drop the rest. The agent's spill then does the bounding the model sees:
+anything over the 64 KiB budget goes whole to the session's spill file and the model reads head
+and tail with the spill marker, so test summaries at the end survive and bash spills like any
+other tool. An agent with no spill store (a storeless `keywork run`) clips to the same head and
+tail (`clipToolOutput`) instead of passing everything through. `agentShellEnv()` gives both the
+one-shot and the persistent bash `KEYWORK=1` and `CI=1`, so watch-mode runners exit; the user's
+own terminal shell keeps the plain scrubbed environment. The diff cap in a command's change
+report is its own constant now (`maxReportedDiffChars`, still 30,000).
+
+**W3 turn facts that do not drift.** When a turn settles under `serve`, after its messages, a
+`custom` `turn_facts` entry freezes `{ prompt, checkpoint?, settled?, files, session? }`: the
+turn's own files from the tree before its first change to the tree at settle, and the session's
+net totals at that moment (`session/turn-facts.ts`: `recordTurnFacts`, `settledTurnFacts`,
+`turnsAlong`, `latestSessionTotals`). `SessionStore` folds a facts entry's `checkpoint` back onto
+its prompt entry as it indexes, so `restorePointOf`, `rewindBefore` and every other reader of
+`prompt.checkpoint` keep working unchanged. The checkpoint is per session now: `serve`'s guard
+notes the first mutation's tree in a session-owned `TurnCheckpoint` instead of the shared
+`Checkpoints.turnTag`, which two sessions on one server used to cross. Snapshots exclude
+`node_modules/` and `.git/` (the shadow repo's `info/exclude`); an existing shadow repo whose
+exclude file differs empties its index once (`read-tree --empty`) so a dependency tree it took
+in before drops out, at the cost of one full re-hash on its first snapshot.
+
+*Per session.* `GET /sessions/{id}/changes` and `changes.updated` list only the files this
+session's turns touched (settled turns from their facts, the running turn from its checkpoint,
+older turns without facts by diffing their checkpoints as before), each with its net change
+against the session's first checkpoint; `ChangesSourceOf` takes the session id. The desk row's
+`changes` falls back to the latest frozen `session` totals when this process announced nothing,
+so a restart keeps the figure.
+
+*Restore preview.* `GET /sessions/{id}/restore?turn=N` (`previewSessionRestore`) answers what the
+restore would do without doing it, with `others` naming every other session of the workspace
+whose turns touched a file the restore would put back since that turn began (`serve-restore.ts`,
+`pathsTouchedSince` in `serve-changes.ts`).
+
+**Decisions:** a file both sessions touched shows its net change, theirs included; a turn's
+facts can carry another session's concurrent edits, since one tree diff cannot tell them apart;
+an old checkpoint taken before the exclusion can still carry a `node_modules` that a restore to
+it writes back.
+
+**W4 journal order.** `serve` writes the prompt's entry the moment the turn starts
+(`turn.started`), stamped with that time, so it precedes everything the turn journals; the rest
+of the turn's messages follow at settle as before, then `turn_facts`. `isJournalOnly(entry)` in
+`session/journal.ts` names the evidence kinds (`permission_ask`, `permission_decision`,
+`context_injection`, `memory_decision`, `shell_reset`, `session_grants`, `turn_facts`);
+`GET /sessions/{id}/entries` lists their ids as `journal`, and the HTML export leaves them out.
+
+**W5 one context reading.** `readContext(conversation, budget, overhead = 0)` measures on the
+axis of the whole request: `used` is the conversation plus what the system prompt and tool
+schemas take, and `flushAt` and `compactAt` shift by the same amount, so every due decision is
+unchanged while the numbers match the parts. `readAgentContext` answers that reading (its
+`used` is now the sum of the parts, and `thresholds` equals `flushAt` and `compactAt`).
+`ContextMeasure { overhead, conversation(history) }` replaces `ConversationMeasure`, built by
+`contextMeasureOf(agent)` (anchored on the provider's report) or `estimatedMeasureOf(agent)`
+(text only), read with `readMeasured`. Settling and compacting take the measure
+(`SettleOptions.measure`, `CompactNowOptions.measure`); `session-settle.ts` hands every host
+`estimatedMeasureOf(agent)` unless it passes one, so the compaction notice's `context now N of W`
+agrees with `GET /sessions/{id}/context` and the context map in the terminal, `chat` and `serve`
+alike, and the reading right after a compaction is a fresh estimate of the shorter history.
+`serve` keeps its reported measure.
+
+**B3 trust that takes effect.** `POST /workspace/trust` on `keywork serve` recomposes the server
+before it answers: the trust port calls the host's `recompose`, `serve` rebuilds its host options
+(`main.ts`'s `servedHostOptions` over a reopened command context, so the project's config,
+permissions, MCP servers and arcs load) and swaps the new host in with
+`ListeningServer.rehost` and `KeyworkServer.rehost`, which rebuild the route handlers and close
+the old host (open sessions close and reopen on their next request, a running turn is
+interrupted, pending asks are refused). URL, token, ticket and the event log stay, and an open
+SSE stream keeps flowing. The answer gains `recomposed: true` with `reopens: false`;
+`surface.changed { kind: "permissions" }` follows, and `GET /permissions` answers the trusted
+posture at once. A host with no recompose seam (the memory host) answers `reopens: true,
+recomposed: false` as before. **Decision:** recompose rather than exit, because an attached app
+cannot restart a server it did not spawn.
+
+**Rough items.** `serve` prints `token <value>` only when stdout is not an interactive terminal
+(`tokenOnStdout`; the app's spawn reads it from a pipe), and the ticket file holds it either way.
+`keywork doctor` and the terminal's `/doctor` count crash-log entries by their stamped head line
+(`crashLogFactsAt` in `doctor.ts`), not every line of every stack.
+
+**Files.** Engine: `agent.ts`, `checkpoints.ts`, `index.ts`,
+`session/{journal,store,settle,context-map,context-budget,spill,turn-facts}.ts` (`turn-facts.ts`
+new), `tools/{command-run,bash,shell-session,command-changes}.ts`. Server: `asks.ts`,
+`changes.ts`, `client.ts`, `contract.ts`, `contract-fixtures.ts`, both fixtures, `host.ts`,
+`index.ts`, `listen.ts`, `server.ts`, `testing.ts`,
+`routes/{asks,changes,session-verbs,tree,workspace}.ts`. CLI: `serve.ts`, `serve-changes.ts`
+(rewritten), `serve-restore.ts` (new), `serve-surfaces.ts`, `serve-tree.ts`, `session-settle.ts`,
+`main.ts` (`runServe`, `runDoctor`), `doctor.ts`, one import in `compose-panes.ts`,
+`sessions/turns.ts` (the terminal ledger reads frozen facts first), `sessions/export-html.ts`.
+Docs: `docs/events.md`, this entry, keywork-app's `docs/parity.md`. Two test files changed only
+so they compile: `tools/command-changes.test.ts` imports `maxReportedDiffChars`, and
+`tools/command-run.test.ts` aliases `retainedOutputChars`.
+
+**For the TUI lane.** The terminal still writes its prompts at settle and writes no facts. The
+adoption is small: on `turn.started` append the prompt (as `serve`'s `openTurn` does), and at
+settle call `settledTurnFacts(checkpoints, promptId, checkpoint)` then `recordTurnFacts(store,
+facts)`, taking the checkpoint from `Checkpoints.takeTurnTag()` instead of passing it to
+`store.append`. The ledger in `sessions/turns.ts` already prefers frozen facts, and
+`restorePreviewOf` in `serve-restore.ts` gives the ledger restore confirm its `others`. The
+terminal's `/context`, gauge and title can read `readAgentContext` (one reading with `basis`).
+A free-text `note` on an `other` denial rides `Confirmation.note`. Shell escapes run the bash
+tool directly, so their output can now reach 1 Mi characters; `clipToolOutput` bounds it.
+
+### Round 2 server follow-up · landed 2026-10-25
+
+The asks the TUI and app lanes left for the engine and server after round 2 (keywork-app's
+`docs/parity.md`, "Round 2 ledger: TUI" and "Round 2 ledger: app"), plus the three items the
+round 2 engine lane left open. Contract `1.6` to `1.7`, both fixtures regenerated. No tests
+written or run; `bun run check` is green. Scratch probes (not checked in) drove the served
+flows end to end: a grant, a second grant and a revoke survive a restart; a restore survives a
+restart and `POST /redo` then puts the files and the transcript back; `turn.started` carries the
+prompt's entry id; a timed-out ask reads as the person stepping away; a restore to a checkpoint
+holding `node_modules` leaves every `node_modules` as it is now; the keepalive arrives at 15 s.
+
+**Shared grants.** `SessionGrants` gains `adopt(rules)` and `grant(rules)`, and `remember`
+answers the rules it newly holds (the same list as before on a fresh set). The terminal's
+`tui/src/held-grants.ts` is gone; `mutation-ask.ts` holds a `SessionGrants`. `PermissionLedger`
+keeps one `SessionGrants` per session, adopts a journal's rules with `adoptSession`, and tells
+`onSessionRules` listeners whenever a session's rules change (a grant, a quiet grant, a revoke).
+
+**Served grants persist.** `serve` writes the same `session_grants { rules }` snapshot the
+terminal writes on every change and adopts the latest when a session opens, so revokes survive
+a restart. Grant and revoke routes open the session first, so the ledger always holds what the
+log says before it changes anything. **Decision:** journal writes chain on the live session and
+every leaf-moving verb waits for them (`idle()`), because an append still in flight when the leaf
+moves lands the leaf back on the old branch; the probe caught exactly that with a revoke followed
+by a restore.
+
+**Served staged restore.** `POST /undo` and `POST /restore` both journal `restore { turn?, from,
+files, redo }` at the rewound leaf through `sessions/rewind-journal.ts` (now `journalRestore`,
+`unsettledRestoreOf` and `undoRestore`, shared with the terminal port), and `POST /redo` writes
+`restore-undone`. A session reopened on an unsettled restore re-stages it, so `redoable` is true
+and redo works after a restart. **Decision:** undo journals too, so an undo is no longer lost on
+a restart, and a redo swaps onto the agent's current provider instead of the one in force when
+the undo was staged.
+
+**Turn facts, one shape.** `settledTurnFacts(trees, store, prompt, checkpoint)` freezes the
+session totals itself (`sessionFilesAt` and `sessionBaseline` moved into
+`engine/src/session/turn-facts.ts`), and `sessions/turn-journal.ts`'s `freezeTurn` is the one path
+both `serve` and the terminal port call. The terminal port's `turnFiles: TurnFileReader` seam is
+now `turnTrees: TurnTrees`, which `Checkpoints` satisfies as is.
+
+**Memory flush as its own entry (W7).** `SessionStore.appendMemoryFlush` writes a
+`custom_message` with `customType: "memory_flush"` whose `content` is the flush prompt (lead text
+intact), then the reply as an `assistant` message entry. The model sees what it saw before. One
+predicate, `isPromptEntry`, decides what counts as a turn everywhere (`restorePointOf`,
+`turnsAlong`, the terminal ledger, `serve`'s undo target, the attached port), and it also leaves
+out a legacy flush prompt, so old logs number the same way. `GET /sessions/{id}` gains `flushes:
+[{ index, entryId, facts }]`. Replay skips the flush and its reply for either shape, the attached
+terminal does the same by mark, and the HTML export shows `memory flush · keywork asked the model
+what was worth keeping`.
+
+**Forgotten entries on the wire (W6).** `GET /sessions/{id}` gains `edits: [{ index, entryId,
+role, kind, text }]`. **Decision:** marks, the way `summaries` works, rather than an entry id per
+message: a forgotten prompt is not in `messages` at all, so its place has to be said directly,
+and the marks come from the log alone, never from aligning a live history.
+
+**`turn.started` carries `entryId`.** `Agent.openTurnsWith(opener)` runs before `turn.started`
+fires and returns the prompt's entry id; `serve` writes the prompt there. With no opener the
+event still fires synchronously, so the terminal's timing is unchanged.
+
+**SSE keepalive.** Every stream writes `: keepalive` every 15 s (`keepaliveIntervalMs`).
+
+**Smaller.** `keywork sessions decisions` exports `answer.note`, scrubbed and clipped at 1000.
+An ask that times out answers `{ approved: false, gate: "headless", timedOut: true }` and the
+model reads `not approved: nobody answered the ask in time, so the person probably stepped away
+and the call was refused`; asks refused by a closing server keep the headless line.
+`Checkpoints.restoreTo` drops every `node_modules/` and `.git/` path from the target tree before
+it checks it out (a temporary index, only when the tree holds one). Compaction counts a custom
+message's tokens.
+
+**Files.** Shared: `trust/grants.ts`. TUI: `mutation-ask.ts`, `held-grants.ts` (deleted).
+Engine: `agent.ts`, `checkpoints.ts`, `index.ts`, `memory/flush.ts` (`keptFacts`),
+`permission-ledger.ts`, `session/{entries,store,settle,replay,turn-facts,compaction}.ts`. Server:
+`asks.ts`, `sse.ts`, `host.ts`, `index.ts`, `testing.ts`, `contract.ts`, both fixtures,
+`routes/{events,sessions,tree,session-verbs,permissions}.ts`. CLI: `serve.ts`,
+`serve-changes.ts`, `serve-restore.ts`, `remote-ports.ts`, `compose-panes.ts`,
+`sessions/{rewind-journal,turn-journal,turns,ports,decisions,export-html}.ts`. Docs:
+`docs/events.md`, `docs/backlog/122-tool-decision-evidence.md` (the `note` row), this entry, and
+keywork-app's `docs/parity.md`.
+
+**For the TUI lane.** `Agent.openTurnsWith` gives the terminal the same live `entryId` if its
+session writer opens turns through it instead of on `turn.started`. A served restore now carries
+`redo`, so the terminal can redo a server-written restore after a relaunch. The tree pane shows a
+flush as the start of its prompt text; `isMemoryFlushEntry` and `flushMarksOf` are there to draw
+`memory flush · N facts kept` instead.

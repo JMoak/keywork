@@ -25,7 +25,6 @@ export interface ContextAnswer extends AgentContext {
   fullness: number;
   flushDue: boolean;
   compactionDue: boolean;
-  basis: "estimated";
 }
 
 export interface CostAnswer extends CostReport {
@@ -175,7 +174,7 @@ export const sessionVerbRoutes = [
     path: "/sessions/{id}/undo",
     operationId: "undoSession",
     summary:
-      "Take back the last prompt: the conversation moves to just before it, its text comes back in `prompt` so a client can offer it for editing, and the files the turn changed are put back to the checkpoint taken before it. One undo is staged at a time; the next POST /redo cancels it. With no prompt on the path, undoes the last file checkpoint alone. A `session.state` envelope follows.",
+      "Take back the last prompt: the conversation moves to just before it, its text comes back in `prompt` so a client can offer it for editing, and the files the turn changed are put back to the checkpoint taken before it. One undo is staged at a time; the next POST /redo cancels it. The undo is written to the session log as a `restore` entry, as POST /restore writes one, so a reopen finds the session rewound and POST /redo still takes it back after a server restart. With no prompt on the path, undoes the last file checkpoint alone. A `session.state` envelope follows.",
     authenticated: true,
     responses: {
       "200": "`{ prompt: { entryId, text } | null, filesNote, undoable, redoable }`.",
@@ -201,7 +200,7 @@ export const sessionVerbRoutes = [
     path: "/sessions/{id}/restore",
     operationId: "restoreSessionTurn",
     summary:
-      "Restore the session to just before one of its turns in one step, where POST /undo takes back one turn per call: the conversation moves to before that turn's prompt, and the workspace files go back to the checkpoint taken before the first change any turn from there on made (untouched when none of them changed a file, or with checkpoints off). One `restore` entry records it in the session log, so a reopen finds the session where the restore left it. The answer says what changed: the turn's `prompt`, handed back so a client can offer it for editing; `undoneTurns`, how many turns left the active path; and `files`, every file the restore put back with the lines it `added` and `deleted`. Staged like an undo: the next POST /redo takes the whole restore back, files and conversation, and records a `restore-undone` entry so a reopen agrees. `session.state`, `session.tree` (reason `leaf`, naming the recorded entry) and, when files moved, `changes.updated` follow.",
+      "Restore the session to just before one of its turns in one step, where POST /undo takes back one turn per call: the conversation moves to before that turn's prompt, and the workspace files go back to the checkpoint taken before the first change any turn from there on made (untouched when none of them changed a file, or with checkpoints off). One `restore` entry records it in the session log, `{ turn, from, files, redo }` with `redo` the snapshot of the files from before they went back, so a reopen finds the session where the restore left it and, even after a server restart, POST /redo can still put the files back. The answer says what changed: the turn's `prompt`, handed back so a client can offer it for editing; `undoneTurns`, how many turns left the active path; and `files`, every file the restore put back with the lines it `added` and `deleted`. Staged like an undo: the next POST /redo takes the whole restore back, files and conversation, and records a `restore-undone` entry so a reopen agrees. `session.state`, `session.tree` (reason `leaf`, naming the recorded entry) and, when files moved, `changes.updated` follow.",
     authenticated: true,
     requestBody: restoreBody,
     responses: {
@@ -214,14 +213,28 @@ export const sessionVerbRoutes = [
   },
   {
     method: "GET",
-    path: "/sessions/{id}/context",
-    operationId: "readSessionContext",
+    path: "/sessions/{id}/restore",
+    operationId: "previewSessionRestore",
     summary:
-      "How full the model's context window is: `used` tokens estimated from the conversation text against the `window`, with the thresholds at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen. `used` and those two lines are what keywork's settler measures: the conversation alone. `declared` says whether the window came from keywork.json or is assumed. `parts` splits everything the next request carries, each as `{ tokens, basis }`: `system` (keywork's prompt and the configured prompts), `tools` (the tool schemas), `injected` (project instructions, the repo map, memory and extension context riding in the prompt), `conversation`, and `free` (the room left in the window). A part's `basis` is `reported` when it rests on what the provider reported for the last request, plus an estimate of what arrived since, and `estimated` when it comes from the text alone; the provider never splits its count, so `system`, `tools` and `injected` are always estimated. `thresholds` places the flush and the compaction on the parts' axis as absolute token counts, so a client can draw them across the parts; they pass `window` when the parts beyond the conversation outgrow the reserve.",
+      "What `POST /sessions/{id}/restore` would do for `?turn=N`, without doing it, so a client can ask before it acts: the turn's `prompt`, how many turns would leave the active path (`undoneTurns`), every file the restore would put back with the lines it would `add` and `delete` (`files`, empty when no turn from there on changed a file or checkpoints are off), and `others`: the sessions of this workspace other than this one whose turns touched any of those files after that turn began, each as `{ sessionId, title, paths }`, so the question can name the work a restore would take from them. A restore resets the whole workspace to the checkpoint, theirs included. `others` comes from the turns those sessions settled (their `turn_facts`) plus the turn a live one is running now; edits made outside keywork are in `files` but never in `others`.",
     authenticated: true,
     responses: {
       "200":
-        '`ContextReading & { fullness, flushDue, compactionDue, basis: "estimated", parts: { system, tools, injected, conversation, free }, thresholds: { flushAt, compactAt } }`, each part `{ tokens, basis: "reported" | "estimated" }`.',
+        "`{ turn, prompt: { entryId, text }, undoneTurns, files: [{ path, added, deleted }], others: [{ sessionId, title, paths }] }`.",
+      "400": "`turn` is not a positive integer.",
+      "404": `${missingResponse} Or \`{ error: "no turn N on this session's path" }\`.`,
+    },
+  },
+  {
+    method: "GET",
+    path: "/sessions/{id}/context",
+    operationId: "readSessionContext",
+    summary:
+      "How full the model's context window is, as one reading every surface shows: `used` tokens of everything the next request carries (the sum of `parts` less `free`) against the `window`, with the points at which a memory flush (`flushAt`) and a compaction (`compactAt`) happen on the same axis. keywork's settler holds its reserves against the conversation, so the two lines sit at the window less the reserve plus what the system prompt and tool schemas take, and pass `window` when those outgrow the reserve. `basis` says where `used` comes from: `reported` once the provider has reported usage for the conversation so far (its count, plus an estimate of what arrived since), `estimated` from the text alone before that or after the history was rewritten, as a compaction, a flush, an undo or a forget does, so the reading right after any of them is a fresh measure of the shorter history and never the provider's older count. `declared` says whether the window came from keywork.json or is assumed. `parts` splits the same total, each as `{ tokens, basis }`: `system` (keywork's prompt and the configured prompts), `tools` (the tool schemas), `injected` (project instructions, the repo map, memory and extension context riding in the prompt), `conversation`, and `free` (the room left in the window). A part's `basis` is `reported` when it rests on what the provider reported for the last request, plus an estimate of what arrived since, and `estimated` when it comes from the text alone; the provider never splits its count, so `system`, `tools` and `injected` are always estimated. `thresholds` repeats `flushAt` and `compactAt` for clients that draw them across the parts.",
+    authenticated: true,
+    responses: {
+      "200":
+        '`ContextReading & { fullness, flushDue, compactionDue, basis: "reported" | "estimated", parts: { system, tools, injected, conversation, free }, thresholds: { flushAt, compactAt } }`, each part `{ tokens, basis: "reported" | "estimated" }`.',
       "404": missingResponse,
     },
   },
@@ -230,7 +243,7 @@ export const sessionVerbRoutes = [
     path: "/sessions/{id}/cost",
     operationId: "readSessionCost",
     summary:
-      "What this server process has spent on the session: token `usage`, the cost `rollup` in nanodollars with how many turns were priced, metered or unpriced, a `basis` line saying how honest the number is, the last `cacheMiss` if the provider reported one, and the same split per model under `models`.",
+      "What the session has spent under `keywork serve`, this process and the ones before it: each turn's usage is written on its assistant message in the session log, so a restart picks the totals back up. Token `usage`, the cost `rollup` in nanodollars with how many turns were priced, metered or unpriced, a `basis` line saying how honest the number is, the last `cacheMiss` if the provider reported one in this process, and the same split per model under `models`, which lists only models that ran at least one turn.",
     authenticated: true,
     responses: {
       "200":
@@ -351,6 +364,16 @@ export const sessionVerbFamily = {
       log.record(id ?? "", "session.tree", { reason: "leaf", entryId: outcome.leafId });
       return json(200, outcome);
     },
+    previewSessionRestore: async (request, { id }) => {
+      const turn = turnOf({ turn: Number(new URL(request.url).searchParams.get("turn")) });
+      if (turn === undefined) return json(400, { error: "turn must be a positive integer" });
+      const preview = await host.previewRestore(id ?? "", turn);
+      if (preview === "missing") return missingSession();
+      if (preview === "unknown-turn") {
+        return json(404, { error: `no turn ${turn} on this session's path` });
+      }
+      return json(200, preview);
+    },
     readSessionContext: async (_request, { id }) => {
       const reading = await host.context(id ?? "");
       return reading === "missing" ? missingSession() : json(200, contextAnswerOf(reading));
@@ -402,7 +425,6 @@ export function contextAnswerOf(reading: AgentContext): ContextAnswer {
     fullness: contextFullness(reading),
     flushDue: flushDue(reading),
     compactionDue: compactionDue(reading),
-    basis: "estimated",
   };
 }
 

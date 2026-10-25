@@ -236,6 +236,7 @@ function estimateEntryTokens(entry: SessionEntry): number {
   if (entry.type === "message") return estimateConversationTokens([entry.message]);
   if (entry.type === "compaction" || entry.type === "branch_summary")
     return Math.ceil(entry.summary.length / 4);
+  if (entry.type === "custom_message") return Math.ceil(entry.content.length / 4);
   return 0;
 }
 

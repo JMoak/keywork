@@ -62,7 +62,7 @@ export const fileFamily = {
   },
 } satisfies RouteFamily<typeof fileRoutes>;
 
-function byteRangeOf(query: URLSearchParams): ByteRange | undefined {
+export function byteRangeOf(query: URLSearchParams): ByteRange | undefined {
   const from = offsetOf(query.get("from"));
   const to = offsetOf(query.get("to"));
   if (from === null || to === null) return undefined;

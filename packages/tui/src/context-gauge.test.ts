@@ -1,6 +1,6 @@
 import { contextBudgetFor, readContext } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { contextGauge, contextReadout, gaugeStyleFor } from "./context-gauge.ts";
+import { contextGauge, gaugeStyleFor } from "./context-gauge.ts";
 import { assumedGlyphs } from "./marks.ts";
 
 const budget = contextBudgetFor(8_000);
@@ -107,22 +107,5 @@ describe("gaugeStyleFor", () => {
   it("keeps the cockpit on the bar regardless of focus", () => {
     expect(gaugeStyleFor("cockpit", true)).toBe("bar");
     expect(gaugeStyleFor("cockpit", false)).toBe("bar");
-  });
-});
-
-describe("contextReadout", () => {
-  it("states the usage, both marks, and the basis of the window", () => {
-    expect(contextReadout(readContext(4_000, budget))).toEqual([
-      "context 4000 of 8000 tokens · estimated from the conversation text",
-      "memory flush at 7000 · compaction at 7334",
-      "window declared in keywork.json",
-    ]);
-  });
-
-  it("says when the window is assumed and how to declare one", () => {
-    const lines = contextReadout(readContext(4_000, contextBudgetFor(undefined)));
-    expect(lines[2]).toBe(
-      "window assumed at 200000 · declare models[…].contextWindow in keywork.json for an honest limit",
-    );
   });
 });

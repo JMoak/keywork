@@ -406,29 +406,30 @@ async function activeArcLayers(
   return layers;
 }
 
-function noteViews(
-  notes: readonly Note[],
-  layer: string,
-  root: string,
-  recalls: ReadonlyMap<string, number>,
-  injected: ReadonlySet<string>,
-): MemoryNoteView[] {
-  const graph = MemoryGraph.fromNotes(notes);
-  return notes.map((note) => ({
+export interface NotePlace {
+  layer: string;
+  file: string;
+  curing: CuringStage;
+  injected: boolean;
+  recalls: number;
+}
+
+export function noteView(note: Note, place: NotePlace, graph: MemoryGraph): MemoryNoteView {
+  return {
     name: note.name,
     title: note.title,
-    layer,
+    layer: place.layer,
     path: note.path,
-    file: join(root, note.path),
+    file: place.file,
     provenance: note.provenance,
-    curing: curingStage(note),
+    curing: place.curing,
     links: note.links,
     aliases: note.aliases,
     body: note.body,
     tokens: note.tokens,
     pinned: note.pinned,
-    injected: injected.has(note.name),
-    recalls: recalls.get(note.name) ?? 0,
+    injected: place.injected,
+    recalls: place.recalls,
     relations: relationsOf(graph, note),
     ...(note.created !== undefined && { created: note.created }),
     ...(note.usefulness !== undefined && { usefulness: note.usefulness }),
@@ -437,7 +438,30 @@ function noteViews(
     ...(note.supersededBy !== undefined && { supersededBy: note.supersededBy }),
     ...(note.delivered !== undefined && { delivered: note.delivered }),
     ...(note.distilledFrom !== undefined && { distilledFrom: note.distilledFrom }),
-  }));
+  };
+}
+
+function noteViews(
+  notes: readonly Note[],
+  layer: string,
+  root: string,
+  recalls: ReadonlyMap<string, number>,
+  injected: ReadonlySet<string>,
+): MemoryNoteView[] {
+  const graph = MemoryGraph.fromNotes(notes);
+  return notes.map((note) =>
+    noteView(
+      note,
+      {
+        layer,
+        file: join(root, note.path),
+        curing: curingStage(note),
+        injected: injected.has(note.name),
+        recalls: recalls.get(note.name) ?? 0,
+      },
+      graph,
+    ),
+  );
 }
 
 function relationsOf(graph: MemoryGraph, note: Note): NoteRelationView[] {
@@ -460,7 +484,7 @@ function botInboxView({ bot, item }: BotStagedItem): InboxItemView {
   return { ...view, title: `${bot.sigil} ${view.title}` };
 }
 
-function inboxView(item: StagedItem): InboxItemView {
+export function inboxView(item: StagedItem): InboxItemView {
   const base = { id: item.id, created: item.created } as const;
   switch (item.kind) {
     case "note":
@@ -590,7 +614,7 @@ function worseProvenance(a: Provenance, b: Provenance): Provenance {
   return order.indexOf(a) >= order.indexOf(b) ? a : b;
 }
 
-function ledgerOpView(entry: LedgerEntry): LedgerEventView {
+export function ledgerOpView(entry: LedgerEntry): LedgerEventView {
   const paths = entry.deltas.map((delta) => delta.path).filter(isNotePath);
   const names = paths.map(noteName);
   const staged = paths.length === 0;
@@ -607,7 +631,7 @@ function isNotePath(path: string): boolean {
   return path.endsWith(".md") && !path.startsWith(".staging/") && path !== "curation.md";
 }
 
-function auditView(entry: AuditEntry): LedgerEventView {
+export function auditView(entry: AuditEntry): LedgerEventView {
   const colon = entry.event.indexOf(": ");
   const space = entry.event.indexOf(" ");
   const split = colon !== -1 ? colon : space;
@@ -616,7 +640,7 @@ function auditView(entry: AuditEntry): LedgerEventView {
   return { at: entry.timestamp, verb, subject, notes: [] };
 }
 
-function lastSweep(audit: readonly AuditEntry[]): { sweptAt?: string } {
+export function lastSweep(audit: readonly AuditEntry[]): { sweptAt?: string } {
   const swept = audit.filter((entry) => entry.event.startsWith("gardener sweep")).at(-1);
   return swept === undefined ? {} : { sweptAt: swept.timestamp };
 }
