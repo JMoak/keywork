@@ -1,34 +1,55 @@
 import { strict as assert } from "node:assert";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { textTurn } from "../../../packages/engine/src/index.ts";
 import type { Scenario, Stage } from "../scenario.ts";
+import { type LinkCell, replayLinks } from "../terminal-links.ts";
 
-const reference = "packages/engine/src/providers/messages-wire.ts:210";
-const reply = `The fault sits in ${reference} today.`;
+const file = "packages/engine/src/providers/messages-wire.ts";
+const reference = `${file}:210`;
+const lead = "The fault sits in ";
+const reply = `${lead}${reference} today.`;
+const size = { width: 40, height: 14 };
 const linkOpen = "\x1b]8;";
-const linkClose = "\x1b]8;;\x1b\\";
 const kittyVersionReply = "\x1bP>|kitty(0.35.2)\x1b\\";
 
 export const fileLinksOn: Scenario = {
   name: "file-links",
-  description:
-    "a path:line reference wraps across rows and every row opens and closes its own OSC 8",
-  size: { width: 40, height: 14 },
+  description: "every cell of a wrapped path:line reference links to the workspace file and line",
+  size,
   captureTerminal: true,
   app: { hyperlinks: true },
   turns: [textTurn(reply)],
   run: async (stage) => {
     const bytes = await replied(stage);
-    const opens = linkOpensFor(bytes, "messages-wire.ts#L210");
-    stage.evidence("links.txt", JSON.stringify(opens.map((at) => bytes.slice(at, at + 160))));
-    assert.ok(opens.length >= 2, "the wrapped reference carries a link on each of its rows");
-    for (const at of opens) assertClosedOnItsRow(bytes, at);
+    const expectedTarget = `${pathToFileURL(join(stage.workspaceDir, file)).href}#L210`;
+    const { rows, activeTarget } = await replayLinks(bytes, size, expectedTarget);
+    stage.evidence(
+      "linked-cells.json",
+      JSON.stringify(
+        {
+          expectedTarget,
+          activeTarget,
+          rows: rows.map((row) => ({
+            text: row.map(({ text }) => text || " ").join(""),
+            links: row
+              .map(({ target }) => ({ expected: "+", other: "?", none: " " })[target])
+              .join(""),
+          })),
+        },
+        null,
+        2,
+      ),
+    );
+    assert.equal(activeTarget, "", "the completed frame leaves no hyperlink active");
+    assertReferenceLinks(rows);
   },
 };
 
 export const fileLinksOff: Scenario = {
   name: "file-links-off",
   description: "no OSC 8 reaches a link-capable terminal unless keywork says it opens links",
-  size: { width: 40, height: 14 },
+  size,
   captureTerminal: true,
   turns: [textTurn(reply)],
   run: async (stage) => {
@@ -47,33 +68,44 @@ async function replied(stage: Stage): Promise<string> {
   return stage.terminalBytes();
 }
 
-function linkOpensFor(bytes: string, target: string): number[] {
-  const opens: number[] = [];
-  for (let at = bytes.indexOf(linkOpen); at !== -1; at = bytes.indexOf(linkOpen, at + 1)) {
-    if (!bytes.startsWith(linkClose, at) && bytes.slice(at, at + 400).includes(target)) {
-      opens.push(at);
+export function assertReferenceLinks(rows: readonly (readonly LinkCell[])[]): void {
+  const leadGlyphs = [...lead];
+  const leadColumns = rows.map((row) =>
+    row.findIndex((_, col) => leadGlyphs.every((char, offset) => row[col + offset]?.text === char)),
+  );
+  const firstRow = leadColumns.findIndex((col) => col >= 0);
+  const firstColumn = leadColumns[firstRow];
+  assert.ok(firstColumn !== undefined, "the terminal shows the start of the reply");
+
+  let matched = 0;
+  let wrappedRows = 0;
+  for (const [rowIndex, row] of rows.entries()) {
+    const beforeRow = matched;
+    const start: number = firstColumn + (rowIndex === firstRow ? lead.length : 0);
+    if (rowIndex >= firstRow) {
+      for (let col = start; matched < reference.length; col++) {
+        const cell = row[col];
+        if (cell === undefined || cell.text !== reference[matched]) break;
+        assert.equal(
+          cell.target,
+          "expected",
+          `reference cell ${rowIndex + 1}:${col + 1} links to the exact workspace file and line`,
+        );
+        matched++;
+      }
+    }
+    const matchedInRow = matched - beforeRow;
+    if (matchedInRow > 0) wrappedRows++;
+    assert.ok(
+      row.every(
+        ({ target }, col) => target === "none" || (col >= start && col < start + matchedInRow),
+      ),
+      `row ${rowIndex + 1} has a link outside the visible file reference`,
+    );
+    if (rowIndex >= firstRow && beforeRow < reference.length) {
+      assert.ok(matchedInRow > 0, "the entire file reference is visible on consecutive rows");
     }
   }
-  return opens;
-}
-
-function assertClosedOnItsRow(bytes: string, open: number): void {
-  const close = bytes.indexOf(linkClose, open + linkOpen.length);
-  assert.ok(close !== -1, "every opened link is closed");
-  const nextOpen = bytes.indexOf(linkOpen, open + linkOpen.length);
-  assert.equal(nextOpen, close, "a link closes before any other link opens");
-  const row = lastCursorRow(bytes.slice(0, open));
-  const inner = bytes.slice(open, close);
-  for (const match of inner.matchAll(cursorMove)) {
-    assert.equal(Number(match[1]), row, "a link never crosses onto another row");
-  }
-  assert.ok(!inner.includes("\n"), "a link never spans a line feed");
-}
-
-const cursorMove = new RegExp(`${"\x1b"}\\[(\\d+);\\d+H`, "g");
-
-function lastCursorRow(before: string): number | undefined {
-  const moves = [...before.matchAll(cursorMove)];
-  const last = moves.at(-1);
-  return last === undefined ? undefined : Number(last[1]);
+  assert.equal(matched, reference.length, "the entire file reference is visible");
+  assert.ok(wrappedRows >= 2, "the file reference wraps across multiple linked rows");
 }

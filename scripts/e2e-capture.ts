@@ -4,14 +4,14 @@ import { resolve } from "node:path";
 import { type CaptureArgs, liveModeRefusal, parseCaptureArgs } from "./e2e/cli-args.ts";
 import { runScenario, type ScenarioResult } from "./e2e/harness.ts";
 import { liveWorld } from "./e2e/live.ts";
-import type { Scenario } from "./e2e/scenario.ts";
-import { defaultScenarios, scenarioNamed, scenarios } from "./e2e/scenarios/index.ts";
+import { scenarios } from "./e2e/scenarios/index.ts";
+import { selectScenarios } from "./e2e/selection.ts";
 
 const parsed = parseCaptureArgs(process.argv.slice(2));
 if (!parsed.ok) {
   console.error(parsed.error);
   console.error(
-    "usage: bun scripts/e2e-capture.ts [scenario…] [--size 120x32] [--out dir] [--cwd dir --live] [--list] [--update-goldens]",
+    "usage: bun scripts/e2e-capture.ts [scenario…] [--exclude scenario] [--size 120x32] [--out dir] [--cwd dir --live] [--list] [--update-goldens]",
   );
   process.exit(2);
 }
@@ -31,11 +31,15 @@ if (refusal !== undefined) {
 }
 
 const liveCwd = liveTargetDir(parsed.args);
-const chosen = selectScenarios(parsed.args.scenarios, liveCwd !== undefined);
+const chosen = selectScenarios(scenarios, parsed.args);
+if (!chosen.ok) {
+  console.error(chosen.error);
+  process.exit(chosen.exitCode);
+}
 if (liveCwd !== undefined) printLiveReminder(liveCwd);
 
 const results: ScenarioResult[] = [];
-for (const scenario of chosen) {
+for (const scenario of chosen.scenarios) {
   console.log(`▶ ${scenario.name}`);
   results.push(
     await runScenario(scenario, {
@@ -78,22 +82,6 @@ function isDirectory(path: string): boolean {
   } catch {
     return false;
   }
-}
-
-function selectScenarios(names: readonly string[], live: boolean): readonly Scenario[] {
-  if (names.length === 0) return defaultScenarios();
-  return names.map((name) => {
-    const scenario = scenarioNamed(name);
-    if (scenario === undefined) {
-      console.error(`unknown scenario: ${name} (try --list)`);
-      process.exit(2);
-    }
-    if (scenario.manual === true && !live) {
-      console.error(`${name} is manual-only: run it with --cwd <dir> --live`);
-      process.exit(1);
-    }
-    return scenario;
-  });
 }
 
 function printLiveReminder(cwd: string): void {

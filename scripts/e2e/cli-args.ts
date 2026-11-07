@@ -2,6 +2,7 @@ import type { FrameSize } from "./scenario.ts";
 
 export interface CaptureArgs {
   readonly scenarios: readonly string[];
+  readonly exclude: readonly string[];
   readonly out: string;
   readonly size: FrameSize;
   readonly list: boolean;
@@ -17,6 +18,7 @@ export const defaultOut = "artifacts/e2e";
 
 export function parseCaptureArgs(argv: readonly string[]): ParsedCaptureArgs {
   const scenarios: string[] = [];
+  const exclude: string[] = [];
   let out = defaultOut;
   let size = defaultSize;
   let list = false;
@@ -31,6 +33,13 @@ export function parseCaptureArgs(argv: readonly string[]): ParsedCaptureArgs {
       updateGoldens = true;
     } else if (argument === "--live") {
       live = true;
+    } else if (argument === "--exclude") {
+      at += 1;
+      const value = argv[at];
+      if (value === undefined || value.trim() === "" || value.startsWith("-")) {
+        return { ok: false, error: "--exclude requires a scenario name" };
+      }
+      exclude.push(value);
     } else if (argument === "--size" || argument === "--out" || argument === "--cwd") {
       at += 1;
       const value = argv[at];
@@ -54,7 +63,16 @@ export function parseCaptureArgs(argv: readonly string[]): ParsedCaptureArgs {
   }
   return {
     ok: true,
-    args: { scenarios, out, size, list, updateGoldens, ...(cwd !== undefined && { cwd }), live },
+    args: {
+      scenarios,
+      exclude,
+      out,
+      size,
+      list,
+      updateGoldens,
+      ...(cwd !== undefined && { cwd }),
+      live,
+    },
   };
 }
 

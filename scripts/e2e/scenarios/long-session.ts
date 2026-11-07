@@ -4,6 +4,7 @@ import {
   contextBudgetFor,
   estimateConversationTokens,
   type Message,
+  noReplyToken,
   readContext,
   type TurnDelta,
   textMessage,
@@ -116,7 +117,13 @@ function longSessionScript(): LongSessionScript {
     turns.push(textTurn(reply(turn)));
     if (compactionDue(readContext(estimateConversationTokens(conversation), budget))) {
       return {
-        turns: [...turns, textTurn(firstFold), textTurn(reply(turn + 1)), textTurn(secondFold)],
+        turns: [
+          ...turns,
+          textTurn(noReplyToken),
+          textTurn(firstFold),
+          textTurn(reply(turn + 1)),
+          textTurn(secondFold),
+        ],
         compactingTurn: turn,
       };
     }

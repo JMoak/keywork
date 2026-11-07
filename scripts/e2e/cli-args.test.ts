@@ -13,6 +13,7 @@ describe("parseCaptureArgs", () => {
       ok: true,
       args: {
         scenarios: [],
+        exclude: [],
         out: defaultOut,
         size: defaultSize,
         list: false,
@@ -27,6 +28,22 @@ describe("parseCaptureArgs", () => {
     expect(parsed).toMatchObject({
       ok: true,
       args: { scenarios: ["first-conversation", "tiling-tour"] },
+    });
+  });
+
+  it("collects repeated exclusions without changing the selected scenarios", () => {
+    expect(
+      parseCaptureArgs(["cold-start", "--exclude", "long-session", "--exclude", "file-links-on"]),
+    ).toMatchObject({
+      ok: true,
+      args: { scenarios: ["cold-start"], exclude: ["long-session", "file-links-on"] },
+    });
+  });
+
+  it.each([[], [""], [" "], ["--list"]])("requires a name after --exclude: %j", (...tail) => {
+    expect(parseCaptureArgs(["--exclude", ...tail])).toEqual({
+      ok: false,
+      error: "--exclude requires a scenario name",
     });
   });
 
@@ -48,6 +65,7 @@ describe("parseCaptureArgs", () => {
       ok: true,
       args: {
         scenarios: ["s6"],
+        exclude: [],
         out: "tmp/frames",
         size: defaultSize,
         list: true,
@@ -84,6 +102,7 @@ describe("parseCaptureArgs", () => {
 describe("liveModeRefusal", () => {
   const args = (overrides: Partial<CaptureArgs>): CaptureArgs => ({
     scenarios: [],
+    exclude: [],
     out: defaultOut,
     size: defaultSize,
     list: false,

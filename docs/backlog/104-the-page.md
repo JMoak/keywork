@@ -153,16 +153,16 @@
   and `path:line:col` (relative, absolute, drive-letter and `~/` paths with an extension; urls,
   times, versions and bare `name:12` are left alone) and links them to
   `file://<absolute>#L<line>` against the pane's working directory. Linking happens before
-  wrapping, as an `href` on the span, so each wrapped row carries its own piece of the link and
-  the renderer opens and closes OSC 8 per row (OpenTUI's `link()` chunk emits the escape; since 0.5.14 it
+  wrapping, as an `href` on the span, so the reference cells on every wrapped row share the same
+  target (OpenTUI's `link()` chunk emits OSC 8; since 0.5.14 it
   emits only when its own capability probe (XTVERSION) also says links work, so both gates must agree). Covered:
   assistant markdown (prose, code spans, fences), user prompts, tool rows, tool detail and
   thinking. `terminalSupport` gained `hyperlinks`: Windows Terminal, kitty, Ghostty, WezTerm,
   iTerm2, foot, VTE 0.50+ and Konsole; off when unknown, under tmux, screen or zellij (the host
   is unknown) and over ssh (a `file://` url would point at the wrong machine). Visible cells
   never change, so goldens hold. `AppOptions.hyperlinks` overrides detection like `glyphs`
-  does, and the e2e harness pins it off; scenarios `file-links` (a link straddles four wrapped
-  rows, each opened and closed on its own row) and `file-links-off` (no OSC 8 byte at all)
+  does, and the e2e harness pins it off; scenarios `file-links` (the exact URI covers the visible
+  reference across wrapped rows without linking neighboring cells) and `file-links-off` (no OSC 8 byte at all)
   prove both sides on a captured terminal that answers XTVERSION as kitty, so OpenTUI's own
   gate is open and only keywork's decides.
 - **SW25: transcript verbosity cycle** ✅ 2026-10-02. `leader v` (palette `/verbosity`) cycles
