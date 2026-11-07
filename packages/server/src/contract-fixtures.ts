@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { Message, ToolCallPart } from "@keywork/engine";
+import type { Grant, Message, PairRecord, PendingPairing, ToolCallPart } from "@keywork/engine";
 import {
   engineEventTypes,
   serverEventTypes,
@@ -71,6 +71,43 @@ const call: ToolCallPart = {
 
 const message: Message = { role: "assistant", parts: [{ type: "text", text: "done" }, call] };
 
+const pendingPairing: PendingPairing = {
+  pairingId: "p1",
+  peerStableId: "nHouseA1b2CNTRL",
+  peerUserId: "7000000000000001",
+  role: "console",
+  caps: ["exec"],
+  confirmation: "on-device",
+  phase: "confirming",
+  sas: "482913",
+  expiresAt: "2026-11-05T10:05:00.000Z",
+};
+
+const pair: PairRecord = {
+  id: "pair-1",
+  peerStableId: "nHouseA1b2CNTRL",
+  peerUserId: "7000000000000001",
+  peerTags: [],
+  peerDeviceKey: "MCowBQYDK2VwAyEA",
+  role: "console",
+  caps: ["exec"],
+  endpoint: "http://100.101.102.103:47800",
+  createdAt: "2026-11-05T10:00:00.000Z",
+  confirmedBy: "on-device",
+};
+
+const grant: Grant = {
+  id: "g1",
+  issuer: "nHouseA1b2CNTRL",
+  subject: { creature: "pip", node: "nHouseA1b2CNTRL" },
+  target: "nHostC3d4CNTRL",
+  caps: [{ kind: "exec", commands: ["echo"] }],
+  issuedAt: "2026-11-05T10:00:00.000Z",
+  expiresAt: "2026-11-06T10:00:00.000Z",
+  nonce: "n1",
+  signature: "c2ln",
+};
+
 const usage = {
   inputTokens: 10,
   outputTokens: 4,
@@ -109,6 +146,8 @@ const samples: Samples = {
   ],
   "turn.completed": [{ message, usage }],
   "turn.interrupted": [{ message }],
+  "turn.waiting": [{ reason: "rate-limited", until: "2026-11-06T10:00:02.000Z", attempt: 2 }],
+  "turn.resumed": [{ attempt: 2 }],
   "queue.changed": [
     {
       queued: [
@@ -293,6 +332,145 @@ const samples: Samples = {
         usage,
       },
       notices: ["compacted 90000 tokens"],
+    },
+  ],
+  "model.fallback": [
+    {
+      class: "loop",
+      from: "ollama/qwen3:8b",
+      to: "openrouter/qwen/qwen3-32b",
+      trigger: "down",
+      cloud: true,
+    },
+  ],
+  "creature.changed": [{ slug: "pip", change: "created" }],
+  "routine.fired": [
+    {
+      runId: "wren:triage:1762329600000:1",
+      creature: "wren",
+      routineId: "triage",
+      attempt: 1,
+      trigger: "cron",
+      catchUp: false,
+      firedAt: "2026-11-05T08:00:00.000Z",
+      scheduledFor: "2026-11-05T08:00:07.000Z",
+      startedAt: "2026-11-05T08:00:07.200Z",
+      sessionId: "s3",
+    },
+  ],
+  "routine.finished": [
+    {
+      run: {
+        runId: "wren:triage:1762329600000:1",
+        creature: "wren",
+        routineId: "triage",
+        attempt: 1,
+        trigger: "cron",
+        catchUp: false,
+        firedAt: "2026-11-05T08:00:00.000Z",
+        scheduledFor: "2026-11-05T08:00:07.000Z",
+        status: "ended",
+        sessionId: "s3",
+        startedAt: "2026-11-05T08:00:07.200Z",
+        endedAt: "2026-11-05T08:01:12.000Z",
+        process: "completed",
+        delivery: "delivered",
+        verified: null,
+        reason: null,
+        usage: { inputTokens: 1200, outputTokens: 300 },
+        cost: { usd: 0.004 },
+        output: "routines/outputs/wren/triage/2026-11-05T08-00-00.000Z.md",
+        notify: { tier: "digest", at: "2026-11-05T18:00:00.000Z" },
+      },
+      disabled: null,
+    },
+  ],
+  "routine.needs": [
+    {
+      creature: "wren",
+      routineId: "triage",
+      items: [
+        {
+          creature: "wren",
+          routineId: "triage",
+          kind: "grants",
+          reason: "accept the write grant set 3f9c1a2b",
+          runId: "wren:triage:1762333320000:1",
+          since: "2026-11-05T09:02:00.000Z",
+          action: { verb: "accept", digest: "3f9c1a2b" },
+        },
+      ],
+    },
+  ],
+  "workshop.changed": [
+    {
+      change: "started",
+      workshop: {
+        id: "pip-0a1b2c",
+        creature: "pip",
+        substrate: "sbx",
+        state: "running",
+        workdir: "/home/agent/workspace",
+        brokers: ["anthropic"],
+        limitations: ["cpus 2 and memory 4g are recorded, not applied"],
+        display: true,
+        createdAt: "2026-11-05T09:00:00.000Z",
+      },
+    },
+  ],
+  "models.changed": [{ node: "spark-ad4d", reason: "probe" }],
+  "mesh.listener": [
+    { change: "bound", address: "100.101.102.103", port: 47800 },
+    { change: "unbound", address: "100.101.102.103", reason: "address-gone" },
+    { change: "bind-failed", address: "100.101.102.103", error: "EADDRINUSE" },
+    { change: "idle", reason: "not-running" },
+    { change: "status-failed", error: "tailscaled is not reachable" },
+    { change: "serve-warning", message: "Tailscale 1.104.1 serves; 1.104.4 fixed Serve" },
+  ],
+  "mesh.pairing": [
+    { change: "started", pairing: pendingPairing },
+    { change: "refused", peerStableId: "nStrangerE9f0CNTRL", reason: "not-the-owner" },
+    { change: "aborted", pairingId: "p1", reason: "sas-mismatch" },
+  ],
+  "mesh.pair": [
+    { change: "added", pair },
+    { change: "removed", pairId: "pair-1", peerStableId: "nHostC3d4CNTRL", by: "keeper" },
+  ],
+  "mesh.grant": [
+    { change: "issued", grant },
+    { change: "refused", issuer: "nStrangerE9f0CNTRL", reason: "unknown-issuer" },
+    { change: "revoked", grantId: "g1", by: "keeper" },
+  ],
+  "mesh.revocation": [
+    {
+      change: "undelivered",
+      revocation: {
+        kind: "grant",
+        id: "g1",
+        issuer: "nHouseA1b2CNTRL",
+        target: "nHostC3d4CNTRL",
+        revokedAt: "2026-11-05T10:00:00.000Z",
+        nonce: "n1",
+        signature: "c2ln",
+      },
+      attempts: 3,
+      error: "fetch failed",
+    },
+  ],
+  "mesh.peers": [
+    {
+      change: "lanes",
+      peers: [
+        { stableId: "nSparkStable1", path: { kind: "direct", endpoint: "192.168.4.58:41641" } },
+      ],
+    },
+  ],
+  "mesh.walked": [
+    {
+      origin: { kind: "mesh", creature: "pip", node: "nHouseA1b2CNTRL" },
+      grantId: "g1",
+      call,
+      rules: [{ action: "bash", resource: "echo *", effect: "allow" }],
     },
   ],
 };

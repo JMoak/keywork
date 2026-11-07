@@ -1,7 +1,25 @@
+import {
+  contextEntriesFor,
+  hunkDigestPattern,
+  hunkHeaderPattern,
+  hunkVerdicts,
+  isReviewVerdict,
+  type ReviewVerdict,
+  type SessionEntry,
+  type VerdictMark,
+  verdictMarksOf,
+} from "@keywork/engine";
 import { utf8Prefix } from "@keywork/shared";
-import type { ChangesRefusal, FileSides } from "../host.ts";
+import type { ChangesPort, ChangesRefusal, FileSides, SessionEntries } from "../host.ts";
 import { answering } from "./answers.ts";
-import { json, missingSession, type RouteFamily, type RouteSpec } from "./family.ts";
+import {
+  bodyOf,
+  type JsonSchema,
+  json,
+  missingSession,
+  type RouteFamily,
+  type RouteSpec,
+} from "./family.ts";
 
 export type FileChangeNote = "binary" | "new" | "deleted" | "unreadable";
 
@@ -14,6 +32,29 @@ export interface FileChange {
 }
 
 export const fileChangeCapBytes = 1024 * 1024;
+
+export interface HunkVerdicts {
+  verdicts: readonly VerdictMark[];
+}
+
+export interface VerdictPort {
+  verdict(id: string, verdict: ReviewVerdict): Promise<VerdictMark | "missing">;
+}
+
+export const verdictsUnwiredResponse =
+  '`{ error: "verdicts are not wired" }`: this server\'s host records no hunk verdicts yet, so the verdict was not written.';
+
+const hunkVerdictBody: JsonSchema = {
+  type: "object",
+  required: ["path", "header", "digest", "verdict"],
+  properties: {
+    path: { type: "string", minLength: 1 },
+    header: { type: "string", pattern: hunkHeaderPattern.source },
+    digest: { type: "string", pattern: hunkDigestPattern.source },
+    verdict: { type: "string", enum: [...hunkVerdicts] },
+  },
+  additionalProperties: false,
+};
 
 const missingResponse = "No session has that id.";
 const noBaselineResponse =
@@ -50,6 +91,34 @@ export const changesRoutes = [
       "413": "The working file is over the 20 MiB cap GET /files applies.",
     },
   },
+  {
+    method: "GET",
+    path: "/sessions/{id}/changes/verdicts",
+    operationId: "readHunkVerdicts",
+    summary:
+      "The keeper's verdicts on the hunks of this session's changes, oldest first: every `keywork.review.verdict` entry on the session's active path, each `{ index, entryId, at, path, header, digest, verdict }`. `path` is the changed file as GET /sessions/{id}/changes lists it, `header` the hunk's unified range line (`@@ -a,b +c,d @@`), `digest` eight hex characters over the hunk's removed and added lines (the stable reference a quote in the thread carries as `hunk <digest>`, which survives the hunk moving when an earlier hunk is dropped), and `verdict` one of `keep`, `drop`, `ask`. The same hunk judged twice appears twice; the last word stands, so a client folds the trail by `path` and `digest`. `index` is the position in `GET /sessions/{id}` `messages` the entry was written before, where `verdicts` lists the same marks for a transcript that replays the trail as notices. Since contract 1.18.",
+    authenticated: true,
+    responses: {
+      "200": "`{ verdicts: [{ index, entryId, at, path, header, digest, verdict }] }`.",
+      "404": missingResponse,
+    },
+  },
+  {
+    method: "POST",
+    path: "/sessions/{id}/changes/verdicts",
+    operationId: "recordHunkVerdict",
+    summary:
+      "Record the keeper's verdict on one hunk: `keep`, `drop` or `ask`. The verdict is written to the session as a journal-only `keywork.review.verdict` entry (never a prompt, never in the model context, so no turn starts) and the same write emits one `extension.notice` from the `review` extension, `message` the trail line a transcript draws (`<verdict> · <path> <header> · hunk <digest>`) and `detail: { verdict: <the mark>, entryId }`, so a watching console updates its marks and its conversation at once. A verdict of `ask` parks the hunk as something waiting on the keeper until a later `keep` or `drop` on the same `path` and `digest`. The body names the hunk exactly as GET /sessions/{id}/changes/verdicts lists it. Since contract 1.18.",
+    authenticated: true,
+    requestBody: hunkVerdictBody,
+    responses: {
+      "201": "The mark as GET /sessions/{id}/changes/verdicts lists it.",
+      "400":
+        "The body is not `{ path, header, digest, verdict }` with a unified hunk header, an eight-hex digest and a verdict of keep, drop or ask.",
+      "404": missingResponse,
+      "501": verdictsUnwiredResponse,
+    },
+  },
 ] as const satisfies readonly RouteSpec[];
 
 export const changesFamily = {
@@ -65,8 +134,33 @@ export const changesFamily = {
       const sides = await host.changes.file(id ?? "", path);
       return typeof sides === "string" ? refused(sides) : json(200, fileChangeOf(path, sides));
     }),
+    readHunkVerdicts: answering(async (_request, { id }) => {
+      const entries = await host.tree.entries(id ?? "");
+      return entries === "missing" ? missingSession() : json(200, hunkVerdictsOf(entries));
+    }),
+    recordHunkVerdict: answering(async (request, { id }) => {
+      const verdict = await bodyOf(request);
+      if (!isReviewVerdict(verdict)) {
+        return json(400, { error: "the body must be { path, header, digest, verdict }" });
+      }
+      const port = verdictPortOf(host.changes);
+      if (port === undefined) return json(501, { error: "verdicts are not wired" });
+      const recorded = await port.verdict(id ?? "", verdict);
+      return recorded === "missing" ? missingSession() : json(201, recorded);
+    }),
   }),
 } satisfies RouteFamily<typeof changesRoutes>;
+
+export function hunkVerdictsOf(entries: SessionEntries): HunkVerdicts {
+  const onPath = new Set(entries.activePath);
+  const path = entries.entries.filter((entry: SessionEntry) => onPath.has(entry.id));
+  return { verdicts: verdictMarksOf(contextEntriesFor(path)) };
+}
+
+export function verdictPortOf(changes: ChangesPort): VerdictPort | undefined {
+  const candidate = changes as Partial<VerdictPort>;
+  return typeof candidate.verdict === "function" ? (candidate as VerdictPort) : undefined;
+}
 
 export function fileChangeOf(path: string, { before, after }: FileSides): FileChange {
   if (isBinary(before) || isBinary(after)) {

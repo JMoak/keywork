@@ -1,5 +1,6 @@
 export {
   type AnswerOutcome,
+  type AskDecider,
   AskQueue,
   type AskQueueOptions,
   type AskVerdict,
@@ -51,6 +52,7 @@ export {
   EventLog,
   type EventLogOptions,
   engineEventTypes,
+  type ModelsChanged,
   type ServerEvents,
   type ServerEventType,
   serverEventTypes,
@@ -159,6 +161,26 @@ export {
   type WorkspacesPort,
 } from "./host.ts";
 export { type ListeningServer, type ListenOptions, listen, loopback } from "./listen.ts";
+export { type ManifestReader, meshScreenSignalPath } from "./mesh/routes.ts";
+export {
+  type MeshEventSinks,
+  type MeshGrantChange,
+  type MeshLane,
+  type MeshListenerChange,
+  type MeshPairChange,
+  type MeshPairingChange,
+  type MeshPeersChange,
+  type MeshRevocationChange,
+  type MeshWalk,
+  meshEventsInto,
+  watchLanes,
+} from "./mesh-events.ts";
+export {
+  defaultNodeRoles,
+  type ManifestInventory,
+  type MeshListenerOptions,
+  registerMeshListener,
+} from "./mesh-listener.ts";
 export {
   contractMajorOf,
   contractVersion,
@@ -186,11 +208,20 @@ export type {
   RouteHandler,
   RouteParams,
 } from "./routes/family.ts";
+export type { ForgettingMemoryPort, SourceForgettingPort } from "./routes/forget.ts";
 export { sessionRemoved, sessionRestored } from "./routes/lifecycle.ts";
+export {
+  type MeshConsole,
+  type MeshTrust,
+  meshTrustRoutes,
+  pairedManifestReader,
+} from "./routes/mesh.ts";
+export type { ModelsFilter, ModelsPort, ModelsProbeRequest } from "./routes/models.ts";
 export type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
 export type { PromptBehavior } from "./routes/sessions.ts";
 export { arcOrdinals } from "./routes/surfaces.ts";
 export type { TreeChange, TreeChangeReason } from "./routes/tree.ts";
+export type { WorkshopsPort } from "./routes/workshops.ts";
 export {
   createKeyworkServer,
   defaultPort,

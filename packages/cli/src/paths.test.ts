@@ -6,12 +6,16 @@ import { join } from "node:path";
 import { ConfigError, canonicalPath } from "@keywork/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  anchoredElsewhere,
+  anchoredFolder,
+  anchorWords,
   botSkillTelemetryFile,
   defaultSessionDir,
   ensureStateLayout,
   keyworkHome,
   projectKey,
   StateLayoutError,
+  sharedIdentityOf,
   skillTelemetryFile,
   snapshotGitDir,
   stateLayoutVersion,
@@ -189,6 +193,36 @@ describe("workspaceIdentity in a git repo", () => {
     await declareWorkspace(root, { name: "alpha" });
 
     expect(workspaceIdentity(root)).toBe(anchored);
+  });
+});
+
+describe("which anchor a folder resolves to", () => {
+  it("names the repo root a fresh folder inside a repo opens, and the identity it shares", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".git"), { recursive: true });
+    const first = join(root, "artifacts", "first-light", "workspace");
+    const second = join(root, "artifacts", "first-light", "run-2", "workspace");
+    await mkdir(first, { recursive: true });
+    await mkdir(second, { recursive: true });
+
+    const folder = anchoredFolder(second);
+    expect(folder.anchor).toEqual({ root, source: "git" });
+    expect(anchoredElsewhere(folder)).toBe(true);
+    expect(anchorWords(folder.anchor)).toBe(`${root} (its git root)`);
+    expect(sharedIdentityOf([anchoredFolder(first), folder])?.map(({ cwd }) => cwd)).toEqual([
+      first,
+      second,
+    ]);
+    expect(sharedIdentityOf([anchoredFolder(first), anchoredFolder(first)])).toBeUndefined();
+  });
+
+  it("leaves a folder outside any repo anchored at itself, under its own project key", async () => {
+    const loose = await tempRoot();
+    const folder = anchoredFolder(loose);
+    expect(folder.anchor).toEqual({ root: loose, source: "launch" });
+    expect(folder.identity).toBe(projectKey(loose));
+    expect(anchoredElsewhere(folder)).toBe(false);
+    expect(sharedIdentityOf([folder, anchoredFolder(await tempRoot())])).toBeUndefined();
   });
 });
 

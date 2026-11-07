@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { contractVersion } from "../../packages/server/src/contract.ts";
 import {
   exitOnBuildInputError,
   outdirInside,
@@ -14,7 +16,7 @@ import { buildVersionDefine } from "./targets.ts";
 const entrypoint = "packages/cli/src/main.ts";
 const cliManifestPath = "packages/cli/package.json";
 const tuiManifestPath = "packages/tui/package.json";
-const bundledAlongside = ["LICENSE.md", "NOTICE", "README.md"];
+const bundledAlongside = ["LICENSE.md", "NOTICE", "README.md", "docs/runtime-upgrades.md"];
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
@@ -65,7 +67,11 @@ ensureBunShebang(join(outdir, npmBinPath));
 
 const manifest = npmManifestFor({ version, opentuiVersion, treeSitterVersion });
 writeFileSync(join(outdir, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-for (const file of bundledAlongside) copyFileSync(file, join(outdir, file));
+for (const file of bundledAlongside) {
+  const destination = join(outdir, file);
+  mkdirSync(dirname(destination), { recursive: true });
+  copyFileSync(file, destination);
+}
 
 if (!values["skip-smoke"]) {
   console.log("smoke: installing the package's own dependencies, then running --version");
@@ -75,14 +81,13 @@ if (!values["skip-smoke"]) {
     stderr: "inherit",
   });
   if (install.exitCode !== 0) process.exit(install.exitCode ?? 1);
-  const expected = `keywork ${version}`;
+  const expected = `keywork ${version} · contract ${contractVersion}`;
   const smoke = Bun.spawnSync(["bun", npmBinPath, "--version"], {
     cwd: outdir,
     stdout: "pipe",
     stderr: "pipe",
   });
   const printed = new TextDecoder().decode(smoke.stdout).trim();
-  rmSync(join(outdir, "node_modules"), { recursive: true, force: true });
   if (smoke.exitCode !== 0 || printed !== expected) {
     console.error(
       `smoke failed: bin exited ${smoke.exitCode} with "${printed}" (wanted "${expected}")`,
@@ -91,8 +96,12 @@ if (!values["skip-smoke"]) {
     process.exit(1);
   }
   console.log(`smoke ok: ${printed}`);
+  smokeCarriedRatchet(outdir);
+  rmSync(join(outdir, "node_modules"), { recursive: true, force: true });
 }
-console.log(`wrote ${outdir} (publish with: cd ${values.outdir} && npm publish --access public)`);
+console.log(
+  `wrote ${outdir} (stage with: cd ${values.outdir} && npm stage publish --access public --tag latest --loglevel verbose)`,
+);
 
 function dependencyVersion(path: string, name: string): string {
   const manifest = JSON.parse(readFileSync(path, "utf8")) as {
@@ -114,4 +123,24 @@ function ensureBunShebang(path: string): void {
   const source = readFileSync(path, "utf8");
   if (source.startsWith("#!")) return;
   writeFileSync(path, `#!/usr/bin/env bun\n${source}`);
+}
+
+function smokeCarriedRatchet(packageDir: string): void {
+  const emptyHome = mkdtempSync(join(tmpdir(), "keywork-npm-smoke-home-"));
+  try {
+    const smoke = Bun.spawnSync(["bun", resolve(packageDir, npmBinPath), "creatures", "report"], {
+      cwd: emptyHome,
+      env: { ...process.env, HOME: emptyHome, USERPROFILE: emptyHome },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (smoke.exitCode !== 0) {
+      throw new Error(
+        `creatures report exited ${smoke.exitCode} under an empty home: ${new TextDecoder().decode(smoke.stderr)}`,
+      );
+    }
+    console.log("smoke ok: creatures report runs on the Ratchet the npm package carries");
+  } finally {
+    rmSync(emptyHome, { recursive: true, force: true });
+  }
 }

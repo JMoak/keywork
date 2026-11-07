@@ -36,6 +36,7 @@ export interface MessageEntry extends EntryBase {
   message: Message;
   usage?: Usage;
   checkpoint?: string;
+  submissionId?: string;
 }
 
 export interface CompactionEntry extends EntryBase {

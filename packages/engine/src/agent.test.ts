@@ -3,6 +3,8 @@ import { Agent, QueuedPromptCancelledError } from "./agent.ts";
 import { type Message, messageText, textMessage, toolCalls } from "./messages.ts";
 import { MockProvider, textTurn, toolCallTurn } from "./mock-provider.ts";
 import type { Provider, TurnDelta } from "./provider.ts";
+import { ProviderHttpError } from "./providers/errors.ts";
+import { RetryingProvider } from "./providers/retry.ts";
 import type { Tool } from "./tools.ts";
 
 const declinedWithoutRetry = expect.stringMatching(
@@ -1480,5 +1482,46 @@ describe("Agent tool batch settlement", () => {
     });
     await agent.send("hi");
     expect(settled).toBe(0);
+  });
+});
+
+describe("Agent waiting on a retrying provider", () => {
+  function throttledOnce(): Provider {
+    let throttled = false;
+    const answer = new MockProvider([textTurn("answered")]);
+    return {
+      name: "flaky",
+      stream(request) {
+        if (throttled) return answer.stream(request);
+        throttled = true;
+        return (async function* (): AsyncGenerator<TurnDelta> {
+          yield* [];
+          throw new ProviderHttpError("flaky", 429, "slow down", "2");
+        })();
+      },
+    };
+  }
+
+  it("turns each provider sleep into turn.waiting and each next attempt into turn.resumed", async () => {
+    const now = Date.parse("2026-11-06T10:00:00.000Z");
+    const provider = new RetryingProvider(throttledOnce(), {
+      sleep: async () => {},
+      now: () => now,
+    });
+    const agent = new Agent({ provider });
+    const heard: unknown[] = [];
+    agent.bus.on("turn.started", () => heard.push("turn.started"));
+    agent.bus.on("turn.waiting", (wait) => heard.push(["turn.waiting", wait]));
+    agent.bus.on("turn.resumed", (resume) => heard.push(["turn.resumed", resume]));
+    agent.bus.on("turn.delta", ({ delta }) => heard.push(`turn.delta ${delta.type}`));
+    agent.bus.on("turn.completed", () => heard.push("turn.completed"));
+
+    expect(messageText(await agent.send("hi"))).toBe("answered");
+    expect(heard.slice(0, 3)).toEqual([
+      "turn.started",
+      ["turn.waiting", { reason: "rate-limited", until: "2026-11-06T10:00:02.000Z", attempt: 2 }],
+      ["turn.resumed", { attempt: 2 }],
+    ]);
+    expect(heard.slice(3)).toEqual(["turn.delta text", "turn.delta done", "turn.completed"]);
   });
 });

@@ -148,6 +148,19 @@ describe("nextActionFor", () => {
     );
   });
 
+  it("points an unacknowledged license at the mills pane, not at a declaration", () => {
+    const unacknowledged: ResolutionFailure = {
+      code: "missing-capability",
+      reference: "local/llama-4",
+      model: "llama-4",
+      capability: "license-acknowledgement",
+      message: "m",
+    };
+    expect(nextActionFor(unacknowledged)).toBe(
+      "acknowledge the license in the mills pane or with keywork models ack",
+    );
+  });
+
   it("defaults to the slash vocabulary", () => {
     for (const failure of Object.values(failures)) {
       expect(nextActionFor(failure)).toBe(nextActionFor(failure, slashCommands));

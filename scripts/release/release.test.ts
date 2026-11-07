@@ -149,5 +149,11 @@ describe("npm manifest", () => {
     expect(manifest.engines).toEqual({ bun: ">=1.3.0" });
     expect(manifest.license).toBe("FSL-1.1-MIT");
     expect(manifest.files).toContain("bin");
+    expect(manifest.files).toContain("docs/runtime-upgrades.md");
+    expect(manifest.repository.url).toBe("git+https://github.com/JMoak/keywork.git");
+    expect(manifest.publishConfig).toEqual({
+      access: "public",
+      registry: "https://registry.npmjs.org",
+    });
   });
 });

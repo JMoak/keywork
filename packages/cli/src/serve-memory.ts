@@ -3,18 +3,21 @@ import {
   type ArcRegistry,
   type AuditEntry,
   MemoryGraph,
+  type MemoryStore,
   type Note,
   type StagedItem,
+  sourceForgetting,
   titleKey,
+  workspaceOrCraftStore,
 } from "@keywork/engine";
 import type {
   ArcAirlockPort,
   ArcCloseDigestRecord,
+  ForgettingMemoryPort,
   GardenerActivity,
   MemoryLayerRecord,
   MemoryNoteDetail,
   MemoryNoteRecord,
-  MemoryPort,
   NoteRelation,
 } from "@keywork/server";
 import type { ArcService } from "./arcs.ts";
@@ -34,11 +37,12 @@ export interface ServedMemoryOptions {
   bots?: BotMemory | undefined;
 }
 
-export function servedMemory(options: ServedMemoryOptions): MemoryPort {
+export function servedMemory(options: ServedMemoryOptions): ForgettingMemoryPort {
   const { memory, arcs, bots } = options;
   const pane = memoryPanePort(memory, arcs?.registry, arcs?.port.airlock, bots);
+  const staging = stagingChanges(memory);
   const opened = (): WorkspaceMemory | undefined => {
-    const workspace = memory();
+    const workspace = staging.watch(memory());
     return workspace?.store.trusted === true ? workspace : undefined;
   };
   const requireMemory = (): WorkspaceMemory => {
@@ -57,8 +61,16 @@ export function servedMemory(options: ServedMemoryOptions): MemoryPort {
       ...(await botStaged()).map(({ item }) => item),
     ];
   };
-  const layers = (): Promise<LoadedLayer[]> => loadLayers(requireMemory(), registry());
+  const layers = (): Promise<LoadedLayer[]> => loadLayers(requireMemory(), registry(), bots);
+  const craftStore = (slug: string): MemoryStore => {
+    const layer = bots?.layers().find(({ bot }) => bot.name === slug);
+    if (layer === undefined) throw new Error(`no creature here is called ${slug}`);
+    return layer.registry.botStore(slug);
+  };
   return {
+    forgetting: sourceForgetting((source) =>
+      workspaceOrCraftStore(requireMemory().store, craftStore)(source),
+    ),
     trusted: () => opened() !== undefined,
     overview: async () => {
       const workspace = requireMemory();
@@ -100,8 +112,72 @@ export function servedMemory(options: ServedMemoryOptions): MemoryPort {
     query: async (text, arc) =>
       pane.query === undefined ? { hits: [], source: "lexical" } : pane.query(text, arc),
     airlock,
-    ...(arcs?.port.subscribe !== undefined && { subscribe: arcs.port.subscribe }),
+    subscribe: (listener) => {
+      const stopStaging = staging.subscribe(listener);
+      opened();
+      const stopArcs = arcs?.port.subscribe?.(listener);
+      return () => {
+        stopStaging();
+        stopArcs?.();
+      };
+    },
   };
+}
+
+export function stagedInbox(memory: MemoryAccess): () => readonly StagedItem[] {
+  let items: readonly StagedItem[] = [];
+  const staging = stagingChanges(memory);
+  const reload = (): void => {
+    const store = memory()?.store;
+    if (store?.trusted !== true) return;
+    void store.listStaged().then(
+      (listed) => {
+        items = listed;
+      },
+      () => undefined,
+    );
+  };
+  let watching = false;
+  const follow = (): void => {
+    if (watching || memory()?.store.trusted !== true) return;
+    watching = true;
+    staging.watch(memory());
+    reload();
+  };
+  staging.subscribe(reload);
+  follow();
+  return () => {
+    follow();
+    return items;
+  };
+}
+
+interface StagingChanges {
+  watch(workspace: WorkspaceMemory | undefined): WorkspaceMemory | undefined;
+  subscribe(listener: () => void): () => void;
+}
+
+function stagingChanges(memory: MemoryAccess): StagingChanges {
+  const listeners = new Set<() => void>();
+  const watched = new WeakSet<MemoryStore>();
+  const announce = (): void => {
+    for (const listener of [...listeners]) listener();
+  };
+  const changes: StagingChanges = {
+    watch: (workspace) => {
+      if (workspace !== undefined && !watched.has(workspace.store)) {
+        watched.add(workspace.store);
+        workspace.store.onStaged(announce);
+      }
+      return workspace;
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      changes.watch(memory());
+      return () => listeners.delete(listener);
+    },
+  };
+  return changes;
 }
 
 interface LoadedLayer {
@@ -124,12 +200,37 @@ const closedAirlock: ArcAirlockPort = {
 async function loadLayers(
   memory: WorkspaceMemory,
   registry: ArcRegistry | undefined,
+  bots: BotMemory | undefined,
 ): Promise<LoadedLayer[]> {
   const recalls = memory.gardener.recallsSinceSweep();
   return [
     await workspaceLayer(memory, recalls),
     ...(await activeArcLayers(memory, registry, recalls)),
+    ...(await botLayers(bots, recalls)),
   ];
+}
+
+export function botLayerId(slug: string): string {
+  return `bot:${slug}`;
+}
+
+async function botLayers(
+  bots: BotMemory | undefined,
+  recalls: ReadonlyMap<string, number>,
+): Promise<LoadedLayer[]> {
+  if (bots === undefined) return [];
+  const layers: LoadedLayer[] = [];
+  for (const { bot, registry } of bots.layers()) {
+    const store = registry.botStore(bot.name);
+    const id = botLayerId(bot.name);
+    layers.push({
+      layer: { id, kind: "bot", label: bot.name },
+      notes: (await store.listNotes()).map((note) =>
+        noteRecord(note, id, store.vaultRoot, recalls, false),
+      ),
+    });
+  }
+  return layers;
 }
 
 async function workspaceLayer(

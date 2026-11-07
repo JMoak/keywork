@@ -114,12 +114,9 @@ describe("composePanes", () => {
     const bare = await composedIn(await tempDir());
     const declared = await composedIn(root);
     expect(untrusted.app.memory).toBeUndefined();
-    expect(await bare.app.memory?.load()).toEqual({
-      layers: [],
-      notes: [],
-      inbox: [],
-      ledger: [],
-    });
+    const bareGarden = await bare.app.memory?.load();
+    expect(bareGarden?.layers.map((layer) => layer.id)).toEqual(["workspace"]);
+    expect(bareGarden).toMatchObject({ notes: [], inbox: [], ledger: [] });
     expect((await declared.app.memory?.load())?.layers.map((layer) => layer.id)).toEqual([
       "workspace",
     ]);

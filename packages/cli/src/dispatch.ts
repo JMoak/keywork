@@ -28,7 +28,12 @@ Usage:
   keywork permissions [list]                                what runs here without asking
   keywork permissions revoke <action> <resource>            take a workspace grant back
   keywork doctor                                            show what your terminal supports
-  keywork serve [--port <n>|0] [--model <model>]
+  keywork models bench <provider/model> [--repeats <n>]
+                [--decide] [--json]                         measure a model for a task class
+  keywork creatures report [--json] | promote|demote <rule class>
+                | review [<id> approve|deny] | overturn <id>    the keeper's shadowed and decided calls
+  keywork node install|uninstall|status|run|reset|firewall  the always-on node for this machine
+  keywork serve [--home] [--port <n>|0] [--model <model>]
                 [--preset careful|standard|open]
                 [--session-dir <dir>] [--no-checkpoints]    HTTP + SSE server on 127.0.0.1
   keywork attach [--pane <kind>] [--session <id>]
@@ -77,6 +82,9 @@ export const commandNames = [
   "untrust",
   "permissions",
   "doctor",
+  "models",
+  "creatures",
+  "node",
   "serve",
   "attach",
 ] as const;
@@ -107,6 +115,12 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   untrust: { behavior: "runs" },
   permissions: { behavior: "runs" },
   doctor: { behavior: "runs" },
+  models: { behavior: "runs", note: "bench prints its report; --json prints it as JSON" },
+  creatures: {
+    behavior: "runs",
+    note: "promote needs an accepted calibration; overturn demotes the class",
+  },
+  node: { behavior: "runs", note: "run blocks until stopped" },
   serve: { behavior: "runs", note: "prints the URL and token, then runs until SIGINT" },
   attach: { behavior: "refused", reason: "attach needs a terminal" },
 };

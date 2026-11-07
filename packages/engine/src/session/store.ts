@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { PromptOrigin } from "../bus.ts";
 import { type Message, messageText, type Usage } from "../messages.ts";
 import { type CostRollup, sessionCost } from "../pricing.ts";
 import {
@@ -38,6 +39,12 @@ import {
   summaryMarksOf,
   type ThinkingLevelChangeEntry,
 } from "./entries.ts";
+import {
+  type ReviewVerdict,
+  reviewVerdictType,
+  type VerdictMark,
+  verdictMarksOf,
+} from "./review.ts";
 import { SpillStore } from "./spill.ts";
 import { turnFactsOf } from "./turn-facts.ts";
 
@@ -53,6 +60,22 @@ export interface SessionStats {
   createdAt: string;
   lastActivityAt: string;
 }
+
+export interface ReportMark {
+  index: number;
+  entryId: string;
+  at: string;
+  text: string;
+  origin: PromptOrigin;
+  kind?: "frame";
+}
+
+export interface SessionMarks extends MessageMarks {
+  reports: ReportMark[];
+  verdicts: VerdictMark[];
+}
+
+export const creatureReportType = "keywork.creature.report";
 
 export interface CompactionInput {
   summary: string;
@@ -119,12 +142,18 @@ export class SessionStore {
     return store;
   }
 
-  async append(message: Message, usage?: Usage, checkpoint?: string): Promise<MessageEntry> {
+  async append(
+    message: Message,
+    usage?: Usage,
+    checkpoint?: string,
+    submissionId?: string,
+  ): Promise<MessageEntry> {
     return this.appendEntry({
       type: "message",
       message,
       ...(usage !== undefined && { usage }),
       ...(checkpoint !== undefined && { checkpoint }),
+      ...(submissionId !== undefined && { submissionId }),
     });
   }
 
@@ -218,6 +247,18 @@ export class SessionStore {
     )?.effort;
   }
 
+  appendCreatureReport(text: string, origin: PromptOrigin, kind?: "frame"): Promise<CustomEntry> {
+    return this.appendCustom(creatureReportType, {
+      text,
+      origin,
+      ...(kind !== undefined && { kind }),
+    });
+  }
+
+  appendHunkVerdict(verdict: ReviewVerdict): Promise<CustomEntry> {
+    return this.appendCustom(reviewVerdictType, verdict);
+  }
+
   appendQuietChange(on: boolean): Promise<CustomEntry> {
     return this.appendCustom(quietPostureType, { on });
   }
@@ -283,8 +324,14 @@ export class SessionStore {
     return summaryMarksOf(this.contextEntries());
   }
 
-  messageMarks(): MessageMarks {
-    return messageMarksOf(this.activePath());
+  messageMarks(): SessionMarks {
+    const path = this.activePath();
+    const context = contextEntriesFor(path);
+    return {
+      ...messageMarksOf(path),
+      reports: reportMarksOf(context),
+      verdicts: verdictMarksOf(context),
+    };
   }
 
   messages(): Message[] {
@@ -449,4 +496,38 @@ function endsOnItsOwnLine(content: string): boolean {
 
 function closeOpenLine(file: string): Promise<void> {
   return appendFile(file, "\n", "utf8");
+}
+
+export function reportMarksOf(contextEntries: readonly SessionEntry[]): ReportMark[] {
+  const marks: ReportMark[] = [];
+  let index = 0;
+  for (const entry of contextEntries) {
+    const report = creatureReportOf(entry);
+    if (report !== undefined) {
+      marks.push({ index, entryId: entry.id, at: entry.timestamp, ...report });
+    }
+    index += contextMessages([entry]).length;
+  }
+  return marks;
+}
+
+function creatureReportOf(
+  entry: SessionEntry,
+): Pick<ReportMark, "text" | "origin" | "kind"> | undefined {
+  if (entry.type !== "custom" || entry.customType !== creatureReportType) return undefined;
+  const { data } = entry;
+  if (typeof data !== "object" || data === null) return undefined;
+  if (!("text" in data) || typeof data.text !== "string") return undefined;
+  if (!("origin" in data) || !isPromptOrigin(data.origin)) return undefined;
+  const framed = "kind" in data && data.kind === "frame";
+  return { text: data.text, origin: data.origin, ...(framed && { kind: "frame" as const }) };
+}
+
+function isPromptOrigin(value: unknown): value is PromptOrigin {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "kind" in value &&
+    (value.kind === "creature" || value.kind === "external")
+  );
 }

@@ -1,0 +1,21 @@
+{
+  "servers": {
+    "creature": {
+      "url": "${KEYWORK_CREATURE_MCP_URL}"
+    }
+  },
+  "defaultServer": "creature",
+  "globs": ["cases/**/*.json"],
+  "manifest": "__manifest__.json",
+  "timeoutMs": 5000,
+  "failFast": false,
+  "profiles": {
+    "legacy": {
+      "servers": {
+        "creature": {
+          "protocol": "legacy"
+        }
+      }
+    }
+  }
+}

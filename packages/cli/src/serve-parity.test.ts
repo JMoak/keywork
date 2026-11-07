@@ -1,22 +1,36 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   ArcRegistry,
+  type CreatureDetail,
+  type CreatureHost,
+  creatureTagOf,
+  EndpointUnreachableError,
+  filePairStore,
   formatReference,
   type InferenceBinding,
+  inboundBlockHeading,
   isMemoryFlushPrompt,
   type Message,
   MockProvider,
   type ModelCapabilities,
+  meshPairingFile,
   messageText,
+  type ProbeHttp,
   type Provider,
   type ProviderRequest,
   parseReference,
+  type ReportMark,
+  type RunRow,
+  type SessionEntry,
   type TurnDelta,
   textTurn,
   toolCallTurn,
+  type Usage,
 } from "@keywork/engine";
 import {
+  type BusEnvelope,
   createKeyworkServer,
   EventLog,
   type SessionInference,
@@ -26,6 +40,8 @@ import {
 import { type SseFrame, type SseReader, sseReader } from "@keywork/server/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
+import { waitingOnAnswer } from "../../engine/src/routines/scheduler.ts";
+import { heldOnGrants, parkedRun } from "../../engine/src/routines/testing.ts";
 import { openWorkspaceMemory } from "./memory.ts";
 import { type HostOptions, servedHost } from "./serve.ts";
 import { findSession } from "./sessions/store.ts";
@@ -255,6 +271,341 @@ describe("serve parity: the exit sweep", () => {
   });
 });
 
+describe("serve parity: a creature's chore, end to end", () => {
+  it("runs a manual chore in a tagged routine thread, refuses its writes, reports one line to the conversation without a turn, and meters it", async () => {
+    const provider = parityProvider([
+      mutatingTurn(meteredAt(0.002)),
+      textTurn("Nothing needs you today.\nThe inbox is quiet.", meteredAt(0.001)),
+      textTurn("Noted.", meteredAt(0.0005)),
+    ]);
+    const world = await servedWorld(provider);
+    try {
+      const reader = await world.events();
+      await world.json("/creatures", { name: "Pip" }, 201);
+      await world.put("/creatures/pip/routines/triage", triageChore, 201);
+      const fired = await world.json<{ run: RunRow }>(
+        "/creatures/pip/routines/triage/run",
+        {},
+        202,
+      );
+      const seen = (await framesUntil(reader, finishedAndNoticed())).map(envelopeOf);
+      await reader.close();
+
+      const thread = fired.run.sessionId ?? "";
+      expect(payloadsOf(seen, "routine.fired")).toEqual([
+        expect.objectContaining({ creature: "pip", routineId: "triage", sessionId: thread }),
+      ]);
+      expect(payloadsOf(seen, "routine.finished")).toEqual([
+        {
+          run: expect.objectContaining({
+            process: "completed",
+            delivery: "delivered",
+            sessionId: thread,
+          }),
+          disabled: null,
+        },
+      ]);
+      expect(payloadsOf(seen, "creature.changed")).toEqual(
+        expect.arrayContaining([
+          { slug: "pip", change: "created" },
+          { slug: "pip", change: "threads" },
+        ]),
+      );
+      expect(
+        seen
+          .filter(
+            (envelope) => envelope.type === "gate.permission" && envelope.sessionId === thread,
+          )
+          .map((envelope) => (envelope.payload as { decision: unknown }).decision),
+      ).toEqual(
+        ["write", "edit", "bash"].map((tool) =>
+          expect.objectContaining({ tool, verdict: "denied", gate: "policy", asked: false }),
+        ),
+      );
+      expect(seen.some((envelope) => envelope.type === "gate.ask")).toBe(false);
+      expect(existsSync(join(world.cwd, "notes.md"))).toBe(false);
+
+      const pip = await world.json<CreatureDetail>("/creatures/pip");
+      expect(pip.threads).toEqual([
+        expect.objectContaining({ id: thread, kind: "routine", title: "Morning triage" }),
+      ]);
+      const summary = 'Thread "Morning triage" finished: Nothing needs you today.';
+      const conversation = await world.json<{ messages: Message[]; reports: ReportMark[] }>(
+        `/sessions/${pip.conversation}`,
+      );
+      expect(conversation.messages).toEqual([]);
+      expect(conversation.reports).toEqual([
+        {
+          index: 0,
+          entryId: expect.any(String),
+          at: expect.any(String),
+          text: summary,
+          origin: { kind: "creature", creature: "pip", thread },
+        },
+      ]);
+      const { entries } = await world.json<{ entries: SessionEntry[] }>(
+        `/sessions/${pip.conversation}/entries`,
+      );
+      expect(
+        entries.filter(
+          (entry) => entry.type === "custom" && entry.customType === "keywork.creature.report",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          data: { text: summary, origin: { kind: "creature", creature: "pip", thread } },
+        }),
+      ]);
+      expect(
+        seen
+          .filter(
+            (envelope) =>
+              envelope.type === "extension.notice" && envelope.sessionId === pip.conversation,
+          )
+          .map((envelope) => envelope.payload),
+      ).toEqual([
+        {
+          extension: "creature",
+          level: "info",
+          message: summary,
+          detail: {
+            origin: { kind: "creature", creature: "pip", thread },
+            entryId: conversation.reports[0]?.entryId,
+          },
+        },
+      ]);
+      expect(
+        seen.some(
+          (envelope) => envelope.type === "turn.started" && envelope.sessionId === pip.conversation,
+        ),
+      ).toBe(false);
+      expect(provider.requests).toHaveLength(2);
+
+      const threadStore = await findSession(world.sessionDir, thread);
+      expect(creatureTagOf(threadStore?.entries() ?? [])).toEqual({
+        creature: "pip",
+        kind: "routine",
+      });
+      expect(threadStore?.botBinding()).toBe("pip");
+      expect(provider.requests[0]?.systemPrompt).toContain("You are Pip,");
+
+      const runs = await world.json<{ runs: RunRow[] }>("/creatures/pip/routines/triage/runs");
+      expect(runs.runs).toEqual([
+        expect.objectContaining({
+          process: "completed",
+          delivery: "delivered",
+          sessionId: thread,
+          cost: { usd: 0.003 },
+        }),
+      ]);
+      expect(pip.usage).toEqual({
+        date: new Date().toISOString().slice(0, 10),
+        sessions: 2,
+        costNanos: 3_000_000,
+      });
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("holds a write chore until the keeper accepts its grant set, then runs it", async () => {
+    const provider = parityProvider([
+      textTurn("Filed the notes.", meteredAt(0.001)),
+      textTurn("Ok."),
+    ]);
+    const world = await servedWorld(provider);
+    try {
+      await world.json("/creatures", { name: "Pip" }, 201);
+      await world.put("/creatures/pip/routines/triage", { ...triageChore, ...heldOnGrants }, 201);
+
+      const held = await world.json<{ run: RunRow }>("/creatures/pip/routines/triage/run", {}, 200);
+      expect(held.run).toMatchObject(parkedRun);
+      expect(held.run.reason).toMatch(/waits until the keeper accepts that grant set/);
+      expect(provider.requests).toHaveLength(0);
+
+      const { routine } = await world.json<{ routine: { grants: { digest: string } } }>(
+        "/creatures/pip/routines/triage",
+      );
+      const reader = await world.events();
+      await world.json("/creatures/pip/routines/triage/accept", { digest: routine.grants.digest });
+      await until(reader, (frame) => frame.event === "routine.fired");
+      await until(reader, (frame) => frame.event === "routine.finished");
+      await reader.close();
+      const runs = await world.json<{ runs: RunRow[] }>("/creatures/pip/routines/triage/runs");
+      expect(runs.runs).toHaveLength(1);
+      expect(runs.runs[0]).toMatchObject({ runId: held.run.runId, process: "completed" });
+      expect(runs.runs[0]?.sessionId).not.toBeNull();
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+describe("serve parity: the node ports", () => {
+  it("answers the creature, chore, model, workshop and mesh families instead of 503", async () => {
+    const world = await servedWorld(parityProvider([]), { modelProbe: unreachableServers });
+    try {
+      await world.json("/creatures", { name: "Pip" }, 201);
+      const answered = await Promise.all(
+        ["/creatures", "/creatures/pip/routines", "/models", "/workshops", "/mesh/pairs"].map(
+          async (path) => [path, (await world.call(path)).status] as const,
+        ),
+      );
+      expect(answered).toEqual([
+        ["/creatures", 200],
+        ["/creatures/pip/routines", 200],
+        ["/models", 200],
+        ["/workshops", 200],
+        ["/mesh/pairs", 200],
+      ]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("streams workshop.changed, models.changed and the mesh events on GET /events", async () => {
+    const world = await servedWorld(parityProvider([]), { modelProbe: unreachableServers });
+    try {
+      const pairId = await seedPair(world.userRoot);
+      const reader = await world.events();
+      await world.json("/workshops", { creature: "pip", substrate: "host" }, 201);
+      await world.json("/models/probe", { endpoint: "http://127.0.0.1:11434" });
+      await world.host.mesh?.pairing.unpair(pairId, "keeper");
+      const seen = (await framesUntil(reader, (frame) => frame.event === "mesh.pair")).map(
+        envelopeOf,
+      );
+      await reader.close();
+
+      expect(payloadsOf(seen, "workshop.changed")).toEqual([
+        {
+          change: "created",
+          workshop: expect.objectContaining({ creature: "pip", substrate: "host" }),
+        },
+      ]);
+      expect(payloadsOf(seen, "models.changed")).toEqual([
+        { node: expect.any(String), reason: "probe" },
+      ]);
+      expect(payloadsOf(seen, "mesh.pair")).toEqual([
+        expect.objectContaining({ change: "removed", pairId, by: "keeper" }),
+      ]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("keeps a creature's conversation out of the trash while the creature exists", async () => {
+    const world = await servedWorld(parityProvider([]));
+    try {
+      await world.json("/creatures", { name: "Pip" }, 201);
+      const { conversation } = await world.json<CreatureDetail>("/creatures/pip");
+      const refused = await world.call(`/sessions/${conversation}`, { method: "DELETE" });
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({
+        error:
+          "the conversation of pip stays while the creature does · removing the creature removes it",
+      });
+      expect(await findSession(world.sessionDir, conversation)).toBeDefined();
+
+      const removed = await world.call("/creatures/pip?confirmed=true", { method: "DELETE" });
+      expect(removed.status).toBe(200);
+      expect(await findSession(world.sessionDir, conversation)).toBeUndefined();
+      expect((await world.json<{ bots: unknown[] }>("/bots")).bots).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+const triageChore = {
+  title: "Morning triage",
+  instructions: "Read the inbox. Tell me only what needs me today.",
+  trigger: { kind: "manual" },
+};
+
+const unreachableServers: ProbeHttp = {
+  get: async (url) => {
+    throw new EndpointUnreachableError(url, "nothing listens in this test");
+  },
+  post: async (url) => {
+    throw new EndpointUnreachableError(url, "nothing listens in this test");
+  },
+};
+
+function meteredAt(costUsd: number): Usage {
+  return { inputTokens: 100, outputTokens: 10, costUsd };
+}
+
+function mutatingTurn(usage: Usage): TurnDelta[] {
+  const call = (callId: string, name: string, args: unknown): TurnDelta => ({
+    type: "tool-call",
+    call: { type: "tool-call", callId, name, arguments: args },
+  });
+  return [
+    call("w1", "write", { path: "notes.md", content: "x" }),
+    call("e1", "edit", { path: "notes.md", oldText: "x", newText: "y" }),
+    call("b1", "bash", { command: "echo hi > notes.md" }),
+    { type: "done", usage },
+  ];
+}
+
+async function seedPair(userRoot: string): Promise<string> {
+  const pairId = "pair-1";
+  filePairStore(meshPairingFile(join(userRoot, ".keywork", "node"))).write({
+    owner: null,
+    pairs: [
+      {
+        id: pairId,
+        peerStableId: "nPeer",
+        peerUserId: null,
+        peerTags: [],
+        peerDeviceKey: "peer-key",
+        role: "node",
+        caps: [],
+        endpoint: null,
+        createdAt: "2026-11-05T09:00:00.000Z",
+        confirmedBy: "on-device",
+      },
+    ],
+  });
+  return pairId;
+}
+
+function envelopeOf(frame: SseFrame): BusEnvelope {
+  return JSON.parse(frame.data) as BusEnvelope;
+}
+
+function payloadsOf(envelopes: readonly BusEnvelope[], type: string): unknown[] {
+  return envelopes.filter((envelope) => envelope.type === type).map((envelope) => envelope.payload);
+}
+
+function finishedAndNoticed(): (frame: SseFrame) => boolean {
+  const seen = new Set<string>();
+  return (frame) => {
+    if (frame.event === "routine.finished") seen.add("finished");
+    if (
+      frame.event === "extension.notice" &&
+      payloadOf<{ extension: string }>(frame).extension === "creature"
+    ) {
+      seen.add("noticed");
+    }
+    return seen.size === 2;
+  };
+}
+
+async function framesUntil(
+  reader: SseReader,
+  done: (frame: SseFrame) => boolean,
+): Promise<SseFrame[]> {
+  const frames: SseFrame[] = [];
+  for (;;) {
+    const frame = await Promise.race([
+      reader.next(),
+      silence(frames.map((seen) => `${seen.event}`)),
+    ]);
+    frames.push(frame);
+    if (done(frame)) return frames;
+  }
+}
+
 interface ParityProviderOptions {
   modelId?: string;
   capabilities?: ModelCapabilities;
@@ -357,8 +708,10 @@ function fakeBinding(provider: string, model: string): InferenceBinding {
 }
 
 interface WorldOptions {
+  permissions?: HostOptions["permissions"];
   inference?: SessionInference;
   bots?: Record<string, string>;
+  modelProbe?: ProbeHttp;
 }
 
 async function servedWorld(provider: Provider, options: WorldOptions = {}) {
@@ -370,17 +723,19 @@ async function servedWorld(provider: Provider, options: WorldOptions = {}) {
     await writeFile(join(cwd, ".keywork", "bots", slug, "bot.md"), definition);
   }
   const sessionDir = await tempDir();
+  const userRoot = await tempDir();
   const log = new EventLog();
   const hostOptions: HostOptions & { log: EventLog } = {
     cwd,
     sessionDir,
-    userRoot: await tempDir(),
+    userRoot,
     projectTrusted: true,
     provider,
-    permissions: () => "allow",
+    permissions: options.permissions ?? (() => "allow"),
     checkpoints: "off",
     log,
     ...(options.inference !== undefined && { inference: options.inference }),
+    ...(options.modelProbe !== undefined && { modelProbe: options.modelProbe }),
   };
   const host = await servedHost(hostOptions);
   const server = createKeyworkServer({ token, host, log, version: "test" });
@@ -402,11 +757,23 @@ async function servedWorld(provider: Provider, options: WorldOptions = {}) {
     expect(response.status).toBe(status);
     return (await response.json()) as Shape;
   };
+  const put = async (path: string, body: unknown, status = 200) => {
+    const response = await call(path, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(status);
+    return response.json();
+  };
   return {
     cwd,
     sessionDir,
+    userRoot,
+    host,
     call,
     post,
+    put,
     json,
     createSession: async () => ((await (await post("/sessions")).json()) as { id: string }).id,
     events: async () => sseReader(await call("/events")),
@@ -442,3 +809,265 @@ function silence(seen: readonly string[]): Promise<never> {
 }
 
 const waitLimitMs = 3_000;
+
+describe("serve parity: a creature's conversation turn", () => {
+  it("writes one report line after turn.completed, served as reports, and starts no further turn", async () => {
+    const provider = parityProvider([
+      textTurn("The kettle is on. I will say when it boils."),
+      textTurn("never asked for"),
+    ]);
+    const world = await servedWorld(provider);
+    try {
+      await world.json("/creatures", { name: "Hal" }, 201);
+      const hal = await world.json<CreatureDetail>("/creatures/hal");
+      const reader = await world.events();
+      await world.post(`/sessions/${hal.conversation}/prompt`, { text: "put the kettle on" });
+      const seen = (await framesUntil(reader, reportedAfterTurn(hal.conversation))).map(envelopeOf);
+      await reader.close();
+
+      const origin = { kind: "creature", creature: "hal", thread: hal.conversation };
+      const conversation = await world.json<{ reports: ReportMark[] }>(
+        `/sessions/${hal.conversation}`,
+      );
+      expect(conversation.reports).toEqual([
+        {
+          index: 2,
+          entryId: expect.any(String),
+          at: expect.any(String),
+          text: "The kettle is on.",
+          origin,
+        },
+      ]);
+      const ofConversation = seen.filter((envelope) => envelope.sessionId === hal.conversation);
+      const kinds = ofConversation.map((envelope) => envelope.type);
+      expect(kinds.indexOf("extension.notice")).toBeGreaterThan(kinds.indexOf("turn.completed"));
+      expect(kinds.filter((kind) => kind === "turn.started")).toHaveLength(1);
+      expect(payloadsOf(ofConversation, "extension.notice")).toEqual([
+        {
+          extension: "creature",
+          level: "info",
+          message: "The kettle is on.",
+          detail: { origin, entryId: conversation.reports[0]?.entryId },
+        },
+      ]);
+      expect(provider.requests).toHaveLength(1);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("carries a delivered message into the next turn as an untrusted block, once, without a turn of its own", async () => {
+    const provider = parityProvider([textTurn("Lark asked me to check notes."), textTurn("ok")]);
+    const world = await servedWorld(provider);
+    try {
+      await world.json("/creatures", { name: "Hal" }, 201);
+      await world.json("/creatures", { name: "Lark" }, 201);
+      const hal = await world.json<CreatureDetail>("/creatures/hal");
+      const creatures = world.host.creatures as CreatureHost;
+      const origin = {
+        kind: "creature" as const,
+        creature: "lark",
+        thread: "parityMessage1",
+        node: "nParityHouse",
+        machine: "house",
+      };
+      expect(await creatures.deliver("hal", "Message from lark: please check notes", origin)).toBe(
+        "noted",
+      );
+      expect(provider.requests).toHaveLength(0);
+
+      const reader = await world.events();
+      await world.post(`/sessions/${hal.conversation}/prompt`, { text: "what did Lark say?" });
+      await until(reader, (frame) => frame.event === "turn.completed");
+      await world.post(`/sessions/${hal.conversation}/prompt`, { text: "and now?" });
+      await until(reader, (frame) => frame.event === "turn.completed");
+      await reader.close();
+
+      expect(provider.requests[0]?.systemPrompt).toContain(
+        `${inboundBlockHeading}\n- Message from lark: please check notes [untrusted, `,
+      );
+      expect(provider.requests[1]?.systemPrompt).not.toContain(inboundBlockHeading);
+      expect(provider.requests[1]?.systemPrompt).not.toContain("please check notes");
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+function reportedAfterTurn(sessionId: string): (frame: SseFrame) => boolean {
+  let completed = false;
+  return (frame) => {
+    const envelope = envelopeOf(frame);
+    if (envelope.sessionId !== sessionId) return false;
+    if (envelope.type === "turn.completed") completed = true;
+    return completed && envelope.type === "extension.notice";
+  };
+}
+
+describe("serve parity: a creature in its bare host workshop", () => {
+  it("finds its workshop running before the first turn and works in the workspace itself", async () => {
+    const provider = parityProvider([
+      [
+        toolCall("r1", "read", { path: "docs/INDEX.md" }),
+        toolCall("w1", "write", { path: "notes/largest.md", content: "docs/INDEX.md\n" }),
+        { type: "done", usage: meteredAt(0.001) },
+      ],
+      textTurn("The list is in notes/largest.md."),
+    ]);
+    const world = await servedWorld(provider);
+    try {
+      await mkdir(join(world.cwd, "docs"), { recursive: true });
+      await writeFile(join(world.cwd, "docs", "INDEX.md"), "# Index\n", "utf8");
+      const made = await world.json<{ workshop: string }>(
+        "/creatures",
+        { name: "Osk", substrate: "host" },
+        201,
+      );
+      expect(await world.json(`/workshops/${made.workshop}`)).toMatchObject({
+        state: "running",
+        workdir: world.cwd,
+        workspace: { access: "direct", path: world.cwd },
+      });
+
+      const osk = await world.json<CreatureDetail>("/creatures/osk");
+      const reader = await world.events();
+      await world.post(`/sessions/${osk.conversation}/prompt`, {
+        text: "list the five largest files under docs and write the list to notes/largest.md",
+      });
+      await until(reader, (frame) => frame.event === "turn.completed");
+      await reader.close();
+
+      const results = toolResultsOf(provider.requests.at(-1));
+      expect(results.r1).toContain("# Index");
+      expect(results.w1).toBe("Wrote notes/largest.md");
+      expect(await readFile(join(world.cwd, "notes", "largest.md"), "utf8")).toBe(
+        "docs/INDEX.md\n",
+      );
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("runs an accepted parked chore as running while its session works, completed after, writing in the workspace", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inner = parityProvider([
+      [
+        toolCall("s1", "write", { path: "notes/stamp.md", content: "stamped\n" }),
+        { type: "done", usage: meteredAt(0.001) },
+      ],
+      textTurn("Stamped notes/stamp.md."),
+    ]);
+    const provider: Provider = {
+      name: inner.name,
+      modelId: inner.modelId,
+      capabilities: inner.capabilities,
+      async *stream(request) {
+        await gate;
+        yield* inner.stream(request);
+      },
+    };
+    const world = await servedWorld(provider);
+    try {
+      await world.json("/creatures", { name: "Osk", substrate: "host" }, 201);
+      await world.put("/creatures/osk/routines/stamp", { ...triageChore, ...heldOnGrants }, 201);
+      const held = await world.json<{ run: RunRow }>("/creatures/osk/routines/stamp/run", {}, 200);
+      expect(held.run).toMatchObject(parkedRun);
+      const { routine } = await world.json<{ routine: { grants: { digest: string } } }>(
+        "/creatures/osk/routines/stamp",
+      );
+
+      const reader = await world.events();
+      await world.json("/creatures/osk/routines/stamp/accept", { digest: routine.grants.digest });
+      await until(reader, (frame) => frame.event === "routine.fired");
+      const working = await world.json<{ runs: RunRow[] }>("/creatures/osk/routines/stamp/runs");
+      release();
+      await until(reader, (frame) => frame.event === "routine.finished");
+      await reader.close();
+      const finished = await world.json<{ runs: RunRow[] }>("/creatures/osk/routines/stamp/runs");
+
+      expect(working.runs).toEqual([
+        expect.objectContaining({ runId: held.run.runId, status: "running", reason: null }),
+      ]);
+      expect(working.runs[0]?.sessionId).not.toBeNull();
+      expect(finished.runs).toEqual([
+        expect.objectContaining({ runId: held.run.runId, status: "ended", process: "completed" }),
+      ]);
+      expect(await readFile(join(world.cwd, "notes", "stamp.md"), "utf8")).toBe("stamped\n");
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+function toolCall(callId: string, name: string, args: unknown): TurnDelta {
+  return { type: "tool-call", call: { type: "tool-call", callId, name, arguments: args } };
+}
+
+function toolResultsOf(request: ProviderRequest | undefined): Record<string, string> {
+  const results: Record<string, string> = {};
+  for (const message of request?.messages ?? []) {
+    for (const part of message.parts) {
+      if (part.type === "tool-result") results[part.callId] = String(part.output);
+    }
+  }
+  return results;
+}
+
+describe("serve parity: a chore waiting on the keeper's answer", () => {
+  it("names the ask on its parked row, then reads running once answered and completed after", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inner = parityProvider([
+      [
+        toolCall("w9", "write", { path: "stamp.md", content: "stamped\n" }),
+        { type: "done", usage: meteredAt(0.001) },
+      ],
+      textTurn("Stamped."),
+    ]);
+    let streams = 0;
+    const provider: Provider = {
+      name: inner.name,
+      modelId: inner.modelId,
+      capabilities: inner.capabilities,
+      async *stream(request) {
+        streams += 1;
+        if (streams === 2) await gate;
+        yield* inner.stream(request);
+      },
+    };
+    const world = await servedWorld(provider, { permissions: () => "ask" });
+    try {
+      await world.json("/creatures", { name: "Osk", substrate: "host" }, 201);
+      await world.put("/creatures/osk/routines/stamp", { ...triageChore, ...heldOnGrants }, 201);
+      await world.json("/creatures/osk/routines/stamp/run", {}, 200);
+      const { routine } = await world.json<{ routine: { grants: { digest: string } } }>(
+        "/creatures/osk/routines/stamp",
+      );
+
+      const reader = await world.events();
+      await world.json("/creatures/osk/routines/stamp/accept", { digest: routine.grants.digest });
+      await until(reader, (frame) => frame.event === "gate.ask");
+      const waiting = await world.json<{ runs: RunRow[] }>("/creatures/osk/routines/stamp/runs");
+      await world.json("/asks/w9", { verdict: "granted", scope: "once" });
+      await until(reader, (frame) => frame.event === "gate.permission");
+      const answered = await world.json<{ runs: RunRow[] }>("/creatures/osk/routines/stamp/runs");
+      release();
+      await until(reader, (frame) => frame.event === "routine.finished");
+      await reader.close();
+      const finished = await world.json<{ runs: RunRow[] }>("/creatures/osk/routines/stamp/runs");
+
+      expect(waiting.runs[0]).toMatchObject({ status: "parked", reason: waitingOnAnswer("write") });
+      expect(waiting.runs[0]?.sessionId).not.toBeNull();
+      expect(answered.runs[0]).toMatchObject({ status: "running", reason: null });
+      expect(finished.runs[0]).toMatchObject({ status: "ended", process: "completed" });
+      expect(await readFile(join(world.cwd, "stamp.md"), "utf8")).toBe("stamped\n");
+    } finally {
+      await world.close();
+    }
+  });
+});

@@ -52,6 +52,9 @@ before you've touched a config file. What the agent is allowed to do is always o
 
 ## Quickstart
 
+Using Keywork and Stead together? See [shared-engine upgrades](docs/runtime-upgrades.md)
+before installing releases that require different engine versions.
+
 One line, nothing else to install:
 
 ```sh

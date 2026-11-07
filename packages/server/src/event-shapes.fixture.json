@@ -123,6 +123,14 @@
         "role": "string"
       }
     },
+    "turn.waiting": {
+      "attempt": "number",
+      "reason": "string",
+      "until": "string"
+    },
+    "turn.resumed": {
+      "attempt": "number"
+    },
     "queue.changed": {
       "queued": [
         {
@@ -317,6 +325,13 @@
         }
       }
     ],
+    "model.fallback": {
+      "class": "string",
+      "cloud": "boolean",
+      "from": "string",
+      "to": "string",
+      "trigger": "string"
+    },
     "child.started": {
       "bot": "string",
       "callId": "string",
@@ -424,6 +439,252 @@
       "flushed": "number",
       "notices": ["string"],
       "phase": "string"
+    },
+    "creature.changed": {
+      "change": "string",
+      "slug": "string"
+    },
+    "routine.fired": {
+      "attempt": "number",
+      "catchUp": "boolean",
+      "creature": "string",
+      "firedAt": "string",
+      "routineId": "string",
+      "runId": "string",
+      "scheduledFor": "string",
+      "sessionId": "string",
+      "startedAt": "string",
+      "trigger": "string"
+    },
+    "routine.finished": {
+      "disabled": "null",
+      "run": {
+        "attempt": "number",
+        "catchUp": "boolean",
+        "cost": {
+          "usd": "number"
+        },
+        "creature": "string",
+        "delivery": "string",
+        "endedAt": "string",
+        "firedAt": "string",
+        "notify": {
+          "at": "string",
+          "tier": "string"
+        },
+        "output": "string",
+        "process": "string",
+        "reason": "null",
+        "routineId": "string",
+        "runId": "string",
+        "scheduledFor": "string",
+        "sessionId": "string",
+        "startedAt": "string",
+        "status": "string",
+        "trigger": "string",
+        "usage": {
+          "inputTokens": "number",
+          "outputTokens": "number"
+        },
+        "verified": "null"
+      }
+    },
+    "routine.needs": {
+      "creature": "string",
+      "items": [
+        {
+          "action": {
+            "digest": "string",
+            "verb": "string"
+          },
+          "creature": "string",
+          "kind": "string",
+          "reason": "string",
+          "routineId": "string",
+          "runId": "string",
+          "since": "string"
+        }
+      ],
+      "routineId": "string"
+    },
+    "workshop.changed": {
+      "change": "string",
+      "workshop": {
+        "brokers": ["string"],
+        "createdAt": "string",
+        "creature": "string",
+        "display": "boolean",
+        "id": "string",
+        "limitations": ["string"],
+        "state": "string",
+        "substrate": "string",
+        "workdir": "string"
+      }
+    },
+    "models.changed": {
+      "node": "string",
+      "reason": "string"
+    },
+    "mesh.listener": [
+      {
+        "address": "string",
+        "change": "string",
+        "port": "number"
+      },
+      {
+        "address": "string",
+        "change": "string",
+        "reason": "string"
+      },
+      {
+        "address": "string",
+        "change": "string",
+        "error": "string"
+      },
+      {
+        "change": "string",
+        "reason": "string"
+      },
+      {
+        "change": "string",
+        "error": "string"
+      },
+      {
+        "change": "string",
+        "message": "string"
+      }
+    ],
+    "mesh.pairing": [
+      {
+        "change": "string",
+        "pairing": {
+          "caps": ["string"],
+          "confirmation": "string",
+          "expiresAt": "string",
+          "pairingId": "string",
+          "peerStableId": "string",
+          "peerUserId": "string",
+          "phase": "string",
+          "role": "string",
+          "sas": "string"
+        }
+      },
+      {
+        "change": "string",
+        "peerStableId": "string",
+        "reason": "string"
+      },
+      {
+        "change": "string",
+        "pairingId": "string",
+        "reason": "string"
+      }
+    ],
+    "mesh.pair": [
+      {
+        "change": "string",
+        "pair": {
+          "caps": ["string"],
+          "confirmedBy": "string",
+          "createdAt": "string",
+          "endpoint": "string",
+          "id": "string",
+          "peerDeviceKey": "string",
+          "peerStableId": "string",
+          "peerTags": [],
+          "peerUserId": "string",
+          "role": "string"
+        }
+      },
+      {
+        "by": "string",
+        "change": "string",
+        "pairId": "string",
+        "peerStableId": "string"
+      }
+    ],
+    "mesh.grant": [
+      {
+        "change": "string",
+        "grant": {
+          "caps": [
+            {
+              "commands": ["string"],
+              "kind": "string"
+            }
+          ],
+          "expiresAt": "string",
+          "id": "string",
+          "issuedAt": "string",
+          "issuer": "string",
+          "nonce": "string",
+          "signature": "string",
+          "subject": {
+            "creature": "string",
+            "node": "string"
+          },
+          "target": "string"
+        }
+      },
+      {
+        "change": "string",
+        "issuer": "string",
+        "reason": "string"
+      },
+      {
+        "by": "string",
+        "change": "string",
+        "grantId": "string"
+      }
+    ],
+    "mesh.revocation": {
+      "attempts": "number",
+      "change": "string",
+      "error": "string",
+      "revocation": {
+        "id": "string",
+        "issuer": "string",
+        "kind": "string",
+        "nonce": "string",
+        "revokedAt": "string",
+        "signature": "string",
+        "target": "string"
+      }
+    },
+    "mesh.walked": {
+      "call": {
+        "arguments": {
+          "command": "string"
+        },
+        "callId": "string",
+        "name": "string",
+        "type": "'tool-call'"
+      },
+      "grantId": "string",
+      "origin": {
+        "creature": "string",
+        "kind": "string",
+        "node": "string"
+      },
+      "rules": [
+        {
+          "action": "string",
+          "effect": "string",
+          "resource": "string"
+        }
+      ]
+    },
+    "mesh.peers": {
+      "change": "string",
+      "peers": [
+        {
+          "path": {
+            "endpoint": "string",
+            "kind": "string"
+          },
+          "stableId": "string"
+        }
+      ]
     }
   }
 }

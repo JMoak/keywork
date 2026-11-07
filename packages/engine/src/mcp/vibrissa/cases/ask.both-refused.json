@@ -1,0 +1,11 @@
+{
+  "name": "ask: text and a handle together are invalid params",
+  "tool": "ask",
+  "args": {
+    "text": "hello",
+    "handle": "abcdefgh"
+  },
+  "expectError": {
+    "code": "InvalidParams"
+  }
+}

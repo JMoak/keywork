@@ -25,7 +25,7 @@ import {
   composeWorkspace,
   startMcpRegistry,
 } from "./compose.ts";
-import { citationTrail } from "./memory.ts";
+import { citationTrail, openWorkspaceMemory } from "./memory.ts";
 
 const fixtureServerPath = fileURLToPath(
   new URL("../../engine/src/testing/mcp-fixture-server.ts", import.meta.url),
@@ -89,14 +89,16 @@ describe("composeWorkspace", () => {
     expect(composition.memory()?.store.trusted).toBe(true);
   });
 
-  it("finds memory lazily once a trusted workspace materializes after composition", async () => {
+  it("opens a trusted workspace's memory before any declaration, at the vault a later declaration names", async () => {
     const cwd = await tempDir();
     const composition = await composedIn(cwd, { projectTrusted: true });
-    expect(composition.memory()).toBeUndefined();
+    const undeclared = composition.memory();
+    expect(undeclared?.store.trusted).toBe(true);
+    expect(undeclared?.vaultRoot).toBe(join(cwd, ".keywork", "memory"));
     await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
     await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "late" }));
-    expect(composition.memory()?.store.trusted).toBe(true);
-    expect(composition.memory()).toBe(composition.memory());
+    expect(composition.memory()).toBe(undeclared);
+    expect(openWorkspaceMemory(cwd, true)?.vaultRoot).toBe(undeclared?.vaultRoot);
   });
 
   it("opens no shadow git when checkpoints are off", async () => {

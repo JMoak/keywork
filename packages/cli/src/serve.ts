@@ -1,46 +1,84 @@
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   type Agent,
   type AgentContext,
+  type AnsweredAsk,
+  acceptedGrantRules,
   type BotDefinition,
   type ChangedPath,
   type Checkpoints,
+  type CreatureHost,
+  type CreatureMail,
+  CreatureProjectError,
+  type CreatureSessionTag,
+  childDirFor,
+  claimSession,
   compactionDue,
   contextMeasureOf,
+  creatureMail,
+  creatureTagOf,
+  decideForKeeper,
   type EffortLevel,
   flushMemoryNow,
   formatReference,
+  type GrantRule,
+  hostWorkshop,
   isEffortLevel,
   isPromptEntry,
   type JournalTap,
+  type KeeperOutcome,
+  type KeeperTap,
+  keeperContextOf,
   knownCostNanos,
   latestSessionTotals,
+  type Mailboxes,
+  type MemoryStore,
   type Message,
   type MessageEntry,
   type ModelChangeEntry,
+  type ModelReference,
+  messageText,
   modelReferenceOf,
   type PermissionLedger,
   type PermissionResolver,
+  type ProbeHttp,
+  type ProjectWorkRequest,
   type PromptOrigin,
   type Provider,
+  ProviderAnswerBook,
+  postureResolver,
   type QueuedPrompt,
+  type ReviewVerdict,
   readAgentContext,
   readMeasured,
+  recordHunkVerdict,
+  recordKeeperVerdict,
+  rememberFrom,
   restorePointOf,
   type SendBehavior,
   type SendOptions,
   type SessionEntry,
   SessionStore,
   ShellSession,
+  type StagedItem,
   scopeContains,
+  sessionPosture,
+  type ThreadOutcome,
   type ToolGuard,
+  type ToolPosture,
   type ToolScope,
   type TurnSettlement,
   tapJournal,
+  tapKeeperVerdicts,
   type Usage,
+  type VerdictMark,
+  type WakeScheduler,
+  type WorkspaceSessionRef,
 } from "@keywork/engine";
 import {
+  type AskDecider,
   AskQueue,
   type ByteRange,
   ChangesFeed,
@@ -98,12 +136,34 @@ import {
   resolveAnchor,
   toError,
 } from "@keywork/shared";
+import type { CreatureSeat } from "./compose.ts";
 import type { MemoryDeciderSetup } from "./memory-decider.ts";
+import type { HouseMeshConsole } from "./node/compose.ts";
 import { defaultSessionDir, keyworkHome, workspaceIdentity } from "./paths.ts";
+import { cataloguedInventory, catalogueFileOf, openRouterCatalogue } from "./serve-catalogue.ts";
 import { sessionChanges } from "./serve-changes.ts";
-import { servedLifecycle } from "./serve-lifecycle.ts";
-import { servedMemory } from "./serve-memory.ts";
+import { servedCreatureProjects } from "./serve-creature-projects.ts";
+import {
+  type CreaturePlace,
+  creatureRegistryAt,
+  creatureSeats,
+  finishThread,
+  keptConversation,
+  type ServedCreatureSessions,
+  type SettledThread,
+  servedCreatures,
+} from "./serve-creatures.ts";
+import { type LifecycleSessions, servedLifecycle, trashSession } from "./serve-lifecycle.ts";
+import { servedCreatureMcp } from "./serve-mcp.ts";
+import { servedMemory, stagedInbox } from "./serve-memory.ts";
+import { type MeteredTurn, type NodeInventorySeams, servedNode } from "./serve-node.ts";
 import { type NeighbourSession, restorePreviewOf } from "./serve-restore.ts";
+import {
+  creatureDirectoryOver,
+  type RoutineSessions,
+  type ServedRoutines,
+  servedRoutines,
+} from "./serve-routines.ts";
 import { loggedCostNanos, SpendLedger } from "./serve-spend.ts";
 import { type ServedSession, surfacePorts } from "./serve-surfaces.ts";
 import { servedTree } from "./serve-tree.ts";
@@ -134,7 +194,9 @@ import {
   summarize,
 } from "./sessions/store.ts";
 import { freezeTurn } from "./sessions/turn-journal.ts";
+import { excerpt } from "./text.ts";
 import { keyworkVersion } from "./version.ts";
+import { WorkspaceInUseError, withWorkspaceWriter } from "./workspace-ownership.ts";
 import { workspacePermissions } from "./workspace-permissions.ts";
 
 export interface ServeOptions extends HostOptions {
@@ -151,9 +213,11 @@ export interface ServeOptions extends HostOptions {
 export interface HostOptions {
   cwd: string;
   projectTrusted: boolean;
+  managedHome?: boolean | undefined;
   provider: Provider;
   permissions: PermissionResolver;
   inference?: SessionInference | undefined;
+  inventory?: NodeInventorySeams | undefined;
   presets?: PresetHost | undefined;
   checkpoints?: "on" | "off" | undefined;
   checkpointsGitDir?: string | undefined;
@@ -173,6 +237,7 @@ export interface HostOptions {
   memoryDecider?: MemoryDeciderSetup | undefined;
   notice?: ((text: string) => void) | undefined;
   recompose?: (() => Promise<void>) | undefined;
+  modelProbe?: ProbeHttp | undefined;
 }
 
 export function serverTicketFile(userRoot?: string): string {
@@ -190,6 +255,24 @@ export function ticketFilesFor(cwd: string, slug?: string, userRoot?: string): s
 export const alreadyServingExit = 2;
 
 export async function serve(options: ServeOptions): Promise<number> {
+  try {
+    return await withWorkspaceWriter(options, () => serveOwned(options));
+  } catch (cause) {
+    if (!(cause instanceof WorkspaceInUseError)) throw cause;
+    const ticketFile =
+      options.ticketFile ??
+      workspaceTicketFile(options.cwd, options.workspaceSlug, options.userRoot);
+    const running = await runningServerAmong([ticketFile], options.fetch ?? fetch);
+    options.printError(
+      running === undefined
+        ? `keywork serve: ${cause.message}`
+        : `keywork serve: a keywork server for this workspace is already listening at ${running.url} · attach to it, or stop it first`,
+    );
+    return alreadyServingExit;
+  }
+}
+
+async function serveOwned(options: ServeOptions): Promise<number> {
   const ticketFile =
     options.ticketFile ?? workspaceTicketFile(options.cwd, options.workspaceSlug, options.userRoot);
   const running = await runningServerAmong([ticketFile], options.fetch ?? fetch);
@@ -267,26 +350,167 @@ export async function answersAsKeywork(
 
 const healthCheckTimeoutMs = 1500;
 
+function inheritedReferenceOf(provider: Provider): ModelReference | undefined {
+  return provider.modelId === undefined
+    ? undefined
+    : { provider: provider.name, model: provider.modelId };
+}
+
 export function fileSessionHost(options: HostOptions & { log: EventLog }): SessionHost {
   const gate = servedGate(options);
   return sessionVerbsHost(new LiveSessions(options, gate), gate);
 }
 
 export async function servedHost(options: HostOptions & { log: EventLog }): Promise<SessionHost> {
+  const { log } = options;
+  const place: CreaturePlace = {
+    cwd: options.cwd,
+    projectTrusted: options.projectTrusted,
+    managedHome: options.managedHome,
+    workspaceSlug: options.workspaceSlug,
+    userRoot: options.userRoot ?? homedir(),
+  };
+  const notice = (text: string) => options.notice?.(`keywork serve: ${text}`);
   const gate = servedGate(options);
-  const sessions = new LiveSessions(options, gate);
+  const answers = new ProviderAnswerBook();
+  const catalogue = openRouterCatalogue({
+    file: catalogueFileOf(place.userRoot),
+    fetch: (url, init) => fetch(url, init),
+    now: Date.now,
+    notice,
+  });
+  const node = await servedNode({
+    ...place,
+    log,
+    notice,
+    modelProbe: options.modelProbe,
+    inventory:
+      options.inventory === undefined
+        ? undefined
+        : {
+            ...cataloguedInventory(options.inventory, catalogue),
+            inherit: () => inheritedReferenceOf(options.provider),
+            answers,
+          },
+  });
+  if (options.inventory !== undefined) void catalogue.refresh();
+  const workshops = node.workshops.forWorkspace(options.cwd);
+  const registry = creatureRegistryAt(
+    place,
+    async () => (await sessions.composed()).composition.extensions.bots,
+  );
+  let stagedOf: (() => readonly StagedItem[]) | undefined;
+  const localSeat = creatureSeats({
+    registry,
+    workshops,
+    grants: (sessionId) => grantsHeldBy(gate.ledger, sessionId),
+    wakes: (): WakeScheduler | undefined => routines?.service,
+    payload: async (sessionId) => routines?.service.payloadOf(sessionId),
+    mail: () => mail,
+    staged: () => stagedOf?.() ?? [],
+    notice,
+  });
+  const sessions = new LiveSessions(options, gate, {
+    seatFor: async (store) => projectThreadSeat(store) ?? localSeat(store),
+    meter: (turn) => {
+      node.usage.record(turn);
+      answers.answered(turn.provider);
+    },
+    failed: (provider, error) => answers.failed(provider, error),
+    settled: (thread) => void finishThreadQuietly(thread),
+    keeper: (answered) => recordKeeperVerdict(answered, { nodeState: node.state }),
+  });
   const { composition, arcs, bots } = await sessions.composed();
+  stagedOf = stagedInbox(composition.memory);
+  const creatures = servedCreatures({
+    registry,
+    sessions: creatureSessionsOf(sessions, gate, log),
+    workshops,
+    nextRun: async (slug) => routines?.nextRun(slug),
+    spentToday: async (slug, date) => node.usage.spentOn(slug, date),
+    notice,
+  });
+  const trustedMemory = (): MemoryStore | undefined => {
+    const workspace = composition.memory();
+    return workspace?.store.trusted === true ? workspace.store : undefined;
+  };
+  const mail =
+    node.mesh === undefined ? undefined : servedMail(node.mesh, creatures, trustedMemory);
+  const finishThreadQuietly = (thread: SettledThread) =>
+    finishThread(creatures, thread).catch((cause: unknown) =>
+      notice(`thread ${thread.id.slice(0, 8)} did not report back: ${toError(cause).message}`),
+    );
+  const verbs = sessionVerbsHost(
+    sessions,
+    gate,
+    keptConversation(creatures.threads, async (slug) => (await registry.read(slug)) !== undefined),
+  );
+  const routines: ServedRoutines | undefined = options.projectTrusted
+    ? await servedRoutines({
+        state: node.routines,
+        workspace: options.cwd,
+        sessions: routineSessionsOf(sessions, verbs, creatures, gate),
+        creatures,
+        directory: creatureDirectoryOver(registry),
+        log,
+      })
+    : undefined;
+  gate.asks.decideWith(
+    keeperDecider({
+      nodeState: node.state,
+      log,
+      stored: (id) => sessions.stored(id),
+      workshopOf: (id) => sessions.liveOnly(id)?.seat()?.workshop,
+    }),
+  );
   const sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
+  const surfaces = surfacePorts({
+    ...options,
+    sessionDir,
+    arcs,
+    composition: () => Promise.resolve(composition),
+    session: (id) => sessions.bound(id),
+  });
+  const homeWorkspace = {
+    ...surfaces.workspace,
+    report: async () =>
+      ({ ...(await surfaces.workspace.report()), trust: "trusted", readiness: "ready" }) as const,
+    trust: async () => ({
+      trusted: true as const,
+      root: options.cwd,
+      vault: join(options.cwd, ".keywork", "memory"),
+      reopens: false,
+      recomposed: false,
+    }),
+  };
   return {
-    ...sessionVerbsHost(sessions, gate),
-    ...surfacePorts({
-      ...options,
-      sessionDir,
-      arcs,
-      composition: () => Promise.resolve(composition),
-      session: (id) => sessions.bound(id),
+    ...verbs,
+    ...surfaces,
+    ...(options.managedHome && { workspace: homeWorkspace }),
+    ...servedCreatureProjects({
+      ...place,
+      registry,
+      start: (request, generation) => sessions.submitProjectRequest(request, generation),
+      discuss: async (request, generation) =>
+        sessions.submitProjectRequest(
+          request,
+          generation,
+          await creatures.threads.conversationFor(request.creature.slug),
+        ),
     }),
     memory: servedMemory({ memory: composition.memory, arcs, bots }),
+    creatures,
+    ...servedCreatureMcp({ creatures, sessions, mesh: node.mesh }),
+    ...(routines !== undefined && { routines: routines.service }),
+    models: node.models,
+    workshops,
+    ...(node.mesh !== undefined && { mesh: { ...node.mesh, messages: mail } }),
+    close: async () => {
+      routines?.stop();
+      await verbs.close();
+      await routines?.close();
+      await node.usage.flush();
+    },
   };
 }
 
@@ -304,7 +528,11 @@ function servedGate(options: HostOptions & { log: EventLog }): ServedGate {
   return { asks, ledger };
 }
 
-function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate): SessionHost {
+function sessionVerbsHost(
+  sessions: LiveSessions,
+  { asks, ledger }: ServedGate,
+  keeps?: LifecycleSessions["keeps"],
+): SessionHost {
   const onLive = async <T>(
     id: string,
     act: (live: LiveSession) => T | Promise<T>,
@@ -329,7 +557,10 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
     read: (id) => sessions.read(id),
     create: () => sessions.create(),
     prompt: (id, text, behavior) => onLive(id, (live) => live.run(text, { behavior })),
-    inject: (id, text, origin) => onLive(id, (live) => live.run(text, { origin })),
+    inject: (id, text, origin) =>
+      onLive(id, (live) =>
+        origin.kind === "creature" ? live.frame(text, origin) : live.run(text, { origin }),
+      ),
     abort: async (id) => {
       const live = sessions.liveOnly(id);
       if (live !== undefined) return live.interrupt();
@@ -363,16 +594,13 @@ function sessionVerbsHost(sessions: LiveSessions, { asks, ledger }: ServedGate):
       bound: (id) => sessions.bound(id),
       moveLeaf: (id, entryId) => onLive(id, (live) => live.moveLeaf(entryId)),
     }),
-    changes: changesPortOver(
-      { has: async (id) => (await sessions.bound(id)) !== undefined },
-      (id) => sessions.changesSource(id),
-    ),
-    lifecycle: servedLifecycle({
-      sessionDir: sessions.sessionDir,
-      bound: (id) => sessions.bound(id),
-      release: (id) => sessions.release(id),
-      summaryOf: storedSummary,
-    }),
+    changes: {
+      ...changesPortOver({ has: async (id) => (await sessions.bound(id)) !== undefined }, (id) =>
+        sessions.changesSource(id),
+      ),
+      verdict: (id, verdict) => onLive(id, (live) => live.verdict(verdict)),
+    },
+    lifecycle: servedLifecycle({ ...lifecycleOf(sessions), keeps }),
     asks: async () => asks.list(),
     answerAsk: async (callId, verdict, scope, denial) =>
       asks.answer(callId, verdict, scope, denial),
@@ -407,19 +635,79 @@ interface SessionRuntime {
   notice(text: string): void;
   forge(provider: Provider, history: readonly Message[]): Agent;
   botNamed(name: string | undefined): BotDefinition | undefined;
+  seat(): CreatureSeat | undefined;
+  reseat(): Promise<void>;
+  meter(usage: Usage, provider: Provider): void;
+  failed(error: Error, provider: Provider): void;
+  settled(outcome: ThreadOutcome, lastReply: string): void;
+  keeper: ((answered: AnsweredAsk) => Promise<KeeperOutcome>) | undefined;
+}
+
+type CreatureSeams = Pick<
+  SessionRuntime,
+  "seat" | "reseat" | "meter" | "failed" | "settled" | "keeper"
+>;
+
+interface SessionSeams {
+  seatFor?(store: SessionStore): Promise<CreatureSeat | undefined>;
+  meter?(turn: MeteredTurn): void;
+  failed?(provider: string, error: Error): void;
+  settled?(thread: SettledThread): void;
+  keeper?(answered: AnsweredAsk): Promise<KeeperOutcome>;
+}
+
+const projectThreadType = "keywork.creature-project";
+
+interface ProjectThreadTag {
+  key: string;
+  creature: ProjectWorkRequest["creature"];
+}
+
+function projectThreadTag(entries: readonly SessionEntry[]): ProjectThreadTag | undefined {
+  for (const entry of entries) {
+    if (
+      entry.type !== "custom" ||
+      entry.customType !== projectThreadType ||
+      typeof entry.data !== "object" ||
+      entry.data === null
+    )
+      continue;
+    const candidate = entry.data as Partial<ProjectThreadTag>;
+    if (
+      typeof candidate.key === "string" &&
+      typeof candidate.creature?.workspace === "string" &&
+      typeof candidate.creature.slug === "string"
+    )
+      return { key: candidate.key, creature: candidate.creature };
+  }
+  return undefined;
+}
+
+function projectThreadSeat(store: SessionStore): CreatureSeat | undefined {
+  const tag = projectThreadTag(store.entries());
+  if (tag === undefined) return undefined;
+  return {
+    workshop: hostWorkshop,
+    injection: () =>
+      `This is a project thread for creature "${tag.creature.slug}". Work in the project's authorized tool scope.`,
+  };
 }
 
 class LiveSessions {
   readonly sessionDir: string;
   private readonly live = new Map<string, LiveSession>();
+  private readonly opening = new Map<string, Promise<LiveSession>>();
+  private readonly projectRequests = new Map<string, Promise<WorkspaceSessionRef>>();
   private readonly changes: ChangesFeed;
   private readonly frozenChanges = new Map<string, ChangesSummary>();
+  private readonly confinements = new Map<string, ToolPosture>();
   private readonly unjournalGrants: () => void;
   private workspace: Promise<ServedWorkspace> | undefined;
 
   constructor(
     private readonly options: HostOptions & { log: EventLog },
     private readonly gate: ServedGate,
+    private readonly seams: SessionSeams = {},
   ) {
     this.sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
     this.changes = new ChangesFeed(options.log, (id) => this.changesSource(id));
@@ -494,11 +782,76 @@ class LiveSessions {
   }
 
   async create(): Promise<SessionSummary> {
-    const store = await SessionStore.create(
-      join(this.sessionDir, newSessionFileName()),
-      this.options.cwd,
+    return (await this.adopt(await this.newStore())).summary();
+  }
+
+  async openClaimed(tag: CreatureSessionTag): Promise<string> {
+    const store = await this.newStore();
+    await claimSession(store, tag);
+    return (await this.adopt(store)).id;
+  }
+
+  submitProjectRequest(
+    request: ProjectWorkRequest,
+    generation: string,
+    conversation?: string,
+  ): Promise<WorkspaceSessionRef> {
+    const key = createHash("sha256")
+      .update(
+        JSON.stringify([
+          request.creature.workspace,
+          request.creature.slug,
+          generation,
+          request.project,
+          request.requestId,
+          conversation === undefined ? "thread" : "discussion",
+        ]),
+      )
+      .digest("hex");
+    const existing = this.projectRequests.get(key);
+    if (existing !== undefined) return existing;
+    const starting = this.submitProjectPrompt(request, key, conversation).finally(() =>
+      this.projectRequests.delete(key),
     );
-    return (await this.adopt(store)).summary();
+    this.projectRequests.set(key, starting);
+    return starting;
+  }
+
+  private async submitProjectPrompt(
+    request: ProjectWorkRequest,
+    key: string,
+    conversation: string | undefined,
+  ): Promise<WorkspaceSessionRef> {
+    const live =
+      conversation === undefined
+        ? await this.projectThread(request, key)
+        : await this.open(conversation);
+    if (live === undefined) throw new CreatureProjectError("missing-session");
+    await live.submitOnce(request.text, key);
+    return {
+      workspace: workspaceIdentity(this.options.cwd, this.options.workspaceSlug),
+      session: live.id,
+    };
+  }
+
+  private async projectThread(request: ProjectWorkRequest, key: string): Promise<LiveSession> {
+    const existing = (await scanSessions(this.sessionDir)).stores.find(
+      (store) => projectThreadTag(store.entries())?.key === key,
+    );
+    if (existing !== undefined) return this.adopt(existing);
+    const store = await this.newStore();
+    await store.appendCustom(projectThreadType, {
+      key,
+      creature: request.creature,
+      project: request.project,
+      source: request.source,
+    });
+    return this.adopt(store);
+  }
+
+  confine(id: string, posture: ToolPosture, grants: readonly GrantRule[]): void {
+    this.confinements.set(id, posture);
+    if (grants.length > 0) this.gate.ledger.record(id, "session", acceptedGrantRules(grants));
   }
 
   async open(id: string): Promise<LiveSession | undefined> {
@@ -581,7 +934,18 @@ class LiveSessions {
     return { ...storedSummary(stored, store), ...(costNanos !== undefined && { costNanos }) };
   }
 
-  private async adopt(store: SessionStore): Promise<LiveSession> {
+  private adopt(store: SessionStore): Promise<LiveSession> {
+    const id = store.header.id;
+    const live = this.live.get(id);
+    if (live !== undefined) return Promise.resolve(live);
+    const opening = this.opening.get(id);
+    if (opening !== undefined) return opening;
+    const pending = this.adoptNew(store).finally(() => this.opening.delete(id));
+    this.opening.set(id, pending);
+    return pending;
+  }
+
+  private async adoptNew(store: SessionStore): Promise<LiveSession> {
     const workspace = await this.composed();
     const { composition, agents } = workspace;
     const { options } = this;
@@ -589,6 +953,8 @@ class LiveSessions {
     const shell = new ShellSession(options.cwd);
     const turn = new TurnCheckpoint();
     const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints, turn);
+    const permissions = this.confinedResolver(store);
+    const creature = await this.creatureSeams(store);
     const runtime: SessionRuntime = {
       log: options.log,
       cwd: composition.scope.cwd,
@@ -609,10 +975,12 @@ class LiveSessions {
           history,
           sessionId: id,
           spills: store.spills(),
-          permissions: this.gate.ledger.resolverFor(id),
+          permissions,
           bot: workspace.botNamed(store.botBinding()),
+          creature: creature.seat(),
         }),
       botNamed: workspace.botNamed,
+      ...creature,
     };
     const live = new LiveSession(store, shell, runtime);
     this.live.set(id, live);
@@ -620,9 +988,44 @@ class LiveSessions {
     return live;
   }
 
+  private confinedResolver(store: SessionStore): PermissionResolver {
+    const id = store.header.id;
+    return postureResolver(
+      () => sessionPosture(creatureTagOf(store.entries())?.kind, this.confinements.get(id)),
+      this.gate.ledger.resolverFor(id),
+    );
+  }
+
+  private async creatureSeams(store: SessionStore): Promise<CreatureSeams> {
+    const { seatFor, meter, failed, settled, keeper } = this.seams;
+    const id = store.header.id;
+    let seat = await seatFor?.(store);
+    return {
+      seat: () => seat,
+      reseat: async () => {
+        seat = await seatFor?.(store);
+      },
+      meter: (usage, provider) =>
+        meter?.({
+          usage,
+          provider: provider.name,
+          model: provider.modelId,
+          creature: creatureTagOf(store.entries())?.creature ?? null,
+          session: id,
+        }),
+      failed: (error, provider) => failed?.(provider.name, error),
+      settled: (outcome, lastReply) => settled?.({ id, store, outcome, lastReply }),
+      keeper,
+    };
+  }
+
   composed(): Promise<ServedWorkspace> {
     this.workspace ??= this.compose();
     return this.workspace;
+  }
+
+  private newStore(): Promise<SessionStore> {
+    return SessionStore.create(join(this.sessionDir, newSessionFileName()), this.options.cwd);
   }
 
   private compose(): Promise<ServedWorkspace> {
@@ -658,6 +1061,7 @@ interface BoundAgent {
   agent: Agent;
   bot: string | undefined;
   journal: JournalTap;
+  keeper: KeeperTap | undefined;
   detach: () => void;
 }
 
@@ -686,6 +1090,11 @@ const untouchedFiles: StagedFiles = {
   changed: async () => [],
 };
 
+interface PromptSubmission {
+  id: string;
+  accept(): void;
+}
+
 class LiveSession {
   readonly id: string;
   private bound: BoundAgent;
@@ -694,7 +1103,9 @@ class LiveSession {
   private grantsJournaled: Promise<void> = Promise.resolve();
   private staged: StagedUndo | undefined;
   private turnPrompt: MessageEntry | undefined;
+  private turnOutcome: ThreadOutcome = "completed";
   private readonly spend: SpendLedger;
+  private readonly submissions = new Map<string, PromptSubmission>();
   private readonly finishedUsage: Usage[] = [];
 
   constructor(
@@ -727,6 +1138,73 @@ class LiveSession {
     this.settled = this.settled.then(() => turn);
     this.announce();
     return outcome;
+  }
+
+  submitOnce(text: string, id: string): Promise<void> {
+    const prior = this.store
+      .entries()
+      .find((entry): entry is MessageEntry => isPromptEntry(entry) && entry.submissionId === id);
+    if (prior !== undefined) {
+      return messageText(prior.message) === text
+        ? Promise.resolve()
+        : Promise.reject(new CreatureProjectError("request-conflict"));
+    }
+    const client = `creature-${randomUUID()}`;
+    return new Promise((resolve, reject) => {
+      this.submissions.set(client, { id, accept: resolve });
+      this.staged = undefined;
+      const turn = this.agent
+        .send(text, { origin: { kind: "external", client } })
+        .then(() => reject(new CreatureProjectError("unavailable")), reject)
+        .finally(() => this.submissions.delete(client));
+      this.settled = this.settled.then(() => turn).then(() => undefined);
+      this.announce();
+    });
+  }
+
+  async note(text: string, origin: PromptOrigin): Promise<"noted"> {
+    await this.report(text, origin);
+    this.announce();
+    return "noted";
+  }
+
+  verdict(verdict: ReviewVerdict): Promise<VerdictMark> {
+    return recordHunkVerdict(this.store, this.agent.bus, verdict);
+  }
+
+  seat(): CreatureSeat | undefined {
+    return this.runtime.seat();
+  }
+
+  async frame(text: string, origin: CreatureOrigin): Promise<"started" | "queued"> {
+    await this.report(text, origin, "frame");
+    if (this.store.name() === undefined) await this.store.setName(origin.creature);
+    const outcome = this.agent.busy() ? "queued" : "started";
+    this.staged = undefined;
+    const turn = this.agent.send(text, sendOptionsOf({ origin })).then(
+      (reply) => this.titleFromFirstReply(reply, origin.creature),
+      () => undefined,
+    );
+    this.settled = this.settled.then(() => turn);
+    this.announce();
+    return outcome;
+  }
+
+  private async report(text: string, origin: PromptOrigin, kind?: "frame"): Promise<void> {
+    const entry = await this.store.appendCreatureReport(text, origin, kind);
+    this.agent.bus.emit("extension.notice", {
+      extension: "creature",
+      level: "info",
+      message: text,
+      detail: { origin, entryId: entry.id, ...(kind !== undefined && { kind }) },
+    });
+  }
+
+  private async titleFromFirstReply(reply: Message, provisional: string): Promise<void> {
+    const said = messageText(reply).trim();
+    if (said === "" || this.store.name() !== provisional || this.store.titlePinned()) return;
+    await this.store.setName(excerpt(said, firstReplyTitleLength));
+    this.announce();
   }
 
   interrupt(): "aborted" | "idle" {
@@ -861,6 +1339,10 @@ class LiveSession {
 
   cost(): CostReport {
     return this.spend.report(this.agent);
+  }
+
+  costNanos(): number | undefined {
+    return knownCostNanos(this.cost().rollup);
   }
 
   async exportHtml(scope: ExportScope, out?: string): Promise<ExportOutcome> {
@@ -1003,6 +1485,7 @@ class LiveSession {
     const bot = this.store.botBinding();
     if (bot !== this.bound.bot) {
       if (!(await this.idle())) throw new SessionBusyError();
+      await this.runtime.reseat();
       const provider = await this.providerSeededBy(this.runtime.botNamed(bot));
       await this.swap(this.runtime.forge(provider, this.agent.history()));
     }
@@ -1040,8 +1523,12 @@ class LiveSession {
   }
 
   private async openTurn(agent: Agent): Promise<string | undefined> {
-    const written = await this.persistTurn(agent.history());
+    const origin = agent.turnOrigin();
+    const submission =
+      origin?.kind === "external" ? this.submissions.get(origin.client) : undefined;
+    const written = await this.persistTurn(agent.history(), submission?.id);
     this.turnPrompt = written.findLast(isPromptEntry);
+    if (this.turnPrompt?.submissionId === submission?.id) submission?.accept();
     return this.turnPrompt?.id;
   }
 
@@ -1059,6 +1546,9 @@ class LiveSession {
       await this.swap(this.runtime.forge(this.agent.provider, settlement.history));
     }
     this.announce();
+    if (this.agent.queued().length === 0) {
+      this.runtime.settled(this.turnOutcome, lastReplyIn(this.agent.history()));
+    }
   }
 
   private async settleToolBatch(
@@ -1078,10 +1568,19 @@ class LiveSession {
     return settlement.history;
   }
 
-  private persistTurn(history: readonly Message[]): Promise<MessageEntry[]> {
+  private persistTurn(history: readonly Message[], submissionId?: string): Promise<MessageEntry[]> {
     const unsaved = history.slice(this.persisted);
     this.persisted = history.length;
-    return Promise.all(unsaved.map((message) => this.store.append(message, this.usageOf(message))));
+    return Promise.all(
+      unsaved.map((message, index) =>
+        this.store.append(
+          message,
+          this.usageOf(message),
+          undefined,
+          index === unsaved.length - 1 && message.role === "user" ? submissionId : undefined,
+        ),
+      ),
+    );
   }
 
   private usageOf(message: Message): Usage | undefined {
@@ -1169,17 +1668,55 @@ class LiveSession {
     const detach = this.runtime.log.attach(agent.bus, this.id);
     const unfollow = this.runtime.changes.follow(agent.bus, this.id);
     const unmeter = agent.bus.on("turn.delta", ({ delta, replay }) => {
-      if (replay !== true && delta.type === "done") this.finishedUsage.push(delta.usage);
+      if (replay === true || delta.type !== "done") return;
+      this.finishedUsage.push(delta.usage);
+      this.runtime.meter(delta.usage, agent.provider);
     });
+    const unfail = agent.bus.on("engine.error", ({ error, replay }) => {
+      if (replay !== true) this.runtime.failed(error, agent.provider);
+    });
+    const untrack = this.trackTurnOutcome(agent);
     return {
       agent,
       bot: this.store.botBinding(),
       journal: tapJournal(agent.bus, this.store),
+      keeper: this.tapKeeper(agent),
       detach: () => {
         detach();
         unfollow();
         unmeter();
+        unfail();
+        untrack();
       },
+    };
+  }
+
+  private tapKeeper(agent: Agent): KeeperTap | undefined {
+    const record = this.runtime.keeper;
+    if (record === undefined) return undefined;
+    return tapKeeperVerdicts(agent.bus, {
+      session: () => this.id,
+      context: () =>
+        keeperContextOf(creatureTagOf(this.store.entries()), this.runtime.seat()?.workshop),
+      cwd: this.store.header.cwd,
+      record,
+    });
+  }
+
+  private trackTurnOutcome(agent: Agent): () => void {
+    const stops = [
+      agent.bus.on("turn.started", ({ replay }) => {
+        if (replay !== true) this.turnOutcome = "failed";
+      }),
+      agent.bus.on("turn.completed", ({ replay }) => {
+        if (replay !== true) this.turnOutcome = "completed";
+      }),
+      agent.bus.on("turn.interrupted", ({ replay }) => {
+        if (replay !== true) this.turnOutcome = "interrupted";
+      }),
+    ];
+    return () => {
+      for (const stop of stops) stop();
     };
   }
 
@@ -1202,7 +1739,9 @@ class LiveSession {
     bound.agent.settleTurnsWith(undefined);
     bound.agent.settleToolBatchesWith(undefined);
     bound.journal.stop();
+    bound.keeper?.stop();
     await bound.journal.flush();
+    await bound.keeper?.flush();
     bound.detach();
   }
 
@@ -1278,6 +1817,10 @@ class LiveSession {
     await this.runtime.changes.announce(this.id);
   }
 }
+
+type CreatureOrigin = Extract<PromptOrigin, { kind: "creature" }>;
+
+const firstReplyTitleLength = 60;
 
 const noRegistry = "this server was started without a model registry";
 
@@ -1369,6 +1912,159 @@ function storedSummary(summary: StoredSummary, store: SessionStore): SessionSumm
     ...(effort !== undefined && isEffortLevel(effort) && { effort }),
   };
 }
+
+function lifecycleOf(sessions: LiveSessions): LifecycleSessions {
+  return {
+    sessionDir: sessions.sessionDir,
+    bound: (id) => sessions.bound(id),
+    release: (id) => sessions.release(id),
+    summaryOf: storedSummary,
+  };
+}
+
+function creatureSessionsOf(
+  sessions: LiveSessions,
+  { asks }: ServedGate,
+  log: EventLog,
+): ServedCreatureSessions {
+  return {
+    stored: () => storesWithChildren(sessions.sessionDir),
+    working: (id) => sessions.liveOnly(id)?.busy() === true,
+    waiting: (id) => asks.list().filter((ask) => ask.sessionId === id).length,
+    openClaimed: (tag) => sessions.openClaimed(tag),
+    inject: async (id, text, origin) => (await sessions.open(id))?.note(text, origin) ?? "missing",
+    trash: async (id) => {
+      const outcome = await trashSession(lifecycleOf(sessions), id);
+      if (outcome === "busy") throw new SessionBusyError();
+      if (outcome !== "missing") log.record("", "session.removed", { sessionId: id });
+    },
+  };
+}
+
+async function storesWithChildren(sessionDir: string): Promise<SessionStore[]> {
+  const { stores } = await scanSessions(sessionDir);
+  const children = await Promise.all(
+    stores.map(async (store) => (await scanSessions(childDirFor(store.file))).stores),
+  );
+  return [...stores, ...children.flat()];
+}
+
+function routineSessionsOf(
+  sessions: LiveSessions,
+  verbs: SessionHost,
+  creatures: { openThread(creature: string, kind: "routine"): Promise<string> },
+  { asks }: ServedGate,
+): RoutineSessions {
+  return {
+    openThread: async (thread) => {
+      const id = await creatures.openThread(thread.creature, thread.kind);
+      await verbs.rename(id, thread.title);
+      return id;
+    },
+    confine: async (id, posture, grants) => sessions.confine(id, posture, grants),
+    prompt: (id, text) => verbs.prompt(id, text, "queue"),
+    abort: (id) => verbs.abort(id),
+    denyAsk: async (callId) => asks.answer(callId, "denied"),
+    costUsd: async (id) => {
+      const nanos = sessions.liveOnly(id)?.costNanos();
+      return nanos === undefined ? null : nanos / nanosPerDollar;
+    },
+  };
+}
+
+interface KeeperDeciderSeams {
+  nodeState: string;
+  log: Pick<EventLog, "record">;
+  stored(id: string): Promise<SessionStore | undefined>;
+  workshopOf(id: string): string | undefined;
+}
+
+export function keeperDecider(seams: KeeperDeciderSeams): AskDecider {
+  return async (ask, announced) => {
+    if (announced === undefined) return undefined;
+    const store = await seams.stored(ask.sessionId);
+    if (store === undefined) return undefined;
+    const tag = creatureTagOf(store.entries());
+    const ruling = await decideForKeeper(
+      {
+        ask: announced,
+        session: ask.sessionId,
+        context: keeperContextOf(tag, seams.workshopOf(ask.sessionId)),
+        cwd: store.header.cwd,
+      },
+      { nodeState: seams.nodeState },
+    );
+    if (!ruling.decidedForYou) return undefined;
+    seams.log.record(ask.sessionId, "extension.notice", {
+      extension: "keeper",
+      level: "info",
+      message: decidedForYouLine(ask.tool, ruling.ruleClass, ruling.recordId),
+      detail: {
+        recordId: ruling.recordId,
+        ruleClass: ruling.ruleClass,
+        callId: ask.callId,
+        tool: ask.tool,
+        ...(tag !== undefined && { creature: tag.creature }),
+      },
+    });
+    return { approved: true, gate: "headless", asked: true };
+  };
+}
+
+export function decidedForYouLine(tool: string, ruleClass: string, recordId: string): string {
+  return `decided for you: ${tool} (${ruleClass}) · overturn it with POST /creatures/{slug}/overturn { recordId: "${recordId}" }`;
+}
+
+function servedMail(
+  mesh: HouseMeshConsole,
+  creatures: Pick<CreatureHost, "inbound" | "deliver">,
+  memory: () => MemoryStore | undefined,
+): CreatureMail {
+  return creatureMail({
+    mailboxes: stagingMailboxes(creatures, memory),
+    pairs: () => mesh.pairing.pairs(),
+    client: mesh.client,
+    audit: mesh.audit,
+    self: mesh.self,
+    machine: mesh.machine,
+  });
+}
+
+function stagingMailboxes(
+  creatures: Pick<CreatureHost, "inbound" | "deliver">,
+  memory: () => MemoryStore | undefined,
+): Mailboxes {
+  return {
+    inbound: (creature) => creatures.inbound(creature),
+    deliver: async (creature, text, origin) => {
+      const outcome = await creatures.deliver(creature, text, origin);
+      const store = memory();
+      if (outcome === "missing" || store === undefined) return outcome;
+      await rememberFrom(
+        store,
+        { kind: "creature", id: origin.creature },
+        {
+          title: `message from ${origin.creature} ${origin.thread.slice(0, 8)}`,
+          body: text,
+          self: creature,
+        },
+      ).catch(() => undefined);
+      return outcome;
+    },
+  };
+}
+
+function grantsHeldBy(ledger: PermissionLedger, sessionId: string): PermissionRule[] {
+  const view = ledger.view();
+  return [...view.bundle, ...view.workspace, ...(view.session[sessionId] ?? [])];
+}
+
+function lastReplyIn(history: readonly Message[]): string {
+  const reply = history.findLast((message) => message.role === "assistant");
+  return reply === undefined ? "" : textOf(reply);
+}
+
+const nanosPerDollar = 1_000_000_000;
 
 function untilAborted(signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {

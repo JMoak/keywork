@@ -1,5 +1,5 @@
 import { type SessionStore, SessionTrash } from "@keywork/engine";
-import type { SessionLifecyclePort, SessionSummary } from "@keywork/server";
+import type { Refusal, SessionLifecyclePort, SessionSummary } from "@keywork/server";
 import type { ServedSession } from "./serve-surfaces.ts";
 import { discardTrashed, restoreSession, trashStore } from "./sessions/lifecycle.ts";
 import { type SessionSummary as StoredSummary, scanSessions, summarize } from "./sessions/store.ts";
@@ -9,6 +9,7 @@ export interface LifecycleSessions {
   bound(id: string): Promise<ServedSession | undefined>;
   release(id: string): Promise<void>;
   summaryOf(stored: StoredSummary, store: SessionStore): SessionSummary;
+  keeps?: ((id: string, store: SessionStore) => Promise<string | undefined>) | undefined;
 }
 
 export function servedLifecycle(sessions: LifecycleSessions): SessionLifecyclePort {
@@ -16,13 +17,11 @@ export function servedLifecycle(sessions: LifecycleSessions): SessionLifecyclePo
   const wireSummary = async (store: SessionStore): Promise<SessionSummary> =>
     sessions.summaryOf(await summarize(store), store);
   return {
-    remove: async (id) => {
-      const session = await sessions.bound(id);
-      if (session === undefined) return "missing";
-      if (session.busy()) return "busy";
-      await sessions.release(id);
-      return sessions.summaryOf(await trashStore(sessionDir, session.store), session.store);
-    },
+    remove: (id) =>
+      trashSession(sessions, id, async (session) => {
+        const kept = await sessions.keeps?.(id, session.store);
+        if (kept !== undefined) throw new Error(kept);
+      }),
     trash: async () => {
       const { stores } = await scanSessions(new SessionTrash(sessionDir).dir);
       const summaries = await Promise.all(stores.map(wireSummary));
@@ -40,6 +39,19 @@ export function servedLifecycle(sessions: LifecycleSessions): SessionLifecyclePo
     },
     purge: () => new SessionTrash(sessionDir).purge(),
   };
+}
+
+export async function trashSession(
+  sessions: LifecycleSessions,
+  id: string,
+  admit: (session: ServedSession) => Promise<void> = async () => {},
+): Promise<SessionSummary | Refusal> {
+  const session = await sessions.bound(id);
+  if (session === undefined) return "missing";
+  if (session.busy()) return "busy";
+  await admit(session);
+  await sessions.release(id);
+  return sessions.summaryOf(await trashStore(sessions.sessionDir, session.store), session.store);
 }
 
 function summaryFields(stored: StoredSummary): Omit<SessionSummary, "id"> {

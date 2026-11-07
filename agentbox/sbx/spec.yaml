@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "2",
+  "kind": "sandbox",
+  "name": "stead-workshop",
+  "version": "0.1.0",
+  "args": {
+    "image": {
+      "required": true,
+      "description": "Digest-pinned docker/sandbox-templates shell image",
+      "pattern": "^docker/sandbox-templates@sha256:[a-f0-9]{64}$"
+    }
+  },
+  "environment": {
+    "variables": {
+      "DISPLAY": ":99",
+      "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt"
+    }
+  },
+  "permissions": {
+    "network": {
+      "allow": [
+        "archive.ubuntu.com",
+        "security.ubuntu.com",
+        "ports.ubuntu.com"
+      ]
+    }
+  },
+  "sandbox": {
+    "image": "${{ kit.args.image }}",
+    "entrypoint": [
+      "/bin/bash",
+      "-l"
+    ]
+  },
+  "setup": {
+    "install": [
+      {
+        "command": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb imagemagick && rm -rf /var/lib/apt/lists/*",
+        "user": "0",
+        "description": "Install Xvfb and ImageMagick for the workshop's viewable display"
+      }
+    ],
+    "files": [
+      {
+        "path": "/home/agent/.local/bin/stead-display",
+        "mode": "0755",
+        "content": "#!/bin/sh\nset -eu\nscreen=\":99\"\nsocket=\"/tmp/.X11-unix/X99\"\ncase \"${1:-}\" in\n  snapshot)\n    command -v Xvfb >/dev/null 2>&1 || exit 3\n    command -v import >/dev/null 2>&1 || exit 3\n    if [ ! -S \"$socket\" ]; then\n      Xvfb \"$screen\" -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &\n      for _ in 1 2 3 4 5 6 7 8 9 10; do\n        [ -S \"$socket\" ] && break\n        sleep 0.2\n      done\n    fi\n    [ -S \"$socket\" ] || exit 3\n    DISPLAY=\"$screen\" import -window root -resize '1024x768>' png:- | base64 -w0\n    ;;\n  *)\n    echo \"usage: stead-display snapshot\" >&2\n    exit 64\n    ;;\nesac\n"
+      }
+    ]
+  }
+}

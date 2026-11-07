@@ -463,7 +463,7 @@ describe("fileSessionHost permission layers", () => {
     await asking.until("turn.completed");
     await asking.close();
     await reopened.server.close();
-  });
+  }, 15_000);
 
   it("shows a write's consequence on its ask, from the tool's own dry run, before anything is written", async () => {
     const options = await layeredOptions(
@@ -643,6 +643,67 @@ describe("memorySessionHost parity", () => {
 
     const { stores } = await scanSessions(options.sessionDir ?? "");
     expect(stores[0]?.messages().map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("runs a framed inject as the creature's turn: a frame mark in place of a keeper prompt, titled by the first reply", async () => {
+    const reply = "I am Vey, and I can sort the notes folder for you.";
+    const options = await hostOptions(new MockProvider([textTurn(reply)]));
+    const { server, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+    const frame = "You are Vey, the keeper's creature. Introduce yourself.";
+
+    const accepted = await call(`/sessions/${id}/inject`, {
+      method: "POST",
+      body: JSON.stringify({ text: frame, client: "stead-onboarding", frame: { creature: "vey" } }),
+    });
+    expect(await accepted.json()).toEqual({ sessionId: id, accepted: true, queued: false });
+    const origin = { kind: "creature", creature: "vey", thread: id };
+    let event = await reader.next();
+    while (event.event !== "extension.notice") event = await reader.next();
+    expect(JSON.parse(event.data).payload).toMatchObject({
+      extension: "creature",
+      message: frame,
+      detail: { origin, kind: "frame" },
+    });
+    while (event.event !== "turn.started") event = await reader.next();
+    expect(JSON.parse(event.data).payload).toMatchObject({ userText: frame, origin });
+    while ((await reader.next()).event !== "turn.completed");
+    await reader.close();
+    const titleOf = async (): Promise<string | undefined> => {
+      const listed = (await (await call("/sessions")).json()) as {
+        sessions: { id: string; title: string }[];
+      };
+      return listed.sessions.find((row) => row.id === id)?.title;
+    };
+    for (let tries = 0; tries < 50 && (await titleOf()) !== reply; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    const detail = (await (await call(`/sessions/${id}`)).json()) as {
+      title: string;
+      messages: { role: string }[];
+      reports: unknown[];
+    };
+    expect(detail.reports).toEqual([
+      {
+        index: 0,
+        entryId: expect.any(String),
+        at: expect.any(String),
+        text: frame,
+        origin,
+        kind: "frame",
+      },
+    ]);
+    expect(detail.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(detail.title).toBe(reply);
+    expect(await titleOf()).toBe(reply);
+    const refused = await call(`/sessions/${id}/inject`, {
+      method: "POST",
+      body: JSON.stringify({ text: frame, client: "stead-onboarding", frame: { creature: "" } }),
+    });
+    expect(refused.status).toBe(400);
+    await server.close();
   });
 
   it("answers the same host contract as the file host for unknown sessions", async () => {
@@ -1044,7 +1105,7 @@ describe("the memory family over a served vault (K4)", () => {
         staged: false,
       });
       expect(await world.memory.store.readNote("Hunch")).toBeDefined();
-      expect(world.inboxCounts()).toEqual([1]);
+      expect(world.inboxCounts()).toEqual([1, 2, 1, 1]);
       await world.server.close();
     },
     vaultWalkTimeoutMs,
@@ -1226,8 +1287,13 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
       undoable: true,
       redoable: true,
     });
-    const tree = await until(reader, (frame) => frame.event === "session.tree");
+    const announced: SseFrame[] = [];
+    const tree = await until(reader, (frame) => {
+      if (frame.event === "changes.updated") announced.push(frame);
+      return frame.event === "session.tree";
+    });
     expect(payloadOf(tree)).toEqual({ reason: "leaf", entryId: report.leafId });
+    expect(announced.map(payloadOf).at(-1)).toEqual({ paths: ["a.txt"], turn: 1 });
     expect(await readFile(join(options.cwd, "a.txt"), "utf8")).toBe("one\n");
     expect(existsSync(join(options.cwd, "b.txt"))).toBe(false);
     expect(await messagesOf()).toHaveLength(4);

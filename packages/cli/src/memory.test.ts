@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -35,8 +36,21 @@ async function declaredWorkspace(): Promise<string> {
 }
 
 describe("openWorkspaceMemory", () => {
-  it("is absent without a workspace declaration", async () => {
-    expect(openWorkspaceMemory(await tempDir(), true)).toBeUndefined();
+  it("is absent in an untrusted folder without a workspace declaration", async () => {
+    expect(openWorkspaceMemory(await tempDir(), false)).toBeUndefined();
+  });
+
+  it("opens a trusted folder's vault without a declaration, creating it on the first write", async () => {
+    const cwd = await tempDir();
+    const memory = openWorkspaceMemory(cwd, true);
+    expect(memory?.store.trusted).toBe(true);
+    expect(memory?.vaultRoot).toBe(join(cwd, ".keywork", "memory"));
+    expect(await memory?.store.listStaged()).toEqual([]);
+    expect(await memory?.store.listNotes()).toEqual([]);
+    expect(existsSync(join(cwd, ".keywork"))).toBe(false);
+
+    await memory?.store.writeNote({ title: "First", body: "kept\n", provenance: "user" });
+    expect(await readFile(join(cwd, ".keywork", "memory", "First.md"), "utf8")).toContain("kept");
   });
 
   it("opens the vault at .keywork/memory for a declared workspace", async () => {

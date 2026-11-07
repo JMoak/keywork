@@ -1,11 +1,33 @@
-import type { EngineEvents, EventBus } from "@keywork/engine";
+import type {
+  CreatureChanged,
+  EngineEvents,
+  EventBus,
+  RoutineFinished,
+  RoutineFired,
+  RoutineNeedsYou,
+  WorkshopChange,
+} from "@keywork/engine";
 import type { ChangesUpdate } from "./changes.ts";
 import type { SessionSettlement, SessionState } from "./host.ts";
+import type {
+  MeshGrantChange,
+  MeshListenerChange,
+  MeshPairChange,
+  MeshPairingChange,
+  MeshPeersChange,
+  MeshRevocationChange,
+  MeshWalk,
+} from "./mesh-events.ts";
 import type { SurfaceKind } from "./routes/answers.ts";
 import type { InboxTally } from "./routes/memory.ts";
 import type { TreeChange } from "./routes/tree.ts";
 
 export type EngineEventType = keyof EngineEvents;
+
+export interface ModelsChanged {
+  node: string;
+  reason: "probe" | "manifest" | "health";
+}
 
 export interface ServerEvents {
   "memory.inbox": InboxTally;
@@ -16,6 +38,19 @@ export interface ServerEvents {
   "session.removed": { sessionId: string };
   "session.restored": { sessionId: string };
   "session.settled": SessionSettlement;
+  "creature.changed": CreatureChanged;
+  "routine.fired": RoutineFired;
+  "routine.finished": RoutineFinished;
+  "routine.needs": RoutineNeedsYou;
+  "workshop.changed": WorkshopChange;
+  "models.changed": ModelsChanged;
+  "mesh.listener": MeshListenerChange;
+  "mesh.pairing": MeshPairingChange;
+  "mesh.pair": MeshPairChange;
+  "mesh.grant": MeshGrantChange;
+  "mesh.revocation": MeshRevocationChange;
+  "mesh.walked": MeshWalk;
+  "mesh.peers": MeshPeersChange;
 }
 
 export const serverEventTypes = [
@@ -27,6 +62,19 @@ export const serverEventTypes = [
   "session.removed",
   "session.restored",
   "session.settled",
+  "creature.changed",
+  "routine.fired",
+  "routine.finished",
+  "routine.needs",
+  "workshop.changed",
+  "models.changed",
+  "mesh.listener",
+  "mesh.pairing",
+  "mesh.pair",
+  "mesh.grant",
+  "mesh.revocation",
+  "mesh.walked",
+  "mesh.peers",
 ] as const satisfies readonly (keyof ServerEvents)[];
 
 export type ServerEventType = (typeof serverEventTypes)[number];
@@ -55,6 +103,8 @@ export const engineEventTypes = [
   "turn.delta",
   "turn.completed",
   "turn.interrupted",
+  "turn.waiting",
+  "turn.resumed",
   "queue.changed",
   "tool.started",
   "tool.output",
@@ -65,6 +115,7 @@ export const engineEventTypes = [
   "session.mode",
   "context.injected",
   "memory.decided",
+  "model.fallback",
   "child.started",
   "child.finished",
   "diagnostics.published",

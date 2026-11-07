@@ -1,17 +1,22 @@
 import {
+  type CapabilityLookup,
   type CredentialHandle,
   type CredentialMaterial,
   type CredentialState,
   type CredentialVault,
   credentialsFromEnv,
+  type Decider,
+  deciderFor,
   type FetchLike,
   formatReference,
   type InferenceBinding,
   InferenceRegistry,
   isLoopbackEndpoint,
+  type LocalServerDirectory,
   type ModelSpec,
   type Provider,
   type ProviderRegistration,
+  probedCapabilities,
   providerFor,
   type Resolution,
   ResolutionError,
@@ -38,6 +43,7 @@ export interface InferenceInputs {
   observations?: ObservationMap | undefined;
   persistCredential?: PersistCredential | undefined;
   fetchFn?: FetchLike | undefined;
+  localServers?: LocalServerDirectory | undefined;
 }
 
 export interface BoundProvider {
@@ -52,6 +58,8 @@ export interface InferenceRuntime {
   resolve(request: ResolutionRequest): Resolution;
   open(request: ResolutionRequest): BoundProvider;
   provider(binding: InferenceBinding): Provider;
+  decider(binding: InferenceBinding): Decider;
+  capabilityOf: CapabilityLookup;
 }
 
 export function composeInference(inputs: InferenceInputs): InferenceRuntime {
@@ -70,16 +78,19 @@ export function composeInference(inputs: InferenceInputs): InferenceRuntime {
     }
     registry.register(connectionRegistration(name, connection, inputs, materials));
   }
-  const provider = (binding: InferenceBinding): Provider =>
-    providerFor(binding, {
-      vault,
-      ...(inputs.fetchFn !== undefined && { fetchFn: inputs.fetchFn }),
-    });
+  const adapters = {
+    vault,
+    ...(inputs.fetchFn !== undefined && { fetchFn: inputs.fetchFn }),
+    ...(inputs.localServers !== undefined && { localServers: inputs.localServers }),
+  };
+  const provider = (binding: InferenceBinding): Provider => providerFor(binding, adapters);
   return {
     registry,
     warnings,
     resolve: (request) => registry.resolve(request),
     provider,
+    decider: (binding) => deciderFor(binding, adapters),
+    capabilityOf: capabilityLookupOver(inputs.localServers),
     open: (request) => {
       const resolution = registry.resolve(request);
       if (!resolution.ok) throw new ResolutionError(resolution.failure);
@@ -90,6 +101,12 @@ export function composeInference(inputs: InferenceInputs): InferenceRuntime {
       };
     },
   };
+}
+
+export function capabilityLookupOver(
+  directory: LocalServerDirectory | undefined,
+): CapabilityLookup {
+  return directory === undefined ? () => undefined : probedCapabilities(directory);
 }
 
 export const connectHint = `No inference provider yet. Pick one:

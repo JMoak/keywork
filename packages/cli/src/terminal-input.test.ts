@@ -1,5 +1,5 @@
 import { PassThrough } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   isInteractive,
   type KeyPress,
@@ -114,7 +114,13 @@ describe("terminalInput on a terminal", () => {
     expect(input.rawModeChanges.at(-1)).toBe(false);
   });
 
-  it("carries line history across reads so the up arrow recalls the last answer", async () => {
+  it("carries line history across reads so the up arrow recalls the last answer", async ({
+    onTestFinished,
+  }) => {
+    vi.stubEnv("TERM", "xterm-256color");
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
     const { input, terminal } = interactive();
     const first = terminal.readLine("› ");
     input.write(`first prompt${enter}`);

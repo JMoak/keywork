@@ -1,4 +1,4 @@
-import type { AuditEntry } from "./audit.ts";
+import { type AuditEntry, parseAuditLog } from "./audit.ts";
 import type { BootstrapInjection } from "./bootstrap.ts";
 import { titleKey } from "./naming.ts";
 import { extractWikilinks, type Provenance } from "./notes.ts";
@@ -221,6 +221,14 @@ export function parseCitationEvents(
   return events;
 }
 
+export function auditWithoutCitations(raw: string, noteKeys: ReadonlySet<string>): string {
+  if (noteKeys.size === 0) return raw;
+  return raw
+    .split("\n")
+    .filter((line) => !citesAny(line, noteKeys))
+    .join("\n");
+}
+
 export interface CitationChainHop {
   note: string;
   provenance: Provenance;
@@ -283,6 +291,12 @@ function parseCitationAuditLine(
   const surface = asRecallSurface(rawSurface);
   if (surface === undefined) return undefined;
   return { kind: "recall", note, surface, timestamp, ...trail };
+}
+
+function citesAny(line: string, noteKeys: ReadonlySet<string>): boolean {
+  return parseCitationEvents(parseAuditLog(line)).some((event) =>
+    noteKeys.has(titleKey(event.note)),
+  );
 }
 
 function asRecallSurface(value: string | undefined): RecallSurface | undefined {

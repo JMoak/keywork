@@ -43,7 +43,7 @@ export const memoryRoutes = [
     path: "/memory/inbox",
     operationId: "listMemoryInbox",
     summary:
-      "Items waiting for a person: untrusted writes held in staging and the gardener's review proposals, each as the engine's `StagedItem` with its `kind`. `count` is the number the `memory.inbox` event carries.",
+      "Items waiting for a person: untrusted writes held in staging and the gardener's review proposals, each as the engine's `StagedItem` with its `kind`. The admission policy never lands what an untrusted source wrote (a web page, a workshop's output, another creature's message): it waits here, and its staged write names the source in `source` (`web:<origin>`, `workshop:<id>`, `creature:<slug>`) and whom it was for in `for` (`creature:<slug>` when it reached that creature, else `keeper`; an item staged before addressees reads `keeper`), so approve admits it and discard drops it. `count` is the number the `memory.inbox` event carries.",
     authenticated: true,
     responses: { "200": "The staged items and their count." },
   },
@@ -77,7 +77,7 @@ export const memoryRoutes = [
     path: "/memory/notes",
     operationId: "listMemoryNotes",
     summary:
-      "Every note the agent can recall, as the engine's `Note` plus the layer it lives in, its file on disk, whether the bootstrap injects it into the system prompt, how often it was recalled since the last sweep and its curing stage (0 raw, 1 has a confidence, 2 has proved useful, 3 settled). `?layer=<id>` keeps one layer.",
+      "Every note the agent can recall, as the engine's `Note` plus the layer it lives in, its file on disk, whether the bootstrap injects it into the system prompt, how often it was recalled since the last sweep and its curing stage (0 raw, 1 has a confidence, 2 has proved useful, 3 settled). A creature's craft memory, what it learned about its own work as distinct from the keeper's notes, is the named section of its layer whose notes carry `section: craft` in their frontmatter; where a note came from rides in `origin_source` (and `origin_creature`). `?layer=<id>` keeps one layer.",
     authenticated: true,
     responses: { "200": "The notes." },
   },

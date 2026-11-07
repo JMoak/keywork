@@ -119,14 +119,30 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: keywork-npm
           path: dist/npm
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-      - run: cd dist/npm && npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          node-version: 24
+      - run: npm install -g npm@12.2.2 && npm --version
+      - name: verify npm package identity and release tag
+        working-directory: dist/npm
+        run: |
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+            assert.equal(manifest.name, "keywork-cli");
+            assert.equal(process.env.GITHUB_REF_NAME, `v${manifest.version}`);
+            assert.notEqual(manifest.private, true);
+            assert.equal(manifest.repository.url, "git+https://github.com/JMoak/keywork.git");
+          '
+      - name: inspect the package to be staged
+        working-directory: dist/npm
+        run: npm pack --dry-run
+      - name: stage with trusted publishing
+        working-directory: dist/npm
+        run: npm stage publish --access public --tag latest --loglevel verbose

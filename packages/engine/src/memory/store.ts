@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { anchorFrontmatter, type CheckpointAnchor } from "./anchors.ts";
 import { type AuditEntry, auditLine, parseAuditLog } from "./audit.ts";
 import { type BootstrapSelection, mostUsefulFirst, selectWithinBudget } from "./bootstrap.ts";
+import { auditWithoutCitations } from "./citations.ts";
 import { type Frontmatter, parseDocument, serializeDocument } from "./frontmatter.ts";
 import {
   auditSegmentHost,
@@ -53,13 +54,17 @@ import {
   withoutDailyEntries,
 } from "./notes.ts";
 import { type NamedSecret, redactForPersistence } from "./redaction.ts";
+import { type MemorySource, originFrontmatter, sourceText } from "./sources.ts";
 import {
   admitReviews,
   adoptionDeltas,
   describeStaged,
   isStagedWrite,
+  isStagingPath,
+  keeperAddressee,
   type ReviewProposal,
   redactedReview,
+  type StagedAddressee,
   type StagedItem,
   type StagedReview,
   type StagedReviewMeta,
@@ -109,6 +114,16 @@ export interface NoteInput {
   learnedBy?: string;
   anchor?: CheckpointAnchor;
   session?: string;
+  origin?: MemorySource;
+  addressee?: StagedAddressee;
+}
+
+export interface SourcedRemoval {
+  notes: readonly string[];
+  entries: readonly string[];
+  cited: readonly string[];
+  staged?: readonly string[];
+  echo: string;
 }
 
 export interface WriteResult {
@@ -170,6 +185,7 @@ export class MemoryStore {
   private readonly learnedBy: string | undefined;
   private readonly log: LedgerEntry[] = [];
   private turn: Promise<unknown> = Promise.resolve();
+  private readonly stagedListeners = new Set<() => void>();
 
   constructor(options: MemoryStoreOptions) {
     this.vaultRoot = resolve(options.vaultRoot);
@@ -291,7 +307,7 @@ export class MemoryStore {
       const supersedes = await this.resolveSupersedes(input);
       const content = await this.noteContent(input, target, supersedes);
       if (input.provenance === "untrusted")
-        return this.stage("note", target.path, content, supersedes);
+        return this.stage("note", target.path, content, supersedes, input.origin, input.addressee);
       const deltas = await this.noteDeltas(target, content, supersedes);
       const op: LedgerOp = deltas[0]?.before === null ? "create" : "edit";
       return this.commit(op, deltas, target.path, false);
@@ -420,6 +436,25 @@ export class MemoryStore {
       const subject = stagedSubjectPath(item);
       await this.commitWithEcho("discard", deltas, subject, `discarded ${describeStaged(item)}`);
     });
+  }
+
+  async forgetSourced(removal: SourcedRemoval): Promise<WriteResult> {
+    this.gate();
+    return this.serialized(async () => {
+      const moment = this.now();
+      const deltas = [
+        ...(await this.removalDeltas(removal.notes)),
+        ...(await this.dailyRemovalDeltas(removal.entries)),
+        ...(await this.stagedRemovalDeltas(removal.staged ?? [])),
+        ...(await this.auditRemovalDeltas(removal.cited, this.redact(removal.echo), moment)),
+      ];
+      return this.commit("edit", deltas, removal.notes[0] ?? this.auditPath(), false, moment);
+    });
+  }
+
+  onStaged(listener: () => void): () => void {
+    this.stagedListeners.add(listener);
+    return () => this.stagedListeners.delete(listener);
   }
 
   async revert(ledgerId: string): Promise<RevertOutcome> {
@@ -558,6 +593,8 @@ export class MemoryStore {
       ...(learnedBy !== undefined && { learned_by: learnedByLink(learnedBy) }),
       ...(input.anchor !== undefined && anchorFrontmatter(input.anchor)),
       ...sessionOrigin(inherited, input.session),
+      ...(input.origin !== undefined &&
+        originFrontmatter(inherited, this.redactedOrigin(input.origin))),
     };
   }
 
@@ -594,12 +631,16 @@ export class MemoryStore {
     target: string,
     content: string,
     supersedes?: string,
+    origin?: MemorySource,
+    addressee: StagedAddressee = keeperAddressee,
   ): Promise<WriteResult> {
     const meta = {
       kind,
       target,
       created: this.now().toISOString(),
       ...(supersedes !== undefined && { supersedes }),
+      ...(origin !== undefined && { source: sourceText(this.redactedOrigin(origin)) }),
+      for: addressee,
     };
     return this.commit("create", stagedWriteDeltas(meta, content), target, true);
   }
@@ -647,13 +688,56 @@ export class MemoryStore {
   }
 
   private async forgetDeltas(forget: ForgetReview): Promise<FileDelta[]> {
-    const deltas: FileDelta[] = [];
+    const paths: string[] = [];
     for (const name of forget.notes) {
       const path = await this.resolveNotePath(name);
-      const raw = path === undefined ? null : await this.files.read(path);
-      if (path !== undefined && raw !== null) deltas.push(fileDelta(path, raw, null));
+      if (path !== undefined) paths.push(path);
     }
-    for (const [date, indexes] of dailyEntryIndexesByDate(forget.entries)) {
+    return [
+      ...(await this.removalDeltas(paths)),
+      ...(await this.dailyRemovalDeltas(forget.entries)),
+    ];
+  }
+
+  private async removalDeltas(paths: readonly string[]): Promise<FileDelta[]> {
+    const deltas: FileDelta[] = [];
+    for (const path of paths) {
+      const raw = this.files.isNotePath(path) ? await this.files.read(path) : null;
+      if (raw !== null) deltas.push(fileDelta(path, raw, null));
+    }
+    return deltas;
+  }
+
+  private async auditRemovalDeltas(
+    cited: readonly string[],
+    echo: string,
+    moment: Date,
+  ): Promise<FileDelta[]> {
+    const notes = new Set(cited.map(titleKey));
+    const own = this.auditPath();
+    const segments = (await this.files.fileNames("")).filter(isAuditSegmentPath);
+    const deltas: FileDelta[] = [];
+    for (const path of new Set([auditFile, ...segments, own])) {
+      const before = await this.files.read(path);
+      if (before === null && path !== own) continue;
+      const kept = auditWithoutCitations(before ?? "", notes);
+      const after = path === own ? `${kept}${auditLine(moment.toISOString(), echo)}` : kept;
+      if (after !== before) deltas.push(fileDelta(path, before, after));
+    }
+    return deltas;
+  }
+
+  private redactedOrigin(origin: MemorySource): MemorySource {
+    return {
+      ...origin,
+      id: this.redact(origin.id),
+      ...(origin.note !== undefined && { note: this.redact(origin.note) }),
+    };
+  }
+
+  private async dailyRemovalDeltas(entryIds: readonly string[]): Promise<FileDelta[]> {
+    const deltas: FileDelta[] = [];
+    for (const [date, indexes] of dailyEntryIndexesByDate(entryIds)) {
       const placed = await this.placedDailyEntries(date);
       for (const [path, dropped] of segmentIndexes(placed, indexes)) {
         const raw = await this.files.read(path);
@@ -739,7 +823,19 @@ export class MemoryStore {
     this.log.push(entry);
     if (this.log.length > this.ledgerCapacity)
       this.log.splice(0, this.log.length - this.ledgerCapacity);
+    if (deltas.some((delta) => isStagingPath(delta.path))) this.announceStaged();
     return { path, staged, ledgerId: entry.id };
+  }
+
+  private announceStaged(): void {
+    for (const listener of [...this.stagedListeners]) listener();
+  }
+
+  private async stagedRemovalDeltas(ids: readonly string[]): Promise<FileDelta[]> {
+    const deltas: FileDelta[] = [];
+    for (const id of ids)
+      deltas.push(...(await this.staging.removalDeltas(await this.staging.require(id))));
+    return deltas;
   }
 
   private async apply(delta: FileDelta): Promise<void> {

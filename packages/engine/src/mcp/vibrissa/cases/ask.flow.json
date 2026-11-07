@@ -1,0 +1,46 @@
+{
+  "name": "ask: words land as a note and a poll says the creature has not answered yet",
+  "tags": ["flow"],
+  "steps": [
+    {
+      "name": "ask",
+      "tool": "ask",
+      "args": {
+        "text": "is the build green?"
+      },
+      "capture": {
+        "handle": "structuredContent.handle"
+      },
+      "expect": {
+        "$partial": true,
+        "structuredContent": {
+          "handle": {
+            "$type": "string"
+          },
+          "state": "waiting"
+        },
+        "isError": false
+      }
+    },
+    {
+      "name": "poll",
+      "tool": "ask",
+      "args": {
+        "handle": "{{handle}}"
+      },
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": "pip has not answered yet; it answers when it next works"
+          }
+        ],
+        "structuredContent": {
+          "handle": "{{handle}}",
+          "state": "waiting"
+        },
+        "isError": false
+      }
+    }
+  ]
+}

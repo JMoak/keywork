@@ -3,6 +3,7 @@ import {
   formatReference,
   formatTokenCount,
   type InferenceRegistry,
+  licenseAcknowledgementCapability,
   type ProviderRegistration,
   protocols,
   type ResolutionFailure,
@@ -57,7 +58,9 @@ export function nextActionFor(
     case "unsupported-protocol":
       return `set it to one of ${protocols.join(", ")}`;
     case "missing-capability":
-      return `declare models["${failure.model}"].${failure.capability}: true once the model supports it`;
+      return failure.capability === licenseAcknowledgementCapability
+        ? "acknowledge the license in the mills pane or with keywork models ack"
+        : `declare models["${failure.model}"].${failure.capability}: true once the model supports it`;
     case "insecure-endpoint":
       return `use an https:// endpoint, or set connections.${failure.provider}.insecureTransport after reading its risk note`;
   }

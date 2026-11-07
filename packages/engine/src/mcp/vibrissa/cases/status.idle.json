@@ -1,0 +1,18 @@
+{
+  "name": "status: a creature with nothing on reads idle",
+  "tool": "status",
+  "args": {},
+  "expect": {
+    "content": [
+      {
+        "type": "text",
+        "text": "pip is idle"
+      }
+    ],
+    "structuredContent": {
+      "creature": "pip",
+      "status": "idle"
+    },
+    "isError": false
+  }
+}

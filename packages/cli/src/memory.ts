@@ -34,7 +34,7 @@ import {
   titleKey,
   vaultHost,
 } from "@keywork/engine";
-import { resolveVaultPath, toError } from "@keywork/shared";
+import { resolveAnchor, resolveVaultPath, toError } from "@keywork/shared";
 import type {
   AirlockDigestView,
   ArcAirlockPort,
@@ -79,7 +79,7 @@ export function openWorkspaceMemory(
   trusted: boolean,
   slug?: string,
 ): WorkspaceMemory | undefined {
-  const vaultRoot = resolveVaultPath(cwd, slug);
+  const vaultRoot = resolveVaultPath(cwd, slug) ?? (trusted ? undeclaredVaultPath(cwd) : undefined);
   if (vaultRoot === undefined) return undefined;
   const host = vaultHost(vaultRoot);
   const store = new MemoryStore({ vaultRoot, trusted, ...(host !== undefined && { host }) });
@@ -94,6 +94,10 @@ export function openWorkspaceMemory(
       : new AskGateLedger(),
     ...(lease !== undefined && { lease }),
   };
+}
+
+function undeclaredVaultPath(cwd: string): string {
+  return join(resolveAnchor(cwd).root, ".keywork", "memory");
 }
 
 export type SessionKey = string | (() => string | undefined);

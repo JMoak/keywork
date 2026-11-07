@@ -131,6 +131,33 @@ clock, so every timestamp is deterministic under test.
     values and saved keys. Jev's odds never move the Gardener past policy: a pair
     relation acts alone only at 0.95 with TypeSafe's confidence at 0.90 and only inside
     the blast radius, and is a card below that.
+12. **Forget by source is a dry run, then an explicit apply** (milestone two, 2026-11-06).
+    A source is `session:<id>`, `creature:<slug>`, `web:<origin>`, `workshop:<id>`,
+    `craft:<slug>` or `craft:<slug>/<note>` (`sources.ts`). `planSourceForget` touches
+    nothing and lists exactly what would go: the notes the source wrote (matched by
+    `origin_session`, `origin_creature`, `origin_source` or the craft section) with each
+    one's first line, the checkpoint anchors they carry, every graph edge touching them,
+    the recall and citation lines naming them in the curation audit and, for a session,
+    its daily entries, with a count per list and a `digest` over the plan and the notes'
+    bytes. `applySourceForget` re-plans and refuses (`StaleForgetPlanError`) unless the
+    digest still matches, then removes all of it in one ledger entry (notes, daily
+    entries, the audit lines) and appends `forgot <source> · <counts>` to the audit in
+    the same step, so one `revert` restores everything byte for byte. A session's mixed
+    provenance is kept with the reason, as invariant 8 keeps it. Served as
+    `POST /memory/forget/preview` and `POST /memory/forget/apply` through the memory
+    port's optional `forgetting` (`sourceForgetting(workspaceOrCraftStore(...))`).
+13. **Untrusted sources are staged by policy, never admitted** (2026-11-06). The admission
+    policy (`admission.ts`) stages what a web page, a workshop's output or another
+    creature's message would write (`provenance: untrusted`), and admits the keeper's own
+    sessions, a creature's own words and its craft. `rememberFrom` stamps the note's
+    first `origin_source` (and `origin_creature`), redacted, and the staged write carries
+    the same string in `source` so the inbox can name it; approve admits, discard drops.
+    A needs-you item comes from the client's existing inbox threshold (3), not per item.
+14. **Craft memory is a named section of a creature's layer** (2026-11-06). What a
+    creature learned about doing its own work (`learnCraft`, provenance `agent`) carries
+    `section: craft` in frontmatter, apart from the keeper's notes; `craftNotes` lists it,
+    the profile shows it, edits are the note's file (files are truth) and forgetting one
+    lesson or the whole section is forget by source with `craft:<slug>[/<note>]`.
 
 ## Multi-host vaults
 

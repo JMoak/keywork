@@ -1,0 +1,66 @@
+export {
+  type CensusManifest,
+  type CensusOptions,
+  type CensusPair,
+  type CensusPeer,
+  type MeshCensus,
+  readPeerManifest,
+  takeCensus,
+} from "./census.ts";
+export {
+  type Gpu,
+  gpuSchema,
+  nvidiaGpus,
+  nvidiaSmiQuery,
+  parseNvidiaSmiCsv,
+  type SmiRunner,
+} from "./gpu.ts";
+export {
+  defaultHelloTimeoutMs,
+  type HelloFetch,
+  type HelloProbeOptions,
+  type MeshHello,
+  meshHello,
+  meshHelloPath,
+  meshHelloSchema,
+  meshProduct,
+  type PairingState,
+  pairingStates,
+  probeHello,
+} from "./hello.ts";
+export {
+  buildManifest,
+  type MachineFacts,
+  type ManifestModelServer,
+  type ManifestSources,
+  manifestModelServerSchema,
+  manifestVersion,
+  meshManifestPath,
+  type NodeCapability,
+  type NodeManifest,
+  type NodeRole,
+  nodeCapabilities,
+  nodeManifestSchema,
+  nodeRoles,
+  parseManifest,
+  type WorkshopSubstrateKind,
+  workshopSubstrateKinds,
+} from "./manifest.ts";
+export {
+  classifyPath,
+  classifyPing,
+  isRelayed,
+  type MeshPath,
+  type PathKind,
+  type PathProbe,
+  probePath,
+} from "./path.ts";
+export {
+  type DiscoveredPeer,
+  type DiscoveryOptions,
+  discoverPeers,
+  type MeshPeer,
+  type PeerUser,
+  selfPeer,
+  tailnetPeers,
+} from "./peers.ts";

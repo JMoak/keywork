@@ -40,7 +40,13 @@ export interface AskQueueOptions {
   timeoutMs?: number;
   now?: () => Date;
   grants?: GrantSink;
+  decider?: AskDecider;
 }
+
+export type AskDecider = (
+  ask: PendingAsk,
+  announced: PermissionAsk | undefined,
+) => Promise<Confirmation | undefined>;
 
 export const defaultAskTimeoutMs = 120_000;
 
@@ -50,11 +56,17 @@ export class AskQueue {
   private readonly timeoutMs: number;
   private readonly now: () => Date;
   private readonly grants: GrantSink | undefined;
+  private decider: AskDecider | undefined;
 
   constructor(options: AskQueueOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? defaultAskTimeoutMs;
     this.now = options.now ?? (() => new Date());
     this.grants = options.grants;
+    this.decider = options.decider;
+  }
+
+  decideWith(decider: AskDecider | undefined): void {
+    this.decider = decider;
   }
 
   guardFor(sessionId: string): ToolGuard {
@@ -80,6 +92,7 @@ export class AskQueue {
       const timer = setTimeout(() => this.settle(call.callId, "timed-out"), this.timeoutMs);
       timer.unref?.();
       this.pending.set(call.callId, { ask, resolve, timer });
+      void this.decide(ask, announced);
     });
   }
 
@@ -109,6 +122,17 @@ export class AskQueue {
 
   close(): void {
     for (const callId of [...this.pending.keys()]) this.settle(callId, "closed");
+  }
+
+  private async decide(ask: PendingAsk, announced: PermissionAsk | undefined): Promise<void> {
+    if (this.decider === undefined) return;
+    const decided = await this.decider(ask, announced).catch(() => undefined);
+    const waiting = this.pending.get(ask.callId);
+    if (decided === undefined || waiting === undefined) return;
+    this.pending.delete(ask.callId);
+    clearTimeout(waiting.timer);
+    this.remember(ask.callId);
+    waiting.resolve(decided);
   }
 
   private settle(

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { LocalServerDirectory } from "@keywork/engine";
 import { type KeyworkConfig, loadConfig } from "@keywork/shared";
 import type { ConnectionsPort } from "@keywork/tui";
 import {
@@ -45,6 +46,7 @@ export interface InferenceStateOptions {
   env: NodeJS.ProcessEnv;
   warn(line: string): void;
   compose?: typeof composeInference;
+  localServers?: LocalServerDirectory | undefined;
 }
 
 export async function openInferenceState(options: InferenceStateOptions): Promise<LiveInference> {
@@ -94,6 +96,7 @@ async function loadInferenceState(
     config,
     credentials,
     observations,
+    localServers: options.localServers,
     persistCredential: (provider, credential) =>
       saveCredential(provider, credential, defaultAuthDir(), secrets).then(() => {}),
   });

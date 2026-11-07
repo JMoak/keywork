@@ -23,8 +23,9 @@ Every asset has a `<asset>.sha256` beside it and the release carries a combined
 `SHA256SUMS`. The npm fallback (`dist/npm`, package `keywork-cli` since `keywork` is another
 project's name on the registry, `bin` = the bundled CLI that
 runs on an installed Bun with `@opentui/core` as a normal dependency) is built on every
-release and published only when the repository variable `NPM_PUBLISH` is `true` and an
-`NPM_TOKEN` secret exists.
+release and staged on npm only for a release tag when the repository variable
+`NPM_PUBLISH` is `true`. Staging uses GitHub Actions trusted publishing with OIDC;
+the workflow uses no npm token. A maintainer approves the staged package separately.
 
 ## The ritual
 
@@ -56,6 +57,50 @@ bun scripts/release/build.ts --outdir /tmp/out --version 0.0.0-local
 
 `keywork --version` prints the build-time version in a release binary and the manifest
 version when run from source.
+
+## npm trusted staging
+
+The generated package is `keywork-cli@0.2.0`, with `bin.keywork` pointing at
+`bin/keywork.js`, the canonical repository `git+https://github.com/JMoak/keywork.git`,
+and public access on `https://registry.npmjs.org`. Ratchet is carried inside the bundle;
+OpenTUI and web-tree-sitter remain exact public dependencies. The allowlist also includes
+the license, notices, README, and shared-runtime upgrade guide.
+
+Before the first staging run, the package owner configures these settings; the workflow
+does not create or verify them locally:
+
+- On npm's **keywork-cli** package, add a GitHub Actions trusted publisher with organization
+  or user **JMoak**, repository **keywork**, workflow filename **release.yml**, and no
+  environment name. Those fields are case-sensitive. Allow `npm stage publish`; direct
+  publishing and dist-tag management are not needed by this workflow.
+- In **JMoak/keywork**, set the Actions repository variable **NPM_PUBLISH** to **true**.
+  An unset or different value intentionally skips `npm-publish`.
+
+The staging job runs on a GitHub-hosted Ubuntu runner with Node 24 and npm 12.2.2. It
+has `id-token: write`, uses no token environment variable or token-placeholder `.npmrc`,
+and retains all existing check, test, end-to-end, platform build, checksum, and GitHub
+release gates. It verifies the package name, repository, public status, and agreement
+between the package version and release tag, then inspects the pack list before running:
+
+```sh
+npm stage publish --access public --tag latest --loglevel verbose
+```
+
+GitHub OIDC generates provenance automatically for a public package from a public
+repository; there is no local provenance claim before that CI run. The npm
+[trusted-publishing guide](https://docs.npmjs.com/trusted-publishers/) describes the
+required configuration and provenance conditions.
+
+After staging, the owner reviews the stage ID, package contents, version, tag, and source
+workflow on npm. Approval uses 2FA through npm's Staged Packages page or
+`npm stage approve <stage-id>`; the release workflow does not approve its own package.
+Staged versions are not visible through ordinary `npm view`, and staging the same version
+again can conflict with the pending stage. Review or reject that stage before rerunning.
+See npm's [staged-publishing guide](https://docs.npmjs.com/staged-publishing/).
+
+Local preparation uses `bun run build:npm` and `npm pack --dry-run` from `dist/npm`.
+Neither command uploads, stages, approves, or publishes a package. The build checks the
+version and runs `creatures report` under an empty home using its bundled Ratchet.
 
 ## Installing
 

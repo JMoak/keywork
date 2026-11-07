@@ -21,14 +21,8 @@ import {
   type Usage,
 } from "./messages.ts";
 import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
-import type {
-  CacheMiss,
-  DoneDelta,
-  EffortLevel,
-  Provider,
-  ProviderRequest,
-  TurnDelta,
-} from "./provider.ts";
+import type { CacheMiss, DoneDelta, EffortLevel, Provider, TurnDelta } from "./provider.ts";
+import type { WatchedRequest } from "./providers/retry.ts";
 import { ConversationMarks } from "./request-marks.ts";
 import {
   type ReportedContext,
@@ -606,7 +600,7 @@ export class Agent {
     const message: Message = { role: "assistant", parts: [] };
     let usage: Usage = { inputTokens: 0, outputTokens: 0 };
     const tools = this.tools();
-    const request: ProviderRequest = {
+    const request: WatchedRequest = {
       systemPrompt: this.systemPrompt,
       messages: [...this.messages],
       tools,
@@ -614,6 +608,8 @@ export class Agent {
       ...this.marks.forRequest(tools, this.effortRequested, this.messages.length),
       cacheDiagnostics: { previousResponseId: this.previousResponseId },
       signal,
+      onWait: (wait) => this.bus.emit("turn.waiting", wait),
+      onResume: (resume) => this.bus.emit("turn.resumed", resume),
     };
     try {
       for await (const delta of this.provider.stream(request)) {

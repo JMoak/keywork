@@ -1,0 +1,444 @@
+{
+  "asOf": "2026-11-05",
+  "source": "docs/research/local-models.md, Model slate table; re-verified by keywork models bench, never trusted from the table alone",
+  "models": [
+    {
+      "id": "qwen3.8-27b",
+      "label": "Qwen3.8-27B",
+      "roles": [
+        {
+          "class": "strong",
+          "role": "strong, 32 GB GPU or less",
+          "pick": true
+        },
+        {
+          "class": "vision",
+          "role": "screen vision",
+          "pick": true
+        }
+      ],
+      "license": {
+        "id": "Apache-2.0",
+        "acknowledgement": "none"
+      },
+      "released": "2026-08-05",
+      "preview": false,
+      "parameters": {
+        "total": "27.8B dense",
+        "active": null
+      },
+      "memoryQ4": "~16 GB",
+      "contextTokens": 262144,
+      "bestMeasuredDecode": "74.8 tok/s at 4K on an RTX 5090",
+      "evidence": "vendor TB 2.1 73.0, SWE-bench Pro 61.7",
+      "notes": [
+        "reasoning_effort defaults to xhigh; use low or medium locally (MODEL-048)",
+        "replay reasoning: preserve_thinking is on by default"
+      ]
+    },
+    {
+      "id": "laguna-xs-2.1",
+      "label": "Laguna XS 2.1",
+      "roles": [
+        {
+          "class": "strong",
+          "role": "strong, 32 GB GPU or less",
+          "pick": false
+        },
+        {
+          "class": "loop",
+          "role": "fast loop",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "OpenMDW-1.1",
+        "acknowledgement": "none"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": "33B",
+        "active": "3B"
+      },
+      "memoryQ4": null,
+      "contextTokens": 262144,
+      "bestMeasuredDecode": null,
+      "evidence": "vendor SWE-V 70.9, SWE-Pro 47.6",
+      "notes": [
+        "vLLM needs PR #47311 or the poolside_v1 parser drops tool calls (MODEL-055)"
+      ]
+    },
+    {
+      "id": "qwen3.8-flash-next",
+      "label": "Qwen3.8-Flash-Next",
+      "roles": [
+        {
+          "class": "strong",
+          "role": "strong, 128 GB",
+          "pick": true
+        }
+      ],
+      "license": {
+        "id": "qwen-community-1.0",
+        "acknowledgement": "required"
+      },
+      "released": "2026-08-24",
+      "preview": false,
+      "parameters": {
+        "total": "125B + 51B n-gram embeddings",
+        "active": "6B"
+      },
+      "memoryQ4": "93.7 GB",
+      "contextTokens": 262144,
+      "bestMeasuredDecode": "28.6 tok/s on Strix Halo",
+      "evidence": "vendor SWE-Pro 62.5",
+      "notes": [
+        "unpatched vLLM prefix-cache hits returned fluent but wrong output; run the cache canary (MODEL-054)"
+      ]
+    },
+    {
+      "id": "nemotron-3-super",
+      "label": "Nemotron 3 Super",
+      "roles": [
+        {
+          "class": "strong",
+          "role": "strong, 128 GB",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "NVIDIA Open Model License",
+        "acknowledgement": "required"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": "120B",
+        "active": "12B"
+      },
+      "memoryQ4": "~60-65 GB",
+      "contextTokens": 1048576,
+      "bestMeasuredDecode": "18.9 tok/s on Strix Halo",
+      "evidence": "SWE-bench (OpenHands) 60.47"
+    },
+    {
+      "id": "laguna-s-2.1",
+      "label": "Laguna S 2.1",
+      "roles": [
+        {
+          "class": "strong",
+          "role": "strong, 128 GB",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "OpenMDW-1.1",
+        "acknowledgement": "none"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": "118B",
+        "active": "8B"
+      },
+      "memoryQ4": "~65-70 GB (estimate)",
+      "contextTokens": 1048576,
+      "bestMeasuredDecode": null,
+      "evidence": "vendor TB 2.1 70.2, SWE-Pro 59.4",
+      "notes": [
+        "vLLM needs PR #47311 or the poolside_v1 parser drops tool calls (MODEL-055)"
+      ]
+    },
+    {
+      "id": "gpt-oss-120b",
+      "label": "gpt-oss-120b",
+      "roles": [
+        {
+          "class": "strong",
+          "role": "orchestration",
+          "pick": true
+        }
+      ],
+      "license": {
+        "id": "Apache-2.0",
+        "acknowledgement": "none"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": "117B",
+        "active": "5.1B"
+      },
+      "memoryQ4": "63 GB",
+      "contextTokens": 131072,
+      "bestMeasuredDecode": "58.7 tok/s on DGX Spark; 56 on Strix Halo",
+      "evidence": "clean JSON (reported); SWE-Pro 16.2",
+      "notes": [
+        "cannot disable reasoning; use low"
+      ]
+    },
+    {
+      "id": "mistral-small-4",
+      "label": "Mistral Small 4",
+      "roles": [
+        {
+          "class": "strong",
+          "role": "orchestration",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "Apache-2.0",
+        "acknowledgement": "none"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": "119B",
+        "active": "6.5B"
+      },
+      "memoryQ4": "~65 GB",
+      "contextTokens": 262144,
+      "bestMeasuredDecode": null,
+      "evidence": "vendor charts only"
+    },
+    {
+      "id": "qwen3.6-35b-a3b",
+      "label": "Qwen3.6-35B-A3B",
+      "roles": [
+        {
+          "class": "loop",
+          "role": "fast loop",
+          "pick": true
+        },
+        {
+          "class": "vision",
+          "role": "screen vision",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "Apache-2.0",
+        "acknowledgement": "none"
+      },
+      "released": "2026-04-15",
+      "preview": false,
+      "parameters": {
+        "total": "36B",
+        "active": "3B"
+      },
+      "memoryQ4": "22.6 GB",
+      "contextTokens": 262144,
+      "bestMeasuredDecode": "76.9 tok/s on Strix Halo, 101 with MTP",
+      "evidence": "NVIDIA-run SWE-V 70.1"
+    },
+    {
+      "id": "flint",
+      "label": "Flint",
+      "roles": [
+        {
+          "class": "loop",
+          "role": "fast loop",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "Apache-2.0",
+        "acknowledgement": "none"
+      },
+      "released": "2026-10-21",
+      "preview": true,
+      "parameters": {
+        "total": "39.8B",
+        "active": "2.5B"
+      },
+      "memoryQ4": "~22-24 GB (estimate)",
+      "contextTokens": 262144,
+      "bestMeasuredDecode": null,
+      "evidence": "vendor TB 2.1 54.9, SWE-V 74.2; unreplicated"
+    },
+    {
+      "id": "gemma-4-26b-a4b",
+      "label": "Gemma 4 26B-A4B",
+      "roles": [
+        {
+          "class": "loop",
+          "role": "fast loop",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "Apache-2.0",
+        "acknowledgement": "none"
+      },
+      "released": "2026-03",
+      "preview": false,
+      "parameters": {
+        "total": "25.2B",
+        "active": "3.8B"
+      },
+      "memoryQ4": "~15 GB (estimate)",
+      "contextTokens": 262144,
+      "bestMeasuredDecode": "74.8 tok/s on Strix Halo, 107-110 with MTP",
+      "evidence": "vendor Tau2 68.2",
+      "notes": [
+        "0% on AgentFloor tier E; keep to short loops"
+      ]
+    },
+    {
+      "id": "nimble",
+      "label": "nimble 9B",
+      "roles": [
+        {
+          "class": "decide",
+          "role": "gate, local",
+          "pick": true
+        }
+      ],
+      "license": {
+        "id": "unverified",
+        "acknowledgement": "required"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": "9B",
+        "active": null
+      },
+      "memoryQ4": "~9.5 GB",
+      "contextTokens": 8192,
+      "bestMeasuredDecode": "91 ms per decision (vendor, M5 Max)",
+      "evidence": "decision API; macro accuracy 74.8 on 13 datasets"
+    },
+    {
+      "id": "tev1-0.8b",
+      "label": "tev1:0.8b",
+      "roles": [
+        {
+          "class": "decide",
+          "role": "gate, local",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "unverified",
+        "acknowledgement": "required"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": "0.8B",
+        "active": null
+      },
+      "memoryQ4": null,
+      "contextTokens": null,
+      "bestMeasuredDecode": null,
+      "evidence": "experimental (Together AI)"
+    },
+    {
+      "id": "typesafe/jev-1.14",
+      "label": "Jev 1.14",
+      "roles": [
+        {
+          "class": "decide",
+          "role": "gate, cloud",
+          "pick": true
+        }
+      ],
+      "license": {
+        "id": "hosted",
+        "acknowledgement": "none"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": null,
+        "active": null
+      },
+      "memoryQ4": null,
+      "contextTokens": 262144,
+      "bestMeasuredDecode": null,
+      "evidence": "decision API; usage.cost on every reply",
+      "notes": [
+        "keep requests to 32 KB of text and no images (MODEL-043)",
+        "thresholds never transfer between versions (MODEL-042)"
+      ]
+    },
+    {
+      "id": "gpt-6-luna",
+      "label": "gpt-6-luna Decisions",
+      "roles": [
+        {
+          "class": "decide",
+          "role": "gate, cloud",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "hosted",
+        "acknowledgement": "none"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": null,
+        "active": null
+      },
+      "memoryQ4": null,
+      "contextTokens": null,
+      "bestMeasuredDecode": null,
+      "evidence": "decision API at /v1/decisions; no calibration claim"
+    },
+    {
+      "id": "gui-owl-1.5-8b",
+      "label": "GUI-Owl-1.5-8B",
+      "roles": [
+        {
+          "class": "vision",
+          "role": "screen vision",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "unverified",
+        "acknowledgement": "required"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": "8B",
+        "active": null
+      },
+      "memoryQ4": null,
+      "contextTokens": null,
+      "bestMeasuredDecode": null,
+      "evidence": "reported 52 on OSWorld-Verified"
+    },
+    {
+      "id": "clef-flash",
+      "label": "clef-flash",
+      "roles": [
+        {
+          "class": "vision",
+          "role": "screen yes/no gate",
+          "pick": false
+        }
+      ],
+      "license": {
+        "id": "unverified",
+        "acknowledgement": "required"
+      },
+      "released": null,
+      "preview": false,
+      "parameters": {
+        "total": null,
+        "active": null
+      },
+      "memoryQ4": null,
+      "contextTokens": null,
+      "bestMeasuredDecode": null,
+      "evidence": "decision model that takes screenshots"
+    }
+  ]
+}

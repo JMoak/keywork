@@ -39,7 +39,7 @@ export function gitRevision(ref: string, root = repoRoot): ReadFileAt | undefine
   if (git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]) === undefined) {
     return undefined;
   }
-  return async (path) => git(root, ["show", `${ref}:${path}`]);
+  return async (path) => git(root, ["show", `${ref}:./${path}`]);
 }
 
 export function workingTree(root = repoRoot): ReadFileAt {

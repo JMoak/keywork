@@ -1,0 +1,89 @@
+{
+  "Version": "1.104.1-t7f4efe814-g8da26756c",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": ["100.64.0.1", "fd7a:115c:a1e0::1"],
+  "Self": {
+    "ID": "1",
+    "PublicKey": "nodekey:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "HostName": "house",
+    "DNSName": "house.stead.example.",
+    "OS": "windows",
+    "UserID": 1,
+    "TailscaleIPs": ["100.64.0.1", "fd7a:115c:a1e0::1"],
+    "AllowedIPs": ["100.64.0.1/32", "fd7a:115c:a1e0::1/128"],
+    "Addrs": ["192.168.1.20:41641"],
+    "CurAddr": "",
+    "Relay": "",
+    "PeerRelay": "",
+    "Online": true,
+    "ExitNode": false,
+    "ExitNodeOption": false,
+    "Active": false,
+    "PeerAPIURL": ["http://100.64.0.1:62292"],
+    "Capabilities": [],
+    "CapMap": {},
+    "InNetworkMap": true,
+    "InMagicSock": false,
+    "InEngine": false
+  },
+  "Health": [],
+  "MagicDNSSuffix": "stead.example",
+  "CurrentTailnet": {
+    "Name": "stead.example",
+    "MagicDNSSuffix": "stead.example",
+    "MagicDNSEnabled": true
+  },
+  "CertDomains": null,
+  "Peer": {
+    "nodekey:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+      "ID": "2",
+      "PublicKey": "nodekey:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "HostName": "host",
+      "DNSName": "host.stead.example.",
+      "OS": "linux",
+      "UserID": 2147455555,
+      "Tags": ["tag:stead-host"],
+      "TailscaleIPs": ["100.64.0.2", "fd7a:115c:a1e0::2"],
+      "AllowedIPs": ["100.64.0.2/32", "fd7a:115c:a1e0::2/128"],
+      "CurAddr": "192.168.1.30:41641",
+      "Relay": "",
+      "PeerRelay": "",
+      "Online": true,
+      "Active": true,
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": true
+    },
+    "nodekey:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+      "ID": "3",
+      "PublicKey": "nodekey:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "HostName": "laptop",
+      "DNSName": "laptop.stead.example.",
+      "OS": "macOS",
+      "UserID": 1,
+      "TailscaleIPs": ["100.64.0.3", "fd7a:115c:a1e0::3"],
+      "AllowedIPs": ["100.64.0.3/32", "fd7a:115c:a1e0::3/128"],
+      "CurAddr": "",
+      "Relay": "",
+      "PeerRelay": "",
+      "Online": true,
+      "Active": false,
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    }
+  },
+  "User": {
+    "1": { "ID": 1, "LoginName": "keeper", "DisplayName": "keeper", "ProfilePicURL": "" },
+    "2147455555": {
+      "ID": 2147455555,
+      "LoginName": "tagged-devices",
+      "DisplayName": "Tagged Devices",
+      "ProfilePicURL": ""
+    }
+  },
+  "ClientVersion": null
+}

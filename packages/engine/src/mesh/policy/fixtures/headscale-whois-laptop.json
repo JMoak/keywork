@@ -1,0 +1,19 @@
+{
+  "Node": {
+    "ID": 3,
+    "StableID": "3",
+    "Name": "laptop.stead.example.",
+    "User": 1,
+    "Key": "nodekey:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "KeyExpiry": "0001-01-01T00:00:00Z",
+    "Addresses": ["100.64.0.3/32", "fd7a:115c:a1e0::3/128"],
+    "AllowedIPs": ["100.64.0.3/32", "fd7a:115c:a1e0::3/128"],
+    "Hostinfo": { "OS": "macOS", "Hostname": "laptop" },
+    "Created": "2026-10-30T12:00:00Z",
+    "Online": true,
+    "ComputedName": "laptop",
+    "ComputedNameWithHost": "laptop"
+  },
+  "UserProfile": { "ID": 1, "LoginName": "keeper", "DisplayName": "keeper", "ProfilePicURL": "" },
+  "CapMap": null
+}

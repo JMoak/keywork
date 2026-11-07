@@ -1,13 +1,32 @@
 import type { MemoryDecision } from "./memory/decider.ts";
 import type { Message, SpillReference, ToolCallPart, Usage } from "./messages.ts";
+import type { FallbackTrigger } from "./models/policy/fallback.ts";
+import type { ModelClass } from "./models/policy/types.ts";
 import type { TurnDelta } from "./provider.ts";
+import type { ProviderResume, ProviderWait } from "./providers/retry.ts";
 import type { ContextInjection, PermissionAsk, PermissionDecision } from "./session/journal.ts";
 
 export type SendBehavior = "steer" | "queue";
 
-export interface PromptOrigin {
+export interface ExternalOrigin {
   kind: "external";
   client: string;
+}
+
+export interface CreatureOrigin {
+  kind: "creature";
+  creature: string;
+  thread: string;
+}
+
+export type PromptOrigin = ExternalOrigin | CreatureOrigin;
+
+export interface ModelFallback {
+  class: ModelClass;
+  from: string;
+  to: string;
+  trigger: FallbackTrigger;
+  cloud: boolean;
 }
 
 export interface QueuedPrompt {
@@ -45,6 +64,8 @@ interface LiveEvents {
   "turn.delta": { delta: TurnDelta };
   "turn.completed": { message: Message; usage: Usage };
   "turn.interrupted": { message: Message };
+  "turn.waiting": ProviderWait;
+  "turn.resumed": ProviderResume;
   "queue.changed": { queued: readonly QueuedPrompt[] };
   "tool.started": { call: ToolCallPart };
   "tool.output": { chunk: string; callId?: string };
@@ -55,6 +76,7 @@ interface LiveEvents {
   "session.mode": { mode: string };
   "context.injected": { injection: ContextInjection };
   "memory.decided": { decision: MemoryDecision };
+  "model.fallback": ModelFallback;
   "child.started": ChildStarted;
   "child.finished": ChildFinished;
   "diagnostics.published": { path: string; count: number };

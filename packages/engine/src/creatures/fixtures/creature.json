@@ -1,0 +1,17 @@
+{
+  "name": "Pip",
+  "created": "2026-11-05T09:00:00.000Z",
+  "introduction": "You are Pip, Jordan's creature; you keep work moving between conversations and you ask before anything that cannot be undone.",
+  "body": {
+    "skin": "kid",
+    "seed": 424242
+  },
+  "workshop": "host",
+  "models": {
+    "strong": "inherit",
+    "loop": "inherit",
+    "decide": "inherit",
+    "vision": "inherit"
+  },
+  "routines": "routines"
+}

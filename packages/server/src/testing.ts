@@ -273,10 +273,12 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         ...summaryOf(id, session),
         cwd: "/memory",
         live: true,
+        verdicts: [],
         messages: session.agent.history(),
         summaries: [],
         flushes: [],
         edits: [],
+        reports: [],
         asOf: options.log.latestId(),
         ...(session.parent !== undefined && { parentSession: session.parent }),
       };

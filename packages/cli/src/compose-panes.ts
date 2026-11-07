@@ -6,6 +6,7 @@ import {
   type Checkpoints,
   coreTools,
   type Provider,
+  type RuntimeOwnership,
   renderCommand,
   type SessionStore,
   scanTemplate,
@@ -80,6 +81,7 @@ import {
 import { userConfigDir } from "./user-config.ts";
 import { keyworkVersion } from "./version.ts";
 import { freshWorkspace, workspaceFile } from "./workspace.ts";
+import { ownWorkspace } from "./workspace-ownership.ts";
 import { workspacePermissions, workspacePermissionsRecordedAt } from "./workspace-permissions.ts";
 import { workspaceSetupPort } from "./workspace-setup.ts";
 import {
@@ -111,6 +113,20 @@ export interface PanesSeams {
 }
 
 export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Promise<void> {
+  const ownership = await ownWorkspace(launch);
+  try {
+    await openOwnedPanes(launch, seams, ownership);
+  } catch (cause) {
+    ownership.release();
+    throw cause;
+  }
+}
+
+async function openOwnedPanes(
+  launch: PanesLaunch,
+  seams: PanesSeams,
+  ownership: RuntimeOwnership,
+): Promise<void> {
   const { cwd, projectTrusted, workspaceSlug } = launch;
   let pendingReopen: { slug: string | undefined } | undefined;
   const requestReopen = (slug: string | undefined): void => {
@@ -146,9 +162,11 @@ export async function openPanes(launch: PanesLaunch, seams: PanesSeams = {}): Pr
   const colors = await (seams.terminalColors ?? processTerminalColors)();
   await runApp({
     ...app,
+    closers: [...(app.closers ?? []), async () => ownership.release()],
     themes: [systemTheme(colors)],
     ...(seams.createRenderer !== undefined && { createRenderer: seams.createRenderer }),
     exit: (code) => {
+      ownership.release();
       if (pendingReopen !== undefined && seams.reopen !== undefined) {
         seams.reopen(pendingReopen.slug);
       } else exit(code);

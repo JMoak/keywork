@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.7",
+    "x-keywork-contract": "1.26",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -62,7 +62,7 @@
     "/sessions/{id}": {
       "get": {
         "operationId": "readSession",
-        "summary": "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `live` is true when the session is open in this server process.",
+        "summary": "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `reports` lists the one-line summaries a creature's finished threads sent to this conversation (`keywork.creature.report` entries: never prompts, never in the model context), each `{ index, entryId, at, text, origin, kind? }` with `index` the position in `messages` the entry was written before and `origin` the `{ kind: creature, creature, thread }` the live `extension.notice` carried, so a transcript draws the line after a reload exactly as it drew it live (since contract 1.10); `kind: frame` says `messages[index]` is the prompt an inject with `frame` wrote right after it, which a transcript draws as the creature line and never as a keeper prompt (since contract 1.11). `live` is true when the session is open in this server process.",
         "parameters": [
           {
             "name": "id",
@@ -164,7 +164,7 @@
     "/sessions/{id}/inject": {
       "post": {
         "operationId": "injectPrompt",
-        "summary": "Submit a prompt from a client outside keywork, such as a voice assistant or another LLM window. It runs exactly like a typed prompt: it starts a turn when the session is idle and joins the back of the queue when a turn is running. `turn.started` and `queue.changed` carry `origin: { kind: \"external\", client }`, the turn answers to the same permission policy and ask queue, and any memory note it proposes is staged with provenance `untrusted`.",
+        "summary": "Submit a prompt from a client outside keywork, such as a voice assistant or another LLM window. It runs exactly like a typed prompt: it starts a turn when the session is idle and joins the back of the queue when a turn is running. `turn.started` and `queue.changed` carry `origin: { kind: \"external\", client }`, the turn answers to the same permission policy and ask queue, and any memory note it proposes is staged with provenance `untrusted`. With `frame: { creature }` the text is a frame the creature answers, never a keeper prompt (since contract 1.11): the origin is `{ kind: \"creature\", creature, thread }` with `thread` this session, a `keywork.creature.report` entry with `kind: frame` is written before the prompt so `GET /sessions/{id}` marks it under `reports` with the prompt at `messages[index]`, the live `extension.notice` carries `detail.kind: frame`, and the session takes the creature name as its title until the first reply of the creature titles it.",
         "parameters": [
           {
             "name": "id",
@@ -190,6 +190,17 @@
                   "client": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9._-]{1,64}$"
+                  },
+                  "frame": {
+                    "type": "object",
+                    "required": ["creature"],
+                    "properties": {
+                      "creature": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9._-]{1,64}$"
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
@@ -202,7 +213,7 @@
             "description": "The prompt was accepted; `queued` is true when it waits behind a running turn."
           },
           "400": {
-            "description": "The body is not `{ text, client }`."
+            "description": "The body is not `{ text, client, frame?: { creature } }`."
           },
           "404": {
             "description": "No session has that id."
@@ -321,7 +332,7 @@
     "/memory/inbox": {
       "get": {
         "operationId": "listMemoryInbox",
-        "summary": "Items waiting for a person: untrusted writes held in staging and the gardener's review proposals, each as the engine's `StagedItem` with its `kind`. `count` is the number the `memory.inbox` event carries.",
+        "summary": "Items waiting for a person: untrusted writes held in staging and the gardener's review proposals, each as the engine's `StagedItem` with its `kind`. The admission policy never lands what an untrusted source wrote (a web page, a workshop's output, another creature's message): it waits here, and its staged write names the source in `source` (`web:<origin>`, `workshop:<id>`, `creature:<slug>`) and whom it was for in `for` (`creature:<slug>` when it reached that creature, else `keeper`; an item staged before addressees reads `keeper`), so approve admits it and discard drops it. `count` is the number the `memory.inbox` event carries.",
         "responses": {
           "200": {
             "description": "The staged items and their count."
@@ -386,7 +397,7 @@
     "/memory/notes": {
       "get": {
         "operationId": "listMemoryNotes",
-        "summary": "Every note the agent can recall, as the engine's `Note` plus the layer it lives in, its file on disk, whether the bootstrap injects it into the system prompt, how often it was recalled since the last sweep and its curing stage (0 raw, 1 has a confidence, 2 has proved useful, 3 settled). `?layer=<id>` keeps one layer.",
+        "summary": "Every note the agent can recall, as the engine's `Note` plus the layer it lives in, its file on disk, whether the bootstrap injects it into the system prompt, how often it was recalled since the last sweep and its curing stage (0 raw, 1 has a confidence, 2 has proved useful, 3 settled). A creature's craft memory, what it learned about its own work as distinct from the keeper's notes, is the named section of its layer whose notes carry `section: craft` in their frontmatter; where a note came from rides in `origin_source` (and `origin_creature`). `?layer=<id>` keeps one layer.",
         "responses": {
           "200": {
             "description": "The notes."
@@ -2211,6 +2222,88 @@
         }
       }
     },
+    "/sessions/{id}/changes/verdicts": {
+      "get": {
+        "operationId": "readHunkVerdicts",
+        "summary": "The keeper's verdicts on the hunks of this session's changes, oldest first: every `keywork.review.verdict` entry on the session's active path, each `{ index, entryId, at, path, header, digest, verdict }`. `path` is the changed file as GET /sessions/{id}/changes lists it, `header` the hunk's unified range line (`@@ -a,b +c,d @@`), `digest` eight hex characters over the hunk's removed and added lines (the stable reference a quote in the thread carries as `hunk <digest>`, which survives the hunk moving when an earlier hunk is dropped), and `verdict` one of `keep`, `drop`, `ask`. The same hunk judged twice appears twice; the last word stands, so a client folds the trail by `path` and `digest`. `index` is the position in `GET /sessions/{id}` `messages` the entry was written before, where `verdicts` lists the same marks for a transcript that replays the trail as notices. Since contract 1.18.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ verdicts: [{ index, entryId, at, path, header, digest, verdict }] }`."
+          },
+          "404": {
+            "description": "No session has that id."
+          }
+        }
+      },
+      "post": {
+        "operationId": "recordHunkVerdict",
+        "summary": "Record the keeper's verdict on one hunk: `keep`, `drop` or `ask`. The verdict is written to the session as a journal-only `keywork.review.verdict` entry (never a prompt, never in the model context, so no turn starts) and the same write emits one `extension.notice` from the `review` extension, `message` the trail line a transcript draws (`<verdict> · <path> <header> · hunk <digest>`) and `detail: { verdict: <the mark>, entryId }`, so a watching console updates its marks and its conversation at once. A verdict of `ask` parks the hunk as something waiting on the keeper until a later `keep` or `drop` on the same `path` and `digest`. The body names the hunk exactly as GET /sessions/{id}/changes/verdicts lists it. Since contract 1.18.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["path", "header", "digest", "verdict"],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "header": {
+                    "type": "string",
+                    "pattern": "^@@ -\\d+(?:,\\d+)? \\+\\d+(?:,\\d+)? @@$"
+                  },
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}$"
+                  },
+                  "verdict": {
+                    "type": "string",
+                    "enum": ["keep", "drop", "ask"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The mark as GET /sessions/{id}/changes/verdicts lists it."
+          },
+          "400": {
+            "description": "The body is not `{ path, header, digest, verdict }` with a unified hunk header, an eight-hex digest and a verdict of keep, drop or ask."
+          },
+          "404": {
+            "description": "No session has that id."
+          },
+          "501": {
+            "description": "`{ error: \"verdicts are not wired\" }`: this server's host records no hunk verdicts yet, so the verdict was not written."
+          }
+        }
+      }
+    },
     "/trash": {
       "get": {
         "operationId": "listTrash",
@@ -2649,6 +2742,98 @@
         }
       }
     },
+    "/memory/forget/preview": {
+      "post": {
+        "operationId": "previewMemoryForget",
+        "summary": "The dry run of forgetting everything one source put in memory; it touches nothing. `plan` lists exactly what an apply would remove: the notes the source wrote (each with its first line), the checkpoint anchors they carry, every graph edge that touches them, the recall and citation lines naming them in the curation audit, for a session its daily entries, and the inbox items still staged from that source (`staged`: each with its `id`, `kind`, `target`, addressee `for` and first line); `counts` sums each list, `kept` names notes a session only shares with another session and why they stay, and `digest` fingerprints the whole plan for `POST /memory/forget/apply`. A `craft:<slug>` source reads that creature's own layer.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["source"],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Where the memory came from: `session:<id>`, `creature:<slug>` (another creature's messages), `web:<origin>`, `workshop:<id>` (a workshop's output), `craft:<slug>` (a creature's whole craft section) or `craft:<slug>/<note>` (one craft note)."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ plan }`: `{ source, digest, counts, notes, anchors, edges, citations, entries, staged, kept }`."
+          },
+          "400": {
+            "description": "The body is not `{ source }`, or the source is not one of the kinds named."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "501": {
+            "description": "`{ error: \"this node does not serve forget by source yet\" }`."
+          },
+          "503": {
+            "description": "Memory is not served by this host."
+          }
+        }
+      }
+    },
+    "/memory/forget/apply": {
+      "post": {
+        "operationId": "applyMemoryForget",
+        "summary": "Forget a source for real, after its dry run: removes exactly the notes, daily entries, staged inbox items and audit citation lines `POST /memory/forget/preview` listed under `digest`, in one ledger entry that `POST /memory/ledger/{id}/revert` undoes byte for byte, and appends a `forgot <source> · <counts>` line to the curation audit. If the vault moved since the dry run (a note was added, edited or removed) nothing is touched and the answer is 409.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["source", "digest"],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Where the memory came from: `session:<id>`, `creature:<slug>` (another creature's messages), `web:<origin>`, `workshop:<id>` (a workshop's output), `craft:<slug>` (a creature's whole craft section) or `craft:<slug>/<note>` (one craft note)."
+                  },
+                  "digest": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The `digest` of the dry run the keeper read; anything else is refused."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ forgot }`: `{ source, counts, ledgerId? }`; no `ledgerId` when nothing was there to forget."
+          },
+          "400": {
+            "description": "The body is not `{ source, digest }`, or the source is not one of the kinds named."
+          },
+          "403": {
+            "description": "Memory is inert: the workspace is untrusted."
+          },
+          "409": {
+            "description": "The dry run is stale; run it again and apply its new digest."
+          },
+          "501": {
+            "description": "`{ error: \"this node does not serve forget by source yet\" }`."
+          },
+          "503": {
+            "description": "Memory is not served by this host."
+          }
+        }
+      }
+    },
     "/sessions/{id}/queue/{itemId}/move": {
       "post": {
         "operationId": "moveQueuedPrompt",
@@ -2775,6 +2960,3143 @@
           }
         }
       }
+    },
+    "/creatures": {
+      "get": {
+        "operationId": "listCreatures",
+        "summary": "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, and `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs. A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
+        "responses": {
+          "200": {
+            "description": "The creatures."
+          },
+          "503": {
+            "description": "This host serves no creatures."
+          }
+        }
+      },
+      "post": {
+        "operationId": "createCreature",
+        "summary": "Make a creature: writes `.keywork/bots/<slug>/bot.md` byte for byte as `POST /bots` would (so the creature is a bot first) and `creature.json` beside it, with the slug derived from `name` (REQ-003: the name stays editable in the file, the slug is its handle). `skin` defaults to the stead's first skin, every model class to `inherit`; the seed is drawn here. Where it works: `workshop` names an existing workshop id or `host` (the bare node, the default), or `substrate` (`sbx`, `compose` or `host`, as `GET /workshops/substrates` lists them) raises a new workshop for it first, exactly as `POST /workshops` would, records its id, then starts it as `POST /workshops/{id}/start` would, so the workshop reads `running` before the creature's first turn; the two are exclusive. A workshop that will not start leaves the creature made: its first tool call starts it (one line in that tool's output says so), and when it still cannot, the tool answers why in words and the creature tells the keeper. A substrate this node does not support is refused before anything is written, and a workshop raised for a creature that then cannot be written is removed again. The creature composes its one introduction sentence at creation and keeps it in `creature.json`, where the keeper can edit it. Needs a trusted workspace, as project bots do. Nothing is opened yet: the conversation is created lazily by the first `GET /creatures/{slug}`. A `creature.changed` event with `change: \"created\"` follows, after `workshop.changed` when one was raised and before its `change: \"started\"`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "skin": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]*$"
+                  },
+                  "workshop": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "substrate": {
+                    "enum": ["sbx", "compose", "host"]
+                  },
+                  "models": {
+                    "type": "object",
+                    "properties": {
+                      "strong": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "const": "inherit"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["provider", "model"],
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "loop": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "const": "inherit"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["provider", "model"],
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "decide": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "const": "inherit"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["provider", "model"],
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "vision": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "const": "inherit"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["provider", "model"],
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new creature's summary, as `GET /creatures` lists it."
+          },
+          "400": {
+            "description": "The body is not a creature draft, or the name makes no slug."
+          },
+          "409": {
+            "description": "A bot already has that slug, or the workspace is not trusted."
+          },
+          "502": {
+            "description": "The substrate's own command failed while raising the workshop; `error` says what it said."
+          },
+          "503": {
+            "description": "This host serves no creatures, serves no workshops while a substrate was named, or does not support that substrate (`error` says why)."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}": {
+      "get": {
+        "operationId": "readCreature",
+        "summary": "One creature with what a console opened mid-day needs before the first event: the summary row, its `introduction`, the `conversation` id (opened now, bound to the bot and tagged `kind: conversation`, when the creature had none; it is never trashed while the creature exists), its live `threads` newest first, each `{ id, kind: thread | routine, title, state, children, lastActivityAt }` with `state` one of `working`, `waiting` (an ask is pending), `back`, `blocked` or `paused` and `children` the sub-agents rolled up into it, the `nextRun` of its routines (`{ routineId, at }` or `null`), today's `usage` (`{ date, sessions, costNanos }`, `costNanos` `null` when no ledger has priced it, never 0) and the `routines` directory under the creature. Live state afterward rides the session events on /events; thread summaries reach the conversation as prompts whose `origin` is `{ kind: \"creature\", creature, thread }`.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The creature."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "503": {
+            "description": "This host serves no creatures."
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateCreature",
+        "summary": "Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy), `cloudFallback` and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: \"updated\"` follows.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "body": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "properties": {
+                      "skin": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]*$"
+                      },
+                      "seed": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 4294967295
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "models": {
+                    "type": "object",
+                    "properties": {
+                      "strong": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "const": "inherit"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["provider", "model"],
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "loop": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "const": "inherit"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["provider", "model"],
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "decide": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "const": "inherit"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["provider", "model"],
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "vision": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "const": "inherit"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["provider", "model"],
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "cloudFallback": {
+                    "type": "boolean"
+                  },
+                  "inbound": {
+                    "oneOf": [
+                      {
+                        "enum": ["nobody", "paired"]
+                      },
+                      {
+                        "type": "object",
+                        "required": ["named"],
+                        "properties": {
+                          "named": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1,
+                            "maxItems": 64
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The creature's summary after the change."
+          },
+          "400": {
+            "description": "The body changes nothing or is not a creature patch."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "503": {
+            "description": "This host serves no creatures."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeCreature",
+        "summary": "Remove a creature in two steps, as REQ-090 asks. Without `?confirmed=true` nothing changes: the answer is 409 carrying `removal`, what `goes` (its `definition` directory with `bot.md` and `creature.json`, its `conversation` and `threads`, which move to the trash as `DELETE /sessions/{id}` would, how many of its `notes` are retired from its memory layer, how many `routines` files go with the directory, and its `workshop` unless `?keepWorkshop=true`) and what `stays` (the `workspace` with the keeper's own notes, and the kept `workshop`). With `?confirmed=true` the same listing is carried out in that order, threads first, the conversation last, the definition after them, and the answer is 200 with `removed: true` and the `removal` that happened. A `creature.changed` event with `change: \"removed\"` follows; the trashed sessions fire `session.removed` each.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ removed: true, removal }`: the creature is gone and `removal` says what went and what stayed."
+          },
+          "400": {
+            "description": "The query is not `confirmed=true` and optionally `keepWorkshop=true|false`."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "409": {
+            "description": "Not confirmed: `removal` lists what `goes` and what `stays` when it is."
+          },
+          "503": {
+            "description": "This host serves no creatures."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/report": {
+      "get": {
+        "operationId": "readCreatureReport",
+        "summary": "The keeper-would-approve report for this creature, as `keywork creatures report --json` prints it for the whole node but counted over the ledger rows tagged with this creature: `{ creature, gateId, mode: \"shadow\" | \"enforce\", enforced, ledgerPath, evidenceVersion?, rows, earlierRows, classes, gate?, auditRate, calibration, promotions, pendingReviews }`. Each class is `{ ruleClass, model?, rows, labelled, answered, agreement?, brier?, wouldAct, wrongActs, oneWayDoor, grade, gradeWord, gradeText }`. `calibration` holds one entry per model and rule class, `{ model, ruleClass, state, labelled, fitRows, heldOutRows, bar?, fitActs?, acts, sampleSize, agreement?, interval?, errors?, lowerBound?, review }`: the bar is fitted on the first 50 labelled answers and judged on the calls after them, `state` is `fitting`, `no-bar`, `collecting`, `awaiting-labels`, `accepted` or `rejected`, agreement and its 95% interval stay sealed until the planned sample is complete, and `review` counts the blind review (`drawn`, `answered`, `agreedWithGate`, `agreedWithMoment`, `deniedAtBar`) that samples answered asks at `auditRate`. `promotions` lists the rule classes the keeper handed over that cover this creature; with none, `mode` is `shadow`, `enforced` is false and every ask waits for the keeper. A one-way door is never promoted. A creature with no answered asks yet has `rows: 0` and no classes.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The creature's shadow report."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "503": {
+            "description": "This host serves no creatures, knows no node state directory, or cannot load ratchet to grade the rows."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/promote": {
+      "post": {
+        "operationId": "promoteCreatureClass",
+        "summary": "The keeper hands one rule class of this creature's asks to `keeper.would-approve`. The body is `{ ruleClass }`, exactly one class as the report names it. The promotion is accepted only when that class's calibration for the model answering it now is `accepted`: the bar was fitted on the first 50 labelled answers, then the planned sample of the first 149 distinct held-out calls above it (at most 10 from one session) were each approved, so the exact one-sided 95% lower bound reaches the promised 98%, and the blind review denied no call above the bar. A one-way door, `all classes`, a class already promoted, or one short of its evidence is refused with a `sentence` saying what it needs. The promotion is a reversible record scoped to this creature, `{ ruleClass, model, evidenceVersion, bar, creature, sampleSize, errors, lowerBound, by: \"keeper\", at }`. Decided calls still log, still show as decided for you and can be overturned, a blind review still samples them at the audit rate, and `POST /creatures/{slug}/demote` hands the class back. Nothing is ever promoted without this call.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["ruleClass"],
+                "properties": {
+                  "ruleClass": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ promoted: true, promotion, sentence }`."
+          },
+          "400": {
+            "description": "The body is not `{ ruleClass: string }`."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "409": {
+            "description": "`{ promoted: false, refusal, sentence, calibration? }`, with `refusal` one of `one-way-door`, `every-class`, `promoted`, `unanswered`, `uncalibrated` or `blind-review`."
+          },
+          "503": {
+            "description": "This host serves no creatures, knows no node state directory, or cannot load ratchet to grade the rows."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/demote": {
+      "post": {
+        "operationId": "demoteCreatureClass",
+        "summary": "Hand a promoted rule class back to the keeper. The body is `{ ruleClass }`. Every promotion of that class covering this creature (its own, or one made for the whole node) ends with a demotion record `{ ruleClass, creature, by: \"keeper\", reason, at }`; every ask in the class waits for the keeper again, and promoting it again needs a fresh planned sample after this point. Answers `{ demoted: true, demotion, promotions, sentence }`, or `{ demoted: false, sentence }` when nothing was promoted.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["ruleClass"],
+                "properties": {
+                  "ruleClass": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ demoted, sentence }`, with the `demotion` and the `promotions` it ended."
+          },
+          "400": {
+            "description": "The body is not `{ ruleClass: string }`."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "503": {
+            "description": "This host serves no creatures, knows no node state directory, or cannot load ratchet to grade the rows."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/overturn": {
+      "post": {
+        "operationId": "overturnCreatureDecision",
+        "summary": "The keeper overturns one call a promoted class decided for them. The body is `{ recordId }`, the ledger id the \"decided for you\" notice carried (`extension.notice` from the `keeper` extension, `detail.recordId`). The row is labelled wrong with the source `keywork:overturn`, and every promotion of its rule class that covers this creature ends with a demotion `{ by: \"overturn\" }`, so every ask in that class waits for the keeper again until a fresh planned sample promotes it. Answers `{ overturned: true, recordId, ruleClass, demoted }` with the promotions it ended, or 409 `{ overturned: false, reason }` with `not-decided-for-you` (the id names no call a promoted class decided) or `already-overturned`. Since contract 1.23.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["recordId"],
+                "properties": {
+                  "recordId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ overturned: true, recordId, ruleClass, demoted }`."
+          },
+          "400": {
+            "description": "the body must be { recordId: string }, the ledger id of a call decided for you"
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "409": {
+            "description": "`{ overturned: false, reason }`."
+          },
+          "503": {
+            "description": "This host serves no creatures, knows no node state directory, or cannot load ratchet."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/pause": {
+      "post": {
+        "operationId": "pauseCreature",
+        "summary": "Pause a creature: every routine of it that is enabled is switched off through the routine verbs (`PUT /creatures/{slug}/routines/{id}` with `enabled: false`), and `creature.json` records `paused` with when and exactly which routines the pause switched off. Live threads finish; nothing is cancelled or lost, and stopping work stays its own verb. Pausing a paused creature changes nothing. Answers `{ slug, paused: true, since, chores }`; a `creature.changed` event with `change: \"paused\"` follows.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ slug, paused, since, chores }` with the routines the pause switched off."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "503": {
+            "description": "This host serves no creatures."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/resume": {
+      "post": {
+        "operationId": "resumeCreature",
+        "summary": "Resume a paused creature: the routines its pause switched off are switched back on (ones removed since are skipped, ones the keeper had off before stay off) and `paused` leaves `creature.json`. Resuming a creature that runs changes nothing. Answers `{ slug, paused: false, since: null, chores }` with the routines switched back on; a `creature.changed` event with `change: \"resumed\"` follows.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ slug, paused, since, chores }` with the routines switched back on."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "503": {
+            "description": "This host serves no creatures."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/projects": {
+      "get": {
+        "operationId": "listCreatureProjects",
+        "summary": "List the creature's authorized project bindings and their qualified threads.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ projects }"
+          },
+          "400": {
+            "description": "Invalid creature, project, request, or qualified session reference."
+          },
+          "403": {
+            "description": "The project is not currently authorized for creature work."
+          },
+          "404": {
+            "description": "The creature or selected project session is missing."
+          },
+          "409": {
+            "description": "The project is unbound or the request ID was used for different work."
+          },
+          "503": {
+            "description": "This host cannot serve the creature project context."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/projects/{project}": {
+      "put": {
+        "operationId": "bindCreatureProject",
+        "summary": "Associate an explicitly chosen, already authorized project with this creature.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project binding."
+          },
+          "400": {
+            "description": "Invalid creature, project, request, or qualified session reference."
+          },
+          "403": {
+            "description": "The project is not currently authorized for creature work."
+          },
+          "404": {
+            "description": "The creature or selected project session is missing."
+          },
+          "409": {
+            "description": "The project is unbound or the request ID was used for different work."
+          },
+          "503": {
+            "description": "This host cannot serve the creature project context."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unbindCreatureProject",
+        "summary": "Remove the active association and retain the existing project session journals.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project is unbound."
+          },
+          "400": {
+            "description": "Invalid creature, project, request, or qualified session reference."
+          },
+          "403": {
+            "description": "The project is not currently authorized for creature work."
+          },
+          "404": {
+            "description": "The creature or selected project session is missing."
+          },
+          "409": {
+            "description": "The project is unbound or the request ID was used for different work."
+          },
+          "503": {
+            "description": "This host cannot serve the creature project context."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/projects/{project}/threads": {
+      "post": {
+        "operationId": "startCreatureProjectThread",
+        "summary": "Start a thread in the authorized project's runtime. Retry with the same request ID and input.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16000
+                  },
+                  "source": {
+                    "type": "object",
+                    "properties": {
+                      "workspace": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+                      },
+                      "session": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+                      }
+                    },
+                    "required": ["workspace", "session"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["requestId", "text"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The qualified project session reference."
+          },
+          "400": {
+            "description": "Invalid creature, project, request, or qualified session reference."
+          },
+          "403": {
+            "description": "The project is not currently authorized for creature work."
+          },
+          "404": {
+            "description": "The creature or selected project session is missing."
+          },
+          "409": {
+            "description": "The project is unbound or the request ID was used for different work."
+          },
+          "503": {
+            "description": "This host cannot serve the creature project context."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/projects/{project}/discussion": {
+      "post": {
+        "operationId": "discussCreatureProjectSession",
+        "summary": "Send explicitly supplied text to the creature's home conversation and link the chosen project session.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16000
+                  },
+                  "source": {
+                    "type": "object",
+                    "properties": {
+                      "workspace": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+                      },
+                      "session": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+                      }
+                    },
+                    "required": ["workspace", "session"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["requestId", "text", "source"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The qualified home conversation reference."
+          },
+          "400": {
+            "description": "Invalid creature, project, request, or qualified session reference."
+          },
+          "403": {
+            "description": "The project is not currently authorized for creature work."
+          },
+          "404": {
+            "description": "The creature or selected project session is missing."
+          },
+          "409": {
+            "description": "The project is unbound or the request ID was used for different work."
+          },
+          "503": {
+            "description": "This host cannot serve the creature project context."
+          }
+        }
+      }
+    },
+    "/creature-project-work": {
+      "post": {
+        "operationId": "receiveCreatureProjectWork",
+        "summary": "Run an authorized home creature request using this project's own session, tools and permission gate.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16000
+                  },
+                  "source": {
+                    "type": "object",
+                    "properties": {
+                      "workspace": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+                      },
+                      "session": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+                      }
+                    },
+                    "required": ["workspace", "session"],
+                    "additionalProperties": false
+                  },
+                  "creature": {
+                    "type": "object",
+                    "properties": {
+                      "workspace": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+                      },
+                      "slug": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["workspace", "slug"],
+                    "additionalProperties": false
+                  },
+                  "project": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+                  }
+                },
+                "required": ["requestId", "text", "creature", "project"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The qualified project session reference."
+          },
+          "400": {
+            "description": "Invalid creature, project, request, or qualified session reference."
+          },
+          "403": {
+            "description": "The project is not currently authorized for creature work."
+          },
+          "404": {
+            "description": "The creature or selected project session is missing."
+          },
+          "409": {
+            "description": "The project is unbound or the request ID was used for different work."
+          },
+          "503": {
+            "description": "This host cannot serve the creature project context."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/mcp": {
+      "post": {
+        "operationId": "serveCreatureMcp",
+        "summary": "The creature as an MCP server for an agent on this machine, over streamable HTTP with this server's token as the bearer (the loopback ticket): one JSON-RPC message per POST, answered as JSON (`202` and no body for a notification); no event stream and no session id. It speaks MCP `2026-07-28` (`server/discover`) and the 2025 revisions (`initialize`). Three tools: `ask` leaves the creature plain words (`{ text }`, up to 2000 characters) as one creature-origin line in its conversation, the `keywork.creature.report` entry creature mail uses, so it starts no turn and carries no approval, grant or configuration, and answers a `handle`; `ask { handle }` polls, returning the creature's first reply from the turn after the words landed, or that it has not answered yet. `status` answers `working`, `at the porch`, `back`, `idle` or `paused`. `deliveries` returns the report lines finished threads and chores delivered (`{ after?, limit? }`, oldest first). The creature's `inbound` policy gates every tool (`nobody` refuses, `paired` admits, `{ named }` admits only those creatures, never an agent); asks share the hourly limits of creature mail; every call is an audit row (`creature.ask`, `creature.status`, `creature.deliveries`) with its arguments only digested. Bad arguments, an unknown tool, or fields such as `approve` are JSON-RPC `-32602`.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "One JSON-RPC 2.0 message."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The JSON-RPC response."
+          },
+          "202": {
+            "description": "The message was a notification or a response; nothing to answer."
+          },
+          "400": {
+            "description": "The body is not one JSON-RPC message, or the `mcp-protocol-version` or `mcp-method` header is refused; the body is a JSON-RPC error."
+          },
+          "404": {
+            "description": "No creature here has that slug."
+          },
+          "503": {
+            "description": "Creature MCP is not served: the node keeps no audit log without its mesh."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/mcp/arrivals": {
+      "post": {
+        "operationId": "takeCreatureMcpArrival",
+        "summary": "The node hands this workspace one MCP message that reached `/mesh/creatures/{slug}/mcp` on its tailnet listener after a creature ticket held: `{ caller: { stableId, name, userId, tags }, message }`, the caller as WhoIs named it, never as the agent claimed. The workspace answers it as `POST /creatures/{slug}/mcp` would, for a caller on that paired machine: the inbound policy, the shared limits and the audit row all name it. A node that keeps its tailnet listener in another process than its workspaces posts each arrival here, trying the next workspace on 404.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["caller", "message"],
+                "properties": {
+                  "caller": {
+                    "type": "object",
+                    "required": ["stableId", "name", "userId", "tags"],
+                    "properties": {
+                      "stableId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "userId": {
+                        "type": ["string", "null"]
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "message": {
+                    "type": "object",
+                    "description": "One JSON-RPC 2.0 message."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The JSON-RPC response."
+          },
+          "202": {
+            "description": "The message was a notification or a response; nothing to answer."
+          },
+          "400": {
+            "description": "The body is not an arrival, or the message is not one JSON-RPC message."
+          },
+          "404": {
+            "description": "No creature here has that slug."
+          },
+          "503": {
+            "description": "Creature MCP is not served here."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/routines": {
+      "get": {
+        "operationId": "listRoutines",
+        "summary": "The creature's chores, read again from its `routines/<id>.json` files (the files are the source; the node's SQLite journal is the index). Each row is `{ creature, id, file, routine, problem, grants: { posture, digest, needsAcceptance, accepted, acceptedAt }, schedule: { enabled, disabled, nextRunAt, consecutiveErrors, retryAt }, activeRunId, lastRun }`: `routine` is null and `problem` says why when a file does not parse; `schedule.nextRunAt` is the next planned start including the routine's deterministic stagger; `schedule.disabled` carries the reason when repeated failures turned the chore off.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ routines }`."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/routines/{id}": {
+      "get": {
+        "operationId": "readRoutine",
+        "summary": "One chore as `{ creature, id, file, routine, problem, grants: { posture, digest, needsAcceptance, accepted, acceptedAt }, schedule: { enabled, disabled, nextRunAt, consecutiveErrors, retryAt }, activeRunId, lastRun }`.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ routine }`."
+          },
+          "404": {
+            "description": "No creature has that slug, or it has no chore with that id."
+          }
+        }
+      },
+      "put": {
+        "operationId": "putRoutine",
+        "summary": "Write the chore's file and index it. The body is the routine file (`id` may be left out; the path names it). Triggers are `cron` (with an IANA `tz` and an optional `until`), `interval` (with an optional `until` instant), `at` (one instant), `file-watch` (paths or globs under the workspace, debounced), `webhook` (fired through `POST /hooks/{slug}/{id}` with the chore's token) and `event` (a bus event by name, with a `where` filter), and `manual`; since contract 1.17 for the last four beside the first two. A fired trigger is a stored assignment, never consent: every trigger parks the same way on an unaccepted grant set. A chore with `wake` is one the creature asked for itself with the schedule tool; the keeper removes it like any other. `tools` is `read-only` unless the chore declares `write` or `act` with a `grants` set, and the keeper must accept that set once (`POST .../accept`) before such a chore runs; nothing in this body can accept it. Putting a chore that repeated failures disabled back with `enabled: true` reinstates it.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                    "description": "The chore's name and its file name (routines/<id>.json)."
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "What the keeper sees on the chore board."
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The assignment the run is given; a stored assignment, never consent (RUN-033)."
+                  },
+                  "trigger": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "cron"
+                          },
+                          "expr": {
+                            "type": "string",
+                            "description": "When the chore fires, in the five-field cron form the keeper already reads."
+                          },
+                          "tz": {
+                            "type": "string",
+                            "description": "The IANA zone the expression is read in, so 9am stays 9am across DST (RUN-034)."
+                          },
+                          "until": {
+                            "description": "The last day (inclusive, in tz) or instant the chore may fire (REQ-060).",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["kind", "expr", "tz"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "interval"
+                          },
+                          "minutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10080,
+                            "description": "Minutes between runs, counted from when the node first indexed the chore."
+                          },
+                          "until": {
+                            "description": "The instant after which the chore stops firing; a creature's paced wakeup expires so (RUN-048).",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["kind", "minutes"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "at"
+                          },
+                          "at": {
+                            "type": "string",
+                            "description": "The one instant the chore fires: a one-shot, the shape of a creature's own wakeup (REQ-057)."
+                          }
+                        },
+                        "required": ["kind", "at"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "file-watch"
+                          },
+                          "paths": {
+                            "minItems": 1,
+                            "maxItems": 16,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Paths or globs (*, **, ?) under the workspace root; nothing outside it is watched."
+                          },
+                          "debounceMs": {
+                            "default": 2000,
+                            "description": "Changes inside this quiet window batch into one run (RUN-043).",
+                            "type": "integer",
+                            "minimum": 250,
+                            "maximum": 600000
+                          }
+                        },
+                        "required": ["kind", "paths"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "webhook"
+                          },
+                          "maxBytes": {
+                            "default": 65536,
+                            "description": "The largest body the hook takes; a larger one is refused and never reaches a run.",
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1048576
+                          }
+                        },
+                        "required": ["kind"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "event"
+                          },
+                          "name": {
+                            "type": "string",
+                            "pattern": "^[a-z]+\\.[a-z-]+$",
+                            "description": "The bus event that fires the chore, by exact name (for example routine.finished)."
+                          },
+                          "where": {
+                            "default": {},
+                            "description": "Payload fields, by dotted path, that must equal these values for the event to count.",
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "debounceMs": {
+                            "default": 0,
+                            "description": "Matching events inside this window batch into one run (RUN-043); 0 fires on each.",
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 600000
+                          }
+                        },
+                        "required": ["kind", "name"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "manual"
+                          }
+                        },
+                        "required": ["kind"],
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "What starts a run: a time (cron, interval, at), an occurrence (file-watch, webhook, event) or the keeper (manual)."
+                  },
+                  "destination": {
+                    "default": {
+                      "kind": "conversation"
+                    },
+                    "description": "Where the finished output goes: the conversation, a named thread or a file.",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "conversation"
+                          }
+                        },
+                        "required": ["kind"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "thread"
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["kind", "name"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "file"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["kind", "path"],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "notify": {
+                    "default": "only-when-needs-me",
+                    "description": "When the keeper hears about a run that does not need them (RUN-046).",
+                    "type": "string",
+                    "enum": ["always", "only-when-needs-me", "never"]
+                  },
+                  "tools": {
+                    "default": "read-only",
+                    "description": "The tool posture; write and act need the keeper to accept the grants once.",
+                    "type": "string",
+                    "enum": ["read-only", "write", "act"]
+                  },
+                  "grants": {
+                    "default": [],
+                    "description": "The grant set a write or act chore asks for; anything outside it asks.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "resource": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": ["action", "resource"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "budget": {
+                    "default": {
+                      "usd": 0.5,
+                      "minutes": 10
+                    },
+                    "description": "Per-run ceilings; exceeding either ends the run blocked with the reason.",
+                    "type": "object",
+                    "properties": {
+                      "usd": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 100
+                      },
+                      "minutes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1440
+                      }
+                    },
+                    "required": ["usd", "minutes"],
+                    "additionalProperties": false
+                  },
+                  "enabled": {
+                    "default": true,
+                    "description": "Whether the schedule fires at all.",
+                    "type": "boolean"
+                  },
+                  "wake": {
+                    "description": "Present when the creature asked for this chore itself (REQ-057); the keeper cancels it like any chore.",
+                    "type": "object",
+                    "properties": {
+                      "requestedAt": {
+                        "type": "string",
+                        "description": "When the creature asked for this wakeup with the schedule tool."
+                      }
+                    },
+                    "required": ["requestedAt"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["id", "title", "instructions", "trigger"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ routine, created: false }`: the chore was replaced."
+          },
+          "201": {
+            "description": "`{ routine, created: true }`: the chore is new."
+          },
+          "400": {
+            "description": "The body is not a valid routine, or its id differs from the path."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteRoutine",
+        "summary": "Remove the chore's file and its schedule. Its run journal stays. A run in progress is not stopped by this verb; `POST .../cancel` stops work.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ removed }`: the chore as it was."
+          },
+          "404": {
+            "description": "No creature has that slug, or it has no chore with that id."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/routines/{id}/run": {
+      "post": {
+        "operationId": "runRoutine",
+        "summary": "Run the chore now, by hand. A run by hand grants nothing: a write or act chore without an accepted grant set parks at once (`status: parked`, no session, `reason` saying why) and proceeds the moment the keeper accepts that grant set; until then it is the chore's one needs-you item. A run still in progress or parked refuses the new one, which is recorded as `skipped`. Answers `{ runId, creature, routineId, attempt, trigger, catchUp, firedAt, scheduledFor, status, sessionId, startedAt, endedAt, process, delivery, verified, reason, usage, cost, output, notify }`; `routine.fired` and `routine.finished` follow on the event stream.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ run }`: the run did not start: parked on its grant set until the keeper accepts, or failed at once."
+          },
+          "202": {
+            "description": "`{ run }`: the run started."
+          },
+          "400": {
+            "description": "The chore's file does not parse."
+          },
+          "404": {
+            "description": "No creature has that slug, or it has no chore with that id."
+          },
+          "409": {
+            "description": "`{ run }`: a run is still in progress, so this one was recorded as skipped."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/routines/{id}/cancel": {
+      "post": {
+        "operationId": "cancelRoutine",
+        "summary": "Stop the chore's run in progress. Its schedule is untouched (cancelling a schedule is `PUT` with `enabled: false`), and stopping does not undo what the run already did. The run ends as `cancelled` and `routine.finished` follows.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "`{ run }`: the stop was requested."
+          },
+          "404": {
+            "description": "No creature has that slug, or it has no chore with that id."
+          },
+          "409": {
+            "description": "The chore has no run in progress."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/routines/{id}/accept": {
+      "post": {
+        "operationId": "acceptRoutineGrants",
+        "summary": "The keeper accepts a write or act chore's declared grant set, named by the `digest` its row shows, so the keeper accepts exactly what they read. A changed file changes the digest and voids the acceptance; a fired trigger, a run by hand or a routine body never accepts.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["digest"],
+                "properties": {
+                  "digest": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ routine }` with `grants.accepted: true`."
+          },
+          "400": {
+            "description": "The body is not `{ digest }`, the digest is stale, or the chore is read-only."
+          },
+          "404": {
+            "description": "No creature has that slug, or it has no chore with that id."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/routines/{id}/runs": {
+      "get": {
+        "operationId": "listRoutineRuns",
+        "summary": "The chore's run journal, newest first, as `{ runId, creature, routineId, attempt, trigger, catchUp, firedAt, scheduledFor, status, sessionId, startedAt, endedAt, process, delivery, verified, reason, usage, cost, output, notify }`. `process` (completed, failed, cancelled, timed-out, blocked), `delivery` (delivered, unknown, failed, none) and `verified` are separate on purpose: a run that ended is not a result that arrived. Skipped and dropped slots are rows too, each with its reason. `?limit=` takes 1 to 500 (default 50).",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ runs }`."
+          },
+          "400": {
+            "description": "The limit is not an integer from 1 to 500."
+          },
+          "404": {
+            "description": "No creature has that slug, or it has no chore with that id."
+          }
+        }
+      }
+    },
+    "/routines/needs-you": {
+      "get": {
+        "operationId": "listNeedsYou",
+        "summary": "Every chore that needs the keeper, across creatures, from one source: `{ items }`, each `{ creature, routineId, kind, reason, runId, since, action }`. `kind` is `grants` (a write or act chore held on an unaccepted grant set; `action` is `{ verb: accept, digest }` and `runId` names the run that was refused, when one was), `run` (the last run ended and needs you: failed, timed out, over budget or blocked), `disabled` (repeated failures turned the chore off) or `invalid` (its file does not parse). `since` is when that began, when known. A held run has no session, so the item carries the chore, never a thread. `routine.needs` on the event stream carries the same items per chore whenever they change, empty once the chore no longer needs you. Since contract 1.10.",
+        "responses": {
+          "200": {
+            "description": "`{ items }`."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/routines/{id}/hook": {
+      "post": {
+        "operationId": "mintRoutineHook",
+        "summary": "Mint the token a `webhook` chore answers to, replacing any earlier one. The answer is the only time the token is shown; the node keeps its digest. Removing the chore removes the token. Since contract 1.17.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ token, path }`: the bearer token and the hook's path (`/hooks/{slug}/{id}`)."
+          },
+          "400": {
+            "description": "The chore's trigger is not `webhook`, or its file does not parse."
+          },
+          "404": {
+            "description": "No creature has that slug, or it has no chore with that id."
+          }
+        }
+      }
+    },
+    "/hooks/{slug}/{id}": {
+      "post": {
+        "operationId": "fireRoutineHook",
+        "summary": "Fire a `webhook` chore. The node serves this on loopback only, and the caller proves itself with the chore's own token (`authorization: Bearer <token>` from `POST .../hook`), never the node's. The body is untrusted data: it is saved as a file beside the run journal and the run's prompt names that file, never its text. A body over the chore's `maxBytes` (at most 1 MiB) is refused. The run obeys the same hourly caps, lock and grant-set park as every trigger. Since contract 1.17.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ runId, status }`: the run did not start: parked on its grant set, or failed at once."
+          },
+          "202": {
+            "description": "`{ runId, status }`: the run started."
+          },
+          "401": {
+            "description": "No hook answers that token (or that chore has none)."
+          },
+          "409": {
+            "description": "The chore is turned off, or `{ runId, status }` for a run turned away by a cap or the lock."
+          },
+          "413": {
+            "description": "The body is larger than the hook takes."
+          }
+        },
+        "security": []
+      }
+    },
+    "/models": {
+      "get": {
+        "operationId": "listModels",
+        "summary": "Every model server this node knows, per node: servers the node manifests advertise and, for nodes without one, servers found by probing the known ports (11434 Ollama, 9931 llama-server, 8080, 1234, 8000, 30000) and fingerprinted by a native route, never by `/v1/models` alone. Each server carries its kind, fingerprint, source (`advertised` or `probed`) and health (`up | loading | saturated | down`); each model carries `installed`, `loaded`, allocated context, the classes it is eligible for (`strong | loop | decide | vision`) with what the others miss, its license and whether that license needs the keeper's acknowledgement, and its cost basis (`local_estimate` for local servers). A host that keeps license acknowledgements also gives each model `released` (the slate's release date, from which a model younger than 30 days reads as preview) and `acknowledgedAt` (when the keeper acknowledged its license, else null), fills a license the server does not report from the slate, and adds `market`: the cloud providers of the inference registry in the same columns (`kind` is the provider's name, `source: registry`, nothing installed or loaded, cost from the price table or null). A market row's health is `down` when the provider is disabled, has no credential, or refused its credential (401 or 403) on its latest turn, `up` once a turn it served answered, and `unverified` until then: listing a provider is not reaching it. A host with a default model also adds `inherits`: per class (`strong`, `loop`, `decide`, `vision`), what a creature or session whose policy says `inherit` gets, as `{ provider, model }` when the host's default model can serve the class, else `{ refused, detail }` with the IR-18 failure code (`missing-capability` for a default the class cannot use, `unconfigured` when the host has none). The class requirements of a local model are measurements of its mill; a cloud model is judged by what keywork.json or its provider's catalogue declares (context length, input modalities, tool calls), anything undeclared is unknown and never a shortfall, and decode speed is never asked of it, so a configured cloud default resolves unless a declared fact falls short; `detail` then names the model and the measurement. `decide` on a model with no decision endpoint or logprobs answers `{ provider, model, decider: builtin, detail }`: the built-in decider asks that model each question, and `detail` says so (since contract 1.20). `?node=` narrows to one node and leaves the market and the inherits out.",
+        "responses": {
+          "200": {
+            "description": "`{ generatedAt, nodes: [{ node, servers: [{ kind, root, port, source, auth, fingerprint, version, health, models }] }], market?, inherits?: { strong, loop, decide, vision } }`."
+          },
+          "503": {
+            "description": "This host serves no model inventory."
+          }
+        }
+      }
+    },
+    "/models/probe": {
+      "post": {
+        "operationId": "probeModels",
+        "summary": "Probe one endpoint now: fingerprint it by native route, read its inventory, and return the capability record of each model (or of `model` alone), cached with the server fingerprint so a version change re-probes. `refresh` ignores the cache; `behaviour` also sends one small tool-call request to verify calls arrive in `tool_calls` before the model is admitted to tool classes. A server that answers only `/v1/models` comes back `unrecognized` with its listed ids and no capability marked.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["endpoint"],
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^https?://"
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "behaviour": {
+                    "type": "boolean"
+                  },
+                  "refresh": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ root, status: recognized | unrecognized | unreachable, fingerprint, health, records, listedOnly, detail }`."
+          },
+          "400": {
+            "description": "The body is not `{ endpoint: http(s) URL, model?, behaviour?, refresh? }`."
+          },
+          "503": {
+            "description": "This host serves no model inventory."
+          }
+        }
+      }
+    },
+    "/models/acknowledgements": {
+      "post": {
+        "operationId": "acknowledgeModelLicense",
+        "summary": "The keeper acknowledges a model's license (MODEL-049): `model` as `GET /models` lists it at `endpoint`, and the `license` it showed. The acknowledgement is kept in the node's state and answered as `{ model, license, acknowledgedAt }`; acknowledging the same model and license again answers the first acknowledgement. Until a license that needs acknowledgement is acknowledged, the model policy resolver refuses that model for every class with the IR-18 code `missing-capability` and the capability `license-acknowledgement`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["endpoint", "model", "license"],
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^https?://"
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "license": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ model, license, acknowledgedAt }`."
+          },
+          "400": {
+            "description": "The body is not `{ endpoint: http(s) URL, model, license }`."
+          },
+          "503": {
+            "description": "This host keeps no license acknowledgements."
+          }
+        }
+      }
+    },
+    "/models/bench": {
+      "post": {
+        "operationId": "benchModel",
+        "summary": "Bench one model now, as `keywork models bench` does: at least three repeats of the replayed trace for a chat model (valid@1, tool-call accuracy, tokens and seconds per turn, decode tok/s, fallbacks) or of the labelled decisions for a hosted decision model (Brier, ECE, AUROC, threshold at target precision), every report carrying the server fingerprint. Answers when the bench finishes and keeps the report as the model's last; on a local server the measured decode speed is written to the model's capability record, which the `loop` class requires.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["endpoint", "model"],
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^https?://"
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The report, as `keywork models bench --json` prints it: `{ kind: chat | decide, reference, fingerprint, repeats, ... }`."
+          },
+          "400": {
+            "description": "The body is not `{ endpoint: http(s) URL, model }`."
+          },
+          "404": {
+            "description": "The endpoint does not serve that model."
+          },
+          "409": {
+            "description": "That model is already on the bench."
+          },
+          "422": {
+            "description": "The endpoint is not a server the bench can drive."
+          },
+          "500": {
+            "description": "The bench failed; `error` says why."
+          },
+          "502": {
+            "description": "The endpoint is unreachable."
+          },
+          "503": {
+            "description": "This host runs no bench."
+          }
+        }
+      },
+      "get": {
+        "operationId": "readModelBench",
+        "summary": "The last bench report kept for one model, named by `?endpoint=&model=` as `POST /models/bench` took them: `{ report }`, where `report` is null until a bench there has finished.",
+        "responses": {
+          "200": {
+            "description": "`{ report }`, null when the model has not been benched."
+          },
+          "400": {
+            "description": "`endpoint` is not an http(s) URL or `model` is missing."
+          },
+          "503": {
+            "description": "This host runs no bench."
+          }
+        }
+      }
+    },
+    "/workshops": {
+      "get": {
+        "operationId": "listWorkshops",
+        "summary": "Every creature's workshop on this node, oldest first: `{ workshops }`, each `{ id, creature, substrate, state, workdir, brokers, limitations, display, createdAt }`. A creature holds at most one workshop and two creatures never share one. `substrate` is `sbx` (a sealed microVM) or `host` (the bare node, whose `workdir` is the workspace that raised it); `limitations` says plainly what a workshop lacks, so a bare host is never shown as sealed. `brokers` names the model-provider credentials the node swaps in on egress; the workshop itself only ever holds sentinels. `display` is true when the substrate can carry a viewable display.",
+        "responses": {
+          "200": {
+            "description": "`{ workshops }`."
+          },
+          "503": {
+            "description": "This host serves no workshops."
+          }
+        }
+      },
+      "post": {
+        "operationId": "createWorkshop",
+        "summary": "Raise a workshop for a creature. `substrate` picks `sbx` or `host`; `egress` lists the only hosts the creature may reach (bare DNS names; `methods` defaults to GET, HEAD and OPTIONS, `any` opens every method, and `port` opens plain TCP such as SSH), everything else stays denied; `brokers` grants model-provider credentials the node holds; `disks` are sized now because an `sbx` disk cannot grow later; `setup` runs once inside after the first start. A `host` workshop works in the workspace this node serves the request from: its `workdir` and jail are the workspace path, and its home under the node's state dir keeps only the workshop's own state; a sealed one never mounts the workspace. An `sbx` workshop is refused before anything is created when an inherited host-wide allow rule would cover a host the creature wants, and is removed again if its egress cannot be applied. `workshop.changed` fires with `change: \"created\"`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["creature", "substrate"],
+                "properties": {
+                  "creature": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                  },
+                  "substrate": {
+                    "enum": ["sbx", "compose", "host"]
+                  },
+                  "template": {
+                    "type": "string",
+                    "pattern": "^docker/sandbox-templates@sha256:[a-f0-9]{64}$"
+                  },
+                  "disks": {
+                    "type": "object",
+                    "properties": {
+                      "rootGb": {
+                        "type": "integer",
+                        "minimum": 8,
+                        "maximum": 512
+                      },
+                      "dockerGb": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 512
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "cpus": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  },
+                  "memory": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*[mg]$"
+                  },
+                  "gpu": {
+                    "type": "boolean"
+                  },
+                  "egress": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["host"],
+                      "properties": {
+                        "host": {
+                          "type": "string",
+                          "description": "A bare DNS name; wildcards are refused."
+                        },
+                        "port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        },
+                        "methods": {
+                          "oneOf": [
+                            {
+                              "const": "any"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "brokers": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "anthropic",
+                        "openai",
+                        "openrouter",
+                        "google",
+                        "groq",
+                        "mistral",
+                        "xai"
+                      ]
+                    }
+                  },
+                  "setup": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new workshop record, stopped."
+          },
+          "400": {
+            "description": "The body is not a workshop spec; `error` names each field."
+          },
+          "404": {
+            "description": "No workshop has that id."
+          },
+          "409": {
+            "description": "The creature already has a workshop, or the host's sbx policy conflicts with its egress."
+          },
+          "501": {
+            "description": "The spec asks for something deferred past milestone one, such as a GPU."
+          },
+          "502": {
+            "description": "The substrate's own command failed; `error` carries what it said."
+          },
+          "503": {
+            "description": "This host serves no workshops, or the workshop's substrate is not available here."
+          }
+        }
+      }
+    },
+    "/workshops/substrates": {
+      "get": {
+        "operationId": "listWorkshopSubstrates",
+        "summary": "What this node can raise a workshop on: `{ substrates, preferred }`, one row per kind (`sbx`, `compose`, `host`) `{ kind, supported, version, reason, limitations }`. `supported` is asked of the substrate itself (the `sbx` CLI is run for its version and must be the qualified one); an unsupported row's `reason` says why in words the keeper can act on, such as the sbx CLI not being installed. `limitations` names what every workshop of that kind lacks, so a bare host is never offered as sealed. `preferred` is the first supported kind in the order sbx, compose, host, or `null` when none is.",
+        "responses": {
+          "200": {
+            "description": "`{ substrates, preferred }`."
+          },
+          "503": {
+            "description": "This host serves no workshops."
+          }
+        }
+      }
+    },
+    "/workshops/{id}": {
+      "get": {
+        "operationId": "readWorkshop",
+        "summary": "One workshop as `GET /workshops` lists it, plus what the workshop pane shows: `workspace` (how it reaches the keeper's workspace: `access` `direct` for a bare host, which works in the workspace itself with the workspace path as its jail, `working-copy` for a sealed substrate, which never mounts it and works on a copy, or `none` for a bare host raised outside a workspace; `path`, the workspace or `null`; and `returns`, how its work comes back, in words), `egress` (`policy` `deny-all` and `enforced` for a microVM, `none` for a bare host; the creature's own `rules`; the `brokerHosts` its brokered credentials reach), `resources` (the `cpus` and `memory` recorded at creation, the `disks` sized then or `null` for a bare host, and `measured` disk and memory in bytes, each `null` with the reason in `unmeasured` when it cannot be read, such as a stopped microVM), `refusals` (`entries`, the newest fifty things the node refused for this workshop, each `{ at, operation, refused, error }`, and `unreported`, which refusals the node cannot see: an sbx network log has no documented reader yet) and `terminal` (`allowed` and `reason` for typed commands under the keeper's grants, and `log`, the newest fifty typed commands as tool calls `{ at, tool: \"bash\", origin: \"keeper\", input, outcome }`).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workshop with its detail."
+          },
+          "404": {
+            "description": "No workshop has that id."
+          },
+          "502": {
+            "description": "The substrate's own command failed; `error` carries what it said."
+          },
+          "503": {
+            "description": "This host serves no workshops, or the workshop's substrate is not available here."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeWorkshop",
+        "summary": "Remove a workshop. `?keepDisk=true` keeps its disk: an `sbx` sandbox is stopped and left in place, a host directory is moved to `workshops-kept/` under the node's state dir. Without it everything inside is deleted. `workshop.changed` fires with `change: \"removed\"`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ id, keptDisk }`."
+          },
+          "404": {
+            "description": "No workshop has that id."
+          },
+          "502": {
+            "description": "The substrate's own command failed; `error` carries what it said."
+          },
+          "503": {
+            "description": "This host serves no workshops, or the workshop's substrate is not available here."
+          }
+        }
+      }
+    },
+    "/workshops/{id}/start": {
+      "post": {
+        "operationId": "startWorkshop",
+        "summary": "Start a workshop and health-check it. An `sbx` workshop that comes up `running (not responding)` is stopped and started, then the `sbx` daemon is restarted, before the start is called failed. The first start also runs the spec's `setup`. `workshop.changed` fires with `change: \"started\"`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workshop record, running."
+          },
+          "404": {
+            "description": "No workshop has that id."
+          },
+          "409": {
+            "description": "The workshop cannot be started in its current state."
+          },
+          "502": {
+            "description": "The substrate's own command failed; `error` carries what it said."
+          },
+          "503": {
+            "description": "This host serves no workshops, or the workshop's substrate is not available here."
+          }
+        }
+      }
+    },
+    "/workshops/{id}/stop": {
+      "post": {
+        "operationId": "stopWorkshop",
+        "summary": "Stop a workshop with its disk kept (pause). Nothing in memory survives; work resumes from files and the journal. `workshop.changed` fires with `change: \"stopped\"`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workshop record, stopped."
+          },
+          "404": {
+            "description": "No workshop has that id."
+          },
+          "502": {
+            "description": "The substrate's own command failed; `error` carries what it said."
+          },
+          "503": {
+            "description": "This host serves no workshops, or the workshop's substrate is not available here."
+          }
+        }
+      }
+    },
+    "/workshops/{id}/health": {
+      "get": {
+        "operationId": "workshopHealth",
+        "summary": "`{ id, substrate, health, limitations }` where `health` is `up`, `starting`, `unresponsive` or `down`, read from the substrate itself (`sbx ls` for a microVM). `limitations` repeats what the workshop lacks, such as a bare host running commands unconfined.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The health report."
+          },
+          "404": {
+            "description": "No workshop has that id."
+          },
+          "502": {
+            "description": "The substrate's own command failed; `error` carries what it said."
+          },
+          "503": {
+            "description": "This host serves no workshops, or the workshop's substrate is not available here."
+          }
+        }
+      }
+    },
+    "/workshops/{id}/exec": {
+      "post": {
+        "operationId": "execInWorkshop",
+        "summary": "A typed terminal into one workshop: run `command` with the workshop's own shell from its workdir (or `cwd` inside it), through the same substrate exec the creature's `bash` tool uses, so it carries the same jail, the same broker sentinels and never a real credential, and answer `{ workshop, code, stdout, stderr, timedOut }`. A microVM workshop takes typed commands unless a keeper rule says otherwise; a bare host workshop runs them on this node itself, so it refuses with 403 until the keeper grants the rule `{ action: \"workshop.exec\", resource: \"<workshop id>\" | \"<creature>\" | \"*\", effect: \"allow\" }` in the workspace or user permissions; the last matching rule decides and an `ask` refuses, since a typed terminal cannot ask. Every command, run or refused, is logged as a keeper tool call in the workshop's terminal log; refusals also land in its refusal log. Output is answered, never stored.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8000
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "timeoutMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 600000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ workshop, code, stdout, stderr, timedOut }`; a non-zero `code` is the command's own."
+          },
+          "400": {
+            "description": "The body is not `{ command, cwd?, timeoutMs? }`."
+          },
+          "403": {
+            "description": "The keeper has not granted typed commands into this workshop; `error` says which rule would."
+          },
+          "404": {
+            "description": "No workshop has that id."
+          },
+          "409": {
+            "description": "The workshop is not running."
+          },
+          "502": {
+            "description": "The substrate's own command failed; `error` carries what it said."
+          },
+          "503": {
+            "description": "This host serves no workshops, or the workshop's substrate is not available here."
+          }
+        }
+      }
+    },
+    "/workshops/{id}/display": {
+      "get": {
+        "operationId": "streamWorkshopDisplay",
+        "summary": "The workshop's virtual display as a snapshot stream: server-sent `event: frame` with `data: { png, at }` once a second, `png` being a base64 PNG scaled to at most 1024x768. The stream ends with `event: ended` when the display goes away (no Xvfb in the workshop) and closes when the client leaves. View only; nothing here can type or click.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An open text/event-stream of frames."
+          },
+          "404": {
+            "description": "No workshop has that id."
+          },
+          "503": {
+            "description": "The workshop has no display (a bare host workshop never does), or no workshops are served."
+          }
+        }
+      }
+    },
+    "/mesh/pairs": {
+      "get": {
+        "operationId": "listMeshPairs",
+        "summary": "This node's pairing state: `{ claim, owner, pairs, pending }`. `claim` is `unclaimed` until the first console pairs; `owner` is the `(tailnetId, userId)` of the human who claimed it; `pairs` are the peers this node trusts, each `{ id, peerStableId, peerUserId, peerTags, role, caps, endpoint, createdAt, confirmedBy }` where `role` is `console` (may issue grants here), `node` (may call with grants) or `target` (this node is its console); `pending` lists inbound attempts with the six-digit `sas` to compare.",
+        "responses": {
+          "200": {
+            "description": "`{ claim, owner, pairs, pending }`."
+          },
+          "503": {
+            "description": "The mesh is not served."
+          }
+        }
+      },
+      "post": {
+        "operationId": "beginMeshPairing",
+        "summary": "Start pairing this console with a node found by discovery: sends the hello and the nonce reveal, then answers `{ attemptId, sas, confirmation, expiresAt }`. Show `sas` to the keeper; `confirmation` says what the target needs (`on-device`, a `claim-code`, or an `endorsement` from a console already paired there).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["endpoint", "stableId", "role"],
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "description": "The node's mesh base URL, e.g. http://100.88.77.66:47800."
+                  },
+                  "stableId": {
+                    "type": "string",
+                    "description": "The node's StableID as WhoIs reports it."
+                  },
+                  "userId": {
+                    "type": ["string", "null"]
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "role": {
+                    "enum": ["console", "node"]
+                  },
+                  "caps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The attempt with its SAS."
+          },
+          "400": {
+            "description": "The body is not a pairing request."
+          },
+          "502": {
+            "description": "The node refused or answered badly; `failed` says why."
+          }
+        }
+      }
+    },
+    "/mesh/pairs/{id}/complete": {
+      "post": {
+        "operationId": "completeMeshPairing",
+        "summary": "Finish an attempt this console began. `matches: false` cancels it on both sides; `matches: true` sends the confirmation (with `claimCode` for a headless host) and waits for the target's own confirmation, then stores the pair key and answers `{ paired }`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["matches"],
+                "properties": {
+                  "matches": {
+                    "type": "boolean"
+                  },
+                  "claimCode": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ paired }`."
+          },
+          "409": {
+            "description": "The attempt ended without a pair; `failed` says why."
+          }
+        }
+      }
+    },
+    "/mesh/pairings/{id}/confirm": {
+      "post": {
+        "operationId": "confirmMeshPairingHere",
+        "summary": "The keeper at this machine confirms an inbound attempt after comparing the SAS on both screens; `sas` is the code this node showed.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sas"],
+                "properties": {
+                  "sas": {
+                    "type": "string",
+                    "pattern": "^[0-9]{6}$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ state }`: `confirming` until the console confirms, then `paired`."
+          },
+          "404": {
+            "description": "No attempt has that id."
+          },
+          "409": {
+            "description": "The attempt aborted; `reason` says why."
+          }
+        }
+      }
+    },
+    "/mesh/pairs/{id}": {
+      "delete": {
+        "operationId": "removeMeshPair",
+        "summary": "Forget a pair here at once. When this node is the peer's console, a signed revocation is pushed to the peer and retried until it lands.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The signed revocation."
+          },
+          "404": {
+            "description": "No pair has that id."
+          }
+        }
+      }
+    },
+    "/mesh/grants": {
+      "get": {
+        "operationId": "listMeshGrants",
+        "summary": "Live grants: `{ issued, installed }`. `issued` are grants this console signed for creatures to act on other nodes; `installed` are grants other consoles signed that let creatures act here. Each is `{ id, issuer, subject: { creature, node }, target, caps, issuedAt, expiresAt, nonce, signature }`.",
+        "responses": {
+          "200": {
+            "description": "`{ issued, installed }`."
+          }
+        }
+      },
+      "post": {
+        "operationId": "issueMeshGrant",
+        "summary": "Sign a grant with this console's device key and push it to the target node, which verifies the chain to a paired owner console and renders `files:*` and `exec` caps into rules scoped to the creature. Caps: `{ kind: files:read | files:write, paths }`, `{ kind: exec, commands }` (literal command heads), `{ kind: screen:view | screen:control | clipboard }`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["subject", "target", "caps", "expiresAt"],
+                "properties": {
+                  "subject": {
+                    "type": "object",
+                    "required": ["creature", "node"],
+                    "properties": {
+                      "creature": {
+                        "type": "string"
+                      },
+                      "node": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "target": {
+                    "type": "string",
+                    "description": "The StableID of the node the creature may act on."
+                  },
+                  "caps": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": ["kind", "paths"],
+                          "properties": {
+                            "kind": {
+                              "enum": ["files:read", "files:write"]
+                            },
+                            "paths": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "minItems": 1
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "required": ["kind", "commands"],
+                          "properties": {
+                            "kind": {
+                              "const": "exec"
+                            },
+                            "commands": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "minItems": 1
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "required": ["kind"],
+                          "properties": {
+                            "kind": {
+                              "enum": ["screen:view", "screen:control", "clipboard"]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The signed grant."
+          },
+          "400": {
+            "description": "The draft is not a grant."
+          },
+          "403": {
+            "description": "The target refused it."
+          },
+          "404": {
+            "description": "This console is not paired with the target."
+          }
+        }
+      }
+    },
+    "/mesh/grants/{id}": {
+      "delete": {
+        "operationId": "revokeMeshGrant",
+        "summary": "Revoke a grant here at once and push a signed revocation to the target, retried until it lands.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The signed revocation."
+          },
+          "404": {
+            "description": "No live grant has that id."
+          }
+        }
+      }
+    },
+    "/mesh/audit": {
+      "get": {
+        "operationId": "meshAudit",
+        "summary": "This node's hash-chained audit rows: `{ rows, chain }`, each row `{ ts, actorStableID, actorUserID, actorTags, targetStableID, capability, requestDigest, decision, reason, prevHash, hash }`. Rows come oldest first; `?order=newest` turns the page newest first, so its first page holds the latest rows. `?after=<hash>` continues from a known row in the page's order (older rows when newest first) and `?limit=` caps the page; `chain` reports whether the whole log still verifies.",
+        "responses": {
+          "200": {
+            "description": "`{ rows, chain }`."
+          },
+          "400": {
+            "description": "`order` is neither `oldest` nor `newest`."
+          }
+        }
+      }
+    },
+    "/mesh/screen/audit": {
+      "post": {
+        "operationId": "recordScreenAudit",
+        "summary": "Chain one screen row into this node's audit log, posted by the console that shared the screen. `kind: control` records a control grant decided over a live view (`decision`, `reason` in words, `expiresAt`); `kind: session` records a finished session with its grant, `scopes` (`view`, or `view` and `control`), `displays`, `path`, `startedAt`, `endedAt`, the end `reason` and the injected input counts. The row's capability is `screen:control` when control was held or asked, `screen:view` otherwise; its reason says every field in words and its `requestDigest` binds the record. A creature may control only its own workshop's display, so the console records an agent's request to control a keeper's desktop as a `deny` row.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "sessionId",
+                      "grantId",
+                      "peer",
+                      "controller",
+                      "decision",
+                      "reason"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "control"
+                      },
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "grantId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "controlGrantId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "peer": {
+                        "type": "object",
+                        "required": ["stableId", "name", "userId", "tags"],
+                        "properties": {
+                          "stableId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "userId": {
+                            "type": ["string", "null"]
+                          },
+                          "loginName": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "controller": {
+                        "enum": ["human", "agent"]
+                      },
+                      "decision": {
+                        "enum": ["allow", "deny"]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "expiresAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "sessionId",
+                      "grantId",
+                      "peer",
+                      "controller",
+                      "scopes",
+                      "displays",
+                      "path",
+                      "endedAt",
+                      "reason",
+                      "inputs"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "session"
+                      },
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "grantId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "controlGrantId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "peer": {
+                        "type": "object",
+                        "required": ["stableId", "name", "userId", "tags"],
+                        "properties": {
+                          "stableId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "userId": {
+                            "type": ["string", "null"]
+                          },
+                          "loginName": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "controller": {
+                        "enum": ["human", "agent"]
+                      },
+                      "scopes": {
+                        "type": "array",
+                        "items": {
+                          "enum": ["view", "control"]
+                        },
+                        "minItems": 1
+                      },
+                      "displays": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "startedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "endedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "inputs": {
+                        "type": "object",
+                        "required": ["pointer", "keys"],
+                        "properties": {
+                          "pointer": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "keys": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "`{ row }`: the chained audit row."
+          },
+          "400": {
+            "description": "The body is not a screen audit record."
+          },
+          "503": {
+            "description": "The mesh is not served."
+          }
+        }
+      }
+    },
+    "/mesh/messages": {
+      "post": {
+        "operationId": "sendCreatureMessage",
+        "summary": "One creature messages another, here or on a paired machine: plain text, delivered into the conversation of the receiving creature as one creature-origin line (`Message from <sender> on <machine>: <text>`, the `keywork.creature.report` entry the thread reports use, so it reads on `GET /sessions/{id}` under `reports`), never a prompt: no turn starts, and it cannot approve, grant, change configuration or run anything. `node` names the receiving machine by StableID; omit it (or name this machine) for a creature here, which needs no pairing. Across machines it rides the tailnet listener of the node with the pair-key proof every paired request carries, so a machine this one has not paired is refused in words before anything is sent. The `inbound` policy of the receiving creature decides (`nobody`, `paired`, the default, or `{ named }`); a message may cross one machine (`hop`), a creature may send 12 an hour, a conversation takes 50 an hour, and the same words from the same sender within the hour are dropped. Every message is an audit row on both nodes (`message.send` here, `message.receive` where it lands; the text is only digested). The `origin` of the delivered line is `{ kind: \"creature\", creature: <sender>, thread: <message id>, node, machine }`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["from", "to", "text"],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+                    "description": "The sending creature, on this machine."
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+                    "description": "The receiving creature."
+                  },
+                  "node": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The receiving machine's StableID; omitted, or this machine's own, for a creature here."
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "hop": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "How many machines the message that prompted this one had crossed; 0, the default, for a fresh message."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "`{ delivered: { id, from, to, node, machine, hop } }`: `node` is the sender's machine, `machine` the name of the one it landed on."
+          },
+          "400": {
+            "description": "The body is not a message, or it has crossed more machines than the hop limit allows; `error` says which."
+          },
+          "403": {
+            "description": "The receiving creature's inbound policy refused the sender, or the machines are not paired; `error` says why in words."
+          },
+          "404": {
+            "description": "No creature has that slug, here or on the receiving machine."
+          },
+          "409": {
+            "description": "The same words from the same sender reached that creature within the hour; the repeat is dropped."
+          },
+          "429": {
+            "description": "The sender or the receiving conversation reached its hourly limit."
+          },
+          "502": {
+            "description": "The receiving machine did not answer, or does not take creature messages yet."
+          },
+          "503": {
+            "description": "The mesh or creature messages are not served."
+          }
+        }
+      }
+    },
+    "/mesh/messages/arrivals": {
+      "post": {
+        "operationId": "takeCreatureMessage",
+        "summary": "The node hands this workspace a creature message that reached it over the tailnet after the pair proof held: `{ message: { id, from, to, text, hop }, caller: { stableId, name, userId, tags } }`, the caller as WhoIs named it, never as the sender claimed. The workspace runs it as a message that lands here through `POST /mesh/messages`: the inbound policy of the receiving creature, the hop, repeat and hourly limits, one line in its conversation and one `message.receive` audit row. A node that keeps its tailnet listener in another process than its workspaces posts each arrival here, trying the next workspace on 404.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["message", "caller"],
+                "properties": {
+                  "message": {
+                    "type": "object",
+                    "required": ["id", "from", "to", "text", "hop"],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "from": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                      },
+                      "to": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                      },
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      },
+                      "hop": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "caller": {
+                    "type": "object",
+                    "required": ["stableId", "name", "userId", "tags"],
+                    "properties": {
+                      "stableId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "userId": {
+                        "type": ["string", "null"]
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "`{ delivered }`, as `POST /mesh/messages` answers."
+          },
+          "400": {
+            "description": "The body is not an arrival, or the message has crossed more machines than the hop limit allows."
+          },
+          "403": {
+            "description": "The inbound policy of the receiving creature refused the sender."
+          },
+          "404": {
+            "description": "No creature here has that slug."
+          },
+          "409": {
+            "description": "The message was already delivered, or the same words arrived within the hour."
+          },
+          "429": {
+            "description": "The sender or the receiving conversation reached its hourly limit."
+          },
+          "503": {
+            "description": "The mesh or creature messages are not served."
+          }
+        }
+      }
+    },
+    "/mesh/peers": {
+      "get": {
+        "operationId": "listMeshPeers",
+        "summary": "The tailnet as this console sees it: `{ self, peers }`, each a machine `{ stableId, machine, dnsName, os, addresses, tags, user, online, active, candidate, path, node, manifest, endpoint? }`. Identity comes from `tailscale status` (`user` is null for a tagged machine); `path` is the lane (`direct`, `peer-relay`, `derp`, `offline`, `unknown`); `node` is the machine's unauthenticated `GET /mesh/hello` (`{ product, version, pairing }`), null when no keywork node answers or the peer is offline, shared in or expired; `endpoint` is the node's mesh base URL, the pair's when paired, else the address that answered. `manifest` is `{ roles }` from the node's manifest, which a node serves only to the consoles it is paired with, so it is null for every unpaired peer. `self` is this machine, with the manifest this node publishes.",
+        "responses": {
+          "200": {
+            "description": "`{ self, peers }`."
+          },
+          "502": {
+            "description": "Tailscale did not answer; `error` says why."
+          },
+          "503": {
+            "description": "This node takes no tailnet census."
+          }
+        }
+      }
+    },
+    "/mesh/pairings": {
+      "get": {
+        "operationId": "listMeshPairings",
+        "summary": "The pairing attempts this console began with `POST /mesh/pairs` and has not finished: `{ pairings }`, each `{ attemptId, peerStableId, peerUserId, endpoint, role, caps, sas, confirmation, phase, startedAt, expiresAt }`. `sas` is the six-digit code to compare with the one the node shows; `confirmation` is what the node needs (`on-device`, `claim-code` or `endorsement`); `phase` is `comparing` until `POST /mesh/pairs/{id}/complete` is called, then `confirming` while the node's keeper confirms. An attempt leaves the list when it completes, is cancelled or expires; attempts live in this console's memory and end with it.",
+        "responses": {
+          "200": {
+            "description": "`{ pairings }`."
+          },
+          "503": {
+            "description": "The mesh is not served."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2801,6 +6123,8 @@
               "turn.delta",
               "turn.completed",
               "turn.interrupted",
+              "turn.waiting",
+              "turn.resumed",
               "queue.changed",
               "tool.started",
               "tool.output",
@@ -2811,6 +6135,7 @@
               "session.mode",
               "context.injected",
               "memory.decided",
+              "model.fallback",
               "child.started",
               "child.finished",
               "diagnostics.published",
@@ -2824,7 +6149,20 @@
               "changes.updated",
               "session.removed",
               "session.restored",
-              "session.settled"
+              "session.settled",
+              "creature.changed",
+              "routine.fired",
+              "routine.finished",
+              "routine.needs",
+              "workshop.changed",
+              "models.changed",
+              "mesh.listener",
+              "mesh.pairing",
+              "mesh.pair",
+              "mesh.grant",
+              "mesh.revocation",
+              "mesh.walked",
+              "mesh.peers"
             ]
           },
           "payload": {}

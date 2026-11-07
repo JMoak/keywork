@@ -15,9 +15,13 @@ import {
   ChildSlots,
   type ContextInjection,
   childGuardOf,
+  childTagOf,
+  claimSession,
   composeAfterSave,
   contextBudgetFor,
   coreTools,
+  creatureTagOf,
+  creatureTools,
   type DelegationSeams,
   type DiagnosticsLog,
   type DiagnosticsPublication,
@@ -40,6 +44,7 @@ import {
   MemoryFlush,
   type MemoryRecall,
   type Message,
+  type MessageTarget,
   memoryRecallTools,
   messageText,
   narrowedPermissions,
@@ -51,6 +56,7 @@ import {
   restrictTools,
   type Sandbox,
   type SandboxMode,
+  type ScheduleTarget,
   type SessionStartReason,
   type SessionStore,
   type ShellSession,
@@ -66,6 +72,7 @@ import {
   type ToolScope,
   toolScope,
   type WorkspaceSandbox,
+  withReadRoots,
   workspaceSandbox,
 } from "@keywork/engine";
 import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
@@ -266,10 +273,20 @@ export interface DelegationHost {
   release?(childId: string): void;
 }
 
+export interface CreatureSeat {
+  workshop: string;
+  injection?: (() => string) | undefined;
+  workshopTools?: readonly Tool[] | undefined;
+  schedule?: ScheduleTarget | undefined;
+  message?: MessageTarget | undefined;
+  readable?: readonly string[] | undefined;
+}
+
 export interface AgentBuildSpec {
   provider: Provider;
   guard: ToolGuard;
   bot?: BotDefinition | undefined;
+  creature?: CreatureSeat | undefined;
   history?: readonly Message[] | undefined;
   bus?: EventBus<EngineEvents> | undefined;
   sessionId?: SessionKey | undefined;
@@ -485,24 +502,29 @@ function buildAgent(
     permissions,
     agent: () => self,
   });
+  const seat = spec.creature;
   const baseTools = [
-    ...coreTools(composition.scope, {
-      shell: spec.shell,
-      vault: composition.memory()?.store,
-      worktree: composition.checkpoints,
-      origin: () => self?.turnOrigin(),
-      session: () => resolveSessionKey(spec.sessionId),
-      onToolOutput: (chunk) => self?.reportToolOutput(chunk),
-      afterSave: composition.afterSaveFor((publication) =>
-        self?.bus.emit("diagnostics.published", publication),
-      ),
-      sandbox: composition.sandbox.forAgent(
-        askGateUnconfined(spec.guard, {
-          say: options.notice,
-          onDecision: (decision) => self?.bus.emit("gate.permission", { decision }),
-        }),
-      ),
-    }),
+    ...(seat?.workshopTools !== undefined
+      ? [...seat.workshopTools, ...creatureTools(seat)]
+      : coreTools(withReadRoots(composition.scope, seat?.readable ?? []), {
+          schedule: seat?.schedule,
+          message: seat?.message,
+          shell: spec.shell,
+          vault: composition.memory()?.store,
+          worktree: composition.checkpoints,
+          origin: () => self?.turnOrigin(),
+          session: () => resolveSessionKey(spec.sessionId),
+          onToolOutput: (chunk) => self?.reportToolOutput(chunk),
+          afterSave: composition.afterSaveFor((publication) =>
+            self?.bus.emit("diagnostics.published", publication),
+          ),
+          sandbox: composition.sandbox.forAgent(
+            askGateUnconfined(spec.guard, {
+              say: options.notice,
+              onDecision: (decision) => self?.bus.emit("gate.permission", { decision }),
+            }),
+          ),
+        })),
     ...(recall === undefined
       ? []
       : memoryRecallTools(recall.store, recall.search, recall.onRecall, tap)),
@@ -519,7 +541,7 @@ function buildAgent(
   const learning = bot === undefined ? undefined : options.bots?.bootstrapFor(bot);
   const prompt = promptFor(composition, spec.provider.modelId, bot, learning);
   const session = () => resolveSessionKey(spec.sessionId);
-  const hooks = composition.host.agentHooks({ session });
+  const hooks = withCreatureInjection(composition.host.agentHooks({ session }), spec.creature);
   const agent = new Agent({
     provider: spec.provider,
     tools: narrowing === undefined ? tools : () => narrowing(tools()),
@@ -583,6 +605,7 @@ function delegationFor(
             provider: spec.provider,
             guard: childGuardOf(spec.guard),
             bot: composition.extensions.bots.find((candidate) => candidate.name === bot),
+            creature: childSeatOf(spec.creature, bot === parentBot?.name),
             bus,
             sessionId: store?.header.id,
             spills: store?.spills(),
@@ -591,7 +614,10 @@ function delegationFor(
           },
           shared,
         ),
-      attach: (child) => host.attach?.(child),
+      attach: (child) => {
+        claimForParent(parentStore(), child, options.notice);
+        host.attach?.(child);
+      },
       release: (childId) => host.release?.(childId),
     },
     slots: shared.slots,
@@ -603,6 +629,34 @@ function delegationFor(
     parentBus: () => parent.agent()?.bus,
     reportActivity: (line) => parent.agent()?.reportToolOutput(`${line}\n`),
     newSessionFileName,
+  };
+}
+
+function childSeatOf(seat: CreatureSeat | undefined, sameBot: boolean): CreatureSeat | undefined {
+  if (seat === undefined || sameBot) return seat;
+  return { workshop: seat.workshop, workshopTools: seat.workshopTools };
+}
+
+function claimForParent(
+  parent: SessionStore | undefined,
+  child: SessionStore,
+  notice: ((text: string) => void) | undefined,
+): void {
+  const tag = parent === undefined ? undefined : creatureTagOf(parent.entries());
+  if (tag === undefined || child.botBinding() !== tag.creature) return;
+  claimSession(child, childTagOf(tag)).catch((cause: unknown) =>
+    notice?.(
+      `child ${child.header.id.slice(0, 8)} was not tagged for ${tag.creature}: ${toError(cause).message}`,
+    ),
+  );
+}
+
+function withCreatureInjection(hooks: AgentHooks, seat: CreatureSeat | undefined): AgentHooks {
+  const injection = seat?.injection;
+  if (injection === undefined) return hooks;
+  return {
+    ...hooks,
+    systemPrompt: async (base) => `${(await hooks.systemPrompt?.(base)) ?? base}\n\n${injection()}`,
   };
 }
 

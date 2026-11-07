@@ -3,17 +3,16 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   type BotDefinition,
+  botDefinitionText,
   botFileName,
   botsDir,
   type CostRollup,
-  type Frontmatter,
   groupCosts,
   knownCostNanos,
   type LayerRoots,
   loadBots,
   type Provider,
   type SessionStore,
-  serializeDocument,
   suggestBotName,
 } from "@keywork/engine";
 import { validateSlug } from "@keywork/shared";
@@ -92,14 +91,6 @@ export async function removeBot(roots: BotRoots, slug: string): Promise<BotDefin
     throw new Error(`no bot named ${slug} · keywork bot list shows the roster`);
   await rm(dirname(found.file), { recursive: true, force: true });
   return found;
-}
-
-export function botDefinitionText(draft: Pick<BotDraft, "purpose">): string {
-  const frontmatter: Frontmatter = {
-    ...(draft.purpose !== undefined && { description: draft.purpose }),
-    learning: "notes",
-  };
-  return serializeDocument(frontmatter, "");
 }
 
 export function layerRoots(roots: BotRoots): LayerRoots {

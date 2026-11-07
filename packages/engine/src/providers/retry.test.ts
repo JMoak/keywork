@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { textMessage } from "../messages.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
 import { ProviderEmptyResponseError, ProviderHttpError } from "./errors.ts";
-import { RetryingProvider, type RetryOptions } from "./retry.ts";
+import {
+  type ProviderResume,
+  type ProviderWait,
+  RetryingProvider,
+  type RetryOptions,
+} from "./retry.ts";
 
 const request: ProviderRequest = {
   systemPrompt: "",
@@ -251,5 +256,85 @@ describe("RetryingProvider", () => {
 
     await expect(outcome).rejects.toThrow(/429/);
     expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+});
+
+describe("RetryingProvider watch", () => {
+  const now = Date.parse("2026-11-06T10:00:00.000Z");
+
+  function watching(): {
+    heard: Array<["wait", ProviderWait] | ["resume", ProviderResume] | ["delta", TurnDelta]>;
+    request: ProviderRequest & {
+      onWait: (wait: ProviderWait) => void;
+      onResume: (resume: ProviderResume) => void;
+    };
+  } {
+    const heard: Array<["wait", ProviderWait] | ["resume", ProviderResume] | ["delta", TurnDelta]> =
+      [];
+    return {
+      heard,
+      request: {
+        ...request,
+        onWait: (wait) => heard.push(["wait", wait]),
+        onResume: (resume) => heard.push(["resume", resume]),
+      },
+    };
+  }
+
+  it("reports each sleep and each resumption, in order, before the answer streams", async () => {
+    const { options } = recordingDelays({ now: () => now, random: () => 1 });
+    const provider = new RetryingProvider(providerFailingTimes(2, throttled), options);
+    const { heard, request: watched } = watching();
+
+    for await (const delta of provider.stream(watched)) heard.push(["delta", delta]);
+
+    expect(heard.slice(0, 4)).toEqual([
+      ["wait", { reason: "rate-limited", until: "2026-11-06T10:00:00.100Z", attempt: 2 }],
+      ["resume", { attempt: 2 }],
+      ["wait", { reason: "rate-limited", until: "2026-11-06T10:00:00.200Z", attempt: 3 }],
+      ["resume", { attempt: 3 }],
+    ]);
+    expect(heard.slice(4).map(([kind]) => kind)).toEqual(["delta", "delta"]);
+  });
+
+  it("names the reason from the failure and the time from Retry-After", async () => {
+    const overloaded = () => new ProviderHttpError("flaky", 503, "busy", "7");
+    const unreachable = () => new TypeError("fetch failed");
+    const waits: ProviderWait[] = [];
+    for (const failure of [overloaded, unreachable]) {
+      const provider = new RetryingProvider(providerFailingTimes(1, failure), {
+        sleep: instantSleep,
+        now: () => now,
+        random: () => 1,
+        baseDelayMs: 100,
+      });
+      await collect(provider.stream({ ...request, onWait: (wait) => waits.push(wait) }));
+    }
+
+    expect(waits).toEqual([
+      { reason: "overloaded", until: "2026-11-06T10:00:07.000Z", attempt: 2 },
+      { reason: "unreachable", until: "2026-11-06T10:00:00.100Z", attempt: 2 },
+    ]);
+  });
+
+  it("does not report a resumption when the sleep ends in an abort", async () => {
+    const controller = new AbortController();
+    const provider = new RetryingProvider(providerFailingTimes(1, throttled), {
+      sleep: async () => controller.abort(),
+    });
+    const { heard, request: watched } = watching();
+
+    await expect(
+      collect(provider.stream({ ...watched, signal: controller.signal })),
+    ).rejects.toThrow(/429/);
+    expect(heard.map(([kind]) => kind)).toEqual(["wait"]);
+  });
+
+  it("stays silent when the call needs no retry", async () => {
+    const provider = new RetryingProvider(providerFailingTimes(0, throttled));
+    const { heard, request: watched } = watching();
+
+    await collect(provider.stream(watched));
+    expect(heard).toEqual([]);
   });
 });

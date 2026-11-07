@@ -3,6 +3,8 @@ import { engineEventTypes, serverEventTypes } from "./events.ts";
 import { airlockFamily } from "./routes/airlock.ts";
 import { askFamily } from "./routes/asks.ts";
 import { changesFamily } from "./routes/changes.ts";
+import { creatureProjectFamily } from "./routes/creature-projects.ts";
+import { creatureFamily } from "./routes/creatures.ts";
 import { documentFamily } from "./routes/document.ts";
 import { eventFamily } from "./routes/events.ts";
 import type {
@@ -16,16 +18,21 @@ import { fileFamily } from "./routes/files.ts";
 import { flushFamily } from "./routes/flush.ts";
 import { forgetFamily } from "./routes/forget.ts";
 import { lifecycleFamily } from "./routes/lifecycle.ts";
+import { creatureMcpFamily } from "./routes/mcp.ts";
 import { memoryFamily } from "./routes/memory.ts";
+import { meshFamily } from "./routes/mesh.ts";
+import { modelFamilyFor } from "./routes/models.ts";
 import { permissionFamily } from "./routes/permissions.ts";
 import { queueFamily } from "./routes/queue.ts";
 import { quietFamily } from "./routes/quiet.ts";
+import { registerRoutineRoutes } from "./routes/routines.ts";
 import { sessionVerbFamily } from "./routes/session-verbs.ts";
 import { sessionFamily } from "./routes/sessions.ts";
 import { spillFamily } from "./routes/spills.ts";
 import { surfaceFamily } from "./routes/surfaces.ts";
 import { themeFamily } from "./routes/themes.ts";
 import { treeFamily } from "./routes/tree.ts";
+import { workshopFamily } from "./routes/workshops.ts";
 import { workspaceFamily } from "./routes/workspace.ts";
 
 export { contractMajorOf, contractVersion } from "./contract.ts";
@@ -52,6 +59,13 @@ export const routeFamilies = [
   forgetFamily,
   queueFamily,
   spillFamily,
+  creatureFamily,
+  creatureProjectFamily,
+  creatureMcpFamily((host) => host.creatureMcp),
+  registerRoutineRoutes(({ host }) => host.routines),
+  modelFamilyFor(({ host }) => host.models),
+  workshopFamily((host) => host.workshops),
+  meshFamily((host) => host.mesh),
 ] as const;
 
 export type Route = (typeof routeFamilies)[number]["routes"][number];

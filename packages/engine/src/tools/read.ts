@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import { confinedPath, type ToolScope } from "./confine.ts";
+import { readablePath, type ToolScope } from "./confine.ts";
 import { defineTool } from "./define.ts";
 
 const defaultLineLimit = 2000;
@@ -17,7 +17,7 @@ export function readTool(scope: ToolScope) {
     description: "Read a text file, returning numbered lines.",
     schema,
     run: async ({ path, offset = 1, limit = defaultLineLimit }) => {
-      const content = await readFile(confinedPath(scope, path), "utf8");
+      const content = await readFile(readablePath(scope, path), "utf8");
       if (content.includes("\u0000")) return `${path} is a binary file`;
       return numberedSlice(content, offset, limit);
     },

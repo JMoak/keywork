@@ -4,6 +4,25 @@ import { ProviderHttpError } from "./errors.ts";
 
 export type Sleep = (ms: number, signal?: AbortSignal) => Promise<void>;
 
+export type WaitReason = "rate-limited" | "overloaded" | "unreachable";
+
+export interface ProviderWait {
+  reason: WaitReason;
+  until: string;
+  attempt: number;
+}
+
+export interface ProviderResume {
+  attempt: number;
+}
+
+export interface RetryWatch {
+  onWait?: ((wait: ProviderWait) => void) | undefined;
+  onResume?: ((resume: ProviderResume) => void) | undefined;
+}
+
+export type WatchedRequest = ProviderRequest & RetryWatch;
+
 export interface RetryOptions {
   attempts?: number;
   baseDelayMs?: number;
@@ -39,7 +58,7 @@ export class RetryingProvider implements Provider {
     this.random = options.random ?? Math.random;
   }
 
-  async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
+  async *stream(request: WatchedRequest): AsyncIterable<TurnDelta> {
     for (let attempt = 1; ; attempt += 1) {
       let yieldedAny = false;
       try {
@@ -55,10 +74,22 @@ export class RetryingProvider implements Provider {
           request.signal?.aborted !== true &&
           isTransient(cause);
         if (!retryable) throw cause;
-        await this.sleep(this.delayBefore(attempt, cause), request.signal);
+        await this.waitBefore(attempt + 1, cause, request);
         if (request.signal?.aborted === true) throw cause;
+        request.onResume?.({ attempt: attempt + 1 });
       }
     }
+  }
+
+  private async waitBefore(
+    attempt: number,
+    cause: unknown,
+    request: WatchedRequest,
+  ): Promise<void> {
+    const delay = this.delayBefore(attempt - 1, cause);
+    const until = new Date(this.now() + delay).toISOString();
+    request.onWait?.({ reason: waitReasonOf(cause), until, attempt });
+    await this.sleep(delay, request.signal);
   }
 
   private delayBefore(attempt: number, cause: unknown): number {
@@ -90,6 +121,11 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(finish, ms);
     signal?.addEventListener("abort", finish);
   });
+}
+
+function waitReasonOf(cause: unknown): WaitReason {
+  if (!(cause instanceof ProviderHttpError)) return "unreachable";
+  return cause.status === 429 ? "rate-limited" : "overloaded";
 }
 
 function isTransient(cause: unknown): boolean {

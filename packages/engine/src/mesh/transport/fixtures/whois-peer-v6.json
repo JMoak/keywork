@@ -1,0 +1,49 @@
+{
+  "Node": {
+    "ID": 1002,
+    "StableID": "nHostC3d4CNTRL",
+    "Name": "host.tail5e7d00.ts.net.",
+    "User": 7000000000000001,
+    "Key": "nodekey:1111111111111111111111111111111111111111111111111111111111111111",
+    "KeyExpiry": "2027-03-26T08:19:08Z",
+    "DiscoKey": "discokey:2222222222222222222222222222222222222222222222222222222222222222",
+    "Addresses": ["100.88.77.66/32", "fd7a:115c:a1e0::5841:4d42/128"],
+    "AllowedIPs": ["100.88.77.66/32", "fd7a:115c:a1e0::5841:4d42/128"],
+    "Endpoints": [
+      "203.0.113.10:2162",
+      "203.0.113.10:41641",
+      "[2001:db8::10]:41641",
+      "172.17.0.1:41641",
+      "172.18.0.1:41641",
+      "192.168.1.30:41641",
+      "[2001:db8::10]:41641"
+    ],
+    "HomeDERP": 12,
+    "Hostinfo": {
+      "OS": "linux",
+      "Hostname": "host",
+      "Services": [
+        {
+          "Proto": "peerapi4",
+          "Port": 45316
+        },
+        {
+          "Proto": "peerapi6",
+          "Port": 56600
+        }
+      ]
+    },
+    "Created": "2026-09-27T08:19:08.70881848Z",
+    "Cap": 142,
+    "Online": true,
+    "ComputedName": "host",
+    "ComputedNameWithHost": "host"
+  },
+  "UserProfile": {
+    "ID": 7000000000000001,
+    "LoginName": "keeper@example.com",
+    "DisplayName": "Keeper",
+    "ProfilePicURL": ""
+  },
+  "CapMap": null
+}

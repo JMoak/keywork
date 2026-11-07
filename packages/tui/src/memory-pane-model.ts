@@ -19,7 +19,7 @@ import { RowCursor } from "./row-cursor.ts";
 export type MemoryProvenance = "user" | "agent" | "untrusted";
 export type CuringStage = 0 | 1 | 2 | 3;
 export type MemoryLens = "garden" | "note" | "ledger" | "decisions";
-export type MemoryLayerKind = "workspace" | "arc" | "user";
+export type MemoryLayerKind = "workspace" | "arc" | "user" | "bot";
 
 export interface PromptBudgetView {
   budget: number;

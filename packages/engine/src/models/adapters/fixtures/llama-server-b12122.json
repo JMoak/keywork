@@ -1,0 +1,250 @@
+{
+  "server": {
+    "kind": "llama-server",
+    "version": "b12122"
+  },
+  "source": "Response shapes transcribed from the llama.cpp tools/server README for v0.9.0 build b12122 (docs/research/local-models.md S14, read 2026-11-05), router mode. No llama-server runs on the recording host; re-record against a live build with the live test before trusting a new build.",
+  "routes": {
+    "GET /props": [
+      {
+        "body": {
+          "default_generation_settings": {
+            "id": 0,
+            "n_ctx": 131072,
+            "speculative": false,
+            "is_processing": false,
+            "params": {
+              "temperature": 0.6,
+              "top_p": 0.95,
+              "n_predict": -1
+            }
+          },
+          "total_slots": 4,
+          "model_alias": "qwen3.8-27b",
+          "model_path": "/models/Qwen3.8-27B-Q4_K_M.gguf",
+          "chat_template": "{%- if enable_thinking %}<think>{%- endif %}{%- for message in messages %}{%- if message.reasoning_content %}<think>{{ message.reasoning_content }}</think>{%- endif %}{{ message.content }}{%- endfor %}",
+          "modalities": {
+            "vision": true,
+            "audio": false
+          },
+          "build_info": "b12122-4f1e2a7"
+        }
+      }
+    ],
+    "GET /props?model=nimble-9b": [
+      {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": 400,
+            "message": "model nimble-9b is not loaded",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    ],
+    "GET /health": [
+      {
+        "body": {
+          "status": "ok"
+        }
+      }
+    ],
+    "GET /slots": [
+      {
+        "body": [
+          {
+            "id": 0,
+            "is_processing": false
+          }
+        ]
+      }
+    ],
+    "GET /models": [
+      {
+        "body": {
+          "data": [
+            {
+              "id": "qwen3.8-27b",
+              "status": {
+                "value": "loaded"
+              },
+              "architecture": {
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"]
+              }
+            },
+            {
+              "id": "nimble-9b",
+              "status": {
+                "value": "unloaded"
+              },
+              "architecture": {
+                "input_modalities": ["text"],
+                "output_modalities": ["decisions"]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "GET /v1/models": [
+      {
+        "body": {
+          "object": "list",
+          "data": [
+            {
+              "id": "qwen3.8-27b",
+              "object": "model",
+              "created": 1762300000,
+              "owned_by": "llamacpp",
+              "meta": {
+                "vocab_type": 2,
+                "n_vocab": 151936,
+                "n_ctx_train": 262144,
+                "n_embd": 5120,
+                "n_params": 27800000000,
+                "size": 16800000000
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "POST /v1/chat/completions": [
+      {
+        "match": {
+          "stream": false,
+          "max_tokens": 1
+        },
+        "body": {
+          "choices": [
+            {
+              "index": 0,
+              "finish_reason": "length",
+              "message": {
+                "role": "assistant",
+                "content": "O"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 9,
+            "completion_tokens": 1,
+            "total_tokens": 10
+          }
+        }
+      },
+      {
+        "match": {
+          "stream": false
+        },
+        "body": {
+          "choices": [
+            {
+              "index": 0,
+              "finish_reason": "tool_calls",
+              "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {
+                      "name": "keywork_probe_ping",
+                      "arguments": "{}"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 120,
+            "completion_tokens": 14,
+            "total_tokens": 134
+          }
+        }
+      },
+      {
+        "sse": [
+          {
+            "choices": [
+              {
+                "finish_reason": null,
+                "index": 0,
+                "delta": {
+                  "reasoning_content": "Read the clock first."
+                }
+              }
+            ],
+            "created": 1762344000,
+            "id": "chatcmpl-b12122",
+            "model": "qwen3.8-27b",
+            "system_fingerprint": "b12122-4f1e2a7",
+            "object": "chat.completion.chunk"
+          },
+          {
+            "choices": [
+              {
+                "finish_reason": null,
+                "index": 0,
+                "delta": {
+                  "content": "It is noon."
+                }
+              }
+            ],
+            "created": 1762344000,
+            "id": "chatcmpl-b12122",
+            "model": "qwen3.8-27b",
+            "system_fingerprint": "b12122-4f1e2a7",
+            "object": "chat.completion.chunk"
+          },
+          {
+            "choices": [
+              {
+                "finish_reason": "stop",
+                "index": 0,
+                "delta": {}
+              }
+            ],
+            "created": 1762344000,
+            "id": "chatcmpl-b12122",
+            "model": "qwen3.8-27b",
+            "system_fingerprint": "b12122-4f1e2a7",
+            "object": "chat.completion.chunk"
+          },
+          {
+            "choices": [],
+            "created": 1762344000,
+            "id": "chatcmpl-b12122",
+            "model": "qwen3.8-27b",
+            "system_fingerprint": "b12122-4f1e2a7",
+            "object": "chat.completion.chunk",
+            "usage": {
+              "completion_tokens": 12,
+              "prompt_tokens": 4100,
+              "total_tokens": 4112,
+              "prompt_tokens_details": {
+                "cached_tokens": 4000
+              }
+            },
+            "timings": {
+              "cache_n": 4000,
+              "prompt_n": 100,
+              "prompt_ms": 85.2,
+              "prompt_per_token_ms": 0.852,
+              "prompt_per_second": 1173.7,
+              "predicted_n": 12,
+              "predicted_ms": 160.1,
+              "predicted_per_token_ms": 13.34,
+              "predicted_per_second": 74.95
+            }
+          },
+          "[DONE]"
+        ]
+      }
+    ]
+  }
+}

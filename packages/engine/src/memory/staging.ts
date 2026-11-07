@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseDocument } from "./frontmatter.ts";
 import { type FileDelta, fileDelta } from "./ledger.ts";
 import { titleKey } from "./naming.ts";
 import { provenances } from "./notes.ts";
@@ -6,11 +7,17 @@ import { isVaultRelativePath, stagingDir, type VaultFiles } from "./vault-files.
 
 export type StagedWriteKind = "note" | "daily" | "moc";
 
+export const keeperAddressee = "keeper";
+
+export type StagedAddressee = typeof keeperAddressee | `creature:${string}`;
+
 export interface StagedWriteMeta {
   kind: StagedWriteKind;
   target: string;
   created: string;
   supersedes?: string;
+  source?: string;
+  for?: StagedAddressee;
 }
 
 export interface StagedWrite extends StagedWriteMeta {
@@ -150,7 +157,7 @@ export class StagingArea {
     const meta = parseStagedMeta(metaRaw, stagedMetaPath(id));
     if (!isStagedWrite(meta)) return { id, ...meta };
     const content = await this.files.read(stagedContentPath(id));
-    return content === null ? undefined : { id, content, ...meta };
+    return content === null ? undefined : { id, content, ...meta, for: addresseeOf(meta) };
   }
 
   async require(id: string): Promise<StagedItem> {
@@ -245,6 +252,31 @@ export function reviewKey(proposal: ReviewProposal): string {
   }
 }
 
+export function addresseeFor(creature?: string): StagedAddressee {
+  return creature === undefined ? keeperAddressee : `creature:${creature}`;
+}
+
+export function addresseeOf(meta: Pick<StagedWriteMeta, "for">): StagedAddressee {
+  return meta.for ?? keeperAddressee;
+}
+
+export function isStagedAddressee(value: unknown): value is StagedAddressee {
+  return value === keeperAddressee || (typeof value === "string" && addresseePattern.test(value));
+}
+
+export function stagedBody(item: StagedWrite): string {
+  if (item.kind !== "note") return item.content;
+  try {
+    return parseDocument(item.content, item.target).body;
+  } catch {
+    return item.content;
+  }
+}
+
+export function isStagingPath(path: string): boolean {
+  return path.startsWith(`${stagingDir}/`);
+}
+
 export function isStagedWrite<T extends StagedMeta>(item: T): item is Extract<T, StagedWriteMeta> {
   return isStagedWriteKind(item.kind);
 }
@@ -292,6 +324,7 @@ export function parseLegacyInbox(raw: string, file: string): StagedReviewMeta[] 
 }
 
 const legacyInboxPath = `${stagingDir}/inbox.json`;
+const addresseePattern = /^creature:[^\s/]+$/;
 const stagedIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const writeKinds: readonly string[] = ["note", "daily", "moc"];
 const reviewKinds: readonly string[] = reviewProposalSchema.options.map(
@@ -303,6 +336,8 @@ const writeMetaSchema = z.object({
   target: z.string().refine(isVaultRelativePath, { error: "leaves the vault" }),
   created: z.string(),
   supersedes: z.string().optional(),
+  source: z.string().optional(),
+  for: z.string().refine(isStagedAddressee, { error: "names no creature or keeper" }).optional(),
 });
 
 const reviewMetaSchema = z.intersection(
@@ -329,8 +364,16 @@ function isStagedWriteKind(kind: unknown): kind is StagedWriteKind {
 function parseWriteMeta(value: Record<string, unknown>, file: string): StagedWriteMeta {
   const result = writeMetaSchema.safeParse(value);
   if (!result.success) throw new MalformedStagedItemError(file, describeIssues(result.error));
-  const { kind, target, created, supersedes } = result.data;
-  return { kind, target, created, ...(supersedes !== undefined && { supersedes }) };
+  const { kind, target, created, supersedes, source } = result.data;
+  const addressee = result.data.for;
+  return {
+    kind,
+    target,
+    created,
+    ...(supersedes !== undefined && { supersedes }),
+    ...(source !== undefined && { source }),
+    ...(isStagedAddressee(addressee) && { for: addressee }),
+  };
 }
 
 function parseReviewMeta(value: Record<string, unknown>, file: string): StagedReviewMeta {

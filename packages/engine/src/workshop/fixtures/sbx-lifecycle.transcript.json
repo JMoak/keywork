@@ -1,0 +1,167 @@
+{
+  "recorded": "2026-11-05",
+  "sbx": "0.45.1",
+  "note": "Shaped from the Docker Sandboxes documentation; Docker and sbx were not installed where this was recorded. Steps marked shaped carry output layout the documentation does not print verbatim. Replace with a live recording during qualification.",
+  "steps": [
+    {
+      "args": ["version"],
+      "exit": 0,
+      "stdout": "sbx version v0.45.1 (9d79d90ee4c5d297fb3d36b75384e8cea7a4fbcb)\n",
+      "shaped": true,
+      "source": "version and commit from containerized-coding-agents docs/untested.md; line layout shaped"
+    },
+    {
+      "args": ["policy", "ls"],
+      "exit": 0,
+      "stdout": "SCOPE      TYPE      DECISION   RESOURCES\n(global)   network   allow      *.googleapis.com\n(global)   network   allow      api.anthropic.com\n",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/governance/local/network-rules/ names the rules; the SCOPE column and (global) follow sbx secret ls in https://docs.docker.com/ai/sandboxes/configuration/credentials/"
+    },
+    {
+      "args": [
+        "create",
+        "--name",
+        "stead-pip-0a1b2c",
+        "--skills=off",
+        "--kit-arg",
+        "image=docker/sandbox-templates@sha256:da4458d89a5f739df50a2a334c08a3d15f15e11f0024bf47b37c88ad348a4644",
+        "{kit}"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/sandboxes/usage/ (sbx create --name, mountless since v0.42.0); --skills=off and --kit-arg from C:/src/containerized-coding-agents/sandboxes/manual-kits.md",
+      "env": {
+        "DOCKER_SANDBOXES_ROOT_SIZE": "20g",
+        "DOCKER_SANDBOXES_DOCKER_SIZE": "10g"
+      }
+    },
+    {
+      "args": [
+        "secret",
+        "set-custom",
+        "--sandbox",
+        "stead-pip-0a1b2c",
+        "--host",
+        "api.anthropic.com",
+        "--env",
+        "ANTHROPIC_API_KEY",
+        "--value-stdin"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/sandboxes/configuration/credentials/",
+      "input": "{secret}"
+    },
+    {
+      "args": ["policy", "deny", "network", "--sandbox", "stead-pip-0a1b2c", "*.googleapis.com"],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/governance/local/network-rules/"
+    },
+    {
+      "args": ["policy", "deny", "network", "--sandbox", "stead-pip-0a1b2c", "archive.ubuntu.com"],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/governance/local/network-rules/"
+    },
+    {
+      "args": ["policy", "deny", "network", "--sandbox", "stead-pip-0a1b2c", "security.ubuntu.com"],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/governance/local/network-rules/"
+    },
+    {
+      "args": ["policy", "deny", "network", "--sandbox", "stead-pip-0a1b2c", "ports.ubuntu.com"],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/governance/local/network-rules/"
+    },
+    {
+      "args": [
+        "policy",
+        "allow",
+        "network",
+        "--sandbox",
+        "stead-pip-0a1b2c",
+        "pypi.org",
+        "--method",
+        "GET",
+        "--method",
+        "HEAD",
+        "--method",
+        "OPTIONS"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/governance/local/network-rules/"
+    },
+    {
+      "args": ["policy", "allow", "network", "--sandbox", "stead-pip-0a1b2c", "api.anthropic.com"],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/governance/local/network-rules/"
+    },
+    {
+      "args": ["start", "stead-pip-0a1b2c"],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/sandboxes/troubleshooting/ (sbx stop and sbx start)"
+    },
+    {
+      "args": ["ls"],
+      "exit": 0,
+      "stdout": "SANDBOX            AGENT           STATUS      PORTS   WORKSPACE   CREATED\nstead-pip-0a1b2c   stead-workshop  ● running                         1m\n",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/sandboxes/usage/ sample row; agent column for a kit sandbox shaped"
+    },
+    {
+      "args": ["ls"],
+      "exit": 0,
+      "stdout": "SANDBOX            AGENT           STATUS      PORTS   WORKSPACE   CREATED\nstead-pip-0a1b2c   stead-workshop  ● running                         1m\n",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/sandboxes/usage/ sample row; agent column for a kit sandbox shaped"
+    },
+    {
+      "args": [
+        "exec",
+        "stead-pip-0a1b2c",
+        "--",
+        "sh",
+        "-c",
+        "mkdir -p -- \"$1\" && cd -- \"$1\" || exit 125; shift; exec \"$@\"",
+        "workshop",
+        "/home/agent/workspace",
+        "sh",
+        "-c",
+        "echo ready"
+      ],
+      "exit": 0,
+      "stdout": "ready\n",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/sandboxes/troubleshooting/ (sbx exec <name> -- <command>)"
+    },
+    {
+      "args": ["stop", "stead-pip-0a1b2c"],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/sandboxes/usage/"
+    },
+    {
+      "args": ["rm", "--force", "stead-pip-0a1b2c"],
+      "exit": 0,
+      "stdout": "",
+      "shaped": true,
+      "source": "https://docs.docker.com/ai/sandboxes/usage/ (sbx rm --force)"
+    }
+  ]
+}

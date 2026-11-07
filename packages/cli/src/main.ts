@@ -1,8 +1,14 @@
 #!/usr/bin/env bun
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
-import { debugEnabled, type PermissionResolver, ResolutionError } from "@keywork/engine";
-import type { KeyworkClient } from "@keywork/server";
+import {
+  CapabilityCache,
+  debugEnabled,
+  type PermissionResolver,
+  type Provider,
+  ResolutionError,
+} from "@keywork/engine";
+import { contractVersion, type KeyworkClient } from "@keywork/server";
 import {
   ConfigError,
   openWorkspace,
@@ -27,12 +33,13 @@ import { nextActionFor, shellCommands } from "./inference/port.ts";
 import { closingRole, roleProvider } from "./inference/roles.ts";
 import { composeInference, connectHint } from "./inference/runtime.ts";
 import { type LiveInference, openInferenceState } from "./inference-state.ts";
-import { defaultSessionDir, ensureStateLayout } from "./paths.ts";
+import { defaultSessionDir, ensureStateLayout, prepareManagedHome } from "./paths.ts";
 import { isPresetName, permissionsResolver, presetResolver, userPresetSwitch } from "./presets.ts";
 import { conclude, exitCodeOf, runHeadless } from "./run.ts";
 import type { HostOptions } from "./serve.ts";
 import { terminalConfirm } from "./terminal-input.ts";
 import { versionLine } from "./version.ts";
+import { WorkspaceInUseError, withWorkspaceWriter } from "./workspace-ownership.ts";
 import {
   fileWorkspaceRecall,
   selectWorkspace,
@@ -53,7 +60,7 @@ export async function main(argv: readonly string[], seams: MainSeams = {}): Prom
   const io = resolveSeams(seams);
   const decision = dispatchCommand(argv, io.interactive);
   if (decision.kind === "version") {
-    io.print(versionLine());
+    io.print(engineVersionLine());
     return 0;
   }
   if (decision.kind === "help") {
@@ -64,14 +71,41 @@ export async function main(argv: readonly string[], seams: MainSeams = {}): Prom
     io.printError(`keywork: ${decision.reason}\n\n${io.interactive ? usage : nonInteractiveUsage}`);
     return decision.exitCode;
   }
+  if (decision.command === "node") {
+    const { nodeCommand } = await import("./node/index.ts");
+    return nodeCommand(decision.rest, { cwd: io.cwd, env: io.env }, io);
+  }
   const invocation = parseInvocation(decision.rest);
   if (!invocation.ok) return refuseInvocation(decision, invocation.problem, io);
+  const managedHome = invocation.values.home;
+  if (
+    managedHome &&
+    (decision.command !== "serve" ||
+      invocation.values.workspace !== undefined ||
+      invocation.values["session-dir"] !== undefined)
+  ) {
+    return refuseInvocation(
+      decision,
+      "--home requires serve and selects its own workspace and session directory",
+      io,
+    );
+  }
   const requestedWorkspace = invocation.values.workspace;
   const workspaceProblem = strictWorkspaceCommands.has(decision.command)
     ? unknownWorkspaceProblem(io.cwd, requestedWorkspace)
     : undefined;
   if (workspaceProblem !== undefined) return refuseInvocation(decision, workspaceProblem, io);
-  const context = await openCommandContext(io, requestedWorkspace);
+  const servingIo = managedHome ? { ...io, cwd: prepareManagedHome() } : io;
+  const context = await openCommandContext(servingIo, requestedWorkspace, managedHome);
+  if (decision.command === "run") {
+    try {
+      return await withWorkspaceWriter(context, () => runHeadlessPrompt(context, invocation));
+    } catch (cause) {
+      if (!(cause instanceof WorkspaceInUseError)) throw cause;
+      io.printError(`keywork run: ${cause.message}`);
+      return exitCodes.unresolved;
+    }
+  }
   return commands[decision.command](context, invocation);
 }
 
@@ -103,6 +137,10 @@ export function runUntilSwitch(
   });
 }
 
+export function engineVersionLine(contract: string = contractVersion): string {
+  return `${versionLine()} · contract ${contract}`;
+}
+
 interface MainIo {
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -115,10 +153,12 @@ interface MainIo {
 interface CommandContext {
   io: MainIo;
   cwd: string;
+  capabilities: CapabilityCache;
   workspaceSlug: string | undefined;
   workspaceRecall: WorkspaceRecall;
   trustStore: TrustStore;
   projectTrusted: boolean;
+  managedHome: boolean;
   openInference(): Promise<LiveInference>;
 }
 
@@ -126,7 +166,7 @@ type Command = (context: CommandContext, invocation: ParsedInvocation) => Promis
 
 const strictWorkspaceCommands: ReadonlySet<CommandName> = new Set(["run", "chat"]);
 
-const commands: Record<CommandName, Command> = {
+const commands: Record<Exclude<CommandName, "node">, Command> = {
   panes: runPanes,
   chat: runChat,
   run: runHeadlessPrompt,
@@ -145,6 +185,8 @@ const commands: Record<CommandName, Command> = {
   untrust: (context) => runTrust("untrust", context),
   permissions: runPermissions,
   doctor: runDoctor,
+  models: runModels,
+  creatures: runCreatures,
   serve: runServe,
   attach: runAttach,
 };
@@ -152,23 +194,29 @@ const commands: Record<CommandName, Command> = {
 async function openCommandContext(
   io: MainIo,
   requestedWorkspace: string | undefined,
+  managedHome = false,
 ): Promise<CommandContext> {
   const { cwd } = io;
   ensureStateLayout();
   const workspaceRecall = fileWorkspaceRecall();
-  const workspaceSlug = selectWorkspace(cwd, requestedWorkspace, workspaceRecall, io.printError);
+  const workspaceSlug = managedHome
+    ? undefined
+    : selectWorkspace(cwd, requestedWorkspace, workspaceRecall, io.printError);
   for (const dir of openWorkspace(cwd, workspaceSlug)?.missingContextDirs ?? []) {
     io.printError(`keywork: skipping context dir ${dir}, it doesn't exist`);
   }
   const trustStore = new TrustStore();
-  const projectTrusted = trustStore.resolve(cwd) === "trusted";
+  const projectTrusted = managedHome || trustStore.resolve(cwd) === "trusted";
+  const capabilities = new CapabilityCache();
   return {
     io,
     cwd,
+    capabilities,
     workspaceSlug,
     workspaceRecall,
     trustStore,
     projectTrusted,
+    managedHome,
     openInference: () =>
       openInferenceState({
         cwd,
@@ -176,6 +224,7 @@ async function openCommandContext(
         env: io.env,
         warn: io.printError,
         compose: io.composeInference,
+        localServers: capabilities,
       }),
   };
 }
@@ -323,7 +372,7 @@ ${usage}`);
       tokenOnStdout: !io.interactive,
       reopen: async () => {
         const reopened = await servedHostOptions(
-          await openCommandContext(io, context.workspaceSlug),
+          await openCommandContext(io, context.workspaceSlug, context.managedHome),
           values,
           preset,
         );
@@ -347,7 +396,7 @@ async function servedHostOptions(
   const { cwd, projectTrusted, workspaceSlug } = context;
   const { config, runtime, memoryDecider } = (await context.openInference()).current();
   const bound = runtime.resolve({ override: values.model, default: config.model });
-  if (!bound.ok) {
+  if (!bound.ok && (!context.managedHome || values.model !== undefined)) {
     return {
       ok: false,
       problem: `${bound.failure.message} · ${nextActionFor(bound.failure, shellCommands)}
@@ -363,15 +412,22 @@ ${connectHint}`,
     options: {
       cwd,
       projectTrusted,
+      managedHome: context.managedHome,
       workspaceSlug,
       memoryDecider,
-      provider: runtime.provider(bound.binding),
+      provider: bound.ok ? runtime.provider(bound.binding) : setupRequiredProvider,
       closingProvider: roleProvider(runtime, config, closingRole),
       permissions: presets.resolver,
       presets,
       inference: {
         bind: (reference) => runtime.registry.bind(reference),
         provider: (binding) => runtime.provider(binding),
+      },
+      inventory: {
+        capabilities: context.capabilities,
+        registrations: () => runtime.registry.all(),
+        provider: (binding) => runtime.provider(binding),
+        decider: (binding) => runtime.decider(binding),
       },
       checkpoints: values["no-checkpoints"] ? "off" : "on",
       sessionDir: values["session-dir"],
@@ -386,6 +442,13 @@ ${connectHint}`,
     },
   };
 }
+
+const setupRequiredProvider: Provider = {
+  name: "model-setup",
+  stream: () => {
+    throw new Error("Choose an available model before starting a creature conversation.");
+  },
+};
 
 async function runAttach(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
   const { io } = context;
@@ -601,6 +664,34 @@ async function defaultProvider(context: CommandContext) {
   return resolution.ok ? runtime.provider(resolution.binding) : undefined;
 }
 
+async function runModels(
+  context: CommandContext,
+  { positionals, values }: ParsedInvocation,
+): Promise<number> {
+  const { modelsCommand } = await import("./models/command.ts");
+  const { benchDepsFrom } = await import("./models/deps.ts");
+  const { runtime } = (await context.openInference()).current();
+  return modelsCommand(
+    positionals,
+    benchDepsFrom({
+      registrations: () => runtime.registry.all(),
+      resolve: (request) => runtime.resolve(request),
+      provider: (binding) => runtime.provider(binding),
+      decider: (binding) => runtime.decider(binding),
+    }),
+    commandIo(context),
+    { repeats: values.repeats, decide: values.decide, json: values.json },
+  );
+}
+
+async function runCreatures(
+  context: CommandContext,
+  { positionals, values }: ParsedInvocation,
+): Promise<number> {
+  const { creaturesCommand } = await import("./creatures/command.ts");
+  return creaturesCommand(positionals, {}, commandIo(context), { json: values.json });
+}
+
 async function runTrust(action: "trust" | "untrust", context: CommandContext): Promise<number> {
   const { trustCommand } = await import("./trust.ts");
   return trustCommand(action, context.cwd, context.trustStore, commandIo(context));
@@ -686,6 +777,7 @@ function parseInvocationArgs(args: readonly string[]) {
       "session-dir": { type: "string" },
       workspace: { type: "string" },
       port: { type: "string" },
+      home: { type: "boolean", default: false },
       "no-checkpoints": { type: "boolean", default: false },
       pane: { type: "string" },
       session: { type: "string" },
@@ -696,6 +788,8 @@ function parseInvocationArgs(args: readonly string[]) {
       apply: { type: "boolean", default: false },
       restore: { type: "string" },
       yes: { type: "boolean", default: false },
+      repeats: { type: "string" },
+      decide: { type: "boolean", default: false },
     },
   });
 }

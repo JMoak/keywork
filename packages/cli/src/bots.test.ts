@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  botDefinitionText,
   emptyCostRollup,
   knownCostNanos,
   loadBots,
@@ -13,15 +14,7 @@ import {
 import { recordingProvider } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import {
-  type BotRoots,
-  botCommand,
-  botCosts,
-  botDefinitionText,
-  botService,
-  boundStores,
-  createBot,
-} from "./bots.ts";
+import { type BotRoots, botCommand, botCosts, botService, boundStores, createBot } from "./bots.ts";
 
 const scratch = scratchDirs("keywork-cli-bots-");
 

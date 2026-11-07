@@ -1,4 +1,4 @@
-import type { SendBehavior } from "@keywork/engine";
+import type { PromptOrigin, SendBehavior } from "@keywork/engine";
 import {
   bodyOf,
   fieldsOf,
@@ -32,6 +32,12 @@ const injectBody: JsonSchema = {
   properties: {
     text: { type: "string", minLength: 1 },
     client: { type: "string", pattern: clientName.source },
+    frame: {
+      type: "object",
+      required: ["creature"],
+      properties: { creature: { type: "string", pattern: clientName.source } },
+      additionalProperties: false,
+    },
   },
   additionalProperties: false,
 };
@@ -59,7 +65,7 @@ export const sessionRoutes = [
     path: "/sessions/{id}",
     operationId: "readSession",
     summary:
-      "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `live` is true when the session is open in this server process.",
+      "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `reports` lists the one-line summaries a creature's finished threads sent to this conversation (`keywork.creature.report` entries: never prompts, never in the model context), each `{ index, entryId, at, text, origin, kind? }` with `index` the position in `messages` the entry was written before and `origin` the `{ kind: creature, creature, thread }` the live `extension.notice` carried, so a transcript draws the line after a reload exactly as it drew it live (since contract 1.10); `kind: frame` says `messages[index]` is the prompt an inject with `frame` wrote right after it, which a transcript draws as the creature line and never as a keeper prompt (since contract 1.11). `live` is true when the session is open in this server process.",
     authenticated: true,
     responses: { "200": "The session.", "404": "No session has that id." },
   },
@@ -83,12 +89,12 @@ export const sessionRoutes = [
     path: "/sessions/{id}/inject",
     operationId: "injectPrompt",
     summary:
-      'Submit a prompt from a client outside keywork, such as a voice assistant or another LLM window. It runs exactly like a typed prompt: it starts a turn when the session is idle and joins the back of the queue when a turn is running. `turn.started` and `queue.changed` carry `origin: { kind: "external", client }`, the turn answers to the same permission policy and ask queue, and any memory note it proposes is staged with provenance `untrusted`.',
+      'Submit a prompt from a client outside keywork, such as a voice assistant or another LLM window. It runs exactly like a typed prompt: it starts a turn when the session is idle and joins the back of the queue when a turn is running. `turn.started` and `queue.changed` carry `origin: { kind: "external", client }`, the turn answers to the same permission policy and ask queue, and any memory note it proposes is staged with provenance `untrusted`. With `frame: { creature }` the text is a frame the creature answers, never a keeper prompt (since contract 1.11): the origin is `{ kind: "creature", creature, thread }` with `thread` this session, a `keywork.creature.report` entry with `kind: frame` is written before the prompt so `GET /sessions/{id}` marks it under `reports` with the prompt at `messages[index]`, the live `extension.notice` carries `detail.kind: frame`, and the session takes the creature name as its title until the first reply of the creature titles it.',
     authenticated: true,
     requestBody: injectBody,
     responses: {
       "202": "The prompt was accepted; `queued` is true when it waits behind a running turn.",
-      "400": "The body is not `{ text, client }`.",
+      "400": "The body is not `{ text, client, frame?: { creature } }`.",
       "404": "No session has that id.",
     },
   },
@@ -137,10 +143,11 @@ export const sessionFamily = {
     injectPrompt: async (request, { id }) => {
       const injection = injectionOf(await bodyOf(request));
       if (injection === undefined) {
-        return json(400, { error: "the body must be { text: string, client: string }" });
+        return json(400, {
+          error: "the body must be { text: string, client: string, frame?: { creature: string } }",
+        });
       }
-      const origin = { kind: "external", client: injection.client } as const;
-      const outcome = await host.inject(id ?? "", injection.text, origin);
+      const outcome = await host.inject(id ?? "", injection.text, originOf(injection, id ?? ""));
       return outcome === "missing"
         ? missingSession()
         : json(202, { sessionId: id, accepted: true, queued: outcome === "queued" });
@@ -170,11 +177,26 @@ function sendBehaviorOf(behavior: PromptBehavior): SendBehavior {
   return behavior === "now" ? "steer" : behavior;
 }
 
-function injectionOf(body: unknown): { text: string; client: string } | undefined {
-  const fields = fieldsOf<{ text: unknown; client: unknown }>(body);
+interface Injection {
+  text: string;
+  client: string;
+  creature?: string;
+}
+
+function injectionOf(body: unknown): Injection | undefined {
+  const fields = fieldsOf<{ text: unknown; client: unknown; frame: unknown }>(body);
   const text = nonBlank(fields?.text);
   const client = fields?.client;
   if (text === undefined || typeof client !== "string" || !clientName.test(client))
     return undefined;
-  return { text, client };
+  if (fields?.frame === undefined) return { text, client };
+  const creature = fieldsOf<{ creature: unknown }>(fields.frame)?.creature;
+  if (typeof creature !== "string" || !clientName.test(creature)) return undefined;
+  return { text, client, creature };
+}
+
+function originOf(injection: Injection, thread: string): PromptOrigin {
+  return injection.creature === undefined
+    ? { kind: "external", client: injection.client }
+    : { kind: "creature", creature: injection.creature, thread };
 }

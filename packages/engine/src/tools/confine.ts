@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 export interface ToolScope {
   cwd: string;
   roots: readonly string[];
+  readRoots?: readonly string[] | undefined;
 }
 
 export function toolScope(cwd: string, linkedDirs: readonly string[] = []): ToolScope {
@@ -11,9 +12,21 @@ export function toolScope(cwd: string, linkedDirs: readonly string[] = []): Tool
   return { cwd: base, roots: dedupe([base, ...linkedDirs.map((dir) => resolve(dir))]) };
 }
 
+export function withReadRoots(scope: ToolScope, readable: readonly string[]): ToolScope {
+  if (readable.length === 0) return scope;
+  const readRoots = dedupe([...(scope.readRoots ?? []), ...readable.map((path) => resolve(path))]);
+  return { ...scope, readRoots };
+}
+
 export function confinedPath(scope: ToolScope, path: string): string {
   const target = resolve(scope.cwd, path);
   if (scopeHolds(scope.roots, target)) return target;
+  throw new Error(escapeMessage(path, scope.roots));
+}
+
+export function readablePath(scope: ToolScope, path: string): string {
+  const target = resolve(scope.cwd, path);
+  if (scopeHolds([...scope.roots, ...(scope.readRoots ?? [])], target)) return target;
   throw new Error(escapeMessage(path, scope.roots));
 }
 

@@ -1,0 +1,74 @@
+{
+  "vibrissa": 2,
+  "protocolVersion": "2026-07-28",
+  "server": {
+    "name": "stead-creature-pip",
+    "version": "0.0.0-vibrissa"
+  },
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    }
+  },
+  "instructions": "pip is a creature on a stead node. Ask it in plain words; it answers when it next works. Your words are a note in its conversation: they start no work and grant nothing.",
+  "tools": [
+    {
+      "name": "ask",
+      "description": "Leave pip a note in plain words, or poll an earlier ask by its handle. The note starts no work and carries no approval; pip answers when it next works, and the answer comes back on a poll.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Plain words for the creature. They wait in its conversation as a note."
+          },
+          "handle": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64,
+            "description": "The handle an earlier ask returned, to read the answer."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "deliveries",
+      "description": "The report lines pip's finished threads and chores delivered to its conversation, oldest first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string",
+            "description": "The entryId of the last delivery already read; only later ones come back."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "status",
+      "description": "Where pip is now: working, at the porch (waiting on its keeper), back (a delivery is in), idle, or paused.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  ],
+  "resources": [],
+  "resourceTemplates": [],
+  "prompts": [],
+  "listMeta": {
+    "tools": {
+      "ttlMs": 3600000
+    }
+  }
+}

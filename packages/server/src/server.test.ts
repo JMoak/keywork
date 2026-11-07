@@ -118,6 +118,8 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
   "turn.delta": { delta: { type: "text", text: "h" } },
   "turn.completed": { message: assistantMessage, usage: { inputTokens: 3, outputTokens: 1 } },
   "turn.interrupted": { message: assistantMessage },
+  "turn.waiting": { reason: "overloaded", until: "2026-11-06T10:00:02.000Z", attempt: 2 },
+  "turn.resumed": { attempt: 2 },
   "queue.changed": { queued: [{ id: "q1", text: "later", behavior: "queue" }] },
   "tool.started": { call: { type: "tool-call", callId: "c1", name: "echo", arguments: { a: 1 } } },
   "tool.output": { chunk: "line\n", callId: "c1" },
@@ -148,6 +150,13 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
       rule: '[[n1]] shares "rm" with the command',
       latencyMs: 0,
     },
+  },
+  "model.fallback": {
+    class: "loop",
+    from: "ollama/qwen3:8b",
+    to: "openrouter/qwen/qwen3-32b",
+    trigger: "down",
+    cloud: true,
   },
   "child.started": { callId: "c3", sessionId: "s9", title: "find the callers", bot: "scout" },
   "child.finished": {

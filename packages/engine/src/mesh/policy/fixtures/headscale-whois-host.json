@@ -1,0 +1,25 @@
+{
+  "Node": {
+    "ID": 2,
+    "StableID": "2",
+    "Name": "host.stead.example.",
+    "User": 2147455555,
+    "Tags": ["tag:stead-host"],
+    "Key": "nodekey:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "KeyExpiry": "0001-01-01T00:00:00Z",
+    "Addresses": ["100.64.0.2/32", "fd7a:115c:a1e0::2/128"],
+    "AllowedIPs": ["100.64.0.2/32", "fd7a:115c:a1e0::2/128"],
+    "Hostinfo": { "OS": "linux", "Hostname": "host" },
+    "Created": "2026-10-30T12:05:00Z",
+    "Online": true,
+    "ComputedName": "host",
+    "ComputedNameWithHost": "host"
+  },
+  "UserProfile": {
+    "ID": 2147455555,
+    "LoginName": "tagged-devices",
+    "DisplayName": "Tagged Devices",
+    "ProfilePicURL": ""
+  },
+  "CapMap": null
+}

@@ -30,6 +30,7 @@ export {
   type ToolCallRuling,
   toolsThroughHooks,
 } from "./agent-hooks.ts";
+export { type BackoffPolicy, backoffMs } from "./backoff.ts";
 export {
   type ChildFinished,
   type ChildOutcome,
@@ -66,6 +67,7 @@ export {
   frameTickMs,
   type TickScheduler,
 } from "./coalesce.ts";
+export * from "./creatures/index.ts";
 export {
   type BotChoice,
   type ChildHost,
@@ -331,6 +333,19 @@ export {
 } from "./mcp/registry.ts";
 export { mcpSearchToolName } from "./mcp/tool-search.ts";
 export {
+  type AddressedNote,
+  addressedLine,
+  addressedNotesForThisTurn,
+} from "./memory/addressed.ts";
+export {
+  type Admission,
+  admissionOf,
+  provenanceFor,
+  rememberFrom,
+  type SourcedNote,
+  untrustedSourceKinds,
+} from "./memory/admission.ts";
+export {
   anchorFrontmatter,
   type CheckpointAnchor,
   type CheckpointAnchorInputs,
@@ -480,6 +495,13 @@ export {
   type UsefulnessSink,
 } from "./memory/citations.ts";
 export {
+  type CraftLesson,
+  craftNotes,
+  craftSection,
+  isCraftNote,
+  learnCraft,
+} from "./memory/craft.ts";
+export {
   type ActionBudget,
   type ActionCandidates,
   actionAsk,
@@ -557,12 +579,25 @@ export {
   shouldFlush,
 } from "./memory/flush.ts";
 export {
+  applySourceForget,
   type ForgetEntry,
   type ForgetPlan,
   type ForgetRefusal,
+  type ForgetStagedLine,
+  forgetEcho,
   isEmptyPlan,
+  isEmptySourcePlan,
   planForget,
+  planSourceForget,
+  type SourceForgetCounts,
+  type SourceForgetPlan,
+  type SourceForgetRefusal,
+  type SourceForgetReport,
+  type SourceForgetting,
+  StaleForgetPlanError,
+  sourceForgetting,
   stageForget,
+  workspaceOrCraftStore,
 } from "./memory/forget.ts";
 export {
   type Frontmatter,
@@ -782,12 +817,24 @@ export {
   type SearchOutcome,
 } from "./memory/search.ts";
 export {
+  InvalidMemorySourceError,
+  type MemorySource,
+  type MemorySourceKind,
+  memorySourceKinds,
+  parseMemorySource,
+  sourceText,
+} from "./memory/sources.ts";
+export {
+  addresseeFor,
+  addresseeOf,
   describeStaged,
   isStagedWrite,
+  keeperAddressee,
   MalformedStagedItemError,
   type ReviewProposal,
   reviewKey,
   reviewProposalSchema,
+  type StagedAddressee,
   type StagedItem,
   StagedItemNotFoundError,
   type StagedKind,
@@ -816,6 +863,25 @@ export {
   VaultFiles,
   writeFileAtomic,
 } from "./memory/vault-files.ts";
+export type { AuditEntry as MeshAuditEntry } from "./mesh/audit/index.ts";
+export * from "./mesh/audit/index.ts";
+export * from "./mesh/discovery/index.ts";
+export * from "./mesh/grants/index.ts";
+export type { DenyReason as MeshDenyReason } from "./mesh/listener/index.ts";
+export * from "./mesh/listener/index.ts";
+export * from "./mesh/pairing/index.ts";
+export {
+  type Confirmation as PairingConfirmation,
+  isFresh as isMacFresh,
+  type Refusal,
+  type RefusalKind,
+} from "./mesh/pairing/index.ts";
+export * from "./mesh/policy/index.ts";
+export * from "./mesh/transport/index.ts";
+export {
+  type CliRunner as TailscaleCliRunner,
+  withFallback as withTransportFallback,
+} from "./mesh/transport/index.ts";
 export {
   type ImagePart,
   type Message,
@@ -841,6 +907,15 @@ export {
   textTurn,
   toolCallTurn,
 } from "./mock-provider.ts";
+export * from "./models/adapters/index.ts";
+export * from "./models/bench/index.ts";
+export * from "./models/capabilities/index.ts";
+export * from "./models/decide/index.ts";
+export * from "./models/discovery/index.ts";
+export * from "./models/health/index.ts";
+export * from "./models/ledger/index.ts";
+export * from "./models/licenses/index.ts";
+export * from "./models/policy/index.ts";
 export { followMutations, mutatingToolNames } from "./mutations.ts";
 export {
   memoryGrants,
@@ -936,6 +1011,24 @@ export {
   repoMapTokenCap,
 } from "./repomap/map.ts";
 export { type IgnoreFileProblem, scanWorkspace, type WorkspaceScan } from "./repomap/scan.ts";
+export type { Refusal as RoutineRefusal } from "./routines/index.ts";
+export * from "./routines/index.ts";
+export { acquireRuntimeOwnership, type RuntimeOwnership } from "./runtime/ownership.ts";
+export {
+  type ManagedRuntime,
+  type RuntimeClient,
+  type RuntimeConflictCode,
+  RuntimeConflictError,
+  type RuntimeConsumer,
+  type RuntimeProduct,
+  type RuntimeRecovery,
+  RuntimeRegistry,
+  type RuntimeRetention,
+  type RuntimeVersion,
+  runtimeHeartbeatMs,
+  runtimeLeaseMs,
+  sameRuntime,
+} from "./runtime/registry.ts";
 export {
   type BubblewrapHost,
   bubblewrapArgs,
@@ -1088,6 +1181,25 @@ export {
 } from "./session/journal.ts";
 export { replaySession } from "./session/replay.ts";
 export {
+  type HunkReference,
+  type HunkVerdict,
+  hunkDigestPattern,
+  hunkHeaderPattern,
+  hunkKey,
+  hunkVerdicts,
+  isHunkVerdict,
+  isReviewVerdict,
+  latestVerdicts,
+  openAsks,
+  type ReviewVerdict,
+  recordHunkVerdict,
+  reviewExtension,
+  reviewVerdictType,
+  type VerdictMark,
+  verdictLine,
+  verdictMarksOf,
+} from "./session/review.ts";
+export {
   type CompactNowOptions,
   compactNow,
   type FlushNowOptions,
@@ -1112,6 +1224,10 @@ export {
 export {
   type BranchSummaryInput,
   type CompactionInput,
+  creatureReportType,
+  type ReportMark,
+  reportMarksOf,
+  type SessionMarks,
   type SessionStats,
   SessionStore,
 } from "./session/store.ts";
@@ -1233,10 +1349,24 @@ export {
   composeAfterSave,
 } from "./tools/after-save.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
-export { confinedPath, scopeContains, type ToolScope, toolScope } from "./tools/confine.ts";
-export { type CoreToolOptions, coreTools, type MemoryRecall } from "./tools/core.ts";
+export {
+  confinedPath,
+  readablePath,
+  scopeContains,
+  type ToolScope,
+  toolScope,
+  withReadRoots,
+} from "./tools/confine.ts";
+export {
+  type CoreToolOptions,
+  type CreatureToolTargets,
+  coreTools,
+  creatureTools,
+  type MemoryRecall,
+} from "./tools/core.ts";
 export { defineTool } from "./tools/define.ts";
 export { editTool } from "./tools/edit.ts";
+export { type MessageTarget, messageTool } from "./tools/message.ts";
 export {
   interactiveShell,
   type PtyChild,
@@ -1249,6 +1379,7 @@ export {
   realPtyRuntimeFacts,
 } from "./tools/pty.ts";
 export { readTool } from "./tools/read.ts";
+export { type ScheduleTarget, scheduleTool, type WakeScheduler } from "./tools/schedule.ts";
 export {
   type InteractiveShell,
   openInteractiveShell,
@@ -1258,5 +1389,9 @@ export {
 } from "./tools/shell-session.ts";
 export { writeTool } from "./tools/write.ts";
 export { findTool, type Tool, ToolNotFoundError, type ToolPreview } from "./tools.ts";
-
 export { engineVersion } from "./version.ts";
+export type {
+  CliRunner,
+  RefusalKind as WorkshopRefusalKind,
+} from "./workshop/index.ts";
+export * from "./workshop/index.ts";

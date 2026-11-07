@@ -16,6 +16,7 @@ export interface NpmManifest {
   readonly dependencies: Readonly<Record<string, string>>;
   readonly repository: { readonly type: string; readonly url: string };
   readonly homepage: string;
+  readonly publishConfig: { readonly access: "public"; readonly registry: string };
 }
 
 export const npmBinPath = "bin/keywork.js";
@@ -28,7 +29,7 @@ export function npmManifestFor(inputs: NpmManifestInputs): NpmManifest {
     license: "FSL-1.1-MIT",
     type: "module",
     bin: { keywork: npmBinPath },
-    files: ["bin", "LICENSE.md", "NOTICE", "README.md"],
+    files: ["bin", "docs/runtime-upgrades.md", "LICENSE.md", "NOTICE", "README.md"],
     engines: { bun: ">=1.3.0" },
     dependencies: {
       "@opentui/core": inputs.opentuiVersion,
@@ -36,5 +37,6 @@ export function npmManifestFor(inputs: NpmManifestInputs): NpmManifest {
     },
     repository: { type: "git", url: "git+https://github.com/JMoak/keywork.git" },
     homepage: "https://github.com/JMoak/keywork",
+    publishConfig: { access: "public", registry: "https://registry.npmjs.org" },
   };
 }

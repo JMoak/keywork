@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
+import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { canonicalPath, type JsonFileStore, jsonFileStore, resolveAnchor } from "@keywork/shared";
+import { dirname, join, resolve } from "node:path";
+import {
+  canonicalPath,
+  type JsonFileStore,
+  jsonFileStore,
+  openWorkspace,
+  resolveAnchor,
+  type WorkspaceAnchor,
+  writeWorkspaceDeclaration,
+} from "@keywork/shared";
 
 export const stateLayoutVersion = 2;
 
@@ -23,6 +32,44 @@ export function workspaceIdentity(
     : anchoredIdentity(anchor.root, undefined, platform);
 }
 
+export interface AnchoredFolder {
+  cwd: string;
+  slug: string | null;
+  anchor: WorkspaceAnchor;
+  identity: WorkspaceIdentity;
+}
+
+export function anchoredFolder(cwd: string, slug: string | null = null): AnchoredFolder {
+  return {
+    cwd,
+    slug,
+    anchor: resolveAnchor(cwd),
+    identity: workspaceIdentity(cwd, slug ?? undefined),
+  };
+}
+
+export function anchoredElsewhere(folder: Pick<AnchoredFolder, "cwd" | "anchor">): boolean {
+  return canonicalPath(folder.cwd) !== canonicalPath(folder.anchor.root);
+}
+
+export function anchorWords(anchor: WorkspaceAnchor): string {
+  return `${anchor.root} (${anchorSourceWords[anchor.source]})`;
+}
+
+export function sharedIdentityOf(
+  folders: readonly AnchoredFolder[],
+): [AnchoredFolder, AnchoredFolder] | undefined {
+  const seen = new Map<WorkspaceIdentity, AnchoredFolder>();
+  for (const folder of folders) {
+    const first = seen.get(folder.identity);
+    if (first !== undefined && canonicalPath(first.cwd) !== canonicalPath(folder.cwd)) {
+      return [first, folder];
+    }
+    seen.set(folder.identity, first ?? folder);
+  }
+  return undefined;
+}
+
 export function defaultSessionDir(cwd: string, slug?: string): string {
   return join(keyworkHome(), "sessions", workspaceIdentity(cwd, slug));
 }
@@ -40,6 +87,10 @@ export function workspacePermissionsFile(
   userRoot: string = homedir(),
 ): string {
   return join(keyworkHome(userRoot), "workspaces", identity, "permissions.json");
+}
+
+export function workspaceWriterFile(cwd: string, slug?: string, userRoot?: string): string {
+  return join(keyworkHome(userRoot), "workspaces", workspaceIdentity(cwd, slug), "writer.sqlite");
 }
 
 export function skillTelemetryFile(
@@ -96,6 +147,48 @@ export function keyworkHome(userRoot: string = homedir()): string {
   return join(userRoot, ".keywork");
 }
 
+export function managedHomeFolder(userRoot: string = homedir()): string {
+  return resolve(keyworkHome(userRoot), "home");
+}
+
+export function prepareManagedHome(userRoot: string = homedir()): string {
+  const root = managedHomeFolder(userRoot);
+  const existing = existingManagedHome(userRoot);
+  if (existing !== undefined) return existing;
+  ensureStateLayout(keyworkHome(userRoot));
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  writeWorkspaceDeclaration(root, { name: "Creature home" });
+  const prepared = existingManagedHome(userRoot);
+  if (prepared === undefined) throw invalidManagedHome();
+  return prepared;
+}
+
+export function existingManagedHome(userRoot: string = homedir()): string | undefined {
+  const root = managedHomeFolder(userRoot);
+  for (const path of [dirname(root), root, join(root, ".keywork")]) {
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (stat !== undefined && !stat.isDirectory()) throw invalidManagedHome();
+  }
+  const declaration = join(root, ".keywork", "workspace.json");
+  const declarationStat = lstatSync(declaration, { throwIfNoEntry: false });
+  if (declarationStat === undefined) return undefined;
+  if (!declarationStat.isFile()) throw invalidManagedHome();
+  const expected = join(realpathSync(userRoot), ".keywork", "home");
+  if (canonicalPath(realpathSync(root)) !== canonicalPath(expected)) throw invalidManagedHome();
+  const workspace = openWorkspace(root);
+  if (
+    workspace?.root !== root ||
+    workspace.contextDirs.length !== 0 ||
+    workspace.missingContextDirs.length !== 0
+  )
+    throw invalidManagedHome();
+  return root;
+}
+
+function invalidManagedHome(): Error {
+  return new Error("the managed creature home must have its own local workspace directory");
+}
+
 interface StateLayoutMarker {
   version: number;
 }
@@ -125,6 +218,12 @@ function pendingMigrations(
     .filter((migration) => migration.from >= recorded && migration.from < version)
     .sort((a, b) => a.from - b.from);
 }
+
+const anchorSourceWords: Readonly<Record<WorkspaceAnchor["source"], string>> = {
+  declaration: "its declared workspace root",
+  git: "its git root",
+  launch: "the folder itself",
+};
 
 function anchoredIdentity(root: string, slug?: string, platform?: NodeJS.Platform): string {
   const canonicalRoot = canonicalPath(root, platform);

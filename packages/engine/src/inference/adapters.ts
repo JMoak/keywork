@@ -1,4 +1,8 @@
 import { withDeclaredCapabilities } from "../capabilities.ts";
+import {
+  type LocalServerDirectory,
+  localServerProvider,
+} from "../models/adapters/inference-hook.ts";
 import type { Provider } from "../provider.ts";
 import { AnthropicProvider } from "../providers/anthropic.ts";
 import { BedrockProvider } from "../providers/bedrock/bedrock.ts";
@@ -22,6 +26,7 @@ export interface CredentialVault {
 export interface AdapterOptions {
   vault: CredentialVault;
   fetchFn?: FetchLike | undefined;
+  localServers?: LocalServerDirectory | undefined;
 }
 
 export class CredentialMaterialError extends Error {
@@ -36,7 +41,9 @@ export class CredentialMaterialError extends Error {
 
 export function providerFor(binding: InferenceBinding, options: AdapterOptions): Provider {
   const material = materialFor(binding, options.vault);
-  const transport = transportFor(binding, material, options.fetchFn);
+  const transport =
+    localTransportFor(binding, material, options) ??
+    transportFor(binding, material, options.fetchFn);
   return withDeclaredCapabilities(new RetryingProvider(transport), binding.capabilities);
 }
 
@@ -58,6 +65,21 @@ function materialFor(
     );
   }
   return material;
+}
+
+function localTransportFor(
+  binding: InferenceBinding,
+  material: CredentialMaterial | undefined,
+  options: AdapterOptions,
+): Provider | undefined {
+  if (options.localServers === undefined || binding.protocol !== "chat-completions") {
+    return undefined;
+  }
+  return localServerProvider(binding, {
+    directory: options.localServers,
+    authHeaders: httpAuthHeaders(binding, material),
+    fetchFn: options.fetchFn,
+  });
 }
 
 function transportFor(

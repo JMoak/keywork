@@ -1,0 +1,132 @@
+{
+  "name": "keywork-core",
+  "systemPrompt": "You are a coding agent working in a Bun and TypeScript monorepo. Use a tool when it helps, call independent tools together, and answer in plain text when no tool is needed.",
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": ["path"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_command",
+      "description": "Run a shell command in the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": ["command"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_code",
+      "description": "Search the workspace for text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "glob": {
+            "type": "string"
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "turns": [
+    {
+      "id": "read-config",
+      "messages": [
+        {
+          "role": "user",
+          "text": "Which port does keywork serve use by default? It is set in packages/server/src/serve-options.ts."
+        }
+      ],
+      "expected": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "packages/server/src/serve-options.ts"
+          }
+        }
+      ]
+    },
+    {
+      "id": "run-tests",
+      "messages": [
+        {
+          "role": "user",
+          "text": "Run the test suite with bun run test and tell me what fails."
+        }
+      ],
+      "expected": [
+        {
+          "name": "run_command",
+          "arguments": {
+            "command": "bun run test"
+          }
+        }
+      ]
+    },
+    {
+      "id": "compare-manifests",
+      "messages": [
+        {
+          "role": "user",
+          "text": "Read packages/engine/package.json and packages/cli/package.json and compare their dependencies."
+        }
+      ],
+      "expected": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "packages/engine/package.json"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "packages/cli/package.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "no-tool",
+      "messages": [
+        {
+          "role": "user",
+          "text": "Which port did you find?"
+        },
+        {
+          "role": "assistant",
+          "text": "keywork serve listens on 7300 by default."
+        },
+        {
+          "role": "user",
+          "text": "Thanks, that answers it. Nothing else for now."
+        }
+      ],
+      "expected": []
+    }
+  ]
+}

@@ -2,10 +2,12 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MockProvider, type Provider, textTurn } from "@keywork/engine";
+import { contractVersion } from "@keywork/server";
 import { TrustStore, writeNamedWorkspaceDeclaration } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { usage } from "./dispatch.ts";
+import { cliVersion } from "./index.ts";
 import { composeInference } from "./inference/runtime.ts";
 import { type MainSeams, main, runUntilSwitch } from "./main.ts";
 import { defaultSessionDir } from "./paths.ts";
@@ -155,6 +157,14 @@ describe("main(argv) composes inference only for the commands that need it", () 
       await rm(configFile, { force: true });
     }
   }
+
+  it("prints the release version and the contract the server speaks on one line", async () => {
+    const { code, out, err } = await invoke(["--version"]);
+    expect(code).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toEqual([`keywork ${cliVersion} · contract ${contractVersion}`]);
+    expect(out[0]).toMatch(/^keywork \d+\.\d+\.\d+ · contract \d+\.\d+$/);
+  });
 
   it("help, version, sessions, workspace, trust and doctor never load config or inference", async () => {
     let composed = 0;

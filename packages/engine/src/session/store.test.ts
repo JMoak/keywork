@@ -49,6 +49,43 @@ describe("SessionStore", () => {
     ]);
   });
 
+  it("marks a creature report at its place among the messages and keeps it out of them", async () => {
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+    const origin = { kind: "creature", creature: "pip", thread: "t1" } as const;
+    const text = 'Thread "triage" finished: nothing needs you today.';
+    await store.append(textMessage("user", "hi"));
+    const report = await store.appendCreatureReport(text, origin);
+    await store.append(textMessage("assistant", "hello"));
+
+    const reopened = await SessionStore.open(file);
+
+    expect(reopened.messages()).toEqual([
+      textMessage("user", "hi"),
+      textMessage("assistant", "hello"),
+    ]);
+    expect(reopened.messageMarks().reports).toEqual([
+      { index: 1, entryId: report.id, at: report.timestamp, text, origin },
+    ]);
+  });
+
+  it("marks a frame as a report of kind frame with its prompt at the marked index", async () => {
+    const file = await sessionFile();
+    const store = await SessionStore.create(file, ".");
+    const origin = { kind: "creature", creature: "vey", thread: "s1" } as const;
+    const frame = "You are Vey. Introduce yourself.";
+    const mark = await store.appendCreatureReport(frame, origin, "frame");
+    await store.append(textMessage("user", frame));
+    await store.append(textMessage("assistant", "I am Vey."));
+
+    const reopened = await SessionStore.open(file);
+
+    expect(reopened.messages()[0]).toEqual(textMessage("user", frame));
+    expect(reopened.messageMarks().reports).toEqual([
+      { index: 0, entryId: mark.id, at: mark.timestamp, text: frame, origin, kind: "frame" },
+    ]);
+  });
+
   it("links entries into a parent chain with timestamps", async () => {
     const store = await SessionStore.create(await sessionFile(), ".");
     const first = await store.append(textMessage("user", "one"));

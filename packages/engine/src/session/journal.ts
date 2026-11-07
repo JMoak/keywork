@@ -3,6 +3,7 @@ import type { EngineEvents, EventBus } from "../bus.ts";
 import type { MemoryDecision } from "../memory/decider.ts";
 import type { ToolPreview } from "../tools.ts";
 import type { CustomEntry, SessionEntry } from "./entries.ts";
+import { reviewVerdictType } from "./review.ts";
 import type { SessionStore } from "./store.ts";
 import { turnFactsType } from "./turn-facts.ts";
 
@@ -68,7 +69,8 @@ export type InjectionSource =
   | "skill"
   | "project-instructions"
   | "repo-map"
-  | "subagent";
+  | "subagent"
+  | "creature";
 
 export interface ContextInjection {
   source: InjectionSource;
@@ -223,6 +225,7 @@ const journalOnlyTypes: ReadonlySet<string> = new Set([
   "shell_reset",
   "session_grants",
   turnFactsType,
+  reviewVerdictType,
 ]);
 
 function changeOf(preview: ToolPreview): AskedChange {

@@ -8,8 +8,10 @@ import { bashTool, detectShell } from "./bash.ts";
 import { reportingChanges, type WorktreeChanges } from "./command-changes.ts";
 import type { ToolScope } from "./confine.ts";
 import { editTool } from "./edit.ts";
+import { type MessageTarget, messageTool } from "./message.ts";
 import type { OriginSource, SessionSource } from "./protected-writes.ts";
 import { readTool } from "./read.ts";
+import { type ScheduleTarget, scheduleTool } from "./schedule.ts";
 import { persistentBashTool, type ShellSession } from "./shell-session.ts";
 import { writeTool } from "./write.ts";
 
@@ -29,12 +31,27 @@ export interface CoreToolOptions {
   origin?: OriginSource | undefined;
   session?: SessionSource | undefined;
   sandbox?: ToolSandbox | undefined;
+  schedule?: ScheduleTarget | undefined;
+  message?: MessageTarget | undefined;
+}
+
+export interface CreatureToolTargets {
+  schedule?: ScheduleTarget | undefined;
+  message?: MessageTarget | undefined;
+}
+
+export function creatureTools(targets: CreatureToolTargets): Tool[] {
+  const { schedule, message } = targets;
+  return [
+    ...(schedule === undefined ? [] : [scheduleTool(schedule)]),
+    ...(message === undefined ? [] : [messageTool(message)]),
+  ];
 }
 
 export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool[] {
   const { memory, shell, onToolOutput, afterSave, sandbox } = options;
   const vault = options.vault ?? memory?.store;
-  const base = [
+  const files = [
     readTool(scope),
     writeTool(scope, { afterSave, vault, origin: options.origin, session: options.session }),
     editTool(scope, { afterSave, vault, origin: options.origin, session: options.session }),
@@ -45,6 +62,7 @@ export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool
       options.worktree,
     ),
   ];
+  const base = [...files, ...creatureTools(options)];
   if (memory === undefined) return base;
   return [...base, ...memoryRecallTools(memory.store, memory.search, memory.onRecall)];
 }

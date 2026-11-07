@@ -152,6 +152,20 @@ describe("session journal", () => {
 
     expect(extensionState(store.activePath()).mode).toBe("plan");
   });
+
+  it("journals a creature's standing introduction by its slug", async () => {
+    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), "/work");
+    const bus = new EventBus<EngineEvents>();
+    const tap = tapJournal(bus, store);
+
+    bus.emit("context.injected", { injection: { source: "creature", id: "pip" } });
+    await tap.flush();
+    tap.stop();
+
+    expect(extensionState(store.activePath()).injections).toEqual([
+      { source: "creature", id: "pip" },
+    ]);
+  });
 });
 
 describe("agent gate decisions on the journal", () => {

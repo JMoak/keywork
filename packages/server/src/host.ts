@@ -9,6 +9,10 @@ import type {
   ContextEditEntry,
   ContextEditMark,
   CostRollup,
+  CreatureMcpPort,
+  CreatureProjectsPort,
+  CreatureProjectWorkPort,
+  CreaturesPort,
   DailyEntry,
   EffortLevel,
   FlushMark,
@@ -26,9 +30,12 @@ import type {
   QuestionTriage,
   QueuedPrompt,
   QueueMove,
+  ReportMark,
   Resolution,
   ResolutionFailure,
   RevertOutcome,
+  ReviewVerdict,
+  RoutineService,
   SendBehavior,
   SessionBinding,
   SessionEntry,
@@ -37,6 +44,7 @@ import type {
   StagedItem,
   SummaryMark,
   Usage,
+  VerdictMark,
   WriteResult,
 } from "@keywork/engine";
 import type {
@@ -50,6 +58,9 @@ import type {
 } from "@keywork/shared";
 import type { AnswerOutcome, AskVerdict, Denial, PendingAsk } from "./asks.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
+import type { MeshConsole } from "./routes/mesh.ts";
+import type { ModelsPort } from "./routes/models.ts";
+import type { WorkshopsPort } from "./routes/workshops.ts";
 
 export interface SessionSummary {
   id: string;
@@ -90,6 +101,8 @@ export interface SessionDetail extends SessionSummary {
   summaries: readonly SummaryMark[];
   flushes: readonly FlushMark[];
   edits: readonly ContextEditMark[];
+  reports: readonly ReportMark[];
+  verdicts: readonly VerdictMark[];
   asOf: number;
   parentSession?: string;
   forkedFrom?: ForkOrigin;
@@ -159,6 +172,7 @@ export type ChangesRefusal = "missing" | "no-baseline";
 export interface ChangesPort {
   list(id: string): Promise<ChangesReport | ChangesRefusal>;
   file(id: string, path: string): Promise<FileSides | ChangesRefusal>;
+  verdict?(id: string, verdict: ReviewVerdict): Promise<VerdictMark | "missing">;
 }
 
 export interface SessionState {
@@ -351,6 +365,14 @@ export interface SessionHost {
   workspaces?: WorkspacesPort;
   themes?: ThemesPort;
   lifecycle?: SessionLifecyclePort;
+  creatures?: CreaturesPort;
+  creatureProjects?: CreatureProjectsPort;
+  creatureProjectWork?: CreatureProjectWorkPort;
+  creatureMcp?: CreatureMcpPort;
+  routines?: RoutineService;
+  models?: ModelsPort;
+  workshops?: WorkshopsPort;
+  mesh?: MeshConsole;
 }
 
 export interface MemoryPort {
@@ -381,7 +403,7 @@ export interface MemoryOverview {
 
 export interface MemoryLayerRecord {
   id: string;
-  kind: "workspace" | "arc" | "user";
+  kind: "workspace" | "arc" | "user" | "bot";
   label: string;
   arc?: string;
   prompt?: { budget: number; used: number };
