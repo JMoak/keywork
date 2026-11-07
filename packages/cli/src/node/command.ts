@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, statSync } from "node:fs";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename, posix, resolve, win32 } from "node:path";
 import { parseArgs } from "node:util";
 import { RuntimeRegistry } from "@keywork/engine";
 import { type CommandIo, type ResolvedCommandIo, resolveCommandIo } from "../command-io.ts";
@@ -670,7 +670,12 @@ function parseNodeArgs(args: readonly string[]): ParsedNode {
   if (consolePid !== undefined && !(verb === "workspace" && operands[0] === "add")) {
     return { ok: false, problem: "--console only applies to workspace add" };
   }
-  if (values.workspace !== undefined && (values.workspace === "" || isAbsolute(values.workspace))) {
+  if (
+    values.workspace !== undefined &&
+    (values.workspace === "" ||
+      posix.isAbsolute(values.workspace) ||
+      win32.isAbsolute(values.workspace))
+  ) {
     return { ok: false, problem: "--workspace names a workspace slug, not a path" };
   }
   if (values.workspace !== undefined && values["no-workspace"]) {

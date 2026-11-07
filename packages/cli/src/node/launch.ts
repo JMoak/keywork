@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { posix, win32 } from "node:path";
 
 export interface SelfLaunch {
   program: string;
@@ -36,5 +36,9 @@ export function workspaceServeArgs(slug: string | null, home = false): string[] 
 const scriptExtension = /\.[cm]?[jt]s$/;
 
 function isScriptOnDisk(script: string, exists: (path: string) => boolean): boolean {
-  return scriptExtension.test(script) && isAbsolute(script) && exists(script);
+  return (
+    scriptExtension.test(script) &&
+    (posix.isAbsolute(script) || win32.isAbsolute(script)) &&
+    exists(script)
+  );
 }
