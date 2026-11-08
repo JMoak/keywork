@@ -61,7 +61,9 @@ import {
   type SendOptions,
   type SessionEntry,
   SessionStore,
+  type SettingStore,
   ShellSession,
+  type ShowTarget,
   type StagedItem,
   scopeContains,
   sessionPosture,
@@ -164,6 +166,7 @@ import {
   type ServedRoutines,
   servedRoutines,
 } from "./serve-routines.ts";
+import { servedSettings } from "./serve-show.ts";
 import { loggedCostNanos, SpendLedger } from "./serve-spend.ts";
 import { type ServedSession, surfacePorts } from "./serve-surfaces.ts";
 import { servedTree } from "./serve-tree.ts";
@@ -400,6 +403,7 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
     async () => (await sessions.composed()).composition.extensions.bots,
   );
   let stagedOf: (() => readonly StagedItem[]) | undefined;
+  const shown = servedSettings(log);
   const localSeat = creatureSeats({
     registry,
     workshops,
@@ -412,12 +416,16 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
   });
   const sessions = new LiveSessions(options, gate, {
     seatFor: async (store) => projectThreadSeat(store) ?? localSeat(store),
+    settings: shown.settings,
     meter: (turn) => {
       node.usage.record(turn);
       answers.answered(turn.provider);
     },
     failed: (provider, error) => answers.failed(provider, error),
-    settled: (thread) => void finishThreadQuietly(thread),
+    settled: (thread) => {
+      shown.settings.rested(thread.id);
+      void finishThreadQuietly(thread);
+    },
     keeper: (answered) => recordKeeperVerdict(answered, { nodeState: node.state }),
   });
   const { composition, arcs, bots } = await sessions.composed();
@@ -505,7 +513,9 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
     models: node.models,
     workshops,
     ...(node.mesh !== undefined && { mesh: { ...node.mesh, messages: mail } }),
+    show: shown.settings,
     close: async () => {
+      shown.close();
       routines?.stop();
       await verbs.close();
       await routines?.close();
@@ -654,6 +664,7 @@ interface SessionSeams {
   failed?(provider: string, error: Error): void;
   settled?(thread: SettledThread): void;
   keeper?(answered: AnsweredAsk): Promise<KeeperOutcome>;
+  settings?: Pick<SettingStore, "propose"> | undefined;
 }
 
 const projectThreadType = "keywork.creature-project";
@@ -978,6 +989,7 @@ class LiveSessions {
           permissions,
           bot: workspace.botNamed(store.botBinding()),
           creature: creature.seat(),
+          show: this.showTargetOf(store),
         }),
       botNamed: workspace.botNamed,
       ...creature,
@@ -986,6 +998,16 @@ class LiveSessions {
     this.live.set(id, live);
     await workspace.attached(store);
     return live;
+  }
+
+  private showTargetOf(store: SessionStore): ShowTarget | undefined {
+    const { settings } = this.seams;
+    if (settings === undefined) return undefined;
+    return {
+      creature: creatureTagOf(store.entries())?.creature ?? null,
+      sessionId: store.header.id,
+      settings: () => settings,
+    };
   }
 
   private confinedResolver(store: SessionStore): PermissionResolver {

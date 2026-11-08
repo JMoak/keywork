@@ -473,6 +473,35 @@ const samples: Samples = {
       rules: [{ action: "bash", resource: "echo *", effect: "allow" }],
     },
   ],
+  "show.proposed": [
+    {
+      setting: {
+        id: "0b6f3c1e-8f2a-4c55-9d1e-3a7b2c4d5e6f",
+        creature: "wren",
+        sessionId: "s3",
+        what: { kind: "report", ref: "r-triage-2026-11-08", title: "Morning triage" },
+        rung: "card",
+        why: "Two builds went red overnight; the report says which.",
+        at: "2026-11-08T09:00:00.000Z",
+        until: "rests",
+        state: "live",
+      },
+    },
+    {
+      setting: {
+        id: "5d2a9e47-1c3b-4f86-a0d2-7e9b8c6f4a13",
+        creature: null,
+        sessionId: "s1",
+        what: { kind: "diff", ref: "cs-41" },
+        rung: "unfold",
+        why: "The change you asked for is ready to read.",
+        at: "2026-11-08T09:05:00.000Z",
+        until: "2026-11-08T10:00:00.000Z",
+        state: "live",
+      },
+    },
+  ],
+  "show.settled": [{ id: "0b6f3c1e-8f2a-4c55-9d1e-3a7b2c4d5e6f", outcome: "seen", by: "keeper" }],
 };
 
 function envelopeShape(): Shape {

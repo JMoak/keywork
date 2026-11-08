@@ -685,6 +685,46 @@
           "stableId": "string"
         }
       ]
+    },
+    "show.proposed": [
+      {
+        "setting": {
+          "at": "string",
+          "creature": "string",
+          "id": "string",
+          "rung": "string",
+          "sessionId": "string",
+          "state": "string",
+          "until": "string",
+          "what": {
+            "kind": "string",
+            "ref": "string",
+            "title": "string"
+          },
+          "why": "string"
+        }
+      },
+      {
+        "setting": {
+          "at": "string",
+          "creature": "null",
+          "id": "string",
+          "rung": "string",
+          "sessionId": "string",
+          "state": "string",
+          "until": "string",
+          "what": {
+            "kind": "string",
+            "ref": "string"
+          },
+          "why": "string"
+        }
+      }
+    ],
+    "show.settled": {
+      "by": "string",
+      "id": "string",
+      "outcome": "string"
     }
   }
 }

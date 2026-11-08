@@ -60,11 +60,14 @@ import {
   type SessionStartReason,
   type SessionStore,
   type ShellSession,
+  type ShowTarget,
   SkillLibrary,
   SkillTelemetry,
   type SpillSource,
   type SpillStore,
   sandboxFor,
+  showTool,
+  showToolName,
   skillConventionDirs,
   skillLibraryTools,
   type Tool,
@@ -241,7 +244,11 @@ async function openExtensionHost(
 ): Promise<{ host: ExtensionHost; hostReport: ExtensionLoadReport }> {
   const host = new ExtensionHost({
     bus: new EventBus<EngineEvents>(),
-    reservedToolNames: [...coreTools(scope).map((tool) => tool.name), delegateToolName],
+    reservedToolNames: [
+      ...coreTools(scope).map((tool) => tool.name),
+      delegateToolName,
+      showToolName,
+    ],
   });
   const hostReport = await loadExtensions({ userRoot, projectRoot: cwd, projectTrusted }, host);
   return { host, hostReport };
@@ -287,6 +294,7 @@ export interface AgentBuildSpec {
   guard: ToolGuard;
   bot?: BotDefinition | undefined;
   creature?: CreatureSeat | undefined;
+  show?: ShowTarget | undefined;
   history?: readonly Message[] | undefined;
   bus?: EventBus<EngineEvents> | undefined;
   sessionId?: SessionKey | undefined;
@@ -528,6 +536,7 @@ function buildAgent(
     ...(recall === undefined
       ? []
       : memoryRecallTools(recall.store, recall.search, recall.onRecall, tap)),
+    ...(spec.show === undefined ? [] : [showTool(spec.show)]),
     ...skillToolsFor(skills, () => self),
     ...(delegation === undefined ? [] : [delegateTool(delegation)]),
   ];
@@ -606,6 +615,7 @@ function delegationFor(
             guard: childGuardOf(spec.guard),
             bot: composition.extensions.bots.find((candidate) => candidate.name === bot),
             creature: childSeatOf(spec.creature, bot === parentBot?.name),
+            show: spec.show,
             bus,
             sessionId: store?.header.id,
             spills: store?.spills(),

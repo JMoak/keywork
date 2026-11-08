@@ -60,6 +60,7 @@ import type { AnswerOutcome, AskVerdict, Denial, PendingAsk } from "./asks.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 import type { MeshConsole } from "./routes/mesh.ts";
 import type { ModelsPort } from "./routes/models.ts";
+import type { ShowPort } from "./routes/show.ts";
 import type { WorkshopsPort } from "./routes/workshops.ts";
 
 export interface SessionSummary {
@@ -373,6 +374,7 @@ export interface SessionHost {
   models?: ModelsPort;
   workshops?: WorkshopsPort;
   mesh?: MeshConsole;
+  show?: ShowPort;
 }
 
 export interface MemoryPort {

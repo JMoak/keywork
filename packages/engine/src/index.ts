@@ -1256,6 +1256,7 @@ export {
   turnFactsType,
   turnsAlong,
 } from "./session/turn-facts.ts";
+export * from "./show/index.ts";
 export {
   type AgentAuthoredSkill,
   authoredByKey,
@@ -1387,6 +1388,7 @@ export {
   type ShellRunOptions,
   ShellSession,
 } from "./tools/shell-session.ts";
+export { type ShowTarget, showTool, showToolName } from "./tools/show.ts";
 export { writeTool } from "./tools/write.ts";
 export { findTool, type Tool, ToolNotFoundError, type ToolPreview } from "./tools.ts";
 export { engineVersion } from "./version.ts";

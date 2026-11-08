@@ -28,6 +28,7 @@ import { quietFamily } from "./routes/quiet.ts";
 import { registerRoutineRoutes } from "./routes/routines.ts";
 import { sessionVerbFamily } from "./routes/session-verbs.ts";
 import { sessionFamily } from "./routes/sessions.ts";
+import { showFamily } from "./routes/show.ts";
 import { spillFamily } from "./routes/spills.ts";
 import { surfaceFamily } from "./routes/surfaces.ts";
 import { themeFamily } from "./routes/themes.ts";
@@ -66,6 +67,7 @@ export const routeFamilies = [
   modelFamilyFor(({ host }) => host.models),
   workshopFamily((host) => host.workshops),
   meshFamily((host) => host.mesh),
+  showFamily((host) => host.show),
 ] as const;
 
 export type Route = (typeof routeFamilies)[number]["routes"][number];

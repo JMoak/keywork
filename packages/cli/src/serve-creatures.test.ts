@@ -15,6 +15,7 @@ import {
   type Provider,
   type ReportMark,
   type SessionStore,
+  type Setting,
   type StagedItem,
   SessionStore as Store,
   textTurn,
@@ -244,6 +245,131 @@ describe("a message delivered to a creature", () => {
     expect(sent).toEqual([{ from: "lark", to: "hal", text: "hi" }]);
   });
 });
+
+describe("the show tool under keywork serve", () => {
+  it("is offered to every served session: a plain conversation, a creature's conversation, its child and its chore run", async () => {
+    const provider = recordingProvider([
+      showTurn("p1", { kind: "note", ref: "Lunch at noon." }, "seen"),
+      textTurn("Shown."),
+      toolCallTurn({
+        type: "tool-call",
+        callId: "d1",
+        name: "delegate",
+        arguments: { title: "find the plan", prompt: "show the plan to the keeper" },
+      }),
+      showTurn("c1", { kind: "file", ref: "notes/plan.md" }, "seen"),
+      textTurn("Set it out."),
+      textTurn("The child set out the plan."),
+      showTurn("r1", { kind: "report", ref: "r-triage" }, "rests"),
+      textTurn("Triage done."),
+    ]);
+    const world = await creatureWorld(provider, () => undefined);
+    try {
+      const plain = (await world.host.create()).id;
+      await world.host.prompt(plain, "remind me about lunch");
+      await world.settled(plain);
+      await world.json("/creatures", { name: "Pip" });
+      const { conversation } = await world.json<{ conversation: string }>("/creatures/pip");
+      await world.host.prompt(conversation, "delegate a look at the plan");
+      await world.settled(conversation);
+      const chore = await (world.host.creatures as CreatureHost).openThread("pip", "routine");
+      await world.host.prompt(chore, "triage");
+      await world.settled(chore);
+      const shown = async () => (await world.json<{ settings: Setting[] }>("/show")).settings;
+      await world.until(async () => (await shown()).length === 2);
+
+      expect(provider.requests).toHaveLength(8);
+      for (const request of provider.requests) {
+        expect(request.tools.map((tool) => tool.name)).toContain("show");
+      }
+      expect(
+        (await shown()).map(({ creature, sessionId, what }) => [creature, sessionId, what.ref]),
+      ).toEqual([
+        [null, plain, "Lunch at noon."],
+        ["pip", conversation, "notes/plan.md"],
+      ]);
+      expect(
+        world.log
+          .since(0)
+          .filter(({ sessionId, type }) => sessionId === chore && type.startsWith("show."))
+          .map(({ type }) => type),
+      ).toEqual(["show.proposed", "show.settled"]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("sets out from a conversation with no ask, withdraws its rests settings when the thread rests, and a removed thread's live ones", async () => {
+    const provider = recordingProvider([
+      showTurn("v1", { kind: "file", ref: "notes/working.md" }, "rests"),
+      showTurn("v2", { kind: "file", ref: "notes/plan.md" }, "seen"),
+      textTurn("Set out the plan."),
+      showTurn("v3", { kind: "report", ref: "r1" }, "seen"),
+      textTurn("Set out the report."),
+    ]);
+    const world = await creatureWorld(provider, () => undefined);
+    try {
+      await world.json("/creatures", { name: "Pip" });
+      const { conversation } = await world.json<{ conversation: string }>("/creatures/pip");
+      const shown = async () => (await world.json<{ settings: Setting[] }>("/show")).settings;
+      const refs = async () => (await shown()).map(({ what }) => what.ref);
+
+      await world.host.prompt(conversation, "show me the plan");
+      await world.settled(conversation);
+      await world.until(async () => (await refs()).join() === "notes/plan.md");
+
+      const creatures = world.host.creatures as CreatureHost;
+      const thread = await creatures.openThread("pip", "thread");
+      await world.host.prompt(thread, "show me the report");
+      await world.settled(thread);
+      expect(await refs()).toEqual(["notes/plan.md", "r1"]);
+      await world.remove(`/sessions/${thread}`);
+
+      expect(await shown()).toEqual([
+        expect.objectContaining({ creature: "pip", sessionId: conversation, state: "live" }),
+      ]);
+      expect(provider.requests[0]?.tools.map((tool) => tool.name)).toContain("show");
+      const shows = world.log
+        .since(0)
+        .filter(({ type }) => type.startsWith("show."))
+        .map(({ sessionId, type, payload }) =>
+          type === "show.settled"
+            ? { sessionId, type, ...(payload as object) }
+            : { sessionId, type, ref: (payload as { setting: Setting }).setting.what.ref },
+        );
+      expect(shows).toEqual([
+        { sessionId: conversation, type: "show.proposed", ref: "notes/working.md" },
+        { sessionId: conversation, type: "show.proposed", ref: "notes/plan.md" },
+        {
+          sessionId: conversation,
+          type: "show.settled",
+          id: expect.any(String),
+          outcome: "withdrawn",
+          by: "creature",
+        },
+        { sessionId: thread, type: "show.proposed", ref: "r1" },
+        {
+          sessionId: thread,
+          type: "show.settled",
+          id: expect.any(String),
+          outcome: "withdrawn",
+          by: "keeper",
+        },
+      ]);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+function showTurn(callId: string, what: { kind: string; ref: string }, until: string) {
+  return toolCallTurn({
+    type: "tool-call",
+    callId,
+    name: "show",
+    arguments: { what, why: "The keeper asked for it.", until },
+  });
+}
 
 describe("a finished conversation turn", () => {
   it("writes one report line from the creature, served as reports, with no further turn", async () => {
@@ -577,6 +703,7 @@ async function creatureWorld(
     sessionDir,
     userRoot,
     host,
+    log,
     json,
     remove,
     messagesOf,

@@ -5,6 +5,8 @@ import type {
   RoutineFinished,
   RoutineFired,
   RoutineNeedsYou,
+  ShowProposed,
+  ShowSettled,
   WorkshopChange,
 } from "@keywork/engine";
 import type { ChangesUpdate } from "./changes.ts";
@@ -51,6 +53,8 @@ export interface ServerEvents {
   "mesh.revocation": MeshRevocationChange;
   "mesh.walked": MeshWalk;
   "mesh.peers": MeshPeersChange;
+  "show.proposed": ShowProposed;
+  "show.settled": ShowSettled;
 }
 
 export const serverEventTypes = [
@@ -75,6 +79,8 @@ export const serverEventTypes = [
   "mesh.revocation",
   "mesh.walked",
   "mesh.peers",
+  "show.proposed",
+  "show.settled",
 ] as const satisfies readonly (keyof ServerEvents)[];
 
 export type ServerEventType = (typeof serverEventTypes)[number];
