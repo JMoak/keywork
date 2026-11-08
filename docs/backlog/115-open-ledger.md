@@ -4,6 +4,20 @@
 > owns it. Read this first when resuming, then the owning overlay before building. Strike items
 > as they land and add the landing date; when a section empties, delete it.
 
+## Refinement campaigns planned (2026-11-08)
+
+The canonical implementation plan is [123: Refinement campaigns](123-refinement-campaigns.md).
+Product direction is agreed; implementation has not started. Begin with CAM-01 (domain
+contracts and fixtures across all three workloads) and CAM-02 (durability and orchestration
+spike), then follow their dependencies. The shared Keywork runtime owns execution;
+Keywork-app and Stead share the desktop workspace; Orchard supplies a development adapter.
+Live monitoring of loop activity, costs, and evidence-backed achievements is required in
+the first release. Skill cartridges, bounded context, and quality-preserving spending
+controls are core scope. Bounded persistence challenges premature finish proposals, with
+provisional probe profiles that can explore past repeated no-change attempts while preserving
+the best artifact and hard resource limits. Relly is an optional later integration. Read the
+plan's handoff and the owning repository's instructions before creating scoped implementation work.
+
 ## Where the tree stands (2026-10-12, wave three)
 
 Uncommitted on top of the alias and theme lanes, four workstreams run on Opus 5.5 at high
