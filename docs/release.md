@@ -119,3 +119,45 @@ Every action in `.github/workflows/` is pinned to a full commit SHA with the ver
 comment (`scripts/check-pins.ts` enforces it). Bump by looking up the tag's commit
 (`git ls-remote --tags https://github.com/<owner>/<action>`) and updating both the SHA and
 the comment.
+
+## Dependency updates
+
+Dependabot reads the root Bun workspace and `bun.lock` on Mondays at 09:15
+America/New_York, then checks GitHub Actions at 09:45. The root entry owns every
+workspace; separate entries for `packages/*` would duplicate that work. Bun's text
+lockfile is supported, while the old binary `bun.lockb` format is not.
+
+Runtime and development patch/minor updates have separate groups. Bun groups use
+explicit package patterns because Dependabot's `dependency-type` grouping is not
+documented for Bun. Keep those patterns aligned when adding dependencies. Unmatched
+packages and major updates get individual PRs. Bun version updates wait 3 days for
+patches, 7 for minors, and 14 for majors; action updates wait 3 days. Actions security
+updates have their own group and do not wait for the weekly schedule or cooldown.
+
+Keep exact manifest versions and full-SHA action pins. Dependabot PRs use `chore`
+commit prefixes and do not tag, publish, or merge themselves. Review release notes
+and lockfile changes, then require the existing Linux/Windows `check` jobs and the
+new `dependency-review` job before merging. Configure those checks as required in
+the repository's main-branch ruleset; workflow files alone do not enforce a merge
+restriction.
+
+Dependency review rejects newly introduced high/critical advisories reported by
+GitHub's dependency graph across runtime, development, and unknown scopes. It runs
+with read-only permissions and adds no PR comments. Its coverage follows the
+manifests and lockfiles GitHub's graph recognizes; do not assume full Bun transitive
+coverage from a green check. GitHub currently supports Bun version updates but
+does **not** support automatic Bun security updates. Run `bun audit --audit-level=high`
+while reviewing dependency PRs, triage the complete lockfile report, and update
+vulnerable dependencies explicitly. Existing advisories need remediation; the audit
+is not a blanket blocking CI gate. Enable repository security alerts and automatic
+security updates for the ecosystems GitHub supports.
+
+The Bun runtime version is pinned in `packageManager` and workflow `bun-version`
+inputs, with matching `@types/bun`. The npm staging CLI is pinned in `release.yml`.
+Dependabot's package and action updates do not keep these executable version inputs
+in sync: review them together during runtime upgrades. Dependency changes ship only
+through the normal tagged release and staged npm approval process above.
+
+Reference: GitHub's [Dependabot options](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference),
+[supported ecosystems](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories),
+and [dependency review action](https://github.com/actions/dependency-review-action).
