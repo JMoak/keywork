@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   plan:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.plan.outputs.release }}
@@ -39,6 +40,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   binaries:
+    timeout-minutes: 30
     needs: [plan, check]
     if: needs.plan.outputs.release == 'true'
     strategy:
@@ -78,6 +80,7 @@ jobs:
           overwrite: true
 
   npm-package:
+    timeout-minutes: 15
     needs: [plan, check]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
@@ -98,6 +101,7 @@ jobs:
           overwrite: true
 
   publish:
+    timeout-minutes: 20
     needs: [plan, binaries, npm-package]
     runs-on: ubuntu-latest
     permissions:

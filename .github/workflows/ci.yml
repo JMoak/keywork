@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   check:
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

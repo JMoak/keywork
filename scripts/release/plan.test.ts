@@ -188,7 +188,22 @@ describe("npm release recovery", () => {
     await expect(confirmPublishedVersion("0.2.2", "tested-head", lookup, wait)).rejects.toThrow(
       "not indexed",
     );
-    expect(lookup).toHaveBeenCalledTimes(5);
+    expect(lookup).toHaveBeenCalledTimes(15);
+  });
+
+  it("accepts a version indexed after the observed 55 second registry delay", async () => {
+    let elapsed = 0;
+    const manifest = { name: "keywork-cli", version: "0.2.2", gitHead: "tested-head" };
+    const lookup = vi
+      .fn()
+      .mockImplementation(async () => (elapsed >= 55_000 ? manifest : undefined));
+    const wait = vi.fn().mockImplementation(async (milliseconds: number) => {
+      elapsed += milliseconds;
+    });
+    await confirmPublishedVersion("0.2.2", "tested-head", lookup, wait);
+    expect(elapsed).toBe(55_000);
+    expect(lookup).toHaveBeenCalledTimes(10);
+    expect(wait).toHaveBeenCalledTimes(8);
   });
 
   it("waits for latest to catch up and reports an older channel after bounded retries", async () => {
@@ -211,8 +226,11 @@ describe("npm release recovery", () => {
     await expect(confirmPublishedVersion("0.2.2", "tested-head", lookup, wait)).rejects.toThrow(
       "restore latest to 0.2.2 or newer",
     );
-    expect(lookup).toHaveBeenCalledTimes(10);
-    expect(wait).toHaveBeenCalledTimes(4);
+    expect(lookup).toHaveBeenCalledTimes(30);
+    expect(wait).toHaveBeenCalledTimes(14);
+    expect(wait.mock.calls.reduce((total, [milliseconds]) => total + milliseconds, 0)).toBe(
+      115_000,
+    );
   });
 
   it("accepts a newer latest without moving it backward", async () => {
