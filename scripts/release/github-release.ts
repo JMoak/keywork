@@ -8,8 +8,35 @@ export interface GithubRelease {
   readonly tag_name: string;
 }
 
-export async function readGithubRelease(path: string): Promise<GithubRelease | undefined> {
-  const response = await fetch(`https://api.github.com/repos/JMoak/keywork/releases/${path}`, {
+export async function readGithubRelease(
+  path: string,
+  request: GithubRequest = fetch,
+): Promise<GithubRelease | undefined> {
+  const response = await requestGithub(`/${path}`, request);
+  if (response.status === 404) {
+    return path.startsWith("tags/") ? findReleaseByTag(path.slice(5), request) : undefined;
+  }
+  return parseRelease(await readResponse(response));
+}
+
+type GithubRequest = (url: string, init?: RequestInit) => Promise<Response>;
+
+async function findReleaseByTag(
+  tag: string,
+  request: GithubRequest,
+): Promise<GithubRelease | undefined> {
+  for (let page = 1; ; page++) {
+    const response = await requestGithub(`?per_page=100&page=${page}`, request);
+    const releases = await readResponse(response);
+    if (!Array.isArray(releases)) throw new Error("GitHub returned invalid release listing");
+    const release = releases.map(parseRelease).find((candidate) => candidate.tag_name === tag);
+    if (release) return release;
+    if (releases.length < 100) return undefined;
+  }
+}
+
+function requestGithub(suffix: string, request: GithubRequest): Promise<Response> {
+  return request(`https://api.github.com/repos/JMoak/keywork/releases${suffix}`, {
     signal: AbortSignal.timeout(15_000),
     headers: {
       Accept: "application/vnd.github+json",
@@ -17,9 +44,14 @@ export async function readGithubRelease(path: string): Promise<GithubRelease | u
       "X-GitHub-Api-Version": "2022-11-28",
     },
   });
-  if (response.status === 404) return undefined;
+}
+
+async function readResponse(response: Response): Promise<unknown> {
   if (!response.ok) throw new Error(`GitHub release lookup failed: ${response.status}`);
-  const release = await response.json();
+  return response.json();
+}
+
+function parseRelease(release: unknown): GithubRelease {
   if (
     typeof release !== "object" ||
     release === null ||
