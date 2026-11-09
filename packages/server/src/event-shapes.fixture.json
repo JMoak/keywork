@@ -717,6 +717,7 @@
           "replaces": "string",
           "rung": "string",
           "sessionId": "string",
+          "size": "string",
           "state": "string",
           "until": "string",
           "what": {

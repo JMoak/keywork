@@ -33,6 +33,7 @@ import {
   EventBus,
   ExtensionHost,
   type ExtensionLoadReport,
+  heardNoteSource,
   type LanguagePort,
   type LanguageServerSetting,
   languagePort,
@@ -66,7 +67,6 @@ import {
   type SpillSource,
   type SpillStore,
   sandboxFor,
-  showTool,
   showToolName,
   skillConventionDirs,
   skillLibraryTools,
@@ -77,6 +77,9 @@ import {
   type WorkspaceSandbox,
   withReadRoots,
   workspaceSandbox,
+  yardPrompt,
+  yardToolNames,
+  yardTools,
 } from "@keywork/engine";
 import type { McpServerConfig, ModelCapabilitiesConfig, PromptsConfig } from "@keywork/shared";
 import {
@@ -247,7 +250,7 @@ async function openExtensionHost(
     reservedToolNames: [
       ...coreTools(scope).map((tool) => tool.name),
       delegateToolName,
-      showToolName,
+      ...yardToolNames,
     ],
   });
   const hostReport = await loadExtensions({ userRoot, projectRoot: cwd, projectTrusted }, host);
@@ -536,7 +539,7 @@ function buildAgent(
     ...(recall === undefined
       ? []
       : memoryRecallTools(recall.store, recall.search, recall.onRecall, tap)),
-    ...(spec.show === undefined ? [] : [showTool(spec.show)]),
+    ...(spec.show === undefined ? [] : yardTools(spec.show)),
     ...skillToolsFor(skills, () => self),
     ...(delegation === undefined ? [] : [delegateTool(delegation)]),
   ];
@@ -547,6 +550,8 @@ function buildAgent(
           elicit: askGateElicitation(spec.guard, { say: (line) => options.notice?.(line) }),
         });
   const narrowing = toolNarrowing(bot, spec.child?.toolCeiling);
+  const offered = narrowing === undefined ? baseTools : narrowing(baseTools);
+  const yardSeat = offered.some((tool) => tool.name === showToolName) ? spec.show : undefined;
   const learning = bot === undefined ? undefined : options.bots?.bootstrapFor(bot);
   const prompt = promptFor(composition, spec.provider.modelId, bot, learning);
   const session = () => resolveSessionKey(spec.sessionId);
@@ -555,7 +560,8 @@ function buildAgent(
     provider: spec.provider,
     tools: narrowing === undefined ? tools : () => narrowing(tools()),
     hooks: narrowing === undefined ? hooks : hooksNarrowedBy(hooks, narrowing),
-    systemPrompt: prompt.systemPrompt,
+    systemPrompt:
+      yardSeat === undefined ? prompt.systemPrompt : `${prompt.systemPrompt}\n\n${yardPrompt}`,
     promptInjections: prompt.promptInjections,
     standingInjections: prompt.standingInjections,
     guard: spec.guard,
@@ -564,6 +570,10 @@ function buildAgent(
     ...(spec.history !== undefined && { history: spec.history }),
     ...(spec.bus !== undefined && { bus: spec.bus }),
     ...(spec.spills !== undefined && { spills: spec.spills }),
+    ...(yardSeat !== undefined &&
+      spec.child === undefined && {
+        notes: heardNoteSource(yardSeat),
+      }),
     ...(recall !== undefined && {
       actionRecall: pointOfActionRecall({
         search: recall.search,

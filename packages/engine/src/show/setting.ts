@@ -16,6 +16,10 @@ export type SettledBy = "keeper" | "creature" | "time";
 
 export type SettingState = "live" | "seen" | "pinned" | "dismissed" | "withdrawn";
 
+export const settingSizes = ["readable", "working"] as const;
+
+export type SettingSize = (typeof settingSizes)[number];
+
 export const settingOrigins = ["creature", "keeper"] as const;
 
 export type SettingOrigin = (typeof settingOrigins)[number];
@@ -41,6 +45,7 @@ export interface Setting {
   from: string | null;
   origin: SettingOrigin;
   replaces: string | null;
+  size?: SettingSize;
 }
 
 export interface ShowProposed {

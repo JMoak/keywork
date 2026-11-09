@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type Cancel, type Clock, hourMs, isoOf, systemClock } from "../routines/clock.ts";
+import { type Heard, HeardOutcomes } from "./heard.ts";
 import type { KeeperOpening } from "./input.ts";
 import { type KeptSettings, memorySettingStorage, type SettingStorage } from "./kept.ts";
 import { ownerOf, type SettingSeat, sameOwner, sees, type ThreadLookup } from "./lineage.ts";
@@ -8,6 +9,7 @@ import type {
   Setting,
   SettingAnswer,
   SettingOrigin,
+  SettingSize,
   SettingState,
   SettingUntil,
   SettingWhat,
@@ -25,6 +27,7 @@ export interface ShowProposal {
   until: SettingUntil;
   from: string | null;
   origin: SettingOrigin;
+  size?: SettingSize | undefined;
 }
 
 export interface SetOut {
@@ -63,6 +66,7 @@ export class SettingStore {
   private readonly out = new Map<string, Setting>();
   private readonly timers = new Map<string, Cancel>();
   private readonly setOutAt = new Map<string, number[]>();
+  private readonly outcomes = new HeardOutcomes();
   private readonly emit: ShowEventSink;
   private readonly clock: Clock;
   private readonly hourlyLimit: number;
@@ -124,6 +128,21 @@ export class SettingStore {
     return settled;
   }
 
+  takeBack(caller: SettingSeat, id: string): Setting | ShowRefusal {
+    const setting = this.out.get(id);
+    if (setting === undefined || !sameOwner(setting, caller))
+      return refused("missing", nothingOfYoursOut(id));
+    const held = heldByTheKeeper(setting);
+    if (held !== undefined) return refused("conflict", held);
+    const settled = this.withdraw(setting, "creature");
+    this.keep();
+    return settled;
+  }
+
+  takeHeardBy(sessionId: string): Heard | undefined {
+    return this.outcomes.take(sessionId);
+  }
+
   rested(sessionId: string): void {
     this.withdrawLive(
       (setting) => setting.sessionId === sessionId && setting.until === "rests",
@@ -133,6 +152,7 @@ export class SettingStore {
 
   removed(sessionId: string): void {
     this.withdrawLive((setting) => setting.sessionId === sessionId, "keeper");
+    this.outcomes.forget(sessionId);
   }
 
   close(): void {
@@ -246,8 +266,8 @@ export class SettingStore {
     if (withdrawn.length > 0) this.keep();
   }
 
-  private withdraw(setting: Setting, by: SettledBy): void {
-    this.settle(setting, "withdrawn", by, "withdrawn");
+  private withdraw(setting: Setting, by: SettledBy): Setting {
+    return this.settle(setting, "withdrawn", by, "withdrawn");
   }
 
   private settle(
@@ -259,6 +279,7 @@ export class SettingStore {
     const settled = { ...setting, state };
     if (isOut(state)) this.out.set(setting.id, settled);
     else this.takeIn(setting.id);
+    this.outcomes.note(setting, outcome, by);
     this.emit(setting.sessionId, "show.settled", { id: setting.id, outcome, by });
     return settled;
   }
@@ -301,7 +322,27 @@ function settingOf(
 ): Setting {
   const { creature, sessionId, what, rung, why, until, origin } = proposal;
   const lineage = { from: lineageOf(proposal, replaced), origin, replaces: replaced?.id ?? null };
-  return { id, creature, sessionId, what, rung, why, at, until, state: "live", ...lineage };
+  const size = sizeOf(proposal, replaced);
+  return {
+    id,
+    creature,
+    sessionId,
+    what,
+    rung,
+    why,
+    at,
+    until,
+    state: "live",
+    ...lineage,
+    ...(size !== undefined && { size }),
+  };
+}
+
+function sizeOf(
+  { size, origin }: ShowProposal,
+  replaced: Setting | undefined,
+): SettingSize | undefined {
+  return size ?? (origin === "creature" ? replaced?.size : undefined);
 }
 
 function endOf(until: SettingUntil): number {
@@ -331,6 +372,18 @@ function isLive({ state }: Setting): boolean {
 
 function isOut(state: SettingState): boolean {
   return state === "live" || state === "pinned";
+}
+
+function nothingOfYoursOut(id: string): string {
+  return `nothing you set out is out with the id ${id}; shown lists what is out`;
+}
+
+function heldByTheKeeper(setting: Setting): string | undefined {
+  if (setting.origin === "keeper")
+    return `the keeper opened ${setting.id} themselves, so it is theirs to put away`;
+  if (setting.state === "pinned")
+    return `the keeper pinned ${setting.id}, so it stays until they let it go`;
+  return undefined;
 }
 
 function conflictOf(setting: Setting): string {

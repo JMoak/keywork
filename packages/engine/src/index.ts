@@ -1011,6 +1011,7 @@ export {
   repoMapTokenCap,
 } from "./repomap/map.ts";
 export { type IgnoreFileProblem, scanWorkspace, type WorkspaceScan } from "./repomap/scan.ts";
+export type { NoteSource } from "./request-notes.ts";
 export type { Refusal as RoutineRefusal } from "./routines/index.ts";
 export * from "./routines/index.ts";
 export { acquireRuntimeOwnership, type RuntimeOwnership } from "./runtime/ownership.ts";
@@ -1390,7 +1391,10 @@ export {
   ShellSession,
 } from "./tools/shell-session.ts";
 export { type ShowSettings, type ShowTarget, showTool, showToolName } from "./tools/show.ts";
+export { shownTool, shownToolName } from "./tools/shown.ts";
+export { withdrawTool, withdrawToolName } from "./tools/withdraw.ts";
 export { writeTool } from "./tools/write.ts";
+export { heardNoteSource, yardPrompt, yardToolNames, yardTools } from "./tools/yard.ts";
 export { findTool, type Tool, ToolNotFoundError, type ToolPreview } from "./tools.ts";
 export { engineVersion } from "./version.ts";
 export type {

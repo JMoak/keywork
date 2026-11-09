@@ -24,7 +24,9 @@ export const settingWhatInput = z
   })
   .strict();
 
-export const settingFromInput = z.string().trim().min(1).max(128);
+export const settingIdInput = z.string().trim().min(1).max(128);
+
+export const settingFromInput = settingIdInput;
 
 export const keeperRung = "unfold";
 

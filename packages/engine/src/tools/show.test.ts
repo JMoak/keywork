@@ -145,6 +145,42 @@ describe("the show tool", () => {
     ]);
   });
 
+  it("carries a named size onto the setting, and leaves it absent when none was named", async () => {
+    const { tool, proposed } = seated();
+
+    await tool.execute({ what: plan, why: "Read it.", rung: "unfold", size: "working" });
+    await tool.execute({ what: { kind: "diff", ref: "cs-41" }, why: "The fix." });
+
+    expect(proposed.map(({ size }) => size)).toEqual(["working", undefined]);
+    expect(proposed[1]).not.toHaveProperty("size");
+  });
+
+  it("keeps a size that was named when a later call replaces the setting, unless it names another", async () => {
+    const { tool, proposed } = seated();
+
+    await tool.execute({ what: plan, why: "Read it.", rung: "unfold", size: "working" });
+    await tool.execute({ what: plan, why: "It moved." });
+    await tool.execute({ what: plan, why: "It moved again.", size: "readable" });
+
+    expect(proposed.map(({ size }) => size)).toEqual(["working", "working", "readable"]);
+  });
+
+  it("refuses a size outside the wire shape", async () => {
+    const { tool, settings } = seated();
+    for (const size of ["card", "huge", 2]) {
+      await expect(tool.execute({ what: plan, why: "Look.", size })).rejects.toThrow();
+    }
+    expect(settings.open()).toEqual([]);
+  });
+
+  it("says a size applies when it first opens, the yard may show less, and it cannot change", () => {
+    const { tool } = seated();
+    expect(tool.description).toContain("A size applies the first time the setting opens");
+    expect(tool.description).toContain("the yard may still show less");
+    expect(tool.description).toContain("it cannot be changed later");
+    expect(tool.parameters).toMatchObject({ required: ["what", "why"] });
+  });
+
   it("is IDE control that asks for no permission", () => {
     const { tool } = seated();
     expect(tool.name).toBe(showToolName);

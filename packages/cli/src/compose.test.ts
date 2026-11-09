@@ -10,10 +10,12 @@ import {
   messageText,
   type Provider,
   SessionStore,
+  SettingStore,
   ShellSession,
   tapJournal,
   textTurn,
   toolCallTurn,
+  yardPrompt,
 } from "@keywork/engine";
 import { extensionFixturesDir, recordingProvider } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
@@ -605,6 +607,165 @@ describe("language servers in the composition", () => {
         },
       },
     ]);
+  });
+});
+
+describe("the yard in a composed agent", () => {
+  function settingsOf() {
+    return new SettingStore({ emit: () => undefined });
+  }
+
+  function seat(settings: SettingStore, sessionId = "s1") {
+    return { creature: null, sessionId, settings: () => settings };
+  }
+
+  function proposalFor(sessionId: string) {
+    return {
+      creature: null,
+      sessionId,
+      what: { kind: "note" as const, ref: "Lunch at noon." },
+      rung: "card" as const,
+      why: "A reminder.",
+      until: "seen" as const,
+      from: null,
+      origin: "creature" as const,
+    };
+  }
+
+  it("offers show, shown and withdraw where show is, and teaches them after the composed prompt", async () => {
+    const composition = await composedIn(await tempDir());
+    const provider = recordingProvider();
+
+    await composeAgents(composition)
+      .build({ provider, guard: {}, show: seat(settingsOf()) })
+      .send("hello");
+
+    const [request] = provider.requests;
+    expect(request?.systemPrompt).toBe(
+      `${composition.systemPromptFor(undefined)}\n\n${yardPrompt}`,
+    );
+    expect(request?.tools.map(({ name }) => name)).toEqual(
+      expect.arrayContaining(["show", "shown", "withdraw"]),
+    );
+  });
+
+  it("teaches them on a creature's own prompt too, before any per-turn injection", async () => {
+    const composition = await composedIn(await tempDir());
+    const provider = recordingProvider();
+
+    await composeAgents(composition)
+      .build({
+        provider,
+        guard: {},
+        bot: briefBot,
+        show: seat(settingsOf()),
+        creature: { workshop: "host", injection: () => "Mail for you." },
+      })
+      .send("hello");
+
+    expect(provider.requests[0]?.systemPrompt).toBe(`be brief\n\n${yardPrompt}\n\nMail for you.`);
+  });
+
+  it("leaves the prompt alone and offers none of them when a bot's allowance keeps show out", async () => {
+    const composition = await composedIn(await tempDir());
+    const provider = recordingProvider([textTurn("ok")]);
+    const shellOnly: BotDefinition = { ...briefBot, name: "shell-only", tools: ["bash"] };
+
+    await composeAgents(composition)
+      .build({ provider, guard: {}, bot: shellOnly, show: seat(settingsOf()) })
+      .send("hello");
+
+    expect(provider.requests[0]?.systemPrompt).toBe("be brief");
+    expect(provider.requests[0]?.tools.map(({ name }) => name)).toEqual(["bash"]);
+  });
+
+  it("offers none of them to a session with no show", async () => {
+    const composition = await composedIn(await tempDir());
+    const provider = recordingProvider();
+
+    await composeAgents(composition).build({ provider, guard: {} }).send("hello");
+
+    expect(provider.requests[0]?.tools.map(({ name }) => name)).not.toEqual(
+      expect.arrayContaining(["show"]),
+    );
+    expect(provider.requests[0]?.systemPrompt).not.toContain(yardPrompt);
+  });
+
+  it("tells a session once, at its next request, what the keeper did with what it set out", async () => {
+    const composition = await composedIn(await tempDir());
+    const settings = settingsOf();
+    const provider = recordingProvider([textTurn("one"), textTurn("two")]);
+    const agent = composeAgents(composition).build({ provider, guard: {}, show: seat(settings) });
+    const placed = settings.propose(proposalFor("s1"));
+    if ("refused" in placed) throw new Error(placed.error);
+    settings.answer(placed.setting.id, "pinned");
+
+    await agent.send("first");
+    await agent.send("second");
+
+    const first = provider.requests[0]?.messages.at(-1);
+    expect(first?.parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining(
+        `- ${placed.setting.id} (note "Lunch at noon."): the keeper pinned it`,
+      ),
+    });
+    expect(provider.requests[1]?.messages.at(-1)).toEqual({
+      role: "user",
+      parts: [{ type: "text", text: "second" }],
+    });
+    expect(provider.requests[0]?.systemPrompt).toBe(provider.requests[1]?.systemPrompt);
+    expect(agent.history().map(messageText)).toEqual(["first", "one", "second", "two"]);
+  });
+
+  it("gives a delegated child the tools and the section, but leaves what settled for its parent", async () => {
+    const composition = await composedIn(await tempDir());
+    const settings = settingsOf();
+    const provider = recordingProvider();
+    const placed = settings.propose(proposalFor("s1"));
+    if ("refused" in placed) throw new Error(placed.error);
+    settings.answer(placed.setting.id, "seen");
+
+    await composeAgents(composition)
+      .build({
+        provider,
+        guard: {},
+        show: seat(settings),
+        child: { toolCeiling: undefined },
+      })
+      .send("hello");
+
+    expect(provider.requests[0]?.systemPrompt).toContain(yardPrompt);
+    expect(messageText(provider.requests[0]?.messages.at(-1) ?? { role: "user", parts: [] })).toBe(
+      "hello",
+    );
+    expect(settings.takeHeardBy("s1")?.told.map(({ id }) => id)).toEqual([placed.setting.id]);
+  });
+
+  it("keeps an extension from claiming the names of the tools", async () => {
+    const cwd = await declaredWorkspace();
+    await mkdir(join(cwd, ".keywork", "extensions"), { recursive: true });
+    const claims = ["shown", "withdraw"].map((name) =>
+      [
+        `export default function ${name}Claim(api) {`,
+        `  api.registerTool({ name: "${name}", description: "x", parameters: {}, execute: async () => "x" });`,
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, ".keywork", "extensions", "claim-shown.ts"), claims[0] ?? "");
+    await writeFile(join(cwd, ".keywork", "extensions", "claim-withdraw.ts"), claims[1] ?? "");
+
+    const composition = await composedIn(cwd, { projectTrusted: true });
+
+    const failures = composition.host.extensions().map((status) => status.failure?.reason);
+    expect(failures).toEqual(
+      expect.arrayContaining([
+        'tool "shown" is reserved by keywork',
+        'tool "withdraw" is reserved by keywork',
+      ]),
+    );
+    await composition.host.dispose();
   });
 });
 

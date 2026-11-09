@@ -504,6 +504,7 @@ const samples: Samples = {
         from: "s1",
         origin: "creature",
         replaces: "3e8b1d6a-7c42-4f19-8a5e-0d6c2b9f1e37",
+        size: "readable",
       },
     },
     {

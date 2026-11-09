@@ -1,11 +1,14 @@
 import { z } from "zod";
 import { settingFromInput, settingWhatInput, settingWhatOf } from "../show/input.ts";
-import { type Rung, rungs } from "../show/setting.ts";
+import { type Rung, rungs, settingSizes } from "../show/setting.ts";
 import type { SetOut, SettingStore, ShowProposal, ShowRefusal } from "../show/store.ts";
 import type { Tool } from "../tools.ts";
 import { defineTool } from "./define.ts";
 
-export type ShowSettings = Pick<SettingStore, "propose" | "canGrowFrom">;
+export type ShowSettings = Pick<
+  SettingStore,
+  "propose" | "canGrowFrom" | "open" | "takeBack" | "takeHeardBy"
+>;
 
 export interface ShowTarget {
   creature: string | null;
@@ -19,7 +22,7 @@ export function showTool(target: ShowTarget): Tool {
   return defineTool({
     name: showToolName,
     description:
-      "Set something out for the keeper to see beside this conversation: a file, a diff, a report, a thread, a chore, a link or a short note. This is IDE control: it arranges the console's own space around the conversation, never the computer, and it changes nothing in the world, so it asks for no permission. It lands as a card by default. Propose unfold only when the keeper should read it now, and stage only when it deserves the whole view; the console spends the keeper's attention and may show it lower than you ask. Showing the same thing again replaces what you set out before. It stays until the keeper has seen it, until this thread rests, or until a time you name. Name from when it grows out of something already in view: the id of a setting you set out (every answer names it), or a thread of yours such as one you delegated; the console sets it beside what it grew from, so the keeper can walk the trail. At most thirty settings an hour.",
+      "Set something out for the keeper to see beside this conversation: a file, a diff, a report, a thread, a chore, a link or a short note. This is IDE control: it arranges the console's own space around the conversation, never the computer, and it changes nothing in the world, so it asks for no permission. It lands as a card by default; propose a rung, and a size for what unfolds. A size applies the first time the setting opens, the yard may still show less, and it cannot be changed later. Showing the same thing again replaces what you set out before. It stays until the keeper has seen it, until this thread rests, or until a time you name. Name from when it grows out of something already in view: the id of a setting you set out (every answer names it), or a thread of yours such as one you delegated; the console sets it beside what it grew from, so the keeper can walk the trail. At most thirty settings an hour.",
     schema: showArgs,
     run: async (args) => {
       const settings = target.settings();
@@ -39,6 +42,12 @@ const showArgs = z
       .optional()
       .describe(
         "How much of the keeper's attention you propose: lantern (a mark to look at when ready), card (the default), unfold (open beside the conversation) or stage (the whole view).",
+      ),
+    size: z
+      .enum(settingSizes)
+      .optional()
+      .describe(
+        "The size it opens at if it unfolds: readable for reading, working for something the keeper will work in.",
       ),
     why: z
       .string()
@@ -76,6 +85,7 @@ function proposalOf(target: ShowTarget, args: ShowArgs): ShowProposal {
     sessionId: target.sessionId,
     what: settingWhatOf(args.what),
     rung: args.rung ?? "card",
+    size: args.size,
     why: args.why,
     until: args.until ?? "seen",
     from: args.from ?? null,

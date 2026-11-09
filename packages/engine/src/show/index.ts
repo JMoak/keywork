@@ -6,6 +6,7 @@ export {
   settingFile,
   settingsFileIn,
 } from "./file.ts";
+export { type Heard, outcomeNoteOf, outcomesPerNote, type SettledNote } from "./heard.ts";
 export { type KeeperOpening, keeperOpeningJsonSchema, keeperOpeningOf } from "./input.ts";
 export {
   type KeptSettings,
@@ -23,6 +24,7 @@ export {
   type SettingAnswer,
   type SettingKind,
   type SettingOrigin,
+  type SettingSize,
   type SettingState,
   type SettingUntil,
   type SettingWhat,
@@ -36,6 +38,7 @@ export {
   settingAnswers,
   settingKinds,
   settingOrigins,
+  settingSizes,
 } from "./setting.ts";
 export {
   type KeptSettingStoreOptions,

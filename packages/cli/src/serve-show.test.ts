@@ -4,11 +4,14 @@ import { join } from "node:path";
 import {
   type Message,
   MockProvider,
+  messageText,
   type Provider,
+  type ProviderRequest,
   type Setting,
   type TurnDelta,
   textTurn,
   toolCallTurn,
+  yardPrompt,
 } from "@keywork/engine";
 import { createKeyworkServer, EventLog } from "@keywork/server";
 import { scratchDirs } from "@keywork/shared/testing";
@@ -226,6 +229,84 @@ describe("a served workspace's settings", () => {
     shared.close();
   });
 
+  it("tell the session that set something out, once, what the keeper did with it, and put nothing new on the wire", async () => {
+    const place = await workspacePlace();
+    const host = await startedHost(
+      place,
+      scripted([
+        () => showTurn("a", { kind: "diff", ref: "cs-1" }, { rung: "unfold", size: "working" }),
+        () => textTurn("Set out."),
+        () => textTurn("Noted."),
+        () => textTurn("Later."),
+      ]),
+      new FakeClock(t0),
+    );
+    const session = (await host.host.create()).id;
+    await host.turn(session, "show me the diff");
+    const [diff] = await host.shown();
+    await host.json(`/show/${diff?.id}/answer`, { outcome: "pinned" });
+
+    await host.turn(session, "what next?");
+    await host.turn(session, "and after that?");
+
+    const { requests } = host.provider;
+    expect(diff).toMatchObject({ rung: "unfold", size: "working" });
+    expect(textOf(requests[2]?.messages.at(-1))).toContain(
+      `- ${diff?.id} (diff "cs-1"): the keeper pinned it; it stays out`,
+    );
+    expect(requests[2]?.messages.at(-1)?.parts.at(-1)).toEqual({
+      type: "text",
+      text: "what next?",
+    });
+    expect(notesIn(requests[3]?.messages ?? [])).toHaveLength(1);
+    expect(requests[3]?.messages.slice(0, requests[2]?.messages.length)).toEqual(
+      requests[2]?.messages,
+    );
+    expect(new Set(requests.map(({ systemPrompt }) => systemPrompt)).size).toBe(1);
+    expect(requests[0]?.systemPrompt).toContain(yardPrompt);
+    expect(host.showEvents().map(({ type }) => type)).toEqual(["show.proposed", "show.settled"]);
+    const stored = await findSession(place.sessionDir, session);
+    expect(stored?.messages().map(messageText).join(" ")).not.toContain("From the yard");
+    const view = await host.json<{ messages: Message[] }>(`/sessions/${session}`);
+    expect(view.messages.map(messageText).join(" ")).not.toContain("From the yard");
+    await host.stop();
+  });
+
+  it("are listed and taken back by the model that set them out, as the creature on the wire", async () => {
+    const place = await workspacePlace();
+    const host = await startedHost(
+      place,
+      scripted([
+        () => showTurn("a", { kind: "note", ref: "Reading the logs." }, { size: "readable" }),
+        () => toolCallTurn({ type: "tool-call", callId: "b", name: "shown", arguments: {} }),
+        (said) => withdrawTurn("c", settingIdInListing(said)),
+        () => textTurn("Cleared."),
+      ]),
+      new FakeClock(t0),
+    );
+    const session = (await host.host.create()).id;
+
+    await host.turn(session, "set out a note then take it back");
+
+    const shownAnswer = host.provider.heard[2] ?? "";
+    expect(shownAnswer.split("\n")[0]).toBe(
+      "1 setting is out beside this conversation, oldest first, one JSON object to a line:",
+    );
+    expect(JSON.parse(shownAnswer.split("\n")[1] ?? "")).toMatchObject({
+      what: { kind: "note", ref: "Reading the logs." },
+      size: "readable",
+      origin: "creature",
+    });
+    expect(host.provider.heard[3]).toMatch(/^Withdrawn: \S+ has left the yard/);
+    expect(await host.shown()).toEqual([]);
+    expect(keptSettingsIn(place)).toEqual([]);
+    expect(host.showEvents().at(-1)?.payload).toMatchObject({
+      outcome: "withdrawn",
+      by: "creature",
+    });
+    await host.stop();
+  });
+
   it("are kept in the same place by a host composed on its own", async () => {
     const place = await workspacePlace();
     const log = new EventLog();
@@ -374,6 +455,7 @@ const waitLimitMs = 5_000;
 
 interface Scripted extends Provider {
   readonly heard: string[];
+  readonly requests: ProviderRequest[];
 }
 
 type ScriptedTurn = (said: string) => TurnDelta[] | Promise<TurnDelta[]>;
@@ -381,10 +463,13 @@ type ScriptedTurn = (said: string) => TurnDelta[] | Promise<TurnDelta[]>;
 function scripted(turns: readonly ScriptedTurn[]): Scripted {
   const queue = [...turns];
   const heard: string[] = [];
+  const requests: ProviderRequest[] = [];
   return {
     name: "scripted",
     heard,
+    requests,
     async *stream(request) {
+      requests.push(request);
       const said = lastToolResultIn(request.messages);
       heard.push(said);
       const turn = queue.shift();
@@ -401,14 +486,31 @@ function lastToolResultIn(messages: readonly Message[]): string {
   return results.at(-1) ?? "";
 }
 
+function textOf(message: Message | undefined): string {
+  return message === undefined ? "" : messageText(message);
+}
+
+function notesIn(messages: readonly Message[]): readonly Message[] {
+  return messages.filter((message) => messageText(message).includes("From the yard"));
+}
+
 function settingIdIn(said: string): string {
   return /name (\S+) as from\./.exec(said)?.[1] ?? `no setting id in: ${said}`;
+}
+
+function settingIdInListing(said: string): string {
+  const row = JSON.parse(said.split("\n")[1] ?? "{}") as { id?: string };
+  return row.id ?? `no setting id in: ${said}`;
+}
+
+function withdrawTurn(callId: string, id: string) {
+  return toolCallTurn({ type: "tool-call", callId, name: "withdraw", arguments: { id } });
 }
 
 function showTurn(
   callId: string,
   what: { kind: string; ref: string },
-  more: { until?: string; from?: string } = {},
+  more: { until?: string; from?: string; rung?: string; size?: string } = {},
 ) {
   return toolCallTurn({
     type: "tool-call",

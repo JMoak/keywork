@@ -24,6 +24,7 @@ import { type CostRollup, emptyCostRollup, withTurnCost } from "./pricing.ts";
 import type { CacheMiss, DoneDelta, EffortLevel, Provider, TurnDelta } from "./provider.ts";
 import type { WatchedRequest } from "./providers/retry.ts";
 import { ConversationMarks } from "./request-marks.ts";
+import { ConversationNotes, carriesNotes, type NoteSource } from "./request-notes.ts";
 import {
   type ReportedContext,
   type RequestAnatomy,
@@ -117,6 +118,7 @@ export interface AgentOptions {
   guard?: ToolGuard;
   permissions?: PermissionResolver;
   standingInjections?: readonly ContextInjection[];
+  notes?: NoteSource;
   actionRecall?: ActionRecall;
   thinking?: boolean;
   effort?: EffortLevel;
@@ -198,6 +200,8 @@ export class Agent {
   private thinkingRequested: boolean;
   private effortRequested: EffortLevel | undefined;
   private readonly marks = new ConversationMarks();
+  private readonly noteSource: NoteSource | undefined;
+  private readonly notes = new ConversationNotes();
   private previousResponseId: string | null = null;
   private turnCacheMiss: CacheMiss | undefined;
   private reported: ReportedContext | undefined;
@@ -219,6 +223,7 @@ export class Agent {
     this.unannouncedInjections = options.standingInjections ?? [];
     this.thinkingRequested = options.thinking ?? false;
     this.effortRequested = options.effort;
+    this.noteSource = options.notes;
   }
 
   thinking(): boolean {
@@ -477,6 +482,7 @@ export class Agent {
   private async runUntilFinalMessage(signal: AbortSignal): Promise<Message> {
     while (true) {
       this.systemPrompt = await this.systemPromptThroughHooks();
+      this.hearPendingNote();
       const turn = await this.streamAssistantTurn(signal);
       this.totals = addUsage(this.totals, turn.usage);
       this.costTotals = withTurnCost(this.costTotals, turn.usage, this.provider.modelId);
@@ -568,6 +574,13 @@ export class Agent {
   private replaceHistory(messages: readonly Message[]): void {
     this.messages.splice(0, this.messages.length, ...messages);
     this.reported = undefined;
+    this.notes.clear();
+  }
+
+  private hearPendingNote(): void {
+    if (!carriesNotes(this.messages.at(-1))) return;
+    const note = this.noteSource?.();
+    if (note !== undefined) this.notes.lay(note, this.messages.length - 1);
   }
 
   private systemPromptThroughHooks(): Promise<string> {
@@ -602,7 +615,7 @@ export class Agent {
     const tools = this.tools();
     const request: WatchedRequest = {
       systemPrompt: this.systemPrompt,
-      messages: [...this.messages],
+      messages: this.notes.layInto(this.messages),
       tools,
       ...(this.thinkingRequested && { thinking: true }),
       ...this.marks.forRequest(tools, this.effortRequested, this.messages.length),

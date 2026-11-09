@@ -4,7 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { type HeldFilePacingSync, renameOverSync, toError } from "@keywork/shared";
 import { z } from "zod";
 import { type KeptSettings, nothingKept, type SettingStorage } from "./kept.ts";
-import { rungs, type Setting, settingKinds, settingOrigins } from "./setting.ts";
+import { rungs, type Setting, settingKinds, settingOrigins, settingSizes } from "./setting.ts";
 
 export type SettingDisk = Pick<
   typeof fs,
@@ -84,6 +84,7 @@ const keptSetting = z.object({
   from: z.string().nullable(),
   origin: z.enum(settingOrigins),
   replaces: z.string().nullable(),
+  size: z.enum(settingSizes).optional(),
 });
 
 const keptFile = z.object({
@@ -93,8 +94,13 @@ const keptFile = z.object({
 });
 
 function keptSettingOf(kept: z.infer<typeof keptSetting>): Setting {
-  const { kind, ref, title } = kept.what;
-  return { ...kept, what: title === undefined ? { kind, ref } : { kind, ref, title } };
+  const { size, ...setting } = kept;
+  const { kind, ref, title } = setting.what;
+  return {
+    ...setting,
+    what: title === undefined ? { kind, ref } : { kind, ref, title },
+    ...(size !== undefined && { size }),
+  };
 }
 
 function firstIssueOf(error: z.ZodError): string {

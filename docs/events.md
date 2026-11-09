@@ -35,7 +35,7 @@ a version of its own, separate from the keywork release. `info.version` in `/doc
 release (`packages/cli/package.json`, or the build-time version in a release binary).
 `info.x-keywork-contract` is the contract version, `major.minor`, and the same string rides
 `/doc` as the `x-keywork-contract` response header so a client can read it before parsing
-anything. The constant lives in `packages/server/src/contract.ts` and is `1.28` today.
+anything. The constant lives in `packages/server/src/contract.ts` and is `1.29` today.
 
 Within a major, changes are additive. A route, an operation id, a response field or an event
 name that exists in `1.x` keeps existing and keeps its meaning through every later `1.y`.
@@ -941,7 +941,8 @@ Carries no decision, so no audit row. Since contract 1.12.
 Something was set out for the keeper to see: a file, a diff, a report, a thread, a chore, a link
 or a note. The model working a session sets things out with the `show` tool, which every session
 `keywork serve` runs carries: a plain conversation, a creature's conversation, a delegated child
-and a chore run alike. The keeper's own openings from inside a setting or a thread (a file from a
+and a chore run alike (with `shown`, which lists what is out, and `withdraw`, which takes back what
+it set out). The keeper's own openings from inside a setting or a thread (a file from a
 diff, a test from a file, a link) arrive the same way, through `POST /show`, so every surface
 agrees on the trail. It is IDE control: it arranges the console's own space around the conversation, never
 the computer, and it changes nothing in the world, so it asks no permission and spends the keeper's
@@ -990,6 +991,15 @@ toward the hourly limit. Opening the same thing again replaces the earlier setti
 its `show.settled` says `by: "keeper"`. A 1.27 server sends none of the three fields; a client
 reads their absence as `from: null`, `origin: "creature"` and `replaces: null`.
 
+A setting may name the size it opens at (since contract 1.29). `size` is `readable` or `working`,
+absent when the session named none. It is honoured the first time the setting opens and never
+re-applied, and the console may still show less. A replacement keeps its predecessor's `size` unless
+the call names another; a keeper's opening carries none. A 1.28 server sends none; a client reads its
+absence as the console's own choice. What became of a setting is also told to the session that set it
+out, once, at the start of its next model request (the keeper's and the clock's settlements only,
+never its own withdrawals or replacements and never anything the keeper opened); that note is
+engine-internal and adds nothing to this stream.
+
 | Field | Type | Meaning |
 |---|---|---|
 | `setting.id` | `string` | The setting, named in `POST /show/{id}/answer`. |
@@ -1004,11 +1014,14 @@ reads their absence as `from: null`, `origin: "creature"` and `replaces: null`.
 | `setting.from` | `string \| null` | The id of the setting or the session it grew from, or `null` for one that starts a trail. Since contract 1.28. |
 | `setting.origin` | `"creature" \| "keeper"` | `creature` for what the model working a session set out, `keeper` for the keeper's own openings through `POST /show`. Since contract 1.28. |
 | `setting.replaces` | `string \| null` | The id of the setting this one replaced (the same owner and the same thing, whoever set either out), withdrawn just before by the `show.settled` that precedes this event; `null` when it replaced nothing. Since contract 1.28. |
+| `setting.size` | `"readable" \| "working"`, optional | The size the session proposed it opens at; absent when none was named. Honoured the first time it opens, and a console may still show less. A keeper's opening carries none. Since contract 1.29. |
 
 ### show.settled
 
 A setting moved, so a client updates or drops its card. The keeper's answers come through
-`POST /show/{id}/answer`; the engine withdraws the rest on its own. Withdrawal only touches a
+`POST /show/{id}/answer`; the engine withdraws the rest on its own, and a session takes back what it
+set out with its `withdraw` tool (`outcome: "withdrawn"`, `by: "creature"`), which refuses what the
+keeper pinned or opened. Withdrawal only touches a
 `live` setting: a pinned one stays out until the keeper unpins or dismisses it. What the server
 withdraws as it starts, after a stop, settles without this event (see `show.proposed`). A setting that
 settles takes nothing with it: the settings that grew from it stay out, and the payload stays

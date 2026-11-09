@@ -69,6 +69,18 @@ describe("the kept settings text", () => {
     expect(JSON.stringify(keptSettingsOf(text))).toBe(JSON.stringify(kept));
   });
 
+  it("reads back a size key for key, and a file older than sizes without one", () => {
+    const sized: KeptSettings = { settings: [{ ...plan, size: "working" }], spent: [] };
+
+    expect(JSON.stringify(keptSettingsOf(keptSettingsText(sized)))).toBe(JSON.stringify(sized));
+    expect(keptSettingsOf(keptSettingsText(kept)).settings[0]).not.toHaveProperty("size");
+  });
+
+  it("refuses a size that is not one", () => {
+    const text = keptSettingsText({ settings: [{ ...plan, size: "working" }], spent: [] });
+    expect(() => keptSettingsOf(text.replace('"working"', '"huge"'))).toThrow(/not kept settings/);
+  });
+
   it("refuses a document that is not kept settings, naming the first problem", () => {
     const withState = (state: string) =>
       JSON.stringify({ version: 1, settings: [{ ...plan, state }], spent: [] });

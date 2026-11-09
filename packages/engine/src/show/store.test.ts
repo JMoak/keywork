@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hourMs, minuteMs } from "../routines/clock.ts";
 import { FakeClock } from "../routines/testing.ts";
+import { memorySettingStorage } from "./kept.ts";
 import type { ShowThread } from "./lineage.ts";
 import type { Setting, ShowEvents, ShowEventType } from "./setting.ts";
 import {
@@ -314,6 +315,105 @@ describe("the hourly limit", () => {
     setOut(store.propose(proposal()));
     expect(store.propose(proposal())).toMatchObject({ refused: "limited" });
     expect(store.open()).toHaveLength(1);
+  });
+});
+
+describe("a setting's size", () => {
+  it("is carried on the record and on show.proposed when named, and absent when not", () => {
+    const { store, heard } = board();
+
+    const named = setOut(store.propose(proposal({ size: "working" }))).setting;
+    const unnamed = setOut(store.propose(proposal({ what: { kind: "note", ref: "n" } }))).setting;
+
+    expect(named.size).toBe("working");
+    expect(unnamed).not.toHaveProperty("size");
+    expect(heard[0]?.payload).toEqual({ setting: named });
+  });
+
+  it("is kept by a replacement that names no size, and replaced by one that does", () => {
+    const { store } = board();
+    setOut(store.propose(proposal({ size: "working" })));
+
+    const kept = setOut(store.propose(proposal({ why: "It moved." }))).setting;
+    const changed = setOut(
+      store.propose(proposal({ why: "And again.", size: "readable" })),
+    ).setting;
+
+    expect([kept.size, changed.size]).toEqual(["working", "readable"]);
+  });
+
+  it("is never carried onto the keeper's own opening of the same thing", async () => {
+    const { store } = board();
+    const diff = setOut(store.propose(proposal({ what: { kind: "diff", ref: "c" } }))).setting;
+    setOut(store.propose(proposal({ size: "working" })));
+
+    const opening = setOut(
+      await store.keeperOpens({ what: proposal().what, from: diff.id, rung: "unfold" }),
+    ).setting;
+
+    expect(opening).not.toHaveProperty("size");
+  });
+});
+
+describe("taking a setting back", () => {
+  const wren = { creature: "wren", sessionId: "s1" };
+
+  it("settles what the caller set out through the store's own path, as the creature's doing", () => {
+    const { store, heard } = board();
+    const { setting } = setOut(store.propose(proposal()));
+    const before = heard.length;
+
+    expect(store.takeBack(wren, setting.id)).toEqual({ ...setting, state: "withdrawn" });
+
+    expect(store.open()).toEqual([]);
+    expect(heard.slice(before)).toEqual([
+      {
+        sessionId: "s1",
+        type: "show.settled",
+        payload: { id: setting.id, outcome: "withdrawn", by: "creature" },
+      },
+    ]);
+  });
+
+  it("refuses what the keeper pinned, what the keeper opened and what is not the caller's", async () => {
+    const { store } = board();
+    const pinned = setOut(store.propose(proposal())).setting;
+    store.answer(pinned.id, "pinned");
+    const diff = setOut(store.propose(proposal({ what: { kind: "diff", ref: "c" } }))).setting;
+    const opening = setOut(
+      await store.keeperOpens({ what: { kind: "url", ref: "u" }, from: diff.id, rung: "unfold" }),
+    ).setting;
+    const hals = setOut(store.propose(proposal({ creature: "hal", sessionId: "s2" }))).setting;
+
+    expect(store.takeBack(wren, pinned.id)).toEqual({
+      refused: "conflict",
+      error: `the keeper pinned ${pinned.id}, so it stays until they let it go`,
+    });
+    expect(store.takeBack(wren, opening.id)).toEqual({
+      refused: "conflict",
+      error: `the keeper opened ${opening.id} themselves, so it is theirs to put away`,
+    });
+    for (const id of [hals.id, "unknown"]) {
+      expect(store.takeBack(wren, id)).toEqual({
+        refused: "missing",
+        error: `nothing you set out is out with the id ${id}; shown lists what is out`,
+      });
+    }
+    expect(store.open()).toHaveLength(4);
+  });
+
+  it("is saved like any other change", async () => {
+    const storage = memorySettingStorage();
+    const store = await SettingStore.load({
+      clock: new FakeClock(t0),
+      emit: () => undefined,
+      storage,
+    });
+    const { setting } = setOut(store.propose(proposal()));
+
+    store.takeBack(wren, setting.id);
+
+    expect(storage.kept.settings).toEqual([]);
   });
 });
 
