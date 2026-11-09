@@ -23,29 +23,50 @@ Every asset has a `<asset>.sha256` beside it and the release carries a combined
 `SHA256SUMS`. The npm fallback (`dist/npm`, package `keywork-cli` since `keywork` is another
 project's name on the registry, `bin` = the bundled CLI that
 runs on an installed Bun with `@opentui/core` as a normal dependency) is built on every
-release and published directly to npm for a release tag when the repository variable
+release and published directly to npm when the repository variable
 `NPM_PUBLISH` is `true`. Publishing uses GitHub Actions trusted publishing with OIDC;
 the workflow uses no npm token. A successful release makes the npm package public.
 
-## The ritual
+## Automatic releases
 
-1. Bump `version` in `packages/cli/package.json` (the root and the other workspaces can
-   stay at their own numbers; the CLI manifest is the release version).
-2. Commit, then tag: `git tag v0.1.0 && git push origin v0.1.0`.
-3. `release.yml` runs: build matrix → checksums → GitHub Release (created with `gh`, notes
-   generated) → a timed `scripts/install.sh` against the just-published tag, printed in the
-   job log as the install-to-`--version` measurement.
-4. Read that number. Install is one leg of the 60 seconds; onboarding, first turn, and
-   first undo are the others and are timed by hand for the screencast.
+`release.yml` handles pushes to `main`, stable `v*` tags, and manual runs. The first
+release under this policy is explicitly tagged `v0.2.2`; main automation waits for
+that real tag before calculating subsequent versions. Existing feature history cannot
+turn this first release into `0.3.0`.
 
-The build refuses a tag that does not match the manifest (`--expect-tag`), so a stale
-`package.json` can never ship under a newer tag.
+After that baseline, commits since the latest reachable stable release tag determine
+the version: `fix` and `perf` increment the patch, `feat` increments the minor, and
+`!` or a `BREAKING CHANGE` footer increments the major. The highest applicable change
+wins. Docs, chores, and ordinary reverts do not independently publish; an unreleased
+change paired with its revert cancels out. Squash-merge titles therefore matter.
 
-The manifest version is also `info.version` in `keywork serve`'s `GET /doc`. The server
+Every main push runs the same Linux and Windows checks as a PR through reusable
+`ci.yml`, once. A release then builds and smoke-tests all five native targets and the
+npm package, checks every checksum, creates its tag and GitHub draft, publishes and
+verifies npm, and makes the GitHub release public. The install rail is timed against
+that public release. Tags created by the workflow need no second workflow run.
+
+The planned version is assigned at build time to the binary and npm package, including
+`--version` and server metadata. Source manifests retain their development versions;
+automation does not commit version bumps. The server
 contract has its own number beside it (`info.x-keywork-contract`, from
 `packages/server/src/contract.ts`), and a release that changed a route or an event bumps
 that one too; [`events.md`](events.md) says when a minor and when a major, and
 `bun run contract:fixtures` regenerates the two fixtures whose diff is the review.
+
+To reproduce an automatic release, check out its tag and pass the version explicitly:
+
+```sh
+git checkout v0.2.3
+bun scripts/release/build.ts --version 0.2.3 --expect-tag v0.2.3
+bun scripts/release/build-npm.ts --version 0.2.3
+```
+
+The binary builder rejects disagreement between `--version` and `--expect-tag`.
+Manual workflow runs on `main` use the same commit rules; running against a stable
+tag rebuilds that exact release. Main and tag runs serialize in one release group.
+An older queued main commit skips publication if a newer release is already ahead
+of it; unrelated branch tags do not become its version baseline.
 
 ## Locally
 
@@ -60,7 +81,7 @@ version when run from source.
 
 ## npm trusted publishing
 
-The generated package is `keywork-cli`, versioned from `packages/cli/package.json`, with `bin.keywork` pointing at
+The generated package is `keywork-cli`, assigned the planned release version, with `bin.keywork` pointing at
 `bin/keywork.js`, the canonical repository `git+https://github.com/JMoak/keywork.git`,
 and public access on `https://registry.npmjs.org`. Ratchet is carried inside the bundle;
 OpenTUI and web-tree-sitter remain exact public dependencies. The allowlist also includes
@@ -74,7 +95,7 @@ does not create or verify them locally:
   environment name. Those fields are case-sensitive. Enable **Allow npm publish**.
   Separate dist-tag management permission is not needed by this workflow.
 - In **JMoak/keywork**, set the Actions repository variable **NPM_PUBLISH** to **true**.
-  An unset or different value intentionally skips `npm-publish`.
+  An unset or different value intentionally skips npm publication.
 
 The publishing job runs on a GitHub-hosted Ubuntu runner with Node 24 and npm 12.2.2. It
 has `id-token: write`, uses no token environment variable or token-placeholder `.npmrc`,
@@ -93,8 +114,17 @@ required configuration and provenance conditions.
 
 After the release succeeds, verify the public version with `npm view keywork-cli@latest version`
 and inspect its provenance on npm. Direct publishing makes the version available immediately
-after registry processing. If the npm job fails after the GitHub release has been created,
-rerun the failed jobs. Published npm versions are immutable; subsequent releases need a new version.
+after registry processing. If publication fails, rerun the original workflow or its
+failed jobs. A tag already attached to that tested source resumes the same version;
+a tag attached to different source fails without being moved. npm versions are accepted
+as already published only when their `gitHead` matches that source. Registry errors fail
+the run, and registry indexing checks have a bounded retry window. With npm publishing
+enabled, GitHub publication also waits for npm `latest` to reach at least the planned
+version; an older channel fails with a repair instruction, and a newer channel is retained.
+Published GitHub
+assets are never overwritten; an incomplete draft can be rebuilt. A later main release
+waits for the preceding tag's GitHub and npm publications to finish. Published npm
+versions are immutable; subsequent releases need a new version.
 
 Local preparation uses `bun run build:npm` and `npm pack --dry-run` from `dist/npm`.
 Both commands prepare and inspect the package locally. The build checks the
@@ -154,7 +184,7 @@ The Bun runtime version is pinned in `packageManager` and workflow `bun-version`
 inputs, with matching `@types/bun`. The npm publishing CLI is pinned in `release.yml`.
 Dependabot's package and action updates do not keep these executable version inputs
 in sync: review them together during runtime upgrades. Dependency changes ship only
-through the tagged release and direct npm publishing process above.
+through the conventional release and direct npm publishing process above.
 
 Reference: GitHub's [Dependabot options](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference),
 [supported ecosystems](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories),
