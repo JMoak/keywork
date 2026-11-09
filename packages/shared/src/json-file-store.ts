@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { canonicalPath } from "./canonical-path.ts";
+import { type HeldFilePacingSync, renameOverSync } from "./rename-over.ts";
 
 export type Disk = Pick<
   typeof import("node:fs"),
@@ -13,6 +14,7 @@ export type JsonFileStoreOptions<T> = {
   validate: (data: unknown) => T;
   private?: boolean;
   disk?: Disk | undefined;
+  pacing?: HeldFilePacingSync | undefined;
 } & ({ mode: "strict"; error: (file: string, detail: string) => Error } | { mode: "lenient" });
 
 export interface JsonFileStore<T> {
@@ -89,7 +91,7 @@ function writeAtomically<T>(options: JsonFileStoreOptions<T>, disk: Disk, value:
       ...(isPrivate && { mode: 0o600 }),
     });
     if (isPrivate) disk.chmodSync(staging, 0o600);
-    disk.renameSync(staging, options.file);
+    renameOverSync(staging, options.file, disk, options.pacing);
   } catch (cause) {
     disk.rmSync(staging, { force: true });
     throw cause;

@@ -1,4 +1,5 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import type { PathLike } from "node:fs";
+import { mkdir, open, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
@@ -91,6 +92,109 @@ describe("writeFileAtomic", () => {
     await expect(writeFileAtomic(join(target, "impossible.md"), "x\n")).rejects.toThrow();
     expect(await readFile(target, "utf8")).toBe("kept\n");
     expect(await readdir(root)).toEqual(["note.md"]);
+  });
+
+  describe("over a file another handle holds", () => {
+    function holdOf(code: string): Error {
+      return Object.assign(new Error(`${code}: the file is held`), { code });
+    }
+
+    function renamesHeldFor(attempts: number, code: string, hold: Error = holdOf(code)) {
+      let remaining = attempts;
+      return {
+        rename: async (from: PathLike, to: PathLike) => {
+          if (remaining > 0) {
+            remaining -= 1;
+            throw hold;
+          }
+          await rename(from, to);
+        },
+      };
+    }
+
+    it.each(["EPERM", "EBUSY", "EACCES"])("rides out a transient %s on Windows", async (code) => {
+      const root = await scratchDir();
+      const target = join(root, "curation.md");
+      await writeFileAtomic(target, "one\n");
+      const pauses: number[] = [];
+
+      await writeFileAtomic(target, "two\n", {
+        disk: renamesHeldFor(2, code),
+        pacing: {
+          platform: "win32",
+          pause: async (milliseconds) => {
+            pauses.push(milliseconds);
+          },
+        },
+      });
+
+      expect(pauses).toHaveLength(2);
+      expect(await readFile(target, "utf8")).toBe("two\n");
+      expect(await readdir(root)).toEqual(["curation.md"]);
+    });
+
+    it("gives up with the first hold, keeps the prior file, and removes the scratch file", async () => {
+      const root = await scratchDir();
+      const target = join(root, "curation.md");
+      await writeFileAtomic(target, "kept\n");
+      const hold = holdOf("EPERM");
+
+      await expect(
+        writeFileAtomic(target, "lost\n", {
+          disk: renamesHeldFor(Number.POSITIVE_INFINITY, "EPERM", hold),
+          pacing: { platform: "win32", pause: async () => undefined },
+        }),
+      ).rejects.toBe(hold);
+
+      expect(await readFile(target, "utf8")).toBe("kept\n");
+      expect(await readdir(root)).toEqual(["curation.md"]);
+    });
+
+    it("surfaces a hold at once off Windows", async () => {
+      const root = await scratchDir();
+      const target = join(root, "curation.md");
+      await writeFileAtomic(target, "kept\n");
+      const pauses: number[] = [];
+
+      await expect(
+        writeFileAtomic(target, "lost\n", {
+          disk: renamesHeldFor(1, "EPERM"),
+          pacing: {
+            platform: "linux",
+            pause: async (milliseconds) => {
+              pauses.push(milliseconds);
+            },
+          },
+        }),
+      ).rejects.toThrow("EPERM");
+
+      expect(pauses).toEqual([]);
+      expect(await readdir(root)).toEqual(["curation.md"]);
+    });
+
+    it.runIf(process.platform === "win32")(
+      "replaces a target that a real handle holds, once the handle closes",
+      async () => {
+        const root = await scratchDir();
+        const target = join(root, "curation.md");
+        await writeFileAtomic(target, "one\n");
+        const holder = await open(target, "r");
+        const pauses: number[] = [];
+
+        await writeFileAtomic(target, "two\n", {
+          pacing: {
+            pause: async (milliseconds) => {
+              pauses.push(milliseconds);
+              await holder.close();
+            },
+          },
+        });
+
+        expect(pauses).toHaveLength(1);
+        expect(await readFile(target, "utf8")).toBe("two\n");
+        expect(await readdir(root)).toEqual(["curation.md"]);
+      },
+    );
   });
 });
 

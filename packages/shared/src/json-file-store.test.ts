@@ -18,6 +18,7 @@ import {
   jsonFileStore,
   pathKeyedStringStore,
 } from "./json-file-store.ts";
+import type { HeldFilePacingSync } from "./rename-over.ts";
 
 type StringMap = Record<string, string>;
 
@@ -26,10 +27,11 @@ class StoreError extends Error {}
 let scratch: string;
 let file: string;
 
-function strictStore(disk?: Disk): JsonFileStore<StringMap> {
+function strictStore(disk?: Disk, pacing?: HeldFilePacingSync): JsonFileStore<StringMap> {
   return jsonFileStore<StringMap>({
     file,
     disk,
+    pacing,
     mode: "strict",
     error: (_file, detail) => new StoreError(detail),
     validate: (data) => data as StringMap,
@@ -172,6 +174,75 @@ describe("jsonFileStore atomic writes", () => {
       expect(statSync(join(scratch, "nested")).mode & 0o777).toBe(0o700);
     },
   );
+});
+
+describe("jsonFileStore replacing a held file", () => {
+  function heldFor(attempts: number, code: string, hold: Error = holdOf(code)): Disk {
+    let remaining = attempts;
+    return {
+      mkdirSync,
+      readFileSync,
+      chmodSync,
+      rmSync,
+      writeFileSync,
+      renameSync: (from, to) => {
+        if (remaining > 0) {
+          remaining -= 1;
+          throw hold;
+        }
+        renameSync(from, to);
+      },
+    };
+  }
+
+  function holdOf(code: string): Error {
+    return Object.assign(new Error(`${code}: the file is held`), { code });
+  }
+
+  function dataListing(): string[] {
+    return readdirSync(join(scratch, "nested"));
+  }
+
+  it.each(["EPERM", "EBUSY", "EACCES"])("rides out a transient %s on Windows", (code) => {
+    strictStore().write({ a: "1" });
+    const pauses: number[] = [];
+
+    strictStore(heldFor(2, code), {
+      platform: "win32",
+      pause: (milliseconds) => pauses.push(milliseconds),
+    }).write({ a: "2" });
+
+    expect(pauses).toHaveLength(2);
+    expect(readFileSync(file, "utf8")).toBe('{\n  "a": "2"\n}\n');
+    expect(dataListing()).toEqual(["data.json"]);
+  });
+
+  it("gives up with the first hold, keeps the prior file, and removes the staging file", () => {
+    strictStore().write({ a: "1" });
+    const before = readFileSync(file, "utf8");
+    const hold = holdOf("EPERM");
+    const held = strictStore(heldFor(Number.POSITIVE_INFINITY, "EPERM", hold), {
+      platform: "win32",
+      pause: () => undefined,
+    });
+
+    expect(() => held.write({ a: "2" })).toThrow(hold);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(dataListing()).toEqual(["data.json"]);
+  });
+
+  it("surfaces a hold at once off Windows", () => {
+    strictStore().write({ a: "1" });
+    const pauses: number[] = [];
+    const held = strictStore(heldFor(1, "EPERM"), {
+      platform: "linux",
+      pause: (milliseconds) => pauses.push(milliseconds),
+    });
+
+    expect(() => held.write({ a: "2" })).toThrow("EPERM");
+    expect(pauses).toEqual([]);
+    expect(dataListing()).toEqual(["data.json"]);
+  });
 });
 
 describe("pathKeyedStringStore", () => {

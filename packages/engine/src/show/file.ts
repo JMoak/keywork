@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { toError } from "@keywork/shared";
+import { type HeldFilePacingSync, renameOverSync, toError } from "@keywork/shared";
 import { z } from "zod";
 import { type KeptSettings, nothingKept, type SettingStorage } from "./kept.ts";
 import { rungs, type Setting, settingKinds, settingOrigins } from "./setting.ts";
@@ -23,6 +23,7 @@ export interface SettingFileOptions {
   file: string;
   notice(line: string): void;
   disk?: SettingDisk | undefined;
+  pacing?: HeldFilePacingSync | undefined;
 }
 
 export function settingsFileIn(workspaceState: string): string {
@@ -30,14 +31,14 @@ export function settingsFileIn(workspaceState: string): string {
 }
 
 export function settingFile(options: SettingFileOptions): SettingStorage {
-  const { file, notice } = options;
+  const { file, notice, pacing } = options;
   const disk = options.disk ?? fs;
   let lastSaveFailed = false;
   return {
-    load: () => loadKept(file, disk, notice),
+    load: () => loadKept(file, disk, notice, pacing),
     save: (kept) => {
       try {
-        writeAtomically(file, keptSettingsText(kept), disk);
+        writeAtomically(file, keptSettingsText(kept), disk, pacing);
         lastSaveFailed = false;
       } catch (cause) {
         if (!lastSaveFailed) notice(unsavedWords(file, cause));
@@ -103,13 +104,18 @@ function firstIssueOf(error: z.ZodError): string {
   return `not kept settings: ${at === "" ? "" : `${at}: `}${issue.message}`;
 }
 
-function loadKept(file: string, disk: SettingDisk, notice: (line: string) => void): KeptSettings {
+function loadKept(
+  file: string,
+  disk: SettingDisk,
+  notice: (line: string) => void,
+  pacing: HeldFilePacingSync | undefined,
+): KeptSettings {
   removeStaleStaging(file, disk);
   try {
     const text = readIfPresent(file, disk);
     return text === undefined ? nothingKept : keptSettingsOf(text);
   } catch (cause) {
-    notice(unreadableWords(file, cause, setAside(file, disk)));
+    notice(unreadableWords(file, cause, setAside(file, disk, pacing)));
     return nothingKept;
   }
 }
@@ -123,12 +129,17 @@ function readIfPresent(file: string, disk: SettingDisk): string | undefined {
   }
 }
 
-function writeAtomically(file: string, text: string, disk: SettingDisk): void {
+function writeAtomically(
+  file: string,
+  text: string,
+  disk: SettingDisk,
+  pacing: HeldFilePacingSync | undefined,
+): void {
   disk.mkdirSync(dirname(file), { recursive: true });
   const staging = `${file}.${process.pid}.${randomBytes(4).toString("hex")}${stagingSuffix}`;
   try {
     writeSynced(staging, text, disk);
-    disk.renameSync(staging, file);
+    renameOverSync(staging, file, disk, pacing);
   } catch (cause) {
     removedQuietly(staging, disk);
     throw cause;
@@ -175,10 +186,14 @@ function removedQuietly(path: string, disk: SettingDisk): boolean {
 
 type SetAside = { moved: true; to: string } | { moved: false; reason: string };
 
-function setAside(file: string, disk: SettingDisk): SetAside {
+function setAside(
+  file: string,
+  disk: SettingDisk,
+  pacing: HeldFilePacingSync | undefined,
+): SetAside {
   const to = `${file}.unreadable`;
   try {
-    disk.renameSync(file, to);
+    renameOverSync(file, to, disk, pacing);
     return { moved: true, to };
   } catch (cause) {
     return { moved: false, reason: oneLine(toError(cause).message) };
