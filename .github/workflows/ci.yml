@@ -25,6 +25,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check:pins
       - run: bun run check:guardrails
+      - run: bun run check:prose
       - run: bun run check:contract HEAD^
       - run: bun run check:types
       - run: bun run lint
