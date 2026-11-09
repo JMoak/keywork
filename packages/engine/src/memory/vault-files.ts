@@ -1,5 +1,6 @@
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
+import { type HeldFilePacing, type RenameDisk, renameOver } from "@keywork/shared";
 
 export const mocFile = "MEMORY.md";
 export const auditFile = "curation.md";
@@ -143,12 +144,21 @@ export class VaultFiles {
   }
 }
 
-export async function writeFileAtomic(path: string, content: string): Promise<void> {
+export interface AtomicWriteSeams {
+  disk?: RenameDisk | undefined;
+  pacing?: HeldFilePacing | undefined;
+}
+
+export async function writeFileAtomic(
+  path: string,
+  content: string,
+  seams: AtomicWriteSeams = {},
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const scratch = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
     await writeFile(scratch, content, "utf8");
-    await rename(scratch, path);
+    await renameOver(scratch, path, seams.disk, seams.pacing);
   } catch (error) {
     await rm(scratch, { force: true });
     throw error;

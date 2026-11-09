@@ -30,6 +30,14 @@ export {
   pathKeyedStringStore,
 } from "./json-file-store.ts";
 export { mixOklab } from "./oklab.ts";
+export {
+  type HeldFilePacing,
+  type HeldFilePacingSync,
+  type RenameDisk,
+  type RenameDiskSync,
+  renameOver,
+  renameOverSync,
+} from "./rename-over.ts";
 export * from "./secrets/index.ts";
 export { countOccurrences, toUnixEol, type Utf8Prefix, utf8Prefix } from "./text.ts";
 export * from "./trust/index.ts";

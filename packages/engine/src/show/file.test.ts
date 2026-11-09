@@ -224,6 +224,107 @@ describe("a settings file", () => {
   });
 });
 
+describe("a settings file another handle holds for a moment", () => {
+  function holdOf(code: string): Error {
+    return Object.assign(new Error(`${code}: the file is held`), { code });
+  }
+
+  function renamesHeldFor(attempts: number, code: string): SettingDisk {
+    let remaining = attempts;
+    return {
+      ...fs,
+      renameSync: (from, to) => {
+        if (remaining > 0) {
+          remaining -= 1;
+          throw holdOf(code);
+        }
+        fs.renameSync(from, to);
+      },
+    };
+  }
+
+  it.each(["EPERM", "EBUSY", "EACCES"])(
+    "saves through a transient %s on Windows without a word",
+    async (code) => {
+      const file = await settingsPath();
+      settingFile({ file, notice: () => undefined }).save({ settings: [plan], spent: [] });
+      const pauses: number[] = [];
+      const lines: string[] = [];
+
+      settingFile({
+        file,
+        notice: heardBy(lines),
+        disk: renamesHeldFor(2, code),
+        pacing: { platform: "win32", pause: (milliseconds) => pauses.push(milliseconds) },
+      }).save(kept);
+
+      expect(pauses).toHaveLength(2);
+      expect(lines).toEqual([]);
+      expect(settingFile({ file, notice: () => undefined }).load()).toEqual(kept);
+      expect(fs.readdirSync(join(file, ".."))).toEqual(["settings.json"]);
+    },
+  );
+
+  it("says the save failed and leaves no staging file when the hold outlasts the retries", async () => {
+    const file = await settingsPath();
+    settingFile({ file, notice: () => undefined }).save({ settings: [plan], spent: [] });
+    const lines: string[] = [];
+
+    settingFile({
+      file,
+      notice: heardBy(lines),
+      disk: renamesHeldFor(Number.POSITIVE_INFINITY, "EPERM"),
+      pacing: { platform: "win32", pause: () => undefined },
+    }).save(kept);
+
+    expect(lines).toEqual([
+      `settings could not be saved to ${file} (EPERM: the file is held); they stay in memory and the next change saves them again`,
+    ]);
+    expect(fs.readdirSync(join(file, ".."))).toEqual(["settings.json"]);
+    expect(settingFile({ file, notice: () => undefined }).load()).toEqual({
+      settings: [plan],
+      spent: [],
+    });
+  });
+
+  it("does not retry a hold off Windows", async () => {
+    const file = await settingsPath();
+    const pauses: number[] = [];
+    const lines: string[] = [];
+
+    settingFile({
+      file,
+      notice: heardBy(lines),
+      disk: renamesHeldFor(1, "EBUSY"),
+      pacing: { platform: "linux", pause: (milliseconds) => pauses.push(milliseconds) },
+    }).save(kept);
+
+    expect(pauses).toEqual([]);
+    expect(lines).toHaveLength(1);
+    expect(fs.readdirSync(join(file, ".."))).toEqual([]);
+  });
+
+  it("moves an unreadable file aside through a transient hold", async () => {
+    const file = await settingsPath();
+    fs.mkdirSync(join(file, ".."), { recursive: true });
+    fs.writeFileSync(file, "{ not json");
+    const pauses: number[] = [];
+    const lines: string[] = [];
+
+    const loaded = settingFile({
+      file,
+      notice: heardBy(lines),
+      disk: renamesHeldFor(1, "EPERM"),
+      pacing: { platform: "win32", pause: (milliseconds) => pauses.push(milliseconds) },
+    }).load();
+
+    expect(loaded).toEqual(nothingKept);
+    expect(pauses).toHaveLength(1);
+    expect(lines[0]).toContain(`it was moved to ${file}.unreadable`);
+    expect(fs.readFileSync(`${file}.unreadable`, "utf8")).toBe("{ not json");
+  });
+});
+
 describe("a crash between writes", () => {
   const proposalOf = (what: ShowProposal["what"]): ShowProposal => ({
     creature: "wren",
