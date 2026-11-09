@@ -1,4 +1,20 @@
+export {
+  keptSettingsOf,
+  keptSettingsText,
+  type SettingDisk,
+  type SettingFileOptions,
+  settingFile,
+  settingsFileIn,
+} from "./file.ts";
 export { type KeeperOpening, keeperOpeningJsonSchema, keeperOpeningOf } from "./input.ts";
+export {
+  type KeptSettings,
+  type MemorySettingStorage,
+  memorySettingStorage,
+  nothingKept,
+  type SettingStorage,
+  type Spend,
+} from "./kept.ts";
 export type { SettingSeat, ShowThread, ThreadLookup } from "./lineage.ts";
 export {
   type Rung,
@@ -22,6 +38,7 @@ export {
   settingOrigins,
 } from "./setting.ts";
 export {
+  type KeptSettingStoreOptions,
   type SetOut,
   SettingStore,
   type SettingStoreOptions,

@@ -1384,6 +1384,7 @@ export { type ScheduleTarget, scheduleTool, type WakeScheduler } from "./tools/s
 export {
   type InteractiveShell,
   openInteractiveShell,
+  type PersistentShell,
   persistentBashTool,
   type ShellRunOptions,
   ShellSession,

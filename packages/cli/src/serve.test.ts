@@ -17,6 +17,7 @@ import {
   textTurn,
   toolCallTurn,
 } from "@keywork/engine";
+import { recordingShell } from "@keywork/engine/testing";
 import {
   createKeyworkServer,
   EventLog,
@@ -80,6 +81,13 @@ async function hostOptions(provider: MockProvider): Promise<HostOptions & { log:
   };
 }
 
+async function processFreeOptions(
+  provider: MockProvider,
+  shell = recordingShell(),
+): Promise<HostOptions & { log: EventLog }> {
+  return { ...(await hostOptions(provider)), checkpoints: "off", openShell: () => shell };
+}
+
 function serverOver(options: HostOptions & { log: EventLog }) {
   const host = fileSessionHost(options);
   const server = createKeyworkServer({ token, host, log: options.log, version: "test" });
@@ -131,7 +139,8 @@ describe("servedHost", () => {
 
 describe("fileSessionHost", () => {
   it("creates a session, runs a tool-using turn on prompt, streams it, and persists it", async () => {
-    const options = await hostOptions(
+    const shell = recordingShell();
+    const options = await processFreeOptions(
       new MockProvider([
         toolCallTurn({
           type: "tool-call",
@@ -141,6 +150,7 @@ describe("fileSessionHost", () => {
         }),
         textTurn("all done"),
       ]),
+      shell,
     );
     const { server, call } = serverOver(options);
     const created = await call("/sessions", { method: "POST" });
@@ -160,6 +170,7 @@ describe("fileSessionHost", () => {
     expect(types).toContain("tool.started");
     expect(types).toContain("tool.output");
     expect(types).toContain("tool.finished");
+    expect(shell.commands).toEqual(["echo served"]);
     await reader.close();
     await server.close();
 
@@ -209,7 +220,7 @@ describe("fileSessionHost", () => {
         }),
         textTurn("gave up"),
       ]);
-    const answered = await hostOptions(askingTurns());
+    const answered = await processFreeOptions(askingTurns());
     answered.permissions = () => "ask";
     const first = serverOver(answered);
     const { id } = (await (await first.call("/sessions", { method: "POST" })).json()) as {
@@ -251,7 +262,7 @@ describe("fileSessionHost", () => {
     await reader.close();
     await first.server.close();
 
-    const unanswered = await hostOptions(askingTurns());
+    const unanswered = await processFreeOptions(askingTurns());
     unanswered.permissions = () => "ask";
     unanswered.askTimeoutMs = 20;
     const second = serverOver(unanswered);
@@ -287,8 +298,16 @@ describe("fileSessionHost permission layers", () => {
     body: JSON.stringify(body),
   });
 
-  async function layeredOptions(provider: MockProvider, projectTrusted: boolean) {
-    return { ...(await hostOptions(provider)), projectTrusted, permissions: () => undefined };
+  async function layeredOptions(
+    provider: MockProvider,
+    projectTrusted: boolean,
+    shell = recordingShell(),
+  ): Promise<HostOptions & { log: EventLog }> {
+    return {
+      ...(await processFreeOptions(provider, shell)),
+      projectTrusted,
+      permissions: () => undefined,
+    };
   }
 
   async function prompted(served: ReturnType<typeof serverOver>, id: string, text: string) {
@@ -319,6 +338,7 @@ describe("fileSessionHost permission layers", () => {
   }
 
   it("runs a read-only command in a trusted workspace without an ask, and still asks for a compound", async () => {
+    const shell = recordingShell();
     const options = await layeredOptions(
       new MockProvider([
         bash("c1", "echo trusted"),
@@ -326,6 +346,7 @@ describe("fileSessionHost permission layers", () => {
         textTurn("done"),
       ]),
       true,
+      shell,
     );
     const served = serverOver(options);
     const id = await sessionOn(served);
@@ -337,14 +358,17 @@ describe("fileSessionHost permission layers", () => {
     ]);
     await served.call("/asks/c2", json({ verdict: "denied" }));
     await turn.until("turn.completed");
+    expect(shell.commands).toEqual(["echo trusted"]);
     await turn.close();
     await served.server.close();
   });
 
   it("keeps an untrusted workspace on the built-in posture", async () => {
+    const shell = recordingShell();
     const options = await layeredOptions(
       new MockProvider([bash("c1", "echo plain"), textTurn("done")]),
       false,
+      shell,
     );
     const served = serverOver(options);
     const id = await sessionOn(served);
@@ -356,6 +380,7 @@ describe("fileSessionHost permission layers", () => {
     });
     await served.call("/asks/c1", json({ verdict: "denied" }));
     await turn.until("turn.completed");
+    expect(shell.commands).toEqual([]);
     await turn.close();
     expect(await (await served.call("/permissions")).json()).toMatchObject({
       trusted: false,
@@ -365,6 +390,7 @@ describe("fileSessionHost permission layers", () => {
   });
 
   it("stops the second ask after a session grant", async () => {
+    const shell = recordingShell();
     const options = await layeredOptions(
       new MockProvider([
         bash("c1", "printf %s one"),
@@ -372,6 +398,7 @@ describe("fileSessionHost permission layers", () => {
         textTurn("done"),
       ]),
       false,
+      shell,
     );
     const served = serverOver(options);
     const id = await sessionOn(served);
@@ -400,6 +427,7 @@ describe("fileSessionHost permission layers", () => {
         asked: false,
       },
     ]);
+    expect(shell.commands).toEqual(["printf %s one", "printf %s two"]);
     expect(await (await served.call("/permissions")).json()).toMatchObject({
       workspace: [],
       session: { [id]: [printfRule] },
@@ -409,9 +437,11 @@ describe("fileSessionHost permission layers", () => {
   });
 
   it("keeps a workspace grant across a reopen until it is revoked", async () => {
+    const firstShell = recordingShell();
     const first = await layeredOptions(
       new MockProvider([bash("c1", "printf %s one"), textTurn("done")]),
       false,
+      firstShell,
     );
     const opened = serverOver(first);
     const firstTurn = await prompted(opened, await sessionOn(opened), "print");
@@ -420,7 +450,9 @@ describe("fileSessionHost permission layers", () => {
     await firstTurn.until("turn.completed");
     await firstTurn.close();
     await opened.server.close();
+    expect(firstShell.commands).toEqual(["printf %s one"]);
 
+    const reopenedShell = recordingShell();
     const reopened = serverOver({
       ...(await layeredOptions(
         new MockProvider([
@@ -430,6 +462,7 @@ describe("fileSessionHost permission layers", () => {
           textTurn("done"),
         ]),
         false,
+        reopenedShell,
       )),
       cwd: first.cwd,
     });
@@ -461,9 +494,10 @@ describe("fileSessionHost permission layers", () => {
     expect(JSON.parse(asked.at(-1)?.data ?? "{}").payload.ask.callId).toBe("c3");
     await reopened.call("/asks/c3", json({ verdict: "denied" }));
     await asking.until("turn.completed");
+    expect(reopenedShell.commands).toEqual(["printf %s two"]);
     await asking.close();
     await reopened.server.close();
-  }, 15_000);
+  });
 
   it("shows a write's consequence on its ask, from the tool's own dry run, before anything is written", async () => {
     const options = await layeredOptions(
@@ -1250,34 +1284,36 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
       toolCallTurn({ type: "tool-call", callId, name: "write", arguments: { path, content } });
     const options = await checkpointed(
       new MockProvider([
-        write("c1", "a.txt", "one\n"),
-        textTurn("wrote a"),
         textTurn("just talking"),
-        write("c2", "b.txt", "two\n"),
-        write("c3", "a.txt", "uno\n"),
+        write("c1", "b.txt", "two\n"),
+        write("c2", "a.txt", "uno\n"),
         textTurn("wrote b and a"),
       ]),
     );
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
+    await writeFile(join(options.cwd, "a.txt"), "one\n");
+    const opened = serverOver(options);
+    const { id } = (await (await opened.call("/sessions", { method: "POST" })).json()) as {
+      id: string;
+    };
+    const reader = sseReader(await opened.call("/events"));
     let leaf: string | null = null;
-    for (const text of ["first", "second", "third"]) {
-      await post(call, `/sessions/${id}/prompt`, { text });
+    for (const text of ["first", "second"]) {
+      await post(opened.call, `/sessions/${id}/prompt`, { text });
       const previous: string | null = leaf;
       const settled = await settledState(reader, (state) => state.leafId !== previous);
       leaf = (payloadOf(settled) as { leafId: string | null }).leafId;
     }
-    const messagesOf = async () =>
+    const messagesOn = async ({ call }: ReturnType<typeof serverOver>) =>
       ((await (await call(`/sessions/${id}`)).json()) as { messages: Message[] }).messages;
-    expect(await messagesOf()).toHaveLength(12);
+    expect(await messagesOn(opened)).toHaveLength(8);
+    expect((await post(opened.call, `/sessions/${id}/restore`, { turn: 3 })).status).toBe(404);
 
-    const restored = await post(call, `/sessions/${id}/restore`, { turn: 2 });
+    const restored = await post(opened.call, `/sessions/${id}/restore`, { turn: 1 });
     expect(restored.status).toBe(200);
     const report = (await restored.json()) as { leafId: string };
     expect(report).toMatchObject({
-      turn: 2,
-      prompt: { text: "second" },
+      turn: 1,
+      prompt: { text: "first" },
       undoneTurns: 2,
       files: [
         { path: "a.txt", added: 1, deleted: 1 },
@@ -1293,37 +1329,33 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
       return frame.event === "session.tree";
     });
     expect(payloadOf(tree)).toEqual({ reason: "leaf", entryId: report.leafId });
-    expect(announced.map(payloadOf).at(-1)).toEqual({ paths: ["a.txt"], turn: 1 });
+    expect(announced.map(payloadOf).at(-1)).toEqual({ paths: [] });
     expect(await readFile(join(options.cwd, "a.txt"), "utf8")).toBe("one\n");
     expect(existsSync(join(options.cwd, "b.txt"))).toBe(false);
-    expect(await messagesOf()).toHaveLength(4);
+    expect(await messagesOn(opened)).toHaveLength(0);
     const store = await findSession(options.sessionDir ?? "", id);
     expect(store?.entry(report.leafId)).toMatchObject({
       type: "custom",
       customType: "restore",
-      data: { turn: 2, from: leaf, files: expect.stringMatching(/^[0-9a-f]{40,64}$/) },
+      data: { turn: 1, from: leaf, files: expect.stringMatching(/^[0-9a-f]{40,64}$/) },
     });
-
-    expect(await (await post(call, `/sessions/${id}/redo`)).json()).toMatchObject({
-      restored: true,
-    });
-    expect(await readFile(join(options.cwd, "b.txt"), "utf8")).toBe("two\n");
-    expect(await messagesOf()).toHaveLength(12);
-    expect((await post(call, `/sessions/${id}/restore`, { turn: 4 })).status).toBe(404);
     await reader.close();
-    await server.close();
+    await opened.server.close();
 
     const reopen = () =>
       serverOver({ ...options, log: new EventLog(), provider: new MockProvider([]) });
-    const messagesAfterReopen = async (served: ReturnType<typeof serverOver>) =>
-      ((await (await served.call(`/sessions/${id}`)).json()) as { messages: Message[] }).messages;
-    const redone = reopen();
-    expect(await messagesAfterReopen(redone)).toHaveLength(12);
-    expect((await post(redone.call, `/sessions/${id}/restore`, { turn: 2 })).status).toBe(200);
-    await redone.server.close();
-    const restoredAgain = reopen();
-    expect(await messagesAfterReopen(restoredAgain)).toHaveLength(4);
-    await restoredAgain.server.close();
+    const restoredOnReopen = reopen();
+    expect(await messagesOn(restoredOnReopen)).toHaveLength(0);
+    expect(await (await post(restoredOnReopen.call, `/sessions/${id}/redo`)).json()).toMatchObject({
+      restored: true,
+    });
+    expect(await readFile(join(options.cwd, "a.txt"), "utf8")).toBe("uno\n");
+    expect(await readFile(join(options.cwd, "b.txt"), "utf8")).toBe("two\n");
+    expect(await messagesOn(restoredOnReopen)).toHaveLength(8);
+    await restoredOnReopen.server.close();
+    const redoneOnReopen = reopen();
+    expect(await messagesOn(redoneOnReopen)).toHaveLength(8);
+    await redoneOnReopen.server.close();
   });
 
   it("splits the context window into the parts the composed request carries", async () => {

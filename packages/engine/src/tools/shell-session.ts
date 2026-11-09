@@ -26,8 +26,14 @@ export interface ShellRunOptions {
   sandbox?: ToolSandbox;
 }
 
+export interface PersistentShell {
+  readonly shellName: string;
+  run(command: string, options?: ShellRunOptions): Promise<string>;
+  close(): Promise<void>;
+}
+
 export function persistentBashTool(
-  session: ShellSession,
+  session: PersistentShell,
   onOutput?: (chunk: string) => void,
   sandbox: ToolSandbox = fixedSandbox(unconfined),
 ): Tool {
@@ -49,7 +55,7 @@ export function persistentBashTool(
   });
 }
 
-export class ShellSession {
+export class ShellSession implements PersistentShell {
   private live: LiveShell | undefined;
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -227,10 +233,11 @@ function framedCommand(shell: Shell, command: string, sentinel: string): string 
   ].join("\n");
 }
 
-class SentinelScanner {
+export class SentinelScanner {
   sawSentinel = false;
   private buffer = "";
   private midLine = false;
+  private heldBlankLines = 0;
 
   constructor(
     private readonly sentinel: string,
@@ -258,22 +265,39 @@ class SentinelScanner {
   private consumeLine(line: string): void {
     if (!this.midLine && line.startsWith(this.sentinel)) {
       this.sawSentinel = true;
+      this.releaseBlankLines(this.heldBlankLines - newlinesBeforeSentinel);
       this.onSentinel(exitCodeIn(line, this.sentinel));
       return;
     }
+    if (!this.midLine && line === "\n") {
+      this.heldBlankLines += 1;
+      return;
+    }
     this.midLine = false;
-    this.output.append(line);
+    this.append(line);
   }
 
   private flushOverlongLine(): void {
     if (this.sawSentinel || this.buffer.length <= longestHeldLine) return;
-    this.output.append(this.buffer);
+    this.append(this.buffer);
     this.buffer = "";
     this.midLine = true;
+  }
+
+  private append(text: string): void {
+    this.releaseBlankLines(this.heldBlankLines);
+    this.output.append(text);
+  }
+
+  private releaseBlankLines(count: number): void {
+    if (count > 0) this.output.append("\n".repeat(count));
+    this.heldBlankLines = 0;
   }
 }
 
 const longestHeldLine = 30_000;
+
+const newlinesBeforeSentinel = 1;
 
 function exitCodeIn(line: string, sentinel: string): number | undefined {
   const code = Number.parseInt(line.slice(sentinel.length).trim(), 10);

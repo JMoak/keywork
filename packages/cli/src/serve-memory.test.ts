@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { MockProvider, parseMemorySource, rememberFrom } from "@keywork/engine";
-import { createKeyworkServer, EventLog } from "@keywork/server";
-import { scratchDirs } from "@keywork/shared/testing";
+import { type BusEnvelope, createKeyworkServer, EventLog } from "@keywork/server";
+import { scratchDirs, tick } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { workspaceMemoryAccess } from "./memory.ts";
 import { servedHost } from "./serve.ts";
@@ -40,8 +40,9 @@ describe("a note a creature's message staged outside the routes", () => {
     const memory = await stagingServed();
     try {
       await memory.read("/memory/inbox");
+      const announced = memory.nextInboxCount();
       await memory.stage();
-      await settle();
+      await announced;
       expect(memory.inboxCounts()).toEqual([1]);
       expect(await memory.read("/memory/inbox")).toMatchObject({
         trusted: true,
@@ -57,10 +58,12 @@ describe("a note a creature's message staged outside the routes", () => {
         expect.objectContaining({ for: "creature:cob", firstLine: "The five largest docs" }),
       ]);
 
+      const emptied = memory.nextInboxCount();
       const { forgot } = (await memory.post("/memory/forget/apply", {
         source: "creature:wren",
         digest: plan.digest,
       })) as { forgot: { ledgerId: string } };
+      await emptied;
       expect(await memory.read("/memory/inbox")).toMatchObject({ count: 0 });
       await memory.post(`/memory/ledger/${forgot.ledgerId}/revert`, {});
       expect(await memory.read("/memory/inbox")).toMatchObject({ count: 1 });
@@ -76,7 +79,7 @@ describe("a note a creature's message staged outside the routes", () => {
       const staged = stagedInbox(memory.access);
       expect(staged()).toEqual([]);
       await memory.stage();
-      await settle();
+      await until(() => staged().length > 0);
       expect(staged()).toEqual([expect.objectContaining({ for: "creature:cob" })]);
     } finally {
       await memory.close();
@@ -84,9 +87,9 @@ describe("a note a creature's message staged outside the routes", () => {
   });
 });
 
-const settle = async (): Promise<void> => {
-  for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
-};
+async function until(holds: () => boolean): Promise<void> {
+  while (!holds()) await tick();
+}
 
 async function stagingServed() {
   const cwd = await tempDir();
@@ -128,20 +131,30 @@ async function stagingServed() {
       self: "cob",
     });
   };
-  const inboxCounts = (): number[] =>
-    log
-      .since(0)
-      .filter((envelope) => envelope.type === "memory.inbox")
-      .map((envelope) => (envelope.payload as { count: number }).count);
+  const inboxCounts = (): number[] => log.since(0).filter(isInboxTally).map(inboxCountOf);
+  const nextInboxCount = (): Promise<number> =>
+    new Promise((resolve) => {
+      const stop = log.subscribe((envelope) => {
+        if (!isInboxTally(envelope)) return;
+        stop();
+        resolve(inboxCountOf(envelope));
+      });
+    });
   return {
     access,
     stage,
     inboxCounts,
+    nextInboxCount,
     read: (path: string) => call("GET", path),
     post: (path: string, body: unknown) => call("POST", path, body),
     close: () => server.close(),
   };
 }
+
+const isInboxTally = (envelope: BusEnvelope): boolean => envelope.type === "memory.inbox";
+
+const inboxCountOf = (envelope: BusEnvelope): number =>
+  (envelope.payload as { count: number }).count;
 
 async function servedMemoryOf(projectTrusted: boolean) {
   const cwd = await tempDir();

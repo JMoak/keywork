@@ -43,6 +43,7 @@ import {
   modelReferenceOf,
   type PermissionLedger,
   type PermissionResolver,
+  type PersistentShell,
   type ProbeHttp,
   type ProjectWorkRequest,
   type PromptOrigin,
@@ -167,7 +168,12 @@ import {
   type ServedRoutines,
   servedRoutines,
 } from "./serve-routines.ts";
-import { servedSettings } from "./serve-show.ts";
+import {
+  type ServedSettings,
+  servedSettings,
+  showThreadOf,
+  workspaceSettingsFile,
+} from "./serve-show.ts";
 import { loggedCostNanos, SpendLedger } from "./serve-spend.ts";
 import { type ServedSession, surfacePorts } from "./serve-surfaces.ts";
 import { servedTree } from "./serve-tree.ts";
@@ -226,6 +232,7 @@ export interface HostOptions {
   checkpoints?: "on" | "off" | undefined;
   checkpointsGitDir?: string | undefined;
   askTimeoutMs?: number | undefined;
+  openShell?: ((cwd: string) => PersistentShell) | undefined;
   workspaceSlug?: string | undefined;
   sessionDir?: string | undefined;
   userRoot?: string | undefined;
@@ -287,9 +294,32 @@ async function serveOwned(options: ServeOptions): Promise<number> {
     return alreadyServingExit;
   }
   const log = new EventLog();
+  const settings = await servedSettings({
+    log,
+    file: workspaceSettingsFile(options),
+    sessionDir: sessionDirOf(options),
+    notice: (text) => options.printError(`keywork serve: ${text}`),
+  });
+  try {
+    return await serveListening(options, { log, settings, ticketFile });
+  } finally {
+    settings.close();
+  }
+}
+
+interface WorkspaceServing {
+  log: EventLog;
+  settings: ServedSettings;
+  ticketFile: string;
+}
+
+async function serveListening(
+  options: ServeOptions,
+  { log, settings, ticketFile }: WorkspaceServing,
+): Promise<number> {
   let server: Awaited<ReturnType<typeof listen>>;
   const hostOf = (hosting: HostOptions, recompose?: () => Promise<void>) =>
-    servedHost({ ...hosting, log, notice: options.printError, recompose });
+    servedHost({ ...hosting, log, settings, notice: options.printError, recompose });
   const host = await hostOf(options, async () => {
     const trusted = { ...((await options.reopen?.()) ?? options), projectTrusted: true };
     await server.rehost(await hostOf(trusted));
@@ -317,6 +347,10 @@ async function serveOwned(options: ServeOptions): Promise<number> {
   await server.close();
   removeServerTicket(ticketFile);
   return 0;
+}
+
+function sessionDirOf(options: Pick<HostOptions, "sessionDir" | "cwd" | "workspaceSlug">): string {
+  return options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
 }
 
 export function workspaceInfoOf(cwd: string, slug?: string): WorkspaceInfo {
@@ -365,7 +399,12 @@ export function fileSessionHost(options: HostOptions & { log: EventLog }): Sessi
   return sessionVerbsHost(new LiveSessions(options, gate), gate);
 }
 
-export async function servedHost(options: HostOptions & { log: EventLog }): Promise<SessionHost> {
+export type ServedHostOptions = HostOptions & {
+  log: EventLog;
+  settings?: ServedSettings | undefined;
+};
+
+export async function servedHost(options: ServedHostOptions): Promise<SessionHost> {
   const { log } = options;
   const place: CreaturePlace = {
     cwd: options.cwd,
@@ -404,7 +443,11 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
     async () => (await sessions.composed()).composition.extensions.bots,
   );
   let stagedOf: (() => readonly StagedItem[]) | undefined;
-  const shown = servedSettings(log, (id) => sessions.threadOf(id));
+  const sessionDir = sessionDirOf(options);
+  const ownsSettings = options.settings === undefined;
+  const shown =
+    options.settings ??
+    (await servedSettings({ log, file: workspaceSettingsFile(place), sessionDir, notice }));
   const localSeat = creatureSeats({
     registry,
     workshops,
@@ -429,6 +472,7 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
     },
     keeper: (answered) => recordKeeperVerdict(answered, { nodeState: node.state }),
   });
+  const unhosted = shown.hostedBy((id) => sessions.liveThreadOf(id));
   const { composition, arcs, bots } = await sessions.composed();
   stagedOf = stagedInbox(composition.memory);
   const creatures = servedCreatures({
@@ -472,7 +516,6 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
       workshopOf: (id) => sessions.liveOnly(id)?.seat()?.workshop,
     }),
   );
-  const sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
   const surfaces = surfacePorts({
     ...options,
     sessionDir,
@@ -516,7 +559,8 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
     ...(node.mesh !== undefined && { mesh: { ...node.mesh, messages: mail } }),
     show: shown.settings,
     close: async () => {
-      shown.close();
+      unhosted();
+      if (ownsSettings) shown.close();
       routines?.stop();
       await verbs.close();
       await routines?.close();
@@ -721,7 +765,7 @@ class LiveSessions {
     private readonly gate: ServedGate,
     private readonly seams: SessionSeams = {},
   ) {
-    this.sessionDir = options.sessionDir ?? defaultSessionDir(options.cwd, options.workspaceSlug);
+    this.sessionDir = sessionDirOf(options);
     this.changes = new ChangesFeed(options.log, (id) => this.changesSource(id));
     this.unjournalGrants = gate.ledger.onSessionRules((id, rules) =>
       this.live.get(id)?.journalGrants(rules),
@@ -881,13 +925,9 @@ class LiveSessions {
     return findSession(this.sessionDir, id);
   }
 
-  async threadOf(id: string): Promise<ShowThread | undefined> {
-    const store = this.liveOnly(id)?.served().store ?? (await this.stored(id));
-    if (store?.header.id !== id) return undefined;
-    return {
-      creature: creatureTagOf(store.entries())?.creature ?? null,
-      parent: store.header.spawnedBy?.sessionId ?? null,
-    };
+  liveThreadOf(id: string): ShowThread | undefined {
+    const live = this.liveOnly(id)?.served().store;
+    return live === undefined ? undefined : showThreadOf(live);
   }
 
   async changesSource(id: string): Promise<ChangesSource | undefined> {
@@ -971,7 +1011,7 @@ class LiveSessions {
     const { composition, agents } = workspace;
     const { options } = this;
     const id = store.header.id;
-    const shell = new ShellSession(options.cwd);
+    const shell = options.openShell?.(options.cwd) ?? new ShellSession(options.cwd);
     const turn = new TurnCheckpoint();
     const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints, turn);
     const permissions = this.confinedResolver(store);
@@ -1142,7 +1182,7 @@ class LiveSession {
 
   constructor(
     private readonly store: SessionStore,
-    private readonly shell: ShellSession,
+    private readonly shell: PersistentShell,
     private readonly runtime: SessionRuntime,
   ) {
     this.id = store.header.id;

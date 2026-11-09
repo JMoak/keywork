@@ -49,6 +49,7 @@ import {
   messageText,
   narrowedPermissions,
   type PermissionResolver,
+  type PersistentShell,
   type Provider,
   pointOfActionRecall,
   RepoMap,
@@ -59,7 +60,6 @@ import {
   type ScheduleTarget,
   type SessionStartReason,
   type SessionStore,
-  type ShellSession,
   type ShowTarget,
   SkillLibrary,
   SkillTelemetry,
@@ -299,7 +299,7 @@ export interface AgentBuildSpec {
   bus?: EventBus<EngineEvents> | undefined;
   sessionId?: SessionKey | undefined;
   onRetrieval?: ((disclosure: string) => void) | undefined;
-  shell?: ShellSession | undefined;
+  shell?: PersistentShell | undefined;
   spills?: SpillStore | SpillSource | undefined;
   permissions?: PermissionResolver | undefined;
   child?: ChildPlacement | undefined;

@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MockProvider, textTurn, toolCallTurn } from "@keywork/engine";
+import { recordingShell } from "@keywork/engine/testing";
 import { type KeyworkClient, keyworkClient, type PendingAsk } from "@keywork/server";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
@@ -127,15 +128,11 @@ describe("keywork permissions against a running keywork serve", () => {
       userRoot,
       new MockProvider([bash("c1", "printf %s one"), bash("c2", "true"), textTurn("done")]),
     );
-    const { client } = served;
+    const { client, asks } = served;
     const session = await client.createSession();
     await client.prompt(session.id, "print");
-    expect(await client.answerAsk((await nextAsk(client)).callId, "granted", "session")).toBe(
-      "settled",
-    );
-    expect(await client.answerAsk((await nextAsk(client)).callId, "granted", "workspace")).toBe(
-      "settled",
-    );
+    expect(await client.answerAsk(await asks.next(), "granted", "session")).toBe("settled");
+    expect(await client.answerAsk(await asks.next(), "granted", "workspace")).toBe("settled");
     const cliRoots = { cwd, userRoot, projectTrusted: false };
     const listed = recorder();
 
@@ -169,6 +166,7 @@ const bash = (callId: string, command: string) =>
 async function servedWith(cwd: string, userRoot: string, provider: MockProvider) {
   const ticketFile = join(await scratch(), "server.json");
   const stop = new AbortController();
+  const ticket = ticketAnnouncement();
   const finished = serve({
     cwd,
     userRoot,
@@ -176,36 +174,65 @@ async function servedWith(cwd: string, userRoot: string, provider: MockProvider)
     projectTrusted: true,
     provider,
     permissions: () => undefined,
+    checkpoints: "off",
+    openShell: () => recordingShell(),
     port: 0,
     ticketFile,
     signal: stop.signal,
-    print: () => undefined,
+    print: ticket.print,
     printError: () => undefined,
   });
+  const exitCode = await Promise.race([ticket.written, finished]);
+  if (exitCode !== undefined) {
+    throw new Error(`keywork serve exited with ${exitCode} before it wrote its ticket`);
+  }
   const runningServer = async (): Promise<KeyworkClient | undefined> => {
-    const ticket = await runningServerAmong([ticketFile], fetch);
-    return ticket === undefined ? undefined : keyworkClient(ticket);
+    const written = await runningServerAmong([ticketFile], fetch);
+    return written === undefined ? undefined : keyworkClient(written);
   };
-  const client = await eventually(runningServer);
+  const client = await runningServer();
+  if (client === undefined) throw new Error("keywork serve wrote its ticket but does not answer");
+  const asks = askedCalls(client, stop.signal);
   return {
     client,
+    asks,
     seams: { runningServer },
     stop: async () => {
+      await asks.close();
       stop.abort();
       await finished;
     },
   };
 }
 
-async function nextAsk(client: KeyworkClient): Promise<PendingAsk> {
-  return eventually(async () => (await client.asks())[0]);
+function ticketAnnouncement() {
+  let announce = (): void => undefined;
+  return {
+    written: new Promise<void>((resolve) => {
+      announce = resolve;
+    }),
+    print: (line: string) => {
+      if (line.startsWith("ticket ")) announce();
+    },
+  };
 }
 
-async function eventually<T>(probe: () => Promise<T | undefined>): Promise<T> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    const found = await probe();
-    if (found !== undefined) return found;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("gave up waiting");
+function askedCalls(client: KeyworkClient, signal: AbortSignal) {
+  const events = client.events({ since: 0, signal })[Symbol.asyncIterator]();
+  return {
+    next: async (): Promise<string> => {
+      for (;;) {
+        const event = await events.next();
+        if (event.done === true) throw new Error("the event stream ended before the next ask");
+        if (event.value.type === "gate.ask") return (event.value.payload as AskEvent).ask.callId;
+      }
+    },
+    close: async (): Promise<void> => {
+      await events.return?.();
+    },
+  };
+}
+
+interface AskEvent {
+  ask: PendingAsk;
 }

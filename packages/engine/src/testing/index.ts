@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MockProvider } from "../mock-provider.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
+import type { PersistentShell } from "../tools/shell-session.ts";
 
 export interface RecordingProvider extends Provider {
   readonly requests: ProviderRequest[];
@@ -22,6 +23,26 @@ export function recordingProvider(
       requests.push(request);
       return inner === undefined ? okTurn() : inner.stream(request);
     },
+  };
+}
+
+export interface RecordingShell extends PersistentShell {
+  readonly commands: readonly string[];
+}
+
+export function recordingShell(): RecordingShell {
+  const commands: string[] = [];
+  return {
+    shellName: "a recording shell",
+    commands,
+    run: async (command, options = {}) => {
+      options.signal?.throwIfAborted();
+      commands.push(command);
+      const output = `ran ${command}`;
+      options.onOutput?.(output);
+      return output;
+    },
+    close: async () => undefined,
   };
 }
 

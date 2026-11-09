@@ -12,7 +12,7 @@ import { type MessageTarget, messageTool } from "./message.ts";
 import type { OriginSource, SessionSource } from "./protected-writes.ts";
 import { readTool } from "./read.ts";
 import { type ScheduleTarget, scheduleTool } from "./schedule.ts";
-import { persistentBashTool, type ShellSession } from "./shell-session.ts";
+import { type PersistentShell, persistentBashTool } from "./shell-session.ts";
 import { writeTool } from "./write.ts";
 
 export interface MemoryRecall {
@@ -23,7 +23,7 @@ export interface MemoryRecall {
 
 export interface CoreToolOptions {
   memory?: MemoryRecall | undefined;
-  shell?: ShellSession | undefined;
+  shell?: PersistentShell | undefined;
   onToolOutput?: ((chunk: string) => void) | undefined;
   afterSave?: AfterSave | undefined;
   vault?: MemoryStore | undefined;

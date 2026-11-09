@@ -41,6 +41,7 @@ async function composedIn(
     cwd,
     projectTrusted: false,
     userRoot: join(cwd, "user-keywork"),
+    checkpoints: "off",
     checkpointsGitDir: join(cwd, "snapshots-git"),
     ...overrides,
   });
@@ -114,6 +115,7 @@ describe("composeWorkspace", () => {
     await writeFile(blocked, "occupied");
     const messages: string[] = [];
     const composition = await composedIn(cwd, {
+      checkpoints: "on",
       checkpointsGitDir: join(blocked, "git"),
       reportCheckpointsUnavailable: (message) => messages.push(message),
     });

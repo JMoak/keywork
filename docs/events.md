@@ -958,8 +958,21 @@ the same thing again (the same owner, `what.kind` and `what.ref`) replaces the e
 `show.settled` with `outcome: "withdrawn"` and `by: "creature"` for the earlier one comes first,
 then `show.proposed` with a new id that names the earlier one in `replaces`. An owner sets out at most thirty settings an hour, replacements
 included; the tool answers the thirty-first with a sentence, as creature mail answers its limits,
-and nothing fires. The server holds settings in memory: they outlive a console reconnecting, not a
-server restart.
+and nothing fires.
+
+Settings are kept for the workspace on disk, in the node's state beside its chores
+(`~/.keywork/node/workspaces/<identity>/show/settings.json`, replaced atomically on every change), so
+they outlive a console reconnecting, a server restart, a parked workspace waking and a workspace
+re-trust. Live and pinned settings come back exactly as they were, with their ids, times, `from`,
+`origin` and `replaces`; nothing settled is kept, so the file holds only what is still out. When the
+server starts, a live setting whose `until` time passed while it was stopped, a live `rests` setting
+(a stopped server is a rested thread) and a live setting whose session no longer exists are withdrawn
+with no `show.settled`, since no console was listening; a console cold-starting from `GET /show`
+simply does not see them. A pinned setting always comes back, and a live timed one still ahead is
+withdrawn by `time` when its time comes, as before. The hourly limit counts what an owner set out
+before the stop while it is still inside the hour, so a restart is no way around it. A kept file that
+cannot be read is moved aside to `settings.json.unreadable` and the server starts with none, saying
+so in one line of its log.
 
 Every setting has a lineage (since contract 1.28). `from` names what it grew from: a setting still
 out when it was set out, or a session, or `null` for one that starts a trail of its own. The tool
@@ -996,7 +1009,8 @@ reads their absence as `from: null`, `origin: "creature"` and `replaces: null`.
 
 A setting moved, so a client updates or drops its card. The keeper's answers come through
 `POST /show/{id}/answer`; the engine withdraws the rest on its own. Withdrawal only touches a
-`live` setting: a pinned one stays out until the keeper unpins or dismisses it. A setting that
+`live` setting: a pinned one stays out until the keeper unpins or dismisses it. What the server
+withdraws as it starts, after a stop, settles without this event (see `show.proposed`). A setting that
 settles takes nothing with it: the settings that grew from it stay out, and the payload stays
 `{ id, outcome, by }`, since a client already holds the setting and its `from`. Since contract 1.27.
 

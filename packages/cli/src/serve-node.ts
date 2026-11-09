@@ -38,8 +38,7 @@ import { type EventLog, type ModelsPort, meshEventsInto } from "@keywork/server"
 import { toError } from "@keywork/shared";
 import { type HouseMeshConsole, houseMeshConsole, nodeWorkshops } from "./node/compose.ts";
 import { readNodeConfig } from "./node/config.ts";
-import { nodePaths } from "./node/paths.ts";
-import { workspaceIdentity } from "./paths.ts";
+import { nodePaths, workspaceStateDir } from "./node/paths.ts";
 
 export interface ServedNodeOptions {
   cwd: string;
@@ -91,11 +90,7 @@ export async function servedNode(options: ServedNodeOptions): Promise<ServedNode
   const { log } = options;
   const machine = hostname();
   const state = nodePaths(options.userRoot).state;
-  const workspaceState = join(
-    state,
-    "workspaces",
-    workspaceIdentity(options.cwd, options.workspaceSlug),
-  );
+  const workspaceState = workspaceStateDir(options.userRoot, options.cwd, options.workspaceSlug);
   const capabilities = options.inventory?.capabilities ?? new CapabilityCache();
   const licenses = fileLicenseBook(modelAcknowledgementsFile(state));
   const slate = await readSlate().catch(() => undefined);

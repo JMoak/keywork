@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { keyworkHome } from "../paths.ts";
+import { keyworkHome, workspaceIdentity } from "../paths.ts";
 
 export interface NodePaths {
   userState: string;
@@ -40,4 +40,8 @@ export function nodePaths(userRoot?: string): NodePaths {
     stoppedItem: join(state, "desk", "node-stopped.json"),
     taskDefinition: join(state, "task.xml"),
   };
+}
+
+export function workspaceStateDir(userRoot: string, cwd: string, slug?: string): string {
+  return join(nodePaths(userRoot).state, "workspaces", workspaceIdentity(cwd, slug));
 }

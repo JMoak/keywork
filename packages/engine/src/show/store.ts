@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Cancel, type Clock, hourMs, isoOf, systemClock } from "../routines/clock.ts";
 import type { KeeperOpening } from "./input.ts";
+import { type KeptSettings, memorySettingStorage, type SettingStorage } from "./kept.ts";
 import { ownerOf, type SettingSeat, sameOwner, sees, type ThreadLookup } from "./lineage.ts";
 import type {
   Rung,
@@ -54,6 +55,10 @@ export interface SettingStoreOptions {
   threads?: ThreadLookup | undefined;
 }
 
+export interface KeptSettingStoreOptions extends SettingStoreOptions {
+  storage: SettingStorage;
+}
+
 export class SettingStore {
   private readonly out = new Map<string, Setting>();
   private readonly timers = new Map<string, Cancel>();
@@ -62,6 +67,13 @@ export class SettingStore {
   private readonly clock: Clock;
   private readonly hourlyLimit: number;
   private readonly threadOf: ThreadLookup;
+  private storage: SettingStorage = memorySettingStorage();
+
+  static async load(options: KeptSettingStoreOptions): Promise<SettingStore> {
+    const store = new SettingStore(options);
+    await store.restore(options.storage);
+    return store;
+  }
 
   constructor(options: SettingStoreOptions) {
     this.emit = options.emit;
@@ -78,9 +90,9 @@ export class SettingStore {
     const replaced = this.outWithSameWhat(proposal);
     if (replaced !== undefined) this.withdraw(replaced, proposal.origin);
     const setting = settingOf(randomUUID(), proposal, replaced, isoOf(now));
-    this.out.set(setting.id, setting);
-    this.withdrawAtItsTime(setting);
+    this.seat(setting);
     this.emit(setting.sessionId, "show.proposed", { setting });
+    this.keep();
     return { setting, replaced };
   }
 
@@ -107,7 +119,9 @@ export class SettingStore {
     if (setting === undefined) return refused("missing", `no setting out has the id ${id}`);
     const state = keeperMoves[setting.state]?.[outcome];
     if (state === undefined) return refused("conflict", conflictOf(setting));
-    return this.settle(setting, outcome, "keeper", state);
+    const settled = this.settle(setting, outcome, "keeper", state);
+    this.keep();
+    return settled;
   }
 
   rested(sessionId: string): void {
@@ -124,6 +138,51 @@ export class SettingStore {
   close(): void {
     for (const cancel of this.timers.values()) cancel();
     this.timers.clear();
+  }
+
+  private async restore(storage: SettingStorage): Promise<void> {
+    const kept = storage.load();
+    const now = this.clock.now();
+    const spent = kept.spent.filter((spend) => withinTheHour(Date.parse(spend.at), now));
+    const missing = await this.missingThreadsOf(kept.settings.filter(isLive));
+    const back = kept.settings.filter((setting) => !withdrawnByTheStop(setting, now, missing));
+    for (const { owner, at } of spent) this.remember(owner, Date.parse(at));
+    for (const setting of back) this.seat(setting);
+    this.storage = storage;
+    if (back.length < kept.settings.length || spent.length < kept.spent.length) this.keep();
+  }
+
+  private async missingThreadsOf(settings: readonly Setting[]): Promise<ReadonlySet<string>> {
+    const missing = new Set<string>();
+    for (const sessionId of new Set(settings.map((setting) => setting.sessionId))) {
+      if (await this.knownGone(sessionId)) missing.add(sessionId);
+    }
+    return missing;
+  }
+
+  private async knownGone(sessionId: string): Promise<boolean> {
+    try {
+      return (await this.threadOf(sessionId)) === undefined;
+    } catch {
+      return false;
+    }
+  }
+
+  private seat(setting: Setting): void {
+    this.out.set(setting.id, setting);
+    if (isLive(setting)) this.withdrawAtItsTime(setting);
+  }
+
+  private keep(): void {
+    this.storage.save(this.keptNow());
+  }
+
+  private keptNow(): KeptSettings {
+    const now = this.clock.now();
+    const spent = [...this.setOutAt].flatMap(([owner, times]) =>
+      times.filter((at) => withinTheHour(at, now)).map((at) => ({ owner, at: isoOf(at) })),
+    );
+    return { settings: this.open(), spent };
   }
 
   private async seatOf(from: string): Promise<SettingSeat | undefined> {
@@ -153,7 +212,7 @@ export class SettingStore {
   }
 
   private setOutWithinTheHour(owner: string, now: number): number {
-    const recent = (this.setOutAt.get(owner) ?? []).filter((at) => at > now - hourMs);
+    const recent = (this.setOutAt.get(owner) ?? []).filter((at) => withinTheHour(at, now));
     this.setOutAt.set(owner, recent);
     return recent.length;
   }
@@ -182,9 +241,9 @@ export class SettingStore {
   }
 
   private withdrawLive(matches: (setting: Setting) => boolean, by: SettledBy): void {
-    for (const setting of [...this.out.values()]) {
-      if (setting.state === "live" && matches(setting)) this.withdraw(setting, by);
-    }
+    const withdrawn = this.open().filter((setting) => isLive(setting) && matches(setting));
+    for (const setting of withdrawn) this.withdraw(setting, by);
+    if (withdrawn.length > 0) this.keep();
   }
 
   private withdraw(setting: Setting, by: SettledBy): void {
@@ -247,6 +306,27 @@ function settingOf(
 
 function endOf(until: SettingUntil): number {
   return until === "seen" || until === "rests" ? Number.POSITIVE_INFINITY : Date.parse(until);
+}
+
+function withinTheHour(at: number, now: number): boolean {
+  return at > now - hourMs;
+}
+
+function withdrawnByTheStop(
+  setting: Setting,
+  now: number,
+  missingThreads: ReadonlySet<string>,
+): boolean {
+  return (
+    isLive(setting) &&
+    (setting.until === "rests" ||
+      endOf(setting.until) <= now ||
+      missingThreads.has(setting.sessionId))
+  );
+}
+
+function isLive({ state }: Setting): boolean {
+  return state === "live";
 }
 
 function isOut(state: SettingState): boolean {

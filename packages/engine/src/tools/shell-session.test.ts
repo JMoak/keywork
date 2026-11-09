@@ -3,8 +3,8 @@ import { basename, join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
-import { retainedOutputChars } from "./command-run.ts";
-import { persistentBashTool, ShellSession } from "./shell-session.ts";
+import { BoundedOutput, commandResult, retainedOutputChars } from "./command-run.ts";
+import { persistentBashTool, SentinelScanner, ShellSession } from "./shell-session.ts";
 
 const tempDir = scratchDirs("keywork-shell-");
 const sessions: ShellSession[] = [];
@@ -166,7 +166,58 @@ describe("ShellSession", () => {
     expect(first.trim()).toBe("one");
     expect(second.trim()).toBe("first-two");
   });
+
+  it("answers each command exactly what it printed, from the very first on a fresh shell", async () => {
+    const session = await openSession();
+
+    expect(await session.run("printf warned >&2")).toBe("warned");
+    expect(await session.run("true")).toBe("");
+    expect(await session.run("printf 'a\\n\\nb\\n\\n\\n'")).toBe("a\n\nb");
+    expect(await session.run("echo whole")).toBe("whole");
+  });
 });
+
+describe("a framed command's answer", () => {
+  it("is exactly what the command printed without a trailing newline, whichever frame is read first", () => {
+    expect(answerTo(["stderr", stderrFrame], ["stdout", "partial"], ["stdout", stdoutFrame])).toBe(
+      "partial",
+    );
+    expect(answerTo(["stdout", `partial${stdoutFrame}`], ["stderr", stderrFrame])).toBe("partial");
+  });
+
+  it("ends at the command's last text, however many newlines close it, and keeps the blank lines inside", () => {
+    expect(answerTo(["stderr", stderrFrame], ["stdout", `whole\n${stdoutFrame}`])).toBe("whole");
+    expect(answerTo(["stderr", stderrFrame], ["stdout", `a\n\nb\n\n\n${stdoutFrame}`])).toBe(
+      "a\n\nb",
+    );
+  });
+
+  it("is empty when the command printed nothing", () => {
+    expect(answerTo(["stderr", stderrFrame], ["stdout", stdoutFrame])).toBe("");
+    expect(answerTo(["stdout", stdoutFrame], ["stderr", stderrFrame])).toBe("");
+  });
+
+  it("reads stderr that ends without a newline", () => {
+    expect(answerTo(["stdout", stdoutFrame], ["stderr", `warned${stderrFrame}`])).toBe("warned");
+  });
+});
+
+const sentinel = "__keywork_framed__";
+const stdoutFrame = `\n${sentinel} 0\n`;
+const stderrFrame = `\n${sentinel}\n`;
+
+function answerTo(...arrivals: Array<["stdout" | "stderr", string]>): string {
+  const output = new BoundedOutput();
+  let exitCode = 0;
+  const streams = {
+    stdout: new SentinelScanner(sentinel, output, (code) => {
+      exitCode = code ?? 0;
+    }),
+    stderr: new SentinelScanner(sentinel, output, () => undefined),
+  };
+  for (const [stream, chunk] of arrivals) streams[stream].push(chunk);
+  return commandResult(output.rendered(), exitCode);
+}
 
 describe("ShellSession failures", () => {
   it("rejects run() with the spawn error when the shell cannot start", async () => {
