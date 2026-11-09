@@ -1,13 +1,16 @@
 import { z } from "zod";
-import { type Rung, rungs, type SettingWhat, settingKinds } from "../show/setting.ts";
+import { settingFromInput, settingWhatInput, settingWhatOf } from "../show/input.ts";
+import { type Rung, rungs } from "../show/setting.ts";
 import type { SetOut, SettingStore, ShowProposal, ShowRefusal } from "../show/store.ts";
 import type { Tool } from "../tools.ts";
 import { defineTool } from "./define.ts";
 
+export type ShowSettings = Pick<SettingStore, "propose" | "canGrowFrom">;
+
 export interface ShowTarget {
   creature: string | null;
   sessionId: string;
-  settings(): Pick<SettingStore, "propose"> | undefined;
+  settings(): ShowSettings | undefined;
 }
 
 export const showToolName = "show";
@@ -16,11 +19,13 @@ export function showTool(target: ShowTarget): Tool {
   return defineTool({
     name: showToolName,
     description:
-      "Set something out for the keeper to see beside this conversation: a file, a diff, a report, a thread, a chore, a link or a short note. This is IDE control: it arranges the console's own space around the conversation, never the computer, and it changes nothing in the world, so it asks for no permission. It lands as a card by default. Propose unfold only when the keeper should read it now, and stage only when it deserves the whole view; the console spends the keeper's attention and may show it lower than you ask. Showing the same thing again replaces what you set out before. It stays until the keeper has seen it, until this thread rests, or until a time you name. At most thirty settings an hour.",
+      "Set something out for the keeper to see beside this conversation: a file, a diff, a report, a thread, a chore, a link or a short note. This is IDE control: it arranges the console's own space around the conversation, never the computer, and it changes nothing in the world, so it asks for no permission. It lands as a card by default. Propose unfold only when the keeper should read it now, and stage only when it deserves the whole view; the console spends the keeper's attention and may show it lower than you ask. Showing the same thing again replaces what you set out before. It stays until the keeper has seen it, until this thread rests, or until a time you name. Name from when it grows out of something already in view: the id of a setting you set out (every answer names it), or a thread of yours such as one you delegated; the console sets it beside what it grew from, so the keeper can walk the trail. At most thirty settings an hour.",
     schema: showArgs,
     run: async (args) => {
       const settings = target.settings();
       if (settings === undefined) return noKeeperSurface;
+      const from = args.from ?? null;
+      if (from !== null && !(await settings.canGrowFrom(target, from))) return outOfSight(from);
       return sentenceOf(settings.propose(proposalOf(target, args)));
     },
   });
@@ -28,28 +33,7 @@ export function showTool(target: ShowTarget): Tool {
 
 const showArgs = z
   .object({
-    what: z
-      .object({
-        kind: z
-          .enum(settingKinds)
-          .describe("file, diff, report, thread, chore, url or note: what you set out."),
-        ref: z
-          .string()
-          .trim()
-          .min(1)
-          .max(2_000)
-          .describe(
-            "Which one: a workspace path for a file, a change-set id for a diff, a report id, a session id for a thread, a chore id, a url, or the note's own words (at most 2000 characters).",
-          ),
-        title: z
-          .string()
-          .trim()
-          .min(1)
-          .max(200)
-          .optional()
-          .describe("A short title for the card; the yard names it from ref when left out."),
-      })
-      .strict(),
+    what: settingWhatInput,
     rung: z
       .enum(rungs)
       .optional()
@@ -68,6 +52,12 @@ const showArgs = z
       .describe(
         "When it goes: seen (the default, once the keeper has seen it), rests (when this thread rests), or an ISO 8601 date-time with its offset.",
       ),
+    from: settingFromInput
+      .nullable()
+      .optional()
+      .describe(
+        "What it grows from: the id of a setting you set out that is still out, or a thread of yours such as one you delegated. Leave it out for something new.",
+      ),
   })
   .strict();
 
@@ -76,19 +66,21 @@ type ShowArgs = z.infer<typeof showArgs>;
 const noKeeperSurface =
   "Not set out: no keeper surface takes settings here; tell the keeper in words instead.";
 
+function outOfSight(from: string): string {
+  return `Not set out: nothing you may grow from has the id ${from}; name a setting you set out that is still out, or a thread of yours.`;
+}
+
 function proposalOf(target: ShowTarget, args: ShowArgs): ShowProposal {
   return {
     creature: target.creature,
     sessionId: target.sessionId,
-    what: whatOf(args.what),
+    what: settingWhatOf(args.what),
     rung: args.rung ?? "card",
     why: args.why,
     until: args.until ?? "seen",
+    from: args.from ?? null,
+    origin: "creature",
   };
-}
-
-function whatOf({ kind, ref, title }: ShowArgs["what"]): SettingWhat {
-  return title === undefined ? { kind, ref } : { kind, ref, title };
 }
 
 function sentenceOf(outcome: SetOut | ShowRefusal): string {
@@ -98,6 +90,7 @@ function sentenceOf(outcome: SetOut | ShowRefusal): string {
     placedAs[setting.rung],
     goesWhen(setting.until),
     ...(replaced === undefined ? [] : ["It replaces what you set out for this before."]),
+    `To set out what grows from it, name ${setting.id} as from.`,
   ].join(" ");
 }
 

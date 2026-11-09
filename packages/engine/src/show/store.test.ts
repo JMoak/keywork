@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { hourMs, minuteMs } from "../routines/clock.ts";
 import { FakeClock } from "../routines/testing.ts";
-import type { ShowEvents, ShowEventType } from "./setting.ts";
-import { type SetOut, SettingStore, type ShowProposal, type ShowRefusal } from "./store.ts";
+import type { ShowThread } from "./lineage.ts";
+import type { Setting, ShowEvents, ShowEventType } from "./setting.ts";
+import {
+  type SetOut,
+  SettingStore,
+  type SettingStoreOptions,
+  type ShowProposal,
+  type ShowRefusal,
+} from "./store.ts";
 
 const t0 = Date.parse("2026-11-08T09:00:00Z");
 
@@ -12,7 +19,7 @@ interface Heard {
   payload: ShowEvents[ShowEventType];
 }
 
-function board(options: { hourlyLimit?: number } = {}) {
+function board(options: Pick<SettingStoreOptions, "hourlyLimit" | "threads"> = {}) {
   const clock = new FakeClock(t0);
   const heard: Heard[] = [];
   const store = new SettingStore({
@@ -32,6 +39,8 @@ function proposal(overrides: Partial<ShowProposal> = {}): ShowProposal {
     rung: "card",
     why: "The plan changed under the tests you asked about.",
     until: "seen",
+    from: null,
+    origin: "creature",
     ...overrides,
   };
 }
@@ -61,6 +70,9 @@ describe("a setting the creature sets out", () => {
       at: "2026-11-08T09:00:00.000Z",
       until: "seen",
       state: "live",
+      from: null,
+      origin: "creature",
+      replaces: null,
     });
     expect(replaced).toBeUndefined();
     expect(store.open()).toEqual([setting]);
@@ -304,3 +316,274 @@ describe("the hourly limit", () => {
     expect(store.open()).toHaveLength(1);
   });
 });
+
+function threadsOf(known: Readonly<Record<string, ShowThread>>) {
+  return async (sessionId: string): Promise<ShowThread | undefined> => known[sessionId];
+}
+
+function opened(outcome: SetOut | ShowRefusal): Setting {
+  return setOut(outcome).setting;
+}
+
+describe("a setting's lineage", () => {
+  it("names the setting it grows from and the creature's origin, on the record and on show.proposed", () => {
+    const { store, heard } = board();
+    const diff = opened(store.propose(proposal({ what: { kind: "diff", ref: "cs-41" } })));
+
+    const file = opened(store.propose(proposal({ from: diff.id })));
+
+    expect(diff).toMatchObject({ from: null, origin: "creature" });
+    expect(file).toMatchObject({ from: diff.id, origin: "creature" });
+    expect(heard.at(-1)).toEqual({
+      sessionId: "s1",
+      type: "show.proposed",
+      payload: { setting: file },
+    });
+  });
+
+  it("is kept by a replacement that names no other from, or names the setting it replaces", () => {
+    const { store } = board();
+    const diff = opened(store.propose(proposal({ what: { kind: "diff", ref: "cs-41" } })));
+    const test = opened(store.propose(proposal({ what: { kind: "file", ref: "plan.test.ts" } })));
+    const file = opened(store.propose(proposal({ from: diff.id })));
+
+    const unnamed = opened(store.propose(proposal({ why: "It changed again." })));
+    const itself = opened(store.propose(proposal({ from: unnamed.id, why: "And again." })));
+    const moved = opened(store.propose(proposal({ from: test.id, why: "It sits by the test." })));
+
+    expect([file.from, unnamed.from, itself.from, moved.from]).toEqual([
+      diff.id,
+      diff.id,
+      diff.id,
+      test.id,
+    ]);
+    expect(store.open().map(({ id }) => id)).toEqual([diff.id, test.id, moved.id]);
+  });
+
+  it("never withdraws a setting when the one it grew from is withdrawn or answered", async () => {
+    const { store, heard, advanceTo } = board();
+    const rests = opened(
+      store.propose(proposal({ until: "rests", what: { kind: "diff", ref: "a" } })),
+    );
+    const timed = opened(
+      store.propose(proposal({ until: "2026-11-08T09:10:00Z", what: { kind: "diff", ref: "b" } })),
+    );
+    const dismissed = opened(store.propose(proposal({ what: { kind: "diff", ref: "c" } })));
+    const children = [rests, timed, dismissed].map((parent) =>
+      opened(store.propose(proposal({ from: parent.id, what: { kind: "file", ref: parent.id } }))),
+    );
+
+    store.rested("s1");
+    await advanceTo(t0 + hourMs);
+    store.answer(dismissed.id, "dismissed");
+
+    expect(store.open()).toEqual(children);
+    expect(settledOf(heard)).toEqual([
+      { id: rests.id, outcome: "withdrawn", by: "creature" },
+      { id: timed.id, outcome: "withdrawn", by: "time" },
+      { id: dismissed.id, outcome: "dismissed", by: "keeper" },
+    ]);
+  });
+
+  it("names the setting it replaced, whoever set either out, and null when it replaced nothing", async () => {
+    const { store, heard } = board();
+    const diff = opened(store.propose(proposal({ what: { kind: "diff", ref: "cs-41" } })));
+    const first = opened(store.propose(proposal()));
+    store.answer(first.id, "pinned");
+
+    const second = opened(store.propose(proposal({ why: "It changed again." })));
+    const opening = opened(
+      await store.keeperOpens({ what: proposal().what, from: diff.id, rung: "unfold" }),
+    );
+    const third = opened(store.propose(proposal({ why: "And again." })));
+    const elsewhere = opened(store.propose(proposal({ creature: "hal", sessionId: "s2" })));
+
+    expect([diff, first, elsewhere].map(({ replaces }) => replaces)).toEqual([null, null, null]);
+    expect([second, opening, third].map(({ replaces }) => replaces)).toEqual([
+      first.id,
+      second.id,
+      opening.id,
+    ]);
+    expect(
+      heard.filter(({ type }) => type !== "show.proposed").map(({ payload }) => payload),
+    ).toEqual([
+      { id: first.id, outcome: "pinned", by: "keeper" },
+      { id: first.id, outcome: "withdrawn", by: "creature" },
+      { id: second.id, outcome: "withdrawn", by: "keeper" },
+      { id: opening.id, outcome: "withdrawn", by: "creature" },
+    ]);
+    expect(heard.at(-2)?.payload).toEqual({ setting: third });
+  });
+});
+
+describe("the keeper's opening", () => {
+  const plan = { kind: "file" as const, ref: "docs/plan.md" };
+
+  it("sets out on the thread and for the creature of the setting it grows from, to unfold, with no why", async () => {
+    const { store, heard } = board();
+    const diff = opened(
+      store.propose(proposal({ sessionId: "s4", what: { kind: "diff", ref: "c" } })),
+    );
+
+    const file = opened(await store.keeperOpens({ what: plan, from: diff.id, rung: "unfold" }));
+
+    expect(file).toEqual({
+      id: expect.any(String),
+      creature: "wren",
+      sessionId: "s4",
+      what: plan,
+      rung: "unfold",
+      why: "",
+      at: "2026-11-08T09:00:00.000Z",
+      until: "seen",
+      state: "live",
+      from: diff.id,
+      origin: "keeper",
+      replaces: null,
+    });
+    expect(heard.at(-1)).toEqual({
+      sessionId: "s4",
+      type: "show.proposed",
+      payload: { setting: file },
+    });
+  });
+
+  it("sets out on the thread it grows from, for that thread's creature or for none", async () => {
+    const { store } = board({
+      threads: threadsOf({
+        s9: { creature: "hal", parent: null },
+        s10: { creature: null, parent: "s9" },
+      }),
+    });
+
+    const fromHal = opened(await store.keeperOpens({ what: plan, from: "s9", rung: "unfold" }));
+    const fromChild = opened(await store.keeperOpens({ what: plan, from: "s10", rung: "unfold" }));
+
+    expect(fromHal).toMatchObject({ creature: "hal", sessionId: "s9", from: "s9" });
+    expect(fromChild).toMatchObject({ creature: null, sessionId: "s10", from: "s10" });
+  });
+
+  it("refuses a from that names no setting still out and no thread, and sets nothing out", async () => {
+    const { store, heard } = board({ threads: threadsOf({}) });
+    const gone = opened(store.propose(proposal()));
+    store.answer(gone.id, "dismissed");
+    const before = heard.length;
+
+    for (const from of ["nope", gone.id]) {
+      expect(await store.keeperOpens({ what: plan, from, rung: "unfold" })).toEqual({
+        refused: "missing",
+        error: `no setting out and no thread has the id ${from}`,
+      });
+    }
+    expect(heard).toHaveLength(before);
+  });
+
+  it("replaces the owner's setting of the same thing, withdrawn by the keeper", async () => {
+    const { store, heard } = board();
+    const diff = opened(store.propose(proposal({ what: { kind: "diff", ref: "c" } })));
+    const card = opened(store.propose(proposal({ what: plan })));
+
+    const outcome = setOut(await store.keeperOpens({ what: plan, from: diff.id, rung: "unfold" }));
+
+    expect(outcome.replaced?.id).toBe(card.id);
+    expect(settledOf(heard)).toEqual([{ id: card.id, outcome: "withdrawn", by: "keeper" }]);
+    expect(store.open().map(({ id }) => id)).toEqual([diff.id, outcome.setting.id]);
+  });
+
+  it("never spends the hourly limit, in every order of six creature and keeper calls", async () => {
+    const limit = 2;
+    for (const calls of everyOrder(["creature", "keeper"], 6)) {
+      const { store } = board({ hourlyLimit: limit, threads: threadsOf({ s1: noThread }) });
+      const answers: string[] = [];
+      for (const [index, by] of calls.entries()) {
+        const what = { kind: "note" as const, ref: `note ${index}` };
+        const outcome =
+          by === "keeper"
+            ? await store.keeperOpens({ what, from: "s1", rung: "unfold" })
+            : store.propose(proposal({ what }));
+        answers.push("refused" in outcome ? outcome.refused : outcome.setting.origin);
+      }
+      expect(answers).toEqual(expectedUnderTheLimit(calls, limit));
+    }
+  });
+});
+
+describe("what a caller may grow from", () => {
+  const wren = { creature: "wren", sessionId: "s1" };
+  const threads = threadsOf({
+    child: { creature: null, parent: "s1" },
+    chore: { creature: "wren", parent: null },
+    stranger: { creature: null, parent: null },
+    hal: { creature: "hal", parent: null },
+  });
+
+  it("is a setting its owner set out that is still out, live or pinned, and its own thread", async () => {
+    const { store } = board({ threads });
+    const live = opened(store.propose(proposal()));
+    const pinned = opened(store.propose(proposal({ what: { kind: "diff", ref: "c" } })));
+    store.answer(pinned.id, "pinned");
+    const seen = opened(store.propose(proposal({ what: { kind: "note", ref: "n" } })));
+    store.answer(seen.id, "seen");
+    const hals = opened(store.propose(proposal({ creature: "hal", sessionId: "hal" })));
+    const strangers = opened(store.propose(proposal({ creature: null, sessionId: "stranger" })));
+
+    const grows = (from: string) => store.canGrowFrom(wren, from);
+
+    expect(await grows(live.id)).toBe(true);
+    expect(await grows(pinned.id)).toBe(true);
+    expect(await grows("s1")).toBe(true);
+    expect(await grows(seen.id)).toBe(false);
+    expect(await grows(hals.id)).toBe(false);
+    expect(await grows(strangers.id)).toBe(false);
+  });
+
+  it("is a thread it spawned or any thread of its creature, and no other thread", async () => {
+    const { store } = board({ threads });
+    const plain = { creature: null, sessionId: "s1" };
+
+    expect(await store.canGrowFrom(wren, "child")).toBe(true);
+    expect(await store.canGrowFrom(wren, "chore")).toBe(true);
+    expect(await store.canGrowFrom(wren, "stranger")).toBe(false);
+    expect(await store.canGrowFrom(wren, "hal")).toBe(false);
+    expect(await store.canGrowFrom(wren, "unknown")).toBe(false);
+    expect(await store.canGrowFrom(plain, "child")).toBe(true);
+    expect(await store.canGrowFrom(plain, "stranger")).toBe(false);
+  });
+
+  it("is a setting the keeper opened from a thread it spawned", async () => {
+    const { store } = board({ threads });
+    const opening = opened(
+      await store.keeperOpens({ what: { kind: "url", ref: "u" }, from: "child", rung: "unfold" }),
+    );
+
+    expect(opening).toMatchObject({ creature: null, sessionId: "child" });
+    expect(await store.canGrowFrom(wren, opening.id)).toBe(true);
+    expect(await store.canGrowFrom({ creature: "hal", sessionId: "hal" }, opening.id)).toBe(false);
+  });
+
+  it("is only its own thread when the store knows no threads", async () => {
+    const { store } = board();
+    expect(await store.canGrowFrom(wren, "s1")).toBe(true);
+    expect(await store.canGrowFrom(wren, "child")).toBe(false);
+  });
+});
+
+type Caller = "creature" | "keeper";
+
+const noThread: ShowThread = { creature: null, parent: null };
+
+function everyOrder(callers: readonly Caller[], length: number): Caller[][] {
+  if (length === 0) return [[]];
+  return everyOrder(callers, length - 1).flatMap((order) =>
+    callers.map((caller) => [...order, caller]),
+  );
+}
+
+function expectedUnderTheLimit(calls: readonly Caller[], limit: number): string[] {
+  let spent = 0;
+  return calls.map((by) => {
+    if (by === "keeper") return "keeper";
+    spent += 1;
+    return spent > limit ? "limited" : "creature";
+  });
+}

@@ -61,9 +61,10 @@ import {
   type SendOptions,
   type SessionEntry,
   SessionStore,
-  type SettingStore,
   ShellSession,
+  type ShowSettings,
   type ShowTarget,
+  type ShowThread,
   type StagedItem,
   scopeContains,
   sessionPosture,
@@ -403,7 +404,7 @@ export async function servedHost(options: HostOptions & { log: EventLog }): Prom
     async () => (await sessions.composed()).composition.extensions.bots,
   );
   let stagedOf: (() => readonly StagedItem[]) | undefined;
-  const shown = servedSettings(log);
+  const shown = servedSettings(log, (id) => sessions.threadOf(id));
   const localSeat = creatureSeats({
     registry,
     workshops,
@@ -664,7 +665,7 @@ interface SessionSeams {
   failed?(provider: string, error: Error): void;
   settled?(thread: SettledThread): void;
   keeper?(answered: AnsweredAsk): Promise<KeeperOutcome>;
-  settings?: Pick<SettingStore, "propose"> | undefined;
+  settings?: ShowSettings | undefined;
 }
 
 const projectThreadType = "keywork.creature-project";
@@ -878,6 +879,15 @@ class LiveSessions {
 
   stored(id: string): Promise<SessionStore | undefined> {
     return findSession(this.sessionDir, id);
+  }
+
+  async threadOf(id: string): Promise<ShowThread | undefined> {
+    const store = this.liveOnly(id)?.served().store ?? (await this.stored(id));
+    if (store?.header.id !== id) return undefined;
+    return {
+      creature: creatureTagOf(store.entries())?.creature ?? null,
+      parent: store.header.spawnedBy?.sessionId ?? null,
+    };
   }
 
   async changesSource(id: string): Promise<ChangesSource | undefined> {

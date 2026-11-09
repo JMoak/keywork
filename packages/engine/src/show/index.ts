@@ -1,9 +1,12 @@
+export { type KeeperOpening, keeperOpeningJsonSchema, keeperOpeningOf } from "./input.ts";
+export type { SettingSeat, ShowThread, ThreadLookup } from "./lineage.ts";
 export {
   type Rung,
   rungs,
   type Setting,
   type SettingAnswer,
   type SettingKind,
+  type SettingOrigin,
   type SettingState,
   type SettingUntil,
   type SettingWhat,
@@ -16,6 +19,7 @@ export {
   type ShowSettled,
   settingAnswers,
   settingKinds,
+  settingOrigins,
 } from "./setting.ts";
 export {
   type SetOut,

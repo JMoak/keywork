@@ -691,7 +691,10 @@
         "setting": {
           "at": "string",
           "creature": "string",
+          "from": "null",
           "id": "string",
+          "origin": "string",
+          "replaces": "null",
           "rung": "string",
           "sessionId": "string",
           "state": "string",
@@ -708,7 +711,29 @@
         "setting": {
           "at": "string",
           "creature": "null",
+          "from": "string",
           "id": "string",
+          "origin": "string",
+          "replaces": "string",
+          "rung": "string",
+          "sessionId": "string",
+          "state": "string",
+          "until": "string",
+          "what": {
+            "kind": "string",
+            "ref": "string"
+          },
+          "why": "string"
+        }
+      },
+      {
+        "setting": {
+          "at": "string",
+          "creature": "string",
+          "from": "string",
+          "id": "string",
+          "origin": "string",
+          "replaces": "null",
           "rung": "string",
           "sessionId": "string",
           "state": "string",

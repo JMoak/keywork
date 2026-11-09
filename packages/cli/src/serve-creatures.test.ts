@@ -18,6 +18,7 @@ import {
   type Setting,
   type StagedItem,
   SessionStore as Store,
+  type TurnDelta,
   textTurn,
   toolCallTurn,
   type WorkshopView,
@@ -751,3 +752,104 @@ describe("the inbound section of a creature's turn", () => {
     expect(inboundSection("cob", conversation.contextEntries(), staged)).toBe("");
   });
 });
+
+describe("a setting's trail under keywork serve", () => {
+  it("grows from a setting by the id the tool named and from a delegated thread, and the keeper opens from either", async () => {
+    const world = await creatureWorld(
+      readingProvider([
+        () => showTurn("a", { kind: "diff", ref: "cs-1" }, "seen"),
+        (said) => showFromTurn("b", { kind: "file", ref: "src/a.ts" }, settingIdIn(said)),
+        () =>
+          toolCallTurn({
+            type: "tool-call",
+            callId: "d",
+            name: "delegate",
+            arguments: { title: "find the report", prompt: "find the triage report" },
+          }),
+        () => textTurn("The report is r1."),
+        (said) => showFromTurn("c", { kind: "report", ref: "r1" }, childIdIn(said)),
+        () => textTurn("Set out the trail."),
+      ]),
+      () => undefined,
+    );
+    try {
+      await world.json("/creatures", { name: "Pip" });
+      const { conversation } = await world.json<{ conversation: string }>("/creatures/pip");
+      await world.host.prompt(conversation, "walk me through the fix");
+      await world.settled(conversation);
+      const shown = async () => (await world.json<{ settings: Setting[] }>("/show")).settings;
+      await world.until(async () => (await shown()).length === 3);
+      const [diff, file, report] = await shown();
+      const child = report?.from ?? "";
+
+      const fromFile = await world.json<{ setting: Setting }>("/show", {
+        what: { kind: "file", ref: "src/a.test.ts" },
+        from: file?.id,
+      });
+      const fromChild = await world.json<{ setting: Setting }>("/show", {
+        what: { kind: "url", ref: "https://example.com/r1" },
+        from: child,
+        rung: "unfold",
+      });
+
+      const seated = { creature: "pip", sessionId: conversation, origin: "creature" };
+      expect(await shown()).toEqual([
+        expect.objectContaining({ ...seated, what: { kind: "diff", ref: "cs-1" }, from: null }),
+        expect.objectContaining({
+          ...seated,
+          what: { kind: "file", ref: "src/a.ts" },
+          from: diff?.id,
+        }),
+        expect.objectContaining({ ...seated, what: { kind: "report", ref: "r1" }, from: child }),
+        { ...fromFile.setting, creature: "pip", sessionId: conversation, from: file?.id },
+        { ...fromChild.setting, creature: "pip", sessionId: child, from: child },
+      ]);
+      expect([fromFile.setting.origin, fromChild.setting.origin]).toEqual(["keeper", "keeper"]);
+      expect(world.log.since(0)).toContainEqual(
+        expect.objectContaining({
+          sessionId: conversation,
+          type: "child.started",
+          payload: expect.objectContaining({ sessionId: child }),
+        }),
+      );
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+function readingProvider(turns: ReadonlyArray<(said: string) => TurnDelta[]>): Provider {
+  const queue = [...turns];
+  return {
+    name: "reading",
+    async *stream(request) {
+      const turn = queue.shift();
+      if (turn === undefined) throw new Error("the reading provider ran out of turns");
+      yield* turn(lastToolResultIn(request.messages));
+    },
+  };
+}
+
+function lastToolResultIn(messages: readonly Message[]): string {
+  const results = messages.flatMap((message) =>
+    message.parts.flatMap((part) => (part.type === "tool-result" ? [part.output] : [])),
+  );
+  return results.at(-1) ?? "";
+}
+
+function settingIdIn(said: string): string {
+  return /name (\S+) as from\./.exec(said)?.[1] ?? `no setting id in: ${said}`;
+}
+
+function childIdIn(said: string): string {
+  return /^↳ child (\S+)/.exec(said)?.[1] ?? `no child id in: ${said}`;
+}
+
+function showFromTurn(callId: string, what: { kind: string; ref: string }, from: string) {
+  return toolCallTurn({
+    type: "tool-call",
+    callId,
+    name: "show",
+    arguments: { what, why: "It grew from what you are reading.", from },
+  });
+}

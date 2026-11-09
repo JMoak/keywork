@@ -1,4 +1,10 @@
-import { MockProvider, type Setting, SettingStore, type ShowProposal } from "@keywork/engine";
+import {
+  MockProvider,
+  type Setting,
+  SettingStore,
+  type SettingStoreOptions,
+  type ShowProposal,
+} from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { FakeClock } from "../../../engine/src/routines/testing.ts";
 import { contractVersion } from "../contract.ts";
@@ -10,14 +16,18 @@ import { recordedShowEvents, showFamily } from "./show.ts";
 
 const origin = "http://127.0.0.1:4770";
 
-function served(options: { show?: boolean } = {}) {
+function served(
+  options: { show?: boolean } & Pick<SettingStoreOptions, "threads" | "hourlyLimit"> = {},
+) {
+  const { show, ...store } = options;
   const log = new EventLog();
   const settings = new SettingStore({
     clock: new FakeClock(Date.parse("2026-11-08T09:00:00Z")),
     emit: recordedShowEvents(log),
+    ...store,
   });
   const base = memorySessionHost({ log, provider: new MockProvider([]) });
-  const host = options.show === false ? base : { ...base, show: settings };
+  const host = show === false ? base : { ...base, show: settings };
   const handlers = showFamily((host) => host.show).handlers({
     host,
     log,
@@ -32,6 +42,8 @@ function served(options: { show?: boolean } = {}) {
       rung: "card",
       why: "The fix is ready for your eyes.",
       until: "seen",
+      from: null,
+      origin: "creature",
       ...overrides,
     });
     if ("refused" in outcome) throw new Error(outcome.error);
@@ -154,11 +166,123 @@ describe("POST /show/{id}/answer", () => {
   });
 });
 
+describe("POST /show", () => {
+  const plan = { kind: "file", ref: "docs/plan.md" };
+  const open = (handlers: ReturnType<typeof served>["handlers"], body: unknown) =>
+    call(handlers.openSetting, "POST", "/show", {}, body);
+
+  it("sets out the keeper's opening on the thread it grew from, answers 201 and fires show.proposed there", async () => {
+    const { handlers, propose, log } = served();
+    const diff = propose({ sessionId: "s7" });
+
+    const answered = await open(handlers, { what: plan, from: diff.id, rung: "unfold" });
+
+    const setting = {
+      id: expect.any(String),
+      creature: "wren",
+      sessionId: "s7",
+      what: plan,
+      rung: "unfold",
+      why: "",
+      at: "2026-11-08T09:00:00.000Z",
+      until: "seen",
+      state: "live",
+      from: diff.id,
+      origin: "keeper",
+      replaces: null,
+    };
+    expect(answered).toEqual({ status: 201, body: { setting } });
+    expect(log.since(0).at(-1)).toMatchObject({
+      sessionId: "s7",
+      type: "show.proposed",
+      payload: { setting },
+    });
+    expect((await call(handlers.listSettings, "GET", "/show")).body).toEqual({
+      settings: [diff, setting],
+    });
+  });
+
+  it("sets out from a session on that session, for the creature it belongs to", async () => {
+    const { handlers } = served({
+      threads: async (id) => (id === "s9" ? { creature: "hal", parent: null } : undefined),
+    });
+
+    const answered = await open(handlers, { what: plan, from: "s9" });
+
+    expect(answered.status).toBe(201);
+    expect(answered.body.setting).toMatchObject({
+      creature: "hal",
+      sessionId: "s9",
+      from: "s9",
+      origin: "keeper",
+    });
+  });
+
+  it("names the setting a keeper's opening replaced, on the event and in GET /show", async () => {
+    const { handlers, propose, log } = served();
+    const diff = propose();
+    const card = propose({ what: { kind: "file", ref: plan.ref } });
+
+    const answered = await open(handlers, { what: plan, from: diff.id });
+
+    const setting = answered.body.setting as Setting;
+    expect(setting).toMatchObject({ replaces: card.id, from: diff.id, origin: "keeper" });
+    expect(log.since(0).slice(-2)).toMatchObject([
+      { type: "show.settled", payload: { id: card.id, outcome: "withdrawn", by: "keeper" } },
+      { type: "show.proposed", payload: { setting } },
+    ]);
+    expect((await call(handlers.listSettings, "GET", "/show")).body).toEqual({
+      settings: [diff, setting],
+    });
+  });
+
+  it("spends no budget: it sets out while the creature's hour is spent", async () => {
+    const { handlers, propose } = served({ hourlyLimit: 1 });
+    const diff = propose();
+
+    for (const ref of ["a.ts", "b.ts", "c.ts"]) {
+      const answered = await open(handlers, { what: { kind: "file", ref }, from: diff.id });
+      expect(answered.status).toBe(201);
+    }
+    expect(() => propose({ what: { kind: "note", ref: "one more" } })).toThrow(/this hour/);
+  });
+
+  it("refuses a body outside its shape with 400 and an unknown from with 404, firing nothing", async () => {
+    const { handlers, log } = served();
+
+    for (const body of [
+      undefined,
+      { what: plan },
+      { what: plan, from: "s1", rung: "card" },
+      { what: { kind: "image", ref: "a.png" }, from: "s1" },
+      { what: plan, from: "s1", why: "Because." },
+    ]) {
+      expect(await open(handlers, body)).toEqual({
+        status: 400,
+        body: {
+          error: "the body is { what: { kind, ref, title? }, from, rung? } with rung unfold",
+        },
+      });
+    }
+    expect(await open(handlers, { what: plan, from: "nope" })).toEqual({
+      status: 404,
+      body: { refused: "missing", error: "no setting out and no thread has the id nope" },
+    });
+    expect(log.since(0)).toEqual([]);
+  });
+
+  it("answers 503 on a host that serves no settings", async () => {
+    const { handlers } = served({ show: false });
+    expect((await open(handlers, { what: plan, from: "s1" })).status).toBe(503);
+  });
+});
+
 describe("the contract", () => {
-  it("is 1.27 and lists both show routes in /doc", () => {
+  it("is 1.28 and lists the three show routes in /doc", () => {
     const { paths } = fixtureDocument();
-    expect(contractVersion).toBe("1.27");
+    expect(contractVersion).toBe("1.28");
     expect(paths["/show"]?.get?.operationId).toBe("listSettings");
+    expect(paths["/show"]?.post?.operationId).toBe("openSetting");
     expect(paths["/show/{id}/answer"]?.post?.operationId).toBe("answerSetting");
   });
 });

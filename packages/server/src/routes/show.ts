@@ -1,4 +1,7 @@
 import {
+  keeperOpeningJsonSchema,
+  keeperOpeningOf,
+  type SetOut,
   type Setting,
   type SettingAnswer,
   type SettingStore,
@@ -21,7 +24,7 @@ import {
   type RouteSpec,
 } from "./family.ts";
 
-export type ShowPort = Pick<SettingStore, "open" | "answer">;
+export type ShowPort = Pick<SettingStore, "open" | "answer" | "keeperOpens">;
 
 const answerBody: JsonSchema = {
   type: "object",
@@ -30,7 +33,7 @@ const answerBody: JsonSchema = {
 };
 
 const settingRow =
-  "`{ id, creature, sessionId, what: { kind, ref, title }, rung, why, at, until, state }`";
+  "`{ id, creature, sessionId, what: { kind, ref, title }, rung, why, at, until, state, from, origin, replaces }`";
 
 const unserved = "This host serves no settings.";
 
@@ -39,9 +42,23 @@ export const showRoutes = [
     method: "GET",
     path: "/show",
     operationId: "listSettings",
-    summary: `Every setting still out for the keeper, oldest first: \`{ settings }\`, each ${settingRow}. A setting is one thing the model working a session set out with the \`show\` tool, which every served session carries (a plain conversation, a creature's conversation, a child, a chore run). It is IDE control: it arranges the console's own space, never the computer, so it asks no permission. \`creature\` is the creature's slug, or null for a session with no creature. \`what.kind\` is \`file\`, \`diff\`, \`report\`, \`thread\`, \`chore\`, \`url\` or \`note\`, and \`what.ref\` the workspace path, change-set id, report id, session id, chore id, url or the note's own words; \`title\` is absent when none was given. \`rung\` is what the session proposed (\`lantern\`, \`card\`, \`unfold\` or \`stage\`); the console decides the rung it uses, through its yard. \`why\` is the one sentence for the card, \`at\` when it was set out, \`until\` when it goes (\`seen\`, \`rests\` or an ISO time) and \`state\` \`live\` or \`pinned\`. A console seats these on a cold start, as \`GET /sessions\` seats threads, then follows \`show.proposed\` and \`show.settled\` on the event stream. The server holds them in memory, so they outlive a console reconnecting but not the server. Since contract 1.27.`,
+    summary: `Every setting still out for the keeper, oldest first: \`{ settings }\`, each ${settingRow}. A setting is one thing set out for the keeper to see: by the model working a session, with the \`show\` tool every served session carries (a plain conversation, a creature's conversation, a child, a chore run), or by the keeper's own hand, opening something from inside a setting or a thread (\`POST /show\`). It is IDE control: it arranges the console's own space, never the computer, so it asks no permission. \`creature\` is the creature's slug, or null for a session with no creature. \`what.kind\` is \`file\`, \`diff\`, \`report\`, \`thread\`, \`chore\`, \`url\` or \`note\`, and \`what.ref\` the workspace path, change-set id, report id, session id, chore id, url or the note's own words; \`title\` is absent when none was given. \`rung\` is what was proposed (\`lantern\`, \`card\`, \`unfold\` or \`stage\`); the console decides the rung it uses, through its yard. \`why\` is the one sentence for the card (empty for the keeper's own openings), \`at\` when it was set out, \`until\` when it goes (\`seen\`, \`rests\` or an ISO time) and \`state\` \`live\` or \`pinned\`. \`from\` is the id of the setting or the session it grew from, or null for one that starts a trail of its own; withdrawing or answering a setting never touches the settings that grew from it, so a console that folds them does so itself. \`origin\` is \`creature\` for what the model working a session set out, with or without a creature, and \`keeper\` for the keeper's own openings. \`replaces\` is the id of the setting this one replaced and withdrew (the same owner and the same thing, whoever set either out), or null, so a console moves what grew from the old id onto the new one. A console seats these on a cold start, as \`GET /sessions\` seats threads, then follows \`show.proposed\` and \`show.settled\` on the event stream. The server holds them in memory, so they outlive a console reconnecting but not the server. Since contract 1.27; \`from\`, \`origin\` and \`replaces\` since 1.28, and a console reading an older server takes their absence as \`from: null\`, \`origin: "creature"\` and \`replaces: null\`.`,
     authenticated: true,
     responses: { "200": "`{ settings }`.", "503": unserved },
+  },
+  {
+    method: "POST",
+    path: "/show",
+    operationId: "openSetting",
+    summary: `Set out what the keeper opened from inside a setting or a thread (a file from a diff, a test from a file, a link), so every surface agrees on the trail. \`what\` is the thing, in the shape the \`show\` tool takes; \`from\` is the id of the setting still out, or of the session, it was opened from; \`rung\` is \`unfold\`, and may be left out. The keeper's own hand passes no gate and spends no budget: it never counts toward a creature's or a thread's hourly limit. The setting takes the thread and the creature of what it grew from (a setting's \`sessionId\` and \`creature\`, or the session itself and the creature it belongs to), with \`why\` empty, \`until\` \`seen\`, \`from\` as given and \`origin\` \`keeper\`, and \`show.proposed\` fires on that thread as for any setting. Opening the same thing again for the same owner replaces the earlier setting, which settles \`withdrawn\` by \`keeper\` first, and the new setting names it in \`replaces\`. Since contract 1.28.`,
+    authenticated: true,
+    requestBody: keeperOpeningJsonSchema,
+    responses: {
+      "201": "`{ setting }` as it was set out.",
+      "400": "The body is not `{ what: { kind, ref, title? }, from, rung? }` with `rung` `unfold`.",
+      "404": "No setting still out and no session has the id in `from`.",
+      "503": unserved,
+    },
   },
   {
     method: "POST",
@@ -71,6 +88,11 @@ export function showFamily(
       const served = servedBy(() => showOf(context.host), "settings");
       return {
         listSettings: served(async (port) => json(200, { settings: port.open() })),
+        openSetting: served(async (port, request) => {
+          const opening = keeperOpeningOf(await bodyOf(request));
+          if (opening === undefined) return json(400, { error: unreadableOpening });
+          return opened(await port.keeperOpens(opening));
+        }),
         answerSetting: served(async (port, request, { id = "" }) => {
           const outcome = answerOf(await bodyOf(request));
           if (outcome === undefined) return json(400, { error: unreadableAnswer });
@@ -86,11 +108,19 @@ export function recordedShowEvents(log: Pick<EventLog, "record">): ShowEventSink
     void log.record(sessionId, type, payload as WirePayload<Type>);
 }
 
+const unreadableOpening =
+  "the body is { what: { kind, ref, title? }, from, rung? } with rung unfold";
+
 const unreadableAnswer = "the body is { outcome } with seen, pinned, unpinned or dismissed";
 
 function answerOf(body: unknown): SettingAnswer | undefined {
   const outcome = fieldsOf<{ outcome: unknown }>(body)?.outcome;
   return settingAnswers.find((answer) => answer === outcome);
+}
+
+function opened(outcome: SetOut | ShowRefusal): Response {
+  if ("refused" in outcome) return json(showRefusalStatus[outcome.refused], outcome);
+  return json(201, { setting: outcome.setting });
 }
 
 function answered(answer: Setting | ShowRefusal): Response {

@@ -35,7 +35,7 @@ a version of its own, separate from the keywork release. `info.version` in `/doc
 release (`packages/cli/package.json`, or the build-time version in a release binary).
 `info.x-keywork-contract` is the contract version, `major.minor`, and the same string rides
 `/doc` as the `x-keywork-contract` response header so a client can read it before parsing
-anything. The constant lives in `packages/server/src/contract.ts` and is `1.27` today.
+anything. The constant lives in `packages/server/src/contract.ts` and is `1.28` today.
 
 Within a major, changes are additive. A route, an operation id, a response field or an event
 name that exists in `1.x` keeps existing and keeps its meaning through every later `1.y`.
@@ -938,10 +938,12 @@ Carries no decision, so no audit row. Since contract 1.12.
 
 ### show.proposed
 
-The model working a session set something out for the keeper to see, with the `show` tool: a
-file, a diff, a report, a thread, a chore, a link or a note. Every session `keywork serve` runs
-carries the tool: a plain conversation, a creature's conversation, a delegated child and a chore
-run alike. It is IDE control: it arranges the console's own space around the conversation, never
+Something was set out for the keeper to see: a file, a diff, a report, a thread, a chore, a link
+or a note. The model working a session sets things out with the `show` tool, which every session
+`keywork serve` runs carries: a plain conversation, a creature's conversation, a delegated child
+and a chore run alike. The keeper's own openings from inside a setting or a thread (a file from a
+diff, a test from a file, a link) arrive the same way, through `POST /show`, so every surface
+agrees on the trail. It is IDE control: it arranges the console's own space around the conversation, never
 the computer, and it changes nothing in the world, so it asks no permission and spends the keeper's
 attention instead. The record lives on the server, not in a pane
 (`adr.keeper-facing-items-come-from-the-wire-never-a-pane`): `GET /show` seats every setting still
@@ -954,34 +956,55 @@ only carries the proposal. Since contract 1.27.
 A setting belongs to its creature when the session has one, and to its thread otherwise. Showing
 the same thing again (the same owner, `what.kind` and `what.ref`) replaces the earlier setting:
 `show.settled` with `outcome: "withdrawn"` and `by: "creature"` for the earlier one comes first,
-then `show.proposed` with a new id. An owner sets out at most thirty settings an hour, replacements
+then `show.proposed` with a new id that names the earlier one in `replaces`. An owner sets out at most thirty settings an hour, replacements
 included; the tool answers the thirty-first with a sentence, as creature mail answers its limits,
 and nothing fires. The server holds settings in memory: they outlive a console reconnecting, not a
 server restart.
+
+Every setting has a lineage (since contract 1.28). `from` names what it grew from: a setting still
+out when it was set out, or a session, or `null` for one that starts a trail of its own. The tool
+takes `from` only when it names a setting of the same owner, the calling thread, a thread that
+thread delegated, or any thread of the same creature, and answers anything else with a sentence;
+every answer of the tool names the new setting's id, so the model can grow the next one from it.
+A replacement keeps its predecessor's `from` unless the call names another, and names the
+predecessor in `replaces`, so a client moves whatever grew from the old id onto the new one. The
+engine never withdraws a setting because the one it grew from was withdrawn or answered: folding a
+trail is the console's decision. `origin` says whose hand set
+it out: `creature` for the model working a session, with or without a creature, and `keeper` for an
+opening through `POST /show`. A keeper's opening takes the thread and the creature of what it grew
+from, proposes `unfold`, carries an empty `why` and `until: "seen"`, passes no gate and never counts
+toward the hourly limit. Opening the same thing again replaces the earlier setting of that owner, so
+its `show.settled` says `by: "keeper"`. A 1.27 server sends none of the three fields; a client
+reads their absence as `from: null`, `origin: "creature"` and `replaces: null`.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `setting.id` | `string` | The setting, named in `POST /show/{id}/answer`. |
 | `setting.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. |
-| `setting.sessionId` | `string` | The thread that set it out. A delegated child sets out on its parent's thread, so the setting follows the thread the keeper sees. |
+| `setting.sessionId` | `string` | The thread that set it out. A delegated child sets out on its parent's thread, so the setting follows the thread the keeper sees. A keeper's opening sits on the thread of what it grew from. |
 | `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. |
 | `setting.rung` | `"lantern" \| "card" \| "unfold" \| "stage"` | The rung proposed, `card` unless the tool call asked otherwise. A console may use a lower one; the glyph is rung zero and never proposed. |
-| `setting.why` | `string` | One sentence for the card, at most 200 characters. |
+| `setting.why` | `string` | One sentence for the card, at most 200 characters; empty for a keeper's opening. |
 | `setting.at` | `string` | When it was set out (ISO 8601). |
 | `setting.until` | `"seen" \| "rests" \| string` | When it goes: once the keeper has seen it (the default), when its thread rests (`rests`), or at an ISO 8601 time. |
 | `setting.state` | `"live"` | Always `live` here; `GET /show` also serves `pinned`. |
+| `setting.from` | `string \| null` | The id of the setting or the session it grew from, or `null` for one that starts a trail. Since contract 1.28. |
+| `setting.origin` | `"creature" \| "keeper"` | `creature` for what the model working a session set out, `keeper` for the keeper's own openings through `POST /show`. Since contract 1.28. |
+| `setting.replaces` | `string \| null` | The id of the setting this one replaced (the same owner and the same thing, whoever set either out), withdrawn just before by the `show.settled` that precedes this event; `null` when it replaced nothing. Since contract 1.28. |
 
 ### show.settled
 
 A setting moved, so a client updates or drops its card. The keeper's answers come through
 `POST /show/{id}/answer`; the engine withdraws the rest on its own. Withdrawal only touches a
-`live` setting: a pinned one stays out until the keeper unpins or dismisses it. Since contract 1.27.
+`live` setting: a pinned one stays out until the keeper unpins or dismisses it. A setting that
+settles takes nothing with it: the settings that grew from it stay out, and the payload stays
+`{ id, outcome, by }`, since a client already holds the setting and its `from`. Since contract 1.27.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | `string` | The setting. |
 | `outcome` | `"seen" \| "pinned" \| "unpinned" \| "dismissed" \| "withdrawn"` | `seen`, `unpinned` and `dismissed` take it out of the yard; `pinned` keeps it out until the keeper unpins or dismisses it; `withdrawn` takes it out without the keeper. |
-| `by` | `"keeper" \| "creature" \| "time"` | `keeper` for every answer and for a live setting withdrawn because its session was removed (`DELETE /sessions/{id}`, or its creature removed); `creature` when the model working the thread replaced it (a creature's, or a plain session's) or its `rests` thread came to rest (a turn ended with nothing queued); `time` when its `until` time came. |
+| `by` | `"keeper" \| "creature" \| "time"` | `keeper` for every answer, for a live setting withdrawn because its session was removed (`DELETE /sessions/{id}`, or its creature removed), and for one a keeper's opening of the same thing replaced; `creature` when the model working the thread replaced it (a creature's, or a plain session's) or its `rests` thread came to rest (a turn ended with nothing queued); `time` when its `until` time came. |
 
 ## Turn facts and journal-only entries
 

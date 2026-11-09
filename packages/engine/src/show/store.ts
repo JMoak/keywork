@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { type Cancel, type Clock, hourMs, isoOf, systemClock } from "../routines/clock.ts";
+import type { KeeperOpening } from "./input.ts";
+import { ownerOf, type SettingSeat, sameOwner, sees, type ThreadLookup } from "./lineage.ts";
 import type {
   Rung,
   Setting,
   SettingAnswer,
+  SettingOrigin,
   SettingState,
   SettingUntil,
   SettingWhat,
@@ -19,6 +22,8 @@ export interface ShowProposal {
   rung: Rung;
   why: string;
   until: SettingUntil;
+  from: string | null;
+  origin: SettingOrigin;
 }
 
 export interface SetOut {
@@ -46,6 +51,7 @@ export interface SettingStoreOptions {
   emit: ShowEventSink;
   clock?: Clock | undefined;
   hourlyLimit?: number | undefined;
+  threads?: ThreadLookup | undefined;
 }
 
 export class SettingStore {
@@ -55,25 +61,41 @@ export class SettingStore {
   private readonly emit: ShowEventSink;
   private readonly clock: Clock;
   private readonly hourlyLimit: number;
+  private readonly threadOf: ThreadLookup;
 
   constructor(options: SettingStoreOptions) {
     this.emit = options.emit;
     this.clock = options.clock ?? systemClock;
     this.hourlyLimit = options.hourlyLimit ?? settingsPerHour;
+    this.threadOf = options.threads ?? noThreads;
   }
 
   propose(proposal: ShowProposal): SetOut | ShowRefusal {
     const now = this.clock.now();
     const refusal = this.refusalOf(proposal, now);
     if (refusal !== undefined) return refusal;
-    this.remember(ownerOf(proposal), now);
+    if (spendsTheHour(proposal)) this.remember(ownerOf(proposal), now);
     const replaced = this.outWithSameWhat(proposal);
-    if (replaced !== undefined) this.withdraw(replaced, "creature");
-    const setting = settingOf(randomUUID(), proposal, isoOf(now));
+    if (replaced !== undefined) this.withdraw(replaced, proposal.origin);
+    const setting = settingOf(randomUUID(), proposal, replaced, isoOf(now));
     this.out.set(setting.id, setting);
     this.withdrawAtItsTime(setting);
     this.emit(setting.sessionId, "show.proposed", { setting });
     return { setting, replaced };
+  }
+
+  async keeperOpens(opening: KeeperOpening): Promise<SetOut | ShowRefusal> {
+    const { what, from, rung } = opening;
+    const seat = await this.seatOf(from);
+    if (seat === undefined)
+      return refused("missing", `no setting out and no thread has the id ${from}`);
+    return this.propose({ ...seat, what, rung, why: "", until: "seen", from, origin: "keeper" });
+  }
+
+  async canGrowFrom(caller: SettingSeat, from: string): Promise<boolean> {
+    const parent = this.out.get(from);
+    if (parent !== undefined && sameOwner(parent, caller)) return true;
+    return this.threadInSight(caller, parent?.sessionId ?? from);
   }
 
   open(): readonly Setting[] {
@@ -104,12 +126,28 @@ export class SettingStore {
     this.timers.clear();
   }
 
+  private async seatOf(from: string): Promise<SettingSeat | undefined> {
+    const parent = this.out.get(from);
+    if (parent !== undefined) return { creature: parent.creature, sessionId: parent.sessionId };
+    const thread = await this.threadOf(from);
+    return thread === undefined ? undefined : { creature: thread.creature, sessionId: from };
+  }
+
+  private async threadInSight(caller: SettingSeat, sessionId: string): Promise<boolean> {
+    if (sessionId === caller.sessionId) return true;
+    const thread = await this.threadOf(sessionId);
+    return thread !== undefined && sees(caller, thread);
+  }
+
   private refusalOf(proposal: ShowProposal, now: number): ShowRefusal | undefined {
     const ends = endOf(proposal.until);
     if (Number.isNaN(ends))
       return refused("invalid", `until is seen, rests or an ISO 8601 time, not ${proposal.until}`);
     if (ends <= now) return refused("invalid", `until ${proposal.until} has already passed`);
-    if (this.setOutWithinTheHour(ownerOf(proposal), now) >= this.hourlyLimit)
+    if (
+      spendsTheHour(proposal) &&
+      this.setOutWithinTheHour(ownerOf(proposal), now) >= this.hourlyLimit
+    )
       return refused("limited", limitWords(proposal.creature, this.hourlyLimit));
     return undefined;
   }
@@ -125,11 +163,10 @@ export class SettingStore {
   }
 
   private outWithSameWhat(proposal: ShowProposal): Setting | undefined {
-    const owner = ownerOf(proposal);
     const { what } = proposal;
     return [...this.out.values()].find(
       (setting) =>
-        ownerOf(setting) === owner &&
+        sameOwner(setting, proposal) &&
         setting.what.kind === what.kind &&
         setting.what.ref === what.ref,
     );
@@ -181,8 +218,10 @@ const keeperMoves: Readonly<
   pinned: { unpinned: "seen", dismissed: "dismissed" },
 };
 
-function ownerOf({ creature, sessionId }: Pick<Setting, "creature" | "sessionId">): string {
-  return creature === null ? `thread ${sessionId}` : `creature ${creature}`;
+const noThreads: ThreadLookup = async () => undefined;
+
+function spendsTheHour({ origin }: ShowProposal): boolean {
+  return origin === "creature";
 }
 
 function limitWords(creature: string | null, limit: number): string {
@@ -191,9 +230,19 @@ function limitWords(creature: string | null, limit: number): string {
     : `${creature} has set out ${limit} settings this hour, the most a creature may set out; try again later`;
 }
 
-function settingOf(id: string, proposal: ShowProposal, at: string): Setting {
-  const { creature, sessionId, what, rung, why, until } = proposal;
-  return { id, creature, sessionId, what, rung, why, at, until, state: "live" };
+function lineageOf({ from }: ShowProposal, replaced: Setting | undefined): string | null {
+  return from === null || from === replaced?.id ? (replaced?.from ?? null) : from;
+}
+
+function settingOf(
+  id: string,
+  proposal: ShowProposal,
+  replaced: Setting | undefined,
+  at: string,
+): Setting {
+  const { creature, sessionId, what, rung, why, until, origin } = proposal;
+  const lineage = { from: lineageOf(proposal, replaced), origin, replaces: replaced?.id ?? null };
+  return { id, creature, sessionId, what, rung, why, at, until, state: "live", ...lineage };
 }
 
 function endOf(until: SettingUntil): number {

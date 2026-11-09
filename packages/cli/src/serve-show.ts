@@ -1,4 +1,4 @@
-import { type Clock, SettingStore } from "@keywork/engine";
+import { type Clock, SettingStore, type ThreadLookup } from "@keywork/engine";
 import { type BusEnvelope, type EventLog, recordedShowEvents } from "@keywork/server";
 
 export interface ServedSettings {
@@ -8,9 +8,10 @@ export interface ServedSettings {
 
 export function servedSettings(
   log: Pick<EventLog, "record" | "subscribe">,
+  threads: ThreadLookup,
   clock?: Clock,
 ): ServedSettings {
-  const settings = new SettingStore({ emit: recordedShowEvents(log), clock });
+  const settings = new SettingStore({ emit: recordedShowEvents(log), threads, clock });
   const unfollow = log.subscribe((envelope) => {
     const removed = removedSessionOf(envelope);
     if (removed !== undefined) settings.removed(removed);

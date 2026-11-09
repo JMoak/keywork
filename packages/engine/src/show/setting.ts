@@ -16,6 +16,10 @@ export type SettledBy = "keeper" | "creature" | "time";
 
 export type SettingState = "live" | "seen" | "pinned" | "dismissed" | "withdrawn";
 
+export const settingOrigins = ["creature", "keeper"] as const;
+
+export type SettingOrigin = (typeof settingOrigins)[number];
+
 export type SettingUntil = "seen" | "rests" | string;
 
 export interface SettingWhat {
@@ -34,6 +38,9 @@ export interface Setting {
   at: string;
   until: SettingUntil;
   state: SettingState;
+  from: string | null;
+  origin: SettingOrigin;
+  replaces: string | null;
 }
 
 export interface ShowProposed {

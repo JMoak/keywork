@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { mutatingToolNames } from "../mutations.ts";
 import { FakeClock } from "../routines/testing.ts";
+import type { ShowThread } from "../show/lineage.ts";
 import type { Setting } from "../show/setting.ts";
-import { SettingStore } from "../show/store.ts";
+import { SettingStore, type SettingStoreOptions } from "../show/store.ts";
 import { type ShowTarget, showTool, showToolName } from "./show.ts";
 
 const t0 = Date.parse("2026-11-08T09:00:00Z");
 
-function seated(options: { hourlyLimit?: number; creature?: string | null } = {}) {
+function seated(
+  options: Pick<SettingStoreOptions, "hourlyLimit" | "threads"> & { creature?: string | null } = {},
+) {
   const { creature = "wren", ...limits } = options;
   const proposed: Setting[] = [];
   const settings = new SettingStore({
@@ -23,6 +26,11 @@ function seated(options: { hourlyLimit?: number; creature?: string | null } = {}
 
 const plan = { kind: "file", ref: "docs/plan.md" };
 
+function growsFrom(setting: Setting | undefined): string {
+  if (setting === undefined) throw new Error("nothing was set out");
+  return `To set out what grows from it, name ${setting.id} as from.`;
+}
+
 describe("the show tool", () => {
   it("sets out a card on the creature's thread by default and says what the yard decides", async () => {
     const { tool, settings } = seated();
@@ -30,7 +38,7 @@ describe("the show tool", () => {
     const said = await tool.execute({ what: plan, why: "The plan you asked about changed." });
 
     expect(said).toBe(
-      "Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it.",
+      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. ${growsFrom(settings.open()[0])}`,
     );
     expect(settings.open()).toEqual([
       expect.objectContaining({
@@ -56,7 +64,7 @@ describe("the show tool", () => {
         until: "rests",
       }),
     ).toBe(
-      "Set out to unfold; the yard decides whether it unfolds or stays a card. It goes when this thread rests.",
+      `Set out to unfold; the yard decides whether it unfolds or stays a card. It goes when this thread rests. ${growsFrom(proposed.at(-1))}`,
     );
     expect(
       await tool.execute({
@@ -66,7 +74,7 @@ describe("the show tool", () => {
         until: "2026-11-08T10:00:00-06:00",
       }),
     ).toBe(
-      "Set out for the stage; only the keeper or a yard rule stages it, so the yard decides how it shows. It goes at 2026-11-08T10:00:00-06:00. It replaces what you set out for this before.",
+      `Set out for the stage; only the keeper or a yard rule stages it, so the yard decides how it shows. It goes at 2026-11-08T10:00:00-06:00. It replaces what you set out for this before. ${growsFrom(proposed.at(-1))}`,
     );
     expect(
       await tool.execute({
@@ -75,7 +83,7 @@ describe("the show tool", () => {
         why: "A reminder.",
       }),
     ).toBe(
-      "Set out as a lantern; the keeper looks when ready. It stays until the keeper has seen it.",
+      `Set out as a lantern; the keeper looks when ready. It stays until the keeper has seen it. ${growsFrom(proposed.at(-1))}`,
     );
     expect(proposed.map(({ what, rung }) => ({ what, rung }))).toEqual([
       { what: { ...plan, title: "The plan" }, rung: "unfold" },
@@ -143,5 +151,79 @@ describe("the show tool", () => {
     expect(tool.description).toContain("never the computer");
     expect(tool.mutates).toBeUndefined();
     expect(mutatingToolNames.has(tool.name)).toBe(false);
+  });
+});
+
+describe("the show tool's from", () => {
+  const threads = async (sessionId: string): Promise<ShowThread | undefined> =>
+    ({
+      child: { creature: null, parent: "s1" },
+      stranger: { creature: null, parent: null },
+    })[sessionId];
+
+  it("grows a setting from one it set out, named by the id its answer gave", async () => {
+    const { tool, proposed } = seated();
+    await tool.execute({ what: { kind: "diff", ref: "cs-41" }, why: "The fix is ready." });
+    const diff = proposed[0];
+
+    const said = await tool.execute({ what: plan, why: "The file it touches.", from: diff?.id });
+
+    expect(said).toBe(
+      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. ${growsFrom(proposed[1])}`,
+    );
+    expect(proposed.map(({ from, origin }) => ({ from, origin }))).toEqual([
+      { from: null, origin: "creature" },
+      { from: diff?.id, origin: "creature" },
+    ]);
+  });
+
+  it("grows from this thread or a thread it delegated, and takes null as no from", async () => {
+    const { tool, proposed } = seated({ threads });
+
+    await tool.execute({ what: plan, why: "From here.", from: "s1" });
+    await tool.execute({ what: { kind: "report", ref: "r1" }, why: "The child's.", from: "child" });
+    await tool.execute({ what: { kind: "note", ref: "n" }, why: "Fresh.", from: null });
+
+    expect(proposed.map(({ from }) => from)).toEqual(["s1", "child", null]);
+  });
+
+  it("keeps its place in the trail when it replaces what it set out before", async () => {
+    const { tool, proposed } = seated();
+    await tool.execute({ what: { kind: "diff", ref: "cs-41" }, why: "The fix." });
+    await tool.execute({ what: plan, why: "The file.", from: proposed[0]?.id });
+
+    await tool.execute({ what: plan, why: "The file changed again." });
+
+    expect(proposed.map(({ from }) => from)).toEqual([null, proposed[0]?.id, proposed[0]?.id]);
+  });
+
+  it("answers a from out of sight with a sentence and sets nothing out", async () => {
+    const { tool, settings } = seated({ threads });
+    const hal = seated({ creature: "hal" });
+    await hal.tool.execute({ what: plan, why: "Hal's." });
+
+    for (const from of ["stranger", "unknown", hal.proposed[0]?.id ?? ""]) {
+      expect(await tool.execute({ what: plan, why: "Look.", from })).toBe(
+        `Not set out: nothing you may grow from has the id ${from}; name a setting you set out that is still out, or a thread of yours.`,
+      );
+    }
+    expect(settings.open()).toEqual([]);
+  });
+
+  it("refuses a from outside the wire shape", async () => {
+    const { tool, settings } = seated();
+    for (const from of ["", "   ", "x".repeat(129), 7]) {
+      await expect(tool.execute({ what: plan, why: "Look.", from })).rejects.toThrow();
+    }
+    expect(settings.open()).toEqual([]);
+  });
+
+  it("is described to the model as optional", () => {
+    const { tool } = seated();
+    expect(tool.description).toContain("Name from when it grows out of something already in view");
+    expect(tool.parameters).toMatchObject({
+      required: ["what", "why"],
+      properties: { from: expect.objectContaining({ description: expect.any(String) }) },
+    });
   });
 });
