@@ -37,8 +37,9 @@ export async function confirmPublishedVersion(
   lookup: (version: string) => Promise<unknown | undefined> = publishedVersion,
   wait: (milliseconds: number) => Promise<void> = delay,
 ): Promise<void> {
+  const registryChecks = 33;
   let pending = `npm has not indexed keywork-cli@${version}; rerun this release to verify it`;
-  for (let attempt = 0; attempt < 15; attempt++) {
+  for (let attempt = 0; attempt < registryChecks; attempt++) {
     const manifest = await lookup(version);
     if (manifest !== undefined) {
       verifyPublishedVersion(manifest, version, sha);
@@ -47,7 +48,7 @@ export async function confirmPublishedVersion(
       if (latestVersion && gte(latestVersion, version)) return;
       pending = `npm latest is ${latestVersion ?? "unset"}; restore latest to ${version} or newer in npm, then rerun this release`;
     }
-    if (attempt < 14) await wait(Math.min(1000 * 2 ** attempt, 10_000));
+    if (attempt + 1 < registryChecks) await wait(Math.min(1000 * 2 ** attempt, 10_000));
   }
   throw new Error(pending);
 }
