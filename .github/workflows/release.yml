@@ -140,9 +140,9 @@ jobs:
             assert.notEqual(manifest.private, true);
             assert.equal(manifest.repository.url, "git+https://github.com/JMoak/keywork.git");
           '
-      - name: inspect the package to be staged
+      - name: inspect the package to be published
         working-directory: dist/npm
         run: npm pack --dry-run
-      - name: stage with trusted publishing
+      - name: publish with trusted publishing
         working-directory: dist/npm
-        run: npm stage publish --access public --tag latest --loglevel verbose
+        run: npm publish --access public --tag latest --loglevel verbose

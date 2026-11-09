@@ -99,9 +99,7 @@ if (!values["skip-smoke"]) {
   smokeCarriedRatchet(outdir);
   rmSync(join(outdir, "node_modules"), { recursive: true, force: true });
 }
-console.log(
-  `wrote ${outdir} (stage with: cd ${values.outdir} && npm stage publish --access public --tag latest --loglevel verbose)`,
-);
+console.log(`wrote ${outdir} (published to npm by the tagged release workflow)`);
 
 function dependencyVersion(path: string, name: string): string {
   const manifest = JSON.parse(readFileSync(path, "utf8")) as {
