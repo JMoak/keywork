@@ -811,12 +811,10 @@ function sourceTools(
         const results = await sources.search({
           ownerScope: context.campaign.ownerScope,
           query,
-          limit: 50,
+          sourceIds: ids,
+          limit: 8,
         });
-        return JSON.stringify({
-          ...results,
-          hits: results.hits.filter((hit) => ids.includes(hit.sourceId)).slice(0, 8),
-        });
+        return JSON.stringify(results);
       },
     }),
   ];

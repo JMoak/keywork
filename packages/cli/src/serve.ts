@@ -1916,6 +1916,7 @@ class LiveSession {
     next.setThinking(previous.agent.thinking());
     if (effort !== null) next.setEffort(effort);
     await this.release(previous);
+    next.adoptNotes(previous.agent);
     this.bound = this.bind(next);
     this.persisted = next.history().length;
     next.adoptQueue(previous.agent);

@@ -83,6 +83,35 @@ describe("a laid note", () => {
     });
   });
 
+  it("follows retained messages across an agent replacement without attaching to rebuilt history", () => {
+    const previous = new ConversationNotes();
+    previous.lay("Dropped.", 0);
+    previous.lay("Kept.", 2);
+    const notes = new ConversationNotes();
+    const rebuilt = { ...prompt };
+    const next = promptMessage("Next.");
+
+    notes.inherit(previous, [prompt, reply, results], [results, rebuilt, next]);
+
+    expect(notes.layInto([results, rebuilt, next])).toEqual([
+      {
+        ...results,
+        parts: [
+          results.parts[0],
+          { type: "tool-result", callId: "b", output: "second\n\nKept.", isError: false },
+        ],
+      },
+      rebuilt,
+      next,
+    ]);
+    expect(results.parts[1]).toEqual({
+      type: "tool-result",
+      callId: "b",
+      output: "second",
+      isError: false,
+    });
+  });
+
   it("is gone once cleared", () => {
     const notes = new ConversationNotes();
     notes.lay("A note.", 0);

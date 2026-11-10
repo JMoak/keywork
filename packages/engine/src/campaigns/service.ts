@@ -20,7 +20,7 @@ import {
   planContinuation,
 } from "@keywork/campaigns";
 import { z } from "zod";
-import { confinedPath, toolScope } from "../tools/confine.ts";
+import { confinedPath, scopeContains, toolScope } from "../tools/confine.ts";
 import type { CampaignCartridges, CartridgeSummary } from "./cartridges.ts";
 import type { CampaignSources } from "./sources.ts";
 import {
@@ -379,15 +379,18 @@ export class CampaignService {
       throw new CampaignStoreError("missing", "no accessible artifact has that id");
     if (this.options.artifacts.export === undefined)
       throw new CampaignStoreError("state", "artifact export is unavailable");
-    const destination = confinedPath(toolScope(this.options.workspace), request.destination);
+    const scope = toolScope(this.options.workspace);
+    if (!scopeContains(scope, request.destination))
+      throw new CampaignStoreError(
+        "state",
+        "Artifact export destination must stay inside the workspace",
+      );
+    const destination = confinedPath(scope, request.destination);
     await mkdir(dirname(destination), { recursive: true });
     this.requireTrusted();
     return {
       artifactId,
-      path: await this.options.artifacts.export(
-        artifact,
-        confinedPath(toolScope(this.options.workspace), destination),
-      ),
+      path: await this.options.artifacts.export(artifact, confinedPath(scope, destination)),
     };
   }
 
@@ -563,7 +566,7 @@ export class CampaignService {
           hypothesis:
             next.action === "probe"
               ? `${perspective.hypothesis} Use the prior attempts to avoid repeating an unsupported approach.`
-              : currentPurpose(campaign).outcome,
+              : currentPurpose(campaign).outcome.slice(0, 8_000),
           method:
             next.action === "probe"
               ? `${perspective.method}:${campaign.persistence.probesUsed + 1}`

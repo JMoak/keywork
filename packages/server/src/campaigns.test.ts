@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,7 +8,7 @@ import {
   CampaignStore,
   MockProvider,
 } from "@keywork/engine";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventLog } from "./events.ts";
 import { createKeyworkServer } from "./server.ts";
 import { memorySessionHost, type SseReader, sseReader } from "./testing.ts";
@@ -16,6 +16,8 @@ import { memorySessionHost, type SseReader, sseReader } from "./testing.ts";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("campaign HTTP and SSE integration", () => {
@@ -130,6 +132,52 @@ describe("campaign HTTP and SSE integration", () => {
     await expect(resumed.next()).rejects.toThrow(/ended/);
   });
 
+  it("replays a long history through its snapshot and releases the stream on cancellation", async () => {
+    const world = await harness();
+    let current = await world.service.create(createRequest());
+    for (let index = 0; index < 140; index += 1)
+      current = await world.service.command(current.campaign.id, {
+        expectedRevision: current.campaign.revision,
+        command: { type: "select-model", model: { provider: "fixture", model: "fixture" } },
+      });
+    vi.useFakeTimers();
+    const reader = sseReader(await world.call(`/campaigns/${current.campaign.id}/events`));
+    cleanups.push(() => reader.close());
+    const replay = await throughSnapshot(reader);
+    expect(replay.events).toHaveLength(142);
+    expect(replay.snapshot).toEqual(current);
+    expect(vi.getTimerCount()).toBe(1);
+    await reader.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cleans up a slow campaign stream when its bounded queue closes", async () => {
+    const world = await harness();
+    let current = await world.service.create(createRequest());
+    const subscribed = world.service.subscribe.bind(world.service);
+    const released = vi.fn();
+    vi.spyOn(world.service, "subscribe").mockImplementation((id, listener) => {
+      const unsubscribe = subscribed(id, listener);
+      return () => {
+        unsubscribe();
+        released();
+      };
+    });
+    vi.useFakeTimers();
+    const response = await world.call(`/campaigns/${current.campaign.id}/events`);
+    expect(vi.getTimerCount()).toBe(1);
+    for (let index = 0; index < 140; index += 1)
+      current = await world.service.command(current.campaign.id, {
+        expectedRevision: current.campaign.revision,
+        command: { type: "select-model", model: { provider: "fixture", model: "fixture" } },
+      });
+    expect(released).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await response.text();
+    await world.server.close();
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects malformed cursors and actor injection instead of treating the request as authority", async () => {
     const world = await harness();
     const created = (await (
@@ -183,7 +231,7 @@ describe("campaign HTTP and SSE integration", () => {
     expect(exported.status, await exported.clone().text()).toBe(200);
     expect(await exported.json()).toEqual({
       artifactId: created.campaign.baselineArtifactId,
-      path: join(world.root, "exports", "reviewed"),
+      path: await realpath(join(world.root, "exports", "reviewed")),
     });
     expect(await readFile(join(world.root, "exports", "reviewed", "brief.md"), "utf8")).toBe(
       "<script>notExecutable()</script>",
@@ -195,6 +243,34 @@ describe("campaign HTTP and SSE integration", () => {
       created.campaign.baselineArtifactId,
     );
   });
+
+  it.each(["content", "manifest"])(
+    "reports a corrupt %s export as uncertain after a destination was created",
+    async (corruption) => {
+      const world = await harness();
+      const created = await world.service.create(createRequest());
+      const artifact = created.campaign.artifacts[0];
+      if (artifact === undefined) throw new Error("Missing baseline fixture");
+      await writeFile(
+        join(
+          world.root,
+          "artifacts",
+          artifact.storageRef,
+          corruption === "content" ? "files/brief.md" : "manifest.json",
+        ),
+        corruption === "content" ? "damaged" : "{}",
+      );
+      const response = await world.call(
+        `/campaigns/${created.campaign.id}/artifacts/${artifact.id}/export`,
+        post({ destination: "exports/uncertain" }),
+      );
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ code: "unavailable" });
+      expect((await stat(join(world.root, "exports", "uncertain"))).isDirectory()).toBe(true);
+      expect(world.service.read(created.campaign.id)).toEqual(created);
+      expect(world.executions()).toBe(0);
+    },
+  );
 
   it("requires attested human observations, verifies the current best, and records a later failed review without inference", async () => {
     const world = await harness();

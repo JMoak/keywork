@@ -331,6 +331,10 @@ export class Agent {
     return this.holdThenDrain(work);
   }
 
+  adoptNotes(from: Agent): void {
+    this.notes.inherit(from.notes, from.messages, this.messages);
+  }
+
   adoptQueue(from: Agent): void {
     if (from === this) return;
     const moved = from.pending.splice(0);

@@ -42,6 +42,13 @@ export type ArtifactPreview = {
   totalBytes: number;
 };
 
+export class CampaignExportRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CampaignExportRefusal";
+  }
+}
+
 export class CampaignArtifacts {
   readonly root: string;
   readonly limits: ArtifactLimits;
@@ -62,7 +69,7 @@ export class CampaignArtifacts {
   }
 
   async capture(input: ArtifactCapture): Promise<ArtifactManifest> {
-    const allowedRoot = await realpath(resolve(input.allowedRoot));
+    const allowedRoot = resolve(input.allowedRoot);
     const sourcePath = resolve(input.sourcePath);
     await assertSafePath(allowedRoot, sourcePath);
     const source = await lstat(sourcePath);
@@ -161,10 +168,22 @@ export class CampaignArtifacts {
   async export(manifest: ArtifactManifest, destination: string): Promise<string> {
     const target = resolve(destination);
     if (inside(this.root, target))
-      throw new Error("Export requires a destination outside managed artifact storage.");
+      throw new CampaignExportRefusal(
+        "Export requires a destination outside managed artifact storage.",
+      );
     const parent = await realpath(dirname(target));
     const actualTarget = join(parent, basename(target));
-    await mkdir(actualTarget);
+    if (inside(await realpath(this.root), actualTarget))
+      throw new CampaignExportRefusal(
+        "Export requires a destination outside managed artifact storage.",
+      );
+    try {
+      await mkdir(actualTarget);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EEXIST")
+        throw new CampaignExportRefusal("The artifact export destination already exists.");
+      throw error;
+    }
     await this.copyVerified(manifest, actualTarget);
     return actualTarget;
   }
@@ -237,14 +256,14 @@ export class CampaignArtifacts {
   }
 
   private async storedManifest(manifest: ArtifactManifest): Promise<ArtifactManifest> {
-    const expected = artifactManifestSchema.parse(manifest);
+    const expected = parseArtifactManifest(manifest);
     safeIdentifier(expected.id);
     if (expected.storageRef !== `objects/${expected.id}`)
       throw new Error("Invalid artifact storage reference.");
     await this.initialize();
     const path = join(this.root, expected.storageRef, "manifest.json");
     await assertSafePath(this.root, path);
-    const stored = artifactManifestSchema.parse(JSON.parse(await readFile(path, "utf8")));
+    const stored = parseArtifactManifest(JSON.parse(await readFile(path, "utf8")));
     if (JSON.stringify(stored) !== JSON.stringify(expected))
       throw new Error("Artifact manifest differs from the immutable record.");
     if (digest(Buffer.from(JSON.stringify(stored.entries), "utf8")) !== stored.digest)
@@ -276,6 +295,13 @@ export class CampaignArtifacts {
 }
 
 type CapturedFile = { path: string; content: Buffer };
+
+function parseArtifactManifest(value: unknown): ArtifactManifest {
+  const parsed = artifactManifestSchema.safeParse(value);
+  if (!parsed.success)
+    throw new Error("Artifact manifest failed integrity validation.", { cause: parsed.error });
+  return parsed.data;
+}
 
 async function collectFiles(
   root: string,

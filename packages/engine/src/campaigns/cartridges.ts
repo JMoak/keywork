@@ -12,6 +12,8 @@ import type { SkillDefinition } from "../extensions/skills.ts";
 import { parseDocument } from "../memory/frontmatter.ts";
 import { CampaignArtifacts } from "./artifacts.ts";
 
+const maxSnapshotBytes = 384 * 1_024;
+
 const definitionSchema = z.strictObject({
   id: z.string().trim().min(1).max(256),
   version: z.string().trim().min(1).max(256),
@@ -187,10 +189,13 @@ export class CampaignCartridges {
   }
 
   private async save(definition: ResolvedCartridge): Promise<void> {
+    const snapshot = JSON.stringify(definition);
+    if (Buffer.byteLength(snapshot, "utf8") > maxSnapshotBytes)
+      throw new Error("Pinned cartridge snapshot exceeds the activation limit.");
     await this.initialize();
     const path = this.snapshotPath(definition.digest);
     try {
-      await writeFile(path, JSON.stringify(definition), { flag: "wx" });
+      await writeFile(path, snapshot, { flag: "wx" });
     } catch (error) {
       if (!isExists(error)) throw error;
       await this.pinned(definition);
@@ -203,7 +208,7 @@ export class CampaignCartridges {
     await this.initialize();
     const path = this.snapshotPath(lock.digest);
     const stat = await lstat(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 384 * 1_024)
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxSnapshotBytes)
       throw new Error("Invalid pinned cartridge snapshot.");
     const pinned = pinnedSchema.parse(JSON.parse(await readFile(path, "utf8")));
     const { digest, resources, ...definition } = pinned;

@@ -201,6 +201,28 @@ describe("campaign cartridge lifecycle", () => {
     ).rejects.toThrow("incompatible output");
   });
 
+  it("checks serialized snapshot size before activating escaped instructions", async () => {
+    const instructions = (count: number) =>
+      [
+        "Preserve the following escaped text samples exactly.",
+        "```json",
+        ...Array.from({ length: count }, () => String.raw`"\\r\\n\\t"`),
+        "```",
+      ].join("\n");
+    const fitting = definition("fitting", instructions(18_000));
+    const oversized = definition("oversized", instructions(20_000));
+    expect(Buffer.byteLength(oversized.instructions, "utf8")).toBeLessThan(256 * 1_024);
+    const registry = new CampaignCartridges({ root, definitions: [fitting, oversized] });
+    const locks = await registry.activate([fitting.id], [], { stage: "building", at: 1 });
+    expect((await registry.resolve(locks, "building"))[0]?.instructions).toBe(fitting.instructions);
+    await expect(
+      registry.activate([oversized.id], [], { stage: "building", at: 2 }),
+    ).rejects.toThrow("snapshot exceeds");
+    await expect(
+      access(join(root, `${registry.inspect(oversized.id).digest}.json`)),
+    ).rejects.toThrow();
+  });
+
   it("refuses corrupted snapshots and cartridges no longer trusted", async () => {
     const registry = new CampaignCartridges({
       root,

@@ -87,6 +87,85 @@ describe("campaign evidence source registry", () => {
     expect(first.contentDigest).not.toBe(second.contentDigest);
   });
 
+  it("scopes searches before applying hit and registry scan limits", async () => {
+    const source = await sources.register({
+      ownerScope: "owner",
+      title: "Selected",
+      reference: "provided:selected",
+      text: "A matching result.",
+    });
+    const selected = { ...source, id: "source-z-selected" };
+    await Promise.all(
+      [
+        selected,
+        ...Array.from({ length: 1_001 }, (_, index) => ({
+          ...source,
+          id: `source-a-${index}`,
+          title: "Unattached",
+          reference: `provided:unattached-${index}`,
+        })),
+      ].map((entry) => writeFile(join(sources.root, `${entry.id}.json`), JSON.stringify(entry))),
+    );
+    const found = await sources.search({
+      ownerScope: "owner",
+      query: "matching",
+      sourceIds: [selected.id, selected.id],
+      limit: 1,
+    });
+    expect(found).toMatchObject({
+      scanned: 1,
+      truncated: false,
+      hits: [{ sourceId: selected.id, title: "Selected", reference: "provided:selected" }],
+    });
+    expect(found.hits).toHaveLength(1);
+  });
+
+  it("keeps scoped search bounded and access checked", async () => {
+    const first = await sources.register({
+      ownerScope: "owner",
+      title: "First",
+      reference: "provided:first",
+      text: "Shared finding.",
+    });
+    const second = await sources.register({
+      ownerScope: "owner",
+      title: "Second",
+      reference: "provided:second",
+      text: "Shared finding.",
+    });
+    const other = await sources.register({
+      ownerScope: "another-owner",
+      title: "Other owner",
+      reference: "provided:other",
+      text: "Shared finding.",
+    });
+    const input = { ownerScope: "owner", query: "finding" };
+    const found = await sources.search({
+      ...input,
+      sourceIds: [other.id, first.id, second.id],
+      limit: 1,
+    });
+    expect(found).toMatchObject({ scanned: 2, truncated: true });
+    expect(found.hits.map((hit) => hit.sourceId)).toEqual([first.id]);
+    expect(await sources.search({ ...input, sourceIds: [] })).toEqual({
+      hits: [],
+      scanned: 0,
+      truncated: false,
+    });
+    await expect(sources.search({ ...input, sourceIds: ["../source"] })).rejects.toThrow(
+      "identifier",
+    );
+    await expect(
+      sources.search({ ...input, sourceIds: Array.from({ length: 257 }, () => first.id) }),
+    ).rejects.toThrow("scope");
+    allowed = false;
+    expect(await sources.search({ ...input, sourceIds: [first.id] })).toEqual({
+      hits: [],
+      scanned: 1,
+      truncated: false,
+    });
+  });
+
   it("rejects invalid ranges and oversized excerpts rather than silently clipping them", async () => {
     const source = await sources.register({
       ownerScope: "owner",

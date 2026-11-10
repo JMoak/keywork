@@ -13,6 +13,7 @@ import { CampaignCartridges } from "./cartridges.ts";
 import { type CampaignExecutorOptions, campaignExecutor } from "./executor.ts";
 import { OpenRouterQuoteCache } from "./pricing.ts";
 import { CampaignService } from "./service.ts";
+import { CampaignSources, type SourceRegistration, type SourceSearchResult } from "./sources.ts";
 import { CampaignStore } from "./store.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -377,6 +378,48 @@ describe("campaign executor integration", () => {
     expect(world.campaign().currentBestArtifactId).toBe(world.campaign().baselineArtifactId);
   });
 
+  it("searches only attached sources and reports truncation within that collection", async () => {
+    let unattachedId = "";
+    const world = await environment(
+      (turn) => {
+        if (turn.step === 0) return call("search_sources", { query: "Shared finding" });
+        if (turn.step === 1) {
+          const result = toolResults(turn.request).at(-1);
+          expect(result?.isError).toBe(false);
+          const found = JSON.parse(result?.output ?? "null") as SourceSearchResult;
+          expect(found).toMatchObject({ scanned: 8, truncated: true });
+          expect(found.hits).toHaveLength(8);
+          const attached = currentPurpose(turn.campaign).references;
+          for (const hit of found.hits) expect(attached).toContain(`source:${hit.sourceId}`);
+          return call("source_excerpt", { sourceId: unattachedId, startLine: 1, endLine: 1 });
+        }
+        if (turn.step === 2) {
+          expect(toolResults(turn.request).at(-1)).toMatchObject({ isError: true });
+          return submitCandidate();
+        }
+        return text("No further worthwhile change.");
+      },
+      {
+        sources: Array.from({ length: 10 }, (_, index) => ({
+          title: `Attached ${index}`,
+          reference: `provided:attached-${index}`,
+          text: `Shared finding from attached source ${index}.`,
+        })),
+      },
+    );
+    for (let index = 0; index < 55; index += 1) {
+      const source = await world.sources.register({
+        ownerScope: "fixture-owner",
+        title: `Unattached ${index}`,
+        reference: `provided:unattached-${index}`,
+        text: "Shared finding from an unattached source.",
+      });
+      unattachedId = source.id;
+    }
+    await world.start();
+    expect(world.campaign().status, world.notices.join("; ")).toBe("completed");
+  });
+
   it("stops growing tool output before the next paid request exceeds the context allowance", async () => {
     const world = await environment(
       (turn) =>
@@ -471,6 +514,7 @@ type EnvironmentOptions = {
   workload?: CampaignWorkload;
   criteria?: string[];
   source?: string;
+  sources?: Omit<SourceRegistration, "ownerScope">[];
   skills?: (root: string) => Promise<SkillDefinition[]>;
   executor?: Partial<CampaignExecutorOptions>;
 };
@@ -489,6 +533,7 @@ async function environment(script: Script, options: EnvironmentOptions = {}) {
   const database = join(root, "campaigns.db");
   const store = await CampaignStore.open(database);
   const artifacts = new CampaignArtifacts(join(root, "artifacts"));
+  const sources = new CampaignSources(join(root, "sources"), artifacts, () => true);
   const cartridges = new CampaignCartridges({
     root: join(root, "cartridges"),
     ...(options.skills === undefined ? {} : { skills: await options.skills(root) }),
@@ -566,6 +611,7 @@ async function environment(script: Script, options: EnvironmentOptions = {}) {
   const executor = campaignExecutor({
     artifacts,
     cartridges,
+    sources,
     quotes,
     provider: () => provider,
     instructions: async () => "Preserve source bytes. Work only in the isolated candidate.",
@@ -580,6 +626,7 @@ async function environment(script: Script, options: EnvironmentOptions = {}) {
     store,
     artifacts,
     cartridges,
+    sources,
     workspace,
     ownerScope: "fixture-owner",
     executor,
@@ -606,6 +653,7 @@ async function environment(script: Script, options: EnvironmentOptions = {}) {
     budgetMicros: 1_000_000,
     persistenceProfile: "focused",
     artifactPath: "brief.md",
+    ...(options.sources === undefined ? {} : { sources: options.sources }),
   });
   id = created.campaign.id;
   const command = (value: Record<string, unknown>) =>
@@ -618,6 +666,7 @@ async function environment(script: Script, options: EnvironmentOptions = {}) {
     store,
     artifacts,
     cartridges,
+    sources,
     sessionRoot,
     executor,
     service,

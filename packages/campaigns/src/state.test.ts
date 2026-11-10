@@ -387,62 +387,70 @@ describe("artifact and evidence decisions", () => {
     expect(campaign.decisions.some((decision) => decision.kind === "adopt")).toBe(false);
   });
 
-  it("records observed critical regression without deleting the best or its achievement history", () => {
-    let campaign = evaluatedCandidate();
-    campaign = apply(campaign, {
-      type: "adopt",
-      artifactId: "candidate",
-      evaluationId: "evaluation",
-      reason: "Accept observed gain.",
-    });
-    campaign = apply(campaign, {
-      type: "record-achievement",
-      achievement: { ...fixtureAchievement(campaign, "candidate"), criterionId: "preserve" },
-    });
-    campaign = apply(campaign, {
-      type: "record-evidence",
-      evidence: {
-        ...fixtureEvidence(campaign, "candidate", "failure"),
-        kind: "human-review",
-        producer: fixtureUser,
-        verdict: "fail",
-        criterionIds: ["preserve"],
-      },
-    });
-    const evaluation = fixtureEvaluation(campaign, "candidate", "evidence", "human-review");
-    evaluation.materialImprovement = false;
-    evaluation.evaluator = fixtureUser;
-    evaluation.observations = evaluation.observations.map((observation) =>
-      observation.criterionId === "preserve"
-        ? { ...observation, verdict: "fail", evidenceIds: ["failure"] }
-        : observation,
-    );
-    campaign = apply(campaign, { type: "record-evaluation", evaluation });
-    expect(campaign.verification).toBe("failed");
-    expect(campaign.currentBestArtifactId).toBe("candidate");
-    expect(campaign.achievements[0]?.history.map((entry) => entry.status)).toEqual([
-      "verified",
-      "regressed",
-    ]);
-    expect(campaign.achievements[0]?.history.at(-1)?.evidenceIds).toEqual(["failure"]);
-    const subsequent = {
-      ...fixtureEvaluation(campaign, "candidate", "evidence", "later-review"),
-      materialImprovement: false,
-    };
-    campaign = apply(campaign, { type: "record-evaluation", evaluation: subsequent });
-    expect(campaign.verification).toBe("failed");
-    expect(campaign.achievements[0]?.history).toHaveLength(2);
-    expect(() =>
-      apply(campaign, {
+  it.each([
+    { criterionId: "preserve", verification: "failed" },
+    { criterionId: "useful", verification: "partial" },
+  ] as const)(
+    "records observed regression of $criterionId without deleting the best or its achievement history",
+    ({ criterionId, verification }) => {
+      let campaign = evaluatedCandidate();
+      campaign = apply(campaign, {
+        type: "adopt",
+        artifactId: "candidate",
+        evaluationId: "evaluation",
+        reason: "Accept observed gain.",
+      });
+      campaign = apply(campaign, {
         type: "record-achievement",
-        achievement: {
-          ...fixtureAchievement(campaign, "candidate"),
-          id: "later-positive-claim",
-          criterionId: "preserve",
+        achievement: { ...fixtureAchievement(campaign, "candidate"), criterionId },
+      });
+      campaign = apply(campaign, {
+        type: "record-evidence",
+        evidence: {
+          ...fixtureEvidence(campaign, "candidate", "failure"),
+          kind: "human-review",
+          producer: fixtureUser,
+          verdict: "fail",
+          criterionIds: [criterionId],
         },
-      }),
-    ).toThrowError(expect.objectContaining({ code: "unverified" }));
-  });
+      });
+      const evaluation = fixtureEvaluation(campaign, "candidate", "evidence", "human-review");
+      evaluation.materialImprovement = false;
+      evaluation.evaluator = fixtureUser;
+      evaluation.observations = evaluation.observations.map((observation) =>
+        observation.criterionId === criterionId
+          ? { ...observation, verdict: "fail", evidenceIds: ["failure"] }
+          : observation,
+      );
+      campaign = apply(campaign, { type: "record-evaluation", evaluation });
+      expect(campaign.verification).toBe(verification);
+      expect(campaign.currentBestArtifactId).toBe("candidate");
+      expect(campaign.achievements[0]?.history.map((entry) => entry.status)).toEqual([
+        "verified",
+        "regressed",
+      ]);
+      expect(campaign.achievements[0]?.history.at(-1)?.evidenceIds).toEqual(["failure"]);
+      const subsequent = {
+        ...fixtureEvaluation(campaign, "candidate", "evidence", "later-review"),
+        materialImprovement: false,
+        evaluator: fixtureWorker,
+        model: campaign.model,
+      };
+      campaign = apply(campaign, { type: "record-evaluation", evaluation: subsequent });
+      expect(campaign.verification).toBe(verification);
+      expect(campaign.achievements[0]?.history).toHaveLength(2);
+      expect(() =>
+        apply(campaign, {
+          type: "record-achievement",
+          achievement: {
+            ...fixtureAchievement(campaign, "candidate"),
+            id: "later-positive-claim",
+            criterionId,
+          },
+        }),
+      ).toThrowError(expect.objectContaining({ code: "unverified" }));
+    },
+  );
 
   it("does not let later model critique erase stronger observed verification", () => {
     let campaign = evaluatedCandidate();

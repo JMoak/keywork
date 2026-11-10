@@ -158,6 +158,41 @@ describe("headless campaign commands", () => {
     });
   });
 
+  it.each([
+    { status: 500, json: true },
+    { status: 503, json: false },
+  ])(
+    "treats a mutation HTTP $status response as unknown without retrying",
+    async ({ status, json }) => {
+      const fixture = await setup(() =>
+        json
+          ? Response.json({ error: "Unexpected action failure" }, { status })
+          : new Response("Service unavailable", { status }),
+      );
+      await fixture.file("command.json", {
+        expectedRevision: 1,
+        command: { type: "start", reason: "start" },
+      });
+      expect(await fixture.run(["command", "campaign"], { file: "command.json" })).toBe(3);
+      expect(fixture.requests.filter((request) => request.method === "POST")).toHaveLength(1);
+      expect(fixture.out).toEqual([]);
+      expect(fixture.err.join("\n")).toContain(`${status}`);
+      expect(fixture.err.join("\n")).toContain("outcome is unknown");
+      expect(fixture.err.join("\n")).toContain("inspect campaign show before retrying");
+    },
+  );
+
+  it.each([500, 503])("keeps a GET HTTP %s response an ordinary failure", async (status) => {
+    const fixture = await setup(() => Response.json({ error: "Read failed" }, { status }));
+    expect(await fixture.run(["show", "campaign"])).toBe(1);
+    expect(
+      fixture.requests.filter((request) => request.path === "/campaigns/campaign"),
+    ).toHaveLength(1);
+    expect(fixture.requests.filter((request) => request.method === "POST")).toHaveLength(0);
+    expect(fixture.err.join("\n")).toContain(`${status}: Read failed`);
+    expect(fixture.err.join("\n")).not.toContain("outcome is unknown");
+  });
+
   it("treats an unreadable mutation response as unknown instead of successful", async () => {
     const fixture = await setup(() => new Response("truncated", { status: 200 }));
     await fixture.file("command.json", {

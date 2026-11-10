@@ -56,6 +56,26 @@ describe("campaign service integration", () => {
     },
   );
 
+  it("executes an accepted long objective while preserving its complete purpose", async () => {
+    const objective = `${"A".repeat(15_999)}Z`;
+    const executed: CampaignExecutionContext[] = [];
+    const world = await environment({
+      execute: async (context) => {
+        executed.push(context);
+        return emptyResult();
+      },
+    });
+    const created = await world.service.create({ ...createRequest(), objective });
+    await start(world.service, created.campaign.id);
+    await world.service.settled(created.campaign.id);
+    expect(executed.length).toBeGreaterThan(0);
+    expect(executed[0]?.campaign.purposes[0]?.outcome).toBe(objective);
+    expect(executed[0]?.campaign.purposes[0]?.sufficientDelivery).toBe(objective);
+    expect(executed[0]?.attempt.hypothesis.length).toBeLessThanOrEqual(8_000);
+    expect(required(world.service, created.campaign.id).status).toBe("completed");
+    expect(world.notices).toEqual([]);
+  });
+
   it("distinguishes requested pause from its execution boundary and preserves the completed receipt", async () => {
     const entered = deferred<CampaignExecutionContext>();
     const release = deferred<void>();

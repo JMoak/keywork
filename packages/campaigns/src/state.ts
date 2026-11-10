@@ -691,28 +691,32 @@ function reviewCurrentBest(campaign: Campaign, evaluation: Evaluation, at: numbe
     campaign,
     evaluation.artifactId,
     evaluation.purposeRevision,
-    criticalIds,
+    new Set(purpose.criteria.map((criterion) => criterion.id)),
   );
-  if (failures.length > 0) {
-    campaign.verification = "failed";
-    for (const achievement of campaign.achievements) {
-      const supporting = failures.filter((evidence) =>
-        evidence.criterionIds.includes(achievement.criterionId),
+  for (const achievement of campaign.achievements) {
+    const supporting = failures.filter((evidence) =>
+      evidence.criterionIds.includes(achievement.criterionId),
+    );
+    if (
+      achievement.artifactId === evaluation.artifactId &&
+      achievement.purposeRevision === evaluation.purposeRevision &&
+      ["observed", "verified"].includes(achievement.status) &&
+      supporting.length > 0
+    )
+      invalidateAchievement(
+        achievement,
+        "regressed",
+        at,
+        evaluation.summary,
+        supporting.map((evidence) => evidence.id),
       );
-      if (
-        achievement.artifactId === evaluation.artifactId &&
-        achievement.purposeRevision === evaluation.purposeRevision &&
-        ["observed", "verified"].includes(achievement.status) &&
-        supporting.length > 0
-      )
-        invalidateAchievement(
-          achievement,
-          "regressed",
-          at,
-          evaluation.summary,
-          supporting.map((evidence) => evidence.id),
-        );
-    }
+  }
+  if (failures.length > 0) {
+    campaign.verification = failures.some((evidence) =>
+      evidence.criterionIds.some((id) => criticalIds.has(id)),
+    )
+      ? "failed"
+      : "partial";
     return;
   }
   const verified = purpose.criteria.every((criterion) => {

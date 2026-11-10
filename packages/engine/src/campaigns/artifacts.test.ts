@@ -1,8 +1,17 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CampaignArtifacts } from "./artifacts.ts";
+import { CampaignArtifacts, CampaignExportRefusal } from "./artifacts.ts";
 
 let root: string;
 let source: string;
@@ -49,6 +58,25 @@ describe("campaign artifact capture and isolation", () => {
     expect(next.id).not.toBe(manifest.id);
     expect(next.parentIds).toEqual([manifest.id]);
     expect(await store.readText(next, "report.md", 1_000)).toBe("Experimental change");
+  });
+
+  it("captures beneath a filesystem alias above the authorized root", async () => {
+    const allowed = join(source, "allowed");
+    await mkdir(allowed);
+    await writeFile(join(allowed, "notes.md"), "Notes");
+    const alias = join(root, "source-alias");
+    await symlink(source, alias, process.platform === "win32" ? "junction" : "dir");
+    const allowedRoot = join(alias, "allowed");
+    expect(await realpath(allowedRoot)).not.toBe(allowedRoot);
+
+    const manifest = await store.capture({
+      sourcePath: join(allowedRoot, "notes.md"),
+      allowedRoot,
+      ownerScope: "owner",
+      title: "Notes",
+    });
+
+    expect(await store.readText(manifest, "notes.md", 1_000)).toBe("Notes");
   });
 
   it("captures a single file and an empty directory", async () => {
@@ -185,6 +213,22 @@ describe("campaign artifact integrity and bounds", () => {
     await expect(store.preview(manifest)).rejects.toThrow("digest mismatch");
   });
 
+  it.each(["record", "storage"])(
+    "treats an invalid %s manifest as an integrity failure",
+    async (location) => {
+      const manifest = await report("Trusted");
+      if (location === "storage")
+        await writeFile(join(store.root, manifest.storageRef, "manifest.json"), "{}");
+      await expect(
+        store.preview(location === "record" ? { ...manifest, title: "" } : manifest),
+      ).rejects.toMatchObject({
+        name: "Error",
+        message: "Artifact manifest failed integrity validation.",
+        cause: { name: "ZodError" },
+      });
+    },
+  );
+
   it("returns bounded UTF-8 previews and requires explicit full-read capacity", async () => {
     const bounded = new CampaignArtifacts(join(root, "preview"), { previewBytes: 3 });
     const manifest = await bounded.write({
@@ -219,13 +263,27 @@ describe("campaign artifact integrity and bounds", () => {
     await expect(store.readText(manifest, "image.png", 100)).rejects.toThrow("not UTF-8");
   });
 
+  it("refuses managed-storage export destinations including directory aliases", async () => {
+    const manifest = await report("Managed content");
+    await expect(store.export(manifest, join(store.root, "export"))).rejects.toThrow(
+      CampaignExportRefusal,
+    );
+    const alias = join(root, "store-alias");
+    await symlink(store.root, alias, process.platform === "win32" ? "junction" : "dir");
+    await expect(store.export(manifest, join(alias, "export"))).rejects.toThrow(
+      CampaignExportRefusal,
+    );
+    expect(await readdir(store.root)).not.toContain("export");
+  });
+
   it("exports only to a new explicit destination and never overwrites user content", async () => {
     const manifest = await report("Exported");
     const destination = join(root, "export");
-    expect(await store.export(manifest, destination)).toBe(destination);
+    const exported = await store.export(manifest, destination);
+    expect(exported).toBe(await realpath(destination));
     expect(await readFile(join(destination, "report.md"), "utf8")).toBe("Exported");
     await writeFile(join(destination, "report.md"), "User edit");
-    await expect(store.export(manifest, destination)).rejects.toThrow();
+    await expect(store.export(manifest, destination)).rejects.toThrow(CampaignExportRefusal);
     expect(await readFile(join(destination, "report.md"), "utf8")).toBe("User edit");
   });
 });

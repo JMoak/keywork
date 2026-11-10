@@ -141,22 +141,25 @@ export class CampaignSources {
   async search(input: {
     ownerScope: string;
     query: string;
+    sourceIds?: readonly string[];
     limit?: number;
   }): Promise<SourceSearchResult> {
     const query = input.query.trim();
     const limit = input.limit ?? 10;
     if (!query || query.length > 512 || !Number.isInteger(limit) || limit < 1 || limit > 50)
       throw new Error("Invalid source search request.");
-    await this.initialize();
+    if (input.sourceIds !== undefined) {
+      if (input.sourceIds.length > 256) throw new Error("Invalid source search scope.");
+      for (const sourceId of input.sourceIds) this.sourcePath(sourceId);
+    }
+    const sourceIds =
+      input.sourceIds === undefined ? this.registeredIds() : new Set(input.sourceIds);
     const hits: SourceSearch[] = [];
     let scanned = 0;
-    for await (const entry of await opendir(this.root)) {
-      if (!entry.name.endsWith(".json")) continue;
+    for await (const sourceId of sourceIds) {
       if (scanned >= 1_000 || hits.length >= limit) return { hits, scanned, truncated: true };
       scanned += 1;
-      if (!entry.isFile() || entry.isSymbolicLink())
-        throw new Error("Source registry contains an unsupported entry.");
-      const source = await this.load(entry.name.slice(0, -5));
+      const source = await this.load(sourceId);
       if (
         source.ownerScope !== input.ownerScope ||
         !(await this.authorize(input.ownerScope, source))
@@ -175,6 +178,13 @@ export class CampaignSources {
       });
     }
     return { hits, scanned, truncated: false };
+  }
+
+  private async *registeredIds(): AsyncGenerator<string> {
+    await this.initialize();
+    for await (const entry of await opendir(this.root)) {
+      if (entry.name.endsWith(".json")) yield entry.name.slice(0, -5);
+    }
   }
 
   private async load(sourceId: string): Promise<CampaignSource> {

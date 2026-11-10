@@ -1,5 +1,6 @@
 import {
   CampaignError,
+  CampaignExportRefusal,
   type CampaignService,
   CampaignStoreError,
   createCampaignRequestSchema,
@@ -204,64 +205,69 @@ function campaignStream(
 ): Response {
   let dispose = () => {};
   const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-      const cleanups: (() => void)[] = [];
-      dispose = () => {
-        if (closed) return;
-        closed = true;
-        for (const cleanup of cleanups) cleanup();
-        try {
-          controller.close();
-        } catch {
-          return;
-        }
-      };
-      const write = (event: string, data: unknown, sequence?: number) => {
-        if (closed) return;
-        if ((controller.desiredSize ?? 1) < -100) {
-          dispose();
-          return;
-        }
-        try {
-          controller.enqueue(
-            encoder.encode(
-              `${sequence === undefined ? "" : `id: ${sequence}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-            ),
-          );
-        } catch {
-          dispose();
-        }
-      };
-      let cursor = after;
-      cleanups.push(
-        service.subscribe(id, (event) => {
-          if (event.sequence <= cursor) return;
+  const replay = service.events(id, after);
+  const snapshot = service.read(id);
+  const body = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        let closed = false;
+        const cleanups: (() => void)[] = [];
+        dispose = () => {
+          if (closed) return;
+          closed = true;
+          for (const cleanup of cleanups.splice(0)) cleanup();
+          try {
+            controller.close();
+          } catch {
+            return;
+          }
+        };
+        const write = (event: string, data: unknown, sequence?: number) => {
+          if (closed) return;
+          if ((controller.desiredSize ?? 1) < -100) {
+            dispose();
+            return;
+          }
+          try {
+            controller.enqueue(
+              encoder.encode(
+                `${sequence === undefined ? "" : `id: ${sequence}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+              ),
+            );
+          } catch {
+            dispose();
+          }
+        };
+        let cursor = after;
+        cleanups.push(
+          service.subscribe(id, (event) => {
+            if (event.sequence <= cursor) return;
+            cursor = event.sequence;
+            write("campaign", event, event.sequence);
+          }),
+        );
+        const timer = setInterval(() => write("heartbeat", { at: Date.now() }), 15_000);
+        timer.unref?.();
+        cleanups.push(() => clearInterval(timer));
+        cleanups.push(registry.add(dispose));
+        signal.addEventListener("abort", dispose, { once: true });
+        cleanups.push(() => signal.removeEventListener("abort", dispose));
+        if (signal.aborted) dispose();
+        for (const event of replay) {
+          if (closed) break;
+          if (event.sequence <= cursor) continue;
           cursor = event.sequence;
           write("campaign", event, event.sequence);
-        }),
-      );
-      for (const event of service.events(id, after)) {
-        if (event.sequence <= cursor) continue;
-        cursor = event.sequence;
-        write("campaign", event, event.sequence);
-      }
-      const snapshot = service.read(id);
-      if (snapshot !== undefined) {
-        cursor = snapshot.sequence;
-        write("snapshot", snapshot, cursor);
-      }
-      const timer = setInterval(() => write("heartbeat", { at: Date.now() }), 15_000);
-      timer.unref?.();
-      cleanups.push(() => clearInterval(timer));
-      cleanups.push(registry.add(dispose));
-      signal.addEventListener("abort", dispose, { once: true });
-      cleanups.push(() => signal.removeEventListener("abort", dispose));
-      if (signal.aborted) dispose();
+        }
+        if (snapshot !== undefined) {
+          cursor = snapshot.sequence;
+          write("snapshot", snapshot, cursor);
+        }
+      },
+      cancel: () => dispose(),
     },
-    cancel: () => dispose(),
-  });
+    { highWaterMark: replay.length + 1 },
+  );
   return new Response(body, {
     headers: {
       "content-type": "text/event-stream",
@@ -311,7 +317,9 @@ function campaignFailure(cause: unknown): Response {
       code: cause.code,
       error: cause.message,
     });
-  return json(422, {
+  if (cause instanceof CampaignExportRefusal)
+    return json(422, { code: "refused", error: cause.message });
+  return json(500, {
     code: "unavailable",
     error: cause instanceof Error ? cause.message : "campaign operation could not complete",
   });

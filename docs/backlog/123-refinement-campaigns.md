@@ -56,10 +56,40 @@ The current executor uses fresh builder/reviewer sessions, 24,000 conservative i
 4,096 output tokens, up to 12 requests and 48 tools per stage, and a 120-second attempt bound.
 These are implementation defaults awaiting workload calibration, not measures of task quality.
 
-Future agents should start from the remaining qualification column. Preserve the existing
+Feature development is on hold at the user's request as of November 10. The implementation
+quality review below refines existing behavior; it does not resume feature expansion or authorize
+paid pilots or downstream adoption. Keep the remaining-work table for when feature work resumes.
+
+Future agents should preserve that hold and the existing
 uncommitted work, run focused checks, and obtain the required repository work-item acceptance
 before changing Orchard or Stead. Publication, dependency adoption, and activation are separate
 steps; a local test or published release does not prove that a downstream installation adopted it.
+
+## Implementation quality review
+
+Independent reviews covered pure state rules, controller recovery and accounting, artifact/source/
+cartridge I/O, and desktop transport/monitoring. The existing ownership boundaries are sound:
+domain rules remain pure, transactional state and effects belong to the engine, and the shared
+desktop consumes HTTP/SSE. Human-review batches are atomic. No new orchestration layer,
+dependency, or broad reorganization was warranted.
+
+Focused corrections now bound derived hypotheses while preserving full objectives; regress
+noncritical achievements and verification when independent evidence disproves them; search attached
+source IDs before limiting results; and enforce the same serialized cartridge limit on write/read.
+Snapshot identity/structure checks and accepted-only event cursors protect monitor recovery. Event
+streams accommodate bounded history replay and clean up on cancellation or slow-consumer closure.
+Known export refusals remain distinct from unexpected partial outcomes, including corrupt stored
+manifests. Desktop and CLI mutations preserve uncertain 5xx outcomes without automatic retry.
+
+Validation: 188 runtime/domain/API/CLI tests in 13 files and 81 shared desktop/client tests in
+nine files passed. TypeScript, architecture guardrails, contract checks, and targeted formatting
+passed in both repositories. New failure-path regressions were exercised before and after fixes.
+No paid inference, feature expansion, publication, commit, or downstream adoption occurred.
+
+Snapshot validation remains structural, not an exhaustive duplicate of nested domain schemas;
+deeper transport validation is a release-hardening consideration. The qualification limits in the
+table remain in force. History retrieval, evidence-only progress, new UI behavior, and native
+downstream integrations remain deferred while feature development is on hold.
 
 # Product decisions and boundaries
 

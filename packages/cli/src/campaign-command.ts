@@ -205,6 +205,10 @@ async function requestJson(
     if (response.ok) throw new Error("Runtime returned invalid campaign JSON");
     result = {};
   }
+  if (method === "POST" && response.status >= 500)
+    throw new CampaignOutcomeUnknownError(
+      `${response.status}: Request outcome is unknown; inspect campaign show before retrying this action`,
+    );
   if (!response.ok) throw responseFailure(response.status, result);
   return result;
 }
