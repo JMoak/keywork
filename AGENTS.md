@@ -38,5 +38,32 @@ subagent writing keywork code; the perspective is the point.
 - Every behavior lands with tests; acceptance criteria in `docs/backlog/` are the bar.
 - Exact-pinned dependencies only (`scripts/check-pins.ts` enforces).
 - New config options require a `.describe()` justification in the schema (vision D9).
-- `bun run check && bun run test` must be green before any task is called done (`bun run test` is
-  vitest, the runner CI uses; bare `bun test` is Bun's own runner and is not the gate).
+- Run focused tests and relevant static checks for the changed behavior locally. CI owns
+  the full `bun run check && bun run test` gate; do not repeat the full suite locally unless
+  a failure or the change's risk warrants it. Report local results and CI status separately.
+  `bun run test` uses Vitest; bare `bun test` is Bun's own runner and is not the gate.
+
+## Development and release flow
+
+- Optimize for frequent, independent releases through published dependencies. Exact pins
+  and lockfiles provide reproducibility; automate their advancement rather than adding
+  sibling-checkout requirements or coordinating every product release.
+- Separate artifact identity from client compatibility. Verify exact binary versions and
+  checksums, but use the supported protocol contract for clients that opt into compatible
+  admission. Preserve legacy clients' exact requirements until they update. A different
+  engine release alone is not a breaking client change. Contract changes and persistent
+  state migrations need an explicit compatibility and recovery decision.
+- Runtime compatibility capability `1` also promises compatible lifecycle commands and
+  shared configuration formats for supported bootstraps. Older bootstraps can still perform
+  lifecycle writes; preserve fields they do not own. A breaking internal format needs an
+  explicit capability transition or delegation to the selected engine, even if HTTP is unchanged.
+- Keep one active owner of shared engine state. Reuse a compatible verified runtime, never
+  force an older bundled engine over a newer installed engine, and defer replacement while
+  the runtime is running. Activate newer engines only after an explicit stop, under ownership
+  protection. Never bypass ownership or delete state to make an upgrade succeed.
+- Keep release metadata with its producing package. Avoid duplicate manually maintained
+  pins, downstream release gates, and new cross-repository services or credentials without
+  a demonstrated requirement. Required artifacts must be public before consumers discover
+  metadata referring to them.
+- Distinguish publication, dependency adoption, and runtime activation in status reports.
+  A published version does not prove that a consumer or a running machine has adopted it.

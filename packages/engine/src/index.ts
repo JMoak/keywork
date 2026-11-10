@@ -1021,13 +1021,17 @@ export {
   type RuntimeConflictCode,
   RuntimeConflictError,
   type RuntimeConsumer,
+  type RuntimeInstallation,
   type RuntimeProduct,
   type RuntimeRecovery,
   RuntimeRegistry,
+  type RuntimeRequirement,
   type RuntimeRetention,
+  type RuntimeSelection,
   type RuntimeVersion,
   runtimeHeartbeatMs,
   runtimeLeaseMs,
+  runtimeSatisfies,
   sameRuntime,
 } from "./runtime/registry.ts";
 export {

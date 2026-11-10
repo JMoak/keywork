@@ -537,6 +537,7 @@ describe("keywork node status", () => {
     const h = harness();
     await h.run(["status", "--json"]);
     const report = JSON.parse(h.out.join("\n"));
+    expect(report.runtimeCompatibility).toBe(1);
     expect(report).toMatchObject({
       registration: { manager: "windows-task", name: "keywork node", installed: false },
       liveness: "absent",
