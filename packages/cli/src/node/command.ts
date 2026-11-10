@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, statSync } from "node:fs";
 import { basename, posix, resolve, win32 } from "node:path";
 import { parseArgs } from "node:util";
 import { RuntimeRegistry } from "@keywork/engine";
+import { canonicalPath } from "@keywork/shared";
 import { type CommandIo, type ResolvedCommandIo, resolveCommandIo } from "../command-io.ts";
 import { exitCodes } from "../dispatch.ts";
 import {
@@ -27,6 +28,7 @@ import { meshFirewallScript } from "./firewall.ts";
 import { supervisorArgs } from "./launch.ts";
 import { lifecycleLogRotation, RotatingLog } from "./logs.ts";
 import { machineIdentity } from "./machine.ts";
+import { verifyManagedRuntime } from "./managed-runtime.ts";
 import type { Managed, Registration, ServiceManager } from "./manager.ts";
 import { type NodeFile, nodeFileStore, type UnitState } from "./node-file.ts";
 import { opensStore } from "./opens.ts";
@@ -48,6 +50,7 @@ export const nodeUsage = [
   "       keywork node workspace list [--json]",
   "       keywork node run [--supervise [--hidden]]",
   "       keywork node restart",
+  "       keywork node stop [--json]",
   "       keywork node reset",
   "       keywork node firewall",
   "       keywork node policy check [--file <policy.hujson>]",
@@ -58,7 +61,8 @@ export async function nodeCommand(
   overrides: Partial<NodeCommandDeps> = {},
   io: CommandIo = {},
 ): Promise<number> {
-  if (args[0] === "consumer" || args[0] === "client") return runtimeCommand(args, overrides, io);
+  if (args[0] === "consumer" || args[0] === "client" || args[0] === "stop")
+    return runtimeCommand(args, overrides, io);
   if (args[0] === "policy") return nodePolicyCommand(args.slice(1), overrides, io);
   const out = resolveCommandIo(io);
   const parsed = parseNodeArgs(args);
@@ -146,6 +150,7 @@ const verbs: Record<Verb, VerbSpec> = {
 
 async function install(context: NodeContext): Promise<number> {
   const { deps, out, flags, paths } = context;
+  if (!(await permitsManagedOperation(context, "install"))) return exitCodes.unresolved;
   const manager = deps.manager;
   if (manager === undefined) return unsupported(context);
   const workspaceProblem = flags.noWorkspace
@@ -338,6 +343,7 @@ function folderProblem(folder: string): string | undefined {
 
 async function runNode(context: NodeContext): Promise<number> {
   const { deps, flags } = context;
+  if (!(await permitsManagedOperation(context, "run"))) return exitCodes.unresolved;
   if (flags.hidden && !flags.supervise) {
     context.out.printError("keywork node run: --hidden only applies with --supervise");
     return exitCodes.usage;
@@ -353,10 +359,50 @@ async function runNode(context: NodeContext): Promise<number> {
   }
 }
 
+async function permitsManagedOperation(
+  context: NodeContext,
+  operation: "install" | "run",
+): Promise<boolean> {
+  const { deps, paths, out } = context;
+  if (!existsSync(paths.registry)) return true;
+  const registry = await RuntimeRegistry.open(paths.registry);
+  try {
+    const selected = registry.runtime();
+    if (registry.pendingInstallation() !== undefined) {
+      out.printError(
+        "keywork node: activation is incomplete; retry node consumer install to repair it forward",
+      );
+      return false;
+    }
+    if (selected === undefined) return true;
+    if (operation === "install") {
+      out.printError(
+        "keywork node install: a managed engine is selected; use node consumer install to preserve its version and product registrations",
+      );
+      return false;
+    }
+    if (
+      deps.launch.args.length !== 0 ||
+      canonicalPath(deps.launch.program, deps.platform) !==
+        canonicalPath(selected.binary, deps.platform)
+    ) {
+      out.printError(
+        "keywork node run: only the selected managed artifact can open shared runtime state; retry node consumer install to start it",
+      );
+      return false;
+    }
+    verifyManagedRuntime(selected);
+    return true;
+  } finally {
+    registry.close();
+  }
+}
+
 async function supervise(context: NodeContext, signal: AbortSignal): Promise<number> {
   const { deps, paths } = context;
   const config = readNodeConfig(paths.config);
   return superviseNode({
+    admit: () => permitsManagedOperation(context, "run"),
     paths,
     config,
     core: coreUnit(deps.launch, paths.state, deps.pid),

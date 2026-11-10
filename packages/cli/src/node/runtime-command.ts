@@ -5,9 +5,13 @@ import {
   acquireRuntimeOwnership,
   type ManagedRuntime,
   RuntimeConflictError,
+  type RuntimeConsumer,
+  type RuntimeInstallation,
   type RuntimeProduct,
   RuntimeRegistry,
+  type RuntimeRequirement,
   runtimeLeaseMs,
+  runtimeSatisfies,
 } from "@keywork/engine";
 import { contractVersion } from "@keywork/server";
 import { canonicalPath } from "@keywork/shared";
@@ -23,7 +27,7 @@ import {
   stageManagedRuntime,
   verifyManagedRuntime,
 } from "./managed-runtime.ts";
-import type { ServiceManager } from "./manager.ts";
+import type { Registration, ServiceManager } from "./manager.ts";
 import { nodeFileStore } from "./node-file.ts";
 import { heldByConsole, opensStore } from "./opens.ts";
 import { type NodePaths, nodePaths } from "./paths.ts";
@@ -33,13 +37,15 @@ import { workspaceUnit } from "./units.ts";
 export interface RuntimeCommandSeams {
   stage(input: ManagedRuntimeInput): Promise<ManagedRuntime>;
   authorizedWork(deps: NodeCommandDeps, paths: NodePaths): Promise<boolean>;
+  ready(deps: NodeCommandDeps, paths: NodePaths, runtime: ManagedRuntime): Promise<boolean>;
   contract: string;
 }
 
 export const runtimeUsage = [
-  "usage: keywork node consumer install|remove --product keywork|stead --installation <id> [--json]",
-  "       keywork node client attach [<folder>] --product keywork|stead --client <id> --console <pid> [--workspace <slug>] [--json]",
+  "usage: keywork node consumer install|remove --product keywork|stead --installation <id> [--contract <contract>] [--json]",
+  "       keywork node client attach [<folder>] --product keywork|stead --client <id> --console <pid> [--workspace <slug>] [--contract <contract>] [--json]",
   "       keywork node client detach --client <id> [--json]",
+  "       keywork node stop [--json]",
 ].join("\n");
 
 export async function runtimeCommand(
@@ -79,6 +85,7 @@ export async function runtimeCommand(
       seams: {
         stage: stageManagedRuntime,
         authorizedWork: persistentWork,
+        ready: runtimeReady,
         contract: contractVersion,
         ...seams,
       },
@@ -101,7 +108,7 @@ export async function runtimeCommand(
 }
 
 interface RuntimeRequest {
-  action: "install" | "remove" | "attach" | "detach";
+  action: "install" | "remove" | "attach" | "detach" | "stop";
   product: RuntimeProduct;
   installation: string;
   client: string;
@@ -110,6 +117,7 @@ interface RuntimeRequest {
   folder: string | undefined;
   home: boolean;
   json: boolean;
+  contract: string | undefined;
 }
 
 interface RuntimeContext {
@@ -121,6 +129,13 @@ interface RuntimeContext {
 }
 
 async function execute(context: RuntimeContext): Promise<unknown> {
+  if (
+    context.registry.pendingInstallation() !== undefined &&
+    context.request.action !== "install" &&
+    context.request.action !== "stop"
+  ) {
+    throw activationIncomplete();
+  }
   switch (context.request.action) {
     case "install":
       return installConsumer(context);
@@ -130,33 +145,41 @@ async function execute(context: RuntimeContext): Promise<unknown> {
       return attachClient(context);
     case "detach":
       return { kind: "detached", removed: context.registry.detach(context.request.client) };
+    case "stop":
+      return stopRuntime(context);
   }
 }
 
 async function installConsumer(context: RuntimeContext): Promise<unknown> {
   const { deps, paths, registry, request, seams } = context;
   const manager = requireManager(deps);
+  const requirement = runtimeRequirement(context);
+  const pending = registry.pendingInstallation();
+  if (pending !== undefined) {
+    if (!runtimeSatisfies(pending.runtime, requirement)) throw activationIncomplete();
+    await activateRuntime(context, pending);
+  }
   const standing = await manager.status(manager.defaultName);
   const registeredProgram = await manager.program(manager.defaultName);
   const existing = registry.runtime();
-  const authorizedWork = await seams.authorizedWork(deps, paths);
-  if (
-    (existing === undefined || registeredProgram !== existing.binary) &&
-    standing.running &&
-    (authorizedWork || legacyConsoleHeld(context) || registry.clients(deps.clock.now()).length > 0)
-  ) {
+  const running = standing.running || liveNodePids(context).length > 0;
+  if (existing !== undefined) verifyManagedRuntime(existing);
+  if ((existing === undefined || registeredProgram !== existing.binary) && running) {
     throw new RuntimeConflictError(
       "active-work",
-      "The existing engine is serving a console or authorized work; close its consoles and finish that work before moving it to the shared runtime.",
-      "finish-work",
+      "A running engine does not match the managed service registration. Stop it explicitly before repairing the shared runtime; its work remains untouched.",
+      "stop-runtime",
     );
   }
-  registry.checkInstallation(
-    { version: deps.version, contract: seams.contract },
-    consumerId(request),
-    { now: deps.clock.now(), authorizedWork },
-  );
   registry.prune(deps.clock.now(), deps.isAlive);
+  const options = {
+    now: deps.clock.now(),
+    runtimeRunning: running,
+    authorizedWork:
+      legacyConsoleHeld(context) ||
+      (existing?.contract !== requirement.contract && (await seams.authorizedWork(deps, paths))),
+  };
+  registry.checkInstallation(requirement, consumerId(request), options);
   const artifact = await seams.stage({
     root: paths.runtime,
     launch: deps.launch,
@@ -166,41 +189,170 @@ async function installConsumer(context: RuntimeContext): Promise<unknown> {
     arch: process.arch,
     verify: deps.run,
   });
-  const selected = registry.install(
-    artifact,
-    {
-      id: consumerId(request),
-      product: request.product,
-      version: deps.version,
-      contract: seams.contract,
-      installedAt: deps.clock.now(),
-    },
-    { now: deps.clock.now(), authorizedWork },
-  );
+  const consumer: RuntimeConsumer = {
+    ...requirement,
+    id: consumerId(request),
+    product: request.product,
+    installedAt: deps.clock.now(),
+  };
+  const selection = registry.selectInstallation(artifact, consumer, options);
+  const selected = selection.runtime;
   verifyManagedRuntime(selected);
-  if (standing.installed && registeredProgram === selected.binary) {
-    if (!standing.running) requireManaged(await manager.start(manager.defaultName));
-    return { kind: "attached", runtime: selected, consumer: consumerId(request) };
+  if (running) {
+    if (!(await seams.ready(deps, paths, selected))) throw activationIncomplete();
+    registry.install(artifact, consumer, options);
+  } else {
+    await activateRuntime(context, { runtime: selected, consumer });
   }
-  if (standing.running) {
-    requireManaged(await manager.stop(manager.defaultName));
-    terminateRecorded(context);
+  return { kind: running ? "attached" : "installed", ...selection, consumer: consumerId(request) };
+}
+
+async function activateRuntime(
+  context: RuntimeContext,
+  installation: RuntimeInstallation,
+): Promise<void> {
+  const { deps, paths, registry, seams } = context;
+  const manager = requireManager(deps);
+  const selected = installation.runtime;
+  verifyManagedRuntime(selected);
+  if ((await manager.status(manager.defaultName)).running || liveNodePids(context).length > 0) {
+    if (
+      registry.pendingInstallation() !== undefined &&
+      (await seams.ready(deps, paths, selected))
+    ) {
+      registry.completeInstallation();
+      return;
+    }
+    throw runtimeStillRunning();
   }
-  requireManaged(
-    await manager.install(
-      {
-        name: manager.defaultName,
-        launch: { program: selected.binary, args: [] },
-        args: [...supervisorArgs, ...(deps.platform === "win32" ? ["--hidden"] : [])],
-        workingDirectory: paths.state,
-        account: deps.account,
-        path: deps.platform === "win32" ? undefined : deps.env.PATH,
-        logFile: serviceLogFile(deps.userRoot),
-      },
-      { start: true, linger: false },
-    ),
+  const ownership = await acquireRuntimeOwnership(paths.ownership);
+  if (ownership === undefined) throw runtimeStillRunning();
+  try {
+    if ((await manager.status(manager.defaultName)).running || liveNodePids(context).length > 0) {
+      throw runtimeStillRunning();
+    }
+    if (registry.pendingInstallation() === undefined) registry.prepareInstallation(installation);
+    const program = await manager.program(manager.defaultName);
+    if (program !== undefined || (await manager.status(manager.defaultName)).installed) {
+      requireManaged(await manager.uninstall(manager.defaultName));
+    }
+    if ((await manager.status(manager.defaultName)).running || liveNodePids(context).length > 0) {
+      throw runtimeStillRunning();
+    }
+    requireManaged(
+      await manager.install(registrationFor(context, selected), { start: false, linger: false }),
+    );
+    if ((await manager.program(manager.defaultName)) !== selected.binary)
+      throw activationIncomplete();
+    registry.completeInstallation();
+  } finally {
+    ownership.release();
+  }
+  requireManaged(await manager.start(manager.defaultName));
+  await awaitRuntimeReady(context, selected);
+}
+
+async function stopRuntime(context: RuntimeContext): Promise<unknown> {
+  const manager = requireManager(context.deps);
+  const pids = liveNodePids(context);
+  requireManaged(await manager.stop(manager.defaultName));
+  for (const pid of pids) {
+    if (context.deps.isAlive(pid)) context.deps.terminate(pid);
+  }
+  const ownership = await mutationOwnership(context.paths.ownership);
+  if (ownership === undefined) throw runtimeStillRunning();
+  try {
+    if (
+      (await manager.status(manager.defaultName)).running ||
+      pids.some((pid) => context.deps.isAlive(pid)) ||
+      liveNodePids(context).length > 0
+    ) {
+      throw runtimeStillRunning();
+    }
+    return { kind: "stopped", runtime: context.registry.runtime() ?? null };
+  } finally {
+    ownership.release();
+  }
+}
+
+function registrationFor(context: RuntimeContext, runtime: ManagedRuntime): Registration {
+  const { deps, paths } = context;
+  return {
+    name: requireManager(deps).defaultName,
+    launch: { program: runtime.binary, args: [] },
+    args: [...supervisorArgs, ...(deps.platform === "win32" ? ["--hidden"] : [])],
+    workingDirectory: paths.state,
+    account: deps.account,
+    path: deps.platform === "win32" ? undefined : deps.env.PATH,
+    logFile: serviceLogFile(deps.userRoot),
+  };
+}
+
+function runtimeRequirement(context: RuntimeContext): RuntimeRequirement {
+  const { request, deps, seams } = context;
+  if (request.contract !== undefined && request.contract !== seams.contract) {
+    throw new RuntimeConflictError(
+      "incompatible-runtime",
+      `This bootstrap speaks contract ${seams.contract}, not requested contract ${request.contract}. Update the app's bundled bootstrap.`,
+      "update-products",
+    );
+  }
+  return {
+    version: deps.version,
+    contract: seams.contract,
+    ...(request.contract === undefined ? {} : { compatibility: "contract" as const }),
+  };
+}
+
+async function awaitRuntimeReady(context: RuntimeContext, runtime: ManagedRuntime): Promise<void> {
+  const until = Date.now() + 10_000;
+  do {
+    if (await context.seams.ready(context.deps, context.paths, runtime)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < until);
+  throw activationIncomplete();
+}
+
+async function runtimeReady(
+  deps: NodeCommandDeps,
+  paths: NodePaths,
+  runtime: ManagedRuntime,
+): Promise<boolean> {
+  const manager = requireManager(deps);
+  const node = nodeFileStore(paths.nodeFile).read();
+  return (
+    (await manager.status(manager.defaultName)).running &&
+    (await manager.program(manager.defaultName)) === runtime.binary &&
+    node?.state === "running" &&
+    node.version === runtime.version &&
+    node.contract === runtime.contract &&
+    node.pid !== null &&
+    deps.isAlive(node.pid)
   );
-  return { kind: "installed", runtime: selected, consumer: consumerId(request) };
+}
+
+function liveNodePids(context: RuntimeContext): number[] {
+  const node = nodeFileStore(context.paths.nodeFile).read();
+  if (node === undefined) return [];
+  return [node.pid, node.core.pid, ...node.workspaces.map((unit) => unit.pid)].filter(
+    (pid): pid is number => pid !== null && pid !== context.deps.pid && context.deps.isAlive(pid),
+  );
+}
+
+function activationIncomplete(): RuntimeConflictError {
+  return new RuntimeConflictError(
+    "runtime-unavailable",
+    "The selected engine has not completed activation. Retry consumer installation to repair it forward; do not start an older binary against its state.",
+    "start-runtime",
+  );
+}
+
+function runtimeStillRunning(): RuntimeConflictError {
+  return new RuntimeConflictError(
+    "runtime-running",
+    "The supervisor or a recorded child is still running. Finish work, close clients and run keywork node stop before retrying activation.",
+    "stop-runtime",
+  );
 }
 
 async function removeConsumer(context: RuntimeContext): Promise<unknown> {
@@ -228,10 +380,12 @@ async function removeConsumer(context: RuntimeContext): Promise<unknown> {
   return { kind: "removed", consumer: id };
 }
 
-function attachClient(context: RuntimeContext): unknown {
+async function attachClient(context: RuntimeContext): Promise<unknown> {
   const { deps, request, paths, registry, seams } = context;
-  const runtime = registry.admit({ version: deps.version, contract: seams.contract });
+  const requirement = runtimeRequirement(context);
+  const runtime = registry.admit(requirement);
   verifyManagedRuntime(runtime);
+  if (!(await seams.ready(deps, paths, runtime))) throw activationIncomplete();
   const folder = resolve(
     deps.cwd,
     request.folder ?? (request.home ? managedHomeFolder(deps.userRoot) : "."),
@@ -260,8 +414,7 @@ function attachClient(context: RuntimeContext): unknown {
       product: request.product,
       workspace: identity,
       pid: request.console,
-      version: deps.version,
-      contract: seams.contract,
+      ...requirement,
       expiresAt: deps.clock.now() + runtimeLeaseMs,
     },
     deps.clock.now(),
@@ -350,14 +503,17 @@ function parseRequest(args: readonly string[]): RuntimeRequest {
       workspace: { type: "string" },
       json: { type: "boolean", default: false },
       home: { type: "boolean", default: false },
+      contract: { type: "string" },
     },
   });
-  const [group, action, folder, ...extra] = parsed.positionals;
+  const [group, operation, folder, ...extra] = parsed.positionals;
+  const action = group === "stop" ? "stop" : operation;
   if (
     extra.length > 0 ||
     !(
       (group === "consumer" && (action === "install" || action === "remove")) ||
-      (group === "client" && (action === "attach" || action === "detach"))
+      (group === "client" && (action === "attach" || action === "detach")) ||
+      (group === "stop" && operation === undefined)
     ) ||
     (folder !== undefined && action !== "attach")
   ) {
@@ -378,8 +534,17 @@ function parseRequest(args: readonly string[]): RuntimeRequest {
       "--home applies only to attaching the private home without a project workspace.",
     );
   }
+  if (
+    parsed.values.contract !== undefined &&
+    ((action !== "install" && action !== "attach") ||
+      !/^[1-9]\d*\.\d+$/.test(parsed.values.contract))
+  ) {
+    throw new Error(
+      "--contract names an exact wire contract for consumer install or client attach.",
+    );
+  }
   return {
-    action,
+    action: action as RuntimeRequest["action"],
     product: product as RuntimeProduct,
     installation,
     client,
@@ -388,6 +553,7 @@ function parseRequest(args: readonly string[]): RuntimeRequest {
     folder,
     json: parsed.values.json,
     home: parsed.values.home,
+    contract: parsed.values.contract,
   };
 }
 

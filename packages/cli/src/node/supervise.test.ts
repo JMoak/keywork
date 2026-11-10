@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { acquireRuntimeOwnership } from "@keywork/engine";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeClock } from "../../../engine/src/routines/testing.ts";
 import { defaultNodeConfig } from "./config.ts";
@@ -77,6 +78,23 @@ function jsonLines(file: string): Record<string, unknown>[] {
 }
 
 describe("the node supervisor", () => {
+  it("rechecks managed admission under exclusive ownership before opening state or spawning", async () => {
+    let checked = false;
+    const rig = supervising({
+      admit: async () => {
+        checked = true;
+        expect(await acquireRuntimeOwnership(paths.ownership)).toBeUndefined();
+        return false;
+      },
+    });
+    expect(await rig.exit).toBe(3);
+    expect(checked).toBe(true);
+    expect(rig.processes.spawned).toEqual([]);
+    expect(nodeFileStore(paths.nodeFile).read()).toBeUndefined();
+    const released = await acquireRuntimeOwnership(paths.ownership);
+    expect(released).toBeDefined();
+    released?.release();
+  });
   it("publishes node.json for the console while it runs and marks it stopped when asked to stop", async () => {
     const rig = supervising();
     await settle();

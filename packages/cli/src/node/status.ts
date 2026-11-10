@@ -17,6 +17,7 @@ import { type ClaimDesk, groupedClaimCode, type HeldClaimCode } from "./reconcil
 export type NodeLiveness = "running" | "stopped" | "stale" | "absent";
 
 export interface NodeStatusReport {
+  runtimeCompatibility?: 1;
   registration:
     | (ManagerStatus & { manager: ManagerKind; name: string; program: string | null })
     | null;
@@ -45,6 +46,7 @@ export async function nodeStatus(options: NodeStatusOptions): Promise<NodeStatus
   const addresses = node === null ? [] : boundAddresses(paths.nodeLog, coreStart(node));
   const check = unitChecker({ isAlive: options.isAlive, answers: options.answers });
   return {
+    runtimeCompatibility: 1,
     registration:
       manager === undefined
         ? null

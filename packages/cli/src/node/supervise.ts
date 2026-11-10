@@ -51,9 +51,10 @@ export interface SuperviseOptions {
   policy?: Partial<SupervisionPolicy> | undefined;
   served?: ServedSource | undefined;
   parking?: Partial<ParkingPolicy> | undefined;
+  admit?: () => Promise<boolean>;
 }
 
-export const superviseExit = { ran: 0, alreadyRunning: 1 } as const;
+export const superviseExit = { ran: 0, alreadyRunning: 1, admissionRefused: 3 } as const;
 
 export async function superviseNode(options: SuperviseOptions): Promise<number> {
   const ownership = await acquireRuntimeOwnership(options.paths.ownership);
@@ -67,6 +68,8 @@ export async function superviseNode(options: SuperviseOptions): Promise<number> 
     return superviseExit.alreadyRunning;
   }
   try {
+    if (options.admit !== undefined && !(await options.admit()))
+      return superviseExit.admissionRefused;
     return await runOwnedNode(options);
   } finally {
     ownership.release();
