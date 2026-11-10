@@ -39,6 +39,8 @@ import { toError } from "@keywork/shared";
 import { type HouseMeshConsole, houseMeshConsole, nodeWorkshops } from "./node/compose.ts";
 import { readNodeConfig } from "./node/config.ts";
 import { nodePaths, workspaceStateDir } from "./node/paths.ts";
+import { conversationModel } from "./serve-conversation-model.ts";
+import { configuredLoopbackModels } from "./serve-models.ts";
 
 export interface ServedNodeOptions {
   cwd: string;
@@ -108,18 +110,32 @@ export async function servedNode(options: ServedNodeOptions): Promise<ServedNode
     state,
     routines: routinesStateOf(workspaceState),
     workshops: nodeWorkshops(state, (change) => log.record("", "workshop.changed", change)),
-    models: stewardedInventory(inventory, {
-      licenses,
-      benches: benchBook({
-        dir: modelBenchDir(state),
-        openers: benchOpenersOver(capabilities, options),
+    models: configuredLoopbackModels(
+      stewardedInventory(inventory, {
+        licenses,
+        benches: benchBook({
+          dir: modelBenchDir(state),
+          openers: benchOpenersOver(capabilities, options),
+        }),
+        slate,
+        registrations: options.inventory?.registrations,
+        answers: options.inventory?.answers,
+        inherit: options.inventory?.inherit,
+        policy,
       }),
-      slate,
-      registrations: options.inventory?.registrations,
-      answers: options.inventory?.answers,
-      inherit: options.inventory?.inherit,
-      policy,
-    }),
+      {
+        registrations: options.inventory?.registrations,
+        capabilities,
+        conversation:
+          options.inventory === undefined
+            ? undefined
+            : () =>
+                conversationModel(options.inventory?.inherit?.(), {
+                  registrations: options.inventory?.registrations() ?? [],
+                  ...policy,
+                }),
+      },
+    ),
     policy,
     usage: await usageLedgerAt(join(workspaceState, "usage"), machine, options),
     mesh: await meshConsoleFor(state, options),

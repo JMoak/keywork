@@ -54,7 +54,7 @@ async function* streamWithFallback(
       }
       return;
     } catch (error) {
-      if (request.signal?.aborted) throw error;
+      if (request.signal?.aborted || request.retry === "never") throw error;
       const failure = callFailureOf(error);
       const step = nextCandidate({ plan: options.plan, current: index, failure, streamed });
       if (step.kind === "stop") throw error;

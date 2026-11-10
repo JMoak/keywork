@@ -103,9 +103,46 @@ describe("connectionsPort targets", () => {
     port.saved();
     expect(calls).toHaveLength(0);
   });
+
+  it("finds only conventional loopback endpoints with reported models when asked", async () => {
+    const checked: string[] = [];
+    const { port, dir } = await harness({
+      fetchFn: async (url) => {
+        checked.push(url);
+        const data = url === "http://localhost:11434/v1/models" ? [{ id: "qwen" }] : [];
+        return Response.json({ data });
+      },
+    });
+
+    const found = await port.findLocal?.();
+
+    expect(checked).toHaveLength(4);
+    expect(found).toEqual([
+      { target: expect.objectContaining({ id: "ollama" }), models: ["qwen"] },
+    ]);
+    expect(await readObservations(dir)).toEqual({});
+    expect(await readUserConfig(dir)).toEqual({});
+  });
 });
 
 describe("connectionsPort verify and save", () => {
+  it("refuses an insecure endpoint before a credential can be sent", async () => {
+    const { port, calls } = await harness();
+    const result = await port.verify(
+      draft({
+        endpoint: "http://host.example/v1",
+        credential: "api-key",
+        apiKey: "fake-key",
+      }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "plain http off loopback is refused until you allow it",
+    });
+    expect(calls).toEqual([]);
+  });
+
   it("verifies with one GET, then persists the connection, observations, and no credential for loopback", async () => {
     const { port, calls, dir } = await harness({ models: ["qwen3", "llama3"] });
     const verification = await port.verify(draft());

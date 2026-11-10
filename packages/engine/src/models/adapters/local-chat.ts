@@ -1,5 +1,10 @@
 import type { Message, ToolCallPart } from "../../messages.ts";
-import type { Provider, ProviderRequest, TurnDelta } from "../../provider.ts";
+import {
+  assertRequestControls,
+  type Provider,
+  type ProviderRequest,
+  type TurnDelta,
+} from "../../provider.ts";
 import { toChatRequest } from "../../providers/chat-wire.ts";
 import { ProviderStreamError } from "../../providers/errors.ts";
 import { sseJsonEvents } from "../../providers/sse.ts";
@@ -68,6 +73,7 @@ class LocalChatProvider implements Provider {
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
+    assertRequestControls(this, request);
     const started = this.now();
     const plan = chatPlan(request, this.options, this.deltas);
     const stream = await withStagedRetry(

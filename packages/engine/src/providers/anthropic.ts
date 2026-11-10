@@ -1,5 +1,11 @@
 import type { ProviderStateOwner, Usage } from "../messages.ts";
-import type { CacheMiss, Provider, ProviderRequest, TurnDelta } from "../provider.ts";
+import {
+  assertRequestControls,
+  type CacheMiss,
+  type Provider,
+  type ProviderRequest,
+  type TurnDelta,
+} from "../provider.ts";
 import { claudeBetasFor, maxOutputTokensFor } from "./claude-models.ts";
 import { ProviderStreamError } from "./errors.ts";
 import { showsProgressUpdates, toMessagesRequest } from "./messages-wire.ts";
@@ -71,6 +77,7 @@ export class AnthropicProvider implements Provider {
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
+    assertRequestControls(this, request);
     const body = await postForStream(this.name, this.fetchFn, {
       url: `${this.baseUrl}/messages`,
       headers: {

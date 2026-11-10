@@ -1,5 +1,5 @@
 import type { ModelCapabilities } from "../capabilities.ts";
-import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
+import type { Provider, ProviderRequest, ProviderRequestSupport, TurnDelta } from "../provider.ts";
 import { ProviderHttpError } from "./errors.ts";
 
 export type Sleep = (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -36,6 +36,7 @@ export class RetryingProvider implements Provider {
   readonly name: string;
   readonly modelId: string | undefined;
   readonly capabilities: ModelCapabilities | undefined;
+  readonly requestSupport: ProviderRequestSupport | undefined;
   private readonly attempts: number;
   private readonly baseDelayMs: number;
   private readonly maxDelayMs: number;
@@ -50,6 +51,7 @@ export class RetryingProvider implements Provider {
     this.name = inner.name;
     this.modelId = inner.modelId;
     this.capabilities = inner.capabilities;
+    this.requestSupport = inner.requestSupport;
     this.attempts = options.attempts ?? 3;
     this.baseDelayMs = options.baseDelayMs ?? 500;
     this.maxDelayMs = options.maxDelayMs ?? 30_000;
@@ -69,6 +71,7 @@ export class RetryingProvider implements Provider {
         return;
       } catch (cause) {
         const retryable =
+          request.retry !== "never" &&
           !yieldedAny &&
           attempt < this.attempts &&
           request.signal?.aborted !== true &&

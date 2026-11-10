@@ -36,6 +36,7 @@ export type ModelBenchOutcome = { report: object } | { refused: ModelBenchRefusa
 
 export interface ModelsPort {
   list(filter: ModelsFilter): Promise<object>;
+  refresh?(): Promise<object>;
   probe(request: ModelsProbeRequest): Promise<object>;
   acknowledge?(request: ModelLicenseRequest): Promise<object>;
   bench?(target: ModelTarget): Promise<ModelBenchOutcome>;
@@ -88,7 +89,7 @@ export const modelRoutes = [
     authenticated: true,
     responses: {
       "200":
-        "`{ generatedAt, nodes: [{ node, servers: [{ kind, root, port, source, auth, fingerprint, version, health, models }] }], market?, inherits?: { strong, loop, decide, vision } }`.",
+        "`{ generatedAt, nodes: [{ node, servers: [{ kind, root, port, source, auth, fingerprint, version, health, models }] }], market?, inherits?: { strong, loop, decide, vision }, conversation? }`. Since 1.31, a host-wide report may include `conversation`: `{ provider, model, mode: chat | tools }` or `{ refused, detail }`. Chat mode supports basic creature conversation without tool execution; strong/loop requirements for project work are unchanged. A node-filtered report omits conversation. Neither selection mode proves a successful model response.",
       "503": "This host serves no model inventory.",
     },
   },
@@ -105,6 +106,20 @@ export const modelRoutes = [
         "`{ root, status: recognized | unrecognized | unreachable, fingerprint, health, records, listedOnly, detail }`.",
       "400": "The body is not `{ endpoint: http(s) URL, model?, behaviour?, refresh? }`.",
       "503": "This host serves no model inventory.",
+    },
+  },
+  {
+    method: "POST",
+    path: "/models/refresh",
+    operationId: "refreshModels",
+    summary:
+      "Reload saved model connections and configuration, then return the current model inventory in the GET /models shape. Existing turns keep their bound provider. This accepts no credentials or configuration, grants no workspace trust, and does not test a model response. Available since contract 1.31.",
+    authenticated: true,
+    responses: {
+      "200":
+        "The refreshed GET /models inventory, including current inherited and conversation models. A chat-mode conversation may offer `projectCheck: { endpoint, model }` for an explicit short tool-call probe of that selected loopback model; metadata refresh itself never performs this probe.",
+      "400": "This operation accepts no request body.",
+      "503": "This host cannot refresh model connections.",
     },
   },
 ] as const satisfies readonly RouteSpec[];
@@ -170,6 +185,11 @@ export function modelFamilyFor(portOf: ModelsPortOf): RouteFamily<typeof modelFa
         listModels: models(async (port, request) =>
           json(200, await port.list(modelsFilterOf(request))),
         ),
+        refreshModels: models(async (port, request) => {
+          if (port.refresh === undefined) return unserved("refreshing model connections");
+          if (request.body !== null) return json(400, { error: "expected no request body" });
+          return json(200, await port.refresh());
+        }),
         probeModels: models(async (port, request) => {
           const probe = probeRequestOf(await bodyOf(request));
           if (probe === undefined) {

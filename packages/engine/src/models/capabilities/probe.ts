@@ -66,7 +66,12 @@ async function describeServer(
   options: CapabilityProbeOptions,
 ): Promise<ServerProbeResult> {
   const inventory = await adapter.inventory(probe);
-  const models = options.models ?? inventory.installed.map((model) => model.id);
+  const models = options.models ?? [
+    ...new Set([
+      ...inventory.installed.map((model) => model.id),
+      ...inventory.loaded.map((model) => model.id),
+    ]),
+  ];
   const records: CapabilityRecord[] = [];
   for (const model of models) {
     records.push(await recordFor(probe, adapter, fingerprint, model, options));

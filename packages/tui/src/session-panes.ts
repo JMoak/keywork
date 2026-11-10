@@ -4,6 +4,7 @@ import {
   type Agent,
   type Message,
   modelReferenceOf,
+  ResolutionError,
   type ToolCallPart,
   type ToolGuard,
   textMessage,
@@ -504,6 +505,20 @@ function buildAgent(
   try {
     return { agent: factory(guard, history, seams, bot) };
   } catch (cause) {
+    if (cause instanceof ResolutionError && cause.failure.code === "unconfigured") {
+      const next =
+        cause.failure.available.length === 0
+          ? "/connect adds a provider · guided setup before launch: keywork connect --first-model"
+          : "/model picks a model";
+      return { failure: `${cause.message} · ${next}` };
+    }
+    if (
+      cause instanceof ResolutionError &&
+      cause.failure.code === "ambiguous" &&
+      cause.failure.reference === ""
+    ) {
+      return { failure: `${cause.message} · /model picks one for this session` };
+    }
     return { failure: toError(cause).message };
   }
 }

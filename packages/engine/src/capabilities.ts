@@ -1,5 +1,5 @@
 import { mostSpecificMatch } from "@keywork/shared";
-import type { Provider, ProviderRequest } from "./provider.ts";
+import { assertRequestControls, type Provider, type ProviderRequest } from "./provider.ts";
 
 export type InputModality = "text" | "image";
 
@@ -49,7 +49,9 @@ export function withDeclaredCapabilities(
     name: provider.name,
     modelId: provider.modelId,
     capabilities,
+    requestSupport: provider.requestSupport,
     stream: (request) => {
+      assertRequestControls(provider, request);
       assertRequestWithinDeclarations(request, capabilities, provider.modelId ?? provider.name);
       return provider.stream(request);
     },

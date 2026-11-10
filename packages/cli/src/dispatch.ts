@@ -12,6 +12,8 @@ Usage:
   keywork sessions remove <id> [--yes]                      move a session to the trash
   keywork sessions restore <id> | trash | purge [--yes]     bring one back, list, empty the trash
   keywork connect [target|url]                              add or verify an inference provider
+                  [--group local|flagship|openrouter]
+                  [--first-model]                          guided connection and model selection
                                                             (setup is an alias)
   keywork init                                              set up the workspace at its anchor
   keywork workspace [list|new|use|rm] [slug]                named workspaces over this root
@@ -30,6 +32,10 @@ Usage:
   keywork doctor                                            show what your terminal supports
   keywork models bench <provider/model> [--repeats <n>]
                 [--decide] [--json]                         measure a model for a task class
+  keywork campaign list | create --file <json> | show <id>   use the running workspace controller
+  keywork campaign watch <id> [--after <sequence>] [--json]  monitor activity, costs, achievements
+  keywork campaign command <id> --file <json>                steer with an explicit revision
+  keywork campaign export <id> <artifactId> <destination>    export an immutable artifact
   keywork creatures report [--json] | promote|demote <rule class>
                 | review [<id> approve|deny] | overturn <id>    the keeper's shadowed and decided calls
   keywork node install|uninstall|status|run|reset|firewall  the always-on node for this machine
@@ -83,6 +89,7 @@ export const commandNames = [
   "permissions",
   "doctor",
   "models",
+  "campaign",
   "creatures",
   "node",
   "serve",
@@ -116,6 +123,10 @@ export const withoutTerminal: Readonly<Record<CommandName, WithoutTerminal>> = {
   permissions: { behavior: "runs" },
   doctor: { behavior: "runs" },
   models: { behavior: "runs", note: "bench prints its report; --json prints it as JSON" },
+  campaign: {
+    behavior: "runs",
+    note: "uses the running workspace controller; create never starts execution",
+  },
   creatures: {
     behavior: "runs",
     note: "promote needs an accepted calibration; overturn demotes the class",

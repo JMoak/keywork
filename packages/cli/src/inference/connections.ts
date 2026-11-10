@@ -1,4 +1,9 @@
-import { anthropicHeaders, type FetchLike, isLoopbackEndpoint } from "@keywork/engine";
+import {
+  anthropicHeaders,
+  connectionDraftProblem,
+  type FetchLike,
+  isLoopbackEndpoint,
+} from "@keywork/engine";
 import {
   type ConnectionConfig,
   type ConnectionProtocol,
@@ -44,10 +49,14 @@ export interface ConnectionsDeps {
 export function connectionsPort(deps: ConnectionsDeps): ConnectionsPort {
   return {
     targets: () => [...builtInTargets(), ...localTargets(), customTarget],
+    findLocal: () => findLocal(deps),
     saved: () => savedRows(deps),
     draftFor: (target) =>
       "kind" in target ? draftFromTarget(target) : draftFromSaved(target, deps),
     verify: async (draft) => {
+      const problem = connectionDraftProblem(draft);
+      if (problem !== undefined)
+        return { ok: false, at: (deps.now?.() ?? new Date()).toISOString(), reason: problem };
       const report = await verifyEndpoint({
         endpoint: draft.endpoint,
         headers: authHeadersFor(draft, deps),
@@ -77,6 +86,23 @@ export function connectionsPort(deps: ConnectionsDeps): ConnectionsPort {
       return receipt;
     },
   };
+}
+
+const localDiscoveryTimeoutMs = 1_500;
+
+async function findLocal(deps: ConnectionsDeps) {
+  const observations = await Promise.all(
+    localTargets().map(async (target) => {
+      const report = await verifyEndpoint({
+        endpoint: target.endpoint,
+        headers: {},
+        fetchFn: deps.fetchFn,
+        timeoutMs: localDiscoveryTimeoutMs,
+      });
+      return report.ok && report.models.length > 0 ? [{ target, models: report.models }] : [];
+    }),
+  );
+  return observations.flat();
 }
 
 const customTarget: ConnectionTarget = {

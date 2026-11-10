@@ -25,6 +25,7 @@ import {
   formatReference,
   type GrantRule,
   hostWorkshop,
+  type InferenceBinding,
   isEffortLevel,
   isPromptEntry,
   type JournalTap,
@@ -144,8 +145,10 @@ import type { CreatureSeat } from "./compose.ts";
 import type { MemoryDeciderSetup } from "./memory-decider.ts";
 import type { HouseMeshConsole } from "./node/compose.ts";
 import { defaultSessionDir, keyworkHome, workspaceIdentity } from "./paths.ts";
+import { servedCampaigns } from "./serve-campaigns.ts";
 import { cataloguedInventory, catalogueFileOf, openRouterCatalogue } from "./serve-catalogue.ts";
 import { sessionChanges } from "./serve-changes.ts";
+import { requireProjectModel } from "./serve-conversation-model.ts";
 import { servedCreatureProjects } from "./serve-creature-projects.ts";
 import {
   type CreaturePlace,
@@ -160,6 +163,12 @@ import {
 import { type LifecycleSessions, servedLifecycle, trashSession } from "./serve-lifecycle.ts";
 import { servedCreatureMcp } from "./serve-mcp.ts";
 import { servedMemory, stagedInbox } from "./serve-memory.ts";
+import {
+  creatureInitialProvider,
+  refreshableModels,
+  selectedCreatureProvider,
+  unavailableSelectedProvider,
+} from "./serve-models.ts";
 import { type MeteredTurn, type NodeInventorySeams, servedNode } from "./serve-node.ts";
 import { type NeighbourSession, restorePreviewOf } from "./serve-restore.ts";
 import {
@@ -225,6 +234,8 @@ export interface HostOptions {
   projectTrusted: boolean;
   managedHome?: boolean | undefined;
   provider: Provider;
+  currentProvider?: (() => Provider) | undefined;
+  refreshInference?: (() => Promise<void>) | undefined;
   permissions: PermissionResolver;
   inference?: SessionInference | undefined;
   inventory?: NodeInventorySeams | undefined;
@@ -422,17 +433,19 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     now: Date.now,
     notice,
   });
+  const inventory =
+    options.inventory === undefined ? undefined : cataloguedInventory(options.inventory, catalogue);
   const node = await servedNode({
     ...place,
     log,
     notice,
     modelProbe: options.modelProbe,
     inventory:
-      options.inventory === undefined
+      inventory === undefined
         ? undefined
         : {
-            ...cataloguedInventory(options.inventory, catalogue),
-            inherit: () => inheritedReferenceOf(options.provider),
+            ...inventory,
+            inherit: () => inheritedReferenceOf(options.currentProvider?.() ?? options.provider),
             answers,
           },
   });
@@ -458,8 +471,21 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     staged: () => stagedOf?.() ?? [],
     notice,
   });
+  const modelOptions = {
+    registry,
+    inference: options.inference,
+    policy: node.policy,
+    registrations: inventory?.registrations,
+    inherit:
+      options.inference === undefined
+        ? undefined
+        : () => inheritedReferenceOf(options.currentProvider?.() ?? options.provider),
+    projectWork: (store: SessionStore) => projectThreadTag(store.entries()) !== undefined,
+  };
   const sessions = new LiveSessions(options, gate, {
     seatFor: async (store) => projectThreadSeat(store) ?? localSeat(store),
+    initialProvider: creatureInitialProvider(modelOptions),
+    providerFor: selectedCreatureProvider(modelOptions),
     settings: shown.settings,
     meter: (turn) => {
       node.usage.record(turn);
@@ -474,6 +500,27 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
   });
   const unhosted = shown.hostedBy((id) => sessions.liveThreadOf(id));
   const { composition, arcs, bots } = await sessions.composed();
+  const campaigns = await servedCampaigns({
+    root: join(
+      keyworkHome(place.userRoot),
+      "campaigns",
+      workspaceIdentity(options.cwd, options.workspaceSlug),
+    ),
+    workspace: options.cwd,
+    ownerScope: workspaceIdentity(options.cwd, options.workspaceSlug),
+    sessionRoot: sessionDir,
+    trusted: () => options.projectTrusted,
+    provider: options.provider,
+    inference: options.inference,
+    skills: composition.extensions.skills,
+    permissions: options.permissions,
+    guardFor: (sessionId, signal) => {
+      signal?.addEventListener("abort", () => gate.asks.closeFor(sessionId), { once: true });
+      return gate.asks.guardFor(sessionId, { decide: false });
+    },
+    closeAsks: (sessionId) => gate.asks.closeFor(sessionId),
+    notice,
+  });
   stagedOf = stagedInbox(composition.memory);
   const creatures = servedCreatures({
     registry,
@@ -554,7 +601,8 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     creatures,
     ...servedCreatureMcp({ creatures, sessions, mesh: node.mesh }),
     ...(routines !== undefined && { routines: routines.service }),
-    models: node.models,
+    models: refreshableModels(node.models, options.refreshInference),
+    campaigns,
     workshops,
     ...(node.mesh !== undefined && { mesh: { ...node.mesh, messages: mail } }),
     show: shown.settings,
@@ -562,7 +610,9 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
       unhosted();
       if (ownsSettings) shown.close();
       routines?.stop();
+      const closingCampaigns = campaigns.close();
       await verbs.close();
+      await closingCampaigns;
       await routines?.close();
       await node.usage.flush();
     },
@@ -685,6 +735,7 @@ interface SessionRuntime {
   ledger: PermissionLedger;
   inference: SessionInference | undefined;
   fallback: Provider;
+  initialProvider(): Promise<Provider>;
   flushes: SessionFlushes;
   turn: TurnCheckpoint;
   notice(text: string): void;
@@ -705,6 +756,8 @@ type CreatureSeams = Pick<
 
 interface SessionSeams {
   seatFor?(store: SessionStore): Promise<CreatureSeat | undefined>;
+  initialProvider?(store: SessionStore): Promise<Provider | undefined>;
+  providerFor?(store: SessionStore, binding: InferenceBinding): Provider;
   meter?(turn: MeteredTurn): void;
   failed?(provider: string, error: Error): void;
   settled?(thread: SettledThread): void;
@@ -1016,6 +1069,7 @@ class LiveSessions {
     const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints, turn);
     const permissions = this.confinedResolver(store);
     const creature = await this.creatureSeams(store);
+    const inference = options.inference;
     const runtime: SessionRuntime = {
       log: options.log,
       cwd: composition.scope.cwd,
@@ -1023,8 +1077,19 @@ class LiveSessions {
       checkpoints: composition.checkpoints,
       changes: this.changes,
       ledger: this.gate.ledger,
-      inference: options.inference,
+      inference:
+        inference === undefined
+          ? undefined
+          : {
+              bind: (reference) => inference.bind(reference),
+              provider: (binding) =>
+                this.seams.providerFor?.(store, binding) ?? inference.provider(binding),
+            },
       fallback: options.provider,
+      initialProvider: async () =>
+        (await this.seams.initialProvider?.(store)) ??
+        options.currentProvider?.() ??
+        options.provider,
       flushes: agents,
       turn,
       notice: (text) => options.notice?.(`keywork serve: ${text}`),
@@ -1179,6 +1244,7 @@ class LiveSession {
   private readonly spend: SpendLedger;
   private readonly submissions = new Map<string, PromptSubmission>();
   private readonly finishedUsage: Usage[] = [];
+  private preparing: Promise<void> | undefined;
 
   constructor(
     private readonly store: SessionStore,
@@ -1197,10 +1263,11 @@ class LiveSession {
     return this.bound.agent;
   }
 
-  run(
+  async run(
     text: string,
     options: { behavior?: SendBehavior | undefined; origin?: PromptOrigin | undefined },
-  ): "started" | "queued" {
+  ): Promise<"started" | "queued"> {
+    await this.prepareProvider();
     const outcome = this.agent.busy() ? "queued" : "started";
     this.staged = undefined;
     const turn = this.agent.send(text, sendOptionsOf(options)).then(
@@ -1212,7 +1279,7 @@ class LiveSession {
     return outcome;
   }
 
-  submitOnce(text: string, id: string): Promise<void> {
+  async submitOnce(text: string, id: string): Promise<void> {
     const prior = this.store
       .entries()
       .find((entry): entry is MessageEntry => isPromptEntry(entry) && entry.submissionId === id);
@@ -1221,6 +1288,8 @@ class LiveSession {
         ? Promise.resolve()
         : Promise.reject(new CreatureProjectError("request-conflict"));
     }
+    await this.prepareProvider();
+    requireProjectModel(this.agent.provider);
     const client = `creature-${randomUUID()}`;
     return new Promise((resolve, reject) => {
       this.submissions.set(client, { id, accept: resolve });
@@ -1249,6 +1318,7 @@ class LiveSession {
   }
 
   async frame(text: string, origin: CreatureOrigin): Promise<"started" | "queued"> {
+    await this.prepareProvider();
     await this.report(text, origin, "frame");
     if (this.store.name() === undefined) await this.store.setName(origin.creature);
     const outcome = this.agent.busy() ? "queued" : "started";
@@ -1307,15 +1377,17 @@ class LiveSession {
   }
 
   async switchModel(reference: string): Promise<ModelSwitch | "busy"> {
+    await this.preparing;
     const { inference } = this.runtime;
     if (inference === undefined) {
       return { failure: { code: "unconfigured", message: noRegistry, available: [] } };
     }
     const bound = inference.bind(reference);
     if (!bound.ok) return { failure: bound.failure };
+    const provider = inference.provider(bound.binding);
     if (!(await this.idle())) return "busy";
     const model = bound.binding.reference;
-    await this.swap(this.runtime.forge(inference.provider(bound.binding), this.agent.history()));
+    await this.swap(this.runtime.forge(provider, this.agent.history()));
     if (!sameSelection(this.store.modelSelection(), model)) {
       await this.store.appendModelChange(model.provider, model.model);
     }
@@ -1705,22 +1777,65 @@ class LiveSession {
       return this.agent.provider;
     }
     const model = bound.binding.reference;
+    const provider = inference.provider(bound.binding);
     if (!sameSelection(this.store.modelSelection(), model)) {
       await this.store.appendModelChange(model.provider, model.model);
     }
-    return inference.provider(bound.binding);
+    return provider;
   }
 
   private storedProvider(): Provider {
     const selection = this.store.modelSelection();
     const { inference, fallback } = this.runtime;
-    if (selection === undefined || inference === undefined) return fallback;
+    if (selection === undefined) return fallback;
+    if (inference === undefined) {
+      return creatureTagOf(this.store.entries()) === undefined
+        ? fallback
+        : unavailableSelectedProvider(
+            { provider: selection.provider, model: selection.modelId },
+            noRegistry,
+          );
+    }
     const bound = inference.bind(referenceOf(selection));
-    if (bound.ok) return inference.provider(bound.binding);
+    if (bound.ok) {
+      try {
+        return inference.provider(bound.binding);
+      } catch (cause) {
+        if (
+          creatureTagOf(this.store.entries()) === undefined &&
+          projectThreadTag(this.store.entries()) === undefined
+        )
+          throw cause;
+        return unavailableSelectedProvider(bound.binding.reference, toError(cause).message);
+      }
+    }
+    if (creatureTagOf(this.store.entries()) !== undefined) {
+      return unavailableSelectedProvider(
+        { provider: selection.provider, model: selection.modelId },
+        bound.failure.message,
+      );
+    }
     this.runtime.notice(
       `session ${this.id.slice(0, 8)} asked for ${referenceOf(selection)} · ${bound.failure.message} · using the server's model`,
     );
     return fallback;
+  }
+
+  private async prepareProvider(): Promise<void> {
+    if (this.agent.busy() || this.store.modelSelection() !== undefined) return;
+    this.preparing ??= this.prepareInitialProvider().finally(() => {
+      this.preparing = undefined;
+    });
+    await this.preparing;
+  }
+
+  private async prepareInitialProvider(): Promise<void> {
+    const provider = await this.runtime.initialProvider();
+    if (this.agent.busy() || this.store.modelSelection() !== undefined) return;
+    await this.swap(this.runtime.forge(provider, this.agent.history()));
+    if (provider.modelId !== undefined) {
+      await this.store.appendModelChange(provider.name, provider.modelId);
+    }
   }
 
   private adoptStoredSettings(): void {

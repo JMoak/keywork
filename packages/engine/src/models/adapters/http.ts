@@ -1,3 +1,4 @@
+import { isLoopbackEndpoint } from "../../inference/references.ts";
 import type { FetchLike } from "../../providers/transport.ts";
 
 export interface HttpReply {
@@ -37,7 +38,11 @@ export function probeHttp(options: ProbeHttpOptions = {}): ProbeHttp {
   const timeoutMs = options.timeoutMs ?? defaultProbeTimeoutMs;
   const headers = options.headers ?? {};
   const send = (url: string, init: RequestInit) =>
-    exchange(fetchFn, url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    exchange(fetchFn, url, {
+      ...init,
+      ...(isLoopbackEndpoint(url) && { redirect: "error" }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   return {
     get: (url) => send(url, { method: "GET", headers: { ...headers } }),
     post: (url, body) =>

@@ -61,6 +61,12 @@ describe("main(argv) usage contract", () => {
     [[], 2, "err", "no command given and no terminal attached"],
     [["run"], 2, "err", "keywork run needs a prompt"],
     [["serve", "--help"], 0, "out", "Usage:"],
+    [
+      ["connect", "--group", "unknown", "--first-model"],
+      2,
+      "err",
+      "--group must be local, flagship, or openrouter",
+    ],
     [["attach", "--help"], 0, "out", "Usage:"],
     [["serve", "--port", "http"], 2, "err", "keywork serve: --port wants a whole number"],
     [["attach"], 2, "err", "attach needs a terminal"],

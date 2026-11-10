@@ -70,6 +70,7 @@ export interface RemovalReceipt {
 
 export interface ConnectionsPort {
   targets(): readonly ConnectionTarget[];
+  findLocal?(): Promise<readonly { target: ConnectionTarget; models: readonly string[] }[]>;
   saved(): readonly SavedConnection[];
   draftFor(target: ConnectionTarget | SavedConnection): ConnectionDraft;
   verify(draft: ConnectionDraft): Promise<VerificationOutcome>;

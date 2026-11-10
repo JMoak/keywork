@@ -106,6 +106,14 @@ describe("fallbackProvider", () => {
     expect(opened).toEqual(["ollama"]);
   });
 
+  it("does not switch to an unreserved candidate when automatic retries are disabled", async () => {
+    const { provider, opened, switches } = harness({ ollama: [saturated], spark: [done] });
+    const iterator = provider.stream({ ...request, retry: "never" })[Symbol.asyncIterator]();
+    await expect(iterator.next()).rejects.toBe(saturated);
+    expect(opened).toEqual(["ollama"]);
+    expect(switches).toEqual([]);
+  });
+
   it("rethrows once text was streamed", async () => {
     const { provider, opened } = harness({ ollama: [{ type: "text", text: "half" }, saturated] });
     await expect(collect(provider)).rejects.toBe(saturated);

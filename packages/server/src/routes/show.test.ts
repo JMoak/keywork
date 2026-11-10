@@ -278,9 +278,9 @@ describe("POST /show", () => {
 });
 
 describe("the contract", () => {
-  it("is 1.29 and lists the three show routes in /doc", () => {
+  it("is 1.30 and lists the three show routes in /doc", () => {
     const { paths } = fixtureDocument();
-    expect(contractVersion).toBe("1.29");
+    expect(contractVersion).toBe("1.30");
     expect(paths["/show"]?.get?.operationId).toBe("listSettings");
     expect(paths["/show"]?.post?.operationId).toBe("openSetting");
     expect(paths["/show/{id}/answer"]?.post?.operationId).toBe("answerSetting");
