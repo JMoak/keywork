@@ -2,6 +2,7 @@ import { contractVersion } from "./contract.ts";
 import { engineEventTypes, serverEventTypes } from "./events.ts";
 import { airlockFamily } from "./routes/airlock.ts";
 import { askFamily } from "./routes/asks.ts";
+import { campaignFamily } from "./routes/campaigns.ts";
 import { changesFamily } from "./routes/changes.ts";
 import { creatureProjectFamily } from "./routes/creature-projects.ts";
 import { creatureFamily } from "./routes/creatures.ts";
@@ -41,6 +42,7 @@ export type { HttpMethod, JsonSchema, RouteSpec, WorkspaceInfo } from "./routes/
 
 export const routeFamilies = [
   documentFamily,
+  campaignFamily,
   eventFamily,
   sessionFamily,
   askFamily,

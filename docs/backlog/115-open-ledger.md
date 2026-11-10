@@ -4,12 +4,13 @@
 > owns it. Read this first when resuming, then the owning overlay before building. Strike items
 > as they land and add the landing date; when a section empties, delete it.
 
-## Refinement campaigns planned (2026-11-08)
+## Refinement campaigns implementation (2026-11-10)
 
 The canonical implementation plan is [123: Refinement campaigns](123-refinement-campaigns.md).
-Product direction is agreed; implementation has not started. Begin with CAM-01 (domain
-contracts and fixtures across all three workloads) and CAM-02 (durability and orchestration
-spike), then follow their dependencies. The shared Keywork runtime owns execution;
+The local runtime, contract 1.30, CLI and shared desktop lane are implemented on
+`codex/refinement-campaigns`. Start with the plan's implementation-state table and its
+orchestration/provider ADRs. Focused fixtures cover all three workloads, costs, recovery,
+human feedback and late discoveries after five or ten empty attempts. The shared runtime owns execution;
 Keywork-app and Stead share the desktop workspace; Orchard supplies a development adapter.
 Live monitoring of loop activity, costs, and evidence-backed achievements is required in
 the first release. Skill cartridges, bounded context, and quality-preserving spending
@@ -17,6 +18,9 @@ controls are core scope. Bounded persistence challenges premature finish proposa
 provisional probe profiles that can explore past repeated no-change attempts while preserving
 the best artifact and hard resource limits. Relly is an optional later integration. Read the
 plan's handoff and the owning repository's instructions before creating scoped implementation work.
+Paid outcome calibration, CI, packaging, published dependency adoption and native downstream
+qualification remain pending. Orchard `wi-zt77` and Stead `wi-n89w` are draft work items awaiting
+human acceptance. No commits, publication, paid model calls or downstream upgrades are implied.
 
 ## Where the tree stands (2026-10-12, wave three)
 

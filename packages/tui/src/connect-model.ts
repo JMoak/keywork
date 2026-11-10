@@ -1,4 +1,4 @@
-import { isLoopbackEndpoint } from "@keywork/engine";
+import { connectionDraftProblem, endpointScheme, isLoopbackEndpoint } from "@keywork/engine";
 import { connectionProtocols, toError } from "@keywork/shared";
 import type {
   ConnectionDraft,
@@ -459,7 +459,7 @@ export class ConnectModel {
   }
 
   private async verifyAndSave(stage: EditorStage): Promise<void> {
-    const problem = draftProblem(stage.draft);
+    const problem = connectionDraftProblem(stage.draft);
     if (problem !== undefined) {
       this.hooks.notice(problem);
       return;
@@ -766,7 +766,7 @@ function envVariableOf(choice: CredentialChoice): string {
 }
 
 function needsInsecureChoice(endpoint: string): boolean {
-  return endpoint.startsWith("http://") && !isLoopbackEndpoint(endpoint);
+  return endpointScheme(endpoint.trim()) === "http" && !isLoopbackEndpoint(endpoint);
 }
 
 export function verifyActionText(draft: ConnectionDraft): string {
@@ -780,17 +780,6 @@ function credentialSummary(draft: ConnectionDraft): string {
   if (draft.credential === "api-key")
     return draft.apiKey === "" ? "the saved key" : "the typed key";
   return `$${draft.credential.slice("env:".length) || "<variable>"}`;
-}
-
-function draftProblem(draft: ConnectionDraft): string | undefined {
-  if (draft.name.trim() === "") return "a connection needs a name";
-  if (!/^[a-z0-9][a-z0-9._-]*$/.test(draft.name.trim()))
-    return "names are lowercase letters, digits, . _ -";
-  if (!/^https?:\/\/\S+$/.test(draft.endpoint.trim())) return "endpoint must be an http(s) URL";
-  if (draft.credential === "env:") return "name the environment variable";
-  if (needsInsecureChoice(draft.endpoint) && !draft.insecureTransport)
-    return "plain http off loopback is refused until you allow it";
-  return undefined;
 }
 
 function modelsFact(models: readonly string[]): string {

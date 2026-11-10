@@ -210,6 +210,7 @@ describe("authentication", () => {
     ["POST", "/sessions/s1/prompt"],
     ["POST", "/sessions/s1/inject"],
     ["POST", "/sessions/s1/abort"],
+    ["POST", "/models/refresh"],
   ];
 
   it.each(protectedCalls)(

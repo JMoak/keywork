@@ -1,5 +1,12 @@
 import type { ProviderStateOwner, Usage } from "../messages.ts";
-import type { CacheMiss, DoneDelta, Provider, ProviderRequest, TurnDelta } from "../provider.ts";
+import {
+  assertRequestControls,
+  type CacheMiss,
+  type DoneDelta,
+  type Provider,
+  type ProviderRequest,
+  type TurnDelta,
+} from "../provider.ts";
 import { ProviderStreamError } from "./errors.ts";
 import { toResponsesRequest } from "./responses-wire.ts";
 import { sseJsonEvents } from "./sse.ts";
@@ -35,6 +42,7 @@ export class OpenAiResponsesProvider implements Provider {
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
+    assertRequestControls(this, request);
     const body = await postForStream(this.name, this.fetchFn, {
       url: `${this.baseUrl}/responses`,
       headers: {

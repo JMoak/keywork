@@ -184,6 +184,17 @@ describe("terminalInput on a terminal", () => {
     expect(input.rawModeChanges).toEqual([true, false]);
   });
 
+  it("distinguishes a cancelled secret read from submitting a blank key", async () => {
+    const { input, terminal } = interactive();
+    const cancelled = terminal.readSecretOrCancel("key: ");
+    input.write(controlC);
+    expect(await cancelled).toBeUndefined();
+
+    const blank = terminal.readSecretOrCancel("key: ");
+    input.write(enter);
+    expect(await blank).toBe("");
+  });
+
   it("reads one key in raw mode and restores the terminal afterwards", async () => {
     const { input, terminal } = interactive();
     const pending = terminal.readKey();

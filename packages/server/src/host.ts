@@ -3,6 +3,7 @@ import type {
   ArcStatus,
   AuditEntry,
   CacheMiss,
+  CampaignService,
   CandidateTriage,
   ChangedPath,
   CompactionEntry,
@@ -371,6 +372,7 @@ export interface SessionHost {
   creatureProjectWork?: CreatureProjectWorkPort;
   creatureMcp?: CreatureMcpPort;
   routines?: RoutineService;
+  campaigns?: CampaignService;
   models?: ModelsPort;
   workshops?: WorkshopsPort;
   mesh?: MeshConsole;
