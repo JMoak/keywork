@@ -1,10 +1,18 @@
-import { clampIndex } from "./clamp.ts";
+import { clampIndex, clampScroll } from "./clamp.ts";
 import type { Chord } from "./keys.ts";
 import { type PickerKeyOutcome, runPickerKey } from "./picker-keys.ts";
+import type { VisibleRow } from "./row-cursor.ts";
+
+export interface FilterPage<Row> {
+  rows: readonly VisibleRow<Row>[];
+  above: number;
+  below: number;
+}
 
 export class FilterPicker<Row> {
   query = "";
   private index: number;
+  private top = 0;
 
   constructor(
     private readonly rowsFor: (needle: string) => readonly Row[],
@@ -25,6 +33,17 @@ export class FilterPicker<Row> {
     return this.rows()[this.cursor()];
   }
 
+  page(room: number): FilterPage<Row> {
+    const rows = this.rows();
+    const cursor = clampIndex(this.index, rows.length);
+    this.top = topShowing(cursor, this.top, rows.length, room);
+    const shown = rows.slice(this.top, this.top + room).map((row, offset) => {
+      const index = this.top + offset;
+      return { index, row, selected: index === cursor };
+    });
+    return { rows: shown, above: this.top, below: rows.length - this.top - shown.length };
+  }
+
   select(at: number): void {
     this.index = clampIndex(at, this.rows().length);
   }
@@ -37,6 +56,7 @@ export class FilterPicker<Row> {
   retype(query: string): void {
     this.query = query;
     this.index = 0;
+    this.top = 0;
   }
 
   paste(text: string): void {
@@ -46,4 +66,11 @@ export class FilterPicker<Row> {
   handleKey(chord: Chord, sequence: string | undefined): PickerKeyOutcome {
     return runPickerKey(chord, sequence, this);
   }
+}
+
+function topShowing(cursor: number, top: number, count: number, room: number): number {
+  const kept = clampScroll(top, count, room);
+  if (cursor < kept) return cursor;
+  if (cursor >= kept + room) return cursor - room + 1;
+  return kept;
 }

@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../messages.ts";
 import type { ProviderRequest, TurnDelta } from "../provider.ts";
-import { ProviderEmptyResponseError, ProviderHttpError, ProviderStreamError } from "./errors.ts";
+import {
+  ProviderEmptyResponseError,
+  ProviderEmptyStreamError,
+  ProviderHttpError,
+  ProviderStreamError,
+} from "./errors.ts";
 import { OpenAiCompatibleProvider } from "./openai.ts";
-import { sseResponse } from "./stream-fixtures.ts";
+import { RetryingProvider } from "./retry.ts";
+import { rawSseResponse, sseResponse } from "./stream-fixtures.ts";
 import type { FetchLike } from "./transport.ts";
 
 function provider(fetchFn: FetchLike): OpenAiCompatibleProvider {
@@ -26,6 +32,12 @@ async function collect(iterable: AsyncIterable<TurnDelta>): Promise<TurnDelta[]>
   const deltas: TurnDelta[] = [];
   for await (const delta of iterable) deltas.push(delta);
   return deltas;
+}
+
+const stoppedChunk = '{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}';
+
+function stoppedStream(): Response {
+  return sseResponse([stoppedChunk, "[DONE]"]);
 }
 
 describe("OpenAiCompatibleProvider", () => {
@@ -60,7 +72,7 @@ describe("OpenAiCompatibleProvider", () => {
     let sentBody: string | undefined;
     const fetchFn: FetchLike = async (_url, init) => {
       sentBody = init?.body as string;
-      return sseResponse(["[DONE]"]);
+      return stoppedStream();
     };
     const request: ProviderRequest = {
       systemPrompt: "be brief",
@@ -184,7 +196,7 @@ describe("OpenAiCompatibleProvider", () => {
     const bodies: string[] = [];
     const fetchFn: FetchLike = async (_url, init) => {
       bodies.push(init?.body as string);
-      return sseResponse(["[DONE]"]);
+      return stoppedStream();
     };
     await collect(provider(fetchFn).stream(emptyRequest));
     const decorated = new OpenAiCompatibleProvider({
@@ -208,7 +220,7 @@ describe("OpenAiCompatibleProvider", () => {
     const headers: Record<string, string>[] = [];
     const fetchFn: FetchLike = async (_url, init) => {
       headers.push(init?.headers as Record<string, string>);
-      return sseResponse(["[DONE]"]);
+      return stoppedStream();
     };
     await collect(provider(fetchFn).stream(emptyRequest));
     const local = new OpenAiCompatibleProvider({
@@ -224,7 +236,7 @@ describe("OpenAiCompatibleProvider", () => {
   });
 
   it("exposes the configured model id for cost accounting", () => {
-    expect(provider(async () => sseResponse(["[DONE]"])).modelId).toBe("test-model");
+    expect(provider(async () => stoppedStream()).modelId).toBe("test-model");
   });
 
   it("fails the turn when accumulated tool-call arguments exceed the size ceiling", async () => {
@@ -238,5 +250,159 @@ describe("OpenAiCompatibleProvider", () => {
     const streaming = provider(async () => sseResponse(lines, 65_536));
 
     await expect(collect(streaming.stream(emptyRequest))).rejects.toThrow(/size ceiling/);
+  });
+
+  it("keeps the account id out of a surfaced provider rejection", async () => {
+    const body =
+      '{"error":{"message":"This model is unavailable for free.","code":404},"user_id":"user_2fAkE0000iD0000fAkE0000xx"}';
+    const rejecting = provider(async () => new Response(body, { status: 404 }));
+
+    const failure = await collect(rejecting.stream(emptyRequest)).catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(ProviderHttpError);
+    expect((failure as Error).message).toBe(
+      'test request failed (404): {"error":{"message":"This model is unavailable for free.","code":404},"user_id":"[redacted]"}',
+    );
+  });
+});
+
+const zeroUsage = { inputTokens: 0, outputTokens: 0 };
+
+function chunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
+  return JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finishReason }] });
+}
+
+function streamOf(lines: readonly string[]): Promise<TurnDelta[]> {
+  return collect(provider(async () => sseResponse(lines)).stream(emptyRequest));
+}
+
+describe("OpenAiCompatibleProvider reasoning", () => {
+  it("streams OpenRouter reasoning as visible thinking without doubling its reasoning_details", async () => {
+    const detail = (text: string) => [
+      { type: "reasoning.text", text, format: "unknown", index: 0 },
+    ];
+    const deltas = await streamOf([
+      chunk({
+        role: "assistant",
+        content: "",
+        reasoning: "221 = 13",
+        reasoning_details: detail("221 = 13"),
+      }),
+      chunk({
+        role: "assistant",
+        content: "",
+        reasoning: " × 17.",
+        reasoning_details: detail(" × 17."),
+      }),
+      chunk({ role: "assistant", content: "Not prime." }),
+      chunk({ role: "assistant", content: "", reasoning: null }, "stop"),
+      "[DONE]",
+    ]);
+
+    expect(deltas).toEqual([
+      { type: "visible-thinking", text: "221 = 13" },
+      { type: "visible-thinking", text: " × 17." },
+      { type: "text", text: "Not prime." },
+      { type: "done", usage: zeroUsage },
+    ]);
+  });
+
+  it("streams reasoning_content from DeepSeek, vLLM, and llama.cpp style servers", async () => {
+    const deltas = await streamOf([
+      chunk({ role: "assistant", reasoning_content: "Multiply first." }),
+      chunk({ content: "391" }, "stop"),
+      "[DONE]",
+    ]);
+
+    expect(deltas).toEqual([
+      { type: "visible-thinking", text: "Multiply first." },
+      { type: "text", text: "391" },
+      { type: "done", usage: zeroUsage },
+    ]);
+  });
+
+  it("shows reasoning once when a server sends it under both names", async () => {
+    const deltas = await streamOf([
+      chunk({ reasoning: "Same words.", reasoning_content: "Same words." }),
+      chunk({ content: "ok" }, "stop"),
+    ]);
+
+    expect(deltas.filter((delta) => delta.type === "visible-thinking")).toEqual([
+      { type: "visible-thinking", text: "Same words." },
+    ]);
+  });
+
+  it("leaves encrypted reasoning_details alone", async () => {
+    const encrypted = [{ type: "reasoning.encrypted", data: "opaque==", index: 0 }];
+    const deltas = await streamOf([
+      chunk({ reasoning_details: encrypted }),
+      chunk({ content: "ok" }, "stop"),
+    ]);
+
+    expect(deltas).toEqual([
+      { type: "text", text: "ok" },
+      { type: "done", usage: zeroUsage },
+    ]);
+  });
+});
+
+describe("OpenAiCompatibleProvider empty streams", () => {
+  it("fails a stream that ends with nothing produced and no finish reason", async () => {
+    const failure = await streamOf([chunk({ role: "assistant" }), "[DONE]"]).catch(
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toBeInstanceOf(ProviderEmptyStreamError);
+    expect(failure).toBeInstanceOf(ProviderStreamError);
+    expect(failure).toMatchObject({
+      transient: true,
+      message: "test stream failed: ended with no reply and no finish reason",
+    });
+  });
+
+  it("fails a stream that only ever sent keepalive comments", async () => {
+    const keepalive = provider(async () => rawSseResponse(": OPENROUTER PROCESSING\n\n"));
+
+    await expect(collect(keepalive.stream(emptyRequest))).rejects.toThrow(ProviderEmptyStreamError);
+  });
+
+  it("fails a stream that reasoned and then dropped without a reply or finish reason", async () => {
+    const reasoned = provider(async () => sseResponse([chunk({ reasoning: "Let me think." })]));
+
+    await expect(collect(reasoned.stream(emptyRequest))).rejects.toThrow(ProviderEmptyStreamError);
+  });
+
+  it("completes a legitimately empty reply that carries a finish reason", async () => {
+    const deltas = await streamOf([chunk({ role: "assistant", content: "" }, "stop"), "[DONE]"]);
+
+    expect(deltas).toEqual([{ type: "done", usage: zeroUsage }]);
+  });
+
+  it("completes a stream that reported usage without a finish reason", async () => {
+    const deltas = await streamOf([
+      '{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":0}}',
+      "[DONE]",
+    ]);
+
+    expect(deltas).toEqual([{ type: "done", usage: { inputTokens: 5, outputTokens: 0 } }]);
+  });
+
+  it("retries an empty stream when nothing reached the caller yet", async () => {
+    let attempts = 0;
+    const flaky = new RetryingProvider(
+      provider(async () => {
+        attempts += 1;
+        return attempts === 1
+          ? sseResponse(["[DONE]"])
+          : sseResponse([chunk({ content: "hi" }, "stop")]);
+      }),
+      { sleep: async () => {} },
+    );
+
+    expect(await collect(flaky.stream(emptyRequest))).toEqual([
+      { type: "text", text: "hi" },
+      { type: "done", usage: zeroUsage },
+    ]);
+    expect(attempts).toBe(2);
   });
 });

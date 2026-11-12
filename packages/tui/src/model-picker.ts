@@ -17,7 +17,7 @@ export function modelPickerOver(
 ): ModelPicker {
   const rows = choices.map((choice) => rowOf(choice, choice.reference === current, effort));
   return new FilterPicker(
-    (needle) => rankByFuzzy(rows, needle, (row) => row.choice.reference),
+    (needle) => usableFirst(rankByFuzzy(rows, needle, (row) => row.choice.reference)),
     (row) => row.current,
   );
 }
@@ -33,4 +33,11 @@ export function describeModelRow(row: ModelPickerRow): string {
 
 function rowOf(choice: ModelChoice, current: boolean, effort: string | undefined): ModelPickerRow {
   return { choice, current, ...(current && effort !== undefined && { effort }) };
+}
+
+function usableFirst(rows: readonly ModelPickerRow[]): ModelPickerRow[] {
+  return [
+    ...rows.filter((row) => row.choice.available),
+    ...rows.filter((row) => !row.choice.available),
+  ];
 }

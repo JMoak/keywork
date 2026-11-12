@@ -5,11 +5,15 @@ const killGraceMs = 2_000;
 const killCheckIntervalMs = 25;
 const forceKillWaitMs = 1_000;
 
-export function killTree(child: ChildProcess, exited: Promise<void>): Promise<void> {
+export function killTree(
+  child: ChildProcess,
+  exited: Promise<void>,
+  sweepOrphans: () => Promise<void> = nothingToSweep,
+): Promise<void> {
   const pid = child.pid;
   if (pid === undefined) return Promise.resolve();
   if (process.platform === "win32") {
-    return killWindowsTree(pid, exited);
+    return killWindowsTree(pid, exited, sweepOrphans);
   }
   return killPosixTree(pid);
 }
@@ -23,8 +27,19 @@ export function processExists(pid: number): boolean {
   }
 }
 
-async function killWindowsTree(pid: number, exited: Promise<void>): Promise<void> {
-  await new Promise<void>((resolvePromise, rejectPromise) => {
+async function killWindowsTree(
+  pid: number,
+  exited: Promise<void>,
+  sweepOrphans: () => Promise<void>,
+): Promise<void> {
+  await taskkillTree(pid);
+  await sweepOrphans();
+  if (await within(exited, forceKillWaitMs)) return;
+  throw new Error(`process tree ${pid} did not close after taskkill`);
+}
+
+function taskkillTree(pid: number): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
     const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
       windowsHide: true,
       stdio: "ignore",
@@ -38,8 +53,10 @@ async function killWindowsTree(pid: number, exited: Promise<void>): Promise<void
       rejectPromise(new Error(`taskkill exited with code ${code}`));
     });
   });
-  if (await within(exited, forceKillWaitMs)) return;
-  throw new Error(`process tree ${pid} did not close after taskkill`);
+}
+
+function nothingToSweep(): Promise<void> {
+  return Promise.resolve();
 }
 
 async function killPosixTree(pid: number): Promise<void> {

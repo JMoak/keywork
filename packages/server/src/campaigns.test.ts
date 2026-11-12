@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CampaignArtifacts,
+  CampaignPricingError,
   CampaignService,
   type CampaignSnapshot,
   CampaignStore,
@@ -213,8 +214,28 @@ describe("campaign HTTP and SSE integration", () => {
     expect(world.executions()).toBe(0);
   });
 
+  it("refuses to start a model campaigns can't admit with a 422 and records nothing", async () => {
+    const world = await harness({
+      preflight: async () => {
+        throw new CampaignPricingError("This model needs a verified admission contract");
+      },
+    });
+    const created = await world.service.create(createRequest());
+    const response = await world.call(
+      `/campaigns/${created.campaign.id}/commands`,
+      post({ expectedRevision: created.campaign.revision, command: { type: "start" } }),
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      code: "unadmitted",
+      error: "This model needs a verified admission contract",
+    });
+    expect(world.service.read(created.campaign.id)).toEqual(created);
+    expect(world.executions()).toBe(0);
+  });
+
   it("refuses untrusted writes before creating state", async () => {
-    const world = await harness(false);
+    const world = await harness({ trusted: false });
     const response = await world.call("/campaigns", post(createRequest()));
     expect(response.status).toBe(403);
     expect(world.service.list().campaigns).toEqual([]);
@@ -337,7 +358,15 @@ describe("campaign HTTP and SSE integration", () => {
 
 const token = "campaign-test-token-123456";
 
-async function harness(trusted = true) {
+interface HarnessOptions {
+  trusted?: boolean;
+  preflight?: () => Promise<{ maximumCostMicros: number; maximumDurationMs: number }>;
+}
+
+async function harness({
+  trusted = true,
+  preflight = async () => ({ maximumCostMicros: 100, maximumDurationMs: 1 }),
+}: HarnessOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), "keywork-campaign-http-"));
   const store = await CampaignStore.open(join(root, "campaigns.db"));
   let executions = 0;
@@ -348,7 +377,7 @@ async function harness(trusted = true) {
     ownerScope: "owner",
     trusted: () => trusted,
     executor: {
-      preflight: async () => ({ maximumCostMicros: 100, maximumDurationMs: 1 }),
+      preflight,
       execute: async () => {
         executions += 1;
         return {

@@ -1,20 +1,27 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import type { FetchLike } from "@keywork/engine";
+import type { KeyworkConfig } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import type {
   ConnectionDraft,
   ConnectionsPort,
   ConnectionTarget,
+  SavedConnection,
   VerificationOutcome,
 } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
+import { type CredentialMap, readCredentials } from "./auth-store.ts";
 import { typesafeDecider } from "./inference/builtins.ts";
+import { connectionsPort } from "./inference/connections.ts";
+import { type ObservationMap, readObservations } from "./inference/observations.ts";
 import { type DeciderConnection, typesafeTerms } from "./inference/typesafe-connection.ts";
 import type { VerificationReport } from "./inference/verify.ts";
 import { typesafeRefusal } from "./memory-decider.ts";
 import { type ConnectIo, connectCommand, saveApiKey, terminalConnectIo } from "./setup.ts";
 import type { FirstModelSetup } from "./setup-model.ts";
+import { readUserConfig } from "./user-config.ts";
 
 const tempDir = scratchDirs("keywork-setup-");
 
@@ -138,6 +145,34 @@ function firstModelHarness(
   };
   return { firstModel, remembered };
 }
+
+const startingOpenRouter: ReturnType<FirstModelSetup["standing"]> = {
+  kind: "available",
+  reference: "openrouter/openai/gpt-5-mini",
+  configured: "openrouter/openai/gpt-5-mini",
+};
+
+const refusedKey =
+  'openrouter refused the key · HTTP 401 from https://openrouter.ai/api/v1/key: {"error":{"message":"User not found.","code":401}}';
+
+const failedOpenRouter: SavedConnection = {
+  name: "openrouter",
+  endpoint: "https://openrouter.ai/api/v1",
+  protocol: "chat-completions",
+  credential: "saved key",
+  builtIn: true,
+  enabled: true,
+  lastFailure: { at: "2026-11-12T08:00:00.000Z", reason: refusedKey },
+};
+
+const openRouterDraft: ConnectionDraft = {
+  name: "openrouter",
+  endpoint: "https://openrouter.ai/api/v1",
+  protocol: "chat-completions",
+  credential: "api-key",
+  apiKey: "",
+  insecureTransport: false,
+};
 
 function scriptedIo(answers: string[], secrets: string[] = []): ConnectIo & { printed: string[] } {
   const printed: string[] = [];
@@ -367,6 +402,50 @@ describe("guided model setup", () => {
     expect(io.printed).toContain("Model setup cancelled.");
   });
 
+  it("offers to fix the provider behind a starting model whose last check failed", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha"] });
+    port.saved = () => [failedOpenRouter];
+    port.draftFor = () => openRouterDraft;
+    const { firstModel, remembered } = firstModelHarness(startingOpenRouter);
+    const prompts: string[] = [];
+    const script = scriptedIo(["y", ""], ["sk-or-new"]);
+    const io: ConnectIo = {
+      ...script,
+      ask: (prompt) => {
+        prompts.push(prompt);
+        return script.ask(prompt);
+      },
+    };
+
+    expect(await connectCommand(port, { firstModel, io })).toBe(0);
+
+    expect(script.printed.slice(0, 2)).toEqual([
+      "Starting model: openrouter/openai/gpt-5-mini",
+      `last check failed 2026-11-12T08:00:00.000Z · ${refusedKey}`,
+    ]);
+    expect(prompts[0]).toBe("Fix openrouter now? [y/N]: ");
+    expect(saves).toEqual([{ ...openRouterDraft, apiKey: "sk-or-new" }]);
+    expect(script.printed).toContain(
+      "\nSaved openrouter · models reported: alpha · model list checked t",
+    );
+    expect(script.printed.at(-1)).toBe("Starting model unchanged.");
+    expect(remembered).toEqual([]);
+  });
+
+  it("doesn't call guided setup done when the failing provider is left unfixed", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha"] });
+    port.saved = () => [failedOpenRouter];
+    const { firstModel } = firstModelHarness(startingOpenRouter);
+    const io = scriptedIo(["n"]);
+
+    expect(await connectCommand(port, { firstModel, io })).toBe(1);
+
+    expect(saves).toEqual([]);
+    expect(io.printed.at(-1)).toBe(
+      "Starting model unchanged · fix openrouter later with keywork connect openrouter",
+    );
+  });
+
   it("refuses insecure transport before asking for a key", async () => {
     const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha"] });
     const io = {
@@ -380,6 +459,79 @@ describe("guided model setup", () => {
 
     expect(saves).toEqual([]);
     expect(io.printed).toContain("plain http off loopback is refused until you allow it");
+  });
+});
+
+describe("connect against OpenRouter's public model list", () => {
+  const userNotFound = '{"error":{"message":"User not found.","code":401}}';
+
+  async function openRouterPort(env: Record<string, string>, acceptedKey: string) {
+    const dir = await tempDir();
+    const state = {
+      config: {} as KeyworkConfig,
+      credentials: {} as CredentialMap,
+      observations: {} as ObservationMap,
+    };
+    const fetchFn: FetchLike = async (url, init) => {
+      if (url.endsWith("/models")) return Response.json({ data: [{ id: "openai/gpt-5-mini" }] });
+      const { authorization } = (init?.headers ?? {}) as Record<string, string | undefined>;
+      return authorization === `Bearer ${acceptedKey}`
+        ? Response.json({ data: {} })
+        : new Response(userNotFound, { status: 401 });
+    };
+    const port = connectionsPort({
+      env,
+      userDir: dir,
+      config: () => state.config,
+      credentials: () => state.credentials,
+      observations: () => state.observations,
+      fetchFn,
+      now: () => new Date("2026-11-12T08:00:00.000Z"),
+      changed: async () => {
+        state.config = await readUserConfig(dir);
+        state.credentials = await readCredentials(dir);
+        state.observations = await readObservations(dir);
+      },
+    });
+    return { port, dir };
+  }
+
+  it("refuses a key OpenRouter rejects and saves nothing", async () => {
+    const { port, dir } = await openRouterPort({}, "sk-or-real");
+    const io = scriptedIo([], ["hello world"]);
+
+    expect(await connectCommand(port, { argument: "openrouter", io })).toBe(1);
+
+    expect(io.printed.at(-1)).toBe(
+      `not saved: openrouter refused the key · HTTP 401 from https://openrouter.ai/api/v1/key: ${userNotFound}`,
+    );
+    expect(io.printed.join("\n")).not.toContain("Saved");
+    expect(await readCredentials(dir)).toEqual({});
+  });
+
+  it("says what's missing instead of saving when Enter leaves no key to send", async () => {
+    const { port, dir } = await openRouterPort({}, "sk-or-real");
+    const io = scriptedIo(["3", "n"], [""]);
+
+    expect(await connectCommand(port, { firstModel: firstModelHarness().firstModel, io })).toBe(1);
+
+    expect(io.printed).toContain(
+      "not saved: openrouter needs an API key · paste one or set OPENROUTER_API_KEY",
+    );
+    expect(io.printed.join("\n")).not.toContain("Saved");
+    expect(await readObservations(dir)).toEqual({});
+  });
+
+  it("says Enter used the environment key when one is set", async () => {
+    const { port, dir } = await openRouterPort({ OPENROUTER_API_KEY: "sk-or-env" }, "sk-or-env");
+    const io = scriptedIo(["3", ""], [""]);
+
+    expect(await connectCommand(port, { firstModel: firstModelHarness().firstModel, io })).toBe(0);
+
+    expect(io.printed).toContain(
+      "\nopenrouter uses OPENROUTER_API_KEY · models reported: openai/gpt-5-mini · model list checked 2026-11-12T08:00:00.000Z",
+    );
+    expect(await readCredentials(dir)).toEqual({});
   });
 });
 

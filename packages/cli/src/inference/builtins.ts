@@ -6,9 +6,15 @@ import {
 } from "@keywork/engine";
 
 export type BuiltInAuth =
-  | ({ kind: "api-key"; keyPrefix: string } & EnvironmentKeys)
+  | ApiKeyAuth
   | { kind: "oauth"; signInHint: string }
   | { kind: "aws-sigv4" };
+
+export interface ApiKeyAuth extends EnvironmentKeys {
+  kind: "api-key";
+  keyPrefix: string;
+  keyCheckPath?: string;
+}
 
 export interface EnvironmentKeys {
   scopedVariable: string;
@@ -66,6 +72,7 @@ export const builtInProviders: readonly BuiltInProvider[] = [
       ambientVariable: "OPENROUTER_API_KEY",
       keyUrl: "https://openrouter.ai/keys",
       keyPrefix: "sk-or-",
+      keyCheckPath: "/key",
     },
     decorations: { body: { usage: { include: true } } },
   },

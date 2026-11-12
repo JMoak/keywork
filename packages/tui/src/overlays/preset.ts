@@ -22,7 +22,7 @@ export interface PresetConfirmation {
 }
 
 export interface PresetSeams {
-  dismiss(): void;
+  dismiss(overlay: RowOverlay): void;
   notice(text: string): void;
   confirm(overlay: PresetConfirmOverlay): void;
 }
@@ -55,7 +55,7 @@ export class PresetOverlay extends RowOverlay {
 
   handleKey(chord: Chord): void {
     if (chord.name === "escape") {
-      this.seams.dismiss();
+      this.seams.dismiss(this);
       return;
     }
     const stepped = steppedIndex(this.index, chord, this.names.length);
@@ -75,7 +75,7 @@ export class PresetOverlay extends RowOverlay {
   }
 
   outside(): void {
-    this.seams.dismiss();
+    this.seams.dismiss(this);
   }
 
   private activeRow(): number {
@@ -87,7 +87,7 @@ export class PresetOverlay extends RowOverlay {
     const name = this.names[row];
     if (name === undefined) return;
     if (name === this.port.active()) {
-      this.seams.dismiss();
+      this.seams.dismiss(this);
       this.seams.notice(`already on ${name}`);
       return;
     }
@@ -95,6 +95,7 @@ export class PresetOverlay extends RowOverlay {
       this.seams.confirm(new PresetConfirmOverlay(this.port, name, this.seams));
       return;
     }
+    this.seams.dismiss(this);
     applyPreset(this.port, name, this.seams);
   }
 }
@@ -123,23 +124,27 @@ export class PresetConfirmOverlay extends RowOverlay {
   }
 
   handleKey(chord: Chord): void {
-    if (chord.name === "y" || isEnter(chord)) applyPreset(this.port, this.name, this.seams);
-    else if (chord.name === "n" || chord.name === "escape") this.seams.dismiss();
+    if (chord.name === "y" || isEnter(chord)) this.apply();
+    else if (chord.name === "n" || chord.name === "escape") this.seams.dismiss(this);
   }
 
   click(): void {}
 
   outside(): void {
-    this.seams.dismiss();
+    this.seams.dismiss(this);
+  }
+
+  private apply(): void {
+    this.seams.dismiss(this);
+    applyPreset(this.port, this.name, this.seams);
   }
 }
 
 function applyPreset(
   port: PresetsPort,
   name: PresetName,
-  seams: Pick<PresetSeams, "dismiss" | "notice">,
+  seams: Pick<PresetSeams, "notice">,
 ): void {
-  seams.dismiss();
   port
     .apply(name)
     .then(() => seams.notice(`permissions preset → ${name}`))

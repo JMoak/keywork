@@ -3,6 +3,7 @@ import type { FetchLike } from "@keywork/engine";
 export interface VerificationRequest {
   endpoint: string;
   headers: Readonly<Record<string, string>>;
+  keyCheckPath?: string | undefined;
   fetchFn?: FetchLike | undefined;
   timeoutMs?: number | undefined;
   now?: (() => Date) | undefined;
@@ -16,25 +17,36 @@ const defaultTimeoutMs = 10_000;
 
 export async function verifyEndpoint(request: VerificationRequest): Promise<VerificationReport> {
   const at = (request.now ?? (() => new Date()))().toISOString();
-  const fetchFn = request.fetchFn ?? fetch;
   try {
-    const response = await fetchFn(`${request.endpoint}/models`, {
-      method: "GET",
-      headers: { accept: "application/json", ...request.headers },
-      signal: AbortSignal.timeout(request.timeoutMs ?? defaultTimeoutMs),
-    });
-    if (!response.ok) {
-      return {
-        ok: false,
-        at,
-        reason: `HTTP ${response.status} from ${request.endpoint}/models${await excerpt(response)}`,
-        status: response.status,
-      };
+    if (request.keyCheckPath !== undefined) {
+      const keyCheck = await answerTo(request, request.keyCheckPath);
+      if (!keyCheck.accepted) return { ok: false, at, ...keyCheck.refusal };
     }
-    return { ok: true, at, models: modelIds(await response.json().catch(() => undefined)) };
+    const listing = await answerTo(request, "/models");
+    if (!listing.accepted) return { ok: false, at, ...listing.refusal };
+    return { ok: true, at, models: modelIds(await listing.response.json().catch(() => undefined)) };
   } catch (cause) {
     return { ok: false, at, reason: describeFailure(cause, request.endpoint) };
   }
+}
+
+type Answer = { accepted: true; response: Response } | { accepted: false; refusal: Refusal };
+
+interface Refusal {
+  reason: string;
+  status: number;
+}
+
+async function answerTo(request: VerificationRequest, path: string): Promise<Answer> {
+  const url = `${request.endpoint}${path}`;
+  const response = await (request.fetchFn ?? fetch)(url, {
+    method: "GET",
+    headers: { accept: "application/json", ...request.headers },
+    signal: AbortSignal.timeout(request.timeoutMs ?? defaultTimeoutMs),
+  });
+  if (response.ok) return { accepted: true, response };
+  const reason = `HTTP ${response.status} from ${url}${await excerpt(response)}`;
+  return { accepted: false, refusal: { reason, status: response.status } };
 }
 
 function modelIds(payload: unknown): string[] {

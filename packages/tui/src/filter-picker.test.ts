@@ -90,6 +90,61 @@ describe("FilterPicker", () => {
     expect(picker.handleKey(...key("escape"))).toBe("close");
     expect(picker.handleKey(...key("pagedown"))).toBe("stay");
   });
+
+  describe("paging", () => {
+    const letters = Array.from({ length: 10 }, (_, at) => String.fromCharCode(97 + at));
+    const shown = (picker: FilterPicker<string>, room: number) =>
+      picker
+        .page(room)
+        .rows.map(({ row, selected }) => (selected ? row.toUpperCase() : row))
+        .join("");
+
+    it("shows the first rows with the cursor on top and counts what is hidden below", () => {
+      const picker = over(() => letters);
+      expect(shown(picker, 4)).toBe("Abcd");
+      expect(picker.page(4)).toMatchObject({ above: 0, below: 6 });
+      expect(picker.page(4).rows.map((visible) => visible.index)).toEqual([0, 1, 2, 3]);
+    });
+
+    it("scrolls only when the cursor leaves the window, then holds still inside it", () => {
+      const picker = over(() => letters);
+      for (let step = 0; step < 5; step += 1) picker.move(1);
+      expect(shown(picker, 4)).toBe("cdeF");
+      expect(picker.page(4)).toMatchObject({ above: 2, below: 4 });
+      picker.move(-1);
+      picker.move(-1);
+      expect(shown(picker, 4)).toBe("cDef");
+      picker.move(-1);
+      picker.move(-1);
+      expect(shown(picker, 4)).toBe("Bcde");
+    });
+
+    it("follows the cursor around the wrap and starts over on a new query", () => {
+      const picker = over(() => letters);
+      picker.move(-1);
+      expect(shown(picker, 4)).toBe("ghiJ");
+      expect(picker.page(4)).toMatchObject({ above: 6, below: 0 });
+      picker.move(1);
+      expect(shown(picker, 4)).toBe("Abcd");
+      picker.move(-1);
+      picker.retype("");
+      expect(shown(picker, 4)).toBe("Abcd");
+    });
+
+    it("opens with the starting row in view", () => {
+      const picker = new FilterPicker(
+        () => letters,
+        (letter) => letter === "h",
+      );
+      expect(shown(picker, 3)).toBe("fgH");
+    });
+
+    it("shows everything when the rows fit", () => {
+      const picker = over(() => names);
+      expect(picker.page(5)).toMatchObject({ above: 0, below: 0 });
+      expect(picker.page(5).rows).toHaveLength(3);
+    });
+  });
 });
 
 describe("arc picker", () => {
@@ -385,6 +440,48 @@ describe("model picker", () => {
     picker.paste("qwen");
     expect(picker.query).toBe("qwen");
     expect(picker.selected()?.choice.reference).toBe("ollama/qwen3");
+  });
+
+  it("ranks usable models ahead of matches that cannot run, keeping fuzzy order within each", () => {
+    const catalogue: ModelChoice[] = [
+      {
+        reference: "openai/gpt-5-mini",
+        provider: "openai",
+        model: "gpt-5-mini",
+        available: false,
+        facts: ["needs KEYWORK_OPENAI_API_KEY"],
+      },
+      {
+        reference: "openai/gpt-5.4-mini",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        available: false,
+        facts: ["needs KEYWORK_OPENAI_API_KEY"],
+      },
+      {
+        reference: "openrouter/openai/gpt-5-mini",
+        provider: "openrouter",
+        model: "openai/gpt-5-mini",
+        available: true,
+        facts: ["saved key"],
+      },
+      {
+        reference: "openrouter/openai/gpt-5.4-mini",
+        provider: "openrouter",
+        model: "openai/gpt-5.4-mini",
+        available: true,
+        facts: ["saved key"],
+      },
+    ];
+    const picker = modelPickerOver(catalogue, undefined);
+    typed(picker, "gpt-5-mini");
+    expect(references(picker)).toEqual([
+      "openrouter/openai/gpt-5-mini",
+      "openrouter/openai/gpt-5.4-mini",
+      "openai/gpt-5-mini",
+      "openai/gpt-5.4-mini",
+    ]);
+    expect(picker.selected()?.choice.reference).toBe("openrouter/openai/gpt-5-mini");
   });
 
   it("describes a row as reference plus facts, marking the current one", () => {

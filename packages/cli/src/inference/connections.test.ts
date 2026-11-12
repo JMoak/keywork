@@ -326,7 +326,7 @@ describe("connectionsPort verify and save", () => {
   });
 
   it("writes only non-default fields: protocol, env credential, and insecure transport", async () => {
-    const { port, dir } = await harness();
+    const { port, dir } = await harness({ env: { LAN_KEY: "lan-secret" } });
     const lan = draft({
       name: "lan",
       endpoint: "http://10.0.0.9:8080/v1",
@@ -335,7 +335,7 @@ describe("connectionsPort verify and save", () => {
       insecureTransport: true,
     });
     const verification = await port.verify(lan);
-    if (!verification.ok) return;
+    if (!verification.ok) throw new Error("verification should pass");
     await port.save(lan, verification);
     expect(await readUserConfig(dir)).toEqual({
       connections: {
@@ -434,6 +434,131 @@ describe("connectionsPort verify and save", () => {
     expect(edit).toMatchObject({ name: "broker", credential: "api-key", apiKey: "" });
     await port.verify(edit);
     expect(calls.at(-1)?.headers).toMatchObject({ authorization: "Bearer sk-1" });
+  });
+});
+
+describe("connectionsPort proves the credential", () => {
+  const openRouterEndpoint = "https://openrouter.ai/api/v1";
+  const userNotFound = '{"error":{"message":"User not found.","code":401}}';
+
+  function openRouter(acceptedKeys: readonly string[]) {
+    const calls: { url: string; authorization: string | undefined }[] = [];
+    const fetchFn: FetchLike = async (url, init) => {
+      const authorization = (init?.headers as Record<string, string> | undefined)?.authorization;
+      calls.push({ url, authorization });
+      if (url.endsWith("/models")) return Response.json({ data: [{ id: "openai/gpt-5-mini" }] });
+      const accepted = acceptedKeys.some((key) => authorization === `Bearer ${key}`);
+      return accepted
+        ? Response.json({ data: { label: "sk-or-v1-abc" } })
+        : new Response(userNotFound, { status: 401 });
+    };
+    return { calls, fetchFn };
+  }
+
+  function openRouterDraft(apiKey = ""): ConnectionDraft {
+    return draft({
+      name: "openrouter",
+      endpoint: openRouterEndpoint,
+      credential: "api-key",
+      apiKey,
+    });
+  }
+
+  it("refuses a key OpenRouter rejects even though its model list is public", async () => {
+    const { calls, fetchFn } = openRouter(["sk-or-real"]);
+    const { port, dir } = await harness({ fetchFn });
+
+    const verification = await port.verify(openRouterDraft("hello world"));
+
+    expect(verification).toEqual({
+      ok: false,
+      at: "2026-08-21T12:00:00.000Z",
+      reason: `openrouter refused the key · HTTP 401 from ${openRouterEndpoint}/key: ${userNotFound}`,
+      status: 401,
+    });
+    expect(calls.map(({ url }) => url)).toEqual([`${openRouterEndpoint}/key`]);
+    expect(await readCredentials(dir)).toEqual({});
+    expect(await readObservations(dir)).toEqual({});
+  });
+
+  it("checks an accepted OpenRouter key at /key before trusting the model list", async () => {
+    const { calls, fetchFn } = openRouter(["sk-or-real"]);
+    const { port } = await harness({ fetchFn });
+
+    const verification = await port.verify(openRouterDraft("sk-or-real"));
+
+    expect(verification).toMatchObject({ ok: true, models: ["openai/gpt-5-mini"] });
+    expect(calls).toEqual([
+      { url: `${openRouterEndpoint}/key`, authorization: "Bearer sk-or-real" },
+      { url: `${openRouterEndpoint}/models`, authorization: "Bearer sk-or-real" },
+    ]);
+  });
+
+  it("says what's missing without touching the network when no key would be sent", async () => {
+    const { calls, fetchFn } = openRouter([]);
+    const { port } = await harness({ fetchFn });
+
+    expect(await port.verify(openRouterDraft())).toEqual({
+      ok: false,
+      at: "2026-08-21T12:00:00.000Z",
+      reason: "openrouter needs an API key · paste one or set OPENROUTER_API_KEY",
+    });
+    expect(
+      await port.verify(
+        draft({ name: "lab", endpoint: "https://lab.example/v1", credential: "api-key" }),
+      ),
+    ).toMatchObject({ ok: false, reason: "lab needs an API key" });
+    expect(
+      await port.verify(
+        draft({ name: "lab", endpoint: "https://lab.example/v1", credential: "env:LAB_KEY" }),
+      ),
+    ).toMatchObject({ ok: false, reason: "LAB_KEY isn't set" });
+    expect(calls).toEqual([]);
+  });
+
+  it("checks a blank built-in key with the key the runtime would use", async () => {
+    const saved: CredentialMap = { openrouter: { type: "api_key", key: "sk-or-saved" } };
+    const cases: { env: Record<string, string>; credentials: CredentialMap; sent: string }[] = [
+      { env: { OPENROUTER_API_KEY: "sk-or-ambient" }, credentials: {}, sent: "sk-or-ambient" },
+      { env: { OPENROUTER_API_KEY: "sk-or-ambient" }, credentials: saved, sent: "sk-or-saved" },
+      {
+        env: { KEYWORK_OPENROUTER_API_KEY: "sk-or-scoped", OPENROUTER_API_KEY: "sk-or-ambient" },
+        credentials: saved,
+        sent: "sk-or-scoped",
+      },
+    ];
+    for (const { env, credentials, sent } of cases) {
+      const { calls, fetchFn } = openRouter([sent]);
+      const { port } = await harness({ env, credentials: () => credentials, fetchFn });
+
+      expect(await port.verify(openRouterDraft())).toMatchObject({ ok: true });
+      expect(calls.map(({ authorization }) => authorization)).toEqual([
+        `Bearer ${sent}`,
+        `Bearer ${sent}`,
+      ]);
+    }
+  });
+
+  it("names the refusal on a saved built-in so guided setup can offer a fix", async () => {
+    const accepted = ["sk-or-real"];
+    const { port } = await harness({ fetchFn: openRouter(accepted).fetchFn });
+    const first = await port.verify(openRouterDraft("sk-or-real"));
+    if (!first.ok) throw new Error("verification should pass");
+    await port.save(openRouterDraft("sk-or-real"), first);
+
+    accepted.pop();
+    expect(await port.verify(openRouterDraft())).toMatchObject({ ok: false, status: 401 });
+
+    expect(port.saved().map((row) => [row.name, row.credential, row.lastFailure])).toEqual([
+      [
+        "openrouter",
+        "saved key",
+        {
+          at: "2026-08-21T12:00:00.000Z",
+          reason: `openrouter refused the key · HTTP 401 from ${openRouterEndpoint}/key: ${userNotFound}`,
+        },
+      ],
+    ]);
   });
 });
 

@@ -1,6 +1,7 @@
 import {
   CampaignError,
   CampaignExportRefusal,
+  CampaignPricingError,
   type CampaignService,
   CampaignStoreError,
   createCampaignRequestSchema,
@@ -319,6 +320,8 @@ function campaignFailure(cause: unknown): Response {
     });
   if (cause instanceof CampaignExportRefusal)
     return json(422, { code: "refused", error: cause.message });
+  if (cause instanceof CampaignPricingError)
+    return json(422, { code: "unadmitted", error: cause.message });
   return json(500, {
     code: "unavailable",
     error: cause instanceof Error ? cause.message : "campaign operation could not complete",

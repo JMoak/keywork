@@ -17,11 +17,24 @@ export function readTool(scope: ToolScope) {
     description: "Read a text file, returning numbered lines.",
     schema,
     run: async ({ path, offset = 1, limit = defaultLineLimit }) => {
-      const content = await readFile(readablePath(scope, path), "utf8");
+      const content = await readText(readablePath(scope, path), path);
       if (content.includes("\u0000")) return `${path} is a binary file`;
       return numberedSlice(content, offset, limit);
     },
   });
+}
+
+async function readText(file: string, path: string): Promise<string> {
+  try {
+    return await readFile(file, "utf8");
+  } catch (cause) {
+    if (isDirectoryError(cause)) throw new Error(`${path} is a directory; read needs a file path`);
+    throw cause;
+  }
+}
+
+function isDirectoryError(cause: unknown): boolean {
+  return cause instanceof Error && "code" in cause && cause.code === "EISDIR";
 }
 
 function numberedSlice(content: string, offset: number, limit: number): string {

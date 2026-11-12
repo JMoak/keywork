@@ -2,6 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   type Agent,
+  addUsage,
+  askFactsOf,
   type BotDefinition,
   type ChildFinished,
   type ChildStarted,
@@ -24,15 +26,17 @@ import {
   ShellSession,
   type ToolGuard,
   tapJournal,
+  type Usage,
   unconfinedToolName,
 } from "@keywork/engine";
-import type {
-  KeyworkConfig,
-  LspConfig,
-  McpServerConfig,
-  ModelCapabilitiesConfig,
-  PermissionRule,
-  PromptsConfig,
+import {
+  type KeyworkConfig,
+  type LspConfig,
+  type McpServerConfig,
+  type ModelCapabilitiesConfig,
+  type PermissionRule,
+  type PromptsConfig,
+  permissionPresets,
 } from "@keywork/shared";
 import { botMemory } from "./bot-memory.ts";
 import type { WorkspaceExtensions } from "./commands.ts";
@@ -73,11 +77,20 @@ export interface RunOptions {
 
 export type HeadlessOutcome =
   | { outcome: "completed"; message: Message }
-  | { outcome: "denied"; message: Message; refused: readonly PermissionDecision[] }
+  | { outcome: "denied"; message: Message; refused: readonly HeadlessRefusal[] }
   | { outcome: "interrupted"; message: Message; saved: boolean }
   | { outcome: "failed"; error: string }
   | { outcome: "unresolved"; failure: ResolutionFailure }
   | { outcome: "usage"; error: string };
+
+export interface HeadlessRefusal extends PermissionDecision {
+  opaque?: boolean;
+}
+
+export interface RunTally {
+  usage: Usage;
+  children: readonly ChildReport[];
+}
 
 export interface HeadlessIo {
   json: boolean;
@@ -98,21 +111,17 @@ export function exitCodeOf(outcome: HeadlessOutcome): (typeof exitCodes)[ExitCla
   return exitCodes[outcome.outcome];
 }
 
-export function conclude(
-  outcome: HeadlessOutcome,
-  io: HeadlessIo,
-  children: readonly ChildReport[] = [],
-): number {
+export function conclude(outcome: HeadlessOutcome, io: HeadlessIo, tally?: RunTally): number {
   if (io.json) {
     io.print(
       JSON.stringify({
         type: "run.finished",
         ...finishedPayload(outcome),
-        ...(children.length > 0 && { children }),
+        ...(tally !== undefined && tallyPayload(tally)),
       }),
     );
   } else {
-    narrateChildren(children, io);
+    narrateChildren(tally?.children ?? [], io);
     narrate(outcome, io);
   }
   return exitCodeOf(outcome);
@@ -139,7 +148,10 @@ export async function runHeadless(options: RunOptions): Promise<HeadlessOutcome>
   const outcome = await sendPrompt(run, options, trace);
   const teardownFailures = await tearDown(run);
   const settled = teardownFailures.length === 0 ? outcome : failedTeardown(teardownFailures);
-  conclude(settled, io, trace.children);
+  conclude(settled, io, {
+    usage: addUsage(run.agent.usage(), trace.childUsage()),
+    children: trace.children,
+  });
   return settled;
 }
 
@@ -247,8 +259,9 @@ async function openRun(
 
 interface TurnTrace {
   emit(type: string, payload: unknown): void;
-  readonly refused: readonly PermissionDecision[];
+  readonly refused: readonly HeadlessRefusal[];
   readonly children: readonly ChildReport[];
+  childUsage(): Usage;
   interrupted(): boolean;
 }
 
@@ -267,12 +280,17 @@ function traceTurn(bus: EventBus<EngineEvents>, io: HeadlessIo): TurnTrace {
   const emit = (type: string, payload: unknown): void => {
     if (io.json) io.print(JSON.stringify({ type, ...(payload as object) }));
   };
-  const refused: PermissionDecision[] = [];
+  const refused: HeadlessRefusal[] = [];
+  const opaqueCalls = new Set<string>();
   let interrupted = false;
   for (const type of forwardedEvents) bus.on(type, (payload) => emit(type, payload));
+  bus.on("gate.ask", ({ ask }) => {
+    if (askFactsOf(ask).opaque) opaqueCalls.add(ask.callId);
+  });
   bus.on("gate.permission", (payload) => {
-    if (payload.decision.gate === "headless" && payload.decision.verdict === "denied") {
-      refused.push(payload.decision);
+    const { decision } = payload;
+    if (decision.gate === "headless" && decision.verdict === "denied") {
+      refused.push({ ...decision, opaque: opaqueCalls.has(decision.callId) });
     }
     emit("gate.permission", payload);
   });
@@ -284,26 +302,39 @@ function traceTurn(bus: EventBus<EngineEvents>, io: HeadlessIo): TurnTrace {
   const children = traceChildren(bus, emit, (call) =>
     refused.push({ ...call, verdict: "denied", gate: "headless" }),
   );
-  return { emit, refused, children, interrupted: () => interrupted };
+  return {
+    emit,
+    refused,
+    children: children.reports,
+    childUsage: children.usage,
+    interrupted: () => interrupted,
+  };
+}
+
+interface ChildTrace {
+  readonly reports: readonly ChildReport[];
+  usage(): Usage;
 }
 
 function traceChildren(
   bus: EventBus<EngineEvents>,
   emit: (type: string, payload: unknown) => void,
   refuse: (call: { tool: string; callId: string }) => void,
-): readonly ChildReport[] {
+): ChildTrace {
   const reports: ChildReport[] = [];
   const started = new Map<string, ChildStarted>();
+  let usage: Usage = { inputTokens: 0, outputTokens: 0 };
   bus.on("child.started", (payload) => {
     started.set(payload.callId, payload);
     emit("child.started", payload);
   });
   bus.on("child.finished", (payload) => {
     reports.push(childReportOf(started.get(payload.callId), payload));
+    usage = addUsage(usage, payload.usage);
     for (const call of payload.refused ?? []) refuse(call);
     emit("child.finished", payload);
   });
-  return reports;
+  return { reports, usage: () => usage };
 }
 
 function childReportOf(started: ChildStarted | undefined, finished: ChildFinished): ChildReport {
@@ -386,8 +417,9 @@ function finishedPayload(outcome: HeadlessOutcome): Record<string, unknown> {
   const base = { outcome: outcome.outcome, exitCode: exitCodeOf(outcome) };
   switch (outcome.outcome) {
     case "completed":
-    case "interrupted":
       return { ...base, message: messageText(outcome.message) };
+    case "interrupted":
+      return { ...base, message: messageText(outcome.message), saved: outcome.saved };
     case "denied":
       return {
         ...base,
@@ -403,6 +435,10 @@ function finishedPayload(outcome: HeadlessOutcome): Record<string, unknown> {
         failure: { ...outcome.failure, nextAction: nextActionFor(outcome.failure, shellCommands) },
       };
   }
+}
+
+function tallyPayload({ usage, children }: RunTally): Record<string, unknown> {
+  return { usage, ...(children.length > 0 && { children }) };
 }
 
 function narrateChildren(children: readonly ChildReport[], io: HeadlessIo): void {
@@ -448,22 +484,43 @@ function narrate(outcome: HeadlessOutcome, io: HeadlessIo): void {
   }
 }
 
-function refusalNotice(refused: readonly PermissionDecision[]): string {
+function refusalNotice(refused: readonly HeadlessRefusal[]): string {
   const gated = refused.filter((decision) => decision.tool !== unconfinedToolName);
   const sandbox = gated.length < refused.length ? [sandboxRefusal] : [];
   if (gated.length === 0) return `keywork run: ${sandboxRefusal}`;
-  const tools = [...new Set(gated.map((decision) => decision.tool))];
+  const tools = uniqueTools(gated);
   const calls = gated.length === 1 ? "1 tool call" : `${gated.length} tool calls`;
-  const gate = `${calls} needed an approval no one could give (${tools.join(", ")}), so the run stopped there · ${allowAdvice(tools)}`;
-  return `keywork run: ${[gate, ...sandbox].join(" · ")}`;
+  const stopped = `${calls} needed an approval no one could give (${tools.join(", ")}), so the run stopped there`;
+  return `keywork run: ${[stopped, ...refusalAdvice(gated), ...sandbox].join(" · ")}`;
 }
 
 const sandboxRefusal = `the sandbox can't run on this host and no one could allow running unconfined, so every command was refused · set "sandbox": "off" in ~/.keywork/keywork.json or run where the sandbox can`;
 
-function allowAdvice(tools: readonly string[]): string {
-  if (!tools.some(isMcpTool)) return "rerun with --preset open to allow them";
+const opaqueRefusal =
+  "commands with redirects, $, backticks or parentheses always need an ask, which a headless run can't give";
+
+function refusalAdvice(gated: readonly HeadlessRefusal[]): string[] {
+  const opaque = gated.filter((decision) => decision.opaque === true);
+  const allowable = uniqueTools(gated.filter((decision) => decision.opaque !== true));
+  if (opaque.length === 0) return [allowAdvice(allowable, "them")];
+  if (allowable.length === 0) return [opaqueRefusal];
+  return [opaqueRefusal, allowAdvice(allowable, "the rest")];
+}
+
+function allowAdvice(tools: readonly string[], whom: string): string {
+  if (tools.every((tool) => openPresetTools.has(tool))) {
+    return `rerun with --preset open to allow ${whom}`;
+  }
   const rules = tools.map((tool) => JSON.stringify(allowRuleFor(tool))).join(", ");
-  return `to allow them, add ${rules} to the permissions list in ~/.keywork/keywork.json`;
+  return `to allow ${whom}, add ${rules} to the permissions list in ~/.keywork/keywork.json`;
+}
+
+const openPresetTools: ReadonlySet<string> = new Set(
+  permissionPresets.open.filter((rule) => rule.effect === "allow").map((rule) => rule.action),
+);
+
+function uniqueTools(decisions: readonly HeadlessRefusal[]): string[] {
+  return [...new Set(decisions.map((decision) => decision.tool))];
 }
 
 function allowRuleFor(tool: string): PermissionRule {

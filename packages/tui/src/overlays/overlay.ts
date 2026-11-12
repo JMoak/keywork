@@ -62,11 +62,19 @@ export function routeRows(
   else if (onRow) hits.click(row);
 }
 
+const paletteChromeRows = 5;
+
 export function paletteFrame(screen: Screen, rowCount: number): OverlayFrame {
   const width = Math.min(64, screen.width - 4);
   const x = Math.max(2, Math.floor((screen.width - width) / 2));
   const y = 2;
-  return { x, y, width, height: Math.max(1, rowCount) + 5, firstRowY: y + 3 };
+  const wanted = Math.max(1, rowCount) + paletteChromeRows;
+  const height = Math.max(1, Math.min(wanted, screen.height - y - 1));
+  return { x, y, width, height, firstRowY: y + 3 };
+}
+
+export function paletteRowRoom(frame: Pick<OverlayFrame, "height">): number {
+  return Math.max(1, frame.height - paletteChromeRows);
 }
 
 export function helpFrame(screen: Screen, rowCount: number): OverlayFrame {

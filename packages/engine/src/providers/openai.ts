@@ -8,7 +8,7 @@ import {
   type TurnDelta,
 } from "../provider.ts";
 import { toChatRequest } from "./chat-wire.ts";
-import { ProviderStreamError } from "./errors.ts";
+import { ProviderEmptyStreamError, ProviderStreamError } from "./errors.ts";
 import { boundedOpenRouterBody, openRouterRequestSupport } from "./openrouter-limits.ts";
 import { sseJsonEvents } from "./sse.ts";
 import { type AuthHeaders, bearerHeaders, type FetchLike, postForStream } from "./transport.ts";
@@ -99,6 +99,8 @@ interface StreamEvent {
 
 interface WireDelta {
   content?: string | null;
+  reasoning?: string | null;
+  reasoning_content?: string | null;
   tool_calls?: ToolCallFragment[];
 }
 
@@ -114,29 +116,73 @@ async function* assembleTurn(
   receipt?: ProviderResponseReceipt,
   onResponse?: ProviderRequest["onResponse"],
 ): AsyncGenerator<TurnDelta> {
-  const calls = new ToolCallAssembler(provider);
-  let usage: Usage = { inputTokens: 0, outputTokens: 0 };
+  const turn = new TurnAssembly(provider);
   for await (const raw of events) {
     const event = raw as StreamEvent;
     if (receipt !== undefined) updateReceipt(receipt, event, onResponse);
+    yield* turn.absorb(event);
+  }
+  yield* turn.finish(receipt);
+}
+
+class TurnAssembly {
+  private readonly calls: ToolCallAssembler;
+  private usage: Usage | undefined;
+  private finished = false;
+  private answered = false;
+
+  constructor(private readonly provider: string) {
+    this.calls = new ToolCallAssembler(provider);
+  }
+
+  *absorb(event: StreamEvent): Generator<TurnDelta> {
     if (event.error != null) {
-      throw new ProviderStreamError(provider, describeErrorEvent(event.error));
+      throw new ProviderStreamError(this.provider, describeErrorEvent(event.error));
     }
-    if (event.usage != null) usage = usageFromWire(event.usage);
-    const delta = event.choices?.[0]?.delta;
+    if (event.usage != null) this.usage = usageFromWire(event.usage);
+    const choice = event.choices?.[0];
+    if (typeof choice?.finish_reason === "string") this.finished = true;
+    yield* this.absorbDelta(choice?.delta);
+  }
+
+  *finish(receipt: ProviderResponseReceipt | undefined): Generator<TurnDelta> {
+    if (this.endedEmpty()) throw new ProviderEmptyStreamError(this.provider);
+    for (const call of this.calls.completed()) yield { type: "tool-call", call };
+    yield {
+      type: "done",
+      usage: this.usage ?? { inputTokens: 0, outputTokens: 0 },
+      ...(receipt !== undefined && { receipt: { ...receipt } }),
+    };
+  }
+
+  private *absorbDelta(delta: WireDelta | undefined): Generator<TurnDelta> {
+    const reasoning = reasoningOf(delta);
+    if (reasoning !== undefined) yield { type: "visible-thinking", text: reasoning };
     if (typeof delta?.content === "string" && delta.content !== "") {
+      this.answered = true;
       yield { type: "text", text: delta.content };
     }
     for (const fragment of delta?.tool_calls ?? []) {
-      calls.add(fragment.index, {
+      this.answered = true;
+      this.calls.add(fragment.index, {
         id: fragment.id,
         name: fragment.function?.name,
         argumentsJson: fragment.function?.arguments,
       });
     }
   }
-  for (const call of calls.completed()) yield { type: "tool-call", call };
-  yield { type: "done", usage, ...(receipt !== undefined && { receipt: { ...receipt } }) };
+
+  private endedEmpty(): boolean {
+    return !this.finished && !this.answered && this.usage === undefined;
+  }
+}
+
+const reasoningAliases = ["reasoning", "reasoning_content"] as const;
+
+function reasoningOf(delta: WireDelta | undefined): string | undefined {
+  return reasoningAliases
+    .map((alias) => delta?.[alias])
+    .find((text): text is string => typeof text === "string" && text !== "");
 }
 
 function updateReceipt(

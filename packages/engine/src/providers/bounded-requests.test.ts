@@ -41,13 +41,19 @@ async function collect(provider: Provider, input: ProviderRequest = request) {
   return deltas;
 }
 
+const stopped = { delta: {}, finish_reason: "stop" };
+
+function stoppedStream(): Response {
+  return sseResponse([JSON.stringify({ choices: [stopped] }), "[DONE]"]);
+}
+
 describe("bounded provider dispatch", () => {
   it("pins the model, caps output, strengthens existing routing, and disables redirects", async () => {
     let sent: RequestInit | undefined;
     const provider = router(
       async (_url, init) => {
         sent = init;
-        return sseResponse(["[DONE]"]);
+        return stoppedStream();
       },
       {
         max_tokens: 400,
@@ -110,7 +116,7 @@ describe("bounded provider dispatch", () => {
       let called = false;
       const provider = router(async () => {
         called = true;
-        return sseResponse(["[DONE]"]);
+        return stoppedStream();
       });
       await expect(collect(provider, { ...request, maxOutputTokens: cap })).rejects.toBeInstanceOf(
         ProviderRequestControlError,
@@ -134,7 +140,7 @@ describe("bounded provider dispatch", () => {
     const provider = router(
       async () => {
         called = true;
-        return sseResponse(["[DONE]"]);
+        return stoppedStream();
       },
       { [field]: [] },
     );
@@ -156,7 +162,7 @@ describe("bounded provider dispatch", () => {
     let body: unknown;
     const provider = router(async (_url, init) => {
       body = JSON.parse(String(init?.body));
-      return sseResponse(["[DONE]"]);
+      return stoppedStream();
     });
     await collect(provider, {
       ...request,
@@ -293,7 +299,7 @@ describe("bounded response receipts", () => {
     { prompt_tokens: 10, completion_tokens: 1, prompt_tokens_details: { cache_write_tokens: -1 } },
   ])("keeps missing or partial usage unresolved: %j", async (usage) => {
     const deltas = await collect(
-      router(async () => sseResponse([JSON.stringify({ usage, choices: [] }), "[DONE]"])),
+      router(async () => sseResponse([JSON.stringify({ usage, choices: [stopped] }), "[DONE]"])),
     );
     expect(deltas.at(-1)).toMatchObject({ receipt: { usageReported: false } });
   });

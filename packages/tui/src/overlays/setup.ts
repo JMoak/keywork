@@ -9,7 +9,7 @@ import {
 import { helpFrame, isEnter, type OverlayFrame, RowOverlay } from "./overlay.ts";
 
 export interface SetupSeams {
-  dismiss(): void;
+  dismiss(overlay: RowOverlay): void;
   notice(text: string): void;
   shutdown(): void;
 }
@@ -35,17 +35,17 @@ export class SetupConfirmOverlay extends RowOverlay {
 
   handleKey(chord: Chord): void {
     if (chord.name === "y" || isEnter(chord)) this.confirm();
-    else if (chord.name === "n" || chord.name === "escape") this.seams.dismiss();
+    else if (chord.name === "n" || chord.name === "escape") this.seams.dismiss(this);
   }
 
   click(): void {}
 
   outside(): void {
-    this.seams.dismiss();
+    this.seams.dismiss(this);
   }
 
   private confirm(): void {
-    this.seams.dismiss();
+    this.seams.dismiss(this);
     this.port
       .setUp()
       .then((receipt) => {

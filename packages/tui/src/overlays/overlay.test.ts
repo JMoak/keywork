@@ -10,6 +10,7 @@ import {
   helpFrame,
   type OverlayFrame,
   paletteFrame,
+  paletteRowRoom,
   panelRowRoom,
   pastedLine,
   RowOverlay,
@@ -77,6 +78,15 @@ describe("overlay frames", () => {
 
   it("keeps at least one row of height for an empty palette", () => {
     expect(paletteFrame(screen, 0).height).toBe(6);
+  });
+
+  it("keeps a long picker on screen with the bottom row clear", () => {
+    const short: Screen = { width: 120, height: 30 };
+    const frame = paletteFrame(short, 425);
+    expect(frame.height).toBe(27);
+    expect(frame.y + frame.height).toBe(short.height - 1);
+    expect(paletteRowRoom(frame)).toBe(22);
+    expect(paletteRowRoom(paletteFrame(short, 4))).toBe(4);
   });
 
   it("clamps a tall panel to the screen and leaves a row above and below", () => {

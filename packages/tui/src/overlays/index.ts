@@ -36,6 +36,7 @@ export {
   type OverlayFrame,
   type OverlayKind,
   paletteFrame,
+  paletteRowRoom,
   panelFrame,
   panelRowRoom,
   pastedLine,
@@ -48,7 +49,7 @@ export {
   paletteModeOf,
   paletteRowLimit,
 } from "./palette.ts";
-export { PickerOverlay } from "./picker.ts";
+export { PickerOverlay, pickerPage } from "./picker.ts";
 export {
   type PresetConfirmation,
   PresetConfirmOverlay,

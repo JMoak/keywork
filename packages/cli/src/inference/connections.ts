@@ -19,6 +19,7 @@ import type {
   SavedConnection,
 } from "@keywork/tui";
 import {
+  type Credential,
   type CredentialMap,
   deleteCredential,
   type SecretKeeping,
@@ -26,13 +27,14 @@ import {
 } from "../auth-store.ts";
 import { updateUserConfig } from "../user-config.ts";
 import {
+  type ApiKeyAuth,
   type BuiltInProvider,
   builtInProvider,
   builtInProviders,
   localTemplates,
 } from "./builtins.ts";
 import { forgetObservation, type ObservationMap, recordObservation } from "./observations.ts";
-import { verifyEndpoint } from "./verify.ts";
+import { type VerificationReport, verifyEndpoint } from "./verify.ts";
 
 export interface ConnectionsDeps {
   env: Record<string, string | undefined>;
@@ -54,15 +56,10 @@ export function connectionsPort(deps: ConnectionsDeps): ConnectionsPort {
     draftFor: (target) =>
       "kind" in target ? draftFromTarget(target) : draftFromSaved(target, deps),
     verify: async (draft) => {
-      const problem = connectionDraftProblem(draft);
+      const problem = connectionDraftProblem(draft) ?? missingKeyProblem(draft, deps);
       if (problem !== undefined)
         return { ok: false, at: (deps.now?.() ?? new Date()).toISOString(), reason: problem };
-      const report = await verifyEndpoint({
-        endpoint: draft.endpoint,
-        headers: authHeadersFor(draft, deps),
-        ...(deps.fetchFn !== undefined && { fetchFn: deps.fetchFn }),
-        ...(deps.now !== undefined && { now: deps.now }),
-      });
+      const report = await verifyDraft(draft, deps);
       if (!report.ok) await rememberFailure(draft.name, report, deps);
       return report;
     },
@@ -262,13 +259,8 @@ function builtInCredentialLabel(
 ): string | undefined {
   const saved = credentials[provider.name];
   switch (provider.auth.kind) {
-    case "api-key": {
-      const { scopedVariable, ambientVariable } = provider.auth;
-      if (presentIn(env, scopedVariable)) return scopedVariable;
-      if (saved?.type === "api_key") return "saved key";
-      if (presentIn(env, ambientVariable)) return ambientVariable;
-      return undefined;
-    }
+    case "api-key":
+      return builtInKey(provider.auth, saved, env)?.label;
     case "oauth":
       return saved?.type === "oauth" ? "ChatGPT sign-in" : undefined;
     case "aws-sigv4":
@@ -290,20 +282,87 @@ function observationFacts(
   };
 }
 
-function authHeadersFor(draft: ConnectionDraft, deps: ConnectionsDeps): Record<string, string> {
-  const key = apiKeyFor(draft, deps);
-  if (draft.protocol === "anthropic-messages") return anthropicHeaders(key);
+function missingKeyProblem(draft: ConnectionDraft, deps: ConnectionsDeps): string | undefined {
+  if (draft.credential === "none" || keyFor(draft, deps) !== undefined) return undefined;
+  if (draft.credential !== "api-key") return `${envVariableOf(draft.credential)} isn't set`;
+  const auth = builtInProvider(draft.name)?.auth;
+  return auth?.kind === "api-key"
+    ? `${draft.name} needs an API key · paste one or set ${auth.ambientVariable}`
+    : `${draft.name} needs an API key`;
+}
+
+async function verifyDraft(
+  draft: ConnectionDraft,
+  deps: ConnectionsDeps,
+): Promise<VerificationReport> {
+  const key = keyFor(draft, deps);
+  const report = await verifyEndpoint({
+    endpoint: draft.endpoint,
+    headers: authHeaders(draft.protocol, key),
+    keyCheckPath: keyCheckPathOf(draft.name),
+    ...(deps.fetchFn !== undefined && { fetchFn: deps.fetchFn }),
+    ...(deps.now !== undefined && { now: deps.now }),
+  });
+  return key === undefined ? report : withRefusedKeyNamed(draft.name, report);
+}
+
+function withRefusedKeyNamed(name: string, report: VerificationReport): VerificationReport {
+  if (report.ok || (report.status !== 401 && report.status !== 403)) return report;
+  return { ...report, reason: `${name} refused the key · ${report.reason}` };
+}
+
+function authHeaders(
+  protocol: ConnectionProtocol,
+  key: string | undefined,
+): Record<string, string> {
+  if (protocol === "anthropic-messages") return anthropicHeaders(key);
   return key === undefined ? {} : { authorization: `Bearer ${key}` };
 }
 
-function apiKeyFor(draft: ConnectionDraft, deps: ConnectionsDeps): string | undefined {
+function keyCheckPathOf(name: string): string | undefined {
+  const auth = builtInProvider(name)?.auth;
+  return auth?.kind === "api-key" ? auth.keyCheckPath : undefined;
+}
+
+function keyFor(draft: ConnectionDraft, deps: ConnectionsDeps): string | undefined {
   if (draft.credential === "none") return undefined;
-  if (draft.credential === "api-key") {
-    if (draft.apiKey !== "") return draft.apiKey;
-    const saved = deps.credentials()[draft.name];
-    return saved?.type === "api_key" ? saved.key : undefined;
-  }
-  return deps.env[draft.credential.slice("env:".length)];
+  if (draft.credential !== "api-key") return envKey(deps.env, envVariableOf(draft.credential))?.key;
+  if (draft.apiKey !== "") return draft.apiKey;
+  return keyOnFile(draft.name, deps)?.key;
+}
+
+interface KeySource {
+  label: string;
+  key: string;
+}
+
+function keyOnFile(name: string, deps: ConnectionsDeps): KeySource | undefined {
+  const saved = deps.credentials()[name];
+  const auth = builtInProvider(name)?.auth;
+  return auth?.kind === "api-key" ? builtInKey(auth, saved, deps.env) : savedKey(saved);
+}
+
+function builtInKey(
+  auth: ApiKeyAuth,
+  saved: Credential | undefined,
+  env: Record<string, string | undefined>,
+): KeySource | undefined {
+  return envKey(env, auth.scopedVariable) ?? savedKey(saved) ?? envKey(env, auth.ambientVariable);
+}
+
+function savedKey(saved: Credential | undefined): KeySource | undefined {
+  return saved?.type === "api_key" && saved.key !== ""
+    ? { label: "saved key", key: saved.key }
+    : undefined;
+}
+
+function envKey(env: Record<string, string | undefined>, variable: string): KeySource | undefined {
+  const key = env[variable];
+  return key === undefined || key === "" ? undefined : { label: variable, key };
+}
+
+function envVariableOf(credential: `env:${string}`): string {
+  return credential.slice("env:".length);
 }
 
 async function persistDraft(draft: ConnectionDraft, deps: ConnectionsDeps): Promise<void> {

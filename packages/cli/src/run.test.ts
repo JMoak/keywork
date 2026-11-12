@@ -25,6 +25,7 @@ import {
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { composeAgents, composeWorkspace } from "./compose.ts";
+import { presetResolver } from "./presets.ts";
 import { conclude, exitCodeOf, type HeadlessOutcome, type RunOptions, runHeadless } from "./run.ts";
 
 const tempDir = scratchDirs("keywork-cli-");
@@ -883,6 +884,104 @@ describe("headless exit contract", () => {
     expect(err.join("\n")).not.toContain("--preset open");
   });
 
+  describe("opaque commands", () => {
+    const opaqueBashCall = toolCallTurn({
+      type: "tool-call",
+      callId: "call-1",
+      name: "bash",
+      arguments: { command: "git mv a.js b.js || true; echo exit:$?" },
+    });
+    const opaqueRefusal =
+      "commands with redirects, $, backticks or parentheses always need an ask, which a headless run can't give";
+
+    async function refusedUnder(permissions: RunOptions["permissions"]) {
+      const err: string[] = [];
+      const provider = new MockProvider([opaqueBashCall, textTurn("never reached")]);
+      const outcome = await headless({
+        prompt: "rename it",
+        cwd: await tempDir(),
+        json: false,
+        provider,
+        print: () => {},
+        printError: (line) => err.push(line),
+        ...(permissions !== undefined && { permissions }),
+      });
+      return { outcome, err, provider };
+    }
+
+    it("tells a run already under --preset open the truth instead of sending it back to --preset open", async () => {
+      const { outcome, err, provider } = await refusedUnder(presetResolver("open"));
+
+      expect(exitCodeOf(outcome)).toBe(4);
+      expect(provider.remaining()).toBe(1);
+      expect(err).toEqual([
+        `keywork run: 1 tool call needed an approval no one could give (bash), so the run stopped there · ${opaqueRefusal}`,
+      ]);
+    });
+
+    it("leaves --preset open out under the standard preset too, since no preset lets one through", async () => {
+      const { err } = await refusedUnder(undefined);
+
+      expect(err.join("\n")).toContain(opaqueRefusal);
+      expect(err.join("\n")).not.toContain("--preset open");
+    });
+
+    it("keeps the run.finished refusal shape for json readers", async () => {
+      const lines: string[] = [];
+
+      await headless({
+        prompt: "rename it",
+        cwd: await tempDir(),
+        json: true,
+        provider: new MockProvider([opaqueBashCall]),
+        permissions: presetResolver("open"),
+        print: (line) => lines.push(line),
+      });
+
+      const finished = JSON.parse(lines.at(-1) ?? "{}");
+      expect(finished).toMatchObject({ type: "run.finished", outcome: "denied" });
+      expect(finished.refused).toEqual([{ tool: "bash", callId: "call-1" }]);
+    });
+
+    it("still offers --preset open for the plain calls refused beside an opaque one", () => {
+      const err: string[] = [];
+
+      conclude(
+        {
+          outcome: "denied",
+          message: { role: "assistant", parts: [] },
+          refused: [
+            { tool: "bash", callId: "call-1", verdict: "denied", gate: "headless", opaque: true },
+            { tool: "write", callId: "call-2", verdict: "denied", gate: "headless" },
+          ],
+        },
+        { json: false, print: () => {}, printError: (line) => err.push(line) },
+      );
+
+      expect(err).toEqual([
+        `keywork run: 2 tool calls needed an approval no one could give (bash, write), so the run stopped there · ${opaqueRefusal} · rerun with --preset open to allow the rest`,
+      ]);
+    });
+  });
+
+  it("denied: a refused tool the open preset doesn't cover names its rule instead of --preset open", () => {
+    const err: string[] = [];
+
+    conclude(
+      {
+        outcome: "denied",
+        message: { role: "assistant", parts: [] },
+        refused: [{ tool: "skill_create", callId: "call-1", verdict: "denied", gate: "headless" }],
+      },
+      { json: false, print: () => {}, printError: (line) => err.push(line) },
+    );
+
+    expect(err.join("\n")).toContain(
+      'to allow them, add {"action":"skill_create","resource":"*","effect":"allow"} to the permissions list',
+    );
+    expect(err.join("\n")).not.toContain("--preset open");
+  });
+
   it("denied: golden stream", async () => {
     const cwd = await tempDir();
     const lines: string[] = [];
@@ -998,6 +1097,7 @@ describe("headless exit contract", () => {
           outcome: "failed",
           exitCode: 1,
           error: "keywork run: the turn ended but saving the session failed: disk full",
+          usage: { inputTokens: 0, outputTokens: 0 },
         },
       ]);
     } finally {
@@ -1022,6 +1122,69 @@ describe("headless exit contract", () => {
     expect(outcome).toMatchObject({ outcome: "interrupted", saved: false });
     expect(err.join("\n")).toContain("nothing was saved");
     expect(err.join("\n")).not.toContain("was saved up to this point");
+  });
+
+  it("interrupted without a session dir carries saved: false on run.finished", async () => {
+    const lines: string[] = [];
+    const interrupts = new AbortController();
+
+    await headless({
+      prompt: "think for a while",
+      cwd: await tempDir(),
+      json: true,
+      provider: hangingProvider(() => interrupts.abort()),
+      signal: interrupts.signal,
+      print: (line) => lines.push(line),
+    });
+
+    expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
+      type: "run.finished",
+      outcome: "interrupted",
+      saved: false,
+    });
+  });
+
+  it("totals every model call's usage on run.finished while turn.completed keeps the last call's", async () => {
+    const echoUsage = {
+      inputTokens: 100,
+      outputTokens: 10,
+      cacheReadInputTokens: 40,
+      costUsd: 0.25,
+    };
+    const echo = (callId: string) =>
+      toolCallTurn(
+        { type: "tool-call", callId, name: "bash", arguments: { command: "echo hi" } },
+        echoUsage,
+      );
+    const lines: string[] = [];
+
+    await headless({
+      prompt: "echo twice",
+      cwd: await tempDir(),
+      json: true,
+      provider: new MockProvider([
+        echo("call-1"),
+        echo("call-2"),
+        textTurn("done", { inputTokens: 300, outputTokens: 30, costUsd: 0.125 }),
+      ]),
+      permissions: () => "allow",
+      print: (line) => lines.push(line),
+    });
+
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events.find((event) => event.type === "turn.completed").usage).toEqual({
+      inputTokens: 300,
+      outputTokens: 30,
+      costUsd: 0.125,
+    });
+    const finished = events.at(-1);
+    expect(finished).toMatchObject({ type: "run.finished", outcome: "completed" });
+    expect(finished.usage).toEqual({
+      inputTokens: 500,
+      outputTokens: 50,
+      cacheReadInputTokens: 80,
+      costUsd: 0.625,
+    });
   });
 
   it("persists the partial session even when the turn fails", async () => {
@@ -1405,6 +1568,27 @@ describe("delegation under keywork run", () => {
       children: [{ callId: "d1", outcome: "denied", refused: [{ tool: "bash", callId: "b1" }] }],
     });
     expect(events.filter((event) => event.type === "turn.started")).toHaveLength(1);
+  });
+
+  it("counts each child's model calls in the run's total usage", async () => {
+    const lines: string[] = [];
+    const childUsage = { inputTokens: 20, outputTokens: 5, costUsd: 0.5 };
+
+    await headless({
+      prompt: "how many files?",
+      cwd: await tempDir(),
+      json: true,
+      provider: new MockProvider([
+        toolCallTurn(delegateCall, { inputTokens: 100, outputTokens: 10, costUsd: 0.25 }),
+        textTurn("twelve files", childUsage),
+        textTurn("there are twelve", { inputTokens: 200, outputTokens: 20, costUsd: 0.125 }),
+      ]),
+      print: (line) => lines.push(line),
+    });
+
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events.find((event) => event.type === "child.finished").usage).toEqual(childUsage);
+    expect(events.at(-1).usage).toEqual({ inputTokens: 320, outputTokens: 35, costUsd: 0.875 });
   });
 
   it("names each child on stderr when json is off", async () => {

@@ -2,10 +2,11 @@ import { Box, fg, StyledText, Text, type TextChunk } from "@opentui/core";
 import { type ArcPicker, type ArcPickerRow, arcRowParts, describeArcRow } from "../arc-picker.ts";
 import { type ArcAttire, type ArcOrdinals, arcInk } from "../arcs.ts";
 import { type BotPicker, type BotPickerRow, botRowParts, describeBotRow } from "../bot-picker.ts";
-import type { FilterPicker } from "../filter-picker.ts";
+import type { FilterPage, FilterPicker } from "../filter-picker.ts";
 import { describeModelRow, type ModelPicker, type ModelPickerRow } from "../model-picker.ts";
+import { pickerPage } from "../overlays/index.ts";
 import type { Palette } from "../palette.ts";
-import { clipLine } from "../tray.ts";
+import { clip, clipSpans, ellipsis } from "../width.ts";
 import {
   describeWorkspaceRow,
   type WorkspacePicker,
@@ -32,9 +33,8 @@ export function filterOverlay<Row>(
   theme: Palette,
   placement: OverlayPlacement,
 ) {
-  const rows = spec.picker.rows();
-  const cursor = spec.picker.cursor();
-  const innerWidth = Math.max(0, placement.width - 2);
+  const room = Math.max(0, placement.width - 2);
+  const page = pickerPage(spec.picker, placement);
   return Box(
     {
       ...placement,
@@ -50,13 +50,10 @@ export function filterOverlay<Row>(
       paddingTop: 1,
       paddingBottom: 1,
     },
-    Text({ content: clipLine(` › ${spec.picker.query}▌`, innerWidth), fg: theme.text }),
-    ...(rows.length > 0
-      ? rows.map((row, at) => {
-          const selected = at === cursor;
-          return markedRow(spec.rowInk(row, selected, theme), selected, theme);
-        })
-      : [Text({ content: spec.emptyHint, fg: theme.textDim })]),
+    Text({ content: clip(` › ${spec.picker.query}▌`, room), fg: theme.text }),
+    ...(page.rows.length > 0
+      ? pageLines(spec, page, theme, room)
+      : [Text({ content: clip(spec.emptyHint, room), fg: theme.textDim })]),
   );
 }
 
@@ -127,7 +124,31 @@ export function botPickerSpec(picker: BotPicker): FilterOverlaySpec<BotPickerRow
   };
 }
 
-function markedRow(ink: TextChunk[], selected: boolean, theme: Palette) {
+function pageLines<Row>(
+  spec: FilterOverlaySpec<Row>,
+  page: FilterPage<Row>,
+  theme: Palette,
+  room: number,
+) {
+  return [
+    ...page.rows.map(({ row, selected }) =>
+      markedRow(spec.rowInk(row, selected, theme), selected, theme, room),
+    ),
+    ...hiddenRowsHint(page, theme, room),
+  ];
+}
+
+function markedRow(ink: TextChunk[], selected: boolean, theme: Palette, room: number) {
   const marker = fg(selected ? theme.accent : theme.text)(selected ? "▸ " : "  ");
-  return Text({ content: new StyledText([marker, ...ink]) });
+  const cut = fg(theme.textDim)(ellipsis);
+  return Text({ content: new StyledText(clipSpans([marker, ...ink], room, cut)) });
+}
+
+function hiddenRowsHint(page: FilterPage<unknown>, theme: Palette, room: number) {
+  const hidden = [
+    ...(page.above > 0 ? [`${page.above} above`] : []),
+    ...(page.below > 0 ? [`${page.below} below`] : []),
+  ];
+  if (hidden.length === 0) return [];
+  return [Text({ content: clip(`  ${hidden.join(" · ")}`, room), fg: theme.textDim })];
 }

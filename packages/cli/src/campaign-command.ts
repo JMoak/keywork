@@ -1,6 +1,11 @@
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { campaignEventSchema, campaignSchema, createCampaignRequestSchema } from "@keywork/engine";
+import {
+  campaignEventSchema,
+  campaignSchema,
+  createCampaignRequestSchema,
+  type FetchLike,
+} from "@keywork/engine";
 import { readServerTicket, type ServerTicket, sseFrames } from "@keywork/server";
 import { type CommandIo, resolveCommandIo } from "./command-io.ts";
 import { exitCodes } from "./dispatch.ts";
@@ -15,7 +20,7 @@ export interface CampaignCommandOptions {
   after?: string | undefined;
   json?: boolean | undefined;
   signal?: AbortSignal | undefined;
-  fetch?: typeof fetch;
+  fetch?: FetchLike | undefined;
 }
 
 export const campaignCommandUsage =
@@ -213,6 +218,10 @@ async function requestJson(
   return result;
 }
 
+const terminalStatuses: ReadonlySet<string> = new Set(["completed", "cancelled", "failed"]);
+const snapshotWorthyKinds =
+  /usage|achievement|operation\.response|^campaign\.(?:finish|cancel|fail|settle-attempt)$/;
+
 async function watchCampaign(
   action: Extract<CampaignAction, { kind: "watch" }>,
   ticket: ServerTicket,
@@ -246,7 +255,7 @@ async function watchCampaign(
     const campaign = campaignSchema.parse(snapshot.campaign);
     if (campaign.id !== action.id) throw new Error("Runtime returned another campaign's snapshot");
     snapshotCursor = sequence;
-    terminal = campaign.status === "cancelled" || campaign.status === "completed";
+    terminal = terminalStatuses.has(campaign.status);
     if (options.json === true) output.print(JSON.stringify({ type: "snapshot", ...snapshot }));
     else {
       let settled = 0;
@@ -276,6 +285,7 @@ async function watchCampaign(
     }
     if (frame.event === "snapshot") {
       printSnapshot(value);
+      if (terminal) break;
       continue;
     }
     if (frame.event !== "campaign") continue;
@@ -289,8 +299,9 @@ async function watchCampaign(
         ? JSON.stringify({ type: "campaign", ...event })
         : `${event.sequence} ${event.kind}: ${event.summary}`,
     );
-    if (/usage|achievement|operation\.response|completed|cancelled/.test(event.kind))
+    if (snapshotWorthyKinds.test(event.kind))
       printSnapshot(await requestJson(ticket, path, "GET", undefined, options));
+    if (terminal) break;
   }
   if (options.signal?.aborted) return exitCodes.interrupted;
   if (terminal) return exitCodes.completed;

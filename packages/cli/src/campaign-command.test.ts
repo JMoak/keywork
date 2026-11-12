@@ -6,6 +6,7 @@ import {
   type Achievement,
   type Campaign,
   createCampaign,
+  type FetchLike,
   type UsageReceipt,
 } from "@keywork/engine";
 import { writeServerTicket } from "@keywork/server";
@@ -158,6 +159,47 @@ describe("headless campaign commands", () => {
     });
   });
 
+  it("stops watching once a finish event leaves the campaign completed, though the stream stays open", async () => {
+    const running = runningFixture();
+    const completed = { ...running, status: "completed" };
+    const finish = {
+      schemaVersion: 1,
+      id: "event",
+      campaignId: running.id,
+      sequence: 5,
+      commandId: "finish",
+      kind: "campaign.finish",
+      at: 1000,
+      actor: { id: "controller", role: "controller" },
+      summary: "Finished",
+      refs: [],
+    };
+    const fixture = await setup(() => Response.json({ campaign: completed, sequence: 5 }));
+    const exitCode = await fixture.run(["watch", running.id], {
+      after: "4",
+      fetch: throughFixture(
+        `event: snapshot\ndata: ${JSON.stringify({ campaign: running, sequence: 4 })}\n\nid: 5\nevent: campaign\ndata: ${JSON.stringify(finish)}\n\n`,
+      ),
+    });
+    expect(exitCode).toBe(0);
+    expect(fixture.out.join("\n")).toContain("5 campaign.finish: Finished");
+    expect(fixture.out.at(-1)).toContain("campaign completed");
+    expect(fixture.err).toEqual([]);
+  });
+
+  it("stops watching at a failed snapshot on an open stream", async () => {
+    const failed = { ...runningFixture(), status: "failed" };
+    const fixture = await setup(() => Response.json({ campaign: failed, sequence: 9 }));
+    const exitCode = await fixture.run(["watch", failed.id], {
+      json: true,
+      fetch: throughFixture(
+        `event: snapshot\ndata: ${JSON.stringify({ campaign: failed, sequence: 9 })}\n\n`,
+      ),
+    });
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(fixture.out[0] ?? "{}")).toMatchObject({ campaign: { status: "failed" } });
+  });
+
   it.each([
     { status: 500, json: true },
     { status: 503, json: false },
@@ -264,6 +306,20 @@ async function setup(handle: (request: CapturedRequest) => Response, scopeIdenti
         { print: (line) => out.push(line), printError: (line) => err.push(line) },
       ),
   };
+}
+
+function throughFixture(openStreamFrames: string): FetchLike {
+  return (url, init) =>
+    url.includes("/events?")
+      ? Promise.resolve(openEventStream(openStreamFrames))
+      : fetch(url, init);
+}
+
+function openEventStream(frames: string): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start: (controller) => controller.enqueue(new TextEncoder().encode(frames)),
+  });
+  return new Response(body, { headers: { "content-type": "text/event-stream" } });
 }
 
 function createBody() {

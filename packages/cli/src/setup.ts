@@ -1,8 +1,14 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { connectionDraftProblem } from "@keywork/engine";
+import { connectionDraftProblem, parseReference } from "@keywork/engine";
 import { toError } from "@keywork/shared";
-import type { ConnectionDraft, ConnectionsPort, ConnectionTarget } from "@keywork/tui";
+import type {
+  ConnectionDraft,
+  ConnectionsPort,
+  ConnectionTarget,
+  SavedConnection,
+  VerificationOutcome,
+} from "@keywork/tui";
 import { saveCredential } from "./auth-store.ts";
 import { loginWithBrowser, loginWithDeviceCode } from "./codex-login.ts";
 import { codexProviderName } from "./inference/builtins.ts";
@@ -86,7 +92,8 @@ async function connect(
   const { argument, group, firstModel } = options;
   if (argument === undefined && group === undefined && firstModel !== undefined) {
     const standing = firstModel.standing();
-    if (standing.kind === "available") return chooseFirstModel(firstModel, undefined, io);
+    if (standing.kind === "available")
+      return reviewStartingModel(port, firstModel, standing.reference, io);
   }
   const chosen = await chooseTarget(port, options, io);
   if (chosen === undefined) return 1;
@@ -98,17 +105,30 @@ async function connect(
     return chooseFirstModel(firstModel, codexProviderName, io);
   }
   if ("target" in chosen) return connectDecider(chosen, io);
-  const guided = group !== undefined || firstModel !== undefined;
-  let draft = await completeDraft(port, chosen, io, guided);
+  return connectDraft(port, chosen, io, {
+    guided: group !== undefined || firstModel !== undefined,
+    firstModel,
+  });
+}
+
+interface DraftGuidance {
+  guided: boolean;
+  firstModel: FirstModelSetup | undefined;
+}
+
+async function connectDraft(
+  port: ConnectionsPort,
+  initial: ConnectionDraft,
+  io: ConnectIo,
+  { guided, firstModel }: DraftGuidance,
+): Promise<number> {
+  let draft = await completeDraft(port, initial, io, guided);
   while (draft !== undefined) {
-    io.print(`\nverifying ${draft.endpoint}/models …`);
+    io.print(`\nverifying ${draft.endpoint} …`);
     const verification = await port.verify(draft);
     if (verification.ok) {
       await port.save(draft, verification);
-      const observation = guided ? "model list checked" : "verified";
-      io.print(
-        `\nSaved ${draft.name} · ${describeModels(verification.models)} · ${observation} ${verification.at}`,
-      );
+      io.print(`\n${receipt(port, draft, verification, guided)}`);
       if (firstModel !== undefined) return chooseFirstModel(firstModel, draft.name, io);
       io.print(`Try it:  keywork panes   then /model to pick ${draft.name}/<model>`);
       return 0;
@@ -118,6 +138,56 @@ async function connect(
     draft = await completeDraft(port, draft, io, guided);
   }
   return 1;
+}
+
+function receipt(
+  port: ConnectionsPort,
+  draft: ConnectionDraft,
+  verification: VerificationOutcome & { ok: true },
+  guided: boolean,
+): string {
+  const observation = guided ? "model list checked" : "verified";
+  const facts = `${describeModels(verification.models)} · ${observation} ${verification.at}`;
+  const kept = keptCredential(port, draft);
+  return kept === undefined
+    ? `Saved ${draft.name} · ${facts}`
+    : `${draft.name} uses ${kept} · ${facts}`;
+}
+
+function keptCredential(port: ConnectionsPort, draft: ConnectionDraft): string | undefined {
+  if (draft.credential !== "api-key" || draft.apiKey !== "") return undefined;
+  return port.saved().find((row) => row.name === draft.name)?.credential;
+}
+
+type FailingConnection = SavedConnection & Required<Pick<SavedConnection, "lastFailure">>;
+
+async function reviewStartingModel(
+  port: ConnectionsPort,
+  firstModel: FirstModelSetup,
+  reference: string,
+  io: ConnectIo,
+): Promise<number> {
+  const failing = failingConnectionBehind(port, reference);
+  if (failing === undefined) return chooseFirstModel(firstModel, undefined, io);
+  const { name, lastFailure } = failing;
+  io.print(`Starting model: ${reference}`);
+  io.print(`last check failed ${lastFailure.at} · ${lastFailure.reason}`);
+  if (await confirmed(io, `Fix ${name} now? [y/N]: `))
+    return connectDraft(port, port.draftFor(failing), io, { guided: true, firstModel });
+  io.print(`Starting model unchanged · fix ${name} later with keywork connect ${name}`);
+  return 1;
+}
+
+function failingConnectionBehind(
+  port: ConnectionsPort,
+  reference: string,
+): FailingConnection | undefined {
+  const provider = parseReference(reference)?.provider;
+  return port
+    .saved()
+    .find(
+      (row): row is FailingConnection => row.name === provider && row.lastFailure !== undefined,
+    );
 }
 
 async function chooseTarget(

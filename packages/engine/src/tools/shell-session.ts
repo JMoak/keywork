@@ -4,7 +4,14 @@ import { killTree } from "../proc.ts";
 import { type Sandbox, sandboxedToolNote, unconfined } from "../sandbox/sandbox.ts";
 import { fixedSandbox, type ToolSandbox } from "../sandbox/session.ts";
 import type { Tool } from "../tools.ts";
-import { detectShell, type Shell } from "./bash.ts";
+import {
+  announcedGroup,
+  detectShell,
+  isMsysShell,
+  msysGroupAnnouncement,
+  type Shell,
+  sweepMsysGroup,
+} from "./bash.ts";
 import {
   agentShellEnv,
   BoundedOutput,
@@ -97,7 +104,8 @@ export class ShellSession implements PersistentShell {
     const live = this.live;
     this.live = undefined;
     if (live === undefined) return;
-    await killTree(live.child, live.closed).catch(() => undefined);
+    const sweepOrphans = () => sweepMsysGroup(this.shell, live.group);
+    await killTree(live.child, live.closed, sweepOrphans).catch(() => undefined);
   }
 
   private spawnLive(sandbox: Sandbox): LiveShell {
@@ -118,7 +126,20 @@ export class ShellSession implements PersistentShell {
   private async startShell(options: ShellRunOptions): Promise<LiveShell> {
     const sandbox = (await options.sandbox?.current()) ?? unconfined;
     options.signal?.throwIfAborted();
-    return this.spawnLive(sandbox);
+    const live = this.spawnLive(sandbox);
+    await this.prepare(live, options.signal);
+    return live;
+  }
+
+  private async prepare(live: LiveShell, signal: AbortSignal | undefined): Promise<void> {
+    if (this.shell.name === "powershell") live.child.stdin?.write(`${nativeStdinFromNul}\n`);
+    if (isMsysShell(this.shell)) await this.learnGroup(live, signal);
+  }
+
+  private async learnGroup(live: LiveShell, signal: AbortSignal | undefined): Promise<void> {
+    const answer = await this.runIn(live, msysGroupAnnouncement, signal ? { signal } : {});
+    if (this.live !== live) throw new Error(answer);
+    live.group = announcedGroup(answer);
   }
 
   private runIn(live: LiveShell, command: string, options: ShellRunOptions): Promise<string> {
@@ -187,6 +208,7 @@ interface LiveShell {
   child: ChildProcess;
   closed: Promise<void>;
   failureListeners: Set<(failure: Error) => void>;
+  group: number | undefined;
 }
 
 function spawnShell(
@@ -205,12 +227,28 @@ function spawnShell(
   };
   child.on("error", broadcastFailure);
   child.stdin?.on("error", broadcastFailure);
-  return { child, closed, failureListeners };
+  return { child, closed, failureListeners, group: undefined };
 }
 
 function persistentArgs(shell: Shell): string[] {
   return shell.name === "powershell" ? ["-NoProfile", "-NonInteractive", "-Command", "-"] : [];
 }
+
+// PowerShell hands its own stdin, the command pipe, to native programs. Pointing the process
+// stdin at NUL gives them EOF while PowerShell keeps reading commands from the pipe it holds.
+const nativeStdinFromNul = [
+  "try { Add-Type -Namespace Keywork -Name NativeStdin -MemberDefinition '",
+  '[DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);',
+  '[DllImport("kernel32.dll")] static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);',
+  '[DllImport("kernel32.dll")] static extern bool SetStdHandle(int stream, IntPtr handle);',
+  "const uint GenericRead = 0x80000000, ShareReadWrite = 3, OpenExisting = 3, Inheritable = 1;",
+  "const int StandardInput = -10;",
+  "public static void FromNul() {",
+  'IntPtr nul = CreateFileW("NUL", GenericRead, ShareReadWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);',
+  "SetHandleInformation(nul, Inheritable, Inheritable);",
+  "SetStdHandle(StandardInput, nul); }';",
+  "[Keywork.NativeStdin]::FromNul() } catch {}",
+].join(" ");
 
 function framedCommand(shell: Shell, command: string, sentinel: string): string {
   if (shell.name === "powershell") {
@@ -226,7 +264,7 @@ function framedCommand(shell: Shell, command: string, sentinel: string): string 
     `eval "$(cat <<'${heredoc}'`,
     command,
     heredoc,
-    `)"`,
+    `)" </dev/null`,
     `printf '\\n%s %s\\n' '${sentinel}' "$?"`,
     `printf '\\n%s\\n' '${sentinel}' >&2`,
     "",
