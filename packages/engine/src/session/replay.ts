@@ -98,6 +98,7 @@ function replayToolResults(
       output: part.output,
       isError: part.isError,
       ...(part.spill !== undefined && { spill: part.spill }),
+      ...(part.exitCode !== undefined && { exitCode: part.exitCode }),
       replay: true,
     });
   }

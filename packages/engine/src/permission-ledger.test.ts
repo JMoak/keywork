@@ -83,6 +83,48 @@ describe("the trusted read bundle under a ledger", () => {
     expect(rulingOn(asked)).toBeUndefined();
   });
 
+  it.each([
+    ["a glob that matches a link leaving the workspace", "cat *"],
+    ["a glob in a folder that matches such a link", "cat esc*/secret.txt"],
+    ["a bracket glob it cannot narrow", "ls [a-z]*"],
+  ])("asks before reading %s", (_reason, command) => {
+    expect(rulingOn(command)).toBeUndefined();
+  });
+
+  it("reads a glob whose every match stays inside", () => {
+    for (const command of ["cat *.md", "head src/*.ts", "ls sr?"]) {
+      expect(rulingOn(command)).toEqual({ permission: "allow", gate: "trusted" });
+    }
+  });
+
+  it("judges relative paths from where the session's shell stands after a cd", () => {
+    const ledger = trustedLedger(memoryGrants());
+    const from = (cwd: string, command: string) =>
+      ledger.resolverFor("s1", () => cwd)(bashCall(command));
+
+    expect(from(outside, "cat secret.txt")).toBeUndefined();
+    expect(from(outside, "ls")).toBeUndefined();
+    expect(from(join(project, "src"), "cat ../README.md")).toEqual({
+      permission: "allow",
+      gate: "trusted",
+    });
+    expect(from(join(project, "src"), "cat ../../outside/secret.txt")).toBeUndefined();
+  });
+
+  it.runIf(process.platform === "win32")(
+    "reads where an MSYS shell says it stands, in its own /c/ form",
+    () => {
+      const src = join(project, "src");
+      const msys = `/${src[0]?.toLowerCase()}${src.slice(2).replaceAll("\\", "/")}`;
+      const ruling = trustedLedger(memoryGrants()).resolverFor("s1", () => msys);
+      expect(ruling(bashCall("cat ../README.md"))).toEqual({
+        permission: "allow",
+        gate: "trusted",
+      });
+      expect(ruling(bashCall("cat ../../outside/secret.txt"))).toBeUndefined();
+    },
+  );
+
   it("still honours an explicit grant for a read outside the workspace", () => {
     const workspace = memoryGrants();
     workspace.grant([{ action: "bash", resource: "cat *", effect: "allow" }]);

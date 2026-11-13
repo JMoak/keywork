@@ -1,4 +1,6 @@
-import { messageText, type SessionStore, textMessage } from "@keywork/engine";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Checkpoints, messageText, type SessionStore, textMessage } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { sessionPort } from "./ports.ts";
@@ -54,5 +56,45 @@ describe("rewindBefore", () => {
 
     expect(attachment?.rewindBefore?.(reply?.entryId ?? "")).toBeUndefined();
     expect(attachment?.rewindBefore?.("missing")).toBeUndefined();
+  });
+});
+
+describe("the session's own files", () => {
+  async function agentTurnBesideMine() {
+    const root = await tempDir();
+    const worktree = join(root, "project");
+    await mkdir(worktree);
+    await writeFile(join(worktree, "mine.md"), "mine\n");
+    const checkpoints = await Checkpoints.open({ worktree, gitDir: join(root, "shadow") });
+    const port = sessionPort(join(root, "sessions"), worktree, {
+      checkpointTag: () => checkpoints.takeTurnTag(),
+      turnTrees: checkpoints,
+    });
+    const attachment = await port.create();
+    if (attachment === undefined) throw new Error("no session was created");
+    const prompt = await attachment.openTurn?.(textMessage("user", "write the agent file"));
+    await checkpoints.captureTree();
+    await writeFile(join(worktree, "agent.ts"), "export const agent = 1;\n");
+    await attachment.append(textMessage("assistant", "wrote it"));
+    await attachment.settleTurn?.(prompt?.entryId ?? "");
+    await writeFile(join(worktree, "mine.md"), "mine, edited\n");
+    return { port, attachment, promptId: prompt?.entryId ?? "" };
+  }
+
+  it("names what the session's turns changed from a prompt on, never the person's own edits", async () => {
+    const { attachment, promptId } = await agentTurnBesideMine();
+
+    expect(await attachment.sessionPathsFrom?.(promptId)).toEqual(["agent.ts"]);
+    expect(await attachment.sessionPathsFrom?.("missing")).toEqual([]);
+  });
+
+  it("journals the paths an undo put back, so a reopened session redoes only those", async () => {
+    const { port, attachment, promptId } = await agentTurnBesideMine();
+    const rewound = attachment.rewindBefore?.(promptId);
+
+    await rewound?.journal?.({ restoredTo: "tree-a", redoTree: "tree-b", paths: ["agent.ts"] });
+    const reopened = await port.open(attachment.id);
+
+    expect(reopened?.stagedRewind).toMatchObject({ redoFiles: "tree-b", redoPaths: ["agent.ts"] });
   });
 });

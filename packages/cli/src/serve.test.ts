@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   formatReference,
@@ -393,6 +393,42 @@ describe("fileSessionHost permission layers", () => {
     await served.server.close();
   });
 
+  it("asks before a trusted read once an approved cd moved the session's shell out", async () => {
+    const recording = recordingShell();
+    let root = "";
+    const shell = {
+      ...recording,
+      workingDirectory: () => (recording.commands.includes("cd ..") ? dirname(root) : root),
+    };
+    const options = await layeredOptions(
+      new MockProvider([
+        bash("c1", "cat README.md"),
+        bash("c2", "cd .."),
+        bash("c3", "cat README.md"),
+        textTurn("done"),
+      ]),
+      true,
+      shell,
+    );
+    root = options.cwd;
+    const served = serverOver(options);
+    const id = await sessionOn(served);
+    const turn = await prompted(served, id, "look around, then up");
+    await turn.until("gate.ask");
+    await served.call("/asks/c2", json({ verdict: "granted" }));
+    const afterCd = await turn.until("gate.ask");
+
+    expect(JSON.parse(afterCd.at(-1)?.data ?? "{}").payload.ask).toMatchObject({
+      callId: "c3",
+      rule: "default",
+    });
+    await served.call("/asks/c3", json({ verdict: "denied" }));
+    await turn.until("turn.completed");
+    expect(recording.commands).toEqual(["cat README.md", "cd .."]);
+    await turn.close();
+    await served.server.close();
+  });
+
   it("keeps an untrusted workspace on the built-in posture", async () => {
     const shell = recordingShell();
     const options = await layeredOptions(
@@ -654,6 +690,31 @@ describe("serve", () => {
     expect(await listed.json()).toEqual({ sessions: [] });
 
     interrupts.abort();
+    expect(await finished).toBe(0);
+    expect(readServerTicket(ticketFile)).toBeUndefined();
+    await expect(fetch(`${url}/doc`)).rejects.toThrow();
+  });
+
+  it("stops on POST /shutdown as it stops on a signal: it answers, removes the ticket and exits", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    const ticketFile = join(await tempDir(), "server.json");
+    const out: string[] = [];
+    const finished = serve({
+      ...options,
+      port: 0,
+      ticketFile,
+      signal: new AbortController().signal,
+      print: (line) => out.push(line),
+      printError: () => undefined,
+    });
+    while (out.length < 3) await new Promise((resolve) => setTimeout(resolve, 5));
+    const url = out[0]?.replace("listening on ", "") ?? "";
+    const authorization = `Bearer ${out[1]?.replace("token ", "") ?? ""}`;
+
+    const answer = await fetch(`${url}/shutdown`, { method: "POST", headers: { authorization } });
+
+    expect(answer.status).toBe(200);
+    expect(await answer.json()).toEqual({ sessions: [], asks: 0 });
     expect(await finished).toBe(0);
     expect(readServerTicket(ticketFile)).toBeUndefined();
     await expect(fetch(`${url}/doc`)).rejects.toThrow();
@@ -2780,4 +2841,134 @@ describe("how turns ended, across a reload (UX sweep CONV-13, SESS-6)", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
+
+  describe("what is in flight, and stopping without losing it (UX sweep SESS-1, PERM-5)", () => {
+    function stoppable(options: HostOptions & { log: EventLog }) {
+      const stops: string[] = [];
+      const host = fileSessionHost(options);
+      const server = createKeyworkServer({
+        token,
+        host,
+        log: options.log,
+        version: "test",
+        stop: () => stops.push("stop"),
+      });
+      const call = (path: string, init: RequestInit = {}) =>
+        server.fetch(
+          new Request(`http://keywork.test${path}`, {
+            ...init,
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        );
+      return { server, call, stops };
+    }
+
+    async function sessionWithReader(call: ReturnType<typeof stoppable>["call"]) {
+      const { id } = (await (await call("/sessions", { method: "POST" })).json()) as {
+        id: string;
+      };
+      return { id, reader: sseReader(await call("/events")) };
+    }
+
+    const work = async (call: ReturnType<typeof stoppable>["call"]) => (await call("/work")).json();
+
+    const queue = (call: ReturnType<typeof stoppable>["call"], id: string, text: string) =>
+      call(`/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify({ text }) });
+
+    it("names a running turn and its queue on /work, and nothing once the session is idle", async () => {
+      const options = await hostOptions(new MockProvider([]));
+      options.provider = scripted(hangsAfter("half a"), answers("second"));
+      const served = stoppable(options);
+      const { id, reader } = await sessionWithReader(served.call);
+      expect(await work(served.call)).toEqual({ sessions: [], asks: 0, children: 0 });
+
+      await promptedUntil(served.call, reader, id, "first", "turn.delta");
+      await queue(served.call, id, "second");
+
+      expect(await work(served.call)).toEqual({
+        sessions: [
+          { id, title: expect.any(String), working: true, queued: 1, asks: 0, children: 0 },
+        ],
+        asks: 0,
+        children: 0,
+      });
+      await served.call(`/sessions/${id}/abort`, { method: "POST" });
+      await waitForIdle(served.call, id);
+      expect(await work(served.call)).toEqual({ sessions: [], asks: 0, children: 0 });
+      await reader.close();
+      await served.server.close();
+    });
+
+    it("ends a running turn as shutdown with its text, sets the queue aside, refuses new work, then stops", async () => {
+      const options = await hostOptions(new MockProvider([]));
+      options.provider = scripted(hangsAfter("cut off by"));
+      const served = stoppable(options);
+      const { id, reader } = await sessionWithReader(served.call);
+      await promptedUntil(served.call, reader, id, "first", "turn.delta");
+      await queue(served.call, id, "never runs");
+
+      const answer = await served.call("/shutdown", { method: "POST" });
+
+      expect(answer.status).toBe(200);
+      expect(await answer.json()).toEqual({
+        sessions: [
+          { id, interrupted: true, setAside: [expect.objectContaining({ text: "never runs" })] },
+        ],
+        asks: 0,
+      });
+      expect((await queue(served.call, id, "too late")).status).toBe(503);
+      expect((await served.call(`/sessions/${id}`)).status).toBe(200);
+      expect((await served.call("/shutdown", { method: "POST" })).status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(served.stops).toEqual(["stop"]);
+      await reader.close();
+      await served.server.close();
+
+      const reopened = serverOver({
+        ...options,
+        log: new EventLog(),
+        provider: new MockProvider([]),
+      });
+      const { messages, outcomes } = await detailOf(reopened.call, id);
+      expect(outcomes).toEqual([expect.objectContaining({ index: 0, outcome: "shutdown" })]);
+      expect(messages.map((message) => textAt([message], 0))).toEqual(["first", "cut off by"]);
+      await reopened.server.close();
+    });
+
+    it("refuses a pending ask when it stops, and counts it on /work before", async () => {
+      const options = await processFreeOptions(
+        new MockProvider([
+          toolCallTurn({
+            type: "tool-call",
+            callId: "c1",
+            name: "bash",
+            arguments: { command: "rm x" },
+          }),
+          textTurn("gave up"),
+        ]),
+      );
+      options.permissions = () => "ask";
+      const served = stoppable(options);
+      const { id, reader } = await sessionWithReader(served.call);
+      await promptedUntil(served.call, reader, id, "rm", "gate.ask");
+
+      expect(await work(served.call)).toMatchObject({
+        sessions: [{ id, working: true, asks: 1 }],
+        asks: 1,
+      });
+      expect(await (await served.call("/shutdown", { method: "POST" })).json()).toEqual({
+        sessions: [{ id, interrupted: true, setAside: [] }],
+        asks: 1,
+      });
+      expect(await (await served.call("/asks")).json()).toEqual({ asks: [] });
+      await reader.close();
+      await served.server.close();
+    });
+
+    it("answers 503 to /shutdown on a server that cannot stop itself", async () => {
+      const served = serverOver(await hostOptions(new MockProvider([])));
+      expect((await served.call("/shutdown", { method: "POST" })).status).toBe(503);
+      await served.server.close();
+    });
+  });
 });

@@ -163,6 +163,7 @@ const samples: Samples = {
       output: "ok",
       isError: false,
       spill: { id: "s1", bytes: 4096, elidedFrom: 10, elidedTo: 20 },
+      exitCode: 0,
     },
   ],
   "gate.ask": [
@@ -525,6 +526,7 @@ const samples: Samples = {
     },
   ],
   "show.settled": [{ id: "0b6f3c1e-8f2a-4c55-9d1e-3a7b2c4d5e6f", outcome: "seen", by: "keeper" }],
+  "workspace.changed": [{ paths: ["notes/todo.md", "src/math.ts"], truncated: false }],
 };
 
 function envelopeShape(): Shape {

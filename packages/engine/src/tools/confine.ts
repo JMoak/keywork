@@ -1,5 +1,6 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { globReach, hasGlob } from "./glob-reach.ts";
 
 export interface ToolScope {
   cwd: string;
@@ -33,12 +34,23 @@ export function isReadablePath(scope: ToolScope, path: string): boolean {
   return scopeHolds([...scope.roots, ...(scope.readRoots ?? [])], resolvedIn(scope, path));
 }
 
+export function reachesOnlyReadable(scope: ToolScope, operand: string): boolean {
+  if (!isReadablePath(scope, operand)) return false;
+  if (!hasGlob(operand)) return true;
+  const reach = globReach(resolvedIn(scope, operand));
+  return reach?.every((path) => isReadablePath(scope, path)) === true;
+}
+
 export function scopeContains(scope: ToolScope, path: string): boolean {
   return scopeHolds(scope.roots, resolvedIn(scope, path));
 }
 
 function resolvedIn(scope: ToolScope, path: string): string {
-  return resolve(scope.cwd, process.platform === "win32" ? fromMsysDrive(path) : path);
+  return resolve(nativePath(scope.cwd), nativePath(path));
+}
+
+function nativePath(path: string): string {
+  return process.platform === "win32" ? fromMsysDrive(path) : path;
 }
 
 function fromMsysDrive(path: string): string {

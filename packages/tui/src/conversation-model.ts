@@ -42,7 +42,7 @@ import {
   type SendMode,
 } from "./prompt-editor.ts";
 import type { PromptUndoHook, ReopenedUndo, StagedUndo } from "./prompt-undo.ts";
-import type { ReplayedSummary } from "./session-attachment.ts";
+import type { ReplayedSummary, RestoreScope } from "./session-attachment.ts";
 import { SessionLedger } from "./session-ledger.ts";
 import {
   type ShellEscapePort,
@@ -577,22 +577,22 @@ export class ConversationModel {
     this.feed.post("info", reopenedUndoNotice(reopened.undo.filesNote));
   }
 
-  undoLastPrompt(): boolean {
+  undoLastPrompt(scope: RestoreScope = "session"): boolean {
     const at = this.feed.promptIndices().at(-1);
     const prompt = at === undefined ? undefined : this.feed.entries[at];
     if (this.promptUndo === undefined || prompt?.kind !== "user") return false;
     if (prompt.entryId === undefined) return false;
-    return this.rewindFrom(prompt, undoneNotice);
+    return this.rewindFrom(prompt, scope, undoneNotice);
   }
 
-  restoreTurn(turn: number): void {
+  restoreTurn(turn: number, scope: RestoreScope = "session"): void {
     const record = this.ledgerRecords.find((candidate) => candidate.turn === turn);
     const prompt = record === undefined ? undefined : this.promptOf(record);
     if (this.promptUndo === undefined) this.feed.post("info", noRestoreNotice);
     else if (record === undefined)
       this.feed.post("info", unknownTurnNotice(turn, this.ledgerRecords));
     else if (prompt === undefined) this.feed.post("info", foldedTurnNotice(turn));
-    else this.rewindFrom(prompt, (filesNote) => this.restoredNotice(turn, filesNote));
+    else this.rewindFrom(prompt, scope, (filesNote) => this.restoredNotice(turn, filesNote));
   }
 
   bindRename(hook: RenameHook): void {
@@ -781,12 +781,15 @@ export class ConversationModel {
     this.pendingRestore = undefined;
     const record = pending?.row.record;
     if (pending === undefined || record === undefined) return true;
-    if (chord.name !== "y" || chord.ctrl || chord.meta) {
+    const scope = restoreScopeAnswered(chord);
+    if (scope === undefined) {
       this.feed.post("info", restoreKeptNotice);
       return true;
     }
     this.navigation.exitDisclosure();
-    this.rewindFrom(pending.row.prompt, (filesNote) => this.restoredNotice(record.turn, filesNote));
+    this.rewindFrom(pending.row.prompt, scope, (filesNote) =>
+      this.restoredNotice(record.turn, filesNote),
+    );
     return true;
   }
 
@@ -818,7 +821,11 @@ export class ConversationModel {
     );
   }
 
-  private rewindFrom(prompt: UserEntry, notice: (filesNote: string) => string): boolean {
+  private rewindFrom(
+    prompt: UserEntry,
+    scope: RestoreScope,
+    notice: (filesNote: string) => string,
+  ): boolean {
     const hook = this.promptUndo;
     const at = this.feed.entries.indexOf(prompt);
     const entryId = prompt.entryId;
@@ -826,7 +833,7 @@ export class ConversationModel {
     if (this.stagedUndo !== undefined) this.feed.post("info", alreadyStagedNotice);
     else if (this.busy) this.feed.post("info", turnRunningNotice);
     else
-      this.lastUndo = hook(entryId).then(
+      this.lastUndo = hook(entryId, scope).then(
         (staged) => this.stageUndo(staged, at, promptAsTyped(prompt.text), notice),
         (cause: unknown) => this.reportUndoFailure(cause),
       );
@@ -1450,6 +1457,12 @@ const quietOffNotice =
   "quiet ends · it revoked nothing, its grants stay · /permissions then r revokes one";
 
 const renameUsage = "/rename <title> · names this session for good, the titler stops";
+
+function restoreScopeAnswered(chord: Chord): RestoreScope | undefined {
+  if (chord.ctrl || chord.meta) return undefined;
+  if (chord.name === "y") return "session";
+  return chord.name === "e" ? "everything" : undefined;
+}
 
 function undoneNotice(filesNote: string): string {
   return `undone · ${filesNote} · your prompt is back in the composer · /redo brings it all back`;

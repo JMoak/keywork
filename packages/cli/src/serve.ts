@@ -104,6 +104,7 @@ import {
   listen,
   loggedMessages,
   type ModelSwitch,
+  type PendingAsk,
   type PresetHost,
   type PresetOutcome,
   type QueueRefusal,
@@ -122,13 +123,17 @@ import {
   type SessionSettlement,
   type SessionState,
   type SessionSummary,
+  type SessionWork,
   type SpillRefusal,
   type SpillSlice,
+  type StoppedSession,
   servedGrants,
   spillReferenceAmong,
   spillSlice,
   type UndoReport,
+  type WorkPort,
   type WorkspaceInfo,
+  watchWorkspace,
   writeServerTicket,
 } from "@keywork/server";
 import {
@@ -338,6 +343,7 @@ async function serveListening(
     await server.rehost(await hostOf(trusted));
   });
   const token = issueToken();
+  const stopAsked = new AbortController();
   try {
     server = await listen({
       token,
@@ -346,6 +352,7 @@ async function serveListening(
       version: keyworkVersion,
       port: options.port,
       workspace: workspaceInfoOf(options.cwd, options.workspaceSlug),
+      stop: () => stopAsked.abort(),
     });
   } catch (cause) {
     options.printError(`keywork serve: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -353,10 +360,12 @@ async function serveListening(
     return 1;
   }
   writeServerTicket(ticketFile, { url: server.url, token });
+  const watching = watchWorkspace(options.cwd, log);
   options.print(`listening on ${server.url}`);
   if (options.tokenOnStdout !== false) options.print(`token ${token}`);
   options.print(`ticket ${ticketFile}`);
-  await untilAborted(options.signal);
+  await untilAborted(AbortSignal.any([options.signal, stopAsked.signal]));
+  watching.close();
   await server.close();
   removeServerTicket(ticketFile);
   return 0;
@@ -721,9 +730,29 @@ function sessionVerbsHost(
     revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
     revokeSessionGrant: async (sessionId, rule) =>
       (await sessions.open(sessionId)) !== undefined && ledger.revokeSession(sessionId, rule),
+    work: servedWork(sessions, asks),
     close: async () => {
       asks.close();
       await sessions.close();
+    },
+  };
+}
+
+function servedWork(sessions: LiveSessions, asks: AskQueue): WorkPort {
+  return {
+    inFlight: () => {
+      const pending = asks.list();
+      return {
+        sessions: sessions.workInFlight(pending),
+        asks: pending.length,
+        children: sessions.runningChildCount(),
+      };
+    },
+    windDown: async () => {
+      const refused = asks.list().length;
+      const stopping = sessions.windDown();
+      asks.close();
+      return { sessions: await stopping, asks: refused };
     },
   };
 }
@@ -1018,6 +1047,27 @@ class LiveSessions {
     return { from, to: name };
   }
 
+  workInFlight(asks: readonly PendingAsk[]): SessionWork[] {
+    return [...this.live.values()].flatMap((live) => {
+      const work = live.work({
+        asks: asks.filter((ask) => ask.sessionId === live.id).length,
+        children: this.childrenRunningUnder(live.id),
+      });
+      return work === undefined ? [] : [work];
+    });
+  }
+
+  runningChildCount(): number {
+    return this.runningChildren.size;
+  }
+
+  async windDown(): Promise<StoppedSession[]> {
+    const stopping = [...this.live.values()].map((live) => live.windDown());
+    return (await Promise.all(stopping)).flatMap((stopped) =>
+      stopped.interrupted || stopped.setAside.length > 0 ? [stopped] : [],
+    );
+  }
+
   async close(): Promise<void> {
     this.unjournalGrants();
     for (const childId of [...this.runningChildren.keys()]) this.childReleased(childId);
@@ -1078,7 +1128,7 @@ class LiveSessions {
     const shell = options.openShell?.(options.cwd) ?? new ShellSession(options.cwd);
     const turn = new TurnCheckpoint();
     const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints, turn);
-    const permissions = this.confinedResolver(store);
+    const permissions = this.confinedResolver(store, shell);
     const creature = await this.creatureSeams(store);
     const inference = options.inference;
     const runtime: SessionRuntime = {
@@ -1136,11 +1186,11 @@ class LiveSessions {
     };
   }
 
-  private confinedResolver(store: SessionStore): PermissionResolver {
+  private confinedResolver(store: SessionStore, shell: PersistentShell): PermissionResolver {
     const id = store.header.id;
     return postureResolver(
       () => sessionPosture(creatureTagOf(store.entries())?.kind, this.confinements.get(id)),
-      this.gate.ledger.resolverFor(id),
+      this.gate.ledger.resolverFor(id, () => shell.workingDirectory?.()),
     );
   }
 
@@ -1215,6 +1265,12 @@ class LiveSessions {
   private childReleased(childId: string): void {
     this.runningChildren.get(childId)?.stopRelaying();
     this.runningChildren.delete(childId);
+  }
+
+  private childrenRunningUnder(parentId: string): number {
+    return [...this.runningChildren.values()].filter(
+      (child) => child.store.header.spawnedBy?.sessionId === parentId,
+    ).length;
   }
 }
 
@@ -1391,6 +1447,21 @@ class LiveSession {
 
   busy(): boolean {
     return this.agent.busy();
+  }
+
+  work(waiting: { asks: number; children: number }): SessionWork | undefined {
+    const working = this.agent.busy();
+    if (!working && waiting.asks === 0 && waiting.children === 0) return undefined;
+    const queued = this.agent.queued().length;
+    return { id: this.id, title: this.title(), working, queued, ...waiting };
+  }
+
+  async windDown(): Promise<StoppedSession> {
+    this.closing = true;
+    const setAside = this.agent.clearQueue();
+    const interrupted = this.interrupt() === "aborted";
+    await this.settled;
+    return { id: this.id, interrupted, setAside };
   }
 
   history(): readonly Message[] {

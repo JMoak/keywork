@@ -526,6 +526,7 @@ function buildAgent(
           origin: () => self?.turnOrigin(),
           session: () => resolveSessionKey(spec.sessionId),
           onToolOutput: (chunk) => self?.reportToolOutput(chunk),
+          onToolExit: (exitCode) => self?.reportToolExit(exitCode),
           afterSave: composition.afterSaveFor((publication) =>
             self?.bus.emit("diagnostics.published", publication),
           ),

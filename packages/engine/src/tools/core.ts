@@ -25,6 +25,7 @@ export interface CoreToolOptions {
   memory?: MemoryRecall | undefined;
   shell?: PersistentShell | undefined;
   onToolOutput?: ((chunk: string) => void) | undefined;
+  onToolExit?: ((exitCode: number) => void) | undefined;
   afterSave?: AfterSave | undefined;
   vault?: MemoryStore | undefined;
   worktree?: WorktreeChanges | undefined;
@@ -49,7 +50,7 @@ export function creatureTools(targets: CreatureToolTargets): Tool[] {
 }
 
 export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool[] {
-  const { memory, shell, onToolOutput, afterSave, sandbox } = options;
+  const { memory, shell, onToolOutput, onToolExit, afterSave, sandbox } = options;
   const vault = options.vault ?? memory?.store;
   const files = [
     readTool(scope),
@@ -57,8 +58,8 @@ export function coreTools(scope: ToolScope, options: CoreToolOptions = {}): Tool
     editTool(scope, { afterSave, vault, origin: options.origin, session: options.session }),
     reportingChanges(
       shell === undefined
-        ? bashTool(scope.cwd, detectShell(), onToolOutput, sandbox)
-        : persistentBashTool(shell, onToolOutput, sandbox),
+        ? bashTool(scope.cwd, detectShell(), onToolOutput, sandbox, onToolExit)
+        : persistentBashTool(shell, onToolOutput, sandbox, onToolExit),
       options.worktree,
     ),
   ];

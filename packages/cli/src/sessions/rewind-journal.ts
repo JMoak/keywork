@@ -56,8 +56,9 @@ export function journaledRewind(
 ): RewoundPrompt {
   return {
     ...rewound,
-    journal: async ({ restoredTo, redoTree }) => {
-      const restore = await journalRestore(store, { from, files: restoredTo, redo: redoTree });
+    journal: async ({ restoredTo, redoTree, paths }) => {
+      const facts = { from, files: restoredTo, redo: redoTree, paths };
+      const restore = await journalRestore(store, facts);
       changed();
       return stagedRewind(store, restore, changed);
     },

@@ -63,6 +63,7 @@ import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 import type { MeshConsole } from "./routes/mesh.ts";
 import type { ModelsPort } from "./routes/models.ts";
 import type { ShowPort } from "./routes/show.ts";
+import type { WorkPort } from "./routes/work.ts";
 import type { WorkshopsPort } from "./routes/workshops.ts";
 
 export interface SessionSummary {
@@ -396,6 +397,7 @@ export interface SessionHost {
   workshops?: WorkshopsPort;
   mesh?: MeshConsole;
   show?: ShowPort;
+  work?: WorkPort;
 }
 
 export interface MemoryPort {

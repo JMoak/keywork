@@ -15,7 +15,7 @@ import {
 import type { GrantedScope, PermissionResolver, PermissionRuling } from "./agent.ts";
 import type { ToolCallPart } from "./messages.ts";
 import type { AskRule } from "./session/journal.ts";
-import { isReadablePath, type ToolScope, toolScope } from "./tools/confine.ts";
+import { isReadablePath, reachesOnlyReadable, type ToolScope, toolScope } from "./tools/confine.ts";
 
 export interface WorkspaceGrants {
   rules(): readonly PermissionRule[];
@@ -87,10 +87,10 @@ export class PermissionLedger {
     else this.grantSession(sessionId, rules);
   }
 
-  resolverFor(sessionId?: string): PermissionResolver {
+  resolverFor(sessionId?: string, shellCwd?: () => string | undefined): PermissionResolver {
     return (call) =>
       this.options.user?.(call) ??
-      engineRuling(this.policyFor(sessionId)(call.name, call.arguments));
+      engineRuling(this.policyFor(sessionId, shellCwd?.())(call.name, call.arguments));
   }
 
   view(): PermissionsView {
@@ -138,9 +138,10 @@ export class PermissionLedger {
     for (const listener of [...this.sessionRulesListeners]) listener(sessionId, rules);
   }
 
-  private policyFor(sessionId: string | undefined): LayeredPolicy {
+  private policyFor(sessionId: string | undefined, shellCwd: string | undefined): LayeredPolicy {
+    const reads = shellCwd === undefined ? this.readScope : { ...this.readScope, cwd: shellCwd };
     const layers: RuleLayer[] = [
-      { origin: "trusted", rules: this.bundle(), admits: (part) => this.readsWithinScope(part) },
+      { origin: "trusted", rules: this.bundle(), admits: (part) => readsWithin(reads, part) },
       { origin: "workspace", rules: this.options.workspace.rules() },
       { origin: "session", rules: this.sessionRules(sessionId) },
     ];
@@ -153,10 +154,6 @@ export class PermissionLedger {
 
   private bundle(): readonly PermissionRule[] {
     return this.options.trusted ? trustedReadRules : [];
-  }
-
-  private readsWithinScope(commandPart: string): boolean {
-    return trustedReadStaysWithin(commandPart, (path) => isReadablePath(this.readScope, path));
   }
 }
 
@@ -174,6 +171,13 @@ export function memoryGrants(): WorkspaceGrants {
       return revoked;
     },
   };
+}
+
+function readsWithin(scope: ToolScope, commandPart: string): boolean {
+  return (
+    isReadablePath(scope, scope.cwd) &&
+    trustedReadStaysWithin(commandPart, (operand) => reachesOnlyReadable(scope, operand))
+  );
 }
 
 function engineRuling(ruling: Ruling | undefined): PermissionRuling | undefined {

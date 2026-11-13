@@ -37,7 +37,10 @@ export interface RewoundPrompt {
 export interface RewindFiles {
   readonly restoredTo: string | undefined;
   readonly redoTree: string | undefined;
+  readonly paths?: readonly string[] | undefined;
 }
+
+export type RestoreScope = "session" | "everything";
 
 export interface StagedRewind {
   readonly redoFiles: string | undefined;
@@ -82,8 +85,9 @@ export interface SessionAttachment {
   recordEffort?(level: EffortLevel): Promise<void>;
   bindArc?(slug: string | undefined): Promise<void>;
   bindBot?(name: string | undefined): Promise<void>;
+  sessionPathsFrom?(promptId: string): Promise<readonly string[]>;
   rewindBefore?(promptId: string): RewoundPrompt | undefined;
-  rewindOnServer?(promptId: string): Promise<ServedRewind | undefined>;
+  rewindOnServer?(promptId: string, scope: RestoreScope): Promise<ServedRewind | undefined>;
   openTurn?(prompt: Message): Promise<AppendReceipt | undefined>;
   settleTurn?(promptId: string): Promise<void>;
   stagedRewind?: StagedRewind;

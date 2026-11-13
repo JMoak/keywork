@@ -248,6 +248,7 @@ Fires when a tool returns or throws.
 | `output` | `string` | The result text, bounded to the tool output budget. |
 | `isError` | `boolean` | True when the tool threw or was refused. |
 | `spill` | `SpillReference`, optional | Present when the output was clipped: `{ id, bytes, elidedFrom, elidedTo }` names the spill file beside the session. Over `keywork serve`, `GET /sessions/{id}/spills/{spill.id}` reads it, by default exactly the clipped `[elidedFrom, elidedTo)`. |
+| `exitCode` | `number`, optional | The exit code of the command a `bash` call ran, `0` included, so a client marks a failed command without reading `(exit code N)` out of `output`. Absent for every other tool, and for a command that never exited on its own (a timeout, an abort, a shell that died). The tool result in the session keeps it, so a replay carries it too. Since contract 1.32. |
 
 ## Child sessions
 
@@ -1066,6 +1067,22 @@ settles takes nothing with it: the settings that grew from it stay out, and the 
 | `outcome` | `"seen" \| "pinned" \| "unpinned" \| "dismissed" \| "withdrawn"` | `seen`, `unpinned` and `dismissed` take it out of the yard; `pinned` keeps it out until the keeper unpins or dismisses it; `withdrawn` takes it out without the keeper. |
 | `by` | `"keeper" \| "creature" \| "time"` | `keeper` for every answer, for a live setting withdrawn because its session was removed (`DELETE /sessions/{id}`, or its creature removed), and for one a keeper's opening of the same thing replaced; `creature` when the model working the thread replaced it (a creature's, or a plain session's) or its `rests` thread came to rest (a turn ended with nothing queued); `time` when its `until` time came. |
 
+### workspace.changed
+
+Files in the workspace changed on disk, whoever changed them: a person in an editor, a build, a
+`git checkout`, or the agent. A client rereads what it shows from those paths, so a pane
+follows an edit made outside keywork as it follows `changes.updated`. Changes are gathered for
+300 ms and announced together, so a burst is one event. `.git/`, `node_modules/` and whatever
+`.gitignore` or `.keyworkignore` hides are left out. `keywork serve` watches its workspace
+while it runs, with the operating system's whole-tree watch on Windows and macOS; on other
+platforms it never fires, because following every folder one by one costs too much on a
+large repository. Since contract 1.32.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `paths` | `string[]` | The changed paths, relative to the workspace root with `/` separators, sorted. A folder can appear beside the files that changed in it. |
+| `truncated` | `boolean` | More than 200 paths changed in the burst and only the first 200 are listed; a client rereads everything it shows. |
+
 ## Turn facts and journal-only entries
 
 When a turn settles, under `keywork serve` and in the terminal alike, after its messages, the
@@ -1208,6 +1225,33 @@ read, so a client can mark it interrupted and offer it again. What the turn had 
 ended (partial text kept on a failure, an abort or a shutdown) stays in `messages`. The turn
 still running, a turn compacted away and a turn settled before outcomes were kept carry no mark,
 so a client treats a missing mark as unknown, never as a failure. Since contract 1.32.
+
+## In-flight work and stopping gracefully
+
+`GET /work` answers what is running or waiting from memory alone, so a client deciding whether
+it may quit asks it without the session scan `GET /sessions` makes. `sessions` lists only the
+sessions with something in flight:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id`, `title` | `string` | The session. |
+| `working` | `boolean` | A turn runs, settles or has a prompt in its queue: `working` on `GET /sessions`. |
+| `queued` | `number` | Prompts waiting in its queue. |
+| `asks` | `number` | Asks pending on it. |
+| `children` | `number` | Delegated children its turn is running. |
+
+The top-level `asks` and `children` count every pending ask and running child in the server.
+
+`POST /shutdown` is the interrupt signal for a client that cannot send one; on Windows a
+killed engine loses the turn it was running. It interrupts every running turn and records it
+with the outcome `shutdown`, keeping its text. It sets every queue aside so no queued prompt
+starts, and refuses every pending ask. The answer comes once all of that is written:
+`sessions` lists `{ id, interrupted, setAside }` for each session that had something stopped,
+with `setAside` in the `queue.changed` shape so a client can offer those prompts again, and
+`asks` counts the refused asks. The process then closes its streams, removes its ticket and
+exits, the same path an interrupt signal takes. From the call on, the server answers 503 to
+everything but reads and `POST /shutdown` itself. A second call answers the same report. A
+server that `keywork serve` did not start answers 503. Both routes since contract 1.32.
 
 ## SSE framing
 

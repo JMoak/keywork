@@ -9,6 +9,7 @@ import {
   type WorkspaceInfo,
 } from "./openapi.ts";
 import { handlersOf, json, type RouteParams, unauthorized } from "./routes/family.ts";
+import { nothingWoundDown, type WoundDown } from "./routes/work.ts";
 import { bearerMatches } from "./token.ts";
 
 export const defaultPort = 4770;
@@ -20,6 +21,7 @@ export interface ServerOptions {
   version: string;
   url?: string;
   workspace?: WorkspaceInfo;
+  stop?: () => void;
 }
 
 export interface KeyworkServer {
@@ -31,14 +33,29 @@ export interface KeyworkServer {
 export function createKeyworkServer(options: ServerOptions): KeyworkServer {
   const streams = new OpenStreams();
   const url = options.url ?? `http://127.0.0.1:${defaultPort}`;
-  const handlersFor = (host: SessionHost) =>
+  let host = options.host;
+  let shutdown: Promise<WoundDown> | undefined;
+  const windDown = async (): Promise<WoundDown> =>
+    (await host.work?.windDown()) ?? nothingWoundDown;
+  const stop = options.stop;
+  const shutDown =
+    stop === undefined
+      ? undefined
+      : () => {
+          shutdown ??= windDown().then((report) => {
+            setTimeout(stop, 0);
+            return report;
+          });
+          return shutdown;
+        };
+  const handlersFor = (served: SessionHost) =>
     handlersOf(routeFamilies, {
-      host,
+      host: served,
       log: options.log,
       streams,
       describe: () => openApiDocument(url, options.version, options.workspace),
+      ...(shutDown !== undefined && { shutDown }),
     });
-  let host = options.host;
   let handlers = handlersFor(host);
   return {
     fetch: async (request) => {
@@ -46,6 +63,9 @@ export function createKeyworkServer(options: ServerOptions): KeyworkServer {
       if (match === undefined) return json(404, { error: "no such route" });
       if (match.route.authenticated && !bearerMatches(request, options.token))
         return unauthorized();
+      if (shutdown !== undefined && startsWork(match.route)) {
+        return json(503, { error: "this server is shutting down" });
+      }
       return handlers[match.route.operationId](request, match.params);
     },
     rehost: async (next) => {
@@ -55,10 +75,15 @@ export function createKeyworkServer(options: ServerOptions): KeyworkServer {
       await previous.close();
     },
     close: async () => {
+      await windDown();
       streams.closeAll();
       await host.close();
     },
   };
+}
+
+function startsWork(route: Route): boolean {
+  return route.method !== "GET" && route.operationId !== "shutDown";
 }
 
 interface RouteMatch {

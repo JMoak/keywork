@@ -69,7 +69,13 @@ interface LiveEvents {
   "queue.changed": { queued: readonly QueuedPrompt[] };
   "tool.started": { call: ToolCallPart };
   "tool.output": { chunk: string; callId?: string };
-  "tool.finished": { callId: string; output: string; isError: boolean; spill?: SpillReference };
+  "tool.finished": {
+    callId: string;
+    output: string;
+    isError: boolean;
+    spill?: SpillReference;
+    exitCode?: number;
+  };
   "gate.ask": { ask: PermissionAsk };
   "gate.permission": { decision: PermissionDecision };
   "gate.preset": { from: string; to: string };

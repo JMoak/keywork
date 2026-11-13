@@ -34,6 +34,7 @@ import { spillFamily } from "./routes/spills.ts";
 import { surfaceFamily } from "./routes/surfaces.ts";
 import { themeFamily } from "./routes/themes.ts";
 import { treeFamily } from "./routes/tree.ts";
+import { workFamily } from "./routes/work.ts";
 import { workshopFamily } from "./routes/workshops.ts";
 import { workspaceFamily } from "./routes/workspace.ts";
 
@@ -70,6 +71,7 @@ export const routeFamilies = [
   workshopFamily((host) => host.workshops),
   meshFamily((host) => host.mesh),
   showFamily((host) => host.show),
+  workFamily,
 ] as const;
 
 export type Route = (typeof routeFamilies)[number]["routes"][number];
