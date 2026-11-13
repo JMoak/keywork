@@ -164,7 +164,7 @@ interface CommandContext {
 
 type Command = (context: CommandContext, invocation: ParsedInvocation) => Promise<number>;
 
-const strictWorkspaceCommands: ReadonlySet<CommandName> = new Set(["run", "chat"]);
+const strictWorkspaceCommands: ReadonlySet<CommandName> = new Set(["run", "chat", "campaign"]);
 
 const commands: Record<Exclude<CommandName, "node">, Command> = {
   panes: runPanes,
@@ -186,6 +186,7 @@ const commands: Record<Exclude<CommandName, "node">, Command> = {
   permissions: runPermissions,
   doctor: runDoctor,
   models: runModels,
+  campaign: runCampaign,
   creatures: runCreatures,
   serve: runServe,
   attach: runAttach,
@@ -394,7 +395,8 @@ async function servedHostOptions(
   preset: PresetName | undefined,
 ): Promise<ServedHostOptions> {
   const { cwd, projectTrusted, workspaceSlug } = context;
-  const { config, runtime, memoryDecider } = (await context.openInference()).current();
+  const live = await context.openInference();
+  const { config, runtime, memoryDecider } = live.current();
   const bound = runtime.resolve({ override: values.model, default: config.model });
   if (!bound.ok && (!context.managedHome || values.model !== undefined)) {
     return {
@@ -407,6 +409,14 @@ ${connectHint}`,
   const presets = userPresetSwitch(
     preset === undefined ? config.permissions : permissionPresets[preset],
   );
+  const currentProvider = (): Provider => {
+    const current = live.current();
+    const resolved = current.runtime.resolve({
+      override: values.model,
+      default: current.config.model,
+    });
+    return resolved.ok ? current.runtime.provider(resolved.binding) : setupRequiredProvider;
+  };
   return {
     ok: true,
     options: {
@@ -416,18 +426,20 @@ ${connectHint}`,
       workspaceSlug,
       memoryDecider,
       provider: bound.ok ? runtime.provider(bound.binding) : setupRequiredProvider,
+      currentProvider,
+      refreshInference: () => live.reload(),
       closingProvider: roleProvider(runtime, config, closingRole),
       permissions: presets.resolver,
       presets,
       inference: {
-        bind: (reference) => runtime.registry.bind(reference),
-        provider: (binding) => runtime.provider(binding),
+        bind: (reference) => live.current().runtime.registry.bind(reference),
+        provider: (binding) => live.current().runtime.provider(binding),
       },
       inventory: {
         capabilities: context.capabilities,
-        registrations: () => runtime.registry.all(),
-        provider: (binding) => runtime.provider(binding),
-        decider: (binding) => runtime.decider(binding),
+        registrations: () => live.current().runtime.registry.all(),
+        provider: (binding) => live.current().runtime.provider(binding),
+        decider: (binding) => live.current().runtime.decider(binding),
       },
       checkpoints: values["no-checkpoints"] ? "off" : "on",
       sessionDir: values["session-dir"],
@@ -525,13 +537,20 @@ async function runSessions(
 
 async function runConnect(
   context: CommandContext,
-  { positionals }: ParsedInvocation,
+  { positionals, values }: ParsedInvocation,
 ): Promise<number> {
+  const { connectCommand, connectionGroupOf, firstModelSetupFor } = await import("./setup.ts");
+  const group = values.group === undefined ? undefined : connectionGroupOf(values.group);
+  if (values.group !== undefined && group === undefined) {
+    context.io.printError("keywork connect: --group must be local, flagship, or openrouter");
+    return exitCodes.usage;
+  }
   const inference = await context.openInference();
-  const { connectCommand } = await import("./setup.ts");
   return connectCommand(inference.connections, {
     argument: positionals[0],
     decider: inference.decider,
+    ...(group !== undefined && { group }),
+    ...(values["first-model"] && { firstModel: firstModelSetupFor(inference) }),
   });
 }
 
@@ -692,6 +711,32 @@ async function runCreatures(
   return creaturesCommand(positionals, {}, commandIo(context), { json: values.json });
 }
 
+async function runCampaign(
+  context: CommandContext,
+  { positionals, values }: ParsedInvocation,
+): Promise<number> {
+  const { campaignCommand } = await import("./campaign-command.ts");
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  process.once("SIGINT", interrupt);
+  try {
+    return await campaignCommand(
+      positionals,
+      {
+        cwd: context.cwd,
+        workspaceSlug: context.workspaceSlug,
+        file: values.file,
+        after: values.after,
+        json: values.json,
+        signal: controller.signal,
+      },
+      commandIo(context),
+    );
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+  }
+}
+
 async function runTrust(action: "trust" | "untrust", context: CommandContext): Promise<number> {
   const { trustCommand } = await import("./trust.ts");
   return trustCommand(action, context.cwd, context.trustStore, commandIo(context));
@@ -768,6 +813,8 @@ function parseInvocationArgs(args: readonly string[]) {
       json: { type: "boolean", default: false },
       debug: { type: "boolean", default: false },
       model: { type: "string" },
+      group: { type: "string" },
+      "first-model": { type: "boolean", default: false },
       preset: { type: "string" },
       bot: { type: "string" },
       global: { type: "boolean", default: false },
@@ -785,6 +832,8 @@ function parseInvocationArgs(args: readonly string[]) {
       token: { type: "string" },
       tree: { type: "boolean", default: false },
       out: { type: "string" },
+      file: { type: "string" },
+      after: { type: "string" },
       apply: { type: "boolean", default: false },
       restore: { type: "string" },
       yes: { type: "boolean", default: false },

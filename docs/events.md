@@ -35,7 +35,25 @@ a version of its own, separate from the keywork release. `info.version` in `/doc
 release (`packages/cli/package.json`, or the build-time version in a release binary).
 `info.x-keywork-contract` is the contract version, `major.minor`, and the same string rides
 `/doc` as the `x-keywork-contract` response header so a client can read it before parsing
-anything. The constant lives in `packages/server/src/contract.ts` and is `1.29` today.
+anything. The current value lives in `packages/server/src/contract.ts`.
+
+Since contract 1.31, authenticated `POST /models/refresh` reloads saved model connections
+and configuration and returns the `GET /models` inventory. It accepts no request body.
+Refresh does not grant workspace trust, restart the service, or change an already-bound
+conversation. Clients use the returned inherited model to finish setup; an inventory
+reading does not establish that a model has answered. A host without refresh support
+returns 503; older contracts may return 404.
+
+Host-wide model inventory may also report `conversation`: `{ provider, model, mode }`,
+where `mode` is `chat` or `tools`, or a refusal with `refused` and `detail`. A smaller model
+can serve a basic creature conversation in `chat` mode: the engine removes tools from
+requests and refuses returned tool calls. The existing `strong` and `loop` classes still
+gate project and autonomous work. License checks and explicit provider choice apply in
+both modes. Older hosts omit this field; clients keep their existing strong-model path.
+When a selected loopback model has enough measured context but unverified tool support,
+`conversation.projectCheck` supplies its exact `{ endpoint, model }`. A client may offer
+an explicit short `POST /models/probe` with `behaviour: true, refresh: true`, then refresh
+inventory to establish project eligibility. Discovery never runs this check on its own.
 
 Within a major, changes are additive. A route, an operation id, a response field or an event
 name that exists in `1.x` keeps existing and keeps its meaning through every later `1.y`.

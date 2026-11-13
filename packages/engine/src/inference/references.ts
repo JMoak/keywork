@@ -1,3 +1,4 @@
+import { connectionNamePattern } from "@keywork/shared";
 import type { ModelReference } from "./types.ts";
 
 export function formatReference(reference: ModelReference): string {
@@ -25,6 +26,25 @@ export function endpointScheme(endpoint: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function connectionDraftProblem(draft: {
+  name: string;
+  endpoint: string;
+  credential: string;
+  insecureTransport: boolean;
+}): string | undefined {
+  const name = draft.name.trim();
+  if (name === "") return "a connection needs a name";
+  if (!connectionNamePattern.test(name)) return "names are lowercase letters, digits, . _ -";
+  const endpoint = draft.endpoint.trim();
+  const scheme = endpointScheme(endpoint);
+  if ((scheme !== "http" && scheme !== "https") || !/^https?:\/\/\S+$/i.test(endpoint))
+    return "endpoint must be an http(s) URL";
+  if (draft.credential === "env:") return "name the environment variable";
+  if (scheme === "http" && !isLoopbackEndpoint(endpoint) && !draft.insecureTransport)
+    return "plain http off loopback is refused until you allow it";
+  return undefined;
 }
 
 function hostOf(endpoint: string): string | undefined {

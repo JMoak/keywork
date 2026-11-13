@@ -19,19 +19,28 @@ export function withReadRoots(scope: ToolScope, readable: readonly string[]): To
 }
 
 export function confinedPath(scope: ToolScope, path: string): string {
-  const target = resolve(scope.cwd, path);
+  const target = resolvedIn(scope, path);
   if (scopeHolds(scope.roots, target)) return target;
   throw new Error(escapeMessage(path, scope.roots));
 }
 
 export function readablePath(scope: ToolScope, path: string): string {
-  const target = resolve(scope.cwd, path);
+  const target = resolvedIn(scope, path);
   if (scopeHolds([...scope.roots, ...(scope.readRoots ?? [])], target)) return target;
   throw new Error(escapeMessage(path, scope.roots));
 }
 
 export function scopeContains(scope: ToolScope, path: string): boolean {
-  return scopeHolds(scope.roots, resolve(scope.cwd, path));
+  return scopeHolds(scope.roots, resolvedIn(scope, path));
+}
+
+function resolvedIn(scope: ToolScope, path: string): string {
+  return resolve(scope.cwd, process.platform === "win32" ? fromMsysDrive(path) : path);
+}
+
+function fromMsysDrive(path: string): string {
+  const drive = /^\/([a-zA-Z])(?=\/|$)/.exec(path)?.[1];
+  return drive === undefined ? path : `${drive.toUpperCase()}:\\${path.slice(3)}`;
 }
 
 function scopeHolds(roots: readonly string[], target: string): boolean {

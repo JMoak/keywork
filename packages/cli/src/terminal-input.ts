@@ -30,6 +30,7 @@ export interface TerminalInput {
   readonly interactive: boolean;
   readLine(prompt: string, options?: LineReadOptions): Promise<string | undefined>;
   readSecret(prompt: string): Promise<string>;
+  readSecretOrCancel(prompt: string): Promise<string | undefined>;
   confirm(question: string): Promise<boolean>;
   readKey(): Promise<KeyPress | undefined>;
   onKey(listener: (key: KeyPress) => void): () => void;
@@ -85,7 +86,8 @@ function interactiveInput(streams: TerminalStreams): TerminalInput {
   return {
     interactive: true,
     readLine,
-    readSecret: (prompt) => readMaskedLine(prompt, input, output),
+    readSecret: async (prompt) => (await readMaskedLine(prompt, input, output)) ?? "",
+    readSecretOrCancel: (prompt) => readMaskedLine(prompt, input, output),
     confirm: async (question) => saidYes(await readLine(question)),
     readKey: () =>
       new Promise((resolve) => {
@@ -126,6 +128,7 @@ function pipedInput(streams: TerminalStreams): TerminalInput {
     interactive: false,
     readLine,
     readSecret: async (prompt) => (await readLine(prompt)) ?? "",
+    readSecretOrCancel: readLine,
     confirm: async (question) => saidYes(await readLine(question)),
     readKey: () => Promise.resolve(undefined),
     onKey: () => () => {},
@@ -211,25 +214,28 @@ const enter = new Set(["\r", "\n"]);
 const erase = new Set([String.fromCharCode(127), "\b"]);
 const interruptKey = String.fromCharCode(3);
 
-function readMaskedLine(prompt: string, input: InputStream, output: OutputStream): Promise<string> {
+function readMaskedLine(
+  prompt: string,
+  input: InputStream,
+  output: OutputStream,
+): Promise<string | undefined> {
   output.write(prompt);
   const wasRaw = input.isRaw ?? false;
   if (input.isTTY) input.setRawMode?.(true);
   input.resume();
   return new Promise((resolve) => {
     let entered = "";
-    const finish = (): void => {
+    const finish = (answer: string | undefined): void => {
       input.off("data", onData);
       if (input.isTTY) input.setRawMode?.(wasRaw);
       input.pause();
       output.write("\n");
-      resolve(entered);
+      resolve(answer);
     };
     const onData = (chunk: Buffer | string): void => {
       for (const char of chunk.toString()) {
-        if (char === interruptKey) entered = "";
         if (enter.has(char) || char === interruptKey) {
-          finish();
+          finish(char === interruptKey ? undefined : entered);
           return;
         }
         if (erase.has(char)) {

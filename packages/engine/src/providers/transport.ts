@@ -9,6 +9,8 @@ export interface StreamingPost {
   headers: Readonly<Record<string, string>>;
   body: string;
   signal?: AbortSignal | undefined;
+  singleAttempt?: boolean | undefined;
+  onHeaders?: ((headers: Headers) => void) | undefined;
 }
 
 export function bearerHeaders(apiKey: string | undefined): AuthHeaders {
@@ -26,7 +28,9 @@ export async function postForStream(
     headers: post.headers,
     body: post.body,
     ...(post.signal !== undefined && { signal: post.signal }),
+    ...(post.singleAttempt === true && { redirect: "error" }),
   });
+  post.onHeaders?.(response.headers);
   if (!response.ok) throw await httpFailure(provider, response);
   if (response.body === null) throw new ProviderEmptyResponseError(provider);
   return response.body;

@@ -4,7 +4,7 @@ import { type Chord, parseChord } from "../keys.ts";
 import { type OverlayFrame, panelFrame, RowOverlay } from "./overlay.ts";
 
 export interface BotCreateSeams {
-  dismiss(): void;
+  dismiss(overlay: RowOverlay): void;
 }
 
 export class BotCreateOverlay extends RowOverlay {
@@ -26,7 +26,7 @@ export class BotCreateOverlay extends RowOverlay {
   }
 
   handleKey(chord: Chord, sequence: string | undefined): void {
-    if (this.model.handleKey(chord, sequence) === "close") this.seams.dismiss();
+    if (this.model.handleKey(chord, sequence) === "close") this.seams.dismiss(this);
   }
 
   override handlePaste(line: string): void {

@@ -78,6 +78,26 @@ describe("confinedPath", () => {
     expect(() => confinedPath(repo, "brand/new/../../../escape.txt")).toThrow("escapes");
   });
 
+  it.skipIf(process.platform !== "win32")(
+    "reads Git Bash drive paths as the Windows drive they name",
+    async () => {
+      await writeFile(join(root, "notes.md"), "from bash");
+      const msysRoot = `/${root[0]?.toLowerCase()}${root.slice(2).replaceAll("\\", "/")}`;
+
+      expect(confinedPath(repo, `${msysRoot}/src/app.ts`)).toBe(join(root, "src", "app.ts"));
+      expect(await readTool(repo).execute({ path: `${msysRoot}/notes.md` })).toContain("from bash");
+      expect(() => confinedPath(repo, `${msysRoot}/../outside.txt`)).toThrow(
+        "escapes the project root",
+      );
+      expect(scopeContains(toolScope(`${root.slice(0, 2)}\\tmp`), "/tmp/notes.md")).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("leaves drive-shaped paths alone off Windows", () => {
+    expect(() => confinedPath(repo, "/c/Users/notes.md")).toThrow("escapes the project root");
+    expect(confinedPath(toolScope("/c"), "/c/Users/notes.md")).toBe("/c/Users/notes.md");
+  });
+
   it.skipIf(process.platform !== "win32")("rejects targets on another drive letter", () => {
     const otherDrive = root.toUpperCase().startsWith("C:") ? "D:" : "C:";
     const elsewhere = `${otherDrive}\\elsewhere\\file.txt`;

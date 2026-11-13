@@ -1,19 +1,27 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import type { FetchLike } from "@keywork/engine";
+import type { KeyworkConfig } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import type {
   ConnectionDraft,
   ConnectionsPort,
   ConnectionTarget,
+  SavedConnection,
   VerificationOutcome,
 } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
+import { type CredentialMap, readCredentials } from "./auth-store.ts";
 import { typesafeDecider } from "./inference/builtins.ts";
+import { connectionsPort } from "./inference/connections.ts";
+import { type ObservationMap, readObservations } from "./inference/observations.ts";
 import { type DeciderConnection, typesafeTerms } from "./inference/typesafe-connection.ts";
 import type { VerificationReport } from "./inference/verify.ts";
 import { typesafeRefusal } from "./memory-decider.ts";
 import { type ConnectIo, connectCommand, saveApiKey, terminalConnectIo } from "./setup.ts";
+import type { FirstModelSetup } from "./setup-model.ts";
+import { readUserConfig } from "./user-config.ts";
 
 const tempDir = scratchDirs("keywork-setup-");
 
@@ -80,10 +88,13 @@ const custom: ConnectionTarget = {
   credential: "api-key",
 };
 
-function fakePort(verification: VerificationOutcome) {
+function fakePort(
+  verification: VerificationOutcome,
+  targets: readonly ConnectionTarget[] = [ollama, custom],
+) {
   const saves: ConnectionDraft[] = [];
   const port: ConnectionsPort = {
-    targets: () => [ollama, custom],
+    targets: () => targets,
     saved: () => [],
     draftFor: (target) => ({
       name: target.name,
@@ -101,6 +112,67 @@ function fakePort(verification: VerificationOutcome) {
   };
   return { port, saves };
 }
+
+const openai: ConnectionTarget = {
+  id: "openai",
+  label: "OpenAI",
+  kind: "built-in",
+  name: "openai",
+  endpoint: "https://api.openai.com/v1",
+  protocol: "chat-completions",
+  credential: "api-key",
+  endpointEditable: false,
+  nameEditable: false,
+};
+
+function firstModelHarness(
+  standing: ReturnType<FirstModelSetup["standing"]> = {
+    kind: "needs-model",
+    configured: undefined,
+    reason: "2 models could be the default",
+  },
+) {
+  const remembered: { reference: string; previous: string | undefined }[] = [];
+  const firstModel: FirstModelSetup = {
+    refresh: async () => undefined,
+    standing: () => standing,
+    choices: () => ["openai/alpha", "openai/beta"],
+    check: () => undefined,
+    remember: async (reference, previous) => {
+      remembered.push({ reference, previous });
+      return undefined;
+    },
+  };
+  return { firstModel, remembered };
+}
+
+const startingOpenRouter: ReturnType<FirstModelSetup["standing"]> = {
+  kind: "available",
+  reference: "openrouter/openai/gpt-5-mini",
+  configured: "openrouter/openai/gpt-5-mini",
+};
+
+const refusedKey =
+  'openrouter refused the key · HTTP 401 from https://openrouter.ai/api/v1/key: {"error":{"message":"User not found.","code":401}}';
+
+const failedOpenRouter: SavedConnection = {
+  name: "openrouter",
+  endpoint: "https://openrouter.ai/api/v1",
+  protocol: "chat-completions",
+  credential: "saved key",
+  builtIn: true,
+  enabled: true,
+  lastFailure: { at: "2026-11-12T08:00:00.000Z", reason: refusedKey },
+};
+
+const openRouterDraft: ConnectionDraft = {
+  name: "openrouter",
+  endpoint: "https://openrouter.ai/api/v1",
+  protocol: "chat-completions",
+  credential: "api-key",
+  apiKey: "",
+  insecureTransport: false,
+};
 
 function scriptedIo(answers: string[], secrets: string[] = []): ConnectIo & { printed: string[] } {
   const printed: string[] = [];
@@ -190,6 +262,276 @@ describe("connectCommand without a terminal", () => {
     ]);
     expect(written.join("")).toContain("Choice [1]: ");
     expect(written.join("")).not.toContain("sk-piped-key");
+  });
+});
+
+describe("guided model setup", () => {
+  it("offers the three routes and confirms the starting model separately from saving a key", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha", "beta"] }, [openai]);
+    const { firstModel, remembered } = firstModelHarness();
+    const io = scriptedIo(["2", "1", "2", "y"], ["fake-key"]);
+
+    expect(await connectCommand(port, { firstModel, io })).toBe(0);
+
+    expect(io.printed).toEqual(
+      expect.arrayContaining([
+        "  1. Local",
+        "  2. Flagship AI direct",
+        "  3. OpenRouter",
+        "Selected openai/beta for this setup.",
+      ]),
+    );
+    expect(saves).toEqual([expect.objectContaining({ name: "openai" })]);
+    expect(remembered).toEqual([{ reference: "openai/beta", previous: undefined }]);
+  });
+
+  it("keeps the connection and leaves the starting model alone when the user declines", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha", "beta"] }, [openai]);
+    const { firstModel, remembered } = firstModelHarness();
+    const io = scriptedIo(["1", "2", ""], ["fake-key"]);
+
+    expect(await connectCommand(port, { group: "flagship", firstModel, io })).toBe(0);
+
+    expect(saves).toHaveLength(1);
+    expect(remembered).toEqual([]);
+    expect(io.printed).toContain("Starting model unchanged.");
+  });
+
+  it("uses an existing resolved preference without reopening provider setup", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: [] });
+    const { firstModel, remembered } = firstModelHarness({
+      kind: "available",
+      reference: "openrouter/openai/gpt-5-mini",
+      configured: "openrouter/openai/gpt-5-mini",
+    });
+    const io = scriptedIo([]);
+
+    expect(await connectCommand(port, { firstModel, io })).toBe(0);
+
+    expect(io.printed).toEqual(["Starting model: openrouter/openai/gpt-5-mini"]);
+    expect(saves).toEqual([]);
+    expect(remembered).toEqual([]);
+  });
+
+  it("confirms a sole candidate before writing the first starting model", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: [] });
+    const { firstModel, remembered } = firstModelHarness({
+      kind: "available",
+      reference: "ollama/qwen",
+      configured: undefined,
+    });
+    const io = scriptedIo(["y"]);
+
+    expect(await connectCommand(port, { firstModel, io })).toBe(0);
+
+    expect(saves).toEqual([]);
+    expect(remembered).toEqual([{ reference: "ollama/qwen", previous: undefined }]);
+  });
+
+  it("offers the connected provider's model while keeping an existing starting model on decline", async () => {
+    const { port } = fakePort({ ok: true, at: "t", models: ["qwen"] });
+    const { firstModel, remembered } = firstModelHarness({
+      kind: "available",
+      reference: "openrouter/openai/gpt-5-mini",
+      configured: "openrouter/openai/gpt-5-mini",
+    });
+    firstModel.choices = (provider) => (provider === "ollama" ? ["ollama/qwen"] : []);
+    const io = scriptedIo(["1", "", "", "1", "n"]);
+
+    expect(await connectCommand(port, { firstModel, group: "local", io })).toBe(0);
+
+    expect(io.printed).toContain("Starting model: openrouter/openai/gpt-5-mini");
+    expect(io.printed).toContain("Selected ollama/qwen for this setup.");
+    expect(io.printed).toContain("Starting model unchanged.");
+    expect(remembered).toEqual([]);
+  });
+
+  it("puts discovered local models first after an explicit search", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["qwen"] });
+    port.findLocal = async () => [{ target: ollama, models: ["qwen"] }];
+    const io = scriptedIo(["y", "1", "", ""]);
+
+    expect(await connectCommand(port, { group: "local", io })).toBe(0);
+
+    expect(io.printed).toContain("  1. Ollama · models reported: qwen");
+    expect(saves).toEqual([expect.objectContaining({ name: "ollama", credential: "none" })]);
+  });
+
+  it("offers local setup guidance and keeps the nonsecret draft when the endpoint is malformed", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha"] });
+    const prompts: string[] = [];
+    const script = scriptedIo(["2", "lab", "bad-url", "y", "", "http://localhost:6789/v1"]);
+    const io: ConnectIo = {
+      ...script,
+      ask: (prompt) => {
+        prompts.push(prompt);
+        return script.ask(prompt);
+      },
+      askSecret: async (prompt) => {
+        prompts.push(prompt);
+        return "";
+      },
+    };
+
+    expect(await connectCommand(port, { group: "local", io })).toBe(0);
+
+    expect(prompts).toContain("Name [lab]: ");
+    expect(prompts).toContain("Endpoint [bad-url]: ");
+    expect(prompts.filter((prompt) => prompt.includes("API key"))).toHaveLength(1);
+    expect(script.printed).toContain("not saved: endpoint must be an http(s) URL");
+    expect(script.printed.join("\n")).toContain("https://docs.ollama.com/quickstart");
+    expect(script.printed.join("\n")).toContain(
+      "https://lmstudio.ai/docs/developer/rest/quickstart",
+    );
+    expect(script.printed.join("\n")).toContain("model list checked t");
+    expect(saves).toEqual([
+      expect.objectContaining({ name: "lab", endpoint: "http://localhost:6789/v1" }),
+    ]);
+  });
+
+  it("cancels a masked key entry before it can fall through to verification", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha"] }, [openai]);
+    port.verify = async () => {
+      throw new Error("should never verify");
+    };
+    const io = { ...scriptedIo([]), askSecret: async () => undefined };
+
+    expect(await connectCommand(port, { argument: "openai", io })).toBe(130);
+
+    expect(saves).toEqual([]);
+    expect(io.printed).toContain("Model setup cancelled.");
+  });
+
+  it("offers to fix the provider behind a starting model whose last check failed", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha"] });
+    port.saved = () => [failedOpenRouter];
+    port.draftFor = () => openRouterDraft;
+    const { firstModel, remembered } = firstModelHarness(startingOpenRouter);
+    const prompts: string[] = [];
+    const script = scriptedIo(["y", ""], ["sk-or-new"]);
+    const io: ConnectIo = {
+      ...script,
+      ask: (prompt) => {
+        prompts.push(prompt);
+        return script.ask(prompt);
+      },
+    };
+
+    expect(await connectCommand(port, { firstModel, io })).toBe(0);
+
+    expect(script.printed.slice(0, 2)).toEqual([
+      "Starting model: openrouter/openai/gpt-5-mini",
+      `last check failed 2026-11-12T08:00:00.000Z · ${refusedKey}`,
+    ]);
+    expect(prompts[0]).toBe("Fix openrouter now? [y/N]: ");
+    expect(saves).toEqual([{ ...openRouterDraft, apiKey: "sk-or-new" }]);
+    expect(script.printed).toContain(
+      "\nSaved openrouter · models reported: alpha · model list checked t",
+    );
+    expect(script.printed.at(-1)).toBe("Starting model unchanged.");
+    expect(remembered).toEqual([]);
+  });
+
+  it("doesn't call guided setup done when the failing provider is left unfixed", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha"] });
+    port.saved = () => [failedOpenRouter];
+    const { firstModel } = firstModelHarness(startingOpenRouter);
+    const io = scriptedIo(["n"]);
+
+    expect(await connectCommand(port, { firstModel, io })).toBe(1);
+
+    expect(saves).toEqual([]);
+    expect(io.printed.at(-1)).toBe(
+      "Starting model unchanged · fix openrouter later with keywork connect openrouter",
+    );
+  });
+
+  it("refuses insecure transport before asking for a key", async () => {
+    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha"] });
+    const io = {
+      ...scriptedIo(["lab", ""]),
+      askSecret: async () => {
+        throw new Error("should never ask for a key");
+      },
+    };
+
+    expect(await connectCommand(port, { argument: "http://lab.example/v1", io })).toBe(1);
+
+    expect(saves).toEqual([]);
+    expect(io.printed).toContain("plain http off loopback is refused until you allow it");
+  });
+});
+
+describe("connect against OpenRouter's public model list", () => {
+  const userNotFound = '{"error":{"message":"User not found.","code":401}}';
+
+  async function openRouterPort(env: Record<string, string>, acceptedKey: string) {
+    const dir = await tempDir();
+    const state = {
+      config: {} as KeyworkConfig,
+      credentials: {} as CredentialMap,
+      observations: {} as ObservationMap,
+    };
+    const fetchFn: FetchLike = async (url, init) => {
+      if (url.endsWith("/models")) return Response.json({ data: [{ id: "openai/gpt-5-mini" }] });
+      const { authorization } = (init?.headers ?? {}) as Record<string, string | undefined>;
+      return authorization === `Bearer ${acceptedKey}`
+        ? Response.json({ data: {} })
+        : new Response(userNotFound, { status: 401 });
+    };
+    const port = connectionsPort({
+      env,
+      userDir: dir,
+      config: () => state.config,
+      credentials: () => state.credentials,
+      observations: () => state.observations,
+      fetchFn,
+      now: () => new Date("2026-11-12T08:00:00.000Z"),
+      changed: async () => {
+        state.config = await readUserConfig(dir);
+        state.credentials = await readCredentials(dir);
+        state.observations = await readObservations(dir);
+      },
+    });
+    return { port, dir };
+  }
+
+  it("refuses a key OpenRouter rejects and saves nothing", async () => {
+    const { port, dir } = await openRouterPort({}, "sk-or-real");
+    const io = scriptedIo([], ["hello world"]);
+
+    expect(await connectCommand(port, { argument: "openrouter", io })).toBe(1);
+
+    expect(io.printed.at(-1)).toBe(
+      `not saved: openrouter refused the key · HTTP 401 from https://openrouter.ai/api/v1/key: ${userNotFound}`,
+    );
+    expect(io.printed.join("\n")).not.toContain("Saved");
+    expect(await readCredentials(dir)).toEqual({});
+  });
+
+  it("says what's missing instead of saving when Enter leaves no key to send", async () => {
+    const { port, dir } = await openRouterPort({}, "sk-or-real");
+    const io = scriptedIo(["3", "n"], [""]);
+
+    expect(await connectCommand(port, { firstModel: firstModelHarness().firstModel, io })).toBe(1);
+
+    expect(io.printed).toContain(
+      "not saved: openrouter needs an API key · paste one or set OPENROUTER_API_KEY",
+    );
+    expect(io.printed.join("\n")).not.toContain("Saved");
+    expect(await readObservations(dir)).toEqual({});
+  });
+
+  it("says Enter used the environment key when one is set", async () => {
+    const { port, dir } = await openRouterPort({ OPENROUTER_API_KEY: "sk-or-env" }, "sk-or-env");
+    const io = scriptedIo(["3", ""], [""]);
+
+    expect(await connectCommand(port, { firstModel: firstModelHarness().firstModel, io })).toBe(0);
+
+    expect(io.printed).toContain(
+      "\nopenrouter uses OPENROUTER_API_KEY · models reported: openai/gpt-5-mini · model list checked 2026-11-12T08:00:00.000Z",
+    );
+    expect(await readCredentials(dir)).toEqual({});
   });
 });
 

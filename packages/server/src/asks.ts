@@ -69,15 +69,20 @@ export class AskQueue {
     this.decider = decider;
   }
 
-  guardFor(sessionId: string): ToolGuard {
+  guardFor(sessionId: string, options: { decide?: boolean } = {}): ToolGuard {
     return {
-      confirm: (call, announced) => this.ask(sessionId, call, announced),
+      confirm: (call, announced) => this.ask(sessionId, call, announced, options.decide !== false),
       grantsQuietly: (call, rule) => this.grants?.grantsQuietly?.(sessionId, call, rule) === true,
       gate: "headless",
     };
   }
 
-  ask(sessionId: string, call: ToolCallPart, announced?: PermissionAsk): Promise<Confirmation> {
+  ask(
+    sessionId: string,
+    call: ToolCallPart,
+    announced?: PermissionAsk,
+    decide = true,
+  ): Promise<Confirmation> {
     return new Promise((resolve) => {
       const preview = announced?.preview;
       const ask: PendingAsk = {
@@ -92,7 +97,7 @@ export class AskQueue {
       const timer = setTimeout(() => this.settle(call.callId, "timed-out"), this.timeoutMs);
       timer.unref?.();
       this.pending.set(call.callId, { ask, resolve, timer });
-      void this.decide(ask, announced);
+      if (decide) void this.decide(ask, announced);
     });
   }
 
@@ -122,6 +127,12 @@ export class AskQueue {
 
   close(): void {
     for (const callId of [...this.pending.keys()]) this.settle(callId, "closed");
+  }
+
+  closeFor(sessionId: string): void {
+    for (const [callId, waiting] of this.pending) {
+      if (waiting.ask.sessionId === sessionId) this.settle(callId, "closed");
+    }
   }
 
   private async decide(ask: PendingAsk, announced: PermissionAsk | undefined): Promise<void> {

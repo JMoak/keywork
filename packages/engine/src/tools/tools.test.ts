@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { bashTool, detectShell } from "./bash.ts";
+import { processExists } from "../proc.ts";
+import { announcedGroup, bashTool, detectShell, isMsysShell } from "./bash.ts";
 import { retainedOutputChars } from "./command-run.ts";
 import { toolScope } from "./confine.ts";
 import { editTool } from "./edit.ts";
@@ -51,6 +52,15 @@ describe("read", () => {
     const output = await readTool(toolScope(cwd)).execute({ path: "blob.bin" });
 
     expect(output).toContain("binary");
+  });
+
+  it("says plainly that a directory is not a file", async () => {
+    const cwd = await workspace();
+    await mkdir(join(cwd, "src"));
+
+    await expect(readTool(toolScope(cwd)).execute({ path: "src" })).rejects.toThrow(
+      "src is a directory; read needs a file path",
+    );
   });
 });
 
@@ -192,13 +202,23 @@ describe("edit occurrence counting", () => {
 });
 
 describe("bash", () => {
-  it("runs a command and returns its output", async () => {
+  it("runs a command and returns exactly its output", async () => {
     const cwd = await workspace();
 
     const output = await bashTool(cwd).execute({ command: "echo hello" });
 
-    expect(output).toContain("hello");
+    expect(output).toBe("hello");
   });
+
+  it("gives the command an empty stdin so readers finish at once", async () => {
+    const cwd = await workspace();
+    const shell = detectShell();
+    const readsStdin = shell.name === "powershell" ? "sort.exe" : "wc -l";
+
+    const output = await bashTool(cwd).execute({ command: readsStdin, timeoutMs: 5_000 });
+
+    expect(output.trim()).toBe(shell.name === "powershell" ? "" : "0");
+  }, 10_000);
 
   it("streams progress chunks to onOutput while the model still gets only the final output", async () => {
     const cwd = await workspace();
@@ -245,10 +265,46 @@ describe("bash", () => {
     const shell = detectShell();
     const nested = shell.name === "powershell" ? "Start-Sleep -Seconds 30" : "sleep 30 & wait";
 
-    await expect(bashTool(cwd).execute({ command: nested, timeoutMs: 500 })).rejects.toThrow(
-      /timed out/,
-    );
+    const failure = await bashTool(cwd)
+      .execute({ command: nested, timeoutMs: 500 })
+      .catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/timed out/);
+    expect((failure as Error).cause).toBeUndefined();
   }, 10_000);
+
+  it.skipIf(!isMsysShell(detectShell()))(
+    "kills what a timed-out command exec'd under Git Bash, though it left the Windows process tree",
+    async () => {
+      const cwd = await workspace();
+      const straying = "sleep 30 & sleep 0.5; cat /proc/$!/winpid; wait";
+
+      const failure = await bashTool(cwd)
+        .execute({ command: straying, timeoutMs: 3_000 })
+        .catch((cause: unknown) => cause);
+
+      expect(failure).toBeInstanceOf(Error);
+      const stray = Number(/(\d+)\s*$/.exec((failure as Error).message)?.[1]);
+      expect(stray).toBeGreaterThan(0);
+      expect(processExists(stray)).toBe(false);
+    },
+    10_000,
+  );
+
+  it("reads a group announcement only from its marked line", () => {
+    expect(announcedGroup("keywork-msys-group 4242\n")).toBe(4242);
+    expect(announcedGroup("4242")).toBeUndefined();
+    expect(announcedGroup("keywork-msys-group soon")).toBeUndefined();
+    expect(announcedGroup("hello")).toBeUndefined();
+  });
+
+  it("treats only Git Bash on Windows as an MSYS shell", () => {
+    const bash = { file: "bash.exe", args: (command: string) => ["-c", command], name: "bash" };
+    expect(isMsysShell(bash, "win32")).toBe(true);
+    expect(isMsysShell(bash, "linux")).toBe(false);
+    expect(isMsysShell({ ...bash, name: "powershell" }, "win32")).toBe(false);
+  });
 
   it("refuses an already-aborted signal before spawning anything", async () => {
     const cwd = await workspace();

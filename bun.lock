@@ -15,6 +15,13 @@
         "vitest": "4.1.10",
       },
     },
+    "packages/campaigns": {
+      "name": "@keywork/campaigns",
+      "version": "0.0.1",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+    },
     "packages/cli": {
       "name": "@keywork/cli",
       "version": "0.2.2",
@@ -33,6 +40,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@jmoak/ratchet": "0.3.0-alpha.1",
+        "@keywork/campaigns": "workspace:*",
         "@keywork/shared": "workspace:*",
         "zod": "4.4.3",
       },
@@ -51,6 +59,7 @@
       "dependencies": {
         "@keywork/engine": "workspace:*",
         "@keywork/shared": "workspace:*",
+        "zod": "4.4.3",
       },
     },
     "packages/shared": {
@@ -106,6 +115,8 @@
     "@jmoak/ratchet": ["@jmoak/ratchet@0.3.0-alpha.1", "", { "bin": { "ratchet": "dist/bin/ratchet.js" } }, "sha512-qRwAzlrrEK1/CbCTuxUZl0fEva/qI4oi29ckEYEoJGPdMgCYIKsiyJqg97f1B0OGupK2Ihmmf/Af/nM9E8Tqtg=="],
 
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
+
+    "@keywork/campaigns": ["@keywork/campaigns@workspace:packages/campaigns"],
 
     "@keywork/cli": ["@keywork/cli@workspace:packages/cli"],
 

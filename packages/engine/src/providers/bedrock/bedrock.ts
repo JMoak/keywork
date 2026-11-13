@@ -1,6 +1,12 @@
 import type { ImagePart, Message, Part, Usage } from "../../messages.ts";
 import { messageText } from "../../messages.ts";
-import type { Provider, ProviderRequest, ToolDefinition, TurnDelta } from "../../provider.ts";
+import {
+  assertRequestControls,
+  type Provider,
+  type ProviderRequest,
+  type ToolDefinition,
+  type TurnDelta,
+} from "../../provider.ts";
 import { ProviderStreamError } from "../errors.ts";
 import { type FetchLike, postForStream } from "../transport.ts";
 import { ToolCallAssembler } from "../wire-parts.ts";
@@ -45,6 +51,7 @@ export class BedrockProvider implements Provider {
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
+    assertRequestControls(this, request);
     const url = new URL(
       `https://bedrock-runtime.${this.options.region}.amazonaws.com` +
         `/model/${rfc3986Encode(this.options.model)}/converse-stream`,

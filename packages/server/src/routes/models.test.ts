@@ -70,6 +70,7 @@ describe("the models routes", () => {
   it("answer 503 on a host that serves no model inventory", async () => {
     const h = handlers(undefined);
     expect((await call(h.listModels, "GET", "/models")).status).toBe(503);
+    expect((await call(h.refreshModels, "POST", "/models/refresh")).status).toBe(503);
     expect(
       (await call(h.probeModels, "POST", "/models/probe", { endpoint: "http://127.0.0.1:11434" }))
         .status,
@@ -83,6 +84,37 @@ describe("the models routes", () => {
     await call(h.listModels, "GET", "/models?node=spark-ad4d");
     await call(h.listModels, "GET", "/models?node=");
     expect(lists).toEqual([{}, { node: "spark-ad4d" }, {}]);
+  });
+
+  it("reloads saved connections before returning the authoritative inventory", async () => {
+    const { port } = recordingPort();
+    let refreshed = false;
+    port.refresh = async () => {
+      refreshed = true;
+      return { ...report, inherits: { strong: { provider: "local", model: "chosen" } } };
+    };
+    const answer = await call(handlers(port).refreshModels, "POST", "/models/refresh");
+    expect(refreshed).toBe(true);
+    expect(answer).toEqual({
+      status: 200,
+      body: { ...report, inherits: { strong: { provider: "local", model: "chosen" } } },
+    });
+  });
+
+  it("refuses unsupported refresh and never accepts credentials or configuration", async () => {
+    const { port } = recordingPort();
+    expect((await call(handlers(port).refreshModels, "POST", "/models/refresh")).status).toBe(503);
+    let refreshes = 0;
+    port.refresh = async () => {
+      refreshes += 1;
+      return report;
+    };
+    for (const body of [{ apiKey: "not-a-real-key" }, {}, "not json"]) {
+      expect(
+        (await call(handlers(port).refreshModels, "POST", "/models/refresh", body)).status,
+      ).toBe(400);
+    }
+    expect(refreshes).toBe(0);
   });
 
   it("probe a well-formed endpoint and pass only the fields it names", async () => {
@@ -125,10 +157,12 @@ describe("the models routes", () => {
     expect(modelRoutes.map((route) => [route.method, route.path, route.operationId])).toEqual([
       ["GET", "/models", "listModels"],
       ["POST", "/models/probe", "probeModels"],
+      ["POST", "/models/refresh", "refreshModels"],
     ]);
     expect(modelRoutes.every((route) => route.authenticated)).toBe(true);
     expect(operationOf(modelRoutes[1]).requestBody?.required).toBe(true);
     expect(operationOf(modelRoutes[0]).requestBody).toBeUndefined();
+    expect(operationOf(modelRoutes[2]).requestBody).toBeUndefined();
   });
 
   it("normalize a probe request", () => {

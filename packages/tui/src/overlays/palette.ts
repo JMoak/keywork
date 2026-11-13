@@ -14,7 +14,7 @@ export function paletteModeOf(query: string): PaletteMode {
 const commandPrefixes = ["/", ">"] as const;
 
 export interface PaletteSeams {
-  dismiss(): void;
+  dismiss(overlay: RowOverlay): void;
 }
 
 export class PaletteOverlay extends RowOverlay {
@@ -46,7 +46,7 @@ export class PaletteOverlay extends RowOverlay {
 
   handleKey(chord: Chord, sequence: string | undefined): void {
     if (chord.name === "escape") {
-      this.seams.dismiss();
+      this.seams.dismiss(this);
       return;
     }
     const stepped = steppedIndex(this.index, chord, this.entries.length);
@@ -84,7 +84,7 @@ export class PaletteOverlay extends RowOverlay {
   }
 
   outside(): void {
-    this.seams.dismiss();
+    this.seams.dismiss(this);
   }
 
   private run(row: number): void {
@@ -93,7 +93,7 @@ export class PaletteOverlay extends RowOverlay {
       this.complete(row);
       return;
     }
-    this.seams.dismiss();
+    this.seams.dismiss(this);
     chosen?.run();
   }
 

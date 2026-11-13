@@ -20,6 +20,9 @@ function bind(registration: ProviderRegistration, model: string): InferenceBindi
   return resolution.binding;
 }
 
+const stoppedChatStream =
+  'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+
 function recordingFetch(): {
   fetchFn: FetchLike;
   calls: { url: string; init: RequestInit | undefined }[];
@@ -27,7 +30,7 @@ function recordingFetch(): {
   const calls: { url: string; init: RequestInit | undefined }[] = [];
   const fetchFn: FetchLike = async (url, init) => {
     calls.push({ url, init });
-    return new Response("data: [DONE]\n\n", { status: 200 });
+    return new Response(stoppedChatStream, { status: 200 });
   };
   return { fetchFn, calls };
 }

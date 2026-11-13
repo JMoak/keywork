@@ -15,7 +15,7 @@ import {
 } from "./filter-overlay.ts";
 
 const theme = resolvePalette();
-const placement: OverlayPlacement = { position: "absolute", left: 3, top: 3, width: 40, height: 9 };
+const placement: OverlayPlacement = { position: "absolute", left: 3, top: 3, width: 64, height: 9 };
 
 interface RenderedRow {
   text: string;
@@ -96,6 +96,58 @@ describe("filterOverlay", () => {
     );
     expect(first?.inks).toEqual([theme.accent, theme.accent]);
     expect(second?.inks).toEqual([theme.text, theme.textDim]);
+  });
+
+  function catalogue(count: number): ModelChoice[] {
+    return Array.from({ length: count }, (_, at) => ({
+      reference: `openrouter/vendor/model-${String(at).padStart(3, "0")}`,
+      provider: "openrouter",
+      model: `vendor/model-${at}`,
+      available: true,
+      facts: ["chat-completions", "saved key"],
+    }));
+  }
+
+  it("clips every row and the empty hint to the inner width", () => {
+    const narrow = { ...placement, width: 24 };
+    const picker = modelPickerOver(catalogue(3), undefined);
+    const rows = renderedRows(filterOverlay(modelPickerSpec(picker), theme, narrow));
+    expect(rows.map((row) => row.text)).toEqual([
+      " › ▌",
+      "▸ openrouter/vendor/m…",
+      "  openrouter/vendor/m…",
+      "  openrouter/vendor/m…",
+    ]);
+    picker.paste("zzz");
+    expect(renderedRows(filterOverlay(modelPickerSpec(picker), theme, narrow))[1]?.text).toBe(
+      "  nothing matches · /…",
+    );
+  });
+
+  it("draws only the rows that fit around the cursor and says how many are hidden", () => {
+    const tall = { ...placement, width: 48, height: 10 };
+    const picker = modelPickerOver(catalogue(425), undefined);
+    const texts = () =>
+      renderedRows(filterOverlay(modelPickerSpec(picker), theme, tall)).map((row) => row.text);
+    expect(texts()).toEqual([
+      " › ▌",
+      "▸ openrouter/vendor/model-000 · chat-completi…",
+      "  openrouter/vendor/model-001 · chat-completi…",
+      "  openrouter/vendor/model-002 · chat-completi…",
+      "  openrouter/vendor/model-003 · chat-completi…",
+      "  421 below",
+    ]);
+    picker.move(-1);
+    expect(texts()).toEqual([
+      " › ▌",
+      "  openrouter/vendor/model-421 · chat-completi…",
+      "  openrouter/vendor/model-422 · chat-completi…",
+      "  openrouter/vendor/model-423 · chat-completi…",
+      "▸ openrouter/vendor/model-424 · chat-completi…",
+      "  421 above",
+    ]);
+    picker.select(200);
+    expect(texts().at(-1)).toBe("  200 above · 221 below");
   });
 
   const arcs: ArcSummary[] = [

@@ -66,6 +66,7 @@ import {
   type PresetPicker,
   type PresetsPort,
   pastedLine,
+  type RowOverlay,
   SetupConfirmOverlay,
   type WorkspaceOverlay,
 } from "./overlays/index.ts";
@@ -852,14 +853,15 @@ export class AppCore implements ActionTarget {
         notify: () => this.notify(),
         notice: (text) => this.postNotice(text),
         created: (bot) => {
-          this.overlay = undefined;
+          this.overlaySeams.dismiss(overlay);
           this.openBotPane(bot.name);
           this.postNotice(describeCreatedBot(bot));
         },
       },
       seed,
     );
-    this.overlay = new BotCreateOverlay(model, this.overlaySeams);
+    const overlay = new BotCreateOverlay(model, this.overlaySeams);
+    this.overlay = overlay;
   }
 
   private recentConversation(): ConversationPane | undefined {
@@ -913,8 +915,8 @@ export class AppCore implements ActionTarget {
   }
 
   private readonly overlaySeams = {
-    dismiss: (): void => {
-      this.overlay = undefined;
+    dismiss: (overlay: RowOverlay): void => {
+      if (this.overlay === overlay) this.overlay = undefined;
     },
     screen: (): Screen => this.screen(),
     notice: (text: string): void => this.postNotice(text),

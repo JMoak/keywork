@@ -171,6 +171,27 @@ to the pre-compaction prefix), plus agent, session, TUI, and CLI files for mid-r
   proves the stripped keep-tail is accepted after a compaction; the mock tests prove the wire
   shape only.
 
+## Re-run 2026-11-10 (123 campaign request admission)
+
+Diff scope: `packages/engine/src/providers/anthropic.ts` imports and calls
+`assertRequestControls` before constructing a request. Unsupported bounded campaign calls
+fail before credential or network work. The Anthropic wire, endpoint, headers, key handling,
+and model feature mapping are unchanged.
+
+- [x] **Zero OAuth code paths.** The G1 scan over `anthropic.ts`, `messages-wire.ts`, and
+  `claude-models.ts` returns no matches.
+- [x] **Zero subscription endpoints or client-ID spoofing.** The diff adds only the request
+  admission call; authentication remains the public Messages API key path.
+- [x] **No headers imitating Claude Code.** Header construction and feature betas are unchanged.
+- [x] **Key handling is never logged.** No new code reads credentials; the existing HTTP failure
+  redaction regression passes.
+- [x] **Credential precedence, `/connect`, user docs, influencer code.** Unchanged; `NOTICE`
+  untouched. The admission check is original implementation work.
+- [x] **Focused validation.** `anthropic.test.ts` and `bounded-requests.test.ts` pass, including
+  rejection of unsupported bounded calls before network access. `bun run check:guardrails`
+  reports no violations; guardrail patterns are unchanged.
+- [ ] **Live smoke.** Not run; this change makes no paid requests and adds no Anthropic wire behavior.
+
 ## Deviation of record
 
 The overlay named the official `@anthropic-ai/sdk`. The landed provider uses keywork's own

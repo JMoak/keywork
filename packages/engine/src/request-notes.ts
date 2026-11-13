@@ -15,6 +15,15 @@ export class ConversationNotes {
     this.laid.set(at, already === undefined ? note : `${already}\n\n${note}`);
   }
 
+  inherit(from: ConversationNotes, before: readonly Message[], after: readonly Message[]): void {
+    const notes = new Map(before.map((message, at) => [message, from.laid.get(at)]));
+    this.laid.clear();
+    after.forEach((message, at) => {
+      const note = notes.get(message);
+      if (note !== undefined) this.laid.set(at, note);
+    });
+  }
+
   clear(): void {
     this.laid.clear();
   }

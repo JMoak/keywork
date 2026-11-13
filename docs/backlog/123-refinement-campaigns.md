@@ -1,8 +1,8 @@
 # Refinement Campaigns Architecture and Implementation Plan
 
-Planning baseline: November 8, 2026. Status: draft implementation specification. Product owner: Jordan. The product direction is agreed in conversation; package names, schemas, routes, and work item identifiers below are proposed implementation contracts.
+Planning baseline: November 8, 2026. Implementation update: November 10, 2026. Status: integrated local implementation, with release qualification and downstream adoption pending. Product owner: Jordan. The implementation is uncommitted on `codex/refinement-campaigns` in the canonical Keywork and Keywork-app repositories.
 
-Canonical home: Keywork `docs/backlog/123-refinement-campaigns.md`. The Keywork documentation index, backlog index, and open ledger point here; Keywork-app's documentation index links to this shared plan. The chat output is a handoff snapshot. Implementation has not begun under this plan; keep progress and decision links in this canonical copy.
+Canonical home: Keywork `docs/backlog/123-refinement-campaigns.md`. The Keywork documentation index, backlog index, and open ledger point here; Keywork-app's documentation index links to this shared plan. The chat output is a handoff snapshot. Keep progress and decision links in this canonical copy.
 
 Build a general refinement capability in Keywork's shared runtime, with a dedicated workspace in the desktop SDK consumed by Keywork-app and Stead. A campaign pursues a purpose through versioned artifacts, evidence, and deliberate decisions about what to do next. It supports improving an existing app, developing a new project, and refining research or plans from the first prototype.
 
@@ -11,6 +11,85 @@ The quality standard governs the work. Spending controls reduce waste while pres
 **Live monitoring of the loop, costs, and achievements is required in the first release.** It is part of the shared campaign workspace and headless interface, backed by durable runtime events. The user can see what is happening, what it has cost, what has improved, and why the system intends to continue or stop.
 
 **Relly is an optional future integration.** The first release must install, build, run, evaluate, and deliver all three workload classes without Relly, its publication, or a sibling checkout. This replaces the earlier proposal to make Relly packaging an initial integration priority.
+
+# Implementation state on November 10
+
+The runtime, wire contract, headless CLI, and shared desktop lane are connected. Existing-app,
+new-project, and research fixtures execute through the same real campaign host, SQLite store,
+artifact adapters, agent stages, and bounded provider wrapper using deterministic model responses.
+No paid inference, publication, commits, or downstream dependency adoption has occurred.
+
+| Area | Implemented and locally exercised | Remaining qualification |
+| --- | --- | --- |
+| CAM-01 and CAM-02 | Pure `@keywork/campaigns` contracts, controller transitions, fixtures, and native SQLite execution decision. | See [orchestration ADR](../decisions/001-campaign-orchestration.md); no external graph runtime dependency. |
+| CAM-03 through CAM-05 | Durable events and projections, leases, stale revision refusal, operation intents, reservations, response identities, reported/estimated/unknown charges, explicit reconciliation, immutable snapshots and new-directory export. | Real paid-provider interruption and bill reconciliation pilot. Provider-side overcharges are recorded and stop execution; the local bound is not a guarantee against provider misconduct. |
+| CAM-06 and CAM-07 | Selected skill instructions and resources are pinned, stage context is compiled, retired obligations remain, and optional material stays retrievable. A catalog of 500 irrelevant skills leaves a request unchanged. | Larger real workloads should calibrate working context and tool limits. Inventory fingerprints describe discovery metadata; active lock digests include selected resource contents. |
+| CAM-08 and CAM-09 | Independent review stages, exact artifact/source excerpts, provisional adoption, explicit human review, regression evidence, diverse persistence perspectives, and structured handoffs. Fifth/tenth empty-attempt scenarios discover useful sixth/eleventh results within their allowance. | Empirical comparison against immediate stopping and fixed repetition. Model critique alone remains partial verification and observed achievement; it cannot certify tests, rendering, or other unperformed checks. |
+| CAM-10 and CAM-11 | `keywork campaign list/create/show/watch/command/export`; existing workspace runtime and bearer auth; additive HTTP contract 1.30; reconnectable campaign SSE. | Paid outcome/cost pilot and packaged runtime exercise. Creating or monitoring a campaign does not dispatch inference. |
+| CAM-12 | Shared campaign pane, live costs and trend, pending receipts, achievements/evidence, artifact text comparison/export, persistence allowance, model/cartridge controls, explicit allowance renewal, steering and human feedback. Desktop and narrow-screen component captures inspected. | Full packaged-app usability and accessibility review. Initial artifact inspection is inert text and metadata; sandboxed rendered application previews are still a separate adapter. |
+| CAM-13 | Campaign pane registered in the shared SDK used by both shells. | Stead work item `wi-n89w` is a concrete draft pending human acceptance; published SDK/runtime adoption and native creature/desk/output attention integration remain unqualified. No sibling source dependency was added. |
+| CAM-14 | Generic runtime/CLI seam and concrete Orchard work item `wi-zt77` prepared. | Human acceptance and implementation of the Orchard adapter. No claim, accepted criterion, merge gate, or work-item status was bypassed. |
+| CAM-15 | Focused domain, execution, accounting, transport, recovery, HTTP, CLI and UI checks; public quote-only checks for selected GPT models; visual component checks. | Paid quality comparison, real-user acceptance, release/install/upgrade/rollback, CI and downstream qualification. |
+
+The primary source paths are `packages/campaigns`, `packages/engine/src/campaigns`,
+`packages/server/src/routes/campaigns.ts`, `packages/cli/src/serve-campaigns.ts`, and
+`packages/cli/src/campaign-command.ts`. Keywork-app owns protocol/client campaign modules
+and `packages/ui/src/panes/campaigns`. API details are discoverable in `/doc` and its fixtures.
+
+The controller is hosted inside the existing workspace runtime. Its SQLite and artifact stores
+live under the user's Keywork state directory in `campaigns/<workspace identity>`. Restart
+does not automatically replay uncertain work. Expiring leases are recovered; interrupted
+requests retain reservations and any response identity until explicit reconciliation.
+
+Read [provider admission ADR](../decisions/002-campaign-provider-admission.md) before extending
+model support. Admission preserves the selected model. Current bounded OpenRouter transport
+supports verified GPT-family/OpenAI routes with live quoted limits; other routing, modalities,
+and billing contracts require explicit admission. Reasoning, cache writes, conditional pricing,
+and sibling service tiers are accounted for or refused. Monitoring and permission prompts do
+not invoke an unmetered model. Shell work uses the existing permission gate and sandbox system;
+a candidate directory by itself is not a security boundary.
+
+All persistence counters survive adoption, branching, purpose changes, restart and model changes.
+Renewal changes total limits only after explicit user steering. Ordinary skills are loaded only
+when selected, and their supporting resources are accessed through bounded pinned reads.
+The current executor uses fresh builder/reviewer sessions, 24,000 conservative input units,
+4,096 output tokens, up to 12 requests and 48 tools per stage, and a 120-second attempt bound.
+These are implementation defaults awaiting workload calibration, not measures of task quality.
+
+Feature development is on hold at the user's request as of November 10. The implementation
+quality review below refines existing behavior; it does not resume feature expansion or authorize
+paid pilots or downstream adoption. Keep the remaining-work table for when feature work resumes.
+
+Future agents should preserve that hold and the existing
+uncommitted work, run focused checks, and obtain the required repository work-item acceptance
+before changing Orchard or Stead. Publication, dependency adoption, and activation are separate
+steps; a local test or published release does not prove that a downstream installation adopted it.
+
+## Implementation quality review
+
+Independent reviews covered pure state rules, controller recovery and accounting, artifact/source/
+cartridge I/O, and desktop transport/monitoring. The existing ownership boundaries are sound:
+domain rules remain pure, transactional state and effects belong to the engine, and the shared
+desktop consumes HTTP/SSE. Human-review batches are atomic. No new orchestration layer,
+dependency, or broad reorganization was warranted.
+
+Focused corrections now bound derived hypotheses while preserving full objectives; regress
+noncritical achievements and verification when independent evidence disproves them; search attached
+source IDs before limiting results; and enforce the same serialized cartridge limit on write/read.
+Snapshot identity/structure checks and accepted-only event cursors protect monitor recovery. Event
+streams accommodate bounded history replay and clean up on cancellation or slow-consumer closure.
+Known export refusals remain distinct from unexpected partial outcomes, including corrupt stored
+manifests. Desktop and CLI mutations preserve uncertain 5xx outcomes without automatic retry.
+
+Validation: 188 runtime/domain/API/CLI tests in 13 files and 81 shared desktop/client tests in
+nine files passed. TypeScript, architecture guardrails, contract checks, and targeted formatting
+passed in both repositories. New failure-path regressions were exercised before and after fixes.
+No paid inference, feature expansion, publication, commit, or downstream adoption occurred.
+
+Snapshot validation remains structural, not an exhaustive duplicate of nested domain schemas;
+deeper transport validation is a release-hardening consideration. The qualification limits in the
+table remain in force. History retrieval, evidence-only progress, new UI behavior, and native
+downstream integrations remain deferred while feature development is on hold.
 
 # Product decisions and boundaries
 
@@ -335,7 +414,7 @@ Use meaningful tests for state transitions, accounting, authority, persistence, 
 | GEPA or recipe optimization | Repeated tasks, trustworthy feedback, held-out evaluation, and a frozen policy boundary exist. Candidate recipe versions are evaluated before adoption. |
 | Standalone application | The shared campaign workspace has proven independent demand. Add a focused product surface while retaining the same runtime and data contracts. |
 
-Open design decisions for milestone zero are the execution backend, campaign database placement and retention, artifact adapter interface details, the smallest useful cartridge manifest, model capability negotiation, and the pilot's persistence spending and time allowances. The provisional persistence counts require outcome calibration before release. These decisions should be resolved with bounded prototypes and ADRs, without turning every configuration choice into a user prompt.
+The execution backend, local state placement, artifact interface, cartridge lock and bounded provider admission now have concrete implementations and the linked ADRs. Retention policy, rendered artifact adapters, broader provider admission, and the pilot's persistence spending and time allowances still need qualification. The provisional persistence counts require outcome calibration before release.
 
 # Source map and implementation handoff
 
@@ -347,4 +426,4 @@ Use [OpenRouter usage accounting](https://openrouter.ai/docs/cookbook/administra
 
 The orchestration spike should follow [LangGraph persistence](https://docs.langchain.com/oss/javascript/langgraph/persistence) and [interrupt semantics](https://docs.langchain.com/oss/javascript/langgraph/interrupts), including repeated side effects on resume. Evaluation design can draw on [Anthropic's agent evaluation guidance](https://www.anthropic.com/research/demystifying-evals-for-ai-agents), while the independent [OpenHands refinement example](https://docs.openhands.dev/sdk/guides/iterative-refinement) supplies a comparison baseline.
 
-Implementation begins with CAM-01 and CAM-02. Record results and execution ADR links in this canonical plan and update the open ledger, then create the dependent work items with exact scopes. The CAM identifiers are planning references; this document does not itself accept Orchard or Stead work items or change repository governance.
+Implementation began with CAM-01 and CAM-02 and now reaches the shared runtime and desktop lane. Continue from the implementation-state table and linked ADRs, preserving actual qualification limits. The CAM identifiers are planning references; this document does not itself accept Orchard or Stead work items or change repository governance.

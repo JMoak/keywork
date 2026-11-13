@@ -14,11 +14,13 @@ import {
   commandResult,
   commandTimedOut,
   defaultTimeoutMs,
+  scrubbedEnv,
   shellSpawnOptions,
 } from "./command-run.ts";
 import { defineTool } from "./define.ts";
 
 const settleAfterExitMs = 100;
+const msysGroupMarker = "keywork-msys-group";
 
 const schema = z.object({
   command: z.string().min(1).describe("Shell command to execute."),
@@ -61,13 +63,42 @@ export function bashTool(
     mutates: true,
     run: async ({ command, timeoutMs = defaultTimeoutMs }, signal) => {
       const launch = (await sandbox.current()).confine(shellLaunch(shell, command, cwd));
-      return execute(launch, timeoutMs, signal, onOutput);
+      return execute(shell, launch, timeoutMs, signal, onOutput);
     },
   });
 }
 
+export function isMsysShell(shell: Shell, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" && shell.name === "bash";
+}
+
+export const msysGroupAnnouncement = `printf '%s %s\\n' ${msysGroupMarker} "$$"`;
+
+export function announcedGroup(line: string): number | undefined {
+  const [marker, group] = line.trim().split(" ");
+  if (marker !== msysGroupMarker) return undefined;
+  const pid = Number(group);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+// Cygwin runs an exec'd program in a new Windows process whose parent has already exited,
+// so taskkill /t cannot reach it; the MSYS process group still holds it.
+export function sweepMsysGroup(shell: Shell, group: number | undefined): Promise<void> {
+  if (group === undefined) return Promise.resolve();
+  return new Promise((resolvePromise) => {
+    const sweeper = spawn(shell.file, shell.args(`kill -9 -- -${group}`), {
+      windowsHide: true,
+      stdio: "ignore",
+      env: scrubbedEnv(process.env),
+    });
+    sweeper.once("error", () => resolvePromise());
+    sweeper.once("close", () => resolvePromise());
+  });
+}
+
 function shellLaunch(shell: Shell, command: string, cwd: string): Launch {
-  return { file: shell.file, args: shell.args(command), cwd, env: agentShellEnv() };
+  const script = isMsysShell(shell) ? `${msysGroupAnnouncement}; ${command}` : command;
+  return { file: shell.file, args: shell.args(script), cwd, env: agentShellEnv() };
 }
 
 function findGitBash(): string | undefined {
@@ -79,6 +110,7 @@ function findGitBash(): string | undefined {
 }
 
 function execute(
+  shell: Shell,
   launch: Launch,
   timeoutMs: number,
   signal?: AbortSignal,
@@ -89,16 +121,17 @@ function execute(
     const child = spawn(launch.file, [...launch.args], {
       ...shellSpawnOptions(launch.cwd),
       env: launch.env,
+      stdio: ["ignore", "pipe", "pipe"],
     });
     const closed = childClosed(child);
     const output = new BoundedOutput(onOutput);
+    const announcement = isMsysShell(shell) ? new GroupAnnouncement(output) : undefined;
     let terminationReason: TerminationReason | undefined;
     let termination: Promise<void> | undefined;
     let settleTimer: NodeJS.Timeout | undefined;
 
-    const capture = (chunk: Buffer) => output.append(chunk.toString());
-    child.stdout?.on("data", capture);
-    child.stderr?.on("data", capture);
+    child.stdout?.on("data", (chunk: Buffer) => (announcement ?? output).append(chunk.toString()));
+    child.stderr?.on("data", (chunk: Buffer) => output.append(chunk.toString()));
 
     const run = new CommandRun({
       timeoutMs,
@@ -110,6 +143,7 @@ function execute(
     const settle = (outcome: () => void) =>
       run.settle(() => {
         if (settleTimer !== undefined) clearTimeout(settleTimer);
+        announcement?.flush();
         outcome();
       });
 
@@ -136,7 +170,7 @@ function execute(
     const terminate = (reason: TerminationReason) => {
       if (termination !== undefined) return;
       terminationReason = reason;
-      termination = killTree(child, closed);
+      termination = killTree(child, closed, () => sweepMsysGroup(shell, announcement?.group));
       void termination.then(
         () => finish(null),
         () => finish(null),
@@ -149,4 +183,32 @@ function execute(
       settleTimer = setTimeout(() => void finish(code), settleAfterExitMs);
     });
   });
+}
+
+class GroupAnnouncement {
+  group: number | undefined;
+  private held: string | undefined = "";
+
+  constructor(private readonly output: BoundedOutput) {}
+
+  append(chunk: string): void {
+    if (this.held === undefined) {
+      this.output.append(chunk);
+      return;
+    }
+    this.held += chunk;
+    const newline = this.held.indexOf("\n");
+    if (newline !== -1) this.hear(this.held.slice(0, newline), this.held.slice(newline + 1));
+  }
+
+  flush(): void {
+    if (this.held) this.output.append(this.held);
+    this.held = undefined;
+  }
+
+  private hear(firstLine: string, rest: string): void {
+    this.group = announcedGroup(firstLine);
+    this.held = this.group === undefined ? `${firstLine}\n${rest}` : rest;
+    this.flush();
+  }
 }

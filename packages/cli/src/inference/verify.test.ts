@@ -89,6 +89,63 @@ describe("verifyEndpoint", () => {
     expect(report).toMatchObject({ ok: true, models: ["jev-latest", "jev-preview"] });
   });
 
+  it("checks the key path first and stops there when the key is refused", async () => {
+    const calls: string[] = [];
+    const fetchFn: FetchLike = async (url) => {
+      calls.push(url);
+      return url.endsWith("/key")
+        ? new Response('{"error":{"message":"User not found.","code":401}}', { status: 401 })
+        : Response.json({ data: [{ id: "public/model" }] });
+    };
+
+    const report = await verifyEndpoint({
+      endpoint: "https://openrouter.ai/api/v1",
+      headers: { authorization: "Bearer hello world" },
+      keyCheckPath: "/key",
+      fetchFn,
+      now,
+    });
+
+    expect(calls).toEqual(["https://openrouter.ai/api/v1/key"]);
+    expect(report).toEqual({
+      ok: false,
+      at: "2026-08-21T10:00:00.000Z",
+      reason:
+        'HTTP 401 from https://openrouter.ai/api/v1/key: {"error":{"message":"User not found.","code":401}}',
+      status: 401,
+    });
+  });
+
+  it("lists models only after the key check accepts the same headers", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetchFn: FetchLike = async (url, init) => {
+      calls.push({ url, ...(init !== undefined && { init }) });
+      return url.endsWith("/key")
+        ? Response.json({ data: { label: "sk-or-v1-abc" } })
+        : Response.json({ data: [{ id: "openai/gpt-5-mini" }] });
+    };
+
+    const report = await verifyEndpoint({
+      endpoint: "https://openrouter.ai/api/v1",
+      headers: { authorization: "Bearer sk-or-real" },
+      keyCheckPath: "/key",
+      fetchFn,
+      now,
+    });
+
+    expect(calls.map(({ url }) => url)).toEqual([
+      "https://openrouter.ai/api/v1/key",
+      "https://openrouter.ai/api/v1/models",
+    ]);
+    for (const { init } of calls)
+      expect(init?.headers).toMatchObject({ authorization: "Bearer sk-or-real" });
+    expect(report).toEqual({
+      ok: true,
+      at: "2026-08-21T10:00:00.000Z",
+      models: ["openai/gpt-5-mini"],
+    });
+  });
+
   it("reports an unreachable endpoint without throwing", async () => {
     const failing: FetchLike = async () => {
       throw new Error("ECONNREFUSED");

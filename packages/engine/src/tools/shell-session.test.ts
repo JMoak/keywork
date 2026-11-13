@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
+import { detectShell, isMsysShell } from "./bash.ts";
 import { BoundedOutput, commandResult, retainedOutputChars } from "./command-run.ts";
 import { persistentBashTool, SentinelScanner, ShellSession } from "./shell-session.ts";
 
@@ -175,6 +176,54 @@ describe("ShellSession", () => {
     expect(await session.run("printf 'a\\n\\nb\\n\\n\\n'")).toBe("a\n\nb");
     expect(await session.run("echo whole")).toBe("whole");
   });
+
+  it("gives each command an empty stdin so readers finish at once and the shell keeps its frame", async () => {
+    const session = await openSession();
+
+    expect((await session.run("wc -l", { timeoutMs: 5_000 })).trim()).toBe("0");
+    expect((await session.run("printf 'a\\nb\\n' | wc -l", { timeoutMs: 5_000 })).trim()).toBe("2");
+    expect(await session.run("read -r line || echo eof", { timeoutMs: 5_000 })).toBe("eof");
+    expect(await session.run("echo after")).toBe("after");
+  }, 20_000);
+});
+
+describe.skipIf(!isMsysShell(detectShell()))("ShellSession over Git Bash", () => {
+  const strayingCommand = "sleep 30 & sleep 0.5; cat /proc/$!/winpid; wait";
+  const printedPid = /(\d+)\s*$/;
+
+  async function expectGone(pid: number): Promise<void> {
+    expect(pid).toBeGreaterThan(0);
+    await waitUntil(() => !processExists(pid), 5_000);
+    expect(processExists(pid)).toBe(false);
+  }
+
+  it("kills what a timed-out command exec'd, though it left the Windows process tree", async () => {
+    const session = await openSession();
+
+    const failure = await session.run(strayingCommand, { timeoutMs: 3_000 }).catch(caughtFailure);
+
+    expect(failure).toBeInstanceOf(Error);
+    await expectGone(Number(printedPid.exec((failure as Error).message)?.[1]));
+    expect((await session.run("echo fresh")).trim()).toBe("fresh");
+  }, 20_000);
+
+  it("kills what an aborted command exec'd, though it left the Windows process tree", async () => {
+    const session = await openSession();
+    const controller = new AbortController();
+    let printed = "";
+    const running = session.run(strayingCommand, {
+      signal: controller.signal,
+      onOutput: (chunk) => {
+        printed += chunk;
+      },
+    });
+    await waitUntil(() => printedPid.test(printed), 10_000);
+
+    controller.abort();
+
+    await expect(running).rejects.toThrow(/Command aborted/);
+    await expectGone(Number(printedPid.exec(printed)?.[1]));
+  }, 20_000);
 });
 
 describe("a framed command's answer", () => {
@@ -319,6 +368,14 @@ describe.skipIf(process.platform !== "win32")("ShellSession over PowerShell", ()
     expect(session.running()).toBe(false);
     const echoed = await session.run('Write-Output "[$env:KW_SHELL_TEST]"');
     expect(echoed.trim()).toBe("[]");
+  }, 20_000);
+
+  it("gives native programs an empty stdin while pipeline input still reaches them", async () => {
+    const session = await openPowerShell();
+
+    expect(await session.run("sort.exe", { timeoutMs: 5_000 })).toBe("");
+    expect(await session.run("'b', 'a' | sort.exe", { timeoutMs: 5_000 })).toBe("a\r\nb");
+    expect(await session.run("Write-Output after")).toBe("after");
   }, 20_000);
 });
 

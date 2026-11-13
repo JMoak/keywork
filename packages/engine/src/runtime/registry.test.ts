@@ -8,6 +8,8 @@ import {
   RuntimeConflictError,
   type RuntimeConsumer,
   RuntimeRegistry,
+  runtimeSatisfies,
+  sameRuntime,
 } from "./registry.ts";
 
 const now = 1_000_000;
@@ -44,6 +46,94 @@ afterEach(() => {
 });
 
 describe("shared runtime installation consumers", () => {
+  it("separates immutable artifact identity from an explicit contract requirement", () => {
+    const requirement = { ...keywork, version: "0.3.0", compatibility: "contract" as const };
+    expect(sameRuntime(runtime, requirement)).toBe(false);
+    expect(runtimeSatisfies(runtime, requirement)).toBe(true);
+    expect(runtimeSatisfies(runtime, { ...requirement, contract: "1.26" })).toBe(false);
+    expect(runtimeSatisfies(runtime, { ...keywork, version: "0.3.0" })).toBe(false);
+  });
+
+  it("registers a newer compatible consumer without interrupting the running engine", () => {
+    registry.install(runtime, keywork, { now });
+    const candidate = { ...runtime, version: "0.3.0", sha256: "b".repeat(64) };
+    const consumer = { ...stead, version: candidate.version, compatibility: "contract" as const };
+    expect(registry.selectInstallation(candidate, consumer, { now, runtimeRunning: true })).toEqual(
+      {
+        runtime,
+        deferred: { version: candidate.version, reason: "consumer-conflict" },
+      },
+    );
+    expect(registry.install(candidate, consumer, { now, runtimeRunning: true })).toEqual(runtime);
+    expect(registry.consumers()).toEqual([keywork, consumer]);
+  });
+
+  it("upgrades at a stopped point without removing compatible product registrations", () => {
+    const compatibleKeywork = { ...keywork, compatibility: "contract" as const };
+    registry.install(runtime, compatibleKeywork, { now });
+    registry.install(runtime, { ...stead, compatibility: "contract" }, { now });
+    const candidate = { ...runtime, version: "0.3.0", sha256: "b".repeat(64) };
+    const consumer = { ...compatibleKeywork, version: candidate.version };
+    expect(registry.selectInstallation(candidate, consumer, { now, runtimeRunning: true })).toEqual(
+      {
+        runtime,
+        deferred: { version: candidate.version, reason: "runtime-running" },
+      },
+    );
+    registry.install(candidate, consumer, { now });
+    expect(registry.runtime()).toEqual(candidate);
+    expect(registry.consumers()).toHaveLength(2);
+    expect(registry.admit({ ...stead, compatibility: "contract" })).toEqual(candidate);
+  });
+
+  it("defers a compatible update for leases and protected work while registering its consumer", () => {
+    const compatible = { ...keywork, compatibility: "contract" as const };
+    registry.install(runtime, compatible, { now });
+    registry.attach({ ...client("one"), compatibility: "contract" }, now);
+    const candidate = { ...runtime, version: "0.3.0" };
+    const consumer = { ...compatible, version: candidate.version };
+    expect(registry.selectInstallation(candidate, consumer, { now }).deferred?.reason).toBe(
+      "active-clients",
+    );
+    registry.detach("one");
+    expect(
+      registry.selectInstallation(candidate, consumer, { now, authorizedWork: true }).deferred
+        ?.reason,
+    ).toBe("active-work");
+  });
+
+  it("never downgrades a selected artifact for an older compatible bundle", () => {
+    const newer = { ...runtime, version: "0.3.0", sha256: "b".repeat(64) };
+    registry.install(
+      newer,
+      { ...keywork, version: newer.version, compatibility: "contract" },
+      { now },
+    );
+    expect(registry.install(runtime, { ...stead, compatibility: "contract" }, { now })).toEqual(
+      newer,
+    );
+    expect(() => registry.install(runtime, stead, { now })).toThrow(
+      "downgrades are never automatic",
+    );
+    expect(registry.runtime()).toEqual(newer);
+  });
+
+  it("persists an incomplete activation and blocks clients until forward completion", async () => {
+    registry.install(runtime, { ...keywork, compatibility: "contract" }, { now });
+    const candidate = { ...runtime, version: "0.3.0", sha256: "b".repeat(64) };
+    const consumer = { ...stead, version: candidate.version, compatibility: "contract" as const };
+    registry.prepareInstallation({ runtime: candidate, consumer });
+    const other = await RuntimeRegistry.open(registry.file);
+    connections.push(other);
+    expect(other.runtime()).toEqual(runtime);
+    expect(other.pendingInstallation()).toEqual({ runtime: candidate, consumer });
+    expect(() => other.attach({ ...client("one"), compatibility: "contract" }, now)).toThrow(
+      "activation is incomplete",
+    );
+    expect(other.completeInstallation()).toEqual(candidate);
+    expect(registry.pendingInstallation()).toBeUndefined();
+    expect(registry.admit({ ...keywork, compatibility: "contract" })).toEqual(candidate);
+  });
   it("keeps both products across independent installs and removes only the named consumer", () => {
     registry.install(runtime, keywork, { now });
     registry.install(runtime, stead, { now });

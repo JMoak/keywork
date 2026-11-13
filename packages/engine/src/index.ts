@@ -42,6 +42,7 @@ export {
   type RefusedCall,
   type SendBehavior,
 } from "./bus.ts";
+export * from "./campaigns/index.ts";
 export {
   declaredCapabilitiesFor,
   type InputModality,
@@ -209,6 +210,7 @@ export {
   providerFor,
 } from "./inference/adapters.ts";
 export {
+  connectionDraftProblem,
   endpointScheme,
   formatReference,
   isLoopbackEndpoint,
@@ -949,6 +951,7 @@ export {
   type SystemPromptOptions,
 } from "./prompt.ts";
 export {
+  assertRequestControls,
   type CacheDiagnostics,
   type CacheMiss,
   type DoneDelta,
@@ -958,8 +961,12 @@ export {
   effortInForce,
   effortLevels,
   isEffortLevel,
+  type OpenRouterRouting,
   type Provider,
   type ProviderRequest,
+  ProviderRequestControlError,
+  type ProviderRequestSupport,
+  type ProviderResponseReceipt,
   type ToolAddition,
   type ToolDefinition,
   type TurnDelta,
@@ -1021,13 +1028,17 @@ export {
   type RuntimeConflictCode,
   RuntimeConflictError,
   type RuntimeConsumer,
+  type RuntimeInstallation,
   type RuntimeProduct,
   type RuntimeRecovery,
   RuntimeRegistry,
+  type RuntimeRequirement,
   type RuntimeRetention,
+  type RuntimeSelection,
   type RuntimeVersion,
   runtimeHeartbeatMs,
   runtimeLeaseMs,
+  runtimeSatisfies,
   sameRuntime,
 } from "./runtime/registry.ts";
 export {

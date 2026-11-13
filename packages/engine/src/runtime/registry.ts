@@ -9,6 +9,10 @@ export interface RuntimeVersion {
   contract: string;
 }
 
+export interface RuntimeRequirement extends RuntimeVersion {
+  compatibility?: "contract";
+}
+
 export interface ManagedRuntime extends RuntimeVersion {
   binary: string;
   sha256: string;
@@ -16,13 +20,13 @@ export interface ManagedRuntime extends RuntimeVersion {
   arch: string;
 }
 
-export interface RuntimeConsumer extends RuntimeVersion {
+export interface RuntimeConsumer extends RuntimeRequirement {
   id: string;
   product: RuntimeProduct;
   installedAt: number;
 }
 
-export interface RuntimeClient extends RuntimeVersion {
+export interface RuntimeClient extends RuntimeRequirement {
   id: string;
   product: RuntimeProduct;
   workspace: string;
@@ -37,6 +41,7 @@ export type RuntimeConflictCode =
   | "consumer-conflict"
   | "active-clients"
   | "active-work"
+  | "runtime-running"
   | "client-conflict";
 
 export type RuntimeRecovery =
@@ -44,6 +49,7 @@ export type RuntimeRecovery =
   | "update-products"
   | "close-clients"
   | "finish-work"
+  | "stop-runtime"
   | "new-client";
 
 export class RuntimeConflictError extends Error {
@@ -63,6 +69,25 @@ export const runtimeHeartbeatMs = 10_000;
 export interface RuntimeRetention {
   retain: boolean;
   reasons: ("consumers" | "clients" | "work")[];
+}
+
+export interface RuntimeSelection {
+  runtime: ManagedRuntime;
+  deferred?: {
+    version: string;
+    reason: "consumer-conflict" | "active-clients" | "active-work" | "runtime-running";
+  };
+}
+
+interface InstallationOptions {
+  now?: number;
+  authorizedWork?: boolean;
+  runtimeRunning?: boolean;
+}
+
+export interface RuntimeInstallation {
+  runtime: ManagedRuntime;
+  consumer: RuntimeConsumer;
 }
 
 export class RuntimeRegistry {
@@ -112,59 +137,94 @@ export class RuntimeRegistry {
       .map((row) => this.read<RuntimeClient>(row) as RuntimeClient);
   }
 
+  pendingInstallation(): RuntimeInstallation | undefined {
+    return this.read<RuntimeInstallation>(
+      this.database.get("SELECT record FROM runtime_state WHERE id = 'installation'"),
+    );
+  }
+
+  prepareInstallation(installation: RuntimeInstallation): void {
+    if (!runtimeSatisfies(installation.runtime, installation.consumer)) {
+      throw incompatible(installation.runtime, installation.consumer);
+    }
+    this.database.run(
+      "INSERT INTO runtime_state (id, record) VALUES ('installation', ?)",
+      JSON.stringify(installation),
+    );
+  }
+
+  completeInstallation(): ManagedRuntime {
+    return transaction(this.database, () => {
+      const installation = this.pendingInstallation();
+      if (installation === undefined) throw new Error("No engine activation is pending");
+      this.recordInstallation(installation.runtime, installation.consumer);
+      this.database.run("DELETE FROM runtime_state WHERE id = 'installation'");
+      return installation.runtime;
+    });
+  }
+
   install(
     candidate: ManagedRuntime,
     consumer: RuntimeConsumer,
-    options: { now?: number; authorizedWork?: boolean } = {},
+    options: InstallationOptions = {},
   ): ManagedRuntime {
-    if (!sameRuntime(candidate, consumer)) {
-      throw incompatible(candidate, consumer);
-    }
     return transaction(this.database, () => {
-      const current = this.runtime();
-      const now = options.now ?? Date.now();
-      if (
-        current !== undefined &&
-        sameRuntime(current, candidate) &&
-        current.sha256 !== candidate.sha256
-      ) {
-        throw new RuntimeConflictError(
-          "artifact-conflict",
-          "This engine version and contract have different binary contents. Build both products from the same tested engine artifact, or release a distinct engine version before replacing it.",
-          "update-products",
-        );
-      }
-      if (current !== undefined && !sameRuntime(current, candidate)) {
-        this.admitReplacement(candidate, consumer.id, now, options.authorizedWork === true);
-      }
-      const selected =
-        current !== undefined && sameRuntime(current, candidate) ? current : candidate;
-      this.database.run(
-        "INSERT INTO runtime_state (id, record) VALUES ('runtime', ?) ON CONFLICT(id) DO UPDATE SET record = excluded.record",
-        JSON.stringify(selected),
-      );
-      this.database.run(
-        "INSERT INTO runtime_consumers (id, record) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET record = excluded.record",
-        consumer.id,
-        JSON.stringify(consumer),
-      );
+      this.requireSettledInstallation();
+      const selected = this.selectInstallation(candidate, consumer, options).runtime;
+      this.recordInstallation(selected, consumer);
       return selected;
     });
   }
 
+  selectInstallation(
+    candidate: ManagedRuntime,
+    consumer: RuntimeConsumer,
+    options: InstallationOptions = {},
+  ): RuntimeSelection {
+    if (!sameRuntime(candidate, consumer)) throw incompatible(candidate, consumer);
+    const current = this.runtime();
+    if (current === undefined) return { runtime: candidate };
+    if (sameRuntime(current, candidate)) {
+      if (current.sha256 !== candidate.sha256) {
+        throw new RuntimeConflictError(
+          "artifact-conflict",
+          "This engine version and contract have different binary contents. Use the published immutable artifact or release a distinct engine version.",
+          "update-products",
+        );
+      }
+      return { runtime: current };
+    }
+    if (!newerRuntime(candidate.version, current.version)) {
+      if (runtimeSatisfies(current, consumer)) return { runtime: current };
+      throw incompatible(current, consumer);
+    }
+    try {
+      this.admitReplacement(candidate, consumer.id, options);
+    } catch (cause) {
+      if (
+        cause instanceof RuntimeConflictError &&
+        runtimeSatisfies(current, consumer) &&
+        (cause.code === "consumer-conflict" ||
+          cause.code === "active-clients" ||
+          cause.code === "active-work" ||
+          cause.code === "runtime-running")
+      ) {
+        return { runtime: current, deferred: { version: candidate.version, reason: cause.code } };
+      }
+      throw cause;
+    }
+    return { runtime: candidate };
+  }
+
   checkInstallation(
-    candidate: RuntimeVersion,
+    candidate: RuntimeRequirement,
     consumerId: string,
-    options: { now?: number; authorizedWork?: boolean } = {},
+    options: InstallationOptions = {},
   ): void {
     const current = this.runtime();
-    if (current !== undefined && !sameRuntime(current, candidate)) {
-      this.admitReplacement(
-        candidate,
-        consumerId,
-        options.now ?? Date.now(),
-        options.authorizedWork === true,
-      );
+    if (current !== undefined && !runtimeSatisfies(current, candidate)) {
+      if (!newerRuntime(candidate.version, current.version)) throw incompatible(current, candidate);
+      this.admitReplacement(candidate, consumerId, options);
     }
   }
 
@@ -230,7 +290,8 @@ export class RuntimeRegistry {
     this.database.close();
   }
 
-  admit(expected: RuntimeVersion): ManagedRuntime {
+  admit(expected: RuntimeRequirement): ManagedRuntime {
+    this.requireSettledInstallation();
     const runtime = this.runtime();
     if (runtime === undefined) {
       throw new RuntimeConflictError(
@@ -239,39 +300,67 @@ export class RuntimeRegistry {
         "start-runtime",
       );
     }
-    if (!sameRuntime(runtime, expected)) throw incompatible(runtime, expected);
+    if (!runtimeSatisfies(runtime, expected)) throw incompatible(runtime, expected);
     return runtime;
   }
 
   private admitReplacement(
     candidate: RuntimeVersion,
     replacingConsumer: string,
-    now: number,
-    authorizedWork: boolean,
+    options: InstallationOptions,
   ): void {
     const incompatibleConsumers = this.consumers().filter(
-      (consumer) => consumer.id !== replacingConsumer && !sameRuntime(consumer, candidate),
+      (consumer) => consumer.id !== replacingConsumer && !runtimeSatisfies(candidate, consumer),
     );
     if (incompatibleConsumers.length > 0) {
       const products = [...new Set(incompatibleConsumers.map((consumer) => consumer.product))];
       throw new RuntimeConflictError(
         "consumer-conflict",
-        `The shared engine is still required by ${products.join(" and ")}. Updating the apps one at a time cannot replace these registrations. Engine ${candidate.version} / contract ${candidate.contract} needs the explicit maintenance procedure in docs/runtime-upgrades.md: finish work, quit the apps, stop serving their workspaces, and remove the old product registrations before installing a compatible pair. Home and history files are preserved.`,
+        `The shared engine is still required by ${products.join(" and ")} with a different contract or a legacy exact-version registration. Update legacy apps to contract-aware releases before retrying; different contracts require docs/runtime-upgrades.md maintenance. Home and history files are preserved.`,
         "update-products",
       );
     }
-    if (this.clients(now).length > 0) {
+    if (this.clients(options.now ?? Date.now()).length > 0) {
       throw new RuntimeConflictError(
         "active-clients",
         "The shared runtime has active clients; close their windows before replacing its engine.",
         "close-clients",
       );
     }
-    if (authorizedWork) {
+    if (options.runtimeRunning) {
+      throw new RuntimeConflictError(
+        "runtime-running",
+        "The compatible engine is still running. It remains available; finish work, close its clients, run keywork node stop, then retry installation to activate the newer engine.",
+        "stop-runtime",
+      );
+    }
+    if (options.authorizedWork) {
       throw new RuntimeConflictError(
         "active-work",
         "Authorized work or configured workspaces still need this runtime. Idle creatures and unavailable workspaces also retain it. After finishing current tasks, explicitly stop serving the affected workspaces using docs/runtime-upgrades.md before replacing the engine; keep their home and history files.",
         "finish-work",
+      );
+    }
+  }
+
+  private recordInstallation(runtime: ManagedRuntime, consumer: RuntimeConsumer): void {
+    this.database.run(
+      "INSERT INTO runtime_state (id, record) VALUES ('runtime', ?) ON CONFLICT(id) DO UPDATE SET record = excluded.record",
+      JSON.stringify(runtime),
+    );
+    this.database.run(
+      "INSERT INTO runtime_consumers (id, record) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET record = excluded.record",
+      consumer.id,
+      JSON.stringify(consumer),
+    );
+  }
+
+  private requireSettledInstallation(): void {
+    if (this.pendingInstallation() !== undefined) {
+      throw new RuntimeConflictError(
+        "runtime-unavailable",
+        "An engine activation is incomplete. Retry consumer installation to repair the selected artifact before attaching clients; do not restore an older binary.",
+        "start-runtime",
       );
     }
   }
@@ -285,10 +374,38 @@ export function sameRuntime(left: RuntimeVersion, right: RuntimeVersion): boolea
   return left.version === right.version && left.contract === right.contract;
 }
 
-function incompatible(actual: RuntimeVersion, expected: RuntimeVersion): RuntimeConflictError {
+export function runtimeSatisfies(
+  runtime: RuntimeVersion,
+  requirement: RuntimeRequirement,
+): boolean {
+  return (
+    runtime.contract === requirement.contract &&
+    (requirement.compatibility === "contract" || runtime.version === requirement.version)
+  );
+}
+
+function newerRuntime(candidate: string, current: string): boolean {
+  const left = stableVersion(candidate);
+  const right = stableVersion(current);
+  for (const index of [0, 1, 2] as const) {
+    if (left[index] !== right[index]) return left[index] > right[index];
+  }
+  return false;
+}
+
+function stableVersion(version: string): readonly [number, number, number] {
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+    throw new Error(`Shared-engine replacement requires stable published versions, got ${version}`);
+  }
+  const parts = version.split(".").map(Number);
+  if (parts.some((part) => !Number.isSafeInteger(part))) throw new Error("Invalid engine version");
+  return parts as [number, number, number];
+}
+
+function incompatible(actual: RuntimeVersion, expected: RuntimeRequirement): RuntimeConflictError {
   return new RuntimeConflictError(
     "incompatible-runtime",
-    `The shared runtime is engine ${actual.version} / contract ${actual.contract}; this client requires engine ${expected.version} / contract ${expected.contract}. Use a matching app release. Updating incompatible apps one at a time cannot replace old registrations; docs/runtime-upgrades.md describes the explicit maintenance procedure that preserves home and history.`,
+    `The shared runtime is engine ${actual.version} / contract ${actual.contract}; this client requires ${expected.compatibility === "contract" ? `contract ${expected.contract}` : `engine ${expected.version} / contract ${expected.contract} (legacy exact-version client)`}. Use a matching app release or update the legacy client. Engine downgrades are never automatic; docs/runtime-upgrades.md describes contract-changing maintenance that preserves home and history.`,
     "update-products",
   );
 }

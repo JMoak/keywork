@@ -8,7 +8,7 @@ import { width } from "../width.ts";
 import { type OverlayFrame, panelFrame, panelRowRoom, RowOverlay } from "./overlay.ts";
 
 export interface HelpSeams {
-  dismiss(): void;
+  dismiss(overlay: RowOverlay): void;
   screen(): Screen;
 }
 
@@ -91,7 +91,7 @@ export class HelpOverlay extends RowOverlay {
       return;
     }
     if (chord.name === "escape" || chord.name === "f1") {
-      this.seams.dismiss();
+      this.seams.dismiss(this);
       return;
     }
     if (chord.name === "backspace") {
@@ -123,7 +123,7 @@ export class HelpOverlay extends RowOverlay {
   click(): void {}
 
   outside(): void {
-    this.seams.dismiss();
+    this.seams.dismiss(this);
   }
 
   private allRows(): HelpRow[] {

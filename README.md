@@ -78,8 +78,16 @@ bun link --cwd packages/cli
 keywork
 ```
 
-The first run walks you through hooking up a model provider, and `keywork setup` reruns it
-whenever. It's plain API keys, nothing fancier:
+Run `keywork connect --first-model` for guided setup: **Local**, **Flagship AI direct**
+(OpenAI or Anthropic), or **OpenRouter**. Local setup can check known loopback endpoints
+and shows the model lists it finds. Choose a model, then confirm before changing the
+starting model for new conversations. An existing usable choice is kept.
+
+`keywork connect --group local --first-model` opens a route directly. `keywork connect`
+(`setup` is an alias) and the terminal's `/connect` retain the full connection editor;
+`/model` changes the current session. A saved connection or model list is not a successful
+model response: send a message to confirm the complete path. Provider keys may also come
+from the environment:
 
 ```
 KEYWORK_OPENROUTER_API_KEY or OPENROUTER_API_KEY         OpenRouter (one key, hundreds of models)

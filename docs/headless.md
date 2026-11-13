@@ -25,7 +25,7 @@ to stderr. `--json` prints one JSON object per line to stdout and nothing else.
 | 1 | `failed` | the turn ended in `engine.error`: provider failure after retries, tool-loop abort, internal error. |
 | 2 | `usage` | bad invocation: no prompt, unknown command, preset, or `--workspace` slug, or `panes` / `chat` / bare `keywork` without a terminal. |
 | 3 | `unresolved` | inference resolution failed. The IR-18 `code` (`unconfigured` · `ambiguous` · `unknown-provider` · `unknown-model` · `disabled-provider` · `unavailable-credential` · `unsupported-protocol` · `missing-capability` · `insecure-endpoint`) rides in the payload. |
-| 4 | `denied` | a tool call needed an approval nobody could give. The run stops right after that refused call with no further model call (any later calls in the same reply are settled as skipped); stderr names the tool and the fix. |
+| 4 | `denied` | a tool call needed an approval nobody could give. The run stops right after that refused call with no further model call (any later calls in the same reply are settled as skipped); stderr names the tool and the fix, or says there isn't one. |
 | 130 | `interrupted` | SIGINT or SIGTERM arrived mid-turn. The agent was interrupted and orphaned tool calls were settled; the session was persisted only when `--session-dir` was given (the `run.finished` line carries `saved`). |
 
 ### Permissions without a person
@@ -47,6 +47,13 @@ keywork run "fix the failing tests" --preset open --json
 
 `--preset` is run-scoped and never persisted. Explicit `deny` rules are not asks: a policy
 denial is a normal refused result and the run can still exit 0.
+
+A bash command with a redirect, `$`, a backtick or parentheses always asks: opaque parts never
+ride an allow, so no preset or allow rule covers them
+([`backlog/117-influence-sweep.md`](backlog/117-influence-sweep.md) SW15). A headless run
+refuses one even under `--preset open`, and stderr says why. stderr suggests
+`--preset open` only when that preset allows every refused call (`read`, `write`, `edit` and
+plain `bash`); for any other tool it names the permission rule that would allow it.
 
 A child the model starts with `delegate` runs under the same rule
 ([`backlog/120-subagents.md`](backlog/120-subagents.md)): its asks are refused with
@@ -72,10 +79,10 @@ invocation ends with exactly one `run.finished` carrying `outcome` and `exitCode
 | `context.injected` | `injection`: `source` (`project-instructions` · `memory-bootstrap` · `memory-recall` · `skill` · `subagent`), optional `id`, `scope` |
 | `child.started` | `callId` of the `delegate` call, `sessionId` (absent without `--session-dir`), `title`, optional `bot` |
 | `child.finished` | `callId`, `sessionId`, `outcome` (`completed` · `interrupted` · `failed` · `denied`), `usage`, optional `costNanos` and `refused` |
-| `turn.completed` | `message`, `usage` |
+| `turn.completed` | `message`, `usage`. This `usage` covers the last model call only. A turn that ran tools made one call per step, so read the run's total from `run.finished` |
 | `turn.interrupted` | `message` |
 | `engine.error` | `message` |
-| `run.finished` | `outcome`, `exitCode`, plus `message` (completed · denied · interrupted), `refused` (denied: `[{tool, callId}]`, a child's refusals included), `error` (failed · usage), or `failure` (unresolved: the typed IR-18 object plus the `nextAction` a person would be told); `children` (`[{callId, sessionId, title, bot, outcome, refused}]`) whenever the run started any |
+| `run.finished` | `outcome`, `exitCode`, plus `message` (completed · denied · interrupted), `saved` (interrupted: whether `--session-dir` kept the partial run), `refused` (denied: `[{tool, callId}]`, a child's refusals included), `error` (failed · usage), or `failure` (unresolved: the typed IR-18 object plus the `nextAction` a person would be told); `usage` whenever the run started (every outcome but usage · unresolved): the run's total token counts summed over every model call it made, each child's included, with `costUsd` when the provider metered it; `children` (`[{callId, sessionId, title, bot, outcome, refused}]`) whenever the run started any |
 
 Bus events ride under their bus names with their bus payloads, so a CI script reads the
 same events a pane does. The same events land in the session JSONL as Pi-compatible
@@ -90,7 +97,7 @@ Example (`completed`):
 {"type":"turn.delta","delta":{"type":"text","text":"all done"}}
 {"type":"turn.delta","delta":{"type":"done","usage":{"inputTokens":12,"outputTokens":3}}}
 {"type":"turn.completed","message":{"role":"assistant","parts":[{"type":"text","text":"all done"}]},"usage":{"inputTokens":12,"outputTokens":3}}
-{"type":"run.finished","outcome":"completed","exitCode":0,"message":"all done"}
+{"type":"run.finished","outcome":"completed","exitCode":0,"message":"all done","usage":{"inputTokens":12,"outputTokens":3}}
 ```
 
 ## Prompts from outside, through `keywork serve`

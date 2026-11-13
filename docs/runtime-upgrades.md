@@ -1,23 +1,75 @@
 # Shared-engine upgrades
 
-Keywork and Stead use one shared engine. Each installed product records the exact engine
-version and contract it requires. Open app windows also hold short-lived leases.
-An engine update cannot replace a runtime still required by another installed product,
-an active client, or authorized background work.
+Keywork and Stead use one shared engine. Contract-aware apps can ship and run independently:
+their bundled engine versions may differ while their exact wire contract matches. Each
+consumer and client explicitly opts in with `--contract <contract>`, which must match its
+bundled bootstrap. The registry retains the bundled version as provenance and records
+`compatibility: "contract"` as its admission requirement. A missing compatibility field
+continues to mean an exact-version legacy requirement.
 
-Installing incompatible app updates one at a time does not migrate those registrations.
-Use matching releases until a coordinated upgrade is available. The procedure below is
-advanced maintenance with an intentional interruption of background work; it is not the
-normal desktop update flow. The current implementation does not provide an automatic
-coordinated upgrade of both products.
+The engine artifact itself remains exact and immutable. Its version, contract and SHA-256
+identify the executable selected for this account. Different binary contents under the
+same version and contract are refused. A distinct build needs a new published version.
+An older compatible bundle reuses the selected newer engine; it never downgrades it.
 
-Both products must carry the same verified engine artifact. A different binary under the
-same engine version and contract is refused even after removing every consumer. Such a
-build needs a distinct engine release version, or the original matching binary.
+## Compatible app updates and deferred engine activation
+
+`keywork node status --json` advertises `runtimeCompatibility: 1` when the invoked bootstrap
+supports this lifecycle. Apps must require that capability before using `--contract`.
+An old binary cannot be made contract-aware by changing an installed consumer record.
+Update each app to a capability-aware bootstrap and let it register normally; remaining
+legacy registrations continue to protect clients that still use exact-version admission.
+This is a one-time adoption boundary, not a requirement for matching future app versions.
+
+Normal consumer installation verifies the candidate and the selected artifact, then reuses
+a running compatible engine. It does not stop or restart a live service, even when a
+snapshot looks idle: a routine or event could begin work immediately afterward. Successful
+installation returns the actual selected `runtime`; a newer candidate may also return
+`deferred: { version, reason }`. Reasons distinguish a running runtime, active client leases,
+legacy or incompatible consumers, and protected work. The app remains usable on the selected
+compatible engine. There is no second engine and no background activation queue.
+
+To activate a newer same-contract engine, finish work and close attached apps. Allow up to
+30 seconds for disconnected client leases to expire, then explicitly stop the runtime:
+
+```sh
+keywork node stop --json
+```
+
+Stopping is an intentional interruption, not a drain operation; finish tasks and permission
+requests first. It verifies that the supervisor and recorded children have stopped while
+preserving product registrations, served-workspace configuration, home, and history. Launch
+the updated app, or retry its normal `node consumer install ... --contract <contract>` command.
+The stopped activation takes the mutation and supervisor ownership locks and checks the
+processes again before selecting the newer artifact. Configured homes and idle creatures
+do not require deregistration at this stopped point: they resume under the newer engine.
+If a client or service restarts first, activation stays deferred or refuses the race.
+
+Service registration is applied while stopped, with durable activation intent in the runtime
+registry. Selection is committed before starting the new executable. A failed or interrupted
+handoff blocks client admission until consumer installation repairs it forward. Retry the
+same operation; do not delete the registry or restore an older executable after a candidate
+may have opened state. Startup verifies the selected executable's checksum and running
+version/contract. The updated legacy `node install` command refuses to replace a managed
+selection; `node run` permits only its selected, verified artifact. These guarantees apply
+to the managed lifecycle, not arbitrary older executables that predate these checks.
+
+Capability 1 also commits to compatible shared lifecycle records and configuration formats.
+Wire-contract equality alone is not permission to change storage incompatibly: older
+bootstraps still perform lifecycle mutations. A future breaking lifecycle format needs a
+new capability or delegation to the selected engine, with an explicit migration policy.
+
+## Different contracts
+
+A different contract still requires the maintenance procedure below. New apps cannot
+reinterpret old registrations or share an engine they do not understand. Unlike a compatible
+stopped upgrade, this procedure removes incompatible requirements and served workspaces
+before the replacement starts. It preserves existing state and does not provide automatic
+cross-contract migration or rollback.
 
 ## Before maintenance
 
-Obtain both compatible installers and keep a working `keywork` CLI available outside the
+Obtain installers supporting the target contract and keep a working `keywork` CLI available outside the
 app directories you may uninstall. Use a CLI that supports `node consumer` and
 `node workspace`. Keep the previous matching installers available until validation ends.
 
@@ -102,11 +154,12 @@ work running.
 Never delete `runtime.sqlite`, the managed engine directory, or `.keywork` to bypass an
 admission refusal. Those files are not a substitute for the maintenance steps.
 
-## Install the compatible pair and restore service
+## Install compatible products and restore service
 
-Install both matching releases. Launch the first and enable background work; with the old
+Install products supporting the target contract. Launch the first and enable background work; with the old
 requirements removed and no served workspaces, it can register the new engine. Launch
-the second; it must accept the same engine version, contract, and binary contents.
+the second; a contract-aware release accepts the selected engine's contract even when its
+own bundle has a different version. Legacy products still require an exact matching engine.
 
 Open the creature home through either app, then reopen the recorded projects through the
 apps or the workspace controls. The private home must be opened as the managed home,

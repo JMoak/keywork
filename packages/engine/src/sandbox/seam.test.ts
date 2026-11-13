@@ -69,11 +69,8 @@ describe("the sandbox seam", () => {
 
     expect(output.trim()).toBe("confined");
     expect(sandbox.launches).toHaveLength(1);
-    expect(sandbox.launches[0]).toMatchObject({
-      file: shell.file,
-      args: shell.args("echo original"),
-      cwd,
-    });
+    expect(sandbox.launches[0]).toMatchObject({ file: shell.file, cwd });
+    expect(sandbox.launches[0]?.args.at(-1)).toContain("echo original");
     expect(sandbox.launches[0]?.env.KEYWORK).toBe("1");
   });
 

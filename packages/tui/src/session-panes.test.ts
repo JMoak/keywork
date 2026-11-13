@@ -3,6 +3,7 @@ import {
   MockProvider,
   type PermissionResolver,
   type PermissionsView,
+  ResolutionError,
   type Tool,
   textTurn,
 } from "@keywork/engine";
@@ -116,6 +117,28 @@ function world(extra: Partial<SessionPaneDeps> = {}) {
   };
   return { probe, panes, built, created, escrow, pane };
 }
+
+describe("PaneSession without a model", () => {
+  it("shows the in-pane connection and the guided command for a fresh terminal", () => {
+    const { pane } = world({
+      agentFactory: () => {
+        throw new ResolutionError({
+          code: "unconfigured",
+          available: [],
+          message: "no inference provider is configured",
+        });
+      },
+    });
+
+    expect(pane("session-1").model.entries).toContainEqual(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          "/connect adds a provider · guided setup before launch: keywork connect --first-model",
+        ),
+      }),
+    );
+  });
+});
 
 describe("PaneSession bot binding", () => {
   it("switching to a bot rebuilds the agent as that bot, seeds its model, and persists both", async () => {

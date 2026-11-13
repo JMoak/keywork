@@ -6,7 +6,7 @@ import type {
   InferencePort,
   ModelChoice,
 } from "./inference-port.ts";
-import { paletteFrame } from "./overlays/index.ts";
+import { paletteFrame, paletteRowRoom } from "./overlays/index.ts";
 import { AppProbe } from "./probe.ts";
 
 const choices: ModelChoice[] = [
@@ -152,6 +152,41 @@ describe("/model", () => {
     expect(switched).toEqual(["ollama/qwen3"]);
   });
 
+  it("routes the pointer through the visible page of a long catalogue", async () => {
+    const catalogue: ModelChoice[] = Array.from({ length: 100 }, (_, at) => ({
+      reference: `openrouter/model-${at}`,
+      provider: "openrouter",
+      model: `model-${at}`,
+      available: true,
+      facts: [],
+    }));
+    const switched: string[] = [];
+    const probe = new AppProbe({
+      inference: {
+        choices: () => catalogue,
+        describe: (reference) => ({ ok: true, message: reference }),
+      },
+      switchModel: async (reference) => {
+        switched.push(reference);
+        return `model → ${reference}`;
+      },
+    });
+    probe.command("model");
+    probe.keys("up");
+    const frame = paletteFrame(probe.screen, catalogue.length);
+    const shown = paletteRowRoom(frame) - 1;
+    const firstShown = catalogue.length - shown;
+    probe.hover(frame.x + 2, frame.firstRowY);
+    expect(probe.core.modelPicker()?.selected()?.choice.reference).toBe(
+      `openrouter/model-${firstShown}`,
+    );
+    probe.click(frame.x + 2, frame.firstRowY + shown);
+    expect(probe.snapshot().overlay).toBe("model");
+    probe.click(frame.x + 2, frame.firstRowY + 1);
+    await probe.settled();
+    expect(switched).toEqual([`openrouter/model-${firstShown + 1}`]);
+  });
+
   it("pastes into the picker's query", () => {
     const { probe } = probeWithInference();
     probe.command("model");
@@ -197,6 +232,32 @@ describe("/connect", () => {
     expect(model.stage.kind).toBe("targets");
     probe.click(0, 0);
     expect(probe.snapshot().overlay).toBeUndefined();
+  });
+
+  it("hands enter on the receipt to a model picker that stays open and takes keys", async () => {
+    const probe = new AppProbe({
+      inference: inference(),
+      connections: {
+        ...connections(),
+        verify: async () => ({ ok: true, at: "t", models: ["gpt-5-mini"] }),
+      },
+      switchModel: async (reference) => `model → ${reference}`,
+    });
+    probe.core.registry.run("connect openai");
+    const model = probe.core.connectModel();
+    if (model === undefined) throw new Error("expected the connect editor to be open");
+    const keyField = model.fields().findIndex((field) => field.id === "apiKey");
+    for (let step = 0; step < keyField; step += 1) probe.keys("down");
+    probe.paste("sk-live-123\n");
+    probe.keys("return");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(model.stage.kind).toBe("receipt");
+
+    probe.keys("return");
+    expect(probe.snapshot().overlay).toBe("model");
+    probe.type("qwen");
+    expect(probe.core.modelPicker()?.query).toBe("qwen");
+    expect(probe.core.modelPicker()?.selected()?.choice.reference).toBe("ollama/qwen3");
   });
 
   it("opens the clicked target from the target list", () => {
