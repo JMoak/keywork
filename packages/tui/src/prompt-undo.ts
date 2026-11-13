@@ -62,12 +62,12 @@ export function reopenedUndo(seams: PromptUndoSeams): ReopenedUndo | undefined {
   const { checkpoints } = seams;
   if (staged === undefined) return undefined;
   if (staged.redoFiles !== undefined && checkpoints === undefined) return undefined;
-  const { redoFiles } = staged;
+  const { redoFiles, redoPaths } = staged;
   return {
     undo: {
       filesNote: redoFiles === undefined ? untouchedFiles.note : filesPutBack,
       cancel: async () => {
-        if (redoFiles !== undefined) await checkpoints?.restoreTo(redoFiles);
+        if (redoFiles !== undefined) await checkpoints?.restoreTo(redoFiles, redoPaths);
         seams.adopt(await staged.redo());
       },
     },

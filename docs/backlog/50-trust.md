@@ -56,6 +56,16 @@ allow `git branch -D` and `git branch <new>`. The compound rule is unchanged, so
 the bundle never counts toward `activePreset`, since it is posture rather than user rules,
 so a trusted workspace on an empty config still reads `standard`.
 
+**Trusted reads stay in the folder · 2026-11-12 (UX sweep PERM-3).** Jordan's decision:
+"Folder + read roots." The bundle's allow covers a command part only when every operand stays
+inside the workspace roots and read roots, checked with `readablePath`'s rule
+(`trustedReadStaysWithin` in `shared` parses the operands, `PermissionLedger` checks each
+through `isReadablePath`). Anything that could leave (`..`, an absolute path elsewhere, `~`,
+`~user`, a dot-led glob, a brace expansion, a backslash escape that sh would turn into `..`, an
+option value naming such a path, a PowerShell provider path) falls through to the built-in ask
+instead. Known gaps: a glob that matches a link inside the workspace pointing out, and a
+persistent shell whose cwd an approved `cd` moved, are checked against the workspace cwd.
+
 An ask now answers with a scope: `once`, `session` (the rest of this session) or `workspace`
 (every session of this workspace, persisted to `~/.keywork/workspaces/<identity>/permissions.json`,
 a private atomic write parsed strictly into `{ rules: [{ action, resource, effect: "allow" }] }`).

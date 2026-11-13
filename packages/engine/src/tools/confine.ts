@@ -25,9 +25,12 @@ export function confinedPath(scope: ToolScope, path: string): string {
 }
 
 export function readablePath(scope: ToolScope, path: string): string {
-  const target = resolvedIn(scope, path);
-  if (scopeHolds([...scope.roots, ...(scope.readRoots ?? [])], target)) return target;
+  if (isReadablePath(scope, path)) return resolvedIn(scope, path);
   throw new Error(escapeMessage(path, scope.roots));
+}
+
+export function isReadablePath(scope: ToolScope, path: string): boolean {
+  return scopeHolds([...scope.roots, ...(scope.readRoots ?? [])], resolvedIn(scope, path));
 }
 
 export function scopeContains(scope: ToolScope, path: string): boolean {

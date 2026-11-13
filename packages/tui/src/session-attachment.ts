@@ -41,6 +41,7 @@ export interface RewindFiles {
 
 export interface StagedRewind {
   readonly redoFiles: string | undefined;
+  readonly redoPaths?: readonly string[] | undefined;
   redo(): Promise<readonly Message[]>;
   retell(bus: Agent["bus"]): void;
 }

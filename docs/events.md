@@ -285,6 +285,15 @@ reaches the parent.
 | `costNanos` | `number`, optional | What the child cost in nano-dollars, present only when every one of its model calls was priced. |
 | `refused` | `{ tool, callId }[]`, optional | The child's calls a headless gate refused, present only when there were any. |
 
+Under `keywork serve`, from `child.started` to `child.finished` the child's own engine events
+(`turn.started`, `turn.delta`, `tool.*`, `gate.*`, `turn.completed` and the rest) stream on
+`/events` under the child's session id, so a console watching that id sees it work; the parent
+keeps its `child.*` events and activity lines. While it runs, `GET /sessions/{id}` for the child
+reads its running conversation (`live: true`, `messages` up to the prompt it is answering, the
+reply arriving on the stream), and the verbs that would open it to drive it (prompt, model,
+context, cost and the rest) answer as for a session not open here until `child.finished`;
+after that it reads and opens from its saved log like any other session. Since contract 1.32.
+
 ## Gate and session state
 
 ### gate.ask
@@ -306,7 +315,13 @@ tool mutates and no rule covers it). A session left quiet (`POST /sessions/{id}/
 no ask for a call its quiet posture grants; see `gate.permission`.
 
 `rule` can also be `trusted`: the trusted read posture allows a command but asks for its
-write-capable form (`find … -delete`, `rg --pre`, `git log --output=…`). `rules` is the list
+write-capable form (`find … -delete`, `rg --pre`, `git log --output=…`). The posture allows a
+command only while every operand stays inside the workspace and its read roots, by the same
+rule the `read` tool confines paths (links resolved, `/c/…` drive paths read as Windows ones);
+a command that names a path elsewhere (`..`, an absolute path, `~`, a glob or brace expansion
+that can climb out, a path in an option value, a PowerShell provider path such as `env:`) is
+not covered by it and asks with `rule: "default"`, never a silent refusal. A `session` or
+`workspace` grant still covers such a command. Since contract 1.32. `rules` is the list
 of `{ action, resource, effect: "allow" }` rules a `session` or `workspace` answer would
 record, so a client can show them before the person picks: for `bash`, one rule per part of
 the command built from its leading literal words (`git push *` from `git push origin main`,
@@ -1066,6 +1081,8 @@ working tree. Both write the same shape (since contract 1.7 the terminal's facts
 | `settled` | `string`, optional | The tree when the turn settled, present with `checkpoint`. |
 | `files` | `{ path, added, deleted }[]` | What changed from `checkpoint` to `settled`: the turn's own files, empty when it changed nothing. Other sessions working at the same moment can land in it. |
 | `session` | `{ files, added, deleted }`, optional | The session's net change at that moment over every file its turns touched, the figure the desk row shows after a restart. |
+| `outcome` | `"completed" \| "interrupted" \| "failed" \| "shutdown"`, optional | How the turn ended, written under `keywork serve` since contract 1.32: `interrupted` when an abort or a steer stopped it, `shutdown` when the server shut down while it ran. Absent in facts the terminal or an earlier release wrote. |
+| `error` | `string`, optional | The message a `failed` turn failed on. |
 
 Snapshots never take in `node_modules` or `.git`, and gitignored files stay out unless an
 earlier snapshot already held them; an existing checkpoint store forgets its index once, the first
@@ -1147,6 +1164,22 @@ puts the files back from `redo` even after a server restart. The terminal writes
 so either host can redo what the other staged. Since contract 1.7; an earlier `restore` entry
 with moved files and no `redo` is not offered again.
 
+A restore under `keywork serve` is scoped to the session's own files. `POST /undo` and `POST
+/restore` (its default `scope: "session"`) put back only the paths this session's turns changed
+from the restored turn on, as their `turn_facts` record them, and leave every other path as it
+is on disk: a file the keeper created and an edit to a file no turn touched both survive.
+`POST /restore` with `scope: "everything"` puts the whole workspace back to the checkpoint as
+before. A scoped restore entry carries `paths: string[]`, the paths it put back from `files`;
+`POST /redo` puts exactly those paths back from `redo`, after a restart too, so files written
+since the restore stay. An entry without `paths` restores and redoes the whole tree. The answer
+to `POST /restore` echoes `scope` and lists in `files` only what moved. `GET
+/sessions/{id}/restore?turn=N&scope=session|everything` lists every file that differs from the
+checkpoint, each `{ path, added, deleted, touched, goesBack }`: `touched` when a turn of this
+session from turn N on changed it, `goesBack` when a restore with that scope would put it back
+(`touched` itself under `session`). A file another session or an edit outside keywork changed
+while one of this session's turns was running lands in that turn's facts and counts as touched.
+Since contract 1.32; before, every restore put the whole workspace back.
+
 ## Memory flush entries
 
 A memory flush is not a prompt. Since contract 1.7 it is written as a `custom_message` entry
@@ -1166,6 +1199,15 @@ message left `messages`; `index` is where it sat, before the message that now fo
 `rewritten` (it is `messages[index]`, carrying the replacement), and `text` is its own text
 before the edit (empty for a tool result). A client places a forgotten prompt at its turn from
 `edits` alone.
+
+`GET /sessions/{id}` also says how each turn ended, in `outcomes`, each `{ index, entryId,
+outcome, error? }`: `messages[index]` is the turn's prompt, `entryId` its entry, `outcome` the
+`turn_facts` outcome and `error` a failed turn's message. A turn the engine died in leaves its
+prompt with no reply and no `turn_facts`; it reads as `shutdown` the next time the session is
+read, so a client can mark it interrupted and offer it again. What the turn had written before it
+ended (partial text kept on a failure, an abort or a shutdown) stays in `messages`. The turn
+still running, a turn compacted away and a turn settled before outcomes were kept carry no mark,
+so a client treats a missing mark as unknown, never as a failure. Since contract 1.32.
 
 ## SSE framing
 

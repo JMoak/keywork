@@ -174,6 +174,64 @@ describe("Checkpoints", () => {
     expect(existsSync(join(worktree, "intruder.txt"))).toBe(false);
   });
 
+  it("restores only the named paths and leaves every other path as it is", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "agent.txt": "before", "doomed.txt": "delete me", "mine.txt": "v1" });
+    const tree = await store.captureTree();
+    await seed(worktree, { "agent.txt": "after", "made.txt": "agent's", "mine.txt": "my edit" });
+    await seed(worktree, { "notes.txt": "keeper's own" });
+    await rm(join(worktree, "doomed.txt"));
+
+    const restored = await store.restoreTo(tree, ["agent.txt", "made.txt", "doomed.txt", "gone"]);
+
+    expect(await readFile(join(worktree, "agent.txt"), "utf8")).toBe("before");
+    expect(await readFile(join(worktree, "doomed.txt"), "utf8")).toBe("delete me");
+    expect(existsSync(join(worktree, "made.txt"))).toBe(false);
+    expect(await readFile(join(worktree, "mine.txt"), "utf8")).toBe("my edit");
+    expect(await readFile(join(worktree, "notes.txt"), "utf8")).toBe("keeper's own");
+    expect(await store.snapshot()).toBe(restored);
+    expect((await store.filesBetween(tree, restored)).map((file) => file.path)).toEqual([
+      "mine.txt",
+      "notes.txt",
+    ]);
+  });
+
+  it("takes a scoped restore back exactly, through undo or a scoped restore of the left tree", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "agent.txt": "before" });
+    const tree = await store.captureTree();
+    await seed(worktree, { "agent.txt": "after", "mine.txt": "keeper's own" });
+    const left = await store.snapshot();
+
+    await store.restoreTo(tree, ["agent.txt"]);
+    await seed(worktree, { "later.txt": "written after the restore" });
+    await store.restoreTo(left, ["agent.txt"]);
+
+    expect(await readFile(join(worktree, "agent.txt"), "utf8")).toBe("after");
+    expect(await readFile(join(worktree, "mine.txt"), "utf8")).toBe("keeper's own");
+    expect(await readFile(join(worktree, "later.txt"), "utf8")).toBe("written after the restore");
+    expect(await store.undo()).toBe(true);
+    expect(await readFile(join(worktree, "agent.txt"), "utf8")).toBe("before");
+    expect(await store.undo()).toBe(true);
+    expect(await readFile(join(worktree, "agent.txt"), "utf8")).toBe("after");
+    expect(existsSync(join(worktree, "later.txt"))).toBe(false);
+  });
+
+  it("treats a scoped restore whose paths already match as a no-op", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const store = await Checkpoints.open({ worktree, gitDir });
+    await seed(worktree, { "same.txt": "same" });
+    const tree = await store.captureTree();
+    await seed(worktree, { "mine.txt": "keeper's own" });
+
+    const restored = await store.restoreTo(tree, ["same.txt"]);
+
+    expect(restored).toBe(await store.snapshot());
+    expect(await readFile(join(worktree, "mine.txt"), "utf8")).toBe("keeper's own");
+  });
+
   it("rejects a malformed checkpoint reference without touching files", async () => {
     const { worktree, gitDir } = await scratchProject();
     const store = await Checkpoints.open({ worktree, gitDir });

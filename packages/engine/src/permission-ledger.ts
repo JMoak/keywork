@@ -9,11 +9,13 @@ import {
   SessionGrants,
   sameRule,
   trustedReadRules,
+  trustedReadStaysWithin,
   withRules,
 } from "@keywork/shared";
 import type { GrantedScope, PermissionResolver, PermissionRuling } from "./agent.ts";
 import type { ToolCallPart } from "./messages.ts";
 import type { AskRule } from "./session/journal.ts";
+import { isReadablePath, type ToolScope, toolScope } from "./tools/confine.ts";
 
 export interface WorkspaceGrants {
   rules(): readonly PermissionRule[];
@@ -32,6 +34,7 @@ export interface PermissionLedgerOptions {
   trusted: boolean;
   workspace: WorkspaceGrants;
   root: string;
+  readScope?: ToolScope | undefined;
   user?: PermissionResolver | undefined;
 }
 
@@ -41,8 +44,11 @@ export class PermissionLedger {
   private readonly sessions = new Map<string, SessionGrants>();
   private readonly quiet = new Set<string>();
   private readonly sessionRulesListeners = new Set<SessionRulesListener>();
+  private readonly readScope: ToolScope;
 
-  constructor(private readonly options: PermissionLedgerOptions) {}
+  constructor(private readonly options: PermissionLedgerOptions) {
+    this.readScope = options.readScope ?? toolScope(options.root);
+  }
 
   adoptSession(sessionId: string, rules: readonly PermissionRule[]): void {
     this.grantsOf(sessionId).adopt(rules);
@@ -134,7 +140,7 @@ export class PermissionLedger {
 
   private policyFor(sessionId: string | undefined): LayeredPolicy {
     const layers: RuleLayer[] = [
-      { origin: "trusted", rules: this.bundle() },
+      { origin: "trusted", rules: this.bundle(), admits: (part) => this.readsWithinScope(part) },
       { origin: "workspace", rules: this.options.workspace.rules() },
       { origin: "session", rules: this.sessionRules(sessionId) },
     ];
@@ -147,6 +153,10 @@ export class PermissionLedger {
 
   private bundle(): readonly PermissionRule[] {
     return this.options.trusted ? trustedReadRules : [];
+  }
+
+  private readsWithinScope(commandPart: string): boolean {
+    return trustedReadStaysWithin(commandPart, (path) => isReadablePath(this.readScope, path));
   }
 }
 

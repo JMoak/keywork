@@ -8,7 +8,7 @@ export interface CheckpointsPort {
   beginTurn?(): void;
   undo(): Promise<boolean>;
   redo(): Promise<boolean>;
-  restoreTo(tree: string): Promise<void>;
+  restoreTo(tree: string, paths?: readonly string[]): Promise<unknown>;
   snapshot?(): Promise<string>;
 }
 

@@ -13,12 +13,14 @@ export interface RestoreFacts {
   readonly files: string | undefined;
   readonly redo: string | undefined;
   readonly turn?: number | undefined;
+  readonly paths?: readonly string[] | undefined;
 }
 
 export interface JournaledRestore {
   readonly id: string;
   readonly from: string | null;
   readonly redoFiles: string | undefined;
+  readonly redoPaths?: readonly string[] | undefined;
 }
 
 export async function journalRestore(
@@ -30,8 +32,9 @@ export async function journalRestore(
     from: facts.from,
     files: facts.files ?? null,
     redo: facts.redo ?? null,
+    ...(facts.paths !== undefined && { paths: facts.paths }),
   });
-  return { id: recorded.id, from: facts.from, redoFiles: facts.redo };
+  return { id: recorded.id, from: facts.from, redoFiles: facts.redo, redoPaths: facts.paths };
 }
 
 export function unsettledRestoreOf(store: SessionStore): JournaledRestore | undefined {
@@ -73,6 +76,7 @@ function stagedRewind(
 ): StagedRewind {
   return {
     redoFiles: restore.redoFiles,
+    redoPaths: restore.redoPaths,
     redo: async () => {
       await undoRestore(store, restore);
       changed();
@@ -96,10 +100,15 @@ function unsettledRestore(path: readonly SessionEntry[]): CustomEntry | undefine
 }
 
 function redoFactsOf(data: unknown): Omit<JournaledRestore, "id"> | undefined {
-  const { from, files, redo } = (data ?? {}) as Record<string, unknown>;
+  const { from, files, redo, paths } = (data ?? {}) as Record<string, unknown>;
   if (from !== null && typeof from !== "string") return undefined;
-  if (typeof redo === "string") return { from, redoFiles: redo };
+  if (typeof redo === "string") return { from, redoFiles: redo, redoPaths: pathListOf(paths) };
   return files === null ? { from, redoFiles: undefined } : undefined;
+}
+
+function pathListOf(paths: unknown): readonly string[] | undefined {
+  if (!Array.isArray(paths)) return undefined;
+  return paths.filter((path): path is string => typeof path === "string");
 }
 
 function branchTo(store: SessionStore, entryId: string | null): void {
