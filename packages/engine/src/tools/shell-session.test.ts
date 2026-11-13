@@ -60,8 +60,8 @@ describe("ShellSession", () => {
     expect(session.workingDirectory()).toBe(root);
 
     await session.run('cd "a nested folder"');
-    expect(realpathSync(resolve(session.workingDirectory()))).toBe(
-      realpathSync(join(root, "a nested folder")),
+    expect(realpathSync.native(resolve(session.workingDirectory()))).toBe(
+      realpathSync.native(join(root, "a nested folder")),
     );
 
     await session.reset();

@@ -75,18 +75,23 @@ describe("the screen signaling relay on the mesh listener", () => {
   it("lets a paired machine view with a pair ticket this house's node issued", async () => {
     const { send } = relay();
     await follow(await send(here, "GET", "?party=sharer", house));
+    const sessionId = "viewing-session-a-ticket-must-not-carry";
     const issued = await send(
       here,
       "POST",
       "",
       house,
-      { pairId: "pair-spark", sessionId: "s1" },
+      { pairId: "pair-spark", sessionId },
       ticketPath,
     );
     expect(issued.status).toBe(201);
     const { token } = (await issued.json()) as { token: string };
-    expect(token).not.toContain("s1");
-    expect((await send(spark, "POST", "?session=s1", token, request)).status).toBe(204);
+    expect(token).not.toContain(sessionId);
+    const asked = await send(spark, "POST", `?session=${sessionId}`, token, {
+      ...request,
+      sessionId,
+    });
+    expect(asked.status).toBe(204);
   });
 
   it("refuses a request in words when no console here is listening", async () => {
