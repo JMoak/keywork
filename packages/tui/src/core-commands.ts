@@ -6,6 +6,7 @@ import { ConversationPane } from "./conversation-pane.ts";
 import { extensionListingCommand } from "./extension-host.ts";
 import type { TerminalMode } from "./pane.ts";
 import { type PaneKind, paneKindAvailable, paneKindOf } from "./pane-kinds.ts";
+import type { RestoreScope } from "./session-attachment.ts";
 
 export function registerCoreCommands(core: AppCore): void {
   const shortcut = (action: string | undefined): Pick<CommandSpec, "shortcut"> => {
@@ -290,6 +291,16 @@ function terminalModeOf(args: string | undefined): TerminalMode | undefined {
   return operand === "mirror" || operand === "shell" ? operand : undefined;
 }
 
+const undoUsage = "/undo · or /undo everything to put back every file, not only the session's";
+
+const restoreUsage =
+  "/restore <n> [everything] · the ledger row under each turn names its number · everything puts back every file, not only the session's";
+
+function restoreScopeOf(word: string | undefined): RestoreScope | undefined {
+  if (word === undefined) return "session";
+  return word === "everything" ? "everything" : undefined;
+}
+
 function operandOf(args: string | undefined): string | undefined {
   const trimmed = args?.trim() ?? "";
   return trimmed === "" ? undefined : trimmed;
@@ -326,9 +337,12 @@ function undoCommands(core: AppCore): CommandSpec[] {
   return [
     {
       name: "undo",
-      description: "take back your last prompt, its turn and its file changes",
-      run: () => {
-        if (conversation()?.undoLastPrompt() !== true)
+      description:
+        "take back your last prompt, its turn and the session's file changes · /undo everything puts back every file",
+      run: (args) => {
+        const scope = restoreScopeOf(operandOf(args));
+        if (scope === undefined) core.postNotice(undoUsage);
+        else if (conversation()?.undoLastPrompt(scope) !== true)
           announce(files?.undo(), "files put back", "nothing to undo");
       },
     },
@@ -353,15 +367,18 @@ function conversationCommands(core: AppCore): CommandSpec[] {
     {
       name: "restore",
       aliases: ["restore-turn"],
-      description: "restore this session to just before turn n, files included: /restore <n>",
+      description:
+        "restore this session to just before turn n, the session's files included: /restore <n> [everything]",
       needsArgs: true,
       run: (args) => {
-        const turn = Number(operandOf(args));
-        if (!Number.isInteger(turn) || turn < 1) {
-          core.postNotice("/restore <n> · the ledger row under each turn names its number");
+        const [operand, scopeWord, ...rest] = operandOf(args)?.split(/\s+/) ?? [];
+        const turn = Number(operand);
+        const scope = rest.length === 0 ? restoreScopeOf(scopeWord) : undefined;
+        if (!Number.isInteger(turn) || turn < 1 || scope === undefined) {
+          core.postNotice(restoreUsage);
           return;
         }
-        onConversation((conversation) => conversation.restoreTurn(turn), "restore");
+        onConversation((conversation) => conversation.restoreTurn(turn, scope), "restore");
       },
     },
     {

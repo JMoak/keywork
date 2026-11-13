@@ -119,8 +119,10 @@ export type {
   QueueReport,
   RedoReport,
   Refusal,
+  RestoreCandidate,
   RestorePreview,
   RestoreReport,
+  RestoreScope,
   SessionDetail,
   SessionEntries,
   SessionHost,
@@ -222,6 +224,13 @@ export type { PromptBehavior } from "./routes/sessions.ts";
 export { recordedShowEvents, type ShowPort, showRoutes } from "./routes/show.ts";
 export { arcOrdinals } from "./routes/surfaces.ts";
 export type { TreeChange, TreeChangeReason } from "./routes/tree.ts";
+export type {
+  SessionWork,
+  StoppedSession,
+  WorkInFlight,
+  WorkPort,
+  WoundDown,
+} from "./routes/work.ts";
 export type { WorkshopsPort } from "./routes/workshops.ts";
 export {
   createKeyworkServer,
@@ -247,3 +256,10 @@ export {
   type ServerTicket,
   writeServerTicket,
 } from "./token.ts";
+export {
+  announcedPathLimit,
+  type WorkspaceChanged,
+  type WorkspaceWatch,
+  type WorkspaceWatchOptions,
+  watchWorkspace,
+} from "./workspace-watch.ts";

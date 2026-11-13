@@ -279,7 +279,7 @@ export interface AgentCompositionOptions {
 
 export interface DelegationHost {
   storeOf(sessionId: string): SessionStore | undefined;
-  attach?(child: SessionStore): void;
+  attach?(child: SessionStore, agent: Agent): void;
   release?(childId: string): void;
 }
 
@@ -526,6 +526,7 @@ function buildAgent(
           origin: () => self?.turnOrigin(),
           session: () => resolveSessionKey(spec.sessionId),
           onToolOutput: (chunk) => self?.reportToolOutput(chunk),
+          onToolExit: (exitCode) => self?.reportToolExit(exitCode),
           afterSave: composition.afterSaveFor((publication) =>
             self?.bus.emit("diagnostics.published", publication),
           ),
@@ -634,9 +635,9 @@ function delegationFor(
           },
           shared,
         ),
-      attach: (child) => {
+      attach: (child, agent) => {
         claimForParent(parentStore(), child, options.notice);
-        host.attach?.(child);
+        host.attach?.(child, agent);
       },
       release: (childId) => host.release?.(childId),
     },

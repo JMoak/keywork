@@ -1256,11 +1256,14 @@ export {
   fileChangeOf,
   latestSessionTotals,
   type PathTurn,
+  pathsTouchedFromTurn,
   recordTurnFacts,
   sessionBaseline,
   sessionFilesAt,
   settledTurnFacts,
+  type TurnEnding,
   type TurnFacts,
+  type TurnOutcome,
   type TurnSession,
   type TurnTrees,
   totalsOf,
@@ -1268,6 +1271,7 @@ export {
   turnFactsType,
   turnsAlong,
 } from "./session/turn-facts.ts";
+export { type OutcomeMark, outcomeMarksOf } from "./session/turn-outcomes.ts";
 export * from "./show/index.ts";
 export {
   type AgentAuthoredSkill,

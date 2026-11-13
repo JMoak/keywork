@@ -75,13 +75,19 @@ async function toFetchRequest(
     if (typeof value === "string") headers.set(name, value);
     else if (Array.isArray(value)) headers.set(name, value.join(", "));
   }
-  const bodiless = method === "GET" || method === "HEAD";
+  const body = await sentBody(incoming, method);
   return new Request(`${origin}${incoming.url ?? "/"}`, {
     method,
     headers,
     signal,
-    ...(!bodiless && { body: await readAll(incoming) }),
+    ...(body !== null && { body }),
   });
+}
+
+async function sentBody(incoming: IncomingMessage, method: string): Promise<Buffer | null> {
+  if (method === "GET" || method === "HEAD") return null;
+  const bytes = await readAll(incoming);
+  return bytes.byteLength === 0 ? null : bytes;
 }
 
 function readAll(incoming: IncomingMessage): Promise<Buffer> {

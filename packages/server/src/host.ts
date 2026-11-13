@@ -24,6 +24,7 @@ import type {
   Message,
   ModelReference,
   Note,
+  OutcomeMark,
   PermissionsView,
   PromptOrigin,
   Provenance,
@@ -62,6 +63,7 @@ import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 import type { MeshConsole } from "./routes/mesh.ts";
 import type { ModelsPort } from "./routes/models.ts";
 import type { ShowPort } from "./routes/show.ts";
+import type { WorkPort } from "./routes/work.ts";
 import type { WorkshopsPort } from "./routes/workshops.ts";
 
 export interface SessionSummary {
@@ -105,6 +107,7 @@ export interface SessionDetail extends SessionSummary {
   edits: readonly ContextEditMark[];
   reports: readonly ReportMark[];
   verdicts: readonly VerdictMark[];
+  outcomes: readonly OutcomeMark[];
   asOf: number;
   parentSession?: string;
   forkedFrom?: ForkOrigin;
@@ -229,11 +232,14 @@ export interface RedoReport {
   redoable: boolean;
 }
 
+export type RestoreScope = "session" | "everything";
+
 export interface RestoreReport {
   turn: number;
   prompt: UndonePrompt;
   leafId: string | null;
   undoneTurns: number;
+  scope: RestoreScope;
   files: readonly ChangedPath[];
   filesNote: string;
   undoable: boolean;
@@ -244,8 +250,14 @@ export interface RestorePreview {
   turn: number;
   prompt: UndonePrompt;
   undoneTurns: number;
-  files: readonly ChangedPath[];
+  scope: RestoreScope;
+  files: readonly RestoreCandidate[];
   others: readonly OtherSessionFiles[];
+}
+
+export interface RestoreCandidate extends ChangedPath {
+  touched: boolean;
+  goesBack: boolean;
 }
 
 export interface OtherSessionFiles {
@@ -328,8 +340,16 @@ export interface SessionHost {
   compact(id: string, focus?: string): Promise<CompactionReport | Refusal>;
   undo(id: string): Promise<UndoReport | Refusal | "nothing">;
   redo(id: string): Promise<RedoReport | Refusal | "nothing">;
-  restore(id: string, turn: number): Promise<RestoreReport | Refusal | "unknown-turn">;
-  previewRestore(id: string, turn: number): Promise<RestorePreview | "missing" | "unknown-turn">;
+  restore(
+    id: string,
+    turn: number,
+    scope: RestoreScope,
+  ): Promise<RestoreReport | Refusal | "unknown-turn">;
+  previewRestore(
+    id: string,
+    turn: number,
+    scope: RestoreScope,
+  ): Promise<RestorePreview | "missing" | "unknown-turn">;
   context(id: string): Promise<AgentContext | "missing">;
   cost(id: string): Promise<CostReport | "missing">;
   exportHtml(id: string, scope: ExportScope, out?: string): Promise<ExportOutcome>;
@@ -377,6 +397,7 @@ export interface SessionHost {
   workshops?: WorkshopsPort;
   mesh?: MeshConsole;
   show?: ShowPort;
+  work?: WorkPort;
 }
 
 export interface MemoryPort {

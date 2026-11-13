@@ -250,6 +250,19 @@ describe("bash", () => {
     expect(output).toContain("exit code 3");
   });
 
+  it("reports the exit code as a number, zero included, and none for a killed command", async () => {
+    const cwd = await workspace();
+    const exits: number[] = [];
+    const tool = bashTool(cwd, detectShell(), undefined, undefined, (code) => exits.push(code));
+    const slow = detectShell().name === "powershell" ? "Start-Sleep -Seconds 5" : "sleep 5";
+
+    await tool.execute({ command: "echo fine" });
+    await tool.execute({ command: "exit 3" });
+    await tool.execute({ command: slow, timeoutMs: 200 }).catch(() => undefined);
+
+    expect(exits).toEqual([0, 3]);
+  });
+
   it("kills runaway commands at the timeout", async () => {
     const cwd = await workspace();
     const shell = detectShell();

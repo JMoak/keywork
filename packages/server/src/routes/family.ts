@@ -2,6 +2,7 @@ import type { EventLog } from "../events.ts";
 import type { SessionHost } from "../host.ts";
 import type { OpenApiDocument } from "../openapi.ts";
 import type { StreamRegistry } from "../sse.ts";
+import type { WoundDown } from "./work.ts";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -28,6 +29,7 @@ export interface RouteContext {
   log: EventLog;
   streams: StreamRegistry;
   describe(): OpenApiDocument;
+  shutDown?(): Promise<WoundDown>;
 }
 
 export type RouteParams = Readonly<Record<string, string>>;

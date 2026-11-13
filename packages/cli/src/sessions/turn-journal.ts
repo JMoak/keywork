@@ -2,6 +2,7 @@ import {
   recordTurnFacts,
   type SessionStore,
   settledTurnFacts,
+  type TurnEnding,
   type TurnFacts,
   type TurnTrees,
 } from "@keywork/engine";
@@ -11,8 +12,10 @@ export async function freezeTurn(
   promptId: string,
   checkpoint: string | undefined,
   trees: TurnTrees | undefined,
+  ending?: TurnEnding,
 ): Promise<void> {
-  await recordTurnFacts(store, await factsOf(store, promptId, checkpoint, trees));
+  const facts = await factsOf(store, promptId, checkpoint, trees);
+  await recordTurnFacts(store, { ...facts, ...ending });
 }
 
 function factsOf(

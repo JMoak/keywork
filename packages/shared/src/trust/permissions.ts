@@ -16,6 +16,7 @@ export type RuleOrigin = "trusted" | "workspace" | "session" | "user";
 export interface RuleLayer {
   readonly origin: RuleOrigin;
   readonly rules: readonly PermissionRule[];
+  readonly admits?: (commandPart: string) => boolean;
 }
 
 export interface Ruling {
@@ -38,7 +39,7 @@ export function layeredPolicy(
   options: PermissionPolicyOptions = {},
 ): LayeredPolicy {
   const rules = layers.flatMap((layer) =>
-    layer.rules.map((rule) => compiledRule(rule, layer.origin, options)),
+    layer.rules.map((rule) => compiledRule(rule, layer, options)),
   );
   return (toolName, args) => {
     const governing = rules.filter((rule) => rule.governs(toolName));
@@ -89,7 +90,7 @@ const strictnessOrder: readonly (PermissionEffect | undefined)[] = [
 
 function compiledRule(
   rule: PermissionRule,
-  origin: RuleOrigin,
+  layer: RuleLayer,
   options: PermissionPolicyOptions,
 ): CompiledRule {
   const globs: Readonly<Record<ResourceKind, Glob>> = {
@@ -101,13 +102,19 @@ function compiledRule(
   };
   return {
     effect: rule.effect,
-    origin,
+    origin: layer.origin,
     coversEverything: rule.resource === "*",
     governs: (toolName) => actionGoverns(rule.action, toolName),
     matches: (kind, resource) =>
-      globs[kind].test(resource) &&
-      !(kind === "command" && widensGrantOverDestructive(rule, origin, resource)),
+      globs[kind].test(resource) && !(kind === "command" && withheld(rule, layer, resource)),
   };
+}
+
+function withheld(rule: PermissionRule, layer: RuleLayer, command: string): boolean {
+  if (rule.effect !== "allow") return false;
+  return (
+    widensGrantOverDestructive(rule, layer.origin, command) || layer.admits?.(command) === false
+  );
 }
 
 function widensGrantOverDestructive(
@@ -115,12 +122,7 @@ function widensGrantOverDestructive(
   origin: RuleOrigin,
   command: string,
 ): boolean {
-  return (
-    rule.effect === "allow" &&
-    grantOrigins.has(origin) &&
-    rule.resource !== command &&
-    isDestructiveCommand(command)
-  );
+  return grantOrigins.has(origin) && rule.resource !== command && isDestructiveCommand(command);
 }
 
 function actionGoverns(action: string, toolName: string): boolean {

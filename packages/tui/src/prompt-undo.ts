@@ -2,6 +2,7 @@ import type { Agent, Message } from "@keywork/engine";
 import type { CheckpointsPort } from "./fork.ts";
 import type {
   ReplayedSummary,
+  RestoreScope,
   RewindFiles,
   RewoundPrompt,
   ServedRewind,
@@ -20,7 +21,10 @@ export interface ReopenedUndo {
   retell(bus: Agent["bus"]): void;
 }
 
-export type PromptUndoHook = (promptId: string) => Promise<StagedUndo | undefined>;
+export type PromptUndoHook = (
+  promptId: string,
+  scope: RestoreScope,
+) => Promise<StagedUndo | undefined>;
 
 export interface PromptUndoSeams {
   attachment: SessionAttachment;
@@ -31,14 +35,15 @@ export interface PromptUndoSeams {
 export function promptUndo(seams: PromptUndoSeams): PromptUndoHook {
   const served = seams.attachment.rewindOnServer;
   if (served !== undefined) return servedUndo(served, seams.adopt);
-  return async (promptId) => {
+  return async (promptId, scope) => {
+    const paths = await pathsGoingBack(seams.attachment, promptId, scope);
     const rewound = seams.attachment.rewindBefore?.(promptId);
     if (rewound === undefined) return undefined;
     if (!seams.adopt(rewound.history)) {
       rewound.restore();
       return undefined;
     }
-    const files = await stageFiles(seams.checkpoints, rewound.checkpoint).catch((cause) => {
+    const files = await stageFiles(seams.checkpoints, rewound.checkpoint, paths).catch((cause) => {
       seams.adopt(rewound.restore());
       throw cause;
     });
@@ -62,12 +67,12 @@ export function reopenedUndo(seams: PromptUndoSeams): ReopenedUndo | undefined {
   const { checkpoints } = seams;
   if (staged === undefined) return undefined;
   if (staged.redoFiles !== undefined && checkpoints === undefined) return undefined;
-  const { redoFiles } = staged;
+  const { redoFiles, redoPaths } = staged;
   return {
     undo: {
       filesNote: redoFiles === undefined ? untouchedFiles.note : filesPutBack,
       cancel: async () => {
-        if (redoFiles !== undefined) await checkpoints?.restoreTo(redoFiles);
+        if (redoFiles !== undefined) await checkpoints?.restoreTo(redoFiles, redoPaths);
         seams.adopt(await staged.redo());
       },
     },
@@ -77,11 +82,11 @@ export function reopenedUndo(seams: PromptUndoSeams): ReopenedUndo | undefined {
 }
 
 function servedUndo(
-  rewind: (promptId: string) => Promise<ServedRewind | undefined>,
+  rewind: (promptId: string, scope: RestoreScope) => Promise<ServedRewind | undefined>,
   adopt: (history: readonly Message[]) => boolean,
 ): PromptUndoHook {
-  return async (promptId) => {
-    const staged = await rewind(promptId);
+  return async (promptId, scope) => {
+    const staged = await rewind(promptId, scope);
     if (staged === undefined) return undefined;
     if (!adopt(staged.history)) {
       await staged.cancel();
@@ -103,6 +108,8 @@ interface StagedFiles extends RewindFiles {
 
 const filesPutBack = "files put back";
 
+const everyFilePutBack = "every file put back";
+
 const untouchedFiles: StagedFiles = {
   note: "files untouched",
   restoredTo: undefined,
@@ -114,20 +121,31 @@ function journal(rewound: RewoundPrompt, files: StagedFiles): Promise<StagedRewi
   return rewound.journal?.(files) ?? Promise.resolve(undefined);
 }
 
+async function pathsGoingBack(
+  attachment: SessionAttachment,
+  promptId: string,
+  scope: RestoreScope,
+): Promise<readonly string[] | undefined> {
+  if (scope === "everything") return undefined;
+  return attachment.sessionPathsFrom?.(promptId);
+}
+
 async function stageFiles(
   checkpoints: CheckpointsPort | undefined,
   checkpoint: string | undefined,
+  paths: readonly string[] | undefined,
 ): Promise<StagedFiles> {
   if (checkpoints === undefined || checkpoint === undefined) return untouchedFiles;
   const left = await checkpoints.snapshot?.();
-  await checkpoints.restoreTo(checkpoint);
+  await checkpoints.restoreTo(checkpoint, paths);
   return {
-    note: filesPutBack,
+    note: paths === undefined ? everyFilePutBack : filesPutBack,
     restoredTo: checkpoint,
     redoTree: left,
+    paths,
     restore: async () => {
       if (left === undefined) await checkpoints.undo();
-      else await checkpoints.restoreTo(left);
+      else await checkpoints.restoreTo(left, paths);
     },
   };
 }

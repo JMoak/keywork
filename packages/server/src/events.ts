@@ -23,6 +23,7 @@ import type {
 import type { SurfaceKind } from "./routes/answers.ts";
 import type { InboxTally } from "./routes/memory.ts";
 import type { TreeChange } from "./routes/tree.ts";
+import type { WorkspaceChanged } from "./workspace-watch.ts";
 
 export type EngineEventType = keyof EngineEvents;
 
@@ -55,6 +56,7 @@ export interface ServerEvents {
   "mesh.peers": MeshPeersChange;
   "show.proposed": ShowProposed;
   "show.settled": ShowSettled;
+  "workspace.changed": WorkspaceChanged;
 }
 
 export const serverEventTypes = [
@@ -81,6 +83,7 @@ export const serverEventTypes = [
   "mesh.peers",
   "show.proposed",
   "show.settled",
+  "workspace.changed",
 ] as const satisfies readonly (keyof ServerEvents)[];
 
 export type ServerEventType = (typeof serverEventTypes)[number];

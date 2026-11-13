@@ -56,6 +56,21 @@ allow `git branch -D` and `git branch <new>`. The compound rule is unchanged, so
 the bundle never counts toward `activePreset`, since it is posture rather than user rules,
 so a trusted workspace on an empty config still reads `standard`.
 
+**Trusted reads stay in the folder · 2026-11-12 (UX sweep PERM-3).** Jordan's decision:
+"Folder + read roots." The bundle's allow covers a command part only when every operand stays
+inside the workspace roots and read roots, checked with `readablePath`'s rule
+(`trustedReadStaysWithin` in `shared` parses the operands, `PermissionLedger` checks each
+through `isReadablePath`). Anything that could leave (`..`, an absolute path elsewhere, `~`,
+`~user`, a dot-led glob, a brace expansion, a backslash escape that sh would turn into `..`, an
+option value naming such a path, a PowerShell provider path) falls through to the built-in ask
+instead. A glob operand is checked against every entry it could match (a bracket class
+against the whole folder), so a match that is a link pointing out asks; past 2,000 listed
+entries the glob asks. Relative operands are resolved from where the session's persistent shell
+stands after its last command (the shell reports its working directory with each exit code),
+and while that shell stands outside the readable roots nothing in the bundle runs unasked.
+Still open: flags that follow links while recursing (`grep -R`, `rg -L`, `find -L`, `tree -l`)
+into a folder that holds an outbound link.
+
 An ask now answers with a scope: `once`, `session` (the rest of this session) or `workspace`
 (every session of this workspace, persisted to `~/.keywork/workspaces/<identity>/permissions.json`,
 a private atomic write parsed strictly into `{ rules: [{ action, resource, effect: "allow" }] }`).

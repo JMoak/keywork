@@ -17,12 +17,21 @@ export interface ChangeTotals {
   readonly deleted: number;
 }
 
+export type TurnOutcome = "completed" | "interrupted" | "failed" | "shutdown";
+
+export interface TurnEnding {
+  readonly outcome: TurnOutcome;
+  readonly error?: string;
+}
+
 export interface TurnFacts {
   readonly prompt: string;
   readonly checkpoint?: string;
   readonly settled?: string;
   readonly files: readonly FileChange[];
   readonly session?: ChangeTotals;
+  readonly outcome?: TurnOutcome;
+  readonly error?: string;
 }
 
 export interface TurnTrees {
@@ -103,6 +112,16 @@ export async function sessionFilesAt(
     const turn = touched.get(file.path);
     return turn === undefined ? [] : [{ ...fileChangeOf(file), turn }];
   });
+}
+
+export async function pathsTouchedFromTurn(
+  trees: TurnTrees,
+  session: TurnSession,
+  turn: number,
+  tree: string,
+): Promise<ReadonlySet<string>> {
+  const touched = await turnsTouching(trees, session, tree);
+  return new Set([...touched].flatMap(([path, last]) => (last >= turn ? [path] : [])));
 }
 
 export function sessionBaseline(session: TurnSession): string | undefined {

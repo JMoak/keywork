@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   formatReference,
@@ -19,6 +19,7 @@ import {
 } from "@keywork/engine";
 import { recordingShell } from "@keywork/engine/testing";
 import {
+  type BusEnvelope,
   createKeyworkServer,
   EventLog,
   maxFileBytes,
@@ -363,6 +364,71 @@ describe("fileSessionHost permission layers", () => {
     await served.server.close();
   });
 
+  it("asks before a trusted read reaches outside the workspace", async () => {
+    const shell = recordingShell();
+    const options = await layeredOptions(
+      new MockProvider([
+        bash("c1", "cat README.md"),
+        bash("c2", "cat ../elsewhere/secret.txt"),
+        textTurn("done"),
+      ]),
+      true,
+      shell,
+    );
+    const served = serverOver(options);
+    const id = await sessionOn(served);
+    const turn = await prompted(served, id, "look around");
+    const beforeAsk = await turn.until("gate.ask");
+    expect(decisionsIn(beforeAsk)).toEqual([
+      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted", asked: false },
+    ]);
+    expect(JSON.parse(beforeAsk.at(-1)?.data ?? "{}").payload.ask).toMatchObject({
+      callId: "c2",
+      rule: "default",
+    });
+    await served.call("/asks/c2", json({ verdict: "denied" }));
+    await turn.until("turn.completed");
+    expect(shell.commands).toEqual(["cat README.md"]);
+    await turn.close();
+    await served.server.close();
+  });
+
+  it("asks before a trusted read once an approved cd moved the session's shell out", async () => {
+    const recording = recordingShell();
+    let root = "";
+    const shell = {
+      ...recording,
+      workingDirectory: () => (recording.commands.includes("cd ..") ? dirname(root) : root),
+    };
+    const options = await layeredOptions(
+      new MockProvider([
+        bash("c1", "cat README.md"),
+        bash("c2", "cd .."),
+        bash("c3", "cat README.md"),
+        textTurn("done"),
+      ]),
+      true,
+      shell,
+    );
+    root = options.cwd;
+    const served = serverOver(options);
+    const id = await sessionOn(served);
+    const turn = await prompted(served, id, "look around, then up");
+    await turn.until("gate.ask");
+    await served.call("/asks/c2", json({ verdict: "granted" }));
+    const afterCd = await turn.until("gate.ask");
+
+    expect(JSON.parse(afterCd.at(-1)?.data ?? "{}").payload.ask).toMatchObject({
+      callId: "c3",
+      rule: "default",
+    });
+    await served.call("/asks/c3", json({ verdict: "denied" }));
+    await turn.until("turn.completed");
+    expect(recording.commands).toEqual(["cat README.md", "cd .."]);
+    await turn.close();
+    await served.server.close();
+  });
+
   it("keeps an untrusted workspace on the built-in posture", async () => {
     const shell = recordingShell();
     const options = await layeredOptions(
@@ -624,6 +690,31 @@ describe("serve", () => {
     expect(await listed.json()).toEqual({ sessions: [] });
 
     interrupts.abort();
+    expect(await finished).toBe(0);
+    expect(readServerTicket(ticketFile)).toBeUndefined();
+    await expect(fetch(`${url}/doc`)).rejects.toThrow();
+  });
+
+  it("stops on POST /shutdown as it stops on a signal: it answers, removes the ticket and exits", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    const ticketFile = join(await tempDir(), "server.json");
+    const out: string[] = [];
+    const finished = serve({
+      ...options,
+      port: 0,
+      ticketFile,
+      signal: new AbortController().signal,
+      print: (line) => out.push(line),
+      printError: () => undefined,
+    });
+    while (out.length < 3) await new Promise((resolve) => setTimeout(resolve, 5));
+    const url = out[0]?.replace("listening on ", "") ?? "";
+    const authorization = `Bearer ${out[1]?.replace("token ", "") ?? ""}`;
+
+    const answer = await fetch(`${url}/shutdown`, { method: "POST", headers: { authorization } });
+
+    expect(answer.status).toBe(200);
+    expect(await answer.json()).toEqual({ sessions: [], asks: 0 });
     expect(await finished).toBe(0);
     expect(readServerTicket(ticketFile)).toBeUndefined();
     await expect(fetch(`${url}/doc`)).rejects.toThrow();
@@ -1356,6 +1447,137 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
     const redoneOnReopen = reopen();
     expect(await messagesOn(redoneOnReopen)).toHaveLength(8);
     await redoneOnReopen.server.close();
+  });
+
+  describe("restore scope", () => {
+    const agentFile = "export const agent = 1;\n";
+
+    async function keeperBesideAgent() {
+      const options = await checkpointed(
+        new MockProvider([writeTurn("agent.ts", agentFile), textTurn("wrote it"), textTurn("hi")]),
+      );
+      await writeFile(join(options.cwd, "untouched.md"), "mine\n");
+      const opened = serverOver(options);
+      const { id } = (await (await opened.call("/sessions", { method: "POST" })).json()) as {
+        id: string;
+      };
+      const reader = sseReader(await opened.call("/events"));
+      const settle = async (text: string) => {
+        await post(opened.call, `/sessions/${id}/prompt`, { text });
+        await until(reader, (frame) => frame.event === "turn.completed");
+        await settledState(reader, () => true);
+      };
+      await settle("write the agent file");
+      await mkdir(join(options.cwd, "notes"));
+      await writeFile(join(options.cwd, "notes", "mine.md"), "my notes\n");
+      await writeFile(join(options.cwd, "untouched.md"), "mine, edited\n");
+      await settle("say hi");
+      const at = (path: string) => join(options.cwd, path);
+      const close = async () => {
+        await reader.close();
+        await opened.server.close();
+      };
+      return { options, opened, id, at, close };
+    }
+
+    const keepersWork = async (at: (path: string) => string) => ({
+      notes: await readFile(at("notes/mine.md"), "utf8").catch(() => undefined),
+      edit: await readFile(at("untouched.md"), "utf8"),
+    });
+
+    it("previews every differing file with whether this session touched it and whether it goes back", async () => {
+      const { opened, id, close } = await keeperBesideAgent();
+      const preview = async (query: string) =>
+        (await opened.call(`/sessions/${id}/restore?${query}`)).json();
+
+      expect(await preview("turn=1")).toMatchObject({
+        scope: "session",
+        files: [
+          { path: "agent.ts", added: 0, deleted: 1, touched: true, goesBack: true },
+          { path: "notes/mine.md", added: 0, deleted: 1, touched: false, goesBack: false },
+          { path: "untouched.md", added: 1, deleted: 1, touched: false, goesBack: false },
+        ],
+      });
+      expect(await preview("turn=1&scope=everything")).toMatchObject({
+        scope: "everything",
+        files: [
+          { path: "agent.ts", touched: true, goesBack: true },
+          { path: "notes/mine.md", touched: false, goesBack: true },
+          { path: "untouched.md", touched: false, goesBack: true },
+        ],
+      });
+      expect((await opened.call(`/sessions/${id}/restore?turn=1&scope=all`)).status).toBe(400);
+      await close();
+    });
+
+    it("puts back only the session's files by default and takes the restore back exactly", async () => {
+      const { options, opened, id, at, close } = await keeperBesideAgent();
+
+      const restored = await post(opened.call, `/sessions/${id}/restore`, { turn: 1 });
+
+      expect(await restored.json()).toMatchObject({
+        scope: "session",
+        files: [{ path: "agent.ts", added: 0, deleted: 1 }],
+      });
+      expect(existsSync(at("agent.ts"))).toBe(false);
+      expect(await keepersWork(at)).toEqual({ notes: "my notes\n", edit: "mine, edited\n" });
+      const store = await findSession(options.sessionDir ?? "", id);
+      expect(store?.entry(store.leafId() ?? "")).toMatchObject({
+        customType: "restore",
+        data: { turn: 1, paths: ["agent.ts"] },
+      });
+
+      await writeFile(at("later.md"), "written after the restore\n");
+      expect((await post(opened.call, `/sessions/${id}/redo`)).status).toBe(200);
+      expect(await readFile(at("agent.ts"), "utf8")).toBe(agentFile);
+      expect(await readFile(at("later.md"), "utf8")).toBe("written after the restore\n");
+      expect(await keepersWork(at)).toEqual({ notes: "my notes\n", edit: "mine, edited\n" });
+      await close();
+    });
+
+    it("puts the whole workspace back when asked for everything, and redo brings it all back", async () => {
+      const { opened, id, at, close } = await keeperBesideAgent();
+
+      const restored = await post(opened.call, `/sessions/${id}/restore`, {
+        turn: 1,
+        scope: "everything",
+      });
+
+      expect(await restored.json()).toMatchObject({
+        scope: "everything",
+        files: [{ path: "agent.ts" }, { path: "notes/mine.md" }, { path: "untouched.md" }],
+      });
+      expect(existsSync(at("agent.ts"))).toBe(false);
+      expect(await keepersWork(at)).toEqual({ notes: undefined, edit: "mine\n" });
+      expect(
+        (await post(opened.call, `/sessions/${id}/restore`, { turn: 1, scope: "x" })).status,
+      ).toBe(400);
+      expect((await post(opened.call, `/sessions/${id}/redo`)).status).toBe(200);
+      expect(await readFile(at("agent.ts"), "utf8")).toBe(agentFile);
+      expect(await keepersWork(at)).toEqual({ notes: "my notes\n", edit: "mine, edited\n" });
+      await close();
+    });
+
+    it("undoes the last prompt over its own files and redoes a scoped restore after a restart", async () => {
+      const { options, opened, id, at, close } = await keeperBesideAgent();
+      expect((await post(opened.call, `/sessions/${id}/undo`)).status).toBe(200);
+      expect((await post(opened.call, `/sessions/${id}/undo`)).status).toBe(200);
+      expect(existsSync(at("agent.ts"))).toBe(false);
+      expect(await keepersWork(at)).toEqual({ notes: "my notes\n", edit: "mine, edited\n" });
+      await close();
+
+      await writeFile(at("later.md"), "written while the server was down\n");
+      const reopened = serverOver({
+        ...options,
+        log: new EventLog(),
+        provider: new MockProvider([]),
+      });
+      expect((await post(reopened.call, `/sessions/${id}/redo`)).status).toBe(200);
+      expect(await readFile(at("agent.ts"), "utf8")).toBe(agentFile);
+      expect(await readFile(at("later.md"), "utf8")).toBe("written while the server was down\n");
+      expect(await keepersWork(at)).toEqual({ notes: "my notes\n", edit: "mine, edited\n" });
+      await reopened.server.close();
+    });
   });
 
   it("splits the context window into the parts the composed request carries", async () => {
@@ -2375,7 +2597,9 @@ describe("delegation under serve (120)", () => {
       body: JSON.stringify({ text: "how many files?" }),
     });
     const frames: SseFrame[] = [];
-    while (frames.at(-1)?.event !== "turn.completed") frames.push(await reader.next());
+    const parentCompleted = (frame: SseFrame | undefined) =>
+      frame?.event === "turn.completed" && JSON.parse(frame.data).sessionId === id;
+    while (!parentCompleted(frames.at(-1))) frames.push(await reader.next());
     await reader.close();
 
     const envelopeOf = (event: string) => {
@@ -2404,5 +2628,347 @@ describe("delegation under serve (120)", () => {
     });
     expect((await scanSessions(options.sessionDir ?? "")).stores).toHaveLength(1);
     await server.close();
+  });
+});
+
+describe("a running child under serve (UX sweep SESS-7)", () => {
+  const delegateTurn = toolCallTurn({
+    type: "tool-call",
+    callId: "d1",
+    name: "delegate",
+    arguments: { title: "count the files", prompt: "count the files under src" },
+  });
+
+  function childHeldOpen(held: Promise<void>): Provider {
+    const scripted = new MockProvider([delegateTurn, textTurn("files"), textTurn("twelve")]);
+    let streams = 0;
+    return {
+      name: "held",
+      async *stream(request) {
+        streams += 1;
+        if (streams === 2) {
+          yield { type: "text", text: "twelve " };
+          await held;
+        }
+        yield* scripted.stream(request);
+      },
+    };
+  }
+
+  it("reads its transcript and relays its stream under its own id while it runs and after", async () => {
+    let finishChild = () => {};
+    const held = new Promise<void>((resolve) => {
+      finishChild = resolve;
+    });
+    const options = await hostOptions(new MockProvider([]));
+    options.provider = childHeldOpen(held);
+    const { server, call } = serverOver(options);
+    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
+    const reader = sseReader(await call("/events"));
+    await call(`/sessions/${id}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: "how many files?" }),
+    });
+    const envelopes: BusEnvelope[] = [];
+    const next = async (done: (envelope: BusEnvelope) => boolean) => {
+      for (;;) {
+        const envelope = JSON.parse((await reader.next()).data) as BusEnvelope;
+        envelopes.push(envelope);
+        if (done(envelope)) return envelope;
+      }
+    };
+    const started = await next((envelope) => envelope.type === "child.started");
+    const childId = (started.payload as { sessionId: string }).sessionId;
+    await next((envelope) => envelope.type === "turn.delta" && envelope.sessionId === childId);
+    const transcript = async () =>
+      (await (await call(`/sessions/${childId}`)).json()) as { messages: Message[]; live: boolean };
+
+    expect((await call(`/sessions/${childId}/context`)).status).toBe(404);
+    expect(await transcript()).toMatchObject({
+      live: true,
+      messages: [{ role: "user", parts: [{ type: "text", text: "count the files under src" }] }],
+    });
+
+    finishChild();
+    await next((envelope) => envelope.type === "turn.completed" && envelope.sessionId === id);
+    await reader.close();
+    expect(
+      envelopes.filter((envelope) => envelope.sessionId === childId).map((e) => e.type),
+    ).toEqual(expect.arrayContaining(["turn.started", "turn.delta", "turn.completed"]));
+    const finished = await transcript();
+    expect(finished.live).toBe(false);
+    expect(finished.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect((await call(`/sessions/${childId}/context`)).status).toBe(200);
+    await server.close();
+  });
+});
+
+describe("how turns ended, across a reload (UX sweep CONV-13, SESS-6)", () => {
+  type Script = (request: ProviderRequest) => AsyncIterable<TurnDelta>;
+
+  function scripted(...scripts: Script[]): Provider {
+    let next = 0;
+    return {
+      name: "scripted",
+      stream: (request) => {
+        const script = scripts[next];
+        next += 1;
+        if (script === undefined) throw new Error("no more scripted turns");
+        return script(request);
+      },
+    };
+  }
+
+  const answers = (text: string): Script =>
+    async function* () {
+      yield { type: "text", text };
+      yield { type: "done", usage: { inputTokens: 1, outputTokens: 1 } };
+    };
+
+  const failsAfter = (text: string, message: string): Script =>
+    async function* () {
+      yield { type: "text", text };
+      throw new Error(message);
+    };
+
+  const hangsAfter = (text: string): Script =>
+    async function* (request) {
+      yield { type: "text", text };
+      await new Promise<void>((resolve) => {
+        if (request.signal?.aborted) resolve();
+        request.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      request.signal?.throwIfAborted();
+    };
+
+  async function promptedUntil(
+    call: ReturnType<typeof serverOver>["call"],
+    reader: SseReader,
+    id: string,
+    text: string,
+    event: string,
+  ) {
+    await call(`/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify({ text }) });
+    for (;;) {
+      const frame = await reader.next();
+      if (frame.event === event && JSON.parse(frame.data).sessionId === id) return;
+    }
+  }
+
+  const detailOf = async (call: ReturnType<typeof serverOver>["call"], id: string) =>
+    (await (await call(`/sessions/${id}`)).json()) as {
+      messages: Message[];
+      outcomes: { index: number; outcome: string; error?: string }[];
+    };
+
+  const textAt = (messages: readonly Message[], index: number) =>
+    messages[index]?.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+
+  it("keeps completed, failed, interrupted and shut-down turns with their partial text", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    options.provider = scripted(
+      answers("done"),
+      failsAfter("Starting to answer and then", "upstream 529 overloaded"),
+      hangsAfter("half a"),
+      hangsAfter("cut off by"),
+    );
+    const opened = serverOver(options);
+    const { id } = (await (await opened.call("/sessions", { method: "POST" })).json()) as {
+      id: string;
+    };
+    const reader = sseReader(await opened.call("/events"));
+    await promptedUntil(opened.call, reader, id, "first", "turn.completed");
+    await waitForIdle(opened.call, id);
+    await promptedUntil(opened.call, reader, id, "second", "engine.error");
+    await waitForIdle(opened.call, id);
+    await promptedUntil(opened.call, reader, id, "third", "turn.delta");
+    await opened.call(`/sessions/${id}/abort`, { method: "POST" });
+    await waitForIdle(opened.call, id);
+    await promptedUntil(opened.call, reader, id, "fourth", "turn.delta");
+    await reader.close();
+    await opened.server.close();
+
+    const reopened = serverOver({
+      ...options,
+      log: new EventLog(),
+      provider: new MockProvider([]),
+    });
+    const { messages, outcomes } = await detailOf(reopened.call, id);
+    expect(outcomes).toEqual([
+      expect.objectContaining({ index: 0, outcome: "completed" }),
+      expect.objectContaining({ index: 2, outcome: "failed", error: "upstream 529 overloaded" }),
+      expect.objectContaining({ index: 4, outcome: "interrupted" }),
+      expect.objectContaining({ index: 6, outcome: "shutdown" }),
+    ]);
+    expect([3, 5, 7].map((index) => textAt(messages, index))).toEqual([
+      "Starting to answer and then",
+      "half a",
+      "cut off by",
+    ]);
+    await reopened.server.close();
+  });
+
+  it("reads a turn the engine died in as stopped by a shutdown", async () => {
+    const options = await hostOptions(new MockProvider([]));
+    options.provider = scripted(hangsAfter("forty-two words in"));
+    const running = serverOver(options);
+    const { id } = (await (await running.call("/sessions", { method: "POST" })).json()) as {
+      id: string;
+    };
+    const reader = sseReader(await running.call("/events"));
+    await promptedUntil(running.call, reader, id, "slow 300 100", "turn.delta");
+    expect((await detailOf(running.call, id)).outcomes).toEqual([]);
+
+    const afterCrash = serverOver({
+      ...options,
+      log: new EventLog(),
+      provider: new MockProvider([]),
+    });
+    const { messages, outcomes } = await detailOf(afterCrash.call, id);
+    expect(messages).toHaveLength(1);
+    expect(outcomes).toEqual([expect.objectContaining({ index: 0, outcome: "shutdown" })]);
+    await afterCrash.server.close();
+    await reader.close();
+    await running.server.close();
+  });
+
+  async function waitForIdle(call: ReturnType<typeof serverOver>["call"], id: string) {
+    for (;;) {
+      const rows = (await (await call("/sessions")).json()) as {
+        sessions: { id: string; working?: boolean }[];
+      };
+      if (rows.sessions.find((row) => row.id === id)?.working !== true) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  describe("what is in flight, and stopping without losing it (UX sweep SESS-1, PERM-5)", () => {
+    function stoppable(options: HostOptions & { log: EventLog }) {
+      const stops: string[] = [];
+      const host = fileSessionHost(options);
+      const server = createKeyworkServer({
+        token,
+        host,
+        log: options.log,
+        version: "test",
+        stop: () => stops.push("stop"),
+      });
+      const call = (path: string, init: RequestInit = {}) =>
+        server.fetch(
+          new Request(`http://keywork.test${path}`, {
+            ...init,
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        );
+      return { server, call, stops };
+    }
+
+    async function sessionWithReader(call: ReturnType<typeof stoppable>["call"]) {
+      const { id } = (await (await call("/sessions", { method: "POST" })).json()) as {
+        id: string;
+      };
+      return { id, reader: sseReader(await call("/events")) };
+    }
+
+    const work = async (call: ReturnType<typeof stoppable>["call"]) => (await call("/work")).json();
+
+    const queue = (call: ReturnType<typeof stoppable>["call"], id: string, text: string) =>
+      call(`/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify({ text }) });
+
+    it("names a running turn and its queue on /work, and nothing once the session is idle", async () => {
+      const options = await hostOptions(new MockProvider([]));
+      options.provider = scripted(hangsAfter("half a"), answers("second"));
+      const served = stoppable(options);
+      const { id, reader } = await sessionWithReader(served.call);
+      expect(await work(served.call)).toEqual({ sessions: [], asks: 0, children: 0 });
+
+      await promptedUntil(served.call, reader, id, "first", "turn.delta");
+      await queue(served.call, id, "second");
+
+      expect(await work(served.call)).toEqual({
+        sessions: [
+          { id, title: expect.any(String), working: true, queued: 1, asks: 0, children: 0 },
+        ],
+        asks: 0,
+        children: 0,
+      });
+      await served.call(`/sessions/${id}/abort`, { method: "POST" });
+      await waitForIdle(served.call, id);
+      expect(await work(served.call)).toEqual({ sessions: [], asks: 0, children: 0 });
+      await reader.close();
+      await served.server.close();
+    });
+
+    it("ends a running turn as shutdown with its text, sets the queue aside, refuses new work, then stops", async () => {
+      const options = await hostOptions(new MockProvider([]));
+      options.provider = scripted(hangsAfter("cut off by"));
+      const served = stoppable(options);
+      const { id, reader } = await sessionWithReader(served.call);
+      await promptedUntil(served.call, reader, id, "first", "turn.delta");
+      await queue(served.call, id, "never runs");
+
+      const answer = await served.call("/shutdown", { method: "POST" });
+
+      expect(answer.status).toBe(200);
+      expect(await answer.json()).toEqual({
+        sessions: [
+          { id, interrupted: true, setAside: [expect.objectContaining({ text: "never runs" })] },
+        ],
+        asks: 0,
+      });
+      expect((await queue(served.call, id, "too late")).status).toBe(503);
+      expect((await served.call(`/sessions/${id}`)).status).toBe(200);
+      expect((await served.call("/shutdown", { method: "POST" })).status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(served.stops).toEqual(["stop"]);
+      await reader.close();
+      await served.server.close();
+
+      const reopened = serverOver({
+        ...options,
+        log: new EventLog(),
+        provider: new MockProvider([]),
+      });
+      const { messages, outcomes } = await detailOf(reopened.call, id);
+      expect(outcomes).toEqual([expect.objectContaining({ index: 0, outcome: "shutdown" })]);
+      expect(messages.map((message) => textAt([message], 0))).toEqual(["first", "cut off by"]);
+      await reopened.server.close();
+    });
+
+    it("refuses a pending ask when it stops, and counts it on /work before", async () => {
+      const options = await processFreeOptions(
+        new MockProvider([
+          toolCallTurn({
+            type: "tool-call",
+            callId: "c1",
+            name: "bash",
+            arguments: { command: "rm x" },
+          }),
+          textTurn("gave up"),
+        ]),
+      );
+      options.permissions = () => "ask";
+      const served = stoppable(options);
+      const { id, reader } = await sessionWithReader(served.call);
+      await promptedUntil(served.call, reader, id, "rm", "gate.ask");
+
+      expect(await work(served.call)).toMatchObject({
+        sessions: [{ id, working: true, asks: 1 }],
+        asks: 1,
+      });
+      expect(await (await served.call("/shutdown", { method: "POST" })).json()).toEqual({
+        sessions: [{ id, interrupted: true, setAside: [] }],
+        asks: 1,
+      });
+      expect(await (await served.call("/asks")).json()).toEqual({ asks: [] });
+      await reader.close();
+      await served.server.close();
+    });
+
+    it("answers 503 to /shutdown on a server that cannot stop itself", async () => {
+      const served = serverOver(await hostOptions(new MockProvider([])));
+      expect((await served.call("/shutdown", { method: "POST" })).status).toBe(503);
+      await served.server.close();
+    });
   });
 });

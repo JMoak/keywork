@@ -9,6 +9,7 @@ import {
   type SessionEntry,
   SessionStore,
   type TurnTrees,
+  turnsAlong,
   type Usage,
 } from "@keywork/engine";
 import type {
@@ -23,6 +24,7 @@ import type {
   SessionTreeView,
   ThinkingSwitch,
 } from "@keywork/tui";
+import { sessionPathsFromTurn } from "../serve-restore.ts";
 import { heldGrantsOf, recordHeldGrants } from "./grants-journal.ts";
 import {
   discardTrashed,
@@ -260,6 +262,9 @@ function attachmentOf(
       await store.appendBotBinding(name);
       seams.onChange?.(store.header.id);
     },
+    ...(seams.turnTrees !== undefined && {
+      sessionPathsFrom: sessionPathsFrom(store, seams.turnTrees),
+    }),
     rewindBefore: (promptId) => {
       const from = store.leafId();
       const rewound = rewindBefore(store, promptId);
@@ -313,6 +318,13 @@ export function rewindBefore(store: SessionStore, promptId: string): RewoundProm
       moveLeaf(store, leaf);
       return store.messages();
     },
+  };
+}
+
+function sessionPathsFrom(store: SessionStore, trees: TurnTrees) {
+  return async (promptId: string): Promise<readonly string[]> => {
+    const turn = turnsAlong(store.activePath()).find(({ prompt }) => prompt.id === promptId);
+    return turn === undefined ? [] : sessionPathsFromTurn(trees, { store }, turn.turn);
   };
 }
 

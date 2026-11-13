@@ -55,7 +55,7 @@ export function restoreReach(records: readonly TurnRecord[], turn: number): Rest
 }
 
 export function restoreQuestion(turn: number, prompt: string, reach: RestoreReach): string {
-  return `restore to before turn ${turn}, "${excerpt(prompt)}"? ${goingBack(reach)} · /redo brings them back · y restores · any other key keeps it`;
+  return `restore to before turn ${turn}, "${excerpt(prompt)}"? ${goingBack(reach)} · /redo brings them back · y restores · e restores every file in the folder, yours too · any other key keeps it`;
 }
 
 export function restoredNotice(turn: number, undoneTurns: number, filesNote: string): string {

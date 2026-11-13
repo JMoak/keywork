@@ -30,12 +30,14 @@ export interface ShellRunOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   onOutput?: (chunk: string) => void;
+  onExit?: (exitCode: number) => void;
   sandbox?: ToolSandbox;
 }
 
 export interface PersistentShell {
   readonly shellName: string;
   run(command: string, options?: ShellRunOptions): Promise<string>;
+  workingDirectory?(): string;
   close(): Promise<void>;
 }
 
@@ -43,6 +45,7 @@ export function persistentBashTool(
   session: PersistentShell,
   onOutput?: (chunk: string) => void,
   sandbox: ToolSandbox = fixedSandbox(unconfined),
+  onExit?: (exitCode: number) => void,
 ): Tool {
   return defineTool({
     name: "bash",
@@ -57,6 +60,7 @@ export function persistentBashTool(
         ...(args.timeoutMs !== undefined && { timeoutMs: args.timeoutMs }),
         ...(signal !== undefined && { signal }),
         ...(onOutput !== undefined && { onOutput }),
+        ...(onExit !== undefined && { onExit }),
         sandbox,
       }),
   });
@@ -73,6 +77,10 @@ export class ShellSession implements PersistentShell {
 
   get shellName(): string {
     return this.shell.name;
+  }
+
+  workingDirectory(): string {
+    return this.live?.workingDirectory ?? this.cwd;
   }
 
   running(): boolean {
@@ -149,8 +157,9 @@ export class ShellSession implements PersistentShell {
       const output = new BoundedOutput(options.onOutput);
       let exitCode: number | undefined;
 
-      const stdout = new SentinelScanner(sentinel, output, (code) => {
+      const stdout = new SentinelScanner(sentinel, output, (code, workingDirectory) => {
         exitCode = code ?? 0;
+        live.workingDirectory = workingDirectory ?? live.workingDirectory;
         maybeFinish();
       });
       const stderr = new SentinelScanner(sentinel, output, () => maybeFinish());
@@ -175,7 +184,10 @@ export class ShellSession implements PersistentShell {
 
       const maybeFinish = () => {
         if (!stdout.sawSentinel || !stderr.sawSentinel) return;
-        settle(() => resolvePromise(commandResult(output.rendered(), exitCode ?? 0)));
+        settle(() => {
+          options.onExit?.(exitCode ?? 0);
+          resolvePromise(commandResult(output.rendered(), exitCode ?? 0));
+        });
       };
 
       const onShellExit = () => {
@@ -209,6 +221,7 @@ interface LiveShell {
   closed: Promise<void>;
   failureListeners: Set<(failure: Error) => void>;
   group: number | undefined;
+  workingDirectory: string | undefined;
 }
 
 function spawnShell(
@@ -227,7 +240,7 @@ function spawnShell(
   };
   child.on("error", broadcastFailure);
   child.stdin?.on("error", broadcastFailure);
-  return { child, closed, failureListeners, group: undefined };
+  return { child, closed, failureListeners, group: undefined, workingDirectory: undefined };
 }
 
 function persistentArgs(shell: Shell): string[] {
@@ -254,7 +267,7 @@ function framedCommand(shell: Shell, command: string, sentinel: string): string 
   if (shell.name === "powershell") {
     return [
       command,
-      `"\`n${sentinel} $(if ($?) { 0 } else { 1 })"`,
+      `"\`n${sentinel} $(if ($?) { 0 } else { 1 }) $($PWD.ProviderPath)"`,
       `[Console]::Error.WriteLine("\`n${sentinel}")`,
       "",
     ].join("\n");
@@ -265,10 +278,17 @@ function framedCommand(shell: Shell, command: string, sentinel: string): string 
     command,
     heredoc,
     `)" </dev/null`,
-    `printf '\\n%s %s\\n' '${sentinel}' "$?"`,
+    ...exitAndPlaceReport(shell, sentinel),
     `printf '\\n%s\\n' '${sentinel}' >&2`,
     "",
   ].join("\n");
+}
+
+// MSYS rewrites $PWD under its own mounts (%TEMP% reads as /tmp), so only `pwd -W` names the
+// folder Windows knows; it is a builtin, so it costs no fork.
+function exitAndPlaceReport(shell: Shell, sentinel: string): string[] {
+  if (!isMsysShell(shell)) return [`printf '\\n%s %s %s\\n' '${sentinel}' "$?" "$PWD"`];
+  return [`printf '\\n%s %s ' '${sentinel}' "$?"`, `pwd -W 2>/dev/null || printf '\\n'`];
 }
 
 export class SentinelScanner {
@@ -280,7 +300,7 @@ export class SentinelScanner {
   constructor(
     private readonly sentinel: string,
     private readonly output: BoundedOutput,
-    private readonly onSentinel: (exitCode?: number) => void,
+    private readonly onSentinel: (exitCode?: number, workingDirectory?: string) => void,
   ) {}
 
   push(chunk: string): void {
@@ -304,7 +324,8 @@ export class SentinelScanner {
     if (!this.midLine && line.startsWith(this.sentinel)) {
       this.sawSentinel = true;
       this.releaseBlankLines(this.heldBlankLines - newlinesBeforeSentinel);
-      this.onSentinel(exitCodeIn(line, this.sentinel));
+      const { exitCode, workingDirectory } = sentinelReport(line, this.sentinel);
+      this.onSentinel(exitCode, workingDirectory);
       return;
     }
     if (!this.midLine && line === "\n") {
@@ -337,9 +358,17 @@ const longestHeldLine = 30_000;
 
 const newlinesBeforeSentinel = 1;
 
-function exitCodeIn(line: string, sentinel: string): number | undefined {
-  const code = Number.parseInt(line.slice(sentinel.length).trim(), 10);
-  return Number.isNaN(code) ? undefined : code;
+function sentinelReport(
+  line: string,
+  sentinel: string,
+): { exitCode?: number; workingDirectory?: string } {
+  const [code = "", ...directory] = line.slice(sentinel.length).trim().split(" ");
+  const exitCode = Number.parseInt(code, 10);
+  const workingDirectory = directory.join(" ");
+  return {
+    ...(!Number.isNaN(exitCode) && { exitCode }),
+    ...(workingDirectory !== "" && { workingDirectory }),
+  };
 }
 
 export interface InteractiveShell {

@@ -186,6 +186,7 @@ export class Agent {
   private readonly turns: TurnDelegate | undefined;
   private readonly pending: PendingPrompt[] = [];
   private running: ToolCallPart | undefined;
+  private runningExitCode: number | undefined;
   private origin: PromptOrigin | undefined;
   private unannouncedInjections: readonly ContextInjection[];
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
@@ -298,6 +299,10 @@ export class Agent {
 
   turnOrigin(): PromptOrigin | undefined {
     return this.origin;
+  }
+
+  reportToolExit(exitCode: number): void {
+    if (this.running !== undefined) this.runningExitCode = exitCode;
   }
 
   reportToolOutput(chunk: string): void {
@@ -657,10 +662,11 @@ export class Agent {
       const call = ruling.kind === "proceed" ? ruling.call : requested;
       this.bus.emit("tool.started", { call });
       this.running = call;
+      this.runningExitCode = undefined;
       const result = await this.bounded(
         ruling.kind === "refuse"
           ? refusedByExtension(call, ruling.reason)
-          : await this.executeToolCall(call, signal),
+          : withExitCode(await this.executeToolCall(call, signal), this.runningExitCode),
       );
       this.running = undefined;
       this.bus.emit("tool.finished", result);
@@ -775,6 +781,10 @@ export class Agent {
     this.checkpointed = true;
     await this.guard?.beforeMutation?.();
   }
+}
+
+function withExitCode(outcome: ToolOutcome, exitCode: number | undefined): ToolOutcome {
+  return exitCode === undefined ? outcome : { ...outcome, exitCode };
 }
 
 function errorOf(cause: unknown): Error {

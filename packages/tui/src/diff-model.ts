@@ -147,7 +147,7 @@ export function refreshingCheckpoints(
     capture: () => port.capture(),
     undo: () => announced(port.undo()),
     redo: () => announced(port.redo()),
-    restoreTo: (tree) => announced(port.restoreTo(tree)),
+    restoreTo: (tree, paths) => announced(port.restoreTo(tree, paths)),
     ...(port.snapshot !== undefined && { snapshot: port.snapshot.bind(port) }),
   };
 }

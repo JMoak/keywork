@@ -35,6 +35,11 @@ export interface Shell {
 
 type TerminationReason = "abort" | "timeout";
 
+interface CommandWatch {
+  onOutput?: ((chunk: string) => void) | undefined;
+  onExit?: ((exitCode: number) => void) | undefined;
+}
+
 export function detectShell(platform: NodeJS.Platform = process.platform): Shell {
   if (platform !== "win32") {
     return { file: "/bin/sh", args: (command) => ["-c", command], name: "sh" };
@@ -55,6 +60,7 @@ export function bashTool(
   shell: Shell = detectShell(),
   onOutput?: (chunk: string) => void,
   sandbox: ToolSandbox = fixedSandbox(unconfined),
+  onExit?: (exitCode: number) => void,
 ) {
   return defineTool({
     name: "bash",
@@ -63,7 +69,7 @@ export function bashTool(
     mutates: true,
     run: async ({ command, timeoutMs = defaultTimeoutMs }, signal) => {
       const launch = (await sandbox.current()).confine(shellLaunch(shell, command, cwd));
-      return execute(shell, launch, timeoutMs, signal, onOutput);
+      return execute(shell, launch, timeoutMs, signal, { onOutput, onExit });
     },
   });
 }
@@ -113,8 +119,8 @@ function execute(
   shell: Shell,
   launch: Launch,
   timeoutMs: number,
-  signal?: AbortSignal,
-  onOutput?: (chunk: string) => void,
+  signal: AbortSignal | undefined,
+  { onOutput, onExit }: CommandWatch,
 ): Promise<string> {
   signal?.throwIfAborted();
   return new Promise((resolvePromise, rejectPromise) => {
@@ -163,6 +169,7 @@ function execute(
           rejectPromise(commandAborted(terminationFailure));
           return;
         }
+        if (code !== null) onExit?.(code);
         resolvePromise(commandResult(output.rendered(), code));
       });
     };

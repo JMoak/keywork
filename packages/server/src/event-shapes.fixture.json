@@ -160,6 +160,7 @@
     },
     "tool.finished": {
       "callId": "string",
+      "exitCode": "number",
       "isError": "boolean",
       "output": "string",
       "spill": {
@@ -751,6 +752,10 @@
       "by": "string",
       "id": "string",
       "outcome": "string"
+    },
+    "workspace.changed": {
+      "paths": ["string"],
+      "truncated": "boolean"
     }
   }
 }

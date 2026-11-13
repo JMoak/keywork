@@ -8,7 +8,7 @@ export interface CheckpointsPort {
   beginTurn?(): void;
   undo(): Promise<boolean>;
   redo(): Promise<boolean>;
-  restoreTo(tree: string): Promise<void>;
+  restoreTo(tree: string, paths?: readonly string[]): Promise<unknown>;
   snapshot?(): Promise<string>;
 }
 
@@ -19,6 +19,7 @@ export async function forkAtPrompt(
   sessionId: string | undefined,
   promptId: string,
   draft: string,
+  sessionPaths?: readonly string[],
 ): Promise<ForkOutcome> {
   if (trees === undefined || sessionId === undefined) return { forked: false };
   const view = await trees.load(sessionId);
@@ -27,12 +28,12 @@ export async function forkAtPrompt(
   if (anchor === undefined) return { forked: false };
   if (anchor.parentId === null) {
     open(undefined, draft);
-    return { forked: true, note: await restoreForkedFiles(checkpoints, anchor) };
+    return { forked: true, note: await restoreForkedFiles(checkpoints, anchor, sessionPaths) };
   }
   const forked = await trees.fork(sessionId, anchor.parentId);
   if (forked === undefined) return { forked: false };
   open(forked, draft);
-  return { forked: true, note: await restoreForkedFiles(checkpoints, anchor) };
+  return { forked: true, note: await restoreForkedFiles(checkpoints, anchor, sessionPaths) };
 }
 
 export async function forkAfterPrompt(
@@ -55,10 +56,11 @@ const unchangedFilesNote = "forked · files untouched";
 async function restoreForkedFiles(
   checkpoints: CheckpointsPort | undefined,
   anchor: PromptAnchor,
+  sessionPaths: readonly string[] | undefined,
 ): Promise<string> {
   if (checkpoints === undefined || anchor.checkpoint === undefined) return unchangedFilesNote;
   try {
-    await checkpoints.restoreTo(anchor.checkpoint);
+    await checkpoints.restoreTo(anchor.checkpoint, sessionPaths);
     return "files put back to that point";
   } catch (cause) {
     return `forked · file restore failed: ${toError(cause).message}`;

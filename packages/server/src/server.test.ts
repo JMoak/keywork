@@ -441,6 +441,38 @@ describe("shutdown", () => {
   });
 });
 
+describe("the socket listener", () => {
+  it("hands a bodiless POST to its handler with no body, and a sent body intact", async () => {
+    const log = new EventLog();
+    const inventory = { generatedAt: "2026-11-12T00:00:00.000Z", nodes: [] };
+    const host = {
+      ...memorySessionHost({ log, provider: new MockProvider([]) }),
+      models: {
+        list: async () => inventory,
+        probe: async () => ({}),
+        refresh: async () => inventory,
+      },
+    };
+    const server = await listen({ token, host, log, version: "0.0.1-test", port: 0 });
+    const post = (path: string, body?: string) =>
+      fetch(`${server.url}${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        ...(body !== undefined && { body }),
+      });
+    try {
+      const refreshed = await post("/models/refresh");
+      expect(refreshed.status).toBe(200);
+      expect(await refreshed.json()).toEqual(inventory);
+      expect((await post("/models/refresh", "{}")).status).toBe(400);
+      const probe = await post("/models/probe", JSON.stringify({ endpoint: "http://127.0.0.1:9" }));
+      expect(probe.status).toBe(200);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 function hangingProvider(): Provider {
   return {
     name: "hanging",
@@ -2449,6 +2481,7 @@ describe("session verbs (118 K1) over the memory host", () => {
       prompt: { entryId: "m2", text: "second" },
       leafId: "m1",
       undoneTurns: 2,
+      scope: "session",
       files: [],
       filesNote: "files untouched",
       undoable: true,
@@ -2465,9 +2498,9 @@ describe("session verbs (118 K1) over the memory host", () => {
     const refusedBody = await post(h, `/sessions/${id}/restore`, { turn: 0 });
     expect(refusedBody.status).toBe(400);
     expect(await refusedBody.json()).toEqual({
-      error: "the body must be { turn: a positive integer }",
+      error: 'the body must be { turn: a positive integer, scope?: "session" | "everything" }',
     });
-    for (const body of [{}, { turn: "2" }, { turn: 1.5 }]) {
+    for (const body of [{}, { turn: "2" }, { turn: 1.5 }, { turn: 1, scope: "all" }]) {
       expect((await post(h, `/sessions/${id}/restore`, body)).status).toBe(400);
     }
     const unknownTurn = await post(h, `/sessions/${id}/restore`, { turn: 9 });
