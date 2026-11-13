@@ -33,7 +33,7 @@ export interface ChildSpec {
 
 export interface ChildHost {
   forge(spec: ChildSpec): Agent;
-  attach?(child: SessionStore): void;
+  attach?(child: SessionStore, agent: Agent): void;
   release?(childId: string): void;
 }
 
@@ -233,7 +233,7 @@ async function openChild(
   const bus = new EventBus<EngineEvents>();
   const agent = seams.host.forge({ bot, bus, store });
   await recordModel(store, agent);
-  if (store !== undefined) seams.host.attach?.(store);
+  if (store !== undefined) seams.host.attach?.(store, agent);
   return { callId, title, bot, store, bus, agent };
 }
 

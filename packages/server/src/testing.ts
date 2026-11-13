@@ -279,6 +279,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         flushes: [],
         edits: [],
         reports: [],
+        outcomes: [],
         asOf: options.log.latestId(),
         ...(session.parent !== undefined && { parentSession: session.parent }),
       };
@@ -393,7 +394,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
         const { undoable, redoable } = stateOf(session);
         return { restored: true, undoable, redoable };
       }),
-    restore: (id, turn) =>
+    restore: (id, turn, scope) =>
       verb(id, (session): RestoreReport | "busy" | "unknown-turn" => {
         if (session.agent.busy()) return "busy";
         const history = session.agent.history();
@@ -415,13 +416,14 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
           prompt: staged.prompt,
           leafId,
           undoneTurns: prompts.length - turn + 1,
+          scope,
           files: [],
           filesNote: "files untouched",
           undoable,
           redoable,
         };
       }),
-    previewRestore: (id, turn) =>
+    previewRestore: (id, turn, scope) =>
       verb(id, (session): RestorePreview | "unknown-turn" => {
         const history = session.agent.history();
         const prompts = promptIndexes(history);
@@ -432,6 +434,7 @@ export function memorySessionHost(options: MemoryHostOptions): SessionHost {
           turn,
           prompt: { entryId: `m${index}`, text: textOf(prompt) },
           undoneTurns: prompts.length - turn + 1,
+          scope,
           files: [],
           others: [],
         };

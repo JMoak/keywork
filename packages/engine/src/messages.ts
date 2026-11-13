@@ -65,6 +65,7 @@ export interface ToolResultPart {
   output: string;
   isError: boolean;
   spill?: SpillReference;
+  exitCode?: number;
 }
 
 export type Part =

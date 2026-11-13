@@ -74,6 +74,7 @@ import {
   type ToolGuard,
   type ToolPosture,
   type ToolScope,
+  type TurnEnding,
   type TurnSettlement,
   tapJournal,
   tapKeeperVerdicts,
@@ -103,6 +104,7 @@ import {
   listen,
   loggedMessages,
   type ModelSwitch,
+  type PendingAsk,
   type PresetHost,
   type PresetOutcome,
   type QueueRefusal,
@@ -110,6 +112,7 @@ import {
   type RedoReport,
   type RestorePreview,
   type RestoreReport,
+  type RestoreScope,
   readServerTicket,
   removeServerTicket,
   type ServerTicket,
@@ -120,13 +123,17 @@ import {
   type SessionSettlement,
   type SessionState,
   type SessionSummary,
+  type SessionWork,
   type SpillRefusal,
   type SpillSlice,
+  type StoppedSession,
   servedGrants,
   spillReferenceAmong,
   spillSlice,
   type UndoReport,
+  type WorkPort,
   type WorkspaceInfo,
+  watchWorkspace,
   writeServerTicket,
 } from "@keywork/server";
 import {
@@ -170,7 +177,7 @@ import {
   unavailableSelectedProvider,
 } from "./serve-models.ts";
 import { type MeteredTurn, type NodeInventorySeams, servedNode } from "./serve-node.ts";
-import { type NeighbourSession, restorePreviewOf } from "./serve-restore.ts";
+import { type NeighbourSession, restorePreviewOf, sessionPathsFromTurn } from "./serve-restore.ts";
 import {
   creatureDirectoryOver,
   type RoutineSessions,
@@ -336,6 +343,7 @@ async function serveListening(
     await server.rehost(await hostOf(trusted));
   });
   const token = issueToken();
+  const stopAsked = new AbortController();
   try {
     server = await listen({
       token,
@@ -344,6 +352,7 @@ async function serveListening(
       version: keyworkVersion,
       port: options.port,
       workspace: workspaceInfoOf(options.cwd, options.workspaceSlug),
+      stop: () => stopAsked.abort(),
     });
   } catch (cause) {
     options.printError(`keywork serve: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -351,10 +360,12 @@ async function serveListening(
     return 1;
   }
   writeServerTicket(ticketFile, { url: server.url, token });
+  const watching = watchWorkspace(options.cwd, log);
   options.print(`listening on ${server.url}`);
   if (options.tokenOnStdout !== false) options.print(`token ${token}`);
   options.print(`ticket ${ticketFile}`);
-  await untilAborted(options.signal);
+  await untilAborted(AbortSignal.any([options.signal, stopAsked.signal]));
+  watching.close();
   await server.close();
   removeServerTicket(ticketFile);
   return 0;
@@ -677,8 +688,8 @@ function sessionVerbsHost(
     compact: (id, focus) => onLive(id, (live) => live.compact(focus)),
     undo: (id) => onLive(id, (live) => live.undo()),
     redo: (id) => onLive(id, (live) => live.redo()),
-    restore: (id, turn) => onLive(id, (live) => live.restore(turn)),
-    previewRestore: (id, turn) => sessions.previewRestore(id, turn),
+    restore: (id, turn, scope) => onLive(id, (live) => live.restore(turn, scope)),
+    previewRestore: (id, turn, scope) => sessions.previewRestore(id, turn, scope),
     context: (id) => onLive(id, (live) => live.context()),
     cost: (id) => onLive(id, (live) => live.cost()),
     exportHtml: (id, scope, out) => onLive(id, (live) => live.exportHtml(scope, out)),
@@ -719,9 +730,29 @@ function sessionVerbsHost(
     revokeWorkspaceGrant: async (rule) => ledger.revokeWorkspace(rule),
     revokeSessionGrant: async (sessionId, rule) =>
       (await sessions.open(sessionId)) !== undefined && ledger.revokeSession(sessionId, rule),
+    work: servedWork(sessions, asks),
     close: async () => {
       asks.close();
       await sessions.close();
+    },
+  };
+}
+
+function servedWork(sessions: LiveSessions, asks: AskQueue): WorkPort {
+  return {
+    inFlight: () => {
+      const pending = asks.list();
+      return {
+        sessions: sessions.workInFlight(pending),
+        asks: pending.length,
+        children: sessions.runningChildCount(),
+      };
+    },
+    windDown: async () => {
+      const refused = asks.list().length;
+      const stopping = sessions.windDown();
+      asks.close();
+      return { sessions: await stopping, asks: refused };
     },
   };
 }
@@ -805,6 +836,7 @@ function projectThreadSeat(store: SessionStore): CreatureSeat | undefined {
 class LiveSessions {
   readonly sessionDir: string;
   private readonly live = new Map<string, LiveSession>();
+  private readonly runningChildren = new Map<string, RunningChild>();
   private readonly opening = new Map<string, Promise<LiveSession>>();
   private readonly projectRequests = new Map<string, Promise<WorkspaceSessionRef>>();
   private readonly changes: ChangesFeed;
@@ -840,14 +872,17 @@ class LiveSessions {
   async read(id: string): Promise<SessionDetail | undefined> {
     const live = this.liveOnly(id);
     if (live !== undefined) return this.withForkOrigin(live.detail(this.options.log.latestId()));
-    const store = await this.stored(id);
+    const child = this.runningChildren.get(id);
+    const store = child?.store ?? (await this.stored(id));
     if (store === undefined) return undefined;
+    const messages = child?.agent.history() ?? store.messages();
     return this.withForkOrigin({
       ...this.pricedSummary(await summarize(store), store),
+      messageCount: messages.length,
       cwd: store.header.cwd,
-      live: false,
-      messages: store.messages(),
-      ...store.messageMarks(),
+      live: child !== undefined,
+      messages,
+      ...store.messageMarks(child?.agent.busy() === true),
       asOf: this.options.log.latestId(),
       ...parentSessionOf(store),
     });
@@ -860,11 +895,12 @@ class LiveSessions {
   async previewRestore(
     id: string,
     turn: number,
+    scope: RestoreScope,
   ): Promise<RestorePreview | "missing" | "unknown-turn"> {
     const session = await this.bound(id);
     if (session === undefined) return "missing";
     const { checkpoints } = (await this.composed()).composition;
-    return restorePreviewOf(checkpoints, session, turn, () => this.neighboursOf(id));
+    return restorePreviewOf(checkpoints, session, { turn, scope }, () => this.neighboursOf(id));
   }
 
   async spill(id: string, spillId: string, range: ByteRange): Promise<SpillSlice | SpillRefusal> {
@@ -966,6 +1002,7 @@ class LiveSessions {
   async open(id: string): Promise<LiveSession | undefined> {
     const live = this.liveOnly(id);
     if (live !== undefined) return live;
+    if (this.runningChildren.has(id)) return undefined;
     const store = await this.stored(id);
     return store === undefined ? undefined : this.adopt(store);
   }
@@ -993,6 +1030,8 @@ class LiveSessions {
   async bound(id: string): Promise<ServedSession | undefined> {
     const live = this.liveOnly(id);
     if (live !== undefined) return live.served();
+    const child = this.runningChildren.get(id);
+    if (child !== undefined) return { store: child.store, busy: () => true };
     const store = await this.stored(id);
     return store === undefined ? undefined : { store, busy: () => false };
   }
@@ -1008,8 +1047,30 @@ class LiveSessions {
     return { from, to: name };
   }
 
+  workInFlight(asks: readonly PendingAsk[]): SessionWork[] {
+    return [...this.live.values()].flatMap((live) => {
+      const work = live.work({
+        asks: asks.filter((ask) => ask.sessionId === live.id).length,
+        children: this.childrenRunningUnder(live.id),
+      });
+      return work === undefined ? [] : [work];
+    });
+  }
+
+  runningChildCount(): number {
+    return this.runningChildren.size;
+  }
+
+  async windDown(): Promise<StoppedSession[]> {
+    const stopping = [...this.live.values()].map((live) => live.windDown());
+    return (await Promise.all(stopping)).flatMap((stopped) =>
+      stopped.interrupted || stopped.setAside.length > 0 ? [stopped] : [],
+    );
+  }
+
   async close(): Promise<void> {
     this.unjournalGrants();
+    for (const childId of [...this.runningChildren.keys()]) this.childReleased(childId);
     for (const live of this.live.values()) await live.close();
     await this.changes.settled();
     if (this.workspace !== undefined) await (await this.workspace).close();
@@ -1067,7 +1128,7 @@ class LiveSessions {
     const shell = options.openShell?.(options.cwd) ?? new ShellSession(options.cwd);
     const turn = new TurnCheckpoint();
     const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints, turn);
-    const permissions = this.confinedResolver(store);
+    const permissions = this.confinedResolver(store, shell);
     const creature = await this.creatureSeams(store);
     const inference = options.inference;
     const runtime: SessionRuntime = {
@@ -1125,11 +1186,11 @@ class LiveSessions {
     };
   }
 
-  private confinedResolver(store: SessionStore): PermissionResolver {
+  private confinedResolver(store: SessionStore, shell: PersistentShell): PermissionResolver {
     const id = store.header.id;
     return postureResolver(
       () => sessionPosture(creatureTagOf(store.entries())?.kind, this.confinements.get(id)),
-      this.gate.ledger.resolverFor(id),
+      this.gate.ledger.resolverFor(id, () => shell.workingDirectory?.()),
     );
   }
 
@@ -1190,8 +1251,33 @@ class LiveSessions {
       storeOf: (id) => this.live.get(id)?.served().store,
       liveStores: () => [...this.live.values()].map((live) => live.served().store),
       onReleased: (id) => void this.live.get(id)?.adoptBinding(),
+      onChildAttached: (child, agent) => this.childAttached(child, agent),
+      onChildReleased: (childId) => this.childReleased(childId),
     });
   }
+
+  private childAttached(store: SessionStore, agent: Agent): void {
+    const id = store.header.id;
+    const stopRelaying = this.options.log.attach(agent.bus, id);
+    this.runningChildren.set(id, { store, agent, stopRelaying });
+  }
+
+  private childReleased(childId: string): void {
+    this.runningChildren.get(childId)?.stopRelaying();
+    this.runningChildren.delete(childId);
+  }
+
+  private childrenRunningUnder(parentId: string): number {
+    return [...this.runningChildren.values()].filter(
+      (child) => child.store.header.spawnedBy?.sessionId === parentId,
+    ).length;
+  }
+}
+
+interface RunningChild {
+  store: SessionStore;
+  agent: Agent;
+  stopRelaying: () => void;
 }
 
 interface BoundAgent {
@@ -1210,7 +1296,8 @@ interface StagedFiles {
   note: string;
   restoredTo: string | undefined;
   redoTree: string | undefined;
-  restore(): Promise<void>;
+  paths: readonly string[] | undefined;
+  restore(): Promise<unknown>;
   changed(): Promise<readonly ChangedPath[]>;
 }
 
@@ -1223,6 +1310,7 @@ const untouchedFiles: StagedFiles = {
   note: "files untouched",
   restoredTo: undefined,
   redoTree: undefined,
+  paths: undefined,
   restore: async () => {},
   changed: async () => [],
 };
@@ -1241,6 +1329,8 @@ class LiveSession {
   private staged: StagedUndo | undefined;
   private turnPrompt: MessageEntry | undefined;
   private turnOutcome: ThreadOutcome = "completed";
+  private turnFailure: string | undefined;
+  private closing = false;
   private readonly spend: SpendLedger;
   private readonly submissions = new Map<string, PromptSubmission>();
   private readonly finishedUsage: Usage[] = [];
@@ -1359,6 +1449,21 @@ class LiveSession {
     return this.agent.busy();
   }
 
+  work(waiting: { asks: number; children: number }): SessionWork | undefined {
+    const working = this.agent.busy();
+    if (!working && waiting.asks === 0 && waiting.children === 0) return undefined;
+    const queued = this.agent.queued().length;
+    return { id: this.id, title: this.title(), working, queued, ...waiting };
+  }
+
+  async windDown(): Promise<StoppedSession> {
+    this.closing = true;
+    const setAside = this.agent.clearQueue();
+    const interrupted = this.interrupt() === "aborted";
+    await this.settled;
+    return { id: this.id, interrupted, setAside };
+  }
+
   history(): readonly Message[] {
     return this.agent.history();
   }
@@ -1433,9 +1538,10 @@ class LiveSession {
   async undo(): Promise<UndoReport | "busy" | "nothing"> {
     if (!(await this.idle())) return "busy";
     this.staged = undefined;
-    const prompt = lastPromptOnPath(this.store);
+    const prompts = this.store.activePath().filter(isPromptEntry);
+    const prompt = prompts.at(-1);
     if (prompt === undefined) return this.undoFilesOnly();
-    const rewound = await this.stageRewind(prompt);
+    const rewound = await this.stageRewind(prompt, await this.pathsGoingBack(prompts.length));
     if (rewound === undefined) return "nothing";
     this.announce();
     return {
@@ -1458,12 +1564,16 @@ class LiveSession {
     return { restored: true, ...this.travel() };
   }
 
-  async restore(turn: number): Promise<RestoreReport | "busy" | "unknown-turn"> {
+  async restore(
+    turn: number,
+    scope: RestoreScope,
+  ): Promise<RestoreReport | "busy" | "unknown-turn"> {
     if (!(await this.idle())) return "busy";
     const point = restorePointOf(this.store.activePath(), turn);
     if (point === undefined) return "unknown-turn";
     this.staged = undefined;
-    const rewound = await this.stageRewind(point.prompt, turn);
+    const paths = scope === "everything" ? undefined : await this.pathsGoingBack(turn);
+    const rewound = await this.stageRewind(point.prompt, paths, turn);
     if (rewound === undefined) return "unknown-turn";
     this.announce();
     return {
@@ -1471,6 +1581,7 @@ class LiveSession {
       prompt: { entryId: point.prompt.id, text: textOf(point.prompt.message) },
       leafId: rewound.leafId,
       undoneTurns: point.undoneTurns,
+      scope,
       files: await rewound.files.changed(),
       filesNote: rewound.files.note,
       ...this.travel(),
@@ -1577,7 +1688,7 @@ class LiveSession {
       cwd: this.store.header.cwd,
       live: true,
       messages: this.agent.history(),
-      ...this.store.messageMarks(),
+      ...this.store.messageMarks(this.agent.busy()),
       asOf,
       ...parentSessionOf(this.store),
     };
@@ -1599,6 +1710,7 @@ class LiveSession {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     this.agent.interrupt();
     await this.settled;
     await this.grantsJournaled;
@@ -1735,8 +1847,23 @@ class LiveSession {
     const prompt = this.turnPrompt;
     this.turnPrompt = undefined;
     const { checkpoints, turn } = this.runtime;
-    if (prompt !== undefined) await freezeTurn(this.store, prompt.id, turn.current(), checkpoints);
+    if (prompt !== undefined) {
+      await freezeTurn(this.store, prompt.id, turn.current(), checkpoints, this.turnEnding());
+    }
     turn.close();
+  }
+
+  private turnEnding(): TurnEnding {
+    switch (this.turnOutcome) {
+      case "failed":
+        return this.turnFailure === undefined
+          ? { outcome: "failed" }
+          : { outcome: "failed", error: this.turnFailure };
+      case "interrupted":
+        return { outcome: this.closing ? "shutdown" : "interrupted" };
+      default:
+        return { outcome: "completed" };
+    }
   }
 
   private settling(): SettlingSession {
@@ -1893,7 +2020,13 @@ class LiveSession {
   private trackTurnOutcome(agent: Agent): () => void {
     const stops = [
       agent.bus.on("turn.started", ({ replay }) => {
-        if (replay !== true) this.turnOutcome = "failed";
+        if (replay !== true) {
+          this.turnOutcome = "failed";
+          this.turnFailure = undefined;
+        }
+      }),
+      agent.bus.on("engine.error", ({ error }) => {
+        this.turnFailure = error.message;
       }),
       agent.bus.on("turn.completed", ({ replay }) => {
         if (replay !== true) this.turnOutcome = "completed";
@@ -1948,15 +2081,25 @@ class LiveSession {
     return true;
   }
 
-  private async stageRewind(prompt: MessageEntry, turn?: number): Promise<Rewound | undefined> {
+  private async pathsGoingBack(turn: number): Promise<readonly string[] | undefined> {
+    const { checkpoints } = this.runtime;
+    if (checkpoints === undefined) return undefined;
+    return sessionPathsFromTurn(checkpoints, this.served(), turn);
+  }
+
+  private async stageRewind(
+    prompt: MessageEntry,
+    paths: readonly string[] | undefined,
+    turn?: number,
+  ): Promise<Rewound | undefined> {
     const from = this.store.leafId();
     const rewound = rewindBefore(this.store, prompt.id);
     if (rewound === undefined) return undefined;
-    const files = await this.stageFiles(rewound.checkpoint).catch((cause: unknown) => {
+    const files = await this.stageFiles(rewound.checkpoint, paths).catch((cause: unknown) => {
       rewound.restore();
       throw cause;
     });
-    const facts = { from, files: files.restoredTo, redo: files.redoTree, turn };
+    const facts = { from, files: files.restoredTo, redo: files.redoTree, turn, paths: files.paths };
     const restore = await journalRestore(this.store, facts).catch(async (cause: unknown) => {
       await files.restore();
       rewound.restore();
@@ -1967,17 +2110,21 @@ class LiveSession {
     return { files, leafId: restore.id };
   }
 
-  private async stageFiles(checkpoint: string | undefined): Promise<StagedFiles> {
+  private async stageFiles(
+    checkpoint: string | undefined,
+    paths: readonly string[] | undefined,
+  ): Promise<StagedFiles> {
     const { checkpoints } = this.runtime;
     if (checkpoints === undefined || checkpoint === undefined) return untouchedFiles;
     const left = await checkpoints.snapshot();
-    await this.putFilesAt(checkpoint);
+    const restored = (await this.putFilesAt(checkpoint, paths)) ?? left;
     return {
       note: "files put back",
       restoredTo: checkpoint,
       redoTree: left,
-      restore: () => this.putFilesAt(left),
-      changed: () => checkpoints.filesBetween(left, checkpoint),
+      paths,
+      restore: () => this.putFilesAt(left, paths),
+      changed: () => checkpoints.filesBetween(left, restored),
     };
   }
 
@@ -1987,10 +2134,13 @@ class LiveSession {
     const { redoFiles } = restore;
     if (redoFiles === undefined) return this.stagedRestore(restore, untouchedFiles.restore);
     if (this.runtime.checkpoints === undefined) return undefined;
-    return this.stagedRestore(restore, () => this.putFilesAt(redoFiles));
+    return this.stagedRestore(restore, () => this.putFilesAt(redoFiles, restore.redoPaths));
   }
 
-  private stagedRestore(restore: JournaledRestore, putFilesBack: () => Promise<void>): StagedUndo {
+  private stagedRestore(
+    restore: JournaledRestore,
+    putFilesBack: () => Promise<unknown>,
+  ): StagedUndo {
     return {
       cancel: async () => {
         await undoRestore(this.store, restore);
@@ -2000,9 +2150,13 @@ class LiveSession {
     };
   }
 
-  private async putFilesAt(tree: string): Promise<void> {
-    await this.runtime.checkpoints?.restoreTo(tree);
+  private async putFilesAt(
+    tree: string,
+    paths: readonly string[] | undefined,
+  ): Promise<string | undefined> {
+    const restored = await this.runtime.checkpoints?.restoreTo(tree, paths);
     await this.runtime.changes.announce(this.id);
+    return restored;
   }
 }
 

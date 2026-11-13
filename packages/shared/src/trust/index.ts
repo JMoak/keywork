@@ -43,4 +43,4 @@ export {
   TrustStoreError,
   type TrustStoreOptions,
 } from "./store.ts";
-export { trustedReadRules } from "./trusted-reads.ts";
+export { trustedReadRules, trustedReadStaysWithin } from "./trusted-reads.ts";

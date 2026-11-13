@@ -1,8 +1,10 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PermissionRule } from "../config/schema.ts";
 import { layeredPolicy, type RuleLayer } from "./permissions.ts";
 import { activePreset } from "./presets.ts";
-import { trustedReadRules } from "./trusted-reads.ts";
+import { trustedReadRules, trustedReadStaysWithin } from "./trusted-reads.ts";
 
 const bash = (command: string) => ({ command });
 
@@ -101,5 +103,59 @@ describe("the trusted read posture", () => {
   it("is posture rather than user rules, so the active preset still reads from config alone", () => {
     expect(activePreset(undefined)).toBe("standard");
     expect(activePreset([...trustedReadRules])).toBe("custom");
+  });
+});
+
+describe("trustedReadStaysWithin", () => {
+  const consulted = (command: string) => {
+    const paths: string[] = [];
+    const within = trustedReadStaysWithin(command, (path) => {
+      paths.push(path);
+      return true;
+    });
+    return { within, paths };
+  };
+
+  it("hands every operand to the path check as the shell would read it", () => {
+    expect(consulted("cat a.md 'b c.md' --file=d.txt -n 5").paths).toEqual([
+      "a.md",
+      "b",
+      "c.md",
+      "d.txt",
+      "5",
+    ]);
+    expect(consulted("cat ~/notes.md").paths).toEqual([join(homedir(), "notes.md")]);
+    expect(consulted("cat .\\./x").paths).toEqual([".\\./x", "../x"]);
+  });
+
+  it.each([
+    "cat ~root/x",
+    "cat .*/x",
+    "cat {a,b}/x",
+    "grep -f/etc/passwd x",
+    "ls -Path:..",
+    "cat env:PATH",
+    "cat Registry::HKLM\\Software",
+  ])("refuses %s without trusting the path check", (command) => {
+    expect(consulted(command)).toEqual({ within: false, paths: [] });
+  });
+
+  it("withholds only the allow rules of the layer that admits, never its asks or other layers", () => {
+    const admits = (part: string) => trustedReadStaysWithin(part, (path) => !path.includes(".."));
+    const granted: PermissionRule[] = [{ action: "bash", resource: "cat *", effect: "allow" }];
+    const policy = (layers: RuleLayer[]) => layeredPolicy(layers)("bash", bash("cat ../x"));
+    expect(policy([{ origin: "trusted", rules: trustedReadRules, admits }])).toBeUndefined();
+    expect(
+      policy([
+        { origin: "trusted", rules: trustedReadRules, admits },
+        { origin: "workspace", rules: granted },
+      ]),
+    ).toEqual({ effect: "allow", origin: "workspace" });
+    expect(
+      layeredPolicy([{ origin: "trusted", rules: trustedReadRules, admits: () => false }])(
+        "bash",
+        bash("find . -delete"),
+      ),
+    ).toEqual({ effect: "ask", origin: "trusted" });
   });
 });

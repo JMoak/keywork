@@ -9,7 +9,7 @@ import {
   isEffortLevel,
 } from "@keywork/engine";
 import { type PresetName, presetOrder } from "@keywork/shared";
-import type { CostReport, ExportScope, Refusal } from "../host.ts";
+import type { CostReport, ExportScope, Refusal, RestoreScope } from "../host.ts";
 import {
   bodyOf,
   fieldsOf,
@@ -73,6 +73,13 @@ const restoreBody: JsonSchema = {
       minimum: 1,
       description:
         "The turn to restore to just before: its prompt's 1-based place among the prompts on the session's active path.",
+    },
+    scope: {
+      type: "string",
+      enum: ["session", "everything"],
+      default: "session",
+      description:
+        "Which files go back: `session` (the default) only the paths this session's turns changed from that turn on, every other path left as it is on disk; `everything` the whole workspace to the checkpoint.",
     },
   },
   additionalProperties: false,
@@ -174,7 +181,7 @@ export const sessionVerbRoutes = [
     path: "/sessions/{id}/undo",
     operationId: "undoSession",
     summary:
-      "Take back the last prompt: the conversation moves to just before it, its text comes back in `prompt` so a client can offer it for editing, and the files the turn changed are put back to the checkpoint taken before it. One undo is staged at a time; the next POST /redo cancels it. The undo is written to the session log as a `restore` entry, as POST /restore writes one, so a reopen finds the session rewound and POST /redo still takes it back after a server restart. With no prompt on the path, undoes the last file checkpoint alone. A `session.state` envelope follows.",
+      "Take back the last prompt: the conversation moves to just before it, its text comes back in `prompt` so a client can offer it for editing, and the files the turn changed are put back to the checkpoint taken before it; every other path stays as it is on disk. One undo is staged at a time; the next POST /redo cancels it. The undo is written to the session log as a `restore` entry, as POST /restore writes one, so a reopen finds the session rewound and POST /redo still takes it back after a server restart. With no prompt on the path, undoes the last file checkpoint alone. A `session.state` envelope follows.",
     authenticated: true,
     responses: {
       "200": "`{ prompt: { entryId, text } | null, filesNote, undoable, redoable }`.",
@@ -200,13 +207,14 @@ export const sessionVerbRoutes = [
     path: "/sessions/{id}/restore",
     operationId: "restoreSessionTurn",
     summary:
-      "Restore the session to just before one of its turns in one step, where POST /undo takes back one turn per call: the conversation moves to before that turn's prompt, and the workspace files go back to the checkpoint taken before the first change any turn from there on made (untouched when none of them changed a file, or with checkpoints off). One `restore` entry records it in the session log, `{ turn, from, files, redo }` with `redo` the snapshot of the files from before they went back, so a reopen finds the session where the restore left it and, even after a server restart, POST /redo can still put the files back. The answer says what changed: the turn's `prompt`, handed back so a client can offer it for editing; `undoneTurns`, how many turns left the active path; and `files`, every file the restore put back with the lines it `added` and `deleted`. Staged like an undo: the next POST /redo takes the whole restore back, files and conversation, and records a `restore-undone` entry so a reopen agrees. `session.state`, `session.tree` (reason `leaf`, naming the recorded entry) and, when files moved, `changes.updated` follow.",
+      "Restore the session to just before one of its turns in one step, where POST /undo takes back one turn per call: the conversation moves to before that turn's prompt, and files go back to the checkpoint taken before the first change any turn from there on made (untouched when none of them changed a file, or with checkpoints off). `scope` says which files: `session`, the default, puts back only the paths this session's turns changed from that turn on (their `turn_facts`) and leaves every other path as it is on disk, so files the keeper made or edited meanwhile survive; `everything` puts the whole workspace back to the checkpoint (since contract 1.32; before, every restore put the whole workspace back). POST /undo restores with `session` scope. One `restore` entry records it in the session log, `{ turn, from, files, redo, paths? }` with `redo` the snapshot of the files from before they went back and `paths` the scoped paths (absent for `everything`), so a reopen finds the session where the restore left it and, even after a server restart, POST /redo can still put exactly those files back. The answer says what changed: the turn's `prompt`, handed back so a client can offer it for editing; `undoneTurns`, how many turns left the active path; `scope`, as applied; and `files`, every file the restore put back with the lines it `added` and `deleted`. Staged like an undo: the next POST /redo takes the whole restore back, files and conversation, and records a `restore-undone` entry so a reopen agrees. `session.state`, `session.tree` (reason `leaf`, naming the recorded entry) and, when files moved, `changes.updated` follow.",
     authenticated: true,
     requestBody: restoreBody,
     responses: {
       "200":
-        "`{ turn, prompt: { entryId, text }, leafId, undoneTurns, files: [{ path, added, deleted }], filesNote, undoable, redoable }`; `leafId` is the recorded entry.",
-      "400": "The body is not `{ turn }` with a positive integer.",
+        "`{ turn, prompt: { entryId, text }, leafId, undoneTurns, scope, files: [{ path, added, deleted }], filesNote, undoable, redoable }`; `leafId` is the recorded entry.",
+      "400":
+        'The body is not `{ turn, scope? }` with a positive integer and `"session"` or `"everything"`.',
       "404": `${missingResponse} Or \`{ error: "no turn N on this session's path" }\`.`,
       "409": busyResponse,
     },
@@ -216,12 +224,12 @@ export const sessionVerbRoutes = [
     path: "/sessions/{id}/restore",
     operationId: "previewSessionRestore",
     summary:
-      "What `POST /sessions/{id}/restore` would do for `?turn=N`, without doing it, so a client can ask before it acts: the turn's `prompt`, how many turns would leave the active path (`undoneTurns`), every file the restore would put back with the lines it would `add` and `delete` (`files`, empty when no turn from there on changed a file or checkpoints are off), and `others`: the sessions of this workspace other than this one whose turns touched any of those files after that turn began, each as `{ sessionId, title, paths }`, so the question can name the work a restore would take from them. A restore resets the whole workspace to the checkpoint, theirs included. `others` comes from the turns those sessions settled (their `turn_facts`) plus the turn a live one is running now; edits made outside keywork are in `files` but never in `others`.",
+      "What `POST /sessions/{id}/restore` would do for `?turn=N` and an optional `&scope=session|everything` (default `session`), without doing it, so a client can ask before it acts: the turn's `prompt`, how many turns would leave the active path (`undoneTurns`), the `scope` it answers for, and `files`: every file that differs from the checkpoint (empty when no turn from there on changed a file or checkpoints are off), with the lines going back would `add` and `delete`, `touched` (this session's turns from there on changed it) and `goesBack` (a restore with this scope puts it back; with `session` scope exactly the `touched` ones, so a file with `touched: false` is the keeper's own or another session's and stays; `scope`, `touched` and `goesBack` since contract 1.32). `others` lists the sessions of this workspace other than this one whose turns touched any file that goes back after that turn began, each as `{ sessionId, title, paths }`, so the question can name the work a restore would take from them. `others` comes from the turns those sessions settled (their `turn_facts`) plus the turn a live one is running now; edits made outside keywork are in `files` but never in `others`.",
     authenticated: true,
     responses: {
       "200":
-        "`{ turn, prompt: { entryId, text }, undoneTurns, files: [{ path, added, deleted }], others: [{ sessionId, title, paths }] }`.",
-      "400": "`turn` is not a positive integer.",
+        "`{ turn, prompt: { entryId, text }, undoneTurns, scope, files: [{ path, added, deleted, touched, goesBack }], others: [{ sessionId, title, paths }] }`.",
+      "400": "`turn` is not a positive integer, or `scope` is neither `session` nor `everything`.",
       "404": `${missingResponse} Or \`{ error: "no turn N on this session's path" }\`.`,
     },
   },
@@ -352,11 +360,14 @@ export const sessionVerbFamily = {
       return typeof outcome === "string" ? refused(outcome) : json(200, outcome);
     },
     restoreSessionTurn: async (request, { id }) => {
-      const turn = turnOf(await bodyOf(request));
-      if (turn === undefined) {
-        return json(400, { error: "the body must be { turn: a positive integer }" });
+      const asked = restoreRequestOf(await bodyOf(request));
+      if (asked === undefined) {
+        return json(400, {
+          error: 'the body must be { turn: a positive integer, scope?: "session" | "everything" }',
+        });
       }
-      const outcome = await host.restore(id ?? "", turn);
+      const { turn, scope } = asked;
+      const outcome = await host.restore(id ?? "", turn, scope);
       if (outcome === "unknown-turn") {
         return json(404, { error: `no turn ${turn} on this session's path` });
       }
@@ -365,9 +376,18 @@ export const sessionVerbFamily = {
       return json(200, outcome);
     },
     previewSessionRestore: async (request, { id }) => {
-      const turn = turnOf({ turn: Number(new URL(request.url).searchParams.get("turn")) });
-      if (turn === undefined) return json(400, { error: "turn must be a positive integer" });
-      const preview = await host.previewRestore(id ?? "", turn);
+      const query = new URL(request.url).searchParams;
+      const asked = restoreRequestOf({
+        turn: Number(query.get("turn")),
+        scope: query.get("scope") ?? undefined,
+      });
+      if (asked === undefined) {
+        return json(400, {
+          error: 'turn must be a positive integer and scope "session" or "everything"',
+        });
+      }
+      const { turn, scope } = asked;
+      const preview = await host.previewRestore(id ?? "", turn, scope);
       if (preview === "missing") return missingSession();
       if (preview === "unknown-turn") {
         return json(404, { error: `no turn ${turn} on this session's path` });
@@ -451,9 +471,17 @@ function effortOf(body: unknown): EffortLevel | null | undefined {
   return typeof level === "string" && isEffortLevel(level) ? level : undefined;
 }
 
-function turnOf(body: unknown): number | undefined {
-  const turn = fieldsOf<{ turn: unknown }>(body)?.turn;
-  return typeof turn === "number" && Number.isInteger(turn) && turn >= 1 ? turn : undefined;
+function restoreRequestOf(body: unknown): { turn: number; scope: RestoreScope } | undefined {
+  const { turn, scope = "session" } = fieldsOf<{ turn: unknown; scope: unknown }>(body) ?? {};
+  return isTurnOrdinal(turn) && isRestoreScope(scope) ? { turn, scope } : undefined;
+}
+
+function isTurnOrdinal(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
+}
+
+function isRestoreScope(value: unknown): value is RestoreScope {
+  return value === "session" || value === "everything";
 }
 
 function exportRequestOf(body: unknown): { scope: ExportScope; out?: string } | undefined {

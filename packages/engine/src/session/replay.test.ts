@@ -80,6 +80,44 @@ describe("replaySession", () => {
     expect(comparable(replayEvents)).toEqual(comparable(liveEvents));
   });
 
+  it("carries a command's exit code on tool.finished, in the stored result and in the replay", async () => {
+    let agent: Agent | undefined;
+    const command = defineTool({
+      name: "command",
+      description: "runs a command that fails",
+      schema: z.object({}),
+      run: async () => {
+        agent?.reportToolExit(2);
+        return "no such file\n(exit code 2)";
+      },
+    });
+    const provider = new MockProvider([
+      toolCallTurn({ type: "tool-call", callId: "c1", name: "command", arguments: {} }),
+      toolCallTurn({ type: "tool-call", callId: "c2", name: "echo", arguments: { value: "hi" } }),
+      textTurn("all done"),
+    ]);
+    agent = new Agent({ provider, tools: [command, echoTool] });
+    const liveEvents = record(agent.bus);
+    await agent.send("run it");
+    const store = await SessionStore.create(await sessionFile(), ".");
+    for (const message of agent.history()) await store.append(message);
+
+    const bus = new EventBus<EngineEvents>();
+    const replayEvents = record(bus);
+    replaySession(await SessionStore.open(store.file), bus);
+
+    const finished = (events: RecordedEvent[]) =>
+      events.filter((event) => event.type === "tool.finished").map((event) => event.payload);
+    expect(finished(liveEvents)).toEqual([
+      { callId: "c1", output: "no such file\n(exit code 2)", isError: false, exitCode: 2 },
+      { callId: "c2", output: "hi", isError: false },
+    ]);
+    expect(finished(replayEvents)).toEqual([
+      expect.objectContaining({ callId: "c1", exitCode: 2, replay: true }),
+      expect.not.objectContaining({ exitCode: expect.anything() }),
+    ]);
+  });
+
   it("keeps prose and tool events in live order when a tool call precedes text", async () => {
     const provider = new MockProvider([
       [

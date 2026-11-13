@@ -34,6 +34,14 @@ export class UnknownCheckpointError extends Error {
   }
 }
 
+type StagedGit = (args: readonly string[], input?: string) => Promise<string>;
+
+interface PathMove {
+  path: string;
+  mode: string;
+  object: string;
+}
+
 const defaultLimit = 64;
 const treeHashShape = /^[0-9a-f]{40,64}$/;
 const neverCheckpointedDirs = ["node_modules", ".git"];
@@ -159,15 +167,17 @@ export class Checkpoints implements CheckpointReads {
     this.turnTag = undefined;
   }
 
-  restoreTo(tree: string): Promise<void> {
+  restoreTo(tree: string, paths?: readonly string[]): Promise<string> {
     return this.serialized(async () => {
       await this.assertKnownTree(tree);
-      const target = await this.withoutNeverCheckpointed(tree);
+      const source = await this.withoutNeverCheckpointed(tree);
       const current = await this.snapshotWorktree();
-      if (current === target) return;
+      const target = paths === undefined ? source : await this.overlaid(current, source, paths);
+      if (current === target) return current;
       this.redoTrees.length = 0;
       this.pushBounded(this.undoTrees, current);
       await this.git("read-tree", "--reset", "-u", target);
+      return target;
     });
   }
 
@@ -237,11 +247,8 @@ export class Checkpoints implements CheckpointReads {
   private async withoutNeverCheckpointed(tree: string): Promise<string> {
     const paths = await this.gitRaw("ls-tree", "-r", "-z", "--name-only", tree);
     if (!paths.split("\0").some(isNeverCheckpointed)) return tree;
-    const index = join(this.gitDir, "restore-index");
-    const staged = (...args: string[]) => this.gitIn(index, args).then((out) => out.trim());
-    try {
-      await staged("read-tree", tree);
-      await staged(
+    return this.rewritten(tree, (staged) =>
+      staged([
         "rm",
         "-r",
         "-f",
@@ -250,8 +257,31 @@ export class Checkpoints implements CheckpointReads {
         "--ignore-unmatch",
         "--",
         ...neverCheckpointedSpecs,
-      );
-      return await staged("write-tree");
+      ]),
+    );
+  }
+
+  private async overlaid(base: string, source: string, paths: readonly string[]): Promise<string> {
+    const scope = new Set(paths);
+    const moves = parseRawDiff(await this.gitRaw("diff-tree", "-r", "-z", base, source));
+    const scoped = moves.filter((move) => scope.has(move.path));
+    if (scoped.length === 0) return base;
+    return this.rewritten(base, (staged) =>
+      staged(["update-index", "-z", "--index-info"], indexInfoOf(scoped)),
+    );
+  }
+
+  private async rewritten(
+    tree: string,
+    edit: (staged: StagedGit) => Promise<unknown>,
+  ): Promise<string> {
+    const index = join(this.gitDir, "restore-index");
+    const staged: StagedGit = (args, input) =>
+      this.gitIn(index, args, input).then((out) => out.trim());
+    try {
+      await staged(["read-tree", tree]);
+      await edit(staged);
+      return await staged(["write-tree"]);
     } finally {
       await rm(index, { force: true });
     }
@@ -289,7 +319,7 @@ export class Checkpoints implements CheckpointReads {
     return this.gitIn(join(this.gitDir, "index"), args);
   }
 
-  private gitIn(index: string, args: readonly string[]): Promise<string> {
+  private gitIn(index: string, args: readonly string[], input?: string): Promise<string> {
     return new Promise((resolvePromise, rejectPromise) => {
       const child = spawn("git", args, {
         cwd: this.worktree,
@@ -310,6 +340,7 @@ export class Checkpoints implements CheckpointReads {
         stderr += chunk.toString();
       });
       child.on("error", rejectPromise);
+      child.stdin.end(input);
       child.on("close", (code) => {
         if (code === 0) resolvePromise(stdout);
         else rejectPromise(new Error(`git ${args[0]} failed: ${stderr.trim() || `exit ${code}`}`));
@@ -331,6 +362,29 @@ function isNeverCheckpointed(path: string): boolean {
     .split("/")
     .slice(0, -1)
     .some((dir) => neverCheckpointedDirs.includes(dir));
+}
+
+function parseRawDiff(listing: string): PathMove[] {
+  const fields = listing.split("\0");
+  const moves: PathMove[] = [];
+  for (let at = 0; at + 1 < fields.length; at += 2) {
+    const [, mode = "", , object = ""] = (fields[at] ?? "").split(" ");
+    const path = fields[at + 1] ?? "";
+    if (path !== "") moves.push({ path, mode, object });
+  }
+  return moves;
+}
+
+function indexInfoOf(moves: readonly PathMove[]): string {
+  const removals = moves.filter(isRemoval);
+  const writes = moves.filter((move) => !isRemoval(move));
+  return [...removals, ...writes]
+    .map((move) => `${move.mode} ${move.object}\t${move.path}\0`)
+    .join("");
+}
+
+function isRemoval(move: PathMove): boolean {
+  return Number.parseInt(move.mode, 8) === 0;
 }
 
 function parseNumstat(listing: string): ChangedPath[] {

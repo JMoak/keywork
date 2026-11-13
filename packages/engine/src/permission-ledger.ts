@@ -9,11 +9,13 @@ import {
   SessionGrants,
   sameRule,
   trustedReadRules,
+  trustedReadStaysWithin,
   withRules,
 } from "@keywork/shared";
 import type { GrantedScope, PermissionResolver, PermissionRuling } from "./agent.ts";
 import type { ToolCallPart } from "./messages.ts";
 import type { AskRule } from "./session/journal.ts";
+import { isReadablePath, reachesOnlyReadable, type ToolScope, toolScope } from "./tools/confine.ts";
 
 export interface WorkspaceGrants {
   rules(): readonly PermissionRule[];
@@ -32,6 +34,7 @@ export interface PermissionLedgerOptions {
   trusted: boolean;
   workspace: WorkspaceGrants;
   root: string;
+  readScope?: ToolScope | undefined;
   user?: PermissionResolver | undefined;
 }
 
@@ -41,8 +44,11 @@ export class PermissionLedger {
   private readonly sessions = new Map<string, SessionGrants>();
   private readonly quiet = new Set<string>();
   private readonly sessionRulesListeners = new Set<SessionRulesListener>();
+  private readonly readScope: ToolScope;
 
-  constructor(private readonly options: PermissionLedgerOptions) {}
+  constructor(private readonly options: PermissionLedgerOptions) {
+    this.readScope = options.readScope ?? toolScope(options.root);
+  }
 
   adoptSession(sessionId: string, rules: readonly PermissionRule[]): void {
     this.grantsOf(sessionId).adopt(rules);
@@ -81,10 +87,10 @@ export class PermissionLedger {
     else this.grantSession(sessionId, rules);
   }
 
-  resolverFor(sessionId?: string): PermissionResolver {
+  resolverFor(sessionId?: string, shellCwd?: () => string | undefined): PermissionResolver {
     return (call) =>
       this.options.user?.(call) ??
-      engineRuling(this.policyFor(sessionId)(call.name, call.arguments));
+      engineRuling(this.policyFor(sessionId, shellCwd?.())(call.name, call.arguments));
   }
 
   view(): PermissionsView {
@@ -132,9 +138,10 @@ export class PermissionLedger {
     for (const listener of [...this.sessionRulesListeners]) listener(sessionId, rules);
   }
 
-  private policyFor(sessionId: string | undefined): LayeredPolicy {
+  private policyFor(sessionId: string | undefined, shellCwd: string | undefined): LayeredPolicy {
+    const reads = shellCwd === undefined ? this.readScope : { ...this.readScope, cwd: shellCwd };
     const layers: RuleLayer[] = [
-      { origin: "trusted", rules: this.bundle() },
+      { origin: "trusted", rules: this.bundle(), admits: (part) => readsWithin(reads, part) },
       { origin: "workspace", rules: this.options.workspace.rules() },
       { origin: "session", rules: this.sessionRules(sessionId) },
     ];
@@ -164,6 +171,13 @@ export function memoryGrants(): WorkspaceGrants {
       return revoked;
     },
   };
+}
+
+function readsWithin(scope: ToolScope, commandPart: string): boolean {
+  return (
+    isReadablePath(scope, scope.cwd) &&
+    trustedReadStaysWithin(commandPart, (operand) => reachesOnlyReadable(scope, operand))
+  );
 }
 
 function engineRuling(ruling: Ruling | undefined): PermissionRuling | undefined {

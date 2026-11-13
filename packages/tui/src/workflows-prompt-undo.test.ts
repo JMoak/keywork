@@ -17,13 +17,16 @@ class TreeSession {
   readonly entries: TreeEntry[] = [];
   leaf: string | null = null;
   nextCheckpoint: string | undefined;
+  sessionPaths: readonly string[] | undefined;
 
   attachment(): SessionAttachment {
+    const { sessionPaths } = this;
     return {
       id: "sess-1",
       history: [],
       replay: () => {},
       append: async (message) => this.append(message),
+      ...(sessionPaths !== undefined && { sessionPathsFrom: async () => sessionPaths }),
       rewindBefore: (promptId) => {
         const prompt = this.entries.find((entry) => entry.id === promptId);
         if (prompt === undefined) return undefined;
@@ -71,8 +74,19 @@ class FileWorld implements CheckpointsPort {
     return tree;
   }
 
-  async restoreTo(tree: string): Promise<void> {
-    this.files = { ...(this.trees.get(tree) ?? {}) };
+  async restoreTo(tree: string, paths?: readonly string[]): Promise<void> {
+    const saved = this.trees.get(tree) ?? {};
+    if (paths === undefined) {
+      this.files = { ...saved };
+      return;
+    }
+    const files = { ...this.files };
+    for (const path of paths) {
+      const content = saved[path];
+      if (content === undefined) delete files[path];
+      else files[path] = content;
+    }
+    this.files = files;
   }
 
   async capture(): Promise<void> {}
@@ -86,8 +100,9 @@ class FileWorld implements CheckpointsPort {
   }
 }
 
-function undoProbe() {
+function undoProbe(sessionPaths?: readonly string[]) {
   const session = new TreeSession();
+  session.sessionPaths = sessionPaths;
   const world = new FileWorld();
   let agent: Agent | undefined;
   const probe = new AppProbe({
@@ -178,6 +193,45 @@ describe("/undo stages the last prompt", () => {
       { kind: "assistant", text: "made it v2" },
     ]);
     expect(agentHistory()).toEqual(["make it v2", "made it v2"]);
+  });
+
+  it("puts back only the session's files and keeps a file you changed yourself", async () => {
+    const { probe, session, world, model } = undoProbe(["a.txt"]);
+    await promptThatEdits(world, session, probe);
+    world.files = { ...world.files, "mine.md": "my notes" };
+
+    probe.type("/undo").keys("enter");
+    await model.lastUndo;
+
+    expect(world.files).toEqual({ "a.txt": "v1", "mine.md": "my notes" });
+    expect(model.entries.at(-1)).toMatchObject({ kind: "info", text: /^undone · files put back/ });
+    probe.keys("ctrl+c").type("/redo").keys("enter");
+    await model.lastUndo;
+    expect(world.files).toEqual({ "a.txt": "v2", "mine.md": "my notes" });
+  });
+
+  it("puts back every file in the folder on /undo everything, and says so", async () => {
+    const { probe, session, world, model } = undoProbe(["a.txt"]);
+    await promptThatEdits(world, session, probe);
+    world.files = { ...world.files, "mine.md": "my notes" };
+
+    probe.type("/undo everything").keys("enter");
+    await model.lastUndo;
+
+    expect(world.files).toEqual({ "a.txt": "v1" });
+    expect(model.entries.at(-1)).toMatchObject({ text: /^undone · every file put back/ });
+  });
+
+  it("says how to ask for every file when /undo gets a word it does not know", async () => {
+    const { probe, session, world, model } = undoProbe(["a.txt"]);
+    await promptThatEdits(world, session, probe);
+
+    probe.type("/undo all of it").keys("enter");
+    await probe.settled();
+
+    expect(model.undoStaged()).toBe(false);
+    expect(world.files).toEqual({ "a.txt": "v2" });
+    expect(probe.snapshot().notice).toContain("/undo everything");
   });
 
   it("falls back to the file undo when there is no prompt to take back", async () => {

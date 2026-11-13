@@ -44,6 +44,7 @@ import type {
   RedoReport,
   RestorePreview,
   RestoreReport,
+  RestoreScope,
   SessionDetail,
   SessionEntries,
   SessionRow,
@@ -97,8 +98,16 @@ export interface KeyworkClient {
   compact(id: string, focus?: string): Promise<CompactionReport | undefined>;
   undo(id: string): Promise<UndoReport | "missing" | "nothing">;
   redo(id: string): Promise<RedoReport | "missing" | "nothing">;
-  restoreTurn(id: string, turn: number): Promise<RestoreReport | "missing" | "unknown-turn">;
-  previewRestore(id: string, turn: number): Promise<RestorePreview | "missing" | "unknown-turn">;
+  restoreTurn(
+    id: string,
+    turn: number,
+    scope?: RestoreScope,
+  ): Promise<RestoreReport | "missing" | "unknown-turn">;
+  previewRestore(
+    id: string,
+    turn: number,
+    scope?: RestoreScope,
+  ): Promise<RestorePreview | "missing" | "unknown-turn">;
   context(id: string): Promise<ContextAnswer | undefined>;
   cost(id: string): Promise<CostAnswer | undefined>;
   exportSession(id: string, scope?: ExportScope, out?: string): Promise<ExportAnswer | undefined>;
@@ -316,14 +325,15 @@ export function keyworkClient(ticket: ServerTicket, seams: ClientSeams = {}): Ke
       ),
     undo: (id) => timeTravel(request("POST", sessionPath(id, "undo"))),
     redo: (id) => timeTravel(request("POST", sessionPath(id, "redo"))),
-    restoreTurn: async (id, turn) => {
-      const response = await request("POST", sessionPath(id, "restore"), { turn });
+    restoreTurn: async (id, turn, scope) => {
+      const response = await request("POST", sessionPath(id, "restore"), { turn, scope });
       if (response.status !== 404) return json<RestoreReport>(response);
       const detail = await refusalDetail(response);
       return detail.startsWith("no turn") ? "unknown-turn" : "missing";
     },
-    previewRestore: async (id, turn) => {
-      const response = await request("GET", `${sessionPath(id, "restore")}?${queryOf({ turn })}`);
+    previewRestore: async (id, turn, scope) => {
+      const query = queryOf({ turn, scope });
+      const response = await request("GET", `${sessionPath(id, "restore")}?${query}`);
       if (response.status !== 404) return json<RestorePreview>(response);
       const detail = await refusalDetail(response);
       return detail.startsWith("no turn") ? "unknown-turn" : "missing";

@@ -1,5 +1,6 @@
+import { realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
@@ -49,6 +50,22 @@ describe("ShellSession", () => {
     const pwd = await session.run("pwd");
 
     expect(basename(pwd.trim())).toBe("nested");
+  });
+
+  it("knows where it stands after a cd, and stands at its folder again in a fresh shell", async () => {
+    const root = await tempDir();
+    await mkdir(join(root, "a nested folder"));
+    const session = new ShellSession(root);
+    sessions.push(session);
+    expect(session.workingDirectory()).toBe(root);
+
+    await session.run('cd "a nested folder"');
+    expect(realpathSync(resolve(session.workingDirectory()))).toBe(
+      realpathSync(join(root, "a nested folder")),
+    );
+
+    await session.reset();
+    expect(session.workingDirectory()).toBe(root);
   });
 
   it("keeps exported environment live across calls", async () => {
@@ -394,5 +411,16 @@ describe("persistentBashTool", () => {
 
     expect(output.trim()).toBe("streamed");
     expect(chunks.join("")).toContain("streamed");
+  });
+
+  it("reports each command's exit code as a number, the failing one too", async () => {
+    const session = await openSession();
+    const exits: number[] = [];
+    const tool = persistentBashTool(session, undefined, undefined, (code) => exits.push(code));
+
+    await tool.execute({ command: "echo fine" });
+    await tool.execute({ command: "false" });
+
+    expect(exits).toEqual([0, 1]);
   });
 });

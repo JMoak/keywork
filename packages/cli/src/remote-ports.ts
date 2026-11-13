@@ -20,6 +20,7 @@ import {
   type EngineEventType,
   engineEventTypes,
   type KeyworkClient,
+  type RestoreScope,
   type SessionDetail,
   type SessionEntries,
   type SessionRow,
@@ -357,19 +358,20 @@ function attachmentOf(
       await client.bindSessionBot(id, name ?? null);
     },
     turns: async () => turnRecordsOf(await path()),
-    rewindOnServer: async (promptId) => rewindOnServer(client, id, promptId, await path()),
+    rewindOnServer: async (promptId, scope) =>
+      rewindOnServer(client, id, { promptId, scope }, await path()),
   };
 }
 
 async function rewindOnServer(
   client: KeyworkClient,
   sessionId: string,
-  promptId: string,
+  { promptId, scope }: { promptId: string; scope: RestoreScope },
   path: readonly SessionEntry[],
 ): Promise<ServedRewind | undefined> {
   const turn = turnRecordsOf(path).find((record) => record.promptId === promptId)?.turn;
   if (turn === undefined) return undefined;
-  const restored = await client.restoreTurn(sessionId, turn);
+  const restored = await client.restoreTurn(sessionId, turn, scope);
   if (typeof restored === "string") return undefined;
   return {
     history: await historyOf(client, sessionId),

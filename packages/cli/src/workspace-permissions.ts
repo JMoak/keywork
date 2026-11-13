@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { PermissionLedger, type PermissionResolver } from "@keywork/engine";
 import { GrantStore } from "@keywork/shared";
+import { workspaceToolScope } from "./compose.ts";
 import { workspaceIdentity, workspacePermissionsFile } from "./paths.ts";
 
 export interface WorkspacePermissionsOptions {
@@ -17,6 +18,7 @@ export function workspacePermissions(options: WorkspacePermissionsOptions): Perm
     trusted: options.projectTrusted,
     workspace: new GrantStore({ file: grantFileOf(options) }),
     root: options.cwd,
+    readScope: workspaceToolScope(options.cwd, options.projectTrusted, options.workspaceSlug),
     user: options.user,
   });
 }

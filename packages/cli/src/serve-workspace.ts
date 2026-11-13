@@ -1,5 +1,11 @@
 import { homedir } from "node:os";
-import type { BotDefinition, PermissionResolver, Provider, SessionStore } from "@keywork/engine";
+import type {
+  Agent,
+  BotDefinition,
+  PermissionResolver,
+  Provider,
+  SessionStore,
+} from "@keywork/engine";
 import {
   type KeyworkConfig,
   type LspConfig,
@@ -53,6 +59,8 @@ export interface ServedWorkspaceOptions {
   storeOf(sessionId: string): SessionStore | undefined;
   liveStores(): Iterable<SessionStore>;
   onReleased?: ((sessionId: string) => void) | undefined;
+  onChildAttached?: ((child: SessionStore, agent: Agent) => void) | undefined;
+  onChildReleased?: ((childId: string) => void) | undefined;
 }
 
 export interface ServedWorkspace {
@@ -136,12 +144,14 @@ export async function composeServedWorkspace(
     notice,
     delegation: {
       storeOf,
-      attach: (child) => {
+      attach: (child, agent) => {
         children.set(child.header.id, child);
+        options.onChildAttached?.(child, agent);
         void attached(child);
       },
       release: (childId) => {
         children.delete(childId);
+        options.onChildReleased?.(childId);
         void released(childId);
       },
     },

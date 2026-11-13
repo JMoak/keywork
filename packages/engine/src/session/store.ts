@@ -47,6 +47,7 @@ import {
 } from "./review.ts";
 import { SpillStore } from "./spill.ts";
 import { turnFactsOf } from "./turn-facts.ts";
+import { type OutcomeMark, outcomeMarksOf } from "./turn-outcomes.ts";
 
 export interface SessionStats {
   entries: number;
@@ -73,6 +74,7 @@ export interface ReportMark {
 export interface SessionMarks extends MessageMarks {
   reports: ReportMark[];
   verdicts: VerdictMark[];
+  outcomes: OutcomeMark[];
 }
 
 export const creatureReportType = "keywork.creature.report";
@@ -324,13 +326,14 @@ export class SessionStore {
     return summaryMarksOf(this.contextEntries());
   }
 
-  messageMarks(): SessionMarks {
+  messageMarks(lastTurnRunning = false): SessionMarks {
     const path = this.activePath();
     const context = contextEntriesFor(path);
     return {
       ...messageMarksOf(path),
       reports: reportMarksOf(context),
       verdicts: verdictMarksOf(context),
+      outcomes: outcomeMarksOf(path, lastTurnRunning),
     };
   }
 

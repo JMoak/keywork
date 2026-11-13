@@ -652,6 +652,7 @@ describe("checkpoint-paired backtrack fork", () => {
 
   function forkWorld(options: { checkpoint?: string; restoreError?: Error } = {}) {
     const restored: string[] = [];
+    const restoredPaths: (readonly string[] | undefined)[] = [];
     const opened: (string | undefined)[] = [];
     const trees: SessionTreePort = {
       load: async (sessionId) => ({ sessionId, roots: promptRoots(options.checkpoint) }),
@@ -662,15 +663,17 @@ describe("checkpoint-paired backtrack fork", () => {
       capture: async () => {},
       undo: async () => false,
       redo: async () => false,
-      restoreTo: async (tree) => {
+      restoreTo: async (tree, paths) => {
         if (options.restoreError !== undefined) throw options.restoreError;
         restored.push(tree);
+        restoredPaths.push(paths);
       },
     };
     return {
       restored,
+      restoredPaths,
       opened,
-      fork: (promptId: string, draft: string) =>
+      fork: (promptId: string, draft: string, sessionPaths?: readonly string[]) =>
         forkAtPrompt(
           trees,
           (sessionId) => opened.push(sessionId),
@@ -678,6 +681,7 @@ describe("checkpoint-paired backtrack fork", () => {
           "s1",
           promptId,
           draft,
+          sessionPaths,
         ),
     };
   }
@@ -688,6 +692,13 @@ describe("checkpoint-paired backtrack fork", () => {
     expect(outcome).toEqual({ forked: true, note: "files put back to that point" });
     expect(world.restored).toEqual([treeHash]);
     expect(world.opened).toEqual(["forked-1"]);
+  });
+
+  it("puts back only the session's files when it knows them, never the person's own", async () => {
+    const world = forkWorld({ checkpoint: treeHash });
+    await world.fork("u2", "two", ["src/agent.ts"]);
+    expect(world.restored).toEqual([treeHash]);
+    expect(world.restoredPaths).toEqual([["src/agent.ts"]]);
   });
 
   it("forks truthfully without touching files when the prompt was never checkpointed", async () => {

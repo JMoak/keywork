@@ -263,7 +263,7 @@ class PaneSession implements SessionControls {
     );
     const ports: ConversationPorts = {
       readFile: readWorkspaceFile,
-      forkAtPrompt: (promptId, promptDraft) =>
+      forkAtPrompt: async (promptId, promptDraft) =>
         forkAtPrompt(
           deps.trees,
           (sessionId, forkDraft) =>
@@ -272,6 +272,7 @@ class PaneSession implements SessionControls {
           this.pane.sessionId,
           promptId,
           promptDraft,
+          await this.live?.sessionPathsFrom?.(promptId),
         ),
       forkAfterPrompt: (promptId) =>
         forkAfterPrompt(
