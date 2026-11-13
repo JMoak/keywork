@@ -113,7 +113,7 @@ export function isRefused(value: unknown): value is Refused {
 export class Workshops {
   private readonly brokers: readonly CredentialBroker[];
   private readonly now: () => Date;
-  private readonly starting = new Map<string, Promise<WorkshopView | Refused>>();
+  private readonly starting = new Map<string, Promise<Readied>>();
 
   constructor(private readonly options: WorkshopsOptions) {
     this.brokers = options.brokers ?? [];
@@ -266,13 +266,18 @@ export class Workshops {
 
   private readiness(id: string): WorkshopReadiness {
     return async () => {
-      if ((await this.record(id))?.state === "running") return undefined;
       const pending = this.starting.get(id);
-      if (pending !== undefined) return startedNotice(id, await pending, false);
-      const start = this.start(id).finally(() => this.starting.delete(id));
-      this.starting.set(id, start);
-      return startedNotice(id, await start, true);
+      if (pending !== undefined) return startedNotice(id, (await pending).outcome, false);
+      const ready = this.startIfStopped(id).finally(() => this.starting.delete(id));
+      this.starting.set(id, ready);
+      const { outcome, started } = await ready;
+      return startedNotice(id, outcome, started);
     };
+  }
+
+  private async startIfStopped(id: string): Promise<Readied> {
+    if ((await this.record(id))?.state === "running") return { outcome: undefined, started: false };
+    return { outcome: await this.start(id), started: true };
   }
 
   private async creationBlock(spec: WorkshopSpec): Promise<Refused | undefined> {
@@ -459,9 +464,14 @@ function refusal(refused: RefusalKind, error: string): Refused {
   return { refused, error };
 }
 
+interface Readied {
+  readonly outcome: WorkshopView | Refused | undefined;
+  readonly started: boolean;
+}
+
 function startedNotice(
   id: string,
-  outcome: WorkshopView | Refused,
+  outcome: WorkshopView | Refused | undefined,
   startedHere: boolean,
 ): string | undefined {
   if (isRefused(outcome)) throw new Error(unstartableMessage(id, outcome.error));
