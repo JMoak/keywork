@@ -126,15 +126,11 @@ assets are never overwritten; an incomplete draft can be rebuilt. A later main r
 waits for the preceding tag's GitHub and npm publications to finish. Published npm
 versions are immutable; subsequent releases need a new version.
 
-After the public release passes its install smoke check, `notify-app` verifies its public
-tag and source SHA, reads the contract from that immutable source, and sends
-`keywork-engine-published` to `JMoak/keywork-app`. Configure `DEPENDENCY_APP_ID` as an Actions
-variable and `DEPENDENCY_APP_PRIVATE_KEY` as an Actions secret for the dependency GitHub
-App installed on Keywork App with contents write permission. Missing credentials or failed
-delivery fail the notification job visibly; rerunning that job retries delivery without
-moving a tag or republishing assets. Keywork App independently verifies the canonical public
-release and adopts only a compatible engine through its dependency PR workflow. Its daily
-reconciliation recovers missed notifications.
+A release ends at its public install smoke check. This repository notifies no consumer and
+holds no credential for another repository. Keywork App reads the public release on its own
+schedule, verifies it, and adopts a compatible engine itself; its
+`docs/engine-updates.md` describes that. To adopt sooner than the schedule, run the
+`engine-update` workflow in Keywork App by hand.
 
 Local preparation uses `bun run build:npm` and `npm pack --dry-run` from `dist/npm`.
 Both commands prepare and inspect the package locally. The build checks the
