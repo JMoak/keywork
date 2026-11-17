@@ -88,8 +88,9 @@ the field.
 
 ## Identity anchors (from the UX research)
 
-- Fiery-clean keyboard: leader key + palette-as-live-docs; steer (`Enter`) vs. queue
-  (`Alt+Enter`) interruption primitive; single-keystroke reach for the vital few.
+- Fiery-clean keyboard: leader key + palette-as-live-docs; queue (`Enter`) vs. steer
+  (`Alt+Enter`, swapped by C17 on 2026-08-30) interruption primitive; single-keystroke reach
+  for the vital few.
 - Omarchy detail: zero-config beauty, `system` theme by default, visible trust state, honest
   token/cost display, discoverability overlay.
 - Simplicity budget: the refusals list in [`ux-principles.md`](ux-principles.md) §4 is policy.
