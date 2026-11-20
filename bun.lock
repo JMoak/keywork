@@ -39,7 +39,7 @@
       "name": "@keywork/engine",
       "version": "0.0.1",
       "dependencies": {
-        "@jmoak/ratchet": "0.3.0-alpha.1",
+        "@jmoak/ratchet": "0.3.0",
         "@keywork/campaigns": "workspace:*",
         "@keywork/shared": "workspace:*",
         "zod": "4.4.3",
@@ -112,7 +112,7 @@
 
     "@colors/colors": ["@colors/colors@1.5.0", "", {}, "sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ=="],
 
-    "@jmoak/ratchet": ["@jmoak/ratchet@0.3.0-alpha.1", "", { "bin": { "ratchet": "dist/bin/ratchet.js" } }, "sha512-qRwAzlrrEK1/CbCTuxUZl0fEva/qI4oi29ckEYEoJGPdMgCYIKsiyJqg97f1B0OGupK2Ihmmf/Af/nM9E8Tqtg=="],
+    "@jmoak/ratchet": ["@jmoak/ratchet@0.3.0", "", { "bin": { "ratchet": "dist/bin/ratchet.js" } }, "sha512-lWg0hedRePxqkATat3divMIB1mu7Qmodh3NHqJAKN44eYosTST9W2OB0vR0dAmmIszZ+gRJX31dCJtesMLHtbg=="],
 
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 

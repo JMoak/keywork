@@ -11,6 +11,6 @@
     "@keywork/campaigns": "workspace:*",
     "@keywork/shared": "workspace:*",
     "zod": "4.4.3",
-    "@jmoak/ratchet": "0.3.0-alpha.1"
+    "@jmoak/ratchet": "0.3.0"
   }
 }
