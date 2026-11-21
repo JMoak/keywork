@@ -50,6 +50,7 @@ file that currently owns each topic; the file itself says what it amends.
 | Subagents (the `delegate` tool, child sessions nested under `<parent>.children/` with `spawnedBy` lineage, inherited trust, depth and concurrency limits, the child row and `o` to open it, `child.started` / `child.finished`, children in `keywork run --json`) | [`120`](120-subagents.md) |
 | Memory decisions (the `MemoryDecider` port, the builtin and Jev, `memory.decider`, `memory.decided`, the TypeSafe key, the decider eval) | [`121`](121-jev-memory.md); amends [`95`](95-memory-and-skills.md) J7 and J-D8 |
 | Refinement campaigns, skill cartridges, bounded context, loop/cost/achievement monitoring, and integration across Keywork, Keywork-app, Stead, and Orchard | [`123`](123-refinement-campaigns.md): canonical implementation plan; product direction agreed, technical contracts proposed, implementation not started. Relly remains optional. |
+| Items carried over from Stead's removed work records (untriaged) | [`124`](124-carried-from-stead.md) (capture, not authoritative; move each item to its owning file when taken up) |
 
 ## Workstreams
 
